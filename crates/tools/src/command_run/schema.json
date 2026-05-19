@@ -1,0 +1,41 @@
+{
+  "name": "command_run",
+  "description": "Run Codex tools as a pure batch+step command runner. Always use commands[]. Prefer one complete batch for predictable work: discover, read, edit, test, and validate in ordered steps when the dependencies are clear. Put independent safe read-only commands in the same step. Use later steps for apply_patch, generated writes, tests, builds, and verification that should wait for earlier results. Mutating or unknown commands act as barriers and run one at a time. Different steps run in ascending order. Available commands: apply_patch, bash, shell_command.\nCommand run patterns:\n- Batch investigation: put `rg --files`, targeted `rg -n`, and several source reads in step 1 instead of spreading them across turns.\n- Multi-file reading: use several `cat` or `sed` items in the same step for related files and tests. Prefer structured reads over shell readers when the content will guide an edit.\n- Code repair loop: use early steps for discovery/reads, a later step for one multi-file `apply_patch`, and final steps for tests plus focused validation searches.\n- Verification: run the relevant test or build command after edits in the same command_run when the edit target is already clear.\n- Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.\n- Example investigation batch: step 1 `rg --files src tests`, step 1 `rg -n \"symbol|error\" src tests`, step 1 multiple `cat`/`sed` reads for candidate files and tests.\n- Example repair batch: step 1 read touched files, step 2 `apply_patch` across all related files, step 3 run the narrow test, step 3 `rg -n \"fixed_symbol|regression_case\" src tests`.\nCommand line formats:\n- apply_patch: Use one patch for coordinated multi-file source edits after reads. Patches validate context and fail on mismatch. Raw freeform body beginning with `*** Begin Patch`.\n- bash: JSON object string matching this schema: {\"type\":\"object\",\"required\":[\"command\"],\"additionalProperties\":false,\"properties\":{\"command\":{\"type\":\"string\",\"description\":\"The shell script to execute in the active session directory\"}}}\n- shell_command: Use for tests, builds, scripts, package tools, and host-shell behavior. Put verification after edits in a later step. JSON object string matching this schema: {\"type\":\"object\",\"required\":[\"command\"],\"additionalProperties\":false,\"properties\":{\"command\":{\"type\":\"string\",\"description\":\"The shell script to execute in the active session directory\"}}}",
+  "input_schema": {
+    "type": "object",
+    "required": ["commands"],
+    "additionalProperties": false,
+    "properties": {
+      "commands": {
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 15,
+        "description": "Executable command-line instructions. Do not put progress announcements or summaries here.",
+        "items": {
+          "type": "object",
+          "required": ["command", "command_line"],
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "type": "string",
+              "description": "Target internal Codex command name from the available commands list. For namespaced tools use the flattened name shown there exactly."
+            },
+            "command_line": {
+              "type": "string",
+              "description": "String payload for the target command. For JSON-schema commands, pass an escaped JSON object string such as {\"cmd\":\"rg -n query src\"}. For freeform commands such as apply_patch, pass the raw freeform body. For shell-like commands, plain text is also accepted and mapped to that tool's command field."
+            },
+            "step": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Execution stage. Use the same step for independent discovery/read commands and later steps for edits, tests, and validation that depend on earlier output. Commands with the same step may run concurrently when they are safe read-only work; later steps wait for earlier steps."
+            }
+          }
+        }
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object"
+  },
+  "safety": "Runs only local commands inside the active session directory unless permission restrictions are disabled."
+}

@@ -1,0 +1,30 @@
+{
+  "agent_name": "coding_agent_fast",
+  "agent_directory": "crates/agents/src/coding_agent_fast",
+  "parent_agent_id": null,
+  "report_to_user": true,
+  "provider": {
+    "tura_llm_name": "tura_coder",
+    "stream": false,
+    "temperature": 0.2,
+    "max_tokens": 0,
+    "tool_choice": "Auto",
+    "time_out_ms": 120000
+  },
+  "agent_prompt": [
+    {
+      "agent_prompt": "coding_agent_fast",
+      "prompt_directory": "crates/agents/src/coding_agent_fast"
+    }
+  ],
+  "agent_capabilities": [
+    {
+      "capability_name": "command_run",
+      "capability_directory": "crates/tools/src"
+    }
+  ],
+  "validator": {
+    "need_validator": false,
+    "validator_name": null
+  }
+}

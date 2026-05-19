@@ -1,0 +1,877 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
+
+use chrono::Utc;
+use regex::Regex;
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use thiserror::Error;
+use tracing::{error, info, warn};
+use uuid::Uuid;
+
+use crate::llm::_bedrock_provider;
+use crate::llm::_google_provider;
+use crate::llm::_llm_log::{build_call_log, write_llm_log};
+use crate::llm::_openai_provider;
+use crate::tura_conf::TuraConfig;
+
+pub static SETTINGS: OnceLock<Arc<Settings>> = OnceLock::new();
+
+#[derive(Debug, Error)]
+pub enum TuraError {
+    #[error("config error: {message}")]
+    Config { message: String },
+
+    #[error("unknown provider '{provider}'")]
+    UnknownProvider { provider: String },
+
+    #[error("validation error: {message}")]
+    Validation { message: String },
+
+    #[error("http status {status}: {body}")]
+    HttpStatus { status: u16, body: String },
+
+    #[error("network error: {message}")]
+    Network { message: String },
+
+    #[error("provider '{provider}' request failed: {message}")]
+    ProviderRequest { provider: String, message: String },
+
+    #[error("all providers failed: {message}")]
+    AllProvidersFailed { message: String },
+
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+
+    #[error("io error: {message}")]
+    Io { message: String },
+}
+
+impl TuraError {
+    pub fn io(err: std::io::Error) -> Self {
+        Self::Io {
+            message: err.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UsageDetails {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
+    pub cached_input_tokens: Option<u64>,
+    pub cache_write_tokens: Option<u64>,
+    pub reasoning_tokens: Option<u64>,
+    pub audio_input_tokens: Option<u64>,
+    pub audio_output_tokens: Option<u64>,
+    pub context_window: Option<u64>,
+    pub context_used_tokens: Option<u64>,
+    pub context_utilization_ratio: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CostDetails {
+    pub input_cost: Option<f64>,
+    pub output_cost: Option<f64>,
+    pub cache_read_cost: Option<f64>,
+    pub cache_write_cost: Option<f64>,
+    pub reasoning_cost: Option<f64>,
+    pub total_cost: Option<f64>,
+    pub currency: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CallMetrics {
+    pub usage: UsageDetails,
+    pub cost: CostDetails,
+    pub cache_hit: bool,
+    pub cache_triggered_at_input_tokens: Option<u64>,
+    pub tool_call_count: usize,
+    pub finish_reason: Option<String>,
+    pub provider_request_id: Option<String>,
+    pub raw_usage: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProviderResponse {
+    pub content: Value,
+    pub raw: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<CallMetrics>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderConfig {
+    pub provider: String,
+    pub base_url: String,
+    pub model: String,
+    pub temperature: f64,
+}
+
+impl ProviderConfig {
+    pub fn validate(&self) -> Result<(), TuraError> {
+        if self.model.trim().is_empty() {
+            return Err(TuraError::Validation {
+                message: "model must not be empty".into(),
+            });
+        }
+        if !(0.0..=2.0).contains(&self.temperature) {
+            return Err(TuraError::Validation {
+                message: "temperature must be within [0.0, 2.0]".into(),
+            });
+        }
+        Ok(())
+    }
+
+    fn get_api_key(&self, conf: &TuraConfig) -> Result<String, TuraError> {
+        conf.get(&format!("{}_API_KEY", self.provider.to_uppercase()))
+            .or_else(|| conf.get(&format!("{}_api_key", self.provider)))
+            .or_else(|| conf.get(&self.provider))
+            .ok_or_else(|| TuraError::Config {
+                message: format!("API Key not found for provider '{}'", self.provider),
+            })
+    }
+
+    pub async fn embed(&self, text: &str, conf: &TuraConfig) -> Result<Vec<f32>, TuraError> {
+        self.validate()?;
+        let api_key = if self.provider.eq_ignore_ascii_case("openai")
+            && openai_login_is_oauth(conf)
+            && openai_oauth_base_url_allowed(&self.base_url)
+        {
+            refresh_openai_access_token_if_needed(conf)
+                .await
+                .unwrap_or_else(|_| self.get_api_key(conf).unwrap_or_default())
+        } else {
+            self.get_api_key(conf)?
+        };
+        match self.provider.to_lowercase().as_str() {
+            "google" => {
+                _google_provider::google_embed(&self.base_url, &self.model, &api_key, text).await
+            }
+            _ => _openai_provider::openai_embed(&self.base_url, &self.model, &api_key, text).await,
+        }
+    }
+
+    pub async fn call(
+        &self,
+        conf: &TuraConfig,
+        messages: Vec<Value>,
+        options: CallOptions,
+    ) -> Result<ProviderResponse, TuraError> {
+        self.validate()?;
+        let api_key = if self.provider.eq_ignore_ascii_case("openai")
+            && openai_login_is_oauth(conf)
+            && openai_oauth_base_url_allowed(&self.base_url)
+        {
+            refresh_openai_access_token_if_needed(conf)
+                .await
+                .unwrap_or_else(|_| self.get_api_key(conf).unwrap_or_default())
+        } else {
+            self.get_api_key(conf)?
+        };
+        let call_id = Uuid::new_v4().simple().to_string();
+        let started_at = Utc::now();
+        let request_params = serde_json::to_value(&options).unwrap_or(Value::Null);
+
+        let result = match self.provider.to_lowercase().as_str() {
+            "google" => {
+                _google_provider::call(&self.base_url, &self.model, &api_key, &messages, &options)
+                    .await
+            }
+            "bedrock" => {
+                _bedrock_provider::call(&self.base_url, &self.model, &api_key, &messages, &options)
+                    .await
+            }
+            other => {
+                _openai_provider::call(
+                    &self.base_url,
+                    &self.model,
+                    other,
+                    &api_key,
+                    &messages,
+                    &options,
+                )
+                .await
+            }
+        };
+
+        let finished_at = Utc::now();
+        let duration_ms = (finished_at - started_at)
+            .num_microseconds()
+            .unwrap_or_default() as f64
+            / 1000.0;
+
+        match result {
+            Ok(response) => {
+                let log = build_call_log(
+                    &self.provider,
+                    &self.model,
+                    &self.base_url,
+                    Value::Array(messages.clone()),
+                    Some(response.raw.clone()),
+                    request_params,
+                    options.response_format.clone(),
+                    started_at,
+                    finished_at,
+                    duration_ms,
+                    true,
+                    &call_id,
+                    response.metrics.clone(),
+                    None,
+                    None,
+                );
+                if let Ok(path) = write_llm_log(&log, Some(&call_id)).await {
+                    info!(provider = %self.provider, model = %self.model, log_path = %path.display(), duration_ms = duration_ms, "provider call succeeded");
+                }
+                Ok(response)
+            }
+            Err(err) => {
+                let log = build_call_log(
+                    &self.provider,
+                    &self.model,
+                    &self.base_url,
+                    Value::Array(messages.clone()),
+                    None,
+                    request_params,
+                    options.response_format.clone(),
+                    started_at,
+                    finished_at,
+                    duration_ms,
+                    false,
+                    &call_id,
+                    None,
+                    Some(err.to_string()),
+                    None,
+                );
+                if let Ok(path) = write_llm_log(&log, Some(&call_id)).await {
+                    error!(provider = %self.provider, model = %self.model, log_path = %path.display(), error = %err, "provider call failed");
+                }
+                Err(err)
+            }
+        }
+    }
+}
+
+fn openai_login_is_oauth(conf: &TuraConfig) -> bool {
+    conf.get("OPENAI_LOGIN")
+        .map(|value| value.eq_ignore_ascii_case("oauth"))
+        .unwrap_or(false)
+}
+
+fn openai_oauth_base_url_allowed(base_url: &str) -> bool {
+    let normalized = base_url.trim().trim_end_matches('/');
+    matches!(
+        normalized,
+        "" | "https://api.openai.com" | "https://api.openai.com/v1"
+    )
+}
+
+async fn refresh_openai_access_token_if_needed(conf: &TuraConfig) -> Result<String, TuraError> {
+    let codex_auth = load_codex_auth_tokens();
+    let access = conf
+        .get("OPENAI_API_KEY")
+        .or_else(|| {
+            codex_auth
+                .as_ref()
+                .map(|tokens| tokens.access_token.clone())
+        })
+        .ok_or_else(|| TuraError::Config {
+            message: "Configuration key 'OPENAI_API_KEY' not found".to_string(),
+        })?;
+    let expires = conf
+        .get("OPENAI_TOKEN_EXPIRES")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or_default();
+    let now = Utc::now().timestamp_millis();
+    if expires > now + 60_000 {
+        return Ok(access);
+    }
+    if let Some(tokens) = codex_auth.as_ref() {
+        if tokens.access_token != access {
+            std::env::set_var("OPENAI_API_KEY", &tokens.access_token);
+            std::env::set_var("OPENAI_REFRESH_TOKEN", &tokens.refresh_token);
+            return Ok(tokens.access_token.clone());
+        }
+    }
+
+    let refresh = conf
+        .get("OPENAI_REFRESH_TOKEN")
+        .or_else(|| {
+            codex_auth
+                .as_ref()
+                .map(|tokens| tokens.refresh_token.clone())
+        })
+        .ok_or_else(|| TuraError::Config {
+            message: "Configuration key 'OPENAI_REFRESH_TOKEN' not found".to_string(),
+        })?;
+    let response = reqwest::Client::new()
+        .post("https://auth.openai.com/oauth/token")
+        .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh.as_str()),
+            ("client_id", "app_EMoamEEZ73f0CkXaXp7hrann"),
+        ])
+        .send()
+        .await
+        .map_err(|err| TuraError::Network {
+            message: err.to_string(),
+        })?;
+    let status = response.status();
+    let body: Value = response.json().await.map_err(|err| TuraError::Network {
+        message: err.to_string(),
+    })?;
+    if !status.is_success() {
+        if let Some(access) = codex_auth
+            .as_ref()
+            .map(|tokens| tokens.access_token.clone())
+        {
+            std::env::set_var("OPENAI_API_KEY", &access);
+            std::env::set_var("OPENAI_REFRESH_TOKEN", &refresh);
+            return Ok(access);
+        }
+        return Err(TuraError::HttpStatus {
+            status: status.as_u16(),
+            body: body.to_string(),
+        });
+    }
+    let next_access = body
+        .get("access_token")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| TuraError::ProviderRequest {
+            provider: "openai".to_string(),
+            message: "OpenAI OAuth refresh response did not include access_token".to_string(),
+        })?
+        .to_string();
+    std::env::set_var("OPENAI_API_KEY", &next_access);
+    if let Some(refresh) = body.get("refresh_token").and_then(Value::as_str) {
+        std::env::set_var("OPENAI_REFRESH_TOKEN", refresh);
+    }
+    let next_expires = now
+        + body
+            .get("expires_in")
+            .and_then(Value::as_i64)
+            .unwrap_or(3600)
+            * 1000;
+    std::env::set_var("OPENAI_TOKEN_EXPIRES", next_expires.to_string());
+    Ok(next_access)
+}
+
+#[derive(Debug, Clone)]
+struct CodexAuthTokens {
+    access_token: String,
+    refresh_token: String,
+}
+
+fn load_codex_auth_tokens() -> Option<CodexAuthTokens> {
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
+    let path = PathBuf::from(home).join(".codex").join("auth.json");
+    let value: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    let tokens = value.get("tokens")?;
+    let access_token = tokens
+        .get("access_token")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())?
+        .to_string();
+    let refresh_token = tokens
+        .get("refresh_token")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())?
+        .to_string();
+    Some(CodexAuthTokens {
+        access_token,
+        refresh_token,
+    })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CallOptions {
+    pub response_format: Option<Value>,
+    pub search: bool,
+    pub force_search: bool,
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub n: Option<u64>,
+    pub stop: Option<Value>,
+    pub max_completion_tokens: Option<u64>,
+    pub max_tokens: Option<u64>,
+    pub presence_penalty: Option<f64>,
+    pub frequency_penalty: Option<f64>,
+    pub logit_bias: Option<Value>,
+    pub logprobs: Option<bool>,
+    pub top_logprobs: Option<u64>,
+    pub seed: Option<u64>,
+    pub user: Option<String>,
+    pub safety_identifier: Option<String>,
+    pub prompt_cache_key: Option<String>,
+    pub reasoning_effort: Option<String>,
+    pub prediction: Option<Value>,
+    pub modalities: Option<Vec<String>>,
+    pub audio: Option<Value>,
+    pub stream: Option<bool>,
+    pub stream_options: Option<Value>,
+    pub store: Option<bool>,
+    pub metadata: Option<HashMap<String, String>>,
+    pub service_tier: Option<String>,
+    pub verbosity: Option<String>,
+    pub web_search_options: Option<Value>,
+    pub tools: Option<Vec<Value>>,
+    pub tool_choice: Option<Value>,
+    pub parallel_tool_calls: Option<bool>,
+    pub extra_body: Option<Value>,
+    pub context_window: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteConfig {
+    pub default_temperature: f64,
+    pub providers: Vec<ProviderConfig>,
+}
+
+impl RouteConfig {
+    pub fn validate(&self) -> Result<(), TuraError> {
+        if !(0.0..=2.0).contains(&self.default_temperature) {
+            return Err(TuraError::Validation {
+                message: "default_temperature must be within [0.0, 2.0]".into(),
+            });
+        }
+        if self.providers.is_empty() {
+            return Err(TuraError::Validation {
+                message: "no providers configured for this route".into(),
+            });
+        }
+        for p in &self.providers {
+            p.validate()?;
+        }
+        Ok(())
+    }
+
+    pub fn provider(&self, name: &str) -> Result<&ProviderConfig, TuraError> {
+        self.providers
+            .iter()
+            .find(|p| p.provider == name)
+            .ok_or_else(|| TuraError::Config {
+                message: format!("This route has no provider named '{}'", name),
+            })
+    }
+
+    pub async fn embed(&self, text: &str, conf: &TuraConfig) -> Result<Vec<f32>, TuraError> {
+        self.validate()?;
+        self.providers[0].embed(text, conf).await
+    }
+
+    pub async fn run(
+        &self,
+        conf: &TuraConfig,
+        messages: Vec<Value>,
+        options: CallOptions,
+    ) -> Result<ProviderResponse, TuraError> {
+        self.validate()?;
+
+        let mut failures = Vec::new();
+        for provider in &self.providers {
+            let mut effective = options.clone();
+            if effective.temperature.is_none() {
+                effective.temperature = Some(provider.temperature);
+            }
+            match provider.call(conf, messages.clone(), effective).await {
+                Ok(result) => return Ok(result),
+                Err(err) => {
+                    warn!(provider = %provider.provider, model = %provider.model, error = %err, "route fallback to next provider");
+                    failures.push(format!(
+                        "{}:{} => {}",
+                        provider.provider, provider.model, err
+                    ));
+                }
+            }
+        }
+
+        Err(TuraError::AllProvidersFailed {
+            message: failures.join(" | "),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Settings {
+    pub tura_general: RouteConfig,
+    pub tura_office: RouteConfig,
+    pub tura_creative: RouteConfig,
+    pub tura_translator: RouteConfig,
+    pub tura_validator: RouteConfig,
+    pub tura_validator_advanced: RouteConfig,
+    pub tura_classifier: RouteConfig,
+    pub tura_embedding: RouteConfig,
+    pub tura_coder: RouteConfig,
+    pub tura_coder_advanced: RouteConfig,
+    pub tura_planner: RouteConfig,
+    pub tura_planner_advanced: RouteConfig,
+    pub tura_roleplay: RouteConfig,
+    pub tura_professional: RouteConfig,
+    pub tura_math: RouteConfig,
+    pub tura_academic: RouteConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RootConfig {
+    pub provider_base_url: HashMap<String, String>,
+    pub routes: HashMap<String, RawRouteConfig>,
+    #[serde(default)]
+    pub provider_auth: HashMap<String, ProviderAuthConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProviderAuthConfig {
+    #[serde(rename = "type")]
+    pub auth_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub login: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub login_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RawRouteConfig {
+    #[serde(default = "default_temperature")]
+    pub default_temperature: f64,
+    #[serde(default)]
+    pub providers: Vec<RawProviderConfig>,
+}
+
+fn default_temperature() -> f64 {
+    0.2
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RawProviderConfig {
+    pub provider: String,
+    pub model: String,
+    pub temperature: Option<f64>,
+}
+
+impl Settings {
+    pub async fn default() -> Result<Arc<Self>, TuraError> {
+        if let Some(settings) = SETTINGS.get() {
+            return Ok(settings.clone());
+        }
+        let loaded = Arc::new(crate::tura_llm_conf::load_settings().await?);
+        let _ = SETTINGS.set(loaded.clone());
+        Ok(loaded)
+    }
+
+    pub fn normalize_model_name(provider: &str, model: &str) -> String {
+        let model = model.trim();
+        let prefix = format!("{provider}/");
+        if model.starts_with(&prefix) {
+            return model[prefix.len()..].to_string();
+        }
+        if provider == "openai" && model.starts_with("openai/") {
+            return model["openai/".len()..].to_string();
+        }
+        model.to_string()
+    }
+
+    pub fn make_provider(
+        provider_base_url: &HashMap<String, String>,
+        provider: &str,
+        model: &str,
+        temperature: Option<f64>,
+        route_default_temp: f64,
+    ) -> Result<ProviderConfig, TuraError> {
+        let base_url =
+            provider_base_url
+                .get(provider)
+                .cloned()
+                .ok_or_else(|| TuraError::UnknownProvider {
+                    provider: provider.to_string(),
+                })?;
+
+        let config = ProviderConfig {
+            provider: provider.to_string(),
+            base_url,
+            model: Self::normalize_model_name(provider, model),
+            temperature: temperature.unwrap_or(route_default_temp),
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn make_route(
+        provider_base_url: &HashMap<String, String>,
+        items: &[RawProviderConfig],
+        default_temperature: f64,
+    ) -> Result<RouteConfig, TuraError> {
+        let mut providers = Vec::with_capacity(items.len());
+        for item in items {
+            providers.push(Self::make_provider(
+                provider_base_url,
+                &item.provider,
+                &item.model,
+                item.temperature,
+                default_temperature,
+            )?);
+        }
+        let route = RouteConfig {
+            default_temperature,
+            providers,
+        };
+        route.validate()?;
+        Ok(route)
+    }
+}
+
+pub fn default_client(api_key: &str) -> Result<reqwest::Client, TuraError> {
+    reqwest::Client::builder()
+        .default_headers({
+            let mut headers = reqwest::header::HeaderMap::new();
+            let auth = format!("Bearer {api_key}");
+            headers.insert(
+                AUTHORIZATION,
+                auth.parse()
+                    .map_err(
+                        |e: reqwest::header::InvalidHeaderValue| TuraError::Network {
+                            message: e.to_string(),
+                        },
+                    )?,
+            );
+            headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
+            headers
+        })
+        .build()
+        .map_err(|e| TuraError::Network {
+            message: e.to_string(),
+        })
+}
+
+pub fn normalize_response_content(raw: &Value) -> Value {
+    if let Some(message) = raw.pointer("/choices/0/message") {
+        let content = message.get("content").cloned().unwrap_or(Value::Null);
+        let tool_calls = message
+            .get("tool_calls")
+            .cloned()
+            .or_else(|| content.as_str().map(minimax_xml_tool_calls_value));
+        if let Some(tool_calls) = tool_calls.filter(|value| !value.is_null()) {
+            let mut object = serde_json::Map::new();
+            if let Some(text) = content.as_str() {
+                let stripped = strip_minimax_xml_tool_calls(text);
+                if !stripped.trim().is_empty() {
+                    object.insert("text".to_string(), Value::String(stripped));
+                }
+            } else if !content.is_null() {
+                object.insert("content".to_string(), content);
+            }
+            object.insert("tool_calls".to_string(), tool_calls);
+            return Value::Object(object);
+        }
+        return content;
+    }
+    if let Some(output) = raw.get("output") {
+        return output.clone();
+    }
+    if let Some(candidates) = raw.get("candidates") {
+        return candidates.clone();
+    }
+    raw.clone()
+}
+
+fn minimax_xml_tool_calls_value(text: &str) -> Value {
+    let calls = extract_minimax_xml_tool_calls(text);
+    if calls.is_empty() {
+        Value::Null
+    } else {
+        Value::Array(calls)
+    }
+}
+
+fn extract_minimax_xml_tool_calls(text: &str) -> Vec<Value> {
+    if !text.contains("<minimax:tool_call>") && !text.contains("<invoke") {
+        return Vec::new();
+    }
+
+    let Ok(invoke_re) = Regex::new(r#"(?s)<invoke\s+name=["']([^"']+)["']\s*>(.*?)</invoke>"#)
+    else {
+        return Vec::new();
+    };
+    let Ok(param_re) = Regex::new(r#"(?s)<parameter\s+name=["']([^"']+)["']\s*>(.*?)</parameter>"#)
+    else {
+        return Vec::new();
+    };
+
+    invoke_re
+        .captures_iter(text)
+        .enumerate()
+        .map(|(index, capture)| {
+            let name = xml_unescape(
+                capture
+                    .get(1)
+                    .map(|value| value.as_str())
+                    .unwrap_or_default(),
+            );
+            let body = capture
+                .get(2)
+                .map(|value| value.as_str())
+                .unwrap_or_default();
+            let mut arguments = serde_json::Map::new();
+            for parameter in param_re.captures_iter(body) {
+                let key = xml_unescape(
+                    parameter
+                        .get(1)
+                        .map(|value| value.as_str())
+                        .unwrap_or_default(),
+                );
+                let value = xml_unescape(
+                    parameter
+                        .get(2)
+                        .map(|value| value.as_str())
+                        .unwrap_or_default(),
+                )
+                .trim()
+                .to_string();
+                arguments.insert(key, parse_minimax_parameter_value(&value));
+            }
+            json!({
+                "id": format!("minimax_tool_call_{index}"),
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": Value::String(Value::Object(arguments).to_string()),
+                },
+            })
+        })
+        .collect()
+}
+
+fn strip_minimax_xml_tool_calls(text: &str) -> String {
+    let Ok(block_re) = Regex::new(r#"(?s)<minimax:tool_call>.*?</minimax:tool_call>"#) else {
+        return text.to_string();
+    };
+    let stripped = block_re.replace_all(text, "");
+    let Ok(invoke_re) = Regex::new(r#"(?s)<invoke\s+name=["'][^"']+["']\s*>.*?</invoke>"#) else {
+        return stripped.trim().to_string();
+    };
+    invoke_re.replace_all(&stripped, "").trim().to_string()
+}
+
+fn parse_minimax_parameter_value(value: &str) -> Value {
+    serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_string()))
+}
+
+fn xml_unescape(value: &str) -> String {
+    value
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
+pub fn estimate_context_utilization(metrics: &mut CallMetrics) {
+    if let (Some(window), Some(input), maybe_output) = (
+        metrics.usage.context_window,
+        metrics.usage.input_tokens,
+        metrics.usage.output_tokens,
+    ) {
+        let used = input + maybe_output.unwrap_or(0);
+        metrics.usage.context_used_tokens = Some(used);
+        if window > 0 {
+            metrics.usage.context_utilization_ratio = Some(used as f64 / window as f64);
+        }
+    }
+}
+
+pub fn project_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_response_content;
+    use serde_json::json;
+
+    #[test]
+    fn normalizes_openai_style_tool_calls() {
+        let raw = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "glob",
+                            "arguments": "{\"requests\":[{\"directory\":\".\"}]}"
+                        }
+                    }]
+                }
+            }]
+        });
+
+        let content = normalize_response_content(&raw);
+
+        assert_eq!(content["tool_calls"][0]["function"]["name"], "glob");
+    }
+
+    #[test]
+    fn normalizes_minimax_xml_tool_call_content() {
+        let raw = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "<minimax:tool_call>\n<invoke name=\"get_file_outline\">\n<parameter name=\"path\">services/mano/src/manas</parameter>\n<parameter name=\"max_results\">3</parameter>\n</invoke>\n</minimax:tool_call>"
+                }
+            }]
+        });
+
+        let content = normalize_response_content(&raw);
+
+        assert_eq!(
+            content["tool_calls"][0]["function"]["name"],
+            "get_file_outline"
+        );
+        assert_eq!(
+            content["tool_calls"][0]["function"]["arguments"],
+            "{\"max_results\":3,\"path\":\"services/mano/src/manas\"}"
+        );
+        assert!(content.get("text").is_none());
+    }
+
+    #[test]
+    fn keeps_codex_responses_style_output_unchanged_for_codex_normalizer() {
+        let raw = json!({
+            "output": [{
+                "type": "function_call",
+                "name": "read_line",
+                "arguments": "{\"requests\":[]}"
+            }]
+        });
+
+        let content = normalize_response_content(&raw);
+
+        assert_eq!(content[0]["type"], "function_call");
+    }
+}

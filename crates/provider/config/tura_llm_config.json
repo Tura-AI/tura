@@ -1,0 +1,296 @@
+{
+  "provider_auth": {
+    "anthropic": {
+      "auth_url": "https://claude.ai/login",
+      "login": "browser",
+      "login_env": "ANTHROPIC_LOGIN",
+      "provider": "anthropic",
+      "status": "connected",
+      "token_env": "ANTHROPIC_API_KEY",
+      "type": "oauth",
+      "updated_at": "2026-05-08T15:02:45.185671200+00:00"
+    },
+    "openai": {
+      "account_env": "OPENAI_ACCOUNT_ID",
+      "auth_url": "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&scope=openid+profile+email+offline_access&code_challenge=rtMrXDAvdH7MRIayLcVugHUHDNfTRVQxhxWRzN6d_hI&code_challenge_method=S256&id_token_add_organizations=true&codex_cli_simplified_flow=true&state=764502863a384574ad7a47f262323cf6&originator=opencode",
+      "endpoint": "https://chatgpt.com/backend-api/codex/responses",
+      "expires_env": "OPENAI_TOKEN_EXPIRES",
+      "login": "oauth",
+      "login_env": "OPENAI_LOGIN",
+      "provider": "openai",
+      "refresh_env": "OPENAI_REFRESH_TOKEN",
+      "status": "connected",
+      "token_env": "OPENAI_API_KEY",
+      "type": "oauth",
+      "updated_at": "2026-05-08T16:06:48.367503300+00:00"
+    }
+  },
+  "provider_base_url": {
+    "anthropic": "https://api.anthropic.com/v1",
+    "antigravity": "https://antigravity.google.com/v1",
+    "bedrock": "us-east-1",
+    "deepseek": "https://api.deepseek.com/v1",
+    "google": "https://generativelanguage.googleapis.com/v1beta",
+    "minimax": "https://api.minimax.io/v1",
+    "moonshotai": "https://api.moonshot.ai/v1",
+    "openai": "https://api.openai.com/v1",
+    "opencode": "https://opencode.ai/zen/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    "xai": "https://api.x.ai/v1"
+  },
+  "routes": {
+    "tura_academic": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "google/gemini-3-flash-preview",
+          "provider": "google"
+        },
+        {
+          "model": "anthropic/claude-sonnet-4.5",
+          "provider": "anthropic"
+        },
+        {
+          "model": "openai/gpt-5.2",
+          "provider": "openai"
+        }
+      ]
+    },
+    "tura_classifier": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "gemini-2.5-flash-lite",
+          "provider": "google"
+        },
+        {
+          "model": "deepseek/deepseek-v3.2",
+          "provider": "deepseek"
+        },
+        {
+          "model": "minimax/minimax-m2.1",
+          "provider": "minimax"
+        }
+      ]
+    },
+    "tura_coder": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "minimax/minimax-m2.7",
+          "provider": "minimax"
+        },
+        {
+          "model": "openai/gpt-5.5",
+          "provider": "openai"
+        }
+      ]
+    },
+    "tura_coder_advanced": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "minimax/minimax-m2.7",
+          "provider": "minimax"
+        }
+      ]
+    },
+    "tura_creative": {
+      "default_temperature": 0.9,
+      "providers": [
+        {
+          "model": "minimax/minimax-m2.5",
+          "provider": "openrouter"
+        },
+        {
+          "model": "anthropic/claude-opus-4.6",
+          "provider": "anthropic"
+        },
+        {
+          "model": "deepseek/deepseek-v3.2",
+          "provider": "deepseek"
+        }
+      ]
+    },
+    "tura_embedding": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "text-embedding-3-large",
+          "provider": "openai"
+        },
+        {
+          "model": "models/embedding-001",
+          "provider": "google"
+        },
+        {
+          "model": "embo-01",
+          "provider": "minimax"
+        }
+      ]
+    },
+    "tura_general": {
+      "default_temperature": 1,
+      "providers": [
+        {
+          "model": "google/gemini-3-flash-preview",
+          "provider": "google"
+        }
+      ]
+    },
+    "tura_math": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "openai/gpt-5.2",
+          "provider": "openai"
+        },
+        {
+          "model": "google/gemini-2.5-pro",
+          "provider": "google"
+        },
+        {
+          "model": "anthropic/claude-opus-4.6",
+          "provider": "anthropic"
+        }
+      ]
+    },
+    "tura_office": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "anthropic/claude-sonnet-4.5",
+          "provider": "anthropic"
+        },
+        {
+          "model": "openai/gpt-5.2",
+          "provider": "openai"
+        },
+        {
+          "model": "google/gemini-3-flash-preview",
+          "provider": "google"
+        }
+      ]
+    },
+    "tura_planner": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "google/gemini-3-flash-preview",
+          "provider": "google"
+        },
+        {
+          "model": "anthropic/claude-sonnet-4.5",
+          "provider": "anthropic"
+        },
+        {
+          "model": "moonshotai/kimi-k2.5-0127",
+          "provider": "moonshotai"
+        }
+      ]
+    },
+    "tura_planner_advanced": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "minimax/minimax-m2.7",
+          "provider": "openrouter"
+        },
+        {
+          "model": "anthropic/claude-opus-4.6",
+          "provider": "anthropic"
+        },
+        {
+          "model": "google/gemini-2.5-pro",
+          "provider": "google"
+        }
+      ]
+    },
+    "tura_professional": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "openai/gpt-5.2",
+          "provider": "openai"
+        },
+        {
+          "model": "anthropic/claude-sonnet-4.5",
+          "provider": "anthropic"
+        },
+        {
+          "model": "google/gemini-3-flash-preview",
+          "provider": "google"
+        }
+      ]
+    },
+    "tura_roleplay": {
+      "default_temperature": 1,
+      "providers": [
+        {
+          "model": "google/gemini-3-flash-preview",
+          "provider": "google"
+        },
+        {
+          "model": "deepseek/deepseek-v3.2",
+          "provider": "deepseek"
+        },
+        {
+          "model": "xai/grok-4.1-fast",
+          "provider": "google"
+        }
+      ]
+    },
+    "tura_translator": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "google/gemini-2.5-flash",
+          "provider": "google"
+        },
+        {
+          "model": "anthropic/claude-sonnet-4.5",
+          "provider": "anthropic"
+        },
+        {
+          "model": "openai/gpt-5.2",
+          "provider": "openai"
+        }
+      ]
+    },
+    "tura_validator": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "gemini-2.5-flash-lite",
+          "provider": "google"
+        },
+        {
+          "model": "openai/gpt-5.2",
+          "provider": "openai"
+        },
+        {
+          "model": "anthropic/claude-sonnet-4.5",
+          "provider": "anthropic"
+        }
+      ]
+    },
+    "tura_validator_advanced": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "gemini-3.1-flash-lite-preview",
+          "provider": "google"
+        },
+        {
+          "model": "anthropic/claude-opus-4.6",
+          "provider": "anthropic"
+        },
+        {
+          "model": "google/gemini-2.5-pro",
+          "provider": "google"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,44 @@
+[package]
+name = "code-tools-suite"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+name = "code_tools_suite"
+path = "src/lib.rs"
+
+[[test]]
+name = "override_manas_direct_test"
+path = "tests/override_manas_direct_test.rs"
+
+[[test]]
+name = "override_mano_and_manas_test"
+path = "tests/override_mano_and_manas_test.rs"
+
+[[test]]
+name = "process_from_user_default_test"
+path = "tests/process_from_user_default_test.rs"
+
+[[test]]
+name = "coding_agent_live_test"
+path = "tests/coding_agent_live_test.rs"
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+redis.workspace = true
+futures.workspace = true
+tura-llm-rust = { workspace = true }
+tura-agents = { workspace = true }
+code-tools = { path = "../tools" }
+reqwest.workspace = true
+sysinfo = "0.30"
+
+[dev-dependencies]
+tokio-test = "0.4"

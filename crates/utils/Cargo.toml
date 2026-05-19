@@ -1,0 +1,34 @@
+[package]
+name = "utils"
+version = "0.1.0"
+edition = "2021"
+description = "Utilities for TuraOS"
+license = "MIT"
+
+[lib]
+name = "utils"
+path = "src/lib.rs"
+
+[dependencies]
+# Error handling utilities for robust application logic
+anyhow = "1"
+# Base64 encoding/decoding
+base64 = "0.22"
+# Image processing library (JPEG, PNG, WebP support)
+image = { version = "0.25", features = ["jpeg", "png", "webp"] }
+# OpenCV bindings for computer vision tasks
+opencv = "0.92"
+# PDF rendering library with image extraction features
+pdfium-render = { version = "0.8", features = ["image"] }
+# Serialization and deserialization framework
+serde = { version = "1", features = ["derive"] }
+# JSON parsing and generation (used for reading sticker databases)
+serde_json = "1"
+# Asynchronous runtime for executing non-blocking code
+tokio = { version = "1", features = ["process", "rt", "macros"] }
+
+# --- Added Dependencies for Processor & MD Manager ---
+# Random number generation for sticker selection
+rand = "0.8"
+# Regular expressions for markdown parsing and text tag extraction
+regex = "1"

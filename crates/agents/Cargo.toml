@@ -1,0 +1,13 @@
+[package]
+name = "tura-agents"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+name = "tura_agents"
+path = "src/lib.rs"
+
+[dependencies]
+serde.workspace = true

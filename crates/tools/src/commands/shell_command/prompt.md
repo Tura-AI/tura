@@ -1,0 +1,1 @@
+On Windows, `shell_command` command lines run through PowerShell. Prefer `rg` for search, `Get-Content` for exact file reads, and `powershell -NoProfile -ExecutionPolicy Bypass -File ...` for scripts.

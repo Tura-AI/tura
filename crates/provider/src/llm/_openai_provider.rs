@@ -1,0 +1,2374 @@
+use futures_util::StreamExt;
+use regex::Regex;
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
+
+use crate::llm::_utils::{deep_merge_json, strip_json_fence};
+use crate::tura_llm::{
+    default_client, estimate_context_utilization, normalize_response_content, CallMetrics,
+    CallOptions, CostDetails, ProviderResponse, TuraError, UsageDetails,
+};
+
+pub async fn openai_embed(
+    base_url: &str,
+    model: &str,
+    api_key: &str,
+    text: &str,
+) -> Result<Vec<f32>, TuraError> {
+    let client = default_client(api_key)?;
+    let url = format!("{}/embeddings", base_url.trim_end_matches('/'));
+    let payload = json!({
+        "model": model,
+        "input": text,
+    });
+    let resp = client
+        .post(url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| TuraError::Network {
+            message: e.to_string(),
+        })?;
+    let status = resp.status();
+    let data: Value = resp.json().await.map_err(|e| TuraError::Network {
+        message: e.to_string(),
+    })?;
+    if !status.is_success() {
+        return Err(TuraError::HttpStatus {
+            status: status.as_u16(),
+            body: data.to_string(),
+        });
+    }
+    let embedding = data
+        .pointer("/data/0/embedding")
+        .and_then(Value::as_array)
+        .ok_or_else(|| TuraError::ProviderRequest {
+            provider: "openai-compatible".into(),
+            message: "missing embedding vector".into(),
+        })?;
+    Ok(embedding
+        .iter()
+        .filter_map(Value::as_f64)
+        .map(|v| v as f32)
+        .collect())
+}
+
+pub async fn call(
+    base_url: &str,
+    model: &str,
+    provider: &str,
+    api_key: &str,
+    messages: &[Value],
+    options: &CallOptions,
+) -> Result<ProviderResponse, TuraError> {
+    if provider.eq_ignore_ascii_case("openai")
+        && openai_codex_oauth_base_url_allowed(base_url)
+        && std::env::var("OPENAI_LOGIN")
+            .map(|value| value.eq_ignore_ascii_case("oauth"))
+            .unwrap_or(false)
+    {
+        return openai_codex_oauth_call(model, api_key, messages, options).await;
+    }
+
+    if options.force_search && provider.eq_ignore_ascii_case("openai") {
+        return openai_force_search(base_url, model, api_key, messages, options).await;
+    }
+
+    let client = default_client(api_key)?;
+    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+
+    let payload = build_chat_payload(provider, model, messages, options);
+
+    if options.stream.unwrap_or(false) {
+        return stream_call(base_url, &client, url, payload, options.context_window).await;
+    }
+
+    let resp = client
+        .post(url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| TuraError::Network {
+            message: e.to_string(),
+        })?;
+    let status = resp.status();
+    let req_id = resp
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let data: Value = resp.json().await.map_err(|e| TuraError::Network {
+        message: e.to_string(),
+    })?;
+    if !status.is_success() {
+        return Err(TuraError::HttpStatus {
+            status: status.as_u16(),
+            body: data.to_string(),
+        });
+    }
+
+    let mut content = normalize_response_content(&data);
+    if let Some(text) = content.as_str() {
+        content = Value::String(strip_json_fence(text));
+    }
+
+    let mut metrics = extract_metrics(&data, options.context_window);
+    metrics.provider_request_id = req_id;
+
+    Ok(ProviderResponse {
+        content,
+        raw: data.clone(),
+        metrics: Some(metrics),
+    })
+}
+
+fn build_chat_payload(
+    provider: &str,
+    model: &str,
+    messages: &[Value],
+    options: &CallOptions,
+) -> Value {
+    let normalized_messages = normalize_messages_for_provider(provider, messages);
+
+    let mut payload = json!({
+        "model": model,
+        "messages": normalized_messages,
+        "temperature": options.temperature.unwrap_or(0.2),
+    });
+
+    if let Some(tools) = &options.tools {
+        payload["tools"] = Value::Array(tools.clone());
+    }
+    if options.search {
+        let tools = payload
+            .get("tools")
+            .cloned()
+            .unwrap_or(Value::Array(vec![]));
+        let mut arr = tools.as_array().cloned().unwrap_or_default();
+        if !arr
+            .iter()
+            .any(|t| t.get("type").and_then(Value::as_str) == Some("web_search"))
+        {
+            arr.push(json!({"type":"web_search"}));
+        }
+        payload["tools"] = Value::Array(arr);
+    }
+
+    insert_opt(&mut payload, "top_p", options.top_p.map(Value::from));
+    insert_opt(&mut payload, "n", options.n.map(Value::from));
+    insert_opt(&mut payload, "stop", options.stop.clone());
+    insert_opt(
+        &mut payload,
+        "max_completion_tokens",
+        options.max_completion_tokens.map(Value::from),
+    );
+    insert_opt(
+        &mut payload,
+        "max_tokens",
+        options.max_tokens.map(Value::from),
+    );
+    insert_opt(
+        &mut payload,
+        "presence_penalty",
+        options.presence_penalty.map(Value::from),
+    );
+    insert_opt(
+        &mut payload,
+        "frequency_penalty",
+        options.frequency_penalty.map(Value::from),
+    );
+    insert_opt(&mut payload, "logit_bias", options.logit_bias.clone());
+    insert_opt(&mut payload, "logprobs", options.logprobs.map(Value::from));
+    insert_opt(
+        &mut payload,
+        "top_logprobs",
+        options.top_logprobs.map(Value::from),
+    );
+    insert_opt(&mut payload, "seed", options.seed.map(Value::from));
+    insert_opt(&mut payload, "user", options.user.clone().map(Value::from));
+    insert_opt(
+        &mut payload,
+        "safety_identifier",
+        options.safety_identifier.clone().map(Value::from),
+    );
+    insert_opt(
+        &mut payload,
+        "prompt_cache_key",
+        options.prompt_cache_key.clone().map(Value::from),
+    );
+    insert_opt(
+        &mut payload,
+        "reasoning_effort",
+        normalized_reasoning_effort(options).map(Value::from),
+    );
+    insert_opt(&mut payload, "prediction", options.prediction.clone());
+    insert_opt(
+        &mut payload,
+        "modalities",
+        options.modalities.clone().map(|v| json!(v)),
+    );
+    insert_opt(&mut payload, "audio", options.audio.clone());
+    insert_opt(&mut payload, "stream", options.stream.map(Value::from));
+    insert_opt(
+        &mut payload,
+        "stream_options",
+        options.stream_options.clone(),
+    );
+    insert_opt(&mut payload, "store", options.store.map(Value::from));
+    insert_opt(
+        &mut payload,
+        "metadata",
+        options.metadata.clone().map(|v| json!(v)),
+    );
+    if should_pass_service_tier(provider, model) {
+        insert_opt(
+            &mut payload,
+            "service_tier",
+            normalized_service_tier(options).map(Value::from),
+        );
+    }
+    insert_opt(
+        &mut payload,
+        "verbosity",
+        options.verbosity.clone().map(Value::from),
+    );
+    insert_opt(
+        &mut payload,
+        "web_search_options",
+        options.web_search_options.clone(),
+    );
+    insert_opt(&mut payload, "tool_choice", options.tool_choice.clone());
+    insert_opt(
+        &mut payload,
+        "parallel_tool_calls",
+        options.parallel_tool_calls.map(Value::from),
+    );
+
+    if let Some(extra_body) = &options.extra_body {
+        deep_merge_json(&mut payload, extra_body.clone());
+    }
+
+    payload
+}
+
+async fn openai_codex_oauth_call(
+    model: &str,
+    access_token: &str,
+    messages: &[Value],
+    options: &CallOptions,
+) -> Result<ProviderResponse, TuraError> {
+    let client = reqwest::Client::builder()
+        .build()
+        .map_err(|err| TuraError::Network {
+            message: err.to_string(),
+        })?;
+    let payload = build_codex_oauth_payload(model, messages, options);
+
+    let mut request = client
+        .post(openai_codex_endpoint())
+        .bearer_auth(access_token)
+        .header("originator", "opencode")
+        .header("User-Agent", "opencode")
+        .header("session_id", "tura-codex-validation")
+        .json(&payload);
+    if let Ok(account_id) = std::env::var("OPENAI_ACCOUNT_ID") {
+        if !account_id.trim().is_empty() {
+            request = request.header("ChatGPT-Account-Id", account_id);
+        }
+    }
+
+    let resp = request.send().await.map_err(|err| TuraError::Network {
+        message: err.to_string(),
+    })?;
+    let status = resp.status();
+    let req_id = resp
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    if !status.is_success() {
+        let body = resp.text().await.map_err(|err| TuraError::Network {
+            message: err.to_string(),
+        })?;
+        return Err(TuraError::HttpStatus {
+            status: status.as_u16(),
+            body,
+        });
+    }
+
+    let data = parse_codex_response_stream(resp).await?;
+    let mut content = normalize_codex_response_content(&data);
+    if let Some(text) = content.as_str() {
+        content = Value::String(strip_json_fence(text));
+    }
+    let mut metrics = extract_metrics(&data, options.context_window);
+    fill_missing_codex_oauth_usage(&mut metrics, &payload, &content);
+    metrics.cost = CostDetails::default();
+    metrics.provider_request_id = req_id;
+    Ok(ProviderResponse {
+        content,
+        raw: data,
+        metrics: Some(metrics),
+    })
+}
+
+fn build_codex_oauth_payload(model: &str, messages: &[Value], options: &CallOptions) -> Value {
+    let mut input = Vec::new();
+    let mut instructions =
+        "You are OpenAI Codex. Follow the user request and answer concisely.".to_string();
+    for (index, message) in messages.iter().enumerate() {
+        if matches!(
+            message.get("type").and_then(Value::as_str),
+            Some("function_call" | "function_call_output")
+        ) {
+            input.push(message.clone());
+            continue;
+        }
+        let role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("user");
+        let content = message_content_text(message.get("content")).unwrap_or_default();
+        if index == 0
+            && matches!(role, "system" | "developer")
+            && content.trim_start().starts_with("You are Codex")
+        {
+            instructions = content;
+            continue;
+        }
+        input.push(json!({
+            "role": codex_input_role(role),
+            "content": content,
+        }));
+    }
+    let mut payload = json!({
+        "model": model,
+        "instructions": instructions,
+        "store": false,
+        "stream": true,
+        "input": if input.is_empty() {
+            vec![json!({"role": "user", "content": ""})]
+        } else {
+            input
+        },
+    });
+    if let Some(tools) = &options.tools {
+        payload["tools"] = Value::Array(tools.iter().map(codex_tool_schema).collect());
+    }
+    if let Some(reasoning_effort) = normalized_reasoning_effort(options) {
+        payload["reasoning"] = json!({ "effort": reasoning_effort });
+        payload["include"] = json!(["reasoning.encrypted_content"]);
+    }
+    payload["tool_choice"] = options
+        .tool_choice
+        .clone()
+        .unwrap_or_else(|| Value::String("auto".to_string()));
+    insert_opt(
+        &mut payload,
+        "parallel_tool_calls",
+        options.parallel_tool_calls.map(Value::from),
+    );
+    insert_opt(
+        &mut payload,
+        "prompt_cache_key",
+        options.prompt_cache_key.clone().map(Value::from),
+    );
+    insert_opt(
+        &mut payload,
+        "metadata",
+        options.metadata.clone().map(|v| json!(v)),
+    );
+    insert_opt(
+        &mut payload,
+        "service_tier",
+        normalized_service_tier(options).map(Value::from),
+    );
+    if let Some(extra_body) = &options.extra_body {
+        deep_merge_json(&mut payload, extra_body.clone());
+    }
+
+    payload
+}
+
+fn fill_missing_codex_oauth_usage(metrics: &mut CallMetrics, payload: &Value, content: &Value) {
+    if metrics.usage.total_tokens.unwrap_or(0) > 0 {
+        return;
+    }
+
+    let input_tokens = estimate_token_count(&payload.to_string()).max(1);
+    let output_tokens = estimate_token_count(&content.to_string()).max(1);
+    metrics.usage.input_tokens = Some(input_tokens);
+    metrics.usage.output_tokens = Some(output_tokens);
+    metrics.usage.total_tokens = Some(input_tokens + output_tokens);
+    metrics.raw_usage = Some(json!({
+        "estimated": true,
+        "reason": "codex_oauth_stream_returned_before_provider_usage",
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens
+    }));
+}
+
+fn estimate_token_count(text: &str) -> u64 {
+    let chars = text.chars().count() as u64;
+    chars.div_ceil(4)
+}
+
+async fn parse_codex_response_stream(resp: reqwest::Response) -> Result<Value, TuraError> {
+    let mut stream = resp.bytes_stream();
+    let mut pending = String::new();
+    let mut output_text = String::new();
+    let mut completed = None;
+    let mut events = Vec::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|err| TuraError::Network {
+            message: err.to_string(),
+        })?;
+        pending.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(line_end) = pending.find('\n') {
+            let line = pending[..line_end].trim_end_matches('\r').to_string();
+            pending.drain(..=line_end);
+            process_codex_sse_line(&line, &mut output_text, &mut completed, &mut events)?;
+        }
+    }
+
+    if !pending.trim().is_empty() {
+        process_codex_sse_line(&pending, &mut output_text, &mut completed, &mut events)?;
+    }
+
+    Ok(build_codex_stream_root(output_text, completed, events))
+}
+
+fn process_codex_sse_line(
+    line: &str,
+    output_text: &mut String,
+    completed: &mut Option<Value>,
+    events: &mut Vec<Value>,
+) -> Result<(), TuraError> {
+    let line = line.trim_start();
+    let Some(data) = line.strip_prefix("data:") else {
+        return Ok(());
+    };
+    let data = data.trim();
+    if data.is_empty() || data == "[DONE]" {
+        return Ok(());
+    }
+
+    let value: Value = serde_json::from_str(data).map_err(TuraError::Json)?;
+    append_codex_stream_text(&value, output_text);
+    if let Some(response) = value.get("response") {
+        *completed = Some(response.clone());
+    }
+    events.push(value);
+
+    Ok(())
+}
+
+fn append_codex_stream_text(value: &Value, output_text: &mut String) {
+    if let Some(delta) = value
+        .get("type")
+        .and_then(Value::as_str)
+        .filter(|event_type| event_type.ends_with(".delta"))
+        .and_then(|_| value.get("delta").and_then(Value::as_str))
+    {
+        output_text.push_str(delta);
+        return;
+    }
+
+    if let Some(delta) = value
+        .get("delta")
+        .and_then(Value::as_str)
+        .or_else(|| value.pointer("/response/delta").and_then(Value::as_str))
+    {
+        output_text.push_str(delta);
+    }
+}
+
+fn build_codex_stream_root(
+    output_text: String,
+    completed: Option<Value>,
+    events: Vec<Value>,
+) -> Value {
+    let mut root = completed.unwrap_or_else(|| json!({ "output": [] }));
+    if !output_text.is_empty() {
+        root["output_text"] = Value::String(output_text);
+    }
+    root["events"] = Value::Array(events);
+    root
+}
+
+fn openai_codex_endpoint() -> String {
+    std::env::var("OPENAI_CODEX_ENDPOINT")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex/responses".to_string())
+}
+
+fn openai_codex_oauth_base_url_allowed(base_url: &str) -> bool {
+    let normalized = base_url.trim().trim_end_matches('/');
+    matches!(
+        normalized,
+        "" | "https://api.openai.com" | "https://api.openai.com/v1"
+    )
+}
+
+fn codex_input_role(role: &str) -> &str {
+    match role {
+        "assistant" => "assistant",
+        "system" => "system",
+        "developer" => "developer",
+        _ => "user",
+    }
+}
+
+fn normalize_codex_response_content(data: &Value) -> Value {
+    let tool_calls = complete_codex_tool_calls(data);
+    if !tool_calls.is_empty() {
+        let mut object = serde_json::Map::new();
+        if let Some(text) = data.get("output_text").and_then(Value::as_str) {
+            if !text.trim().is_empty() {
+                object.insert("text".to_string(), Value::String(text.to_string()));
+            }
+        }
+        object.insert("tool_calls".to_string(), Value::Array(tool_calls));
+        return Value::Object(object);
+    }
+
+    if let Some(text) = data.get("output_text").and_then(Value::as_str) {
+        return Value::String(text.to_string());
+    }
+    if let Some(text) = data
+        .get("output")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|item| {
+            item.get("content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .find_map(|content| {
+            content
+                .get("text")
+                .and_then(Value::as_str)
+                .or_else(|| content.get("content").and_then(Value::as_str))
+        })
+    {
+        return Value::String(text.to_string());
+    }
+    normalize_response_content(data)
+}
+
+fn codex_tool_schema(tool: &Value) -> Value {
+    if tool.get("name").and_then(Value::as_str).is_some() {
+        return tool.clone();
+    }
+
+    let Some(function) = tool.get("function").and_then(Value::as_object) else {
+        return tool.clone();
+    };
+    let mut converted = serde_json::Map::new();
+    converted.insert(
+        "type".to_string(),
+        tool.get("type")
+            .cloned()
+            .unwrap_or_else(|| Value::String("function".to_string())),
+    );
+    for key in ["name", "description", "parameters", "strict"] {
+        if let Some(value) = function.get(key) {
+            converted.insert(key.to_string(), value.clone());
+        }
+    }
+    Value::Object(converted)
+}
+
+fn extract_codex_tool_calls(data: &Value) -> Vec<Value> {
+    let mut calls = Vec::new();
+    if let Some(output) = data.get("output").and_then(Value::as_array) {
+        for item in output {
+            if let Some(call) = codex_output_item_tool_call(item) {
+                calls.push(call);
+            }
+        }
+    }
+    if let Some(events) = data.get("events").and_then(Value::as_array) {
+        calls.extend(codex_event_tool_calls(events));
+    }
+    dedupe_tool_calls(calls)
+}
+
+fn complete_codex_tool_calls(data: &Value) -> Vec<Value> {
+    extract_codex_tool_calls(data)
+        .into_iter()
+        .filter_map(ready_streaming_tool_call)
+        .collect()
+}
+
+fn ready_streaming_tool_call(call: Value) -> Option<Value> {
+    let name = call
+        .get("function")
+        .and_then(|function| function.get("name"))
+        .and_then(Value::as_str)?;
+    let arguments = call
+        .get("function")
+        .and_then(|function| function.get("arguments"))?
+        .clone();
+
+    if name == "command_run" {
+        let text = match &arguments {
+            Value::String(text) => text.as_str(),
+            other => return Some(call_with_arguments(call, other.clone())),
+        };
+        if let Ok(arguments) = serde_json::from_str::<Value>(text) {
+            return Some(call_with_arguments(call, arguments));
+        }
+        return None;
+    }
+
+    tool_call_arguments_complete(&arguments).then_some(call)
+}
+
+fn call_with_arguments(mut call: Value, arguments: Value) -> Value {
+    if let Some(function) = call.get_mut("function").and_then(Value::as_object_mut) {
+        function.insert("arguments".to_string(), arguments);
+    }
+    call
+}
+
+fn tool_call_arguments_complete(arguments: &Value) -> bool {
+    match arguments {
+        Value::String(text) => serde_json::from_str::<Value>(text).is_ok(),
+        Value::Object(_) => true,
+        _ => false,
+    }
+}
+
+fn codex_output_item_tool_call(item: &Value) -> Option<Value> {
+    let item_type = item.get("type").and_then(Value::as_str)?;
+    if !matches!(item_type, "function_call" | "tool_call") {
+        return None;
+    }
+    let name = item.get("name").and_then(Value::as_str)?;
+    let arguments = item
+        .get("arguments")
+        .cloned()
+        .or_else(|| item.get("input").cloned())
+        .unwrap_or_else(|| json!({}));
+    let arguments = match arguments {
+        Value::String(text) => Value::String(text),
+        other => Value::String(other.to_string()),
+    };
+    let id = item
+        .get("call_id")
+        .or_else(|| item.get("id"))
+        .and_then(Value::as_str)
+        .unwrap_or("codex_tool_call");
+    Some(codex_tool_call_value(id, name, arguments))
+}
+
+fn codex_event_tool_calls(events: &[Value]) -> Vec<Value> {
+    let mut active: Option<String> = None;
+    let mut entries = Vec::<(String, String, String)>::new();
+
+    for event in events {
+        if let Some(item) = event.get("item") {
+            if item.get("type").and_then(Value::as_str) == Some("function_call") {
+                let id = item
+                    .get("call_id")
+                    .or_else(|| item.get("id"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("codex_tool_call")
+                    .to_string();
+                let name = item
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let arguments = item
+                    .get("arguments")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                active = Some(id.clone());
+                if let Some(entry) = entries.iter_mut().find(|entry| entry.0 == id) {
+                    if !name.is_empty() {
+                        entry.1 = name;
+                    }
+                    if !arguments.is_empty() {
+                        entry.2 = arguments;
+                    }
+                } else {
+                    entries.push((id, name, arguments));
+                }
+            }
+        }
+
+        if event.get("type").and_then(Value::as_str)
+            == Some("response.function_call_arguments.delta")
+        {
+            if let (Some(id), Some(delta)) = (
+                active.as_deref(),
+                event.get("delta").and_then(Value::as_str),
+            ) {
+                if let Some(entry) = entries.iter_mut().find(|entry| entry.0 == id) {
+                    entry.2.push_str(delta);
+                }
+            }
+        }
+
+        if event.get("type").and_then(Value::as_str)
+            == Some("response.function_call_arguments.done")
+        {
+            let id = event
+                .get("item_id")
+                .or_else(|| event.get("call_id"))
+                .and_then(Value::as_str)
+                .or(active.as_deref());
+            if let (Some(id), Some(arguments)) =
+                (id, event.get("arguments").and_then(Value::as_str))
+            {
+                if let Some(entry) = entries
+                    .iter_mut()
+                    .find(|entry| entry.0 == id || active.as_deref() == Some(entry.0.as_str()))
+                {
+                    entry.2 = arguments.to_string();
+                }
+            }
+        }
+    }
+
+    entries
+        .into_iter()
+        .filter(|(_, name, _)| !name.is_empty())
+        .map(|(id, name, arguments)| codex_tool_call_value(&id, &name, Value::String(arguments)))
+        .collect()
+}
+
+fn codex_tool_call_value(id: &str, name: &str, arguments: Value) -> Value {
+    json!({
+        "id": id,
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": arguments,
+        }
+    })
+}
+
+fn dedupe_tool_calls(calls: Vec<Value>) -> Vec<Value> {
+    let mut positions = std::collections::HashMap::<String, usize>::new();
+    let mut unique = Vec::new();
+    for call in calls {
+        let key = call
+            .get("id")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .unwrap_or_else(|| call.to_string());
+        if let Some(index) = positions.get(&key).copied() {
+            if tool_call_argument_score(&call) >= tool_call_argument_score(&unique[index]) {
+                unique[index] = call;
+            }
+        } else {
+            positions.insert(key, unique.len());
+            unique.push(call);
+        }
+    }
+    unique
+}
+
+fn tool_call_argument_score(call: &Value) -> usize {
+    let Some(arguments) = call
+        .get("function")
+        .and_then(|function| function.get("arguments"))
+    else {
+        return 0;
+    };
+    match arguments {
+        Value::String(text) => text.trim().len(),
+        Value::Object(object) => object.len().max(1),
+        Value::Array(array) => array.len().max(1),
+        _ => 0,
+    }
+}
+
+fn message_content_text(content: Option<&Value>) -> Option<String> {
+    match content? {
+        Value::String(value) => Some(value.clone()),
+        Value::Array(items) => {
+            let text = items
+                .iter()
+                .filter_map(|item| {
+                    item.get("text")
+                        .and_then(Value::as_str)
+                        .or_else(|| item.get("content").and_then(Value::as_str))
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            (!text.trim().is_empty()).then_some(text)
+        }
+        other if other.is_null() => None,
+        other => Some(other.to_string()),
+    }
+}
+
+async fn stream_call(
+    _base_url: &str,
+    client: &reqwest::Client,
+    url: String,
+    payload: Value,
+    context_window: Option<u64>,
+) -> Result<ProviderResponse, TuraError> {
+    let mut stream = client
+        .post(url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| TuraError::Network {
+            message: e.to_string(),
+        })?
+        .bytes_stream();
+
+    let mut full_content = String::new();
+    let mut tool_calls = Vec::new();
+    let mut tool_call_buffers = BTreeMap::<String, StreamingToolCall>::new();
+    let mut finish_reason = None;
+    let mut completed_tool_call = false;
+    let mut stream_done = false;
+    let mut stream_usage = None;
+
+    while let Some(chunk) = stream.next().await {
+        let data = chunk.map_err(|e| TuraError::Network {
+            message: e.to_string(),
+        })?;
+        let text = String::from_utf8_lossy(&data);
+
+        for line in text.lines() {
+            if let Some(line) = line.strip_prefix("data: ") {
+                if line == "[DONE]" {
+                    stream_done = true;
+                    break;
+                }
+                if let Ok(delta) = serde_json::from_str::<Value>(line) {
+                    if let Some(usage) = delta.get("usage").filter(|usage| !usage.is_null()) {
+                        stream_usage = Some(usage.clone());
+                    }
+                    if let Some(choice) = delta
+                        .get("choices")
+                        .and_then(|c| c.as_array())
+                        .and_then(|a| a.first())
+                    {
+                        if let Some(delta_content) =
+                            choice.get("delta").and_then(|d| d.get("content"))
+                        {
+                            if let Some(text) =
+                                delta_content.as_str().filter(|_| !completed_tool_call)
+                            {
+                                full_content.push_str(text);
+                                if emit_minimax_streaming_tool_call(
+                                    &full_content,
+                                    &mut tool_call_buffers,
+                                    &mut tool_calls,
+                                ) {
+                                    completed_tool_call = true;
+                                }
+                            }
+                        }
+                        if let Some(tool_calls_delta) =
+                            choice.get("delta").and_then(|d| d.get("tool_calls"))
+                        {
+                            if let Some(calls) = tool_calls_delta.as_array() {
+                                for call in calls {
+                                    let key = call
+                                        .get("index")
+                                        .and_then(Value::as_u64)
+                                        .map(|index| index.to_string())
+                                        .or_else(|| {
+                                            call.get("id")
+                                                .and_then(Value::as_str)
+                                                .map(ToString::to_string)
+                                        })
+                                        .unwrap_or_else(|| "0".to_string());
+                                    let buffer = tool_call_buffers.entry(key).or_default();
+                                    if let Some(id) = call.get("id").and_then(|v| v.as_str()) {
+                                        buffer.id = Some(id.to_string());
+                                    }
+                                    if let Some(name) = call
+                                        .get("function")
+                                        .and_then(|f| f.get("name"))
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        buffer.name = Some(name.to_string());
+                                    }
+                                    if let Some(args) = call
+                                        .get("function")
+                                        .and_then(|f| f.get("arguments"))
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        buffer.arguments.push_str(args);
+                                    }
+                                    if emit_completed_tool_call(buffer, &mut tool_calls) {
+                                        completed_tool_call = true;
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(reason) = choice.get("finish_reason").and_then(|v| v.as_str()) {
+                            if reason == "tool_calls" {
+                                for buffer in tool_call_buffers.values_mut() {
+                                    emit_completed_tool_call(buffer, &mut tool_calls);
+                                }
+                            }
+                            finish_reason = Some(reason.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        if stream_done {
+            break;
+        }
+    }
+
+    let content = if !full_content.is_empty() && !tool_calls.is_empty() {
+        json!({
+            "text": full_content,
+            "tool_calls": tool_calls
+        })
+    } else if !full_content.is_empty() {
+        Value::String(full_content)
+    } else if !tool_calls.is_empty() {
+        json!({ "tool_calls": tool_calls })
+    } else {
+        Value::Null
+    };
+
+    let mut metrics = if let Some(usage) = stream_usage.clone() {
+        let mut metrics = extract_metrics(&json!({ "usage": usage }), context_window);
+        metrics.tool_call_count = tool_calls.len();
+        metrics.finish_reason = finish_reason.clone();
+        metrics
+    } else {
+        CallMetrics {
+            usage: UsageDetails {
+                context_window,
+                ..Default::default()
+            },
+            cost: CostDetails {
+                currency: Some("USD".to_string()),
+                ..Default::default()
+            },
+            cache_hit: false,
+            cache_triggered_at_input_tokens: None,
+            tool_call_count: tool_calls.len(),
+            finish_reason: finish_reason.clone(),
+            provider_request_id: None,
+            raw_usage: None,
+            ..Default::default()
+        }
+    };
+    if stream_usage.is_none() {
+        fill_missing_codex_oauth_usage(&mut metrics, &payload, &content);
+    }
+    estimate_context_utilization(&mut metrics);
+
+    Ok(ProviderResponse {
+        content,
+        raw: json!({ "tool_calls": tool_calls, "usage": stream_usage }),
+        metrics: Some(metrics),
+    })
+}
+
+#[derive(Default)]
+struct StreamingToolCall {
+    id: Option<String>,
+    name: Option<String>,
+    arguments: String,
+    emitted: bool,
+}
+
+fn emit_completed_tool_call(buffer: &mut StreamingToolCall, tool_calls: &mut Vec<Value>) -> bool {
+    if buffer.arguments.trim().is_empty() {
+        return false;
+    }
+    let Some(name) = buffer
+        .name
+        .as_deref()
+        .filter(|name| !name.trim().is_empty())
+    else {
+        return false;
+    };
+
+    if buffer.emitted {
+        return false;
+    }
+    let Ok(arguments) = serde_json::from_str::<Value>(&buffer.arguments) else {
+        return false;
+    };
+
+    push_streaming_tool_call(buffer, tool_calls, name, arguments);
+    buffer.emitted = true;
+    true
+}
+
+fn push_streaming_tool_call(
+    buffer: &StreamingToolCall,
+    tool_calls: &mut Vec<Value>,
+    name: &str,
+    arguments: Value,
+) {
+    let id = buffer
+        .id
+        .clone()
+        .unwrap_or_else(|| format!("stream_tool_call_{}", tool_calls.len()));
+    tool_calls.push(json!({
+        "id": id,
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": arguments
+        }
+    }));
+}
+
+fn emit_minimax_streaming_tool_call(
+    content: &str,
+    buffers: &mut BTreeMap<String, StreamingToolCall>,
+    tool_calls: &mut Vec<Value>,
+) -> bool {
+    let Some((name, arguments)) = last_complete_minimax_invoke(content) else {
+        return false;
+    };
+    let buffer = buffers.entry(format!("minimax_xml_{name}")).or_default();
+    buffer.id = Some(format!("minimax_stream_tool_call_{}", tool_calls.len()));
+    buffer.name = Some(name);
+    buffer.arguments = arguments.to_string();
+    emit_completed_tool_call(buffer, tool_calls)
+}
+
+fn last_complete_minimax_invoke(text: &str) -> Option<(String, Value)> {
+    if !text.contains("<invoke") {
+        return None;
+    }
+    let invoke_re = Regex::new(r#"(?s)<invoke\s+name=["']([^"']+)["']\s*>(.*?)</invoke>"#).ok()?;
+    let param_re =
+        Regex::new(r#"(?s)<parameter\s+name=["']([^"']+)["']\s*>(.*?)</parameter>"#).ok()?;
+    let capture = invoke_re.captures_iter(text).last()?;
+    let name = xml_unescape(
+        capture
+            .get(1)
+            .map(|value| value.as_str())
+            .unwrap_or_default(),
+    );
+    if name.trim().is_empty() {
+        return None;
+    }
+    let body = capture
+        .get(2)
+        .map(|value| value.as_str())
+        .unwrap_or_default();
+    let mut arguments = serde_json::Map::new();
+    for parameter in param_re.captures_iter(body) {
+        let key = xml_unescape(
+            parameter
+                .get(1)
+                .map(|value| value.as_str())
+                .unwrap_or_default(),
+        );
+        let value = xml_unescape(
+            parameter
+                .get(2)
+                .map(|value| value.as_str())
+                .unwrap_or_default(),
+        )
+        .trim()
+        .to_string();
+        arguments.insert(key, parse_minimax_parameter_value(&value));
+    }
+    Some((name, Value::Object(arguments)))
+}
+
+fn parse_minimax_parameter_value(value: &str) -> Value {
+    serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_string()))
+}
+
+fn xml_unescape(value: &str) -> String {
+    value
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
+async fn openai_force_search(
+    base_url: &str,
+    model: &str,
+    api_key: &str,
+    messages: &[Value],
+    options: &CallOptions,
+) -> Result<ProviderResponse, TuraError> {
+    let client = default_client(api_key)?;
+    let url = format!("{}/responses", base_url.trim_end_matches('/'));
+    let input = messages
+        .iter()
+        .map(|m| {
+            format!(
+                "{}: {}",
+                m.get("role").and_then(Value::as_str).unwrap_or("user"),
+                m.get("content").map(|v| v.to_string()).unwrap_or_default()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let mut tools = options.tools.clone().unwrap_or_default();
+    if !tools
+        .iter()
+        .any(|t| t.get("type").and_then(Value::as_str) == Some("web_search"))
+    {
+        tools.push(json!({"type":"web_search"}));
+    }
+
+    let mut payload = json!({
+        "model": model,
+        "input": input,
+        "tools": tools,
+    });
+    insert_opt(
+        &mut payload,
+        "web_search_options",
+        options.web_search_options.clone(),
+    );
+    insert_opt(&mut payload, "tool_choice", options.tool_choice.clone());
+    insert_opt(
+        &mut payload,
+        "parallel_tool_calls",
+        options.parallel_tool_calls.map(Value::from),
+    );
+    if let Some(extra_body) = &options.extra_body {
+        deep_merge_json(&mut payload, extra_body.clone());
+    }
+
+    let resp = client
+        .post(url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| TuraError::Network {
+            message: e.to_string(),
+        })?;
+    let status = resp.status();
+    let req_id = resp
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let data: Value = resp.json().await.map_err(|e| TuraError::Network {
+        message: e.to_string(),
+    })?;
+    if !status.is_success() {
+        return Err(TuraError::HttpStatus {
+            status: status.as_u16(),
+            body: data.to_string(),
+        });
+    }
+
+    let content = data.get("output").cloned().unwrap_or_else(|| data.clone());
+    let mut metrics = extract_metrics(&data, options.context_window);
+    metrics.provider_request_id = req_id;
+    Ok(ProviderResponse {
+        content,
+        raw: data,
+        metrics: Some(metrics),
+    })
+}
+
+fn insert_opt(payload: &mut Value, key: &str, value: Option<Value>) {
+    if let Some(value) = value {
+        payload[key] = value;
+    }
+}
+
+fn should_pass_service_tier(provider: &str, model: &str) -> bool {
+    if !provider.eq_ignore_ascii_case("openai") {
+        return false;
+    }
+    let model = model.to_ascii_lowercase();
+    model.starts_with("gpt-") || model.starts_with("o") || model.contains("codex")
+}
+
+fn normalized_reasoning_effort(options: &CallOptions) -> Option<String> {
+    normalized_non_default_option(options.reasoning_effort.as_deref())
+}
+
+fn normalized_service_tier(options: &CallOptions) -> Option<String> {
+    normalized_non_default_option(options.service_tier.as_deref())
+}
+
+fn normalized_non_default_option(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("default"))
+        .map(ToString::to_string)
+}
+
+fn normalize_messages_for_provider(provider: &str, messages: &[Value]) -> Vec<Value> {
+    if needs_chat_tool_result_messages(provider) {
+        return normalize_openai_compatible_chat_messages(messages);
+    }
+
+    messages
+        .iter()
+        .map(|m| {
+            let mut msg = m.clone();
+            if msg.get("role").and_then(Value::as_str) == Some("assistant")
+                && msg.get("content").is_some_and(Value::is_null)
+            {
+                msg["content"] = Value::String(String::new());
+            }
+            msg
+        })
+        .collect()
+}
+
+fn needs_chat_tool_result_messages(provider: &str) -> bool {
+    !(provider.eq_ignore_ascii_case("openai") || provider.eq_ignore_ascii_case("anthropic"))
+}
+
+fn normalize_openai_compatible_chat_messages(messages: &[Value]) -> Vec<Value> {
+    let mut normalized = Vec::new();
+
+    for message in messages {
+        if let Some(item) = normalize_responses_tool_item_for_chat(message) {
+            normalized.push(item);
+            continue;
+        }
+
+        let role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("user");
+        let content = message_content_text(message.get("content"))
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty());
+        let Some(content) = content else {
+            continue;
+        };
+
+        let (role, content) = match role {
+            "assistant" => ("assistant", content),
+            "tool" => ("user", format!("Tool result:\n{content}")),
+            "user" => ("user", content),
+            "system" => ("user", format!("System instruction:\n{content}")),
+            other => ("user", format!("{other} message:\n{content}")),
+        };
+
+        normalized.push(json!({
+            "role": role,
+            "content": content,
+        }));
+    }
+
+    if normalized.is_empty() {
+        normalized.push(json!({
+            "role": "user",
+            "content": "Continue.",
+        }));
+    }
+
+    normalized
+}
+
+fn normalize_responses_tool_item_for_chat(message: &Value) -> Option<Value> {
+    match message.get("type").and_then(Value::as_str)? {
+        "function_call" => {
+            let call_id = message
+                .get("call_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("call_command_run");
+            let name = message
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("command_run");
+            let arguments = message
+                .get("arguments")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+                .unwrap_or_else(|| {
+                    message
+                        .get("arguments")
+                        .cloned()
+                        .unwrap_or(Value::Object(Default::default()))
+                        .to_string()
+                });
+            Some(json!({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": arguments,
+                    },
+                }],
+            }))
+        }
+        "function_call_output" => {
+            let call_id = message
+                .get("call_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("call_command_run");
+            let output = message_content_text(message.get("output"))
+                .or_else(|| message_content_text(message.get("content")))
+                .unwrap_or_default();
+            Some(json!({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": output,
+            }))
+        }
+        _ => None,
+    }
+}
+
+fn extract_metrics(data: &Value, context_window: Option<u64>) -> CallMetrics {
+    let usage = data.get("usage").cloned().unwrap_or(Value::Null);
+    let input_tokens =
+        pointer_u64(&usage, "/prompt_tokens").or_else(|| pointer_u64(&usage, "/input_tokens"));
+    let output_tokens =
+        pointer_u64(&usage, "/completion_tokens").or_else(|| pointer_u64(&usage, "/output_tokens"));
+    let cached_input_tokens = pointer_u64(&usage, "/prompt_tokens_details/cached_tokens")
+        .or_else(|| pointer_u64(&usage, "/input_tokens_details/cached_tokens"))
+        .or_else(|| pointer_u64(&usage, "/cache_read_input_tokens"))
+        .or_else(|| pointer_u64(&usage, "/cache_read_tokens"));
+    let cache_write_tokens = pointer_u64(&usage, "/prompt_tokens_details/cache_creation_tokens")
+        .or_else(|| pointer_u64(&usage, "/input_tokens_details/cache_write_tokens"))
+        .or_else(|| pointer_u64(&usage, "/cache_creation_input_tokens"))
+        .or_else(|| pointer_u64(&usage, "/cache_write_tokens"));
+    let reasoning_tokens = pointer_u64(&usage, "/completion_tokens_details/reasoning_tokens")
+        .or_else(|| pointer_u64(&usage, "/output_tokens_details/reasoning_tokens"));
+
+    let mut metrics = CallMetrics {
+        usage: UsageDetails {
+            input_tokens,
+            output_tokens,
+            total_tokens: pointer_u64(&usage, "/total_tokens").or_else(|| {
+                input_tokens.zip(output_tokens).map(|(input, output)| {
+                    input
+                        + output
+                        + cached_input_tokens.unwrap_or(0)
+                        + cache_write_tokens.unwrap_or(0)
+                })
+            }),
+            cached_input_tokens,
+            cache_write_tokens,
+            reasoning_tokens,
+            audio_input_tokens: pointer_u64(&usage, "/prompt_tokens_details/audio_tokens"),
+            audio_output_tokens: pointer_u64(&usage, "/completion_tokens_details/audio_tokens"),
+            context_window,
+            ..Default::default()
+        },
+        cost: extract_costs(
+            data,
+            input_tokens,
+            output_tokens,
+            cached_input_tokens,
+            cache_write_tokens,
+            reasoning_tokens,
+        ),
+        cache_hit: cached_input_tokens.unwrap_or(0) > 0,
+        cache_triggered_at_input_tokens: cached_input_tokens,
+        tool_call_count: data
+            .pointer("/choices/0/message/tool_calls")
+            .and_then(Value::as_array)
+            .map(|v| v.len())
+            .unwrap_or(0),
+        finish_reason: data
+            .pointer("/choices/0/finish_reason")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        provider_request_id: None,
+        raw_usage: if usage.is_null() { None } else { Some(usage) },
+    };
+    estimate_context_utilization(&mut metrics);
+    metrics
+}
+
+fn extract_costs(
+    data: &Value,
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    cached_input_tokens: Option<u64>,
+    cache_write_tokens: Option<u64>,
+    reasoning_tokens: Option<u64>,
+) -> CostDetails {
+    let direct = data.get("cost");
+    CostDetails {
+        input_cost: direct.and_then(|v| v.get("input")).and_then(Value::as_f64),
+        output_cost: direct.and_then(|v| v.get("output")).and_then(Value::as_f64),
+        cache_read_cost: direct
+            .and_then(|v| v.get("cache_read"))
+            .and_then(Value::as_f64),
+        cache_write_cost: direct
+            .and_then(|v| v.get("cache_write"))
+            .and_then(Value::as_f64),
+        reasoning_cost: direct
+            .and_then(|v| v.get("reasoning"))
+            .and_then(Value::as_f64),
+        total_cost: direct
+            .and_then(|v| v.get("total"))
+            .and_then(Value::as_f64)
+            .or_else(|| {
+                approx_total_cost(
+                    input_tokens,
+                    output_tokens,
+                    cached_input_tokens,
+                    cache_write_tokens,
+                    reasoning_tokens,
+                )
+            }),
+        currency: direct
+            .and_then(|v| v.get("currency"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| Some("USD".to_string())),
+    }
+}
+
+fn approx_total_cost(
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    cached_input_tokens: Option<u64>,
+    cache_write_tokens: Option<u64>,
+    reasoning_tokens: Option<u64>,
+) -> Option<f64> {
+    let input = input_tokens.unwrap_or(0) as f64 / 1_000_000.0 * 0.15;
+    let output = output_tokens.unwrap_or(0) as f64 / 1_000_000.0 * 0.60;
+    let cache_read = cached_input_tokens.unwrap_or(0) as f64 / 1_000_000.0 * 0.03;
+    let cache_write = cache_write_tokens.unwrap_or(0) as f64 / 1_000_000.0 * 0.15;
+    let reasoning = reasoning_tokens.unwrap_or(0) as f64 / 1_000_000.0 * 0.10;
+    let total = input + output + cache_read + cache_write + reasoning;
+    if total > 0.0 {
+        Some(total)
+    } else {
+        None
+    }
+}
+
+fn pointer_u64(value: &Value, ptr: &str) -> Option<u64> {
+    value
+        .pointer(ptr)
+        .and_then(|v| v.as_u64().or_else(|| v.as_i64().map(|i| i.max(0) as u64)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_chat_payload, build_codex_oauth_payload, normalize_messages_for_provider,
+        should_pass_service_tier,
+    };
+    use crate::tura_llm::CallOptions;
+    use serde_json::json;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{mpsc, Mutex, OnceLock};
+
+    fn codex_endpoint_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("codex endpoint env lock poisoned")
+    }
+
+    #[test]
+    fn openai_compatible_chat_messages_drop_empty_content_and_fold_system_into_user() {
+        let messages = vec![
+            json!({"role": "system", "content": "Use tools carefully."}),
+            json!({"role": "assistant", "content": null}),
+            json!({"role": "user", "content": "Inspect files."}),
+        ];
+
+        let normalized = normalize_messages_for_provider("minimax", &messages);
+
+        assert_eq!(normalized.len(), 2);
+        assert_eq!(normalized[0]["role"], "user");
+        assert_eq!(
+            normalized[0]["content"],
+            "System instruction:\nUse tools carefully."
+        );
+        assert_eq!(normalized[1]["role"], "user");
+        assert_eq!(normalized[1]["content"], "Inspect files.");
+    }
+
+    #[test]
+    fn openai_compatible_chat_messages_preserve_tool_call_and_output_pairs() {
+        let messages = vec![
+            json!({
+                "type": "function_call",
+                "name": "command_run",
+                "call_id": "call_abc",
+                "arguments": "{\"commands\":[]}",
+                "status": "completed"
+            }),
+            json!({
+                "type": "function_call_output",
+                "call_id": "call_abc",
+                "output": "Exit code: 0\nOutput:\nTURA_PROBE_OK\n"
+            }),
+        ];
+
+        let normalized = normalize_messages_for_provider("minimax", &messages);
+
+        assert_eq!(normalized.len(), 2);
+        assert_eq!(normalized[0]["role"], "assistant");
+        assert_eq!(normalized[0]["tool_calls"][0]["id"], "call_abc");
+        assert_eq!(
+            normalized[0]["tool_calls"][0]["function"]["name"],
+            "command_run"
+        );
+        assert_eq!(normalized[1]["role"], "tool");
+        assert_eq!(normalized[1]["tool_call_id"], "call_abc");
+        assert!(
+            normalized[1]["content"]
+                .as_str()
+                .unwrap()
+                .contains("TURA_PROBE_OK")
+        );
+    }
+
+    #[test]
+    fn non_minimax_keeps_assistant_empty_content_for_openai_compatibility() {
+        let messages = vec![json!({"role": "assistant", "content": null})];
+
+        let normalized = normalize_messages_for_provider("openai", &messages);
+
+        assert_eq!(normalized[0]["role"], "assistant");
+        assert_eq!(normalized[0]["content"], "");
+    }
+
+    #[test]
+    fn service_tier_is_limited_to_openai_gpt_family_models() {
+        assert!(should_pass_service_tier("openai", "gpt-5.2"));
+        assert!(should_pass_service_tier("openai", "o3"));
+        assert!(should_pass_service_tier("openai", "gpt-5.3-codex"));
+        assert!(!should_pass_service_tier("openrouter", "openai/gpt-5.2"));
+        assert!(!should_pass_service_tier("minimax", "minimax-m2.5"));
+    }
+
+    #[test]
+    fn provider_payload_passes_reasoning_and_acceleration_for_openai_gpt() {
+        let messages = vec![json!({"role": "user", "content": "ping"})];
+        let options = CallOptions {
+            reasoning_effort: Some("high".to_string()),
+            service_tier: Some("priority".to_string()),
+            ..CallOptions::default()
+        };
+
+        let payload = build_chat_payload("openai", "gpt-5.2", &messages, &options);
+
+        assert_eq!(payload["reasoning_effort"], "high");
+        assert_eq!(payload["service_tier"], "priority");
+    }
+
+    #[test]
+    fn provider_payload_omits_default_reasoning_and_acceleration() {
+        let messages = vec![json!({"role": "user", "content": "ping"})];
+        let options = CallOptions {
+            reasoning_effort: Some(" default ".to_string()),
+            service_tier: Some("default".to_string()),
+            ..CallOptions::default()
+        };
+
+        let payload = build_chat_payload("openai", "gpt-5.2", &messages, &options);
+
+        assert!(payload.get("reasoning_effort").is_none());
+        assert!(payload.get("service_tier").is_none());
+    }
+
+    #[test]
+    fn provider_payload_does_not_pass_acceleration_to_non_openai_models() {
+        let messages = vec![json!({"role": "user", "content": "ping"})];
+        let options = CallOptions {
+            reasoning_effort: Some("medium".to_string()),
+            service_tier: Some("priority".to_string()),
+            ..CallOptions::default()
+        };
+
+        let payload = build_chat_payload("minimax", "minimax-m2.5", &messages, &options);
+
+        assert_eq!(payload["reasoning_effort"], "medium");
+        assert!(payload.get("service_tier").is_none());
+    }
+
+    #[tokio::test]
+    async fn direct_provider_call_sends_reasoning_and_acceleration() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let addr = listener.local_addr().expect("local addr");
+        let (tx, rx) = mpsc::channel();
+
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut buffer = Vec::new();
+            let mut chunk = [0_u8; 1024];
+            loop {
+                let read = stream.read(&mut chunk).expect("read request");
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+                if let Some(header_end) = find_header_end(&buffer) {
+                    let headers = String::from_utf8_lossy(&buffer[..header_end]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0);
+                    let body_start = header_end + 4;
+                    if buffer.len() >= body_start + content_length {
+                        let body = String::from_utf8(
+                            buffer[body_start..body_start + content_length].to_vec(),
+                        )
+                        .expect("utf8 body");
+                        tx.send(body).expect("send request body");
+                        break;
+                    }
+                }
+            }
+
+            let response = concat!(
+                "HTTP/1.1 200 OK\r\n",
+                "Content-Type: application/json\r\n",
+                "Content-Length: 69\r\n",
+                "\r\n",
+                r#"{"choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":1}}"#
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
+        });
+
+        let messages = vec![json!({"role": "user", "content": "ping"})];
+        let options = CallOptions {
+            reasoning_effort: Some("high".to_string()),
+            service_tier: Some("priority".to_string()),
+            ..CallOptions::default()
+        };
+
+        super::call(
+            &format!("http://{addr}"),
+            "gpt-5.2",
+            "openai",
+            "test-key",
+            &messages,
+            &options,
+        )
+        .await
+        .expect("provider call");
+
+        let body: serde_json::Value =
+            serde_json::from_str(&rx.recv().expect("request body")).expect("json body");
+        assert_eq!(body["reasoning_effort"], "high");
+        assert_eq!(body["service_tier"], "priority");
+    }
+
+    #[tokio::test]
+    async fn streaming_provider_drains_usage_after_tool_arguments_complete() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let addr = listener.local_addr().expect("local addr");
+
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut buffer = Vec::new();
+            let mut chunk = [0_u8; 1024];
+            loop {
+                let read = stream.read(&mut chunk).expect("read request");
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+                if let Some(header_end) = find_header_end(&buffer) {
+                    let headers = String::from_utf8_lossy(&buffer[..header_end]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0);
+                    let body_start = header_end + 4;
+                    if buffer.len() >= body_start + content_length {
+                        break;
+                    }
+                }
+            }
+
+            let first = json!({
+                "choices": [{
+                    "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "grep",
+                                "arguments": "{\"pattern\""
+                            }
+                        }]
+                    }
+                }]
+            });
+            let second = json!({
+                "choices": [{
+                    "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "function": {
+                                "arguments": ":\"foo\"}"
+                            }
+                        }]
+                    }
+                }]
+            });
+            let late_text = json!({
+                "choices": [{
+                    "delta": {
+                        "content": "late text after tool call"
+                    }
+                }]
+            });
+            let usage = json!({
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": 3000,
+                    "completion_tokens": 8,
+                    "total_tokens": 3008,
+                    "prompt_tokens_details": {"cached_tokens": 2048}
+                }
+            });
+            let body =
+                format!("data: {first}\n\ndata: {second}\n\ndata: {late_text}\n\ndata: {usage}\n\ndata: [DONE]\n\n");
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
+        });
+
+        let messages = vec![json!({"role": "user", "content": "search"})];
+        let options = CallOptions {
+            stream: Some(true),
+            ..CallOptions::default()
+        };
+
+        let result = super::call(
+            &format!("http://{addr}"),
+            "gpt-test",
+            "openai",
+            "test-key",
+            &messages,
+            &options,
+        )
+        .await
+        .expect("provider call");
+
+        assert_eq!(result.content["tool_calls"][0]["function"]["name"], "grep");
+        assert_eq!(
+            result.content["tool_calls"][0]["function"]["arguments"]["pattern"],
+            "foo"
+        );
+        assert!(!result
+            .content
+            .to_string()
+            .contains("late text after tool call"));
+        let metrics = result.metrics.expect("metrics");
+        assert_eq!(metrics.usage.input_tokens, Some(3000));
+        assert_eq!(metrics.usage.cached_input_tokens, Some(2048));
+        assert!(metrics.cache_hit);
+    }
+
+    #[tokio::test]
+    async fn streaming_provider_reads_usage_and_cached_tokens() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let addr = listener.local_addr().expect("local addr");
+        let (tx, rx) = mpsc::channel();
+
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut buffer = Vec::new();
+            let mut chunk = [0_u8; 1024];
+            loop {
+                let read = stream.read(&mut chunk).expect("read request");
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+                if let Some(header_end) = find_header_end(&buffer) {
+                    let headers = String::from_utf8_lossy(&buffer[..header_end]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0);
+                    let body_start = header_end + 4;
+                    if buffer.len() >= body_start + content_length {
+                        let body = String::from_utf8(
+                            buffer[body_start..body_start + content_length].to_vec(),
+                        )
+                        .expect("utf8 body");
+                        tx.send(body).expect("send request body");
+                        break;
+                    }
+                }
+            }
+
+            let content = json!({
+                "choices": [{
+                    "delta": {"content": "ok"}
+                }]
+            });
+            let usage = json!({
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": 3000,
+                    "completion_tokens": 3,
+                    "total_tokens": 3003,
+                    "prompt_tokens_details": {"cached_tokens": 2048}
+                }
+            });
+            let body = format!("data: {content}\n\ndata: {usage}\n\ndata: [DONE]\n\n");
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
+        });
+
+        let messages = vec![json!({"role": "user", "content": "cache"})];
+        let options = CallOptions {
+            stream: Some(true),
+            stream_options: Some(json!({ "include_usage": true })),
+            ..CallOptions::default()
+        };
+
+        let result = super::call(
+            &format!("http://{addr}"),
+            "gpt-test",
+            "openai",
+            "test-key",
+            &messages,
+            &options,
+        )
+        .await
+        .expect("provider call");
+
+        let request_body: serde_json::Value =
+            serde_json::from_str(&rx.recv().expect("request body")).expect("json body");
+        assert_eq!(request_body["stream_options"]["include_usage"], true);
+        let metrics = result.metrics.expect("metrics");
+        assert_eq!(metrics.usage.input_tokens, Some(3000));
+        assert_eq!(metrics.usage.output_tokens, Some(3));
+        assert_eq!(metrics.usage.cached_input_tokens, Some(2048));
+        assert!(metrics.cache_hit);
+    }
+
+    #[test]
+    fn metrics_read_minimax_anthropic_cache_usage_fields() {
+        let metrics = super::extract_metrics(
+            &json!({
+                "usage": {
+                    "input_tokens": 108,
+                    "output_tokens": 91,
+                    "cache_creation_input_tokens": 512,
+                    "cache_read_input_tokens": 14813
+                }
+            }),
+            None,
+        );
+
+        assert_eq!(metrics.usage.input_tokens, Some(108));
+        assert_eq!(metrics.usage.output_tokens, Some(91));
+        assert_eq!(metrics.usage.cached_input_tokens, Some(14813));
+        assert_eq!(metrics.usage.cache_write_tokens, Some(512));
+        assert_eq!(metrics.usage.total_tokens, Some(15524));
+        assert!(metrics.cache_hit);
+    }
+
+    #[tokio::test]
+    async fn codex_oauth_call_sends_responses_reasoning_and_acceleration() {
+        let _env_guard = codex_endpoint_env_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let addr = listener.local_addr().expect("local addr");
+        let endpoint = format!("http://{addr}/backend-api/codex/responses");
+        let previous_endpoint = std::env::var_os("OPENAI_CODEX_ENDPOINT");
+        std::env::set_var("OPENAI_CODEX_ENDPOINT", &endpoint);
+        let (tx, rx) = mpsc::channel();
+
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut buffer = Vec::new();
+            let mut chunk = [0_u8; 1024];
+            loop {
+                let read = stream.read(&mut chunk).expect("read request");
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+                if let Some(header_end) = find_header_end(&buffer) {
+                    let headers = String::from_utf8_lossy(&buffer[..header_end]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0);
+                    let body_start = header_end + 4;
+                    if buffer.len() >= body_start + content_length {
+                        let body = String::from_utf8(
+                            buffer[body_start..body_start + content_length].to_vec(),
+                        )
+                        .expect("utf8 body");
+                        tx.send(body).expect("send request body");
+                        break;
+                    }
+                }
+            }
+
+            let body = concat!(
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"ok\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n",
+                "data: [DONE]\n\n"
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
+        });
+
+        let messages = vec![json!({"role": "user", "content": "ping"})];
+        let options = CallOptions {
+            reasoning_effort: Some("high".to_string()),
+            service_tier: Some("priority".to_string()),
+            ..CallOptions::default()
+        };
+
+        let result =
+            super::openai_codex_oauth_call("gpt-5.4", "test-token", &messages, &options).await;
+
+        match previous_endpoint {
+            Some(value) => std::env::set_var("OPENAI_CODEX_ENDPOINT", value),
+            None => std::env::remove_var("OPENAI_CODEX_ENDPOINT"),
+        }
+
+        result.expect("codex oauth call");
+        let body: serde_json::Value =
+            serde_json::from_str(&rx.recv().expect("request body")).expect("json body");
+        assert!(body.get("reasoning_effort").is_none());
+        assert_eq!(body["reasoning"]["effort"], "high");
+        assert_eq!(body["service_tier"], "priority");
+    }
+
+    #[tokio::test]
+    async fn codex_oauth_stream_reads_completed_usage_after_tool_call() {
+        let _env_guard = codex_endpoint_env_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let addr = listener.local_addr().expect("local addr");
+        let endpoint = format!("http://{addr}/backend-api/codex/responses");
+        let previous_endpoint = std::env::var_os("OPENAI_CODEX_ENDPOINT");
+        std::env::set_var("OPENAI_CODEX_ENDPOINT", &endpoint);
+
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut buffer = Vec::new();
+            let mut chunk = [0_u8; 1024];
+            loop {
+                let read = stream.read(&mut chunk).expect("read request");
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+                if let Some(header_end) = find_header_end(&buffer) {
+                    let headers = String::from_utf8_lossy(&buffer[..header_end]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0);
+                    let body_start = header_end + 4;
+                    if buffer.len() >= body_start + content_length {
+                        break;
+                    }
+                }
+            }
+
+            let args = r#"{"commands":[{"step":1,"command":"rg","command_line":"rg -n bug ."}]}"#;
+            let tool_event = json!({
+                "item": {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "command_run",
+                    "arguments": args
+                }
+            });
+            let completed = json!({
+                "type": "response.completed",
+                "response": {
+                    "output": [{
+                        "type": "function_call",
+                        "call_id": "call_1",
+                        "name": "command_run",
+                        "arguments": args
+                    }],
+                    "usage": {
+                        "input_tokens": 3000,
+                        "input_tokens_details": {"cached_tokens": 2048},
+                        "output_tokens": 20,
+                        "total_tokens": 3020
+                    }
+                }
+            });
+            let body = format!("data: {tool_event}\n\ndata: {completed}\n\ndata: [DONE]\n\n");
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
+        });
+
+        let messages = vec![json!({"role": "user", "content": "run command"})];
+        let options = CallOptions {
+            tools: Some(vec![json!({
+                "type": "function",
+                "function": {
+                    "name": "command_run",
+                    "parameters": {"type": "object"}
+                }
+            })]),
+            ..CallOptions::default()
+        };
+
+        let result = super::openai_codex_oauth_call(
+            "gpt-5.3-codex-spark",
+            "test-token",
+            &messages,
+            &options,
+        )
+        .await;
+
+        match previous_endpoint {
+            Some(value) => std::env::set_var("OPENAI_CODEX_ENDPOINT", value),
+            None => std::env::remove_var("OPENAI_CODEX_ENDPOINT"),
+        }
+
+        let metrics = result.expect("codex oauth call").metrics.expect("metrics");
+        assert_eq!(metrics.usage.cached_input_tokens, Some(2048));
+        assert!(metrics.cache_hit);
+    }
+
+    #[test]
+    fn codex_oauth_payload_omits_default_reasoning_and_acceleration() {
+        let messages = vec![json!({"role": "user", "content": "ping"})];
+        let options = CallOptions {
+            reasoning_effort: Some("default".to_string()),
+            service_tier: Some(" default ".to_string()),
+            ..CallOptions::default()
+        };
+
+        let payload = build_codex_oauth_payload("gpt-5.4", &messages, &options);
+
+        assert!(payload.get("reasoning").is_none());
+        assert!(payload.get("reasoning_effort").is_none());
+        assert!(payload.get("service_tier").is_none());
+    }
+
+    #[test]
+    fn codex_oauth_payload_passes_prompt_cache_key_only() {
+        let messages = vec![json!({"role": "user", "content": "ping"})];
+        let options = CallOptions {
+            prompt_cache_key: Some("turaosv2:test:abc".to_string()),
+            ..CallOptions::default()
+        };
+
+        let payload = build_codex_oauth_payload("gpt-5.3-codex-spark", &messages, &options);
+
+        assert_eq!(payload["prompt_cache_key"], "turaosv2:test:abc");
+        assert!(payload.get("prompt_cache_retention").is_none());
+    }
+
+    #[test]
+    fn codex_oauth_payload_keeps_system_messages_in_input() {
+        let messages = vec![
+            json!({"role": "system", "content": "stable instructions"}),
+            json!({"role": "user", "content": "task"}),
+            json!({"role": "system", "content": "dynamic runtime state"}),
+            json!({"role": "assistant", "content": "progress"}),
+        ];
+
+        let payload =
+            build_codex_oauth_payload("gpt-5.3-codex-spark", &messages, &CallOptions::default());
+
+        assert_eq!(
+            payload["instructions"],
+            "You are OpenAI Codex. Follow the user request and answer concisely."
+        );
+        assert_eq!(payload["input"][0]["role"], "system");
+        assert_eq!(payload["input"][0]["content"], "stable instructions");
+        assert_eq!(payload["input"][1]["role"], "user");
+        assert_eq!(payload["input"][1]["content"], "task");
+        assert_eq!(payload["input"][2]["role"], "system");
+        assert_eq!(payload["input"][2]["content"], "dynamic runtime state");
+        assert_eq!(payload["input"][3]["role"], "assistant");
+        assert_eq!(payload["input"][3]["content"], "progress");
+        assert_eq!(payload["tool_choice"], "auto");
+    }
+
+    #[test]
+    fn codex_oauth_usage_falls_back_to_estimate_when_stream_stops_before_usage() {
+        let payload = json!({
+            "model": "gpt-5.5",
+            "input": [{"role": "user", "content": "Run tests"}],
+            "tools": [{"type": "function", "name": "command_run"}]
+        });
+        let content = json!({
+            "tool_calls": [{
+                "function": {
+                    "name": "command_run",
+                    "arguments": {"commands": [{"step": 1, "command": "npm", "command_line": "npm test"}]}
+                }
+            }]
+        });
+        let mut metrics = super::extract_metrics(&json!({}), None);
+
+        super::fill_missing_codex_oauth_usage(&mut metrics, &payload, &content);
+
+        assert!(metrics.usage.input_tokens.unwrap() > 0);
+        assert!(metrics.usage.output_tokens.unwrap() > 0);
+        assert_eq!(
+            metrics
+                .raw_usage
+                .as_ref()
+                .and_then(|usage| usage.get("estimated"))
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn command_run_streaming_waits_for_complete_json_arguments() {
+        let call = json!({
+            "type": "function",
+            "function": {
+                "name": "command_run",
+                "arguments": r#"{"commands":[{"step":1,"command":"rg","command_line":"rg -n bug ."},"#
+            }
+        });
+
+        assert!(super::ready_streaming_tool_call(call).is_none());
+    }
+
+    #[test]
+    fn command_run_streaming_emits_complete_json_arguments() {
+        let call = json!({
+            "type": "function",
+            "function": {
+                "name": "command_run",
+                "arguments": r#"{"commands":[{"step":1,"command":"npm","command_line":"npm test"}]}"#
+            }
+        });
+        let ready = super::ready_streaming_tool_call(call).expect("complete command_run call");
+
+        assert_eq!(
+            ready["function"]["arguments"]["commands"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            ready["function"]["arguments"]["commands"][0]["command"],
+            "npm"
+        );
+        assert!(ready["function"]["arguments"].get("commands").is_some());
+    }
+
+    #[test]
+    fn codex_event_tool_calls_accumulates_argument_deltas_before_emit() {
+        let events = vec![
+            json!({
+                "type": "response.output_item.added",
+                "item": {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "command_run",
+                    "arguments": ""
+                }
+            }),
+            json!({
+                "type": "response.function_call_arguments.delta",
+                "delta": "{\"commands\":[{\"step\":1,"
+            }),
+            json!({
+                "type": "response.function_call_arguments.delta",
+                "delta": "\"command\":\"shell_command\",\"command_line\":\"pwd\"}]}"
+            }),
+        ];
+        let calls = super::codex_event_tool_calls(&events);
+        let ready = calls
+            .into_iter()
+            .filter_map(super::ready_streaming_tool_call)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ready.len(), 1);
+        assert_eq!(
+            ready[0]["function"]["arguments"]["commands"][0]["command"],
+            "shell_command"
+        );
+    }
+
+    #[test]
+    fn codex_event_tool_calls_does_not_emit_incomplete_command_run_arguments() {
+        let events = vec![
+            json!({
+                "type": "response.output_item.added",
+                "item": {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "command_run",
+                    "arguments": ""
+                }
+            }),
+            json!({
+                "type": "response.function_call_arguments.delta",
+                "delta": "{\"commands\":["
+            }),
+        ];
+        let ready = super::codex_event_tool_calls(&events)
+            .into_iter()
+            .filter_map(super::ready_streaming_tool_call)
+            .collect::<Vec<_>>();
+
+        assert!(ready.is_empty());
+    }
+
+    #[test]
+    fn codex_event_tool_calls_prefers_done_arguments_over_added_empty_arguments() {
+        let events = vec![
+            json!({
+                "type": "response.output_item.added",
+                "item": {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "id": "fc_1",
+                    "name": "command_run",
+                    "arguments": ""
+                }
+            }),
+            json!({
+                "type": "response.function_call_arguments.done",
+                "item_id": "fc_1",
+                "arguments": "{\"commands\":[{\"step\":1,\"command\":\"echo ok\"}]}"
+            }),
+            json!({
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "id": "fc_1",
+                    "name": "command_run",
+                    "status": "completed",
+                    "arguments": "{\"commands\":[{\"step\":1,\"command\":\"echo ok\"}]}"
+                }
+            }),
+        ];
+        let ready = super::complete_codex_tool_calls(&json!({ "events": events }));
+
+        assert_eq!(ready.len(), 1);
+        assert_eq!(
+            ready[0]["function"]["arguments"]["commands"][0]["command"],
+            "echo ok"
+        );
+    }
+
+    #[test]
+    fn streaming_tool_call_buffer_waits_for_complete_json_arguments() {
+        let mut buffer = super::StreamingToolCall {
+            id: Some("call_1".to_string()),
+            name: Some("command_run".to_string()),
+            arguments: r#"{"commands":[{"step":1,"command":"rg","command_line":"rg -n bug ."},"#
+                .to_string(),
+            emitted: false,
+        };
+        let mut calls = Vec::new();
+
+        assert!(!super::emit_completed_tool_call(&mut buffer, &mut calls));
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn streaming_tool_call_buffer_emits_complete_json_arguments() {
+        let mut buffer = super::StreamingToolCall {
+            id: Some("call_1".to_string()),
+            name: Some("command_run".to_string()),
+            arguments: r#"{"commands":[{"step":1,"command":"npm","command_line":"npm test"}]}"#
+                .to_string(),
+            emitted: false,
+        };
+        let mut calls = Vec::new();
+
+        assert!(super::emit_completed_tool_call(&mut buffer, &mut calls));
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0]["function"]["arguments"]["commands"][0]["command"],
+            "npm"
+        );
+    }
+
+    #[test]
+    fn minimax_xml_streaming_tool_call_supports_complete_command_run() {
+        let text = r#"<minimax:tool_call><invoke name="command_run"><parameter name="commands">[{"step":1,"command":"npm","command_line":"npm test"}]</parameter></invoke></minimax:tool_call>"#;
+        let (name, arguments) = super::last_complete_minimax_invoke(text).expect("xml tool call");
+
+        assert_eq!(name, "command_run");
+        assert_eq!(arguments["commands"][0]["command"], "npm");
+    }
+
+    fn find_header_end(buffer: &[u8]) -> Option<usize> {
+        buffer.windows(4).position(|window| window == b"\r\n\r\n")
+    }
+}

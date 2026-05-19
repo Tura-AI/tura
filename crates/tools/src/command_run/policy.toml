@@ -1,0 +1,10 @@
+model_visible = true
+allowed_commands = ["shell_command", "bash", "apply_patch"]
+step_required = true
+same_step_read_concurrency = true
+mutating_commands_are_barriers = true
+
+[locks]
+read = "shared"
+write = "exclusive"
+unknown_mutating_shell = "workspace_exclusive"
