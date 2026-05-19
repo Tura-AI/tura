@@ -57,7 +57,7 @@ fn default_agent_registry_loads_general_agent() {
     assert!(!agents[0]
         .agent_capabilities
         .iter()
-        .any(|capability| capability.capability_name == "planning"));
+        .any(|capability| capability.capability_name == "multiple_tasks"));
     assert!(!agents[0]
         .agent_capabilities
         .iter()
@@ -104,7 +104,7 @@ fn coding_topic_registry_loads_coding_agent() {
     assert!(!agents[0]
         .agent_capabilities
         .iter()
-        .any(|capability| capability.capability_name == "planning"));
+        .any(|capability| capability.capability_name == "multiple_tasks"));
     assert!(!agents[0]
         .agent_capabilities
         .iter()

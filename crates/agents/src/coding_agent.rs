@@ -25,7 +25,7 @@ impl CodingAgent {
     pub fn provider() -> CodingAgentProviderConfig {
         CodingAgentProviderConfig {
             tura_llm_name: "tura_coder".to_string(),
-            stream: false,
+            stream: true,
             temperature: 0.2,
             max_tokens: 0,
             tool_choice: CodingAgentToolChoice::Auto,

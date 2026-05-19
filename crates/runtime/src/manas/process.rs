@@ -1,9 +1,9 @@
-use super::constants::COMMAND_RUN_TOOL;
+use super::constants::{COMMAND_RUN_TOOL, TASK_DELIVERED_TOOL};
 use super::final_response::user_visible_runtime_text;
 use super::gateway_events::{publish_runtime_failure_message, publish_runtime_usage_record};
 use super::prompt_messages::{messages_for_turn, push_task_continuity_message};
 use super::runtime_turn::execute_turn;
-use super::tool_catalog::planning_child_depth;
+use super::tool_catalog::{multiple_tasks_child_depth, multiple_tasks_env_enabled};
 use super::tool_execution::execute_tool_calls;
 use chrono::Utc;
 use std::{
@@ -16,22 +16,23 @@ use std::{
 use tracing::{info, warn};
 
 use crate::context::{accumulate_tool_result_with_feedback, build_context, ContextInput};
-use crate::mano::persist_gateway_session;
 use crate::manas::ManasOverrides;
+use crate::mano::persist_gateway_session;
 use crate::state_machine::agent_management::{AgentManagement, AgentState};
 use crate::state_machine::runtime_management::{
     RuntimeCallResultStatus, RuntimeId, RuntimeManagement,
 };
+use crate::state_machine::session_management::TaskStatus;
 use crate::state_machine::session_management::{SessionManagement, SessionState};
 
 #[cfg(test)]
-use super::constants::PLANNING_TOOL;
+use super::constants::MULTIPLE_TASKS_TOOL;
 #[cfg(test)]
 use super::tool_arguments::{normalize_tool_arguments, normalize_tool_arguments_for_tool};
 #[cfg(test)]
 use super::tool_catalog::{
     filter_tools_for_turn, load_agent_prompt_messages, remove_tool,
-    require_planning_tool_for_planning_mode,
+    require_multiple_tasks_tool_for_multiple_tasks_mode,
 };
 
 pub struct ManasInput<'a> {
@@ -81,6 +82,7 @@ pub fn process_manas_internal(
     let mut provider_timeout_retries = 0_u8;
     let mut no_tool_retries = 0_u8;
     let mut command_run_turns = 0_u64;
+    let mut last_task_delivered = false;
     loop {
         turn = turn.saturating_add(1);
         info!(
@@ -172,6 +174,10 @@ pub fn process_manas_internal(
                 command_run_turns = command_run_turns.saturating_add(1);
             }
             let tool_results = execute_tool_calls(&tool_calls, session, &runtime, redis_url)?;
+            last_task_delivered = tool_results
+                .iter()
+                .filter(|result| result.tool_name == TASK_DELIVERED_TOOL)
+                .any(|result| task_delivered_marked_true(&result.arguments));
 
             for tool_result in tool_results.iter() {
                 accumulate_tool_result_with_feedback(
@@ -198,6 +204,14 @@ pub fn process_manas_internal(
                 context_output.messages,
                 &original_user_task,
             );
+            if let Some(next_task) = active_task_user_message(session) {
+                current_messages.push(next_task);
+            } else if planned_tasks_all_completed(session) && last_task_delivered {
+                current_messages.push(serde_json::json!({
+                    "role": "system",
+                    "content": "All planned tasks are marked delivered. Provide the final user-facing answer now."
+                }));
+            }
         } else {
             let context_output = build_context(ContextInput {
                 session: session.clone(),
@@ -205,13 +219,17 @@ pub fn process_manas_internal(
                 additional_messages: Vec::new(),
             })?;
 
-            current_messages = context_output.messages;
+            current_messages = messages_with_initial_context_prefix(
+                &initial_messages,
+                context_output.messages,
+                &original_user_task,
+            );
             push_task_continuity_message(&mut current_messages, session, &original_user_task);
-            if planning_child_depth() > 0 {
+            if multiple_tasks_child_depth() > 0 {
                 info!(
                     session_id = %session.session_id,
                     turn = turn,
-                    "planning child turn completed without tool calls, ending child session without synthesized user receipt"
+                    "multiple_tasks child turn completed without tool calls, ending child session without synthesized user receipt"
                 );
                 break;
             }
@@ -220,6 +238,8 @@ pub fn process_manas_internal(
                 .map(|text| text.trim().to_string())
                 .filter(|text| !text.is_empty());
             if command_run_turns > 0
+                && (!multiple_tasks_env_enabled()
+                    || (last_task_delivered && !planned_tasks_incomplete(session)))
                 && final_text
                     .as_deref()
                     .is_some_and(text_looks_like_final_answer)
@@ -232,18 +252,37 @@ pub fn process_manas_internal(
                 break;
             }
 
-            if no_tool_retries < 2 {
+            if no_tool_retries < no_tool_retry_limit() {
                 no_tool_retries = no_tool_retries.saturating_add(1);
                 let prior_text = final_text.unwrap_or_else(|| {
                     "The previous model turn returned no tool call.".to_string()
                 });
+                let multiple_tasks_delivery_missing = multiple_tasks_env_enabled()
+                    && command_run_turns > 0
+                    && planned_tasks_incomplete(session)
+                    && !last_task_delivered;
+                let completion_guard = if multiple_tasks_delivery_missing {
+                    "The active planned task is not marked delivered. If it is complete and verified, call task_delivered with task_delivered true now. Do not call command_run only to rerun verification or status. Use command_run only if work remains."
+                } else if planned_tasks_incomplete(session) {
+                    "The planned task list is not complete. Continue the active planned task with command_run."
+                } else {
+                    "Continue the original task now by calling command_run to inspect, edit, test, or write required files."
+                };
+                let retry_reason = if multiple_tasks_delivery_missing {
+                    "The previous text response did not update the multiple_tasks state."
+                } else {
+                    "The previous non-final model turn did not call a required tool, so no workspace action happened."
+                };
                 current_messages.push(serde_json::json!({
                     "role": "system",
                     "content": format!(
-                        "The previous non-final model turn did not call command_run, so no workspace action happened. Continue the original task now by calling command_run to inspect, edit, test, or write required files. Only answer in plain assistant text after the requested work and verification are complete.\n\nPrevious text-only response:\n{}",
+                        "{retry_reason} {completion_guard}\n\nPrevious text-only response:\n{}",
                         prior_text
                     ),
                 }));
+                if let Some(next_task) = active_task_user_message(session) {
+                    current_messages.push(next_task);
+                }
                 warn!(
                     session_id = %session.session_id,
                     turn = turn,
@@ -278,6 +317,43 @@ pub fn process_manas_internal(
         session: session.clone(),
         final_runtime,
     })
+}
+
+fn task_delivered_marked_true(result: &serde_json::Value) -> bool {
+    result
+        .get("task_delivered")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+}
+
+fn active_task_user_message(session: &SessionManagement) -> Option<serde_json::Value> {
+    let (index, task) = session
+        .task_plan
+        .detailed_tasks
+        .iter()
+        .enumerate()
+        .find(|(_, task)| task.status == TaskStatus::InProgress)?;
+    Some(serde_json::json!({
+        "role": "user",
+        "content": format!(
+            "Continue planned task {}.\nTask summary: {}\nDeliverble: {}\n\nUse command_run only for remaining workspace work. If this task is complete and verified, call task_delivered with task_delivered true; do not rerun verification only to finish.",
+            index + 1,
+            task.task_summary,
+            task.step_deliverable_description
+        )
+    }))
+}
+
+fn planned_tasks_incomplete(session: &SessionManagement) -> bool {
+    session
+        .task_plan
+        .detailed_tasks
+        .iter()
+        .any(|task| task.status != TaskStatus::Completed)
+}
+
+fn planned_tasks_all_completed(session: &SessionManagement) -> bool {
+    !session.task_plan.detailed_tasks.is_empty() && !planned_tasks_incomplete(session)
 }
 
 fn text_looks_like_final_answer(text: &str) -> bool {
@@ -368,6 +444,13 @@ fn env_flag(name: &str) -> bool {
     })
 }
 
+fn no_tool_retry_limit() -> u8 {
+    std::env::var("TURA_NO_TOOL_RETRY_LIMIT")
+        .ok()
+        .and_then(|value| value.trim().parse::<u8>().ok())
+        .unwrap_or(20)
+}
+
 fn accumulate_session_from_runtime(
     session: &mut SessionManagement,
     runtime: &RuntimeManagement,
@@ -382,6 +465,7 @@ fn accumulate_session_from_runtime(
                 "runtime_id": runtime.runtime_id,
                 "usage": usage,
                 "status": format!("{:?}", runtime.call_result_status),
+                "cache_diagnostics": runtime_cache_diagnostics(runtime),
                 "timestamp": now.to_rfc3339(),
             })
             .to_string(),
@@ -405,6 +489,47 @@ fn accumulate_session_from_runtime(
     }
 
     Ok(())
+}
+
+fn runtime_cache_diagnostics(runtime: &RuntimeManagement) -> serde_json::Value {
+    let input = runtime.input.as_ref();
+    let messages = input
+        .and_then(|input| input.get("messages"))
+        .and_then(serde_json::Value::as_array);
+    let tools = input
+        .and_then(|input| input.get("tools"))
+        .and_then(serde_json::Value::as_array);
+    let options = input.and_then(|input| input.get("options"));
+    serde_json::json!({
+        "input_hash": input.map(stable_json_hash).unwrap_or_default(),
+        "message_count": messages.map(|messages| messages.len()).unwrap_or_default(),
+        "tool_count": tools.map(|tools| tools.len()).unwrap_or_default(),
+        "first_message_hash": messages
+            .and_then(|messages| messages.first())
+            .map(stable_json_hash)
+            .unwrap_or_default(),
+        "last_message_hash": messages
+            .and_then(|messages| messages.last())
+            .map(stable_json_hash)
+            .unwrap_or_default(),
+        "tools_hash": tools
+            .map(|tools| stable_json_hash(&serde_json::Value::Array(tools.clone())))
+            .unwrap_or_default(),
+        "prompt_cache_key": options
+            .and_then(|options| options.get("prompt_cache_key"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    })
+}
+
+fn stable_json_hash(value: &serde_json::Value) -> String {
+    let serialized = serde_json::to_string(value).unwrap_or_else(|_| value.to_string());
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in serialized.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
 }
 
 fn provider_timeout_retry_wait(retry_count: u8) -> Option<Duration> {
@@ -597,8 +722,8 @@ mod tests {
     use super::{
         filter_tools_for_turn, load_agent_prompt_messages, normalize_tool_arguments,
         normalize_tool_arguments_for_tool, provider_timeout_retry_wait, remove_tool,
-        require_planning_tool_for_planning_mode, user_visible_runtime_text, COMMAND_RUN_TOOL,
-        PLANNING_TOOL,
+        require_multiple_tasks_tool_for_multiple_tasks_mode, user_visible_runtime_text,
+        COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL,
     };
     use crate::state_machine::agent_management::{
         AgentCapabilityItem, AgentManagement, AgentPromptItem, ProviderConfig, ToolChoice,
@@ -625,7 +750,7 @@ mod tests {
     }
 
     #[test]
-    fn planning_mode_still_exposes_only_command_run() {
+    fn multiple_tasks_mode_still_exposes_only_command_run() {
         let tools = vec![
             json!({
                 "type": "function",
@@ -657,12 +782,12 @@ mod tests {
             }),
             json!({
                 "type": "function",
-                "function": { "name": PLANNING_TOOL, "parameters": { "type": "object" } }
+                "function": { "name": MULTIPLE_TASKS_TOOL, "parameters": { "type": "object" } }
             }),
         ];
 
         let filtered = filter_tools_for_turn(tools, false, false, false, true)
-            .expect("planning filtering should succeed");
+            .expect("multiple_tasks filtering should succeed");
         let names = filtered
             .iter()
             .filter_map(|tool| tool["function"]["name"].as_str())
@@ -676,11 +801,11 @@ mod tests {
         assert!(!names.contains("delete_file"));
         assert!(!names.contains("apply_diff"));
         assert!(names.contains("command_run"));
-        assert!(!names.contains(PLANNING_TOOL));
+        assert!(!names.contains(MULTIPLE_TASKS_TOOL));
     }
 
     #[test]
-    fn planning_mode_requires_planning_tool() {
+    fn multiple_tasks_mode_requires_multiple_tasks_command() {
         let tools = vec![
             json!({
                 "type": "function",
@@ -700,14 +825,14 @@ mod tests {
             }),
         ];
 
-        let error = require_planning_tool_for_planning_mode(tools)
-            .expect_err("planning should be required");
+        let error = require_multiple_tasks_tool_for_multiple_tasks_mode(tools)
+            .expect_err("multiple_tasks should be required");
 
-        assert!(error.contains("planning mode requested but planning is unavailable"));
+        assert!(error.contains("multiple-tasks mode requested but multiple_tasks is unavailable"));
     }
 
     #[test]
-    fn default_non_final_turn_keeps_development_tools_without_planning() {
+    fn default_non_final_turn_keeps_development_tools_without_multiple_tasks() {
         let tools = vec![
             json!({
                 "type": "function",
@@ -731,7 +856,7 @@ mod tests {
             }),
             json!({
                 "type": "function",
-                "function": { "name": PLANNING_TOOL, "parameters": { "type": "object" } }
+                "function": { "name": MULTIPLE_TASKS_TOOL, "parameters": { "type": "object" } }
             }),
         ];
 
@@ -748,11 +873,11 @@ mod tests {
         assert!(!names.contains("delete_file"));
         assert!(!names.contains("apply_diff"));
         assert!(names.contains("command_run"));
-        assert!(!names.contains(PLANNING_TOOL));
+        assert!(!names.contains(MULTIPLE_TASKS_TOOL));
     }
 
     #[test]
-    fn planning_child_turn_keeps_development_tools_and_removes_planning_tool() {
+    fn multiple_tasks_child_turn_keeps_development_tools_and_removes_multiple_tasks_command() {
         let tools = vec![
             json!({
                 "type": "function",
@@ -764,7 +889,7 @@ mod tests {
             }),
             json!({
                 "type": "function",
-                "function": { "name": PLANNING_TOOL, "parameters": { "type": "object" } }
+                "function": { "name": MULTIPLE_TASKS_TOOL, "parameters": { "type": "object" } }
             }),
         ];
 
@@ -778,7 +903,7 @@ mod tests {
         assert_eq!(names.len(), 1);
         assert!(!names.contains("write_file"));
         assert!(names.contains("command_run"));
-        assert!(!names.contains(PLANNING_TOOL));
+        assert!(!names.contains(MULTIPLE_TASKS_TOOL));
     }
 
     #[test]
@@ -786,7 +911,7 @@ mod tests {
         let tools = vec![
             json!({
                 "type": "function",
-                "function": { "name": PLANNING_TOOL, "parameters": { "type": "object" } }
+                "function": { "name": MULTIPLE_TASKS_TOOL, "parameters": { "type": "object" } }
             }),
             json!({
                 "type": "function",
@@ -794,7 +919,7 @@ mod tests {
             }),
         ];
 
-        let filtered = remove_tool(tools, PLANNING_TOOL);
+        let filtered = remove_tool(tools, MULTIPLE_TASKS_TOOL);
         let names = filtered
             .iter()
             .filter_map(|tool| tool["function"]["name"].as_str())
@@ -808,8 +933,7 @@ mod tests {
         let normalized = normalize_tool_arguments(json!({
             "reply_message": "done",
             "new_learning": "state changed",
-            "step_summary": "summarize",
-            "previous_command_evaluations": [{ "command": "rg", "evaluation": "completed_helpful" }]
+            "step_summary": "summarize"
         }));
 
         assert_eq!(normalized["reply_message"], "done");
@@ -817,7 +941,6 @@ mod tests {
         assert!(normalized.get("step_summary").is_none());
         assert!(normalized.get("last_tool_call_status").is_none());
         assert!(normalized.get("last_tool_call_summary").is_none());
-        assert!(normalized.get("previous_command_evaluations").is_none());
     }
 
     #[test]
@@ -826,8 +949,7 @@ mod tests {
             "requests": [
                 { "pattern": "*.rs", "directory": "." }
             ],
-            "step_summary": "list files",
-            "previous_command_evaluations": [{ "command": "rg", "evaluation": "completed_not_helpful" }]
+            "step_summary": "list files"
         }));
 
         assert_eq!(normalized, json!([{ "pattern": "*.rs", "directory": "." }]));
@@ -843,7 +965,6 @@ mod tests {
                 { "command": "shell_command", "command_line": "Write-Output 4" },
                 { "command": "shell_command", "command_line": "Write-Output 5" }
             ],
-            "previous_command_evaluations": [],
             "step_summary": "Run pwd."
         });
 
@@ -873,7 +994,6 @@ mod tests {
                         "command_code": "Get-Content src/lib.rs -TotalCount 5"
                     }
                 ],
-                "previous_command_evaluations": [],
                 "step_summary": "legacy provider shape"
             }),
             std::path::Path::new("C:/workspace"),
@@ -881,11 +1001,11 @@ mod tests {
 
         assert!(normalized.get("steps").is_none());
         assert_eq!(normalized["step_summary"], "legacy provider shape");
-        assert_eq!(normalized["commands"][0]["command"], "shell_command");
+        assert_eq!(normalized["commands"][0]["command_type"], "shell_command");
         assert_eq!(normalized["commands"][0]["command_line"], "Get-ChildItem");
         assert_eq!(normalized["commands"][0]["step"], 2);
         assert_eq!(normalized["commands"][0]["timeout_secs"], 15);
-        assert_eq!(normalized["commands"][1]["command"], "shell_command");
+        assert_eq!(normalized["commands"][1]["command_type"], "shell_command");
         assert_eq!(normalized["commands"][1]["step"], 1);
     }
 
@@ -910,7 +1030,6 @@ mod tests {
     #[test]
     fn user_visible_runtime_text_hides_raw_tool_argument_payload() {
         let text = json!({
-            "previous_command_evaluations": [{ "command": "rg", "evaluation": "completed_not_helpful" }],
             "requests": [{
                 "path": "services/sd-text-to-image/main.py",
                 "start_line": 1,

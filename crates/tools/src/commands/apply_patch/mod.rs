@@ -3,7 +3,7 @@ pub const PROMPT: &str = include_str!("prompt.md");
 pub const POLICY: &str = include_str!("policy.toml");
 pub const SCHEMA: &str = include_str!("schema.json");
 
-use super::CommandResponse;
+use super::{shell_command, CommandResponse};
 use crate::runtime::file_locks::Access;
 use crate::runtime::tool::{
     FunctionToolOutput, ToolCall, ToolContext, ToolError, ToolHandler, ToolPayload,
@@ -32,31 +32,41 @@ impl ToolHandler for ApplyPatchHandler {
         true
     }
 
+    async fn access(&self, call: &ToolCall, ctx: &ToolContext) -> Access {
+        let patch_text = patch_text_from_payload(&call.payload);
+        access(&patch_text, &ctx.session_dir)
+    }
+
     async fn handle(
         &self,
         call: ToolCall,
         ctx: ToolContext,
     ) -> Result<FunctionToolOutput, ToolError> {
-        let patch_text = match call.payload {
-            ToolPayload::Freeform { input } => input,
-            ToolPayload::Function { arguments } => arguments
-                .get("patch")
-                .or_else(|| arguments.get("command"))
-                .and_then(Value::as_str)
-                .map(ToString::to_string)
-                .unwrap_or_else(|| arguments.as_str().unwrap_or_default().to_string()),
-        };
+        let patch_text = patch_text_from_payload(&call.payload);
         let response = execute(&patch_text, &ctx.session_dir);
         let success = response.success;
-        if !success {
-            let message = if response.stderr.trim().is_empty() {
-                response.output.to_string()
-            } else {
-                response.stderr
-            };
-            return Err(ToolError::RespondToModel(message));
-        }
-        Ok(FunctionToolOutput::from_value(json!({}), Some(success)))
+        Ok(FunctionToolOutput::from_value(
+            shell_command::json_like_output(
+                response.exit_code,
+                response.stdout,
+                response.stderr,
+                response.output,
+                response.changes,
+            ),
+            Some(success),
+        ))
+    }
+}
+
+fn patch_text_from_payload(payload: &ToolPayload) -> String {
+    match payload {
+        ToolPayload::Freeform { input } => input.clone(),
+        ToolPayload::Function { arguments } => arguments
+            .get("patch")
+            .or_else(|| arguments.get("command"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .unwrap_or_else(|| arguments.as_str().unwrap_or_default().to_string()),
     }
 }
 

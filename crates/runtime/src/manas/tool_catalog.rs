@@ -3,13 +3,13 @@ use std::path::PathBuf;
 use crate::state_machine::agent_management::AgentManagement;
 
 use super::constants::{
-    CODING_AGENT_CONTEXT_EXCLUDED_TOOLS, COMMAND_RUN_TOOL, DISABLE_EXECUTE_TOOLS_PLANNING_ENV,
-    DISABLE_EXECUTE_TOOLS_TOOL_ENV, DISABLE_PLANNING_GATE_ENV, DISABLE_PLANNING_TOOL_ENV,
-    FORCE_EXECUTE_TOOLS_PLANNING_ENV, FORCE_PLANNING_ENV, PROJECT_ROOT_ENV,
+    CODING_AGENT_CONTEXT_EXCLUDED_TOOLS, COMMAND_RUN_TOOL, DISABLE_EXECUTE_TOOLS_TOOL_ENV,
+    DISABLE_MULTIPLE_TASKS_TOOL_ENV, FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS_ENV,
+    FORCE_MULTIPLE_TASKS_ENV, PROJECT_ROOT_ENV, TASK_DELIVERED_TOOL,
 };
 
 #[cfg(test)]
-use super::constants::PLANNING_TOOL;
+use super::constants::MULTIPLE_TASKS_TOOL;
 
 pub(super) fn load_agent_capabilities(
     agent: &AgentManagement,
@@ -42,8 +42,8 @@ pub(super) fn filter_tools_for_turn(
     tools: Vec<serde_json::Value>,
     is_final_turn: bool,
     force_no_tools: bool,
-    is_planning_child: bool,
-    planning_mode_enabled: bool,
+    is_multiple_tasks_child: bool,
+    multiple_tasks_mode_enabled: bool,
 ) -> Result<Vec<serde_json::Value>, String> {
     if force_no_tools {
         return Ok(Vec::new());
@@ -53,19 +53,22 @@ pub(super) fn filter_tools_for_turn(
         return Ok(Vec::new());
     }
 
-    let _ = (is_planning_child, planning_mode_enabled);
+    let _ = is_multiple_tasks_child;
+    if multiple_tasks_mode_enabled {
+        return Ok(keep_command_run_and_task_delivered(tools));
+    }
     Ok(keep_command_run_only(tools))
 }
 
 #[cfg(test)]
-pub(super) fn require_planning_tool_for_planning_mode(
+pub(super) fn require_multiple_tasks_tool_for_multiple_tasks_mode(
     tools: Vec<serde_json::Value>,
 ) -> Result<Vec<serde_json::Value>, String> {
     if !tools
         .iter()
-        .any(|tool| tool_schema_name(tool) == Some(PLANNING_TOOL))
+        .any(|tool| tool_schema_name(tool) == Some(MULTIPLE_TASKS_TOOL))
     {
-        return Err("planning mode requested but planning is unavailable".to_string());
+        return Err("multiple-tasks mode requested but multiple_tasks is unavailable".to_string());
     }
 
     Ok(tools)
@@ -89,6 +92,38 @@ pub(super) fn keep_command_run_only(tools: Vec<serde_json::Value>) -> Vec<serde_
         .collect()
 }
 
+pub(super) fn keep_command_run_and_task_delivered(
+    tools: Vec<serde_json::Value>,
+) -> Vec<serde_json::Value> {
+    tools
+        .into_iter()
+        .filter(|tool| {
+            matches!(
+                tool_schema_name(tool),
+                Some(COMMAND_RUN_TOOL) | Some(TASK_DELIVERED_TOOL)
+            )
+        })
+        .collect()
+}
+
+pub(super) fn task_delivered_provider_schema() -> Result<serde_json::Value, String> {
+    let path = project_directory_with_tools()?
+        .join("crates")
+        .join("tools")
+        .join("src")
+        .join(TASK_DELIVERED_TOOL)
+        .join("schema.json");
+    let content = std::fs::read_to_string(&path).map_err(|err| {
+        format!(
+            "failed to read task_delivered schema {}: {err}",
+            path.display()
+        )
+    })?;
+    let interface = serde_json::from_str::<serde_json::Value>(&content)
+        .map_err(|err| format!("failed to parse task_delivered schema: {err}"))?;
+    Ok(tool_interface_to_provider_schema(interface))
+}
+
 pub(super) fn tool_schema_name(tool: &serde_json::Value) -> Option<&str> {
     tool.get("function")
         .and_then(|function| function.get("name"))
@@ -105,20 +140,16 @@ pub(super) fn env_flag(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub(super) fn planning_env_enabled() -> bool {
-    env_flag(FORCE_PLANNING_ENV) || env_flag(FORCE_EXECUTE_TOOLS_PLANNING_ENV)
+pub(super) fn multiple_tasks_env_enabled() -> bool {
+    env_flag(FORCE_MULTIPLE_TASKS_ENV) || env_flag(FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS_ENV)
 }
 
-pub(super) fn planning_gate_disabled() -> bool {
-    env_flag(DISABLE_PLANNING_GATE_ENV) || env_flag(DISABLE_EXECUTE_TOOLS_PLANNING_ENV)
+pub(super) fn multiple_tasks_tool_disabled() -> bool {
+    env_flag(DISABLE_MULTIPLE_TASKS_TOOL_ENV) || env_flag(DISABLE_EXECUTE_TOOLS_TOOL_ENV)
 }
 
-pub(super) fn planning_tool_disabled() -> bool {
-    env_flag(DISABLE_PLANNING_TOOL_ENV) || env_flag(DISABLE_EXECUTE_TOOLS_TOOL_ENV)
-}
-
-pub(super) fn planning_child_depth() -> usize {
-    std::env::var("TURA_PLANNING_DEPTH")
+pub(super) fn multiple_tasks_child_depth() -> usize {
+    std::env::var("TURA_MULTIPLE_TASKS_DEPTH")
         .or_else(|_| std::env::var("TURA_EXECUTE_TOOLS_DEPTH"))
         .ok()
         .and_then(|value| value.trim().parse::<usize>().ok())
@@ -220,21 +251,23 @@ pub(super) fn tool_interface_to_provider_schema(interface: serde_json::Value) ->
             .cloned()
             .unwrap_or_else(|| serde_json::json!({ "type": "object" })),
     );
-    let mut parameters = if input_schema.get("type").and_then(|value| value.as_str()) == Some("array") {
-        serde_json::json!({
-            "type": "object",
-            "required": ["requests"],
-            "properties": {
-                "requests": input_schema
-            }
-        })
-    } else {
-        input_schema
-    };
-    let strict = !env_flag("TURA_COMMAND_RUN_DISABLE_STRICT_JSON");
+    let mut parameters =
+        if input_schema.get("type").and_then(|value| value.as_str()) == Some("array") {
+            serde_json::json!({
+                "type": "object",
+                "required": ["requests"],
+                "properties": {
+                    "requests": input_schema
+                }
+            })
+        } else {
+            input_schema
+        };
+    let strict = env_flag("TURA_COMMAND_RUN_STRICT_JSON");
     if strict {
         parameters = strict_provider_schema(parameters);
     }
+    parameters = strip_tura_schema_extensions(parameters);
 
     serde_json::json!({
         "type": "function",
@@ -245,6 +278,24 @@ pub(super) fn tool_interface_to_provider_schema(interface: serde_json::Value) ->
             "strict": strict
         }
     })
+}
+
+fn strip_tura_schema_extensions(mut value: serde_json::Value) -> serde_json::Value {
+    match &mut value {
+        serde_json::Value::Object(object) => {
+            object.remove("x-tura-optional");
+            for child in object.values_mut() {
+                *child = strip_tura_schema_extensions(std::mem::take(child));
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for child in items {
+                *child = strip_tura_schema_extensions(std::mem::take(child));
+            }
+        }
+        _ => {}
+    }
+    value
 }
 
 fn strict_provider_schema(mut value: serde_json::Value) -> serde_json::Value {
@@ -258,12 +309,25 @@ fn strict_provider_schema(mut value: serde_json::Value) -> serde_json::Value {
                     .get("properties")
                     .and_then(serde_json::Value::as_object)
                 {
-                    let mut required = properties
-                        .keys()
+                    let mut required = object
+                        .get("required")
+                        .and_then(serde_json::Value::as_array)
                         .cloned()
-                        .map(serde_json::Value::String)
-                        .collect::<Vec<_>>();
-                    required.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
+                        .unwrap_or_default();
+                    for key in properties.keys() {
+                        let optional = properties
+                            .get(key)
+                            .and_then(|property| property.get("x-tura-optional"))
+                            .and_then(serde_json::Value::as_bool)
+                            == Some(true);
+                        if optional {
+                            continue;
+                        }
+                        let key_value = serde_json::Value::String(key.clone());
+                        if !required.contains(&key_value) {
+                            required.push(key_value);
+                        }
+                    }
                     object.insert("required".to_string(), serde_json::Value::Array(required));
                 }
             }
@@ -296,29 +360,76 @@ fn active_shell_command_name() -> &'static str {
 
 fn command_run_description_for_active_shell(original: &str) -> String {
     let active = active_shell_command_name();
-    let shell_schema = "{\"type\":\"object\",\"required\":[\"command\"],\"additionalProperties\":false,\"properties\":{\"command\":{\"type\":\"string\",\"description\":\"The shell script to execute in the active session directory\"}}}";
-    let shell_description = if active == "shell_command" {
-        "Use for tests, builds, scripts, package tools, and host-shell behavior. Put verification after edits in a later step. "
-    } else {
-        ""
-    };
-
     let prefix = original
+        .split("\nAvailable command details")
+        .next()
+        .unwrap_or(original)
         .split("\nCommand line formats:\n")
         .next()
         .unwrap_or(original)
-        .replace(
-            "Available commands: apply_patch, bash, shell_command.",
+        .replace("Available commands: apply_patch, bash, shell_command.", "")
+        .trim_end()
+        .to_string();
+    let shell_prompt = if active == "shell_command" {
+        code_tools::commands::shell_command::PROMPT
+    } else {
+        code_tools::commands::bash::PROMPT
+    };
+    let mut description = format!(
+        "{prefix} Available commands: apply_patch, {active}.\nCommand run patterns:\n{}\nCommand line formats:\n- apply_patch: {}\n- {active}: {}",
+        command_run_usage_patterns(),
+        current_apply_patch_command_format(),
+        current_shell_command_format(active, shell_prompt),
+    );
+    if multiple_tasks_env_enabled() {
+        description.push_str(&format!(
+            "\n- multiple_tasks: {} Schema: {}",
+            compact_prompt(code_tools::commands::multiple_tasks::PROMPT),
+            compact_schema(code_tools::commands::multiple_tasks::SCHEMA),
+        ));
+        description = description.replace(
             &format!("Available commands: apply_patch, {active}."),
-        )
-        .replace(
-            "Supported internal commands are shell_command, bash, and apply_patch.",
-            &format!("Supported internal commands are {active} and apply_patch."),
+            &format!("Available commands: apply_patch, {active}, multiple_tasks."),
         );
+    }
+    description
+}
 
-    format!(
-        "{prefix}\nCommand line formats:\n- apply_patch: Use one patch for coordinated multi-file source edits after reads. Patches validate context and fail on mismatch. Raw freeform body beginning with `*** Begin Patch`.\n- {active}: {shell_description}JSON object string matching this schema: {shell_schema}"
-    )
+fn command_run_usage_patterns() -> &'static str {
+    r#"- Batch investigation: use early commands for the specific discovery, searches, and file reads needed to understand the failure surface.
+- Keep related path listing, targeted search, and candidate file reads in the same command_run batch and same read-only step when they are independent.
+- Parallel reads: put independent safe read-only commands in the same step when they do not depend on each other.
+- Code repair loop: use early steps for needed discovery/reads, a later step for one multi-file `apply_patch`, and final steps in the same command_run for tests plus focused validation searches.
+- Verification: run the relevant test or build command after edits in the same command_run when the edit target is already clear.
+- Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.
+- Example investigation batch: step 1 needed `rg --files`, targeted `rg -n`, and candidate file reads.
+- Example repair batch: step 1 needed reads/searches, step 2 `apply_patch` across related files, step 3 the narrow test and focused validation searches."#
+}
+
+fn current_apply_patch_command_format() -> String {
+    let grammar = "start: begin_patch hunk+ end_patch\nbegin_patch: \"*** Begin Patch\" LF\nend_patch: \"*** End Patch\" LF?\n\nhunk: add_hunk | delete_hunk | update_hunk\nadd_hunk: \"*** Add File: \" filename LF add_line+\ndelete_hunk: \"*** Delete File: \" filename LF\nupdate_hunk: \"*** Update File: \" filename LF change_move? change?\n\nfilename: /(.+)/\nadd_line: \"+\" /(.*)/ LF -> line\n\nchange_move: \"*** Move to: \" filename LF\nchange: (change_context | change_line)+ eof_line?\nchange_context: (\"@@\" | \"@@ \" /(.+)/) LF\nchange_line: (\"+\" | \"-\" | \" \") /(.*)/ LF\neof_line: \"*** End of File\" LF\n\n%import common.LF\n";
+    format!("Use one patch for coordinated multi-file source edits after reads. Patches validate context and fail on mismatch. Raw freeform body. Format type `grammar`, syntax `lark`. Definition: {grammar}")
+}
+
+fn current_shell_command_format(active: &str, shell_prompt: &str) -> String {
+    let guidance = if active == "shell_command" {
+        "Use for tests, builds, scripts, package tools, and host-shell behavior. Put verification after edits in a later step."
+    } else {
+        "Use for tests, builds, scripts, package tools, and host-shell behavior. Put verification after edits in a later step."
+    };
+    let schema = "{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\",\"description\":\"The shell script to execute in the user's default shell\"},\"workdir\":{\"type\":\"string\",\"description\":\"The working directory to execute the command in\"},\"timeout_ms\":{\"type\":\"number\",\"description\":\"The timeout for the command in milliseconds\"}},\"required\":[\"command\"],\"additionalProperties\":false}";
+    let _ = shell_prompt;
+    format!("{guidance} JSON object string matching this schema: {schema}")
+}
+
+fn compact_prompt(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn compact_schema(text: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(text)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|_| compact_prompt(text))
 }
 
 fn sanitize_provider_schema(mut value: serde_json::Value) -> serde_json::Value {
@@ -374,14 +485,17 @@ mod tests {
             "description": "Run Codex tools as a pure batch+step command runner. Available commands: apply_patch, bash, shell_command.\nCommand line formats:\n- apply_patch: patch\n- bash: bash details\n- shell_command: shell details",
             "input_schema": {
                 "type": "object",
+                "required": ["commands"],
                 "properties": {
                     "commands": {
                         "type": "array",
                         "items": {
                             "type": "object",
+                            "required": ["command_type", "command_line"],
                             "properties": {
-                                "command": { "type": "string" },
-                                "command_line": { "type": "string" }
+                                "command_type": { "type": "string" },
+                                "command_line": { "type": "string" },
+                                "step": { "type": "integer", "x-tura-optional": true }
                             }
                         }
                     }
@@ -395,7 +509,7 @@ mod tests {
         let filtered = filter_tools_for_turn(
             vec![
                 tool(COMMAND_RUN_TOOL),
-                tool(PLANNING_TOOL),
+                tool(MULTIPLE_TASKS_TOOL),
                 tool("apply_diff"),
                 tool("web_search"),
             ],
@@ -410,11 +524,12 @@ mod tests {
     }
 
     #[test]
-    fn planning_mode_still_keeps_only_command_run() {
+    fn multiple_tasks_mode_still_keeps_only_command_run() {
         let filtered = filter_tools_for_turn(
             vec![
                 tool(COMMAND_RUN_TOOL),
-                tool(PLANNING_TOOL),
+                tool(MULTIPLE_TASKS_TOOL),
+                tool(TASK_DELIVERED_TOOL),
                 tool("apply_diff"),
             ],
             false,
@@ -424,11 +539,14 @@ mod tests {
         )
         .expect("filter should succeed");
 
-        assert_eq!(names(filtered), vec![COMMAND_RUN_TOOL]);
+        assert_eq!(names(filtered), vec![COMMAND_RUN_TOOL, TASK_DELIVERED_TOOL]);
     }
 
     #[test]
     fn provider_schema_preserves_additional_properties_recursively() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::set_var("TURA_COMMAND_RUN_DISABLE_STRICT_JSON", "1");
+
         let schema = tool_interface_to_provider_schema(serde_json::json!({
             "name": "example",
             "description": "example",
@@ -452,10 +570,12 @@ mod tests {
 
         assert!(schema.to_string().contains("additionalProperties"));
         assert_eq!(schema["function"]["strict"], false);
+
+        std::env::remove_var("TURA_COMMAND_RUN_DISABLE_STRICT_JSON");
     }
 
     #[test]
-    fn strict_json_env_requires_all_object_properties() {
+    fn strict_json_env_requires_all_provider_object_fields() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         std::env::set_var("TURA_COMMAND_RUN_STRICT_JSON", "1");
 
@@ -466,8 +586,57 @@ mod tests {
         assert_eq!(parameters["required"], serde_json::json!(["commands"]));
         assert_eq!(
             parameters["properties"]["commands"]["items"]["required"],
-            serde_json::json!(["command", "command_line"])
+            serde_json::json!(["command_type", "command_line"])
         );
+
+        std::env::remove_var("TURA_COMMAND_RUN_STRICT_JSON");
+    }
+
+    #[test]
+    fn real_command_run_provider_schema_is_openai_strict_compatible() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::set_var("TURA_COMMAND_RUN_STRICT_JSON", "1");
+
+        let interface = serde_json::from_str::<serde_json::Value>(include_str!(
+            "../../../tools/src/command_run/schema.json"
+        ))
+        .expect("command_run schema should parse");
+        let schema = tool_interface_to_provider_schema(interface);
+        let parameters = &schema["function"]["parameters"];
+        let command_required = parameters["properties"]["commands"]["items"]["required"]
+            .as_array()
+            .expect("commands item required should be an array");
+
+        assert_eq!(schema["function"]["strict"], true);
+        assert_eq!(parameters["required"], serde_json::json!(["commands"]));
+        assert_eq!(
+            parameters["properties"]["commands"]["items"]["required"],
+            serde_json::json!(["command_type", "command_line"])
+        );
+        assert!(parameters["properties"].get("task_delivered").is_none());
+        assert!(command_required.contains(&serde_json::json!("command_type")));
+        assert!(!command_required.contains(&serde_json::json!("step")));
+        assert!(!command_required.contains(&serde_json::json!("workdir")));
+        assert!(!command_required.contains(&serde_json::json!("timeout_ms")));
+        std::env::remove_var("TURA_COMMAND_RUN_STRICT_JSON");
+    }
+
+    #[test]
+    fn task_delivered_tool_is_optional_even_under_strict_json() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::set_var("TURA_COMMAND_RUN_STRICT_JSON", "1");
+
+        let interface = serde_json::from_str::<serde_json::Value>(include_str!(
+            "../../../tools/src/task_delivered/schema.json"
+        ))
+        .expect("task_delivered schema should parse");
+        let schema = tool_interface_to_provider_schema(interface);
+        let parameters = &schema["function"]["parameters"];
+
+        assert_eq!(schema["function"]["name"], TASK_DELIVERED_TOOL);
+        assert_eq!(schema["function"]["strict"], true);
+        assert_eq!(parameters["required"], serde_json::json!([]));
+        assert!(parameters["properties"].get("task_delivered").is_some());
 
         std::env::remove_var("TURA_COMMAND_RUN_STRICT_JSON");
     }
@@ -475,6 +644,8 @@ mod tests {
     #[test]
     fn command_run_provider_description_exposes_only_shell_command_surface() {
         let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::remove_var("TURA_FORCE_MULTIPLE_TASKS");
+        std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS");
         std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
 
         let schema = tool_interface_to_provider_schema(command_run_interface());
@@ -484,8 +655,10 @@ mod tests {
 
         assert!(description.contains("Available commands: apply_patch, shell_command."));
         assert!(description.contains("- shell_command:"));
-        assert!(!description.contains("workdir"));
-        assert!(!description.contains("timeout_ms"));
+        assert!(!description.contains("- multiple_tasks:"));
+        assert!(description.contains("\"command\":{\"type\":\"string\""));
+        assert!(description.contains("\"workdir\":{\"type\":\"string\""));
+        assert!(description.contains("\"timeout_ms\":{\"type\":\"number\""));
         assert!(!description.contains("Available commands: apply_patch, bash"));
         assert!(!description.contains("- bash:"));
 
@@ -495,6 +668,8 @@ mod tests {
     #[test]
     fn command_run_provider_description_exposes_only_bash_surface() {
         let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::remove_var("TURA_FORCE_MULTIPLE_TASKS");
+        std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS");
         std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash");
 
         let schema = tool_interface_to_provider_schema(command_run_interface());
@@ -504,10 +679,32 @@ mod tests {
 
         assert!(description.contains("Available commands: apply_patch, bash."));
         assert!(description.contains("- bash:"));
-        assert!(!description.contains("workdir"));
-        assert!(!description.contains("timeout_ms"));
+        assert!(!description.contains("- multiple_tasks:"));
+        assert!(description.contains("\"command\":{\"type\":\"string\""));
+        assert!(description.contains("\"workdir\":{\"type\":\"string\""));
+        assert!(description.contains("\"timeout_ms\":{\"type\":\"number\""));
         assert!(!description.contains("shell_command"));
 
+        std::env::remove_var("TURA_COMMAND_RUN_SHELL");
+    }
+
+    #[test]
+    fn command_run_provider_description_injects_multiple_tasks_only_when_enabled() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+        std::env::set_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS", "1");
+
+        let schema = tool_interface_to_provider_schema(command_run_interface());
+        let description = schema["function"]["description"]
+            .as_str()
+            .unwrap_or_default();
+
+        assert!(
+            description.contains("Available commands: apply_patch, shell_command, multiple_tasks.")
+        );
+        assert!(description.contains("- multiple_tasks:"));
+
+        std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS");
         std::env::remove_var("TURA_COMMAND_RUN_SHELL");
     }
 

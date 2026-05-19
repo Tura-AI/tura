@@ -8,7 +8,6 @@ use super::types::ContextState;
 
 const CONTEXT_OUTPUT_MAX_TOKENS: usize = 2_500;
 const COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS: usize = 2_500;
-const KEEP_FULL_COMMAND_RUN_TOOL_RESULTS: usize = 12;
 const APPROX_CHARS_PER_TOKEN: usize = 4;
 #[derive(Debug, Clone)]
 pub struct ContextInput {
@@ -33,12 +32,7 @@ pub fn messages_with_runtime_context(
 ) -> Vec<serde_json::Value> {
     let mut output = Vec::with_capacity(messages.len() + 1);
     output.extend(messages.iter().cloned());
-    let _ = (
-        session,
-        provider_name,
-        model_name,
-        is_first_llm_call,
-    );
+    let _ = (session, provider_name, model_name, is_first_llm_call);
     output
 }
 
@@ -144,6 +138,13 @@ pub fn accumulate_tool_result_with_feedback(
     _legacy_last_tool_call_summary: Option<String>,
 ) -> Result<(), String> {
     let now = Utc::now();
+    let sequence = session
+        .session_log
+        .iter()
+        .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+        .filter(|value| value.get("type").and_then(|kind| kind.as_str()) == Some("tool_result"))
+        .count()
+        + 1;
     let mut tool_result_json = serde_json::json!({
         "type": "tool_result",
         "tool_name": tool_name,
@@ -151,11 +152,13 @@ pub fn accumulate_tool_result_with_feedback(
         "output": tool_output,
         "success": tool_success,
         "error": tool_error,
+        "sequence": sequence,
         "timestamp": now.to_rfc3339(),
     });
     tool_result_json["context_cache"] = tool_result_context_cache(&tool_result_json);
-    tool_result_json["context_message"] =
-        immutable_tool_result_context_message(&tool_result_json, true);
+    tool_result_json["context_message"] = immutable_tool_result_context_message(&tool_result_json);
+    tool_result_json["context_messages"] =
+        serde_json::Value::Array(immutable_tool_result_context_messages(&tool_result_json));
 
     session.push_log(
         serde_json::to_string(&tool_result_json)
@@ -191,30 +194,11 @@ pub fn build_messages_from_session(session: &SessionManagement) -> Vec<serde_jso
 }
 
 fn build_messages_from_session_with_options(session: &SessionManagement) -> Vec<serde_json::Value> {
-    let entries = session
+    let mut messages = session
         .session_log
         .iter()
         .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
-        .collect::<Vec<_>>();
-    let command_run_tool_result_count = entries
-        .iter()
-        .filter(|entry| is_command_run_tool_result(entry))
-        .count();
-    let first_full_command_run_index =
-        command_run_tool_result_count.saturating_sub(KEEP_FULL_COMMAND_RUN_TOOL_RESULTS);
-    let mut seen_command_run_results = 0usize;
-    let mut messages = entries
-        .into_iter()
-        .flat_map(|entry| {
-            let keep_full_output = if is_command_run_tool_result(&entry) {
-                let keep_full_output = seen_command_run_results >= first_full_command_run_index;
-                seen_command_run_results = seen_command_run_results.saturating_add(1);
-                keep_full_output
-            } else {
-                true
-            };
-            immutable_context_messages_from_log_entry(entry, keep_full_output)
-        })
+        .flat_map(immutable_context_messages_from_log_entry)
         .collect::<Vec<_>>();
 
     let initial_user_input = session.input.user_input.trim();
@@ -239,15 +223,7 @@ fn build_messages_from_session_with_options(session: &SessionManagement) -> Vec<
     messages
 }
 
-fn is_command_run_tool_result(value: &serde_json::Value) -> bool {
-    value.get("type").and_then(|kind| kind.as_str()) == Some("tool_result")
-        && value.get("tool_name").and_then(|name| name.as_str()) == Some("command_run")
-}
-
-fn immutable_context_messages_from_log_entry(
-    value: serde_json::Value,
-    keep_full_output: bool,
-) -> Vec<serde_json::Value> {
+fn immutable_context_messages_from_log_entry(value: serde_json::Value) -> Vec<serde_json::Value> {
     let Some(obj) = value.as_object() else {
         return Vec::new();
     };
@@ -269,7 +245,14 @@ fn immutable_context_messages_from_log_entry(
         return Vec::new();
     }
 
-    immutable_tool_result_context_messages(&value, keep_full_output)
+    if let Some(messages) = obj
+        .get("context_messages")
+        .and_then(|messages| messages.as_array())
+    {
+        return messages.clone();
+    }
+
+    immutable_tool_result_context_messages(&value)
 }
 
 fn strip_command_run_context_noise(value: serde_json::Value) -> serde_json::Value {
@@ -333,12 +316,12 @@ fn tool_result_context_cache(value: &serde_json::Value) -> serde_json::Value {
     );
     let cache_id_input = serde_json::json!({
         "version": 1,
+        "sequence": value.get("sequence").cloned().unwrap_or(serde_json::Value::Null),
         "tool_name": value.get("tool_name").cloned().unwrap_or(serde_json::Value::Null),
         "input": compact_json_for_context(value.get("input").cloned().unwrap_or(serde_json::Value::Null)),
         "output": output.clone(),
         "success": value.get("success").cloned().unwrap_or(serde_json::Value::Bool(true)),
         "error": error.clone(),
-        "timestamp": value.get("timestamp").cloned().unwrap_or(serde_json::Value::Null),
     });
     serde_json::json!({
         "version": 1,
@@ -348,36 +331,24 @@ fn tool_result_context_cache(value: &serde_json::Value) -> serde_json::Value {
     })
 }
 
-fn immutable_tool_result_context_message(
-    value: &serde_json::Value,
-    keep_full_output: bool,
-) -> serde_json::Value {
+fn immutable_tool_result_context_message(value: &serde_json::Value) -> serde_json::Value {
     if value.get("tool_name").and_then(|name| name.as_str()) == Some("command_run") {
-        return command_run_function_output_context_message(value, keep_full_output);
+        return command_run_function_output_context_message(value);
     }
     serde_json::json!({
         "role": "user",
-        "content": compact_json_to_string(&serde_json::json!([immutable_tool_result_context_item(value, keep_full_output)])),
+        "content": compact_json_to_string(&serde_json::json!([immutable_tool_result_context_item(value)])),
     })
 }
 
-fn immutable_tool_result_context_messages(
-    value: &serde_json::Value,
-    keep_full_output: bool,
-) -> Vec<serde_json::Value> {
+fn immutable_tool_result_context_messages(value: &serde_json::Value) -> Vec<serde_json::Value> {
     if value.get("tool_name").and_then(|name| name.as_str()) == Some("command_run") {
-        return command_run_responses_api_context_items(value, keep_full_output);
+        return command_run_responses_api_context_items(value);
     }
-    vec![immutable_tool_result_context_message(
-        value,
-        keep_full_output,
-    )]
+    vec![immutable_tool_result_context_message(value)]
 }
 
-fn command_run_responses_api_context_items(
-    value: &serde_json::Value,
-    keep_full_output: bool,
-) -> Vec<serde_json::Value> {
+fn command_run_responses_api_context_items(value: &serde_json::Value) -> Vec<serde_json::Value> {
     let call_id = command_run_context_call_id(value);
     let arguments = serde_json::to_string(value.get("input").unwrap_or(&serde_json::Value::Null))
         .unwrap_or_else(|_| "{}".to_string());
@@ -392,18 +363,15 @@ fn command_run_responses_api_context_items(
         serde_json::json!({
             "type": "function_call_output",
             "call_id": call_id,
-            "output": command_run_function_output_for_context(value, keep_full_output),
+            "output": command_run_function_output_for_context(value),
         }),
     ]
 }
 
-fn command_run_function_output_context_message(
-    value: &serde_json::Value,
-    keep_full_output: bool,
-) -> serde_json::Value {
+fn command_run_function_output_context_message(value: &serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "role": "user",
-        "content": command_run_function_output_for_context(value, keep_full_output),
+        "content": command_run_function_output_for_context(value),
     })
 }
 
@@ -421,15 +389,8 @@ fn command_run_context_call_id(value: &serde_json::Value) -> String {
     format!("call_{suffix}")
 }
 
-fn command_run_function_output_for_context(
-    value: &serde_json::Value,
-    keep_full_output: bool,
-) -> String {
-    if keep_full_output {
-        return command_run_current_style_output_for_context(value);
-    }
-    let output = compact_older_command_run_output_for_context(value);
-    serde_json::to_string_pretty(&output).unwrap_or_else(|_| output.to_string())
+fn command_run_function_output_for_context(value: &serde_json::Value) -> String {
+    command_run_current_style_output_for_context(value)
 }
 
 fn command_run_current_style_output_for_context(value: &serde_json::Value) -> String {
@@ -448,7 +409,7 @@ struct CommandRunContextOutput {
 #[derive(serde::Serialize)]
 struct CommandRunContextItem {
     step: serde_json::Value,
-    command: serde_json::Value,
+    command_type: serde_json::Value,
     success: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     output: Option<serde_json::Value>,
@@ -467,16 +428,18 @@ fn command_run_current_style_output_string(value: &serde_json::Value) -> Option<
         .enumerate()
         .map(|(index, result)| {
             let input = input_commands.and_then(|commands| commands.get(index));
-            let command = result
-                .get("command")
+            let command_type = result
+                .get("command_type")
+                .or_else(|| result.get("command"))
                 .or_else(|| result.get("command_name"))
                 .or_else(|| result.get("tool_name"))
+                .or_else(|| input.and_then(|input| input.get("command_type")))
                 .or_else(|| input.and_then(|input| input.get("command")))
                 .cloned()
                 .unwrap_or(serde_json::Value::Null);
             let output = result
                 .get("output")
-                .map(command_run_model_output_value)
+                .map(|output| command_run_model_output_value(output, input))
                 .unwrap_or_else(|| {
                     serde_json::Value::String(command_run_result_transcript(result, input))
                 });
@@ -489,12 +452,12 @@ fn command_run_current_style_output_string(value: &serde_json::Value) -> Option<
                     .get("step")
                     .cloned()
                     .unwrap_or(serde_json::Value::Null),
-                command,
+                command_type,
                 success: result
                     .get("success")
                     .cloned()
                     .unwrap_or(serde_json::Value::Null),
-                output: Some(compact_command_run_result_output(output)),
+                output: Some(compact_command_run_result_output(output, input)),
                 error,
             }
         })
@@ -505,11 +468,15 @@ fn command_run_current_style_output_string(value: &serde_json::Value) -> Option<
     serde_json::to_string_pretty(&CommandRunContextOutput { results }).ok()
 }
 
-fn compact_command_run_result_output(value: serde_json::Value) -> serde_json::Value {
+fn compact_command_run_result_output(
+    value: serde_json::Value,
+    input: Option<&serde_json::Value>,
+) -> serde_json::Value {
     match value {
-        serde_json::Value::String(text) => serde_json::Value::String(formatted_truncate_text(
+        serde_json::Value::String(text) => serde_json::Value::String(command_run_truncate_text(
             &text,
             COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS,
+            command_line_from_input(input),
         )),
         other => {
             let serialized =
@@ -517,29 +484,37 @@ fn compact_command_run_result_output(value: serde_json::Value) -> serde_json::Va
             if serialized.len() <= COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS * APPROX_CHARS_PER_TOKEN {
                 other
             } else {
-                serde_json::Value::String(formatted_truncate_text(
+                serde_json::Value::String(command_run_truncate_text(
                     &serialized,
                     COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS,
+                    command_line_from_input(input),
                 ))
             }
         }
     }
 }
 
-fn command_run_model_output_value(value: &serde_json::Value) -> serde_json::Value {
+fn command_run_model_output_value(
+    value: &serde_json::Value,
+    input: Option<&serde_json::Value>,
+) -> serde_json::Value {
     if let Some(text) = value.get("output").and_then(serde_json::Value::as_str) {
-        return serde_json::Value::String(formatted_truncate_text(
+        return serde_json::Value::String(command_run_truncate_text(
             text,
             COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS,
+            command_line_from_input(input),
         ));
     }
-    compact_command_run_result_output(value.clone())
+    compact_command_run_result_output(value.clone(), input)
 }
 
-fn immutable_tool_result_context_item(
-    value: &serde_json::Value,
-    keep_full_output: bool,
-) -> serde_json::Value {
+fn command_line_from_input(input: Option<&serde_json::Value>) -> Option<&str> {
+    input
+        .and_then(|input| input.get("command_line"))
+        .and_then(serde_json::Value::as_str)
+}
+
+fn immutable_tool_result_context_item(value: &serde_json::Value) -> serde_json::Value {
     let item = serde_json::json!({
         "type": "tool_result",
         "cache_id": value
@@ -549,58 +524,11 @@ fn immutable_tool_result_context_item(
             .unwrap_or(serde_json::Value::Null),
         "tool_name": value.get("tool_name").cloned().unwrap_or(serde_json::Value::Null),
         "input": compact_json_for_context(value.get("input").cloned().unwrap_or(serde_json::Value::Null)),
-        "output": if keep_full_output {
-            cached_context_output_for_tool_result(value)
-        } else {
-            compact_older_command_run_output_for_context(value)
-        },
+        "output": cached_context_output_for_tool_result(value),
         "success": value.get("success").cloned().unwrap_or(serde_json::Value::Bool(true)),
         "error": cached_context_error_for_tool_result(value),
-        "timestamp": value.get("timestamp").cloned().unwrap_or(serde_json::Value::Null),
     });
     item
-}
-
-fn compact_older_command_run_output_for_context(value: &serde_json::Value) -> serde_json::Value {
-    if value.get("tool_name").and_then(|name| name.as_str()) != Some("command_run") {
-        return cached_context_output_for_tool_result(value);
-    }
-    let output = value.get("output").unwrap_or(&serde_json::Value::Null);
-    let input_commands = value
-        .get("input")
-        .and_then(|input| input.get("commands"))
-        .and_then(|commands| commands.as_array());
-    let commands = flattened_command_run_results(output)
-        .into_iter()
-        .enumerate()
-        .map(|(index, result)| {
-            let input = input_commands.and_then(|commands| commands.get(index));
-            let command = result
-                .get("display_command")
-                .or_else(|| result.get("command"))
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            let mut item = serde_json::json!({
-                "command": result
-                    .get("display_command")
-                    .or_else(|| result.get("command"))
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null),
-                "success": result.get("success").cloned().unwrap_or(serde_json::Value::Null),
-                "exit_code": result.get("exit_code").cloned().unwrap_or(serde_json::Value::Null),
-            });
-            if command.as_str() == Some("apply_patch") {
-                if let Some(command_line) = input.and_then(|input| input.get("command_line")) {
-                    item["command_line"] = compact_command_run_result_output(command_line.clone());
-                }
-            }
-            item
-        })
-        .collect::<Vec<_>>();
-    serde_json::json!({
-        "summary": "older command_run output compacted; rerun or reread files if exact content is needed",
-        "commands": commands,
-    })
 }
 
 fn stable_context_cache_id(value: &serde_json::Value) -> String {
@@ -697,7 +625,9 @@ fn command_run_result_transcript(
         return compact_json_to_string(&strip_command_run_context_noise(result.clone()));
     };
     let command = input_command
-        .and_then(|input| input.get("command"))
+        .and_then(|input| input.get("command_type"))
+        .or_else(|| input_command.and_then(|input| input.get("command")))
+        .or_else(|| result.get("command_type"))
         .or_else(|| result.get("command_name"))
         .or_else(|| result.get("tool_name"))
         .and_then(serde_json::Value::as_str)
@@ -1278,6 +1208,484 @@ fn formatted_truncate_text(content: &str, max_tokens: usize) -> String {
     format!("Total output lines: {total_lines}\n\n{truncated}")
 }
 
+fn command_run_truncate_text(
+    content: &str,
+    max_tokens: usize,
+    command_line: Option<&str>,
+) -> String {
+    let effective_max_tokens = command_run_effective_max_tokens(max_tokens, command_line);
+    if content.len() <= effective_max_tokens * APPROX_CHARS_PER_TOKEN {
+        return content.to_string();
+    }
+    truncate_marker_sections_for_command_run(content, effective_max_tokens, command_line)
+        .or_else(|| {
+            truncate_query_sections_for_command_run(content, effective_max_tokens, command_line)
+        })
+        .or_else(|| truncate_ripgrep_file_sections_for_command_run(content, effective_max_tokens))
+        .unwrap_or_else(|| formatted_truncate_text(content, effective_max_tokens))
+}
+
+fn command_run_effective_max_tokens(max_tokens: usize, command_line: Option<&str>) -> usize {
+    let Some(command_line) = command_line else {
+        return max_tokens;
+    };
+    if extract_read_targets(command_line).len() == 1 {
+        max_tokens.saturating_mul(3)
+    } else {
+        max_tokens
+    }
+}
+
+fn truncate_marker_sections_for_command_run(
+    content: &str,
+    max_tokens: usize,
+    command_line: Option<&str>,
+) -> Option<String> {
+    let mut preamble = String::new();
+    let mut sections = Vec::<String>::new();
+    let mut current = String::new();
+    let mut bare_file_marker_index = 0usize;
+    let mut saw_bare_file_marker = false;
+    let read_targets = command_line.map(extract_read_targets).unwrap_or_default();
+
+    for chunk in content.split_inclusive('\n') {
+        if is_command_run_section_marker(chunk) {
+            if chunk.trim_end_matches(['\r', '\n']) == "---FILE---" {
+                saw_bare_file_marker = true;
+            }
+            let chunk = rewrite_bare_file_marker(chunk, &read_targets, &mut bare_file_marker_index);
+            if current.is_empty() {
+                current.push_str(&chunk);
+            } else {
+                sections.push(std::mem::take(&mut current));
+                current.push_str(&chunk);
+            }
+            continue;
+        }
+
+        if current.is_empty() {
+            preamble.push_str(chunk);
+        } else {
+            current.push_str(chunk);
+        }
+    }
+
+    if !current.is_empty() {
+        sections.push(current);
+    }
+
+    if saw_bare_file_marker && !read_targets.is_empty() {
+        split_first_bare_file_section(&mut preamble, &mut sections, &read_targets[0]);
+    }
+
+    if sections.is_empty() {
+        return None;
+    }
+
+    let mut output = String::new();
+    if !preamble.is_empty() {
+        output.push_str(&formatted_truncate_text(&preamble, max_tokens));
+        if !output.ends_with('\n') {
+            output.push('\n');
+        }
+    }
+
+    for section in sections {
+        output.push_str(&formatted_truncate_text(&section, max_tokens));
+        if !output.ends_with('\n') {
+            output.push('\n');
+        }
+    }
+
+    Some(output)
+}
+
+fn split_first_bare_file_section(
+    preamble: &mut String,
+    sections: &mut Vec<String>,
+    first_path: &str,
+) {
+    let Some(output_marker) = preamble.rfind("Output:\n") else {
+        return;
+    };
+    let file_body_start = output_marker + "Output:\n".len();
+    if file_body_start >= preamble.len() {
+        return;
+    }
+    let header = preamble[..file_body_start].to_string();
+    let first_body = preamble[file_body_start..].to_string();
+    *preamble = header;
+    sections.insert(0, format!("---FILE--- {first_path}\n{first_body}"));
+}
+
+fn rewrite_bare_file_marker(
+    line: &str,
+    read_targets: &[String],
+    bare_file_marker_index: &mut usize,
+) -> String {
+    let trimmed = line.trim_end_matches(['\r', '\n']);
+    if trimmed != "---FILE---" {
+        return line.to_string();
+    }
+    let target_index = bare_file_marker_index.saturating_add(1);
+    *bare_file_marker_index = bare_file_marker_index.saturating_add(1);
+    let Some(path) = read_targets.get(target_index) else {
+        return line.to_string();
+    };
+    let newline = if line.ends_with("\r\n") {
+        "\r\n"
+    } else if line.ends_with('\n') {
+        "\n"
+    } else {
+        ""
+    };
+    format!("---FILE--- {path}{newline}")
+}
+
+fn is_command_run_section_marker(line: &str) -> bool {
+    let trimmed = line.trim_end_matches(['\r', '\n']);
+    if let Some(path) = trimmed.strip_prefix("---FILE--- ") {
+        return !path.trim().is_empty();
+    }
+    if trimmed == "---FILE---" {
+        return true;
+    }
+    if !trimmed.starts_with("---") {
+        return false;
+    }
+    let Some(rest) = trimmed.strip_prefix("---") else {
+        return false;
+    };
+    let Some(label_end) = rest.find("---") else {
+        return false;
+    };
+    if label_end == 0 {
+        return false;
+    }
+    let label = &rest[..label_end];
+    if !label
+        .chars()
+        .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_' || ch == ' ')
+    {
+        return false;
+    }
+    rest[label_end + 3..]
+        .chars()
+        .next()
+        .is_some_and(char::is_whitespace)
+}
+
+fn extract_read_targets(command_line: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    let command_text = shell_command_text_for_read_targets(command_line)
+        .unwrap_or_else(|| command_line.trim().to_string());
+    let tokens = shell_like_tokens(&command_text);
+    let mut index = 0usize;
+    while index < tokens.len() {
+        let token = tokens[index].to_ascii_lowercase();
+        if (token == "get-content" || token == "gc" || token == "cat" || token == "type")
+            && index + 1 < tokens.len()
+        {
+            let mut next = index + 1;
+            while next < tokens.len() && tokens[next].starts_with('-') {
+                next += 1;
+            }
+            if let Some(path) = tokens
+                .get(next)
+                .and_then(|value| normalize_read_target(value))
+            {
+                if !targets.iter().any(|existing| existing == &path) {
+                    targets.push(path);
+                }
+            }
+            index = next;
+        }
+        index += 1;
+    }
+    targets
+}
+
+fn shell_command_text_for_read_targets(command_line: &str) -> Option<String> {
+    fn parse_candidate(candidate: &str, depth: usize) -> Option<String> {
+        if depth > 3 {
+            return None;
+        }
+        let value = serde_json::from_str::<serde_json::Value>(candidate).ok()?;
+        match value {
+            serde_json::Value::String(inner) => {
+                parse_candidate(inner.trim(), depth + 1).or_else(|| Some(inner.trim().to_string()))
+            }
+            serde_json::Value::Object(object) => object
+                .get("command")
+                .or_else(|| object.get("cmd"))
+                .or_else(|| object.get("command_line"))
+                .and_then(serde_json::Value::as_str)
+                .map(|value| value.trim().to_string()),
+            _ => None,
+        }
+    }
+
+    let trimmed = command_line.trim();
+    parse_candidate(trimmed, 0).or_else(|| {
+        if trimmed.contains("\\\"") {
+            parse_candidate(&trimmed.replace("\\\"", "\""), 0)
+        } else {
+            None
+        }
+    })
+}
+
+fn normalize_read_target(value: &str) -> Option<String> {
+    let trimmed = value
+        .trim()
+        .trim_matches(';')
+        .trim_matches(',')
+        .trim_matches('"')
+        .trim_matches('\'');
+    if trimmed.is_empty() || trimmed.starts_with('$') || trimmed.starts_with('|') {
+        return None;
+    }
+    if !(trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains('.')) {
+        return None;
+    }
+    Some(trimmed.replace('\\', "/"))
+}
+
+fn shell_like_tokens(value: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote = None::<char>;
+    let mut escaped = false;
+    for ch in value.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' && quote.is_some() {
+            escaped = true;
+            continue;
+        }
+        if let Some(active) = quote {
+            if ch == active {
+                quote = None;
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+        if ch == '"' || ch == '\'' {
+            quote = Some(ch);
+        } else if ch.is_whitespace() || ch == ';' {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+        } else {
+            current.push(ch);
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+fn truncate_query_sections_for_command_run(
+    content: &str,
+    max_tokens: usize,
+    command_line: Option<&str>,
+) -> Option<String> {
+    let terms = extract_query_terms(command_line?);
+    if terms.len() < 2 {
+        return None;
+    }
+
+    let mut preamble = String::new();
+    let mut sections = terms
+        .iter()
+        .map(|term| {
+            (
+                term.to_string(),
+                format!("---QUERY--- {term}\n"),
+                term.to_ascii_lowercase(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    for line in content.split_inclusive('\n') {
+        let lower = line.to_ascii_lowercase();
+        if let Some((_, section, _)) = sections
+            .iter_mut()
+            .find(|(_, _, term)| lower.contains(term.as_str()))
+        {
+            section.push_str(line);
+        } else {
+            preamble.push_str(line);
+        }
+    }
+
+    if sections
+        .iter()
+        .all(|(_, section, _)| section.lines().count() <= 1)
+    {
+        return None;
+    }
+
+    let mut output = String::new();
+    if !preamble.trim().is_empty() {
+        output.push_str(&formatted_truncate_text(&preamble, max_tokens));
+        if !output.ends_with('\n') {
+            output.push('\n');
+        }
+    }
+    for (_, section, _) in sections {
+        output.push_str(&formatted_truncate_text(&section, max_tokens));
+        if !output.ends_with('\n') {
+            output.push('\n');
+        }
+    }
+    Some(output)
+}
+
+fn extract_query_terms(command_line: &str) -> Vec<String> {
+    let lower = command_line.to_ascii_lowercase();
+    if !(lower.contains("rg ") || lower.contains("ripgrep") || lower.contains("select-string")) {
+        return Vec::new();
+    }
+
+    let mut terms = Vec::new();
+    for quoted in quoted_fragments(command_line) {
+        let candidates = if quoted.contains('|') {
+            quoted.split('|').collect::<Vec<_>>()
+        } else if should_split_space_separated_query(&quoted) {
+            quoted.split_whitespace().collect::<Vec<_>>()
+        } else {
+            vec![quoted.as_str()]
+        };
+        for candidate in candidates {
+            let term = normalize_query_term(candidate);
+            if is_query_term(&term) && !terms.iter().any(|existing| existing == &term) {
+                terms.push(term);
+            }
+        }
+    }
+    terms
+}
+
+fn should_split_space_separated_query(value: &str) -> bool {
+    let parts = value.split_whitespace().collect::<Vec<_>>();
+    parts.len() >= 2
+        && parts
+            .iter()
+            .all(|part| is_query_term(&normalize_query_term(part)))
+}
+
+fn quoted_fragments(value: &str) -> Vec<String> {
+    let mut fragments = Vec::new();
+    let mut current = String::new();
+    let mut quote = None::<char>;
+    let mut escaped = false;
+    for ch in value.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            if quote.is_some() {
+                escaped = true;
+            }
+            continue;
+        }
+        if let Some(active) = quote {
+            if ch == active {
+                fragments.push(std::mem::take(&mut current));
+                quote = None;
+            } else {
+                current.push(ch);
+            }
+        } else if ch == '"' || ch == '\'' {
+            quote = Some(ch);
+        }
+    }
+    fragments
+}
+
+fn normalize_query_term(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('(')
+        .trim_matches(')')
+        .replace("\\b", "")
+        .replace("\\s+", " ")
+        .replace(".*", "")
+        .trim()
+        .to_string()
+}
+
+fn is_query_term(value: &str) -> bool {
+    let len = value.chars().count();
+    (1..=80).contains(&len)
+        && value
+            .chars()
+            .any(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        && !value.contains("**/")
+        && !value.contains("*.")
+}
+
+fn truncate_ripgrep_file_sections_for_command_run(
+    content: &str,
+    max_tokens: usize,
+) -> Option<String> {
+    let mut preamble = String::new();
+    let mut sections = Vec::<(String, String)>::new();
+
+    for line in content.split_inclusive('\n') {
+        if let Some(path) = ripgrep_result_path(line) {
+            if let Some((_, section)) = sections.iter_mut().find(|(existing, _)| existing == &path)
+            {
+                section.push_str(line);
+            } else {
+                sections.push((path.clone(), format!("---MATCHES--- {path}\n{line}")));
+            }
+        } else {
+            preamble.push_str(line);
+        }
+    }
+
+    if sections.len() < 2 {
+        return None;
+    }
+
+    let mut output = String::new();
+    if !preamble.trim().is_empty() {
+        output.push_str(&formatted_truncate_text(&preamble, max_tokens));
+        if !output.ends_with('\n') {
+            output.push('\n');
+        }
+    }
+    for (_, section) in sections {
+        output.push_str(&formatted_truncate_text(&section, max_tokens));
+        if !output.ends_with('\n') {
+            output.push('\n');
+        }
+    }
+    Some(output)
+}
+
+fn ripgrep_result_path(line: &str) -> Option<String> {
+    let trimmed = line.trim_end_matches(['\r', '\n']);
+    let (path, rest) = trimmed.split_once(':')?;
+    if path.is_empty() || !path.contains('.') {
+        return None;
+    }
+    let line_number = rest.split_once(':').map(|(line, _)| line).unwrap_or(rest);
+    if line_number.is_empty() || !line_number.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    Some(path.replace('\\', "/"))
+}
+
 fn truncate_middle_with_token_budget(content: &str, max_tokens: usize) -> String {
     let max_chars = max_tokens.saturating_mul(APPROX_CHARS_PER_TOKEN);
     if content.len() <= max_chars {
@@ -1334,8 +1742,7 @@ mod tests {
     use super::{
         accumulate_message, accumulate_tool_result, accumulate_tool_result_with_feedback,
         build_context, command_run_function_output_for_context, command_run_summary_for_context,
-        messages_with_runtime_context, previous_command_evaluation_targets, ContextInput,
-        PreviousCommandEvaluationTarget,
+        command_run_truncate_text, messages_with_runtime_context, ContextInput,
     };
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
@@ -1390,6 +1797,28 @@ mod tests {
     }
 
     #[test]
+    fn command_run_single_file_read_gets_larger_truncation_budget() {
+        let content = format!(
+            "Exit code: 0\nWall time: 0.1 seconds\nOutput:\n{}",
+            "single file line\n".repeat(1_500)
+        );
+
+        let single = command_run_truncate_text(
+            &content,
+            2_500,
+            Some(r#"{"command":"Get-Content src/a.py","timeout_ms":10000}"#),
+        );
+        let batch = command_run_truncate_text(
+            &content,
+            2_500,
+            Some(r#"{"command":"Get-Content src/a.py; Get-Content src/b.py"}"#),
+        );
+
+        assert!(!single.contains("tokens truncated"), "{single}");
+        assert!(batch.contains("tokens truncated"), "{batch}");
+    }
+
+    #[test]
     fn build_context_includes_last_tool_call_response() {
         let mut session = session();
         accumulate_tool_result(
@@ -1406,7 +1835,6 @@ mod tests {
             runtime: runtime(&session),
             session,
             additional_messages: vec![],
-            use_previous_command_evaluations: true,
         })
         .expect("context should build");
 
@@ -1444,7 +1872,6 @@ mod tests {
             runtime: runtime(&session),
             session,
             additional_messages: vec![],
-            use_previous_command_evaluations: true,
         })
         .expect("context should build");
 
@@ -1476,7 +1903,6 @@ mod tests {
             Some("tura_coder"),
             Some("openai/gpt-test"),
             true,
-            false,
         );
 
         assert_eq!(messages.len(), 1);
@@ -1508,7 +1934,6 @@ mod tests {
             runtime: runtime(&session),
             session,
             additional_messages: vec![],
-            use_previous_command_evaluations: true,
         })
         .expect("context should build");
 
@@ -1537,7 +1962,6 @@ mod tests {
             runtime: runtime(&session),
             session,
             additional_messages: vec![],
-            use_previous_command_evaluations: true,
         })
         .expect("context should build");
 
@@ -1552,6 +1976,291 @@ mod tests {
         assert!(content.contains("tokens truncated"));
         assert!(!content.contains("maximum context depth reached"));
         assert!(content.len() < 41_000);
+    }
+
+    #[test]
+    fn command_run_context_truncates_grouped_file_reads_per_file_section() {
+        let grouped_output = format!(
+            "Exit code: 0\nWall time: 0.1 seconds\nOutput:\n---FILE--- src/a.py\n{}\n---FILE--- src/b.py\n{}\n---FILE--- src/c.py\n{}\n",
+            "a-head\n".repeat(4_000),
+            "b-middle\n".repeat(4_000),
+            "c-tail\n".repeat(4_000),
+        );
+        let value = json!({
+            "tool_name": "command_run",
+            "input": {
+                "commands": [
+                    {
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "command_line": "$files=@('src/a.py','src/b.py','src/c.py'); foreach ($f in $files) { Write-Output ('---FILE--- ' + $f); Get-Content $f }"
+                    }
+                ]
+            },
+            "output": {
+                "results": [
+                    {
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "success": true,
+                        "output": grouped_output
+                    }
+                ]
+            },
+            "success": true
+        });
+
+        let content = command_run_function_output_for_context(&value);
+
+        assert!(content.contains("---FILE--- src/a.py"));
+        assert!(content.contains("---FILE--- src/b.py"));
+        assert!(content.contains("---FILE--- src/c.py"));
+        assert!(
+            content.matches("tokens truncated").count() >= 3,
+            "each large file section should be truncated independently: {content}"
+        );
+    }
+
+    #[test]
+    fn command_run_context_truncates_grouped_queries_per_condition() {
+        let grouped_output = format!(
+            "Exit code: 0\nWall time: 0.1 seconds\nOutput:\n{}\n{}\n{}\n",
+            "src/a.py:1:alpha keyword hit\n".repeat(4_000),
+            "src/b.py:2:beta keyword hit\n".repeat(4_000),
+            "src/c.py:3:gamma keyword hit\n".repeat(4_000),
+        );
+        let value = json!({
+            "tool_name": "command_run",
+            "input": {
+                "commands": [
+                    {
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "command_line": "rg -n \"alpha|beta|gamma\" src"
+                    }
+                ]
+            },
+            "output": {
+                "results": [
+                    {
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "success": true,
+                        "output": grouped_output
+                    }
+                ]
+            },
+            "success": true
+        });
+
+        let content = command_run_function_output_for_context(&value);
+
+        assert!(content.contains("---QUERY--- alpha"));
+        assert!(content.contains("---QUERY--- beta"));
+        assert!(content.contains("---QUERY--- gamma"));
+        assert!(
+            content.matches("tokens truncated").count() >= 3,
+            "each query condition should be truncated independently: {content}"
+        );
+    }
+
+    #[test]
+    fn command_run_context_keeps_all_markers_for_large_grouped_file_batch() {
+        let files = (0..25)
+            .map(|index| format!("src/retail_core/file_{index:02}.py"))
+            .collect::<Vec<_>>();
+        let mut grouped_output = String::from("Exit code: 0\nWall time: 0.6 seconds\nOutput:\n");
+        for file in &files {
+            grouped_output.push_str(&format!("---FILE--- {file}\n"));
+            grouped_output.push_str(&format!("{file} important header\n"));
+            grouped_output.push_str(&format!("{}\n", "body line\n".repeat(3_000)));
+            grouped_output.push_str(&format!("{file} important tail\n"));
+        }
+        let command_line = format!(
+            "$files=@({}); foreach ($f in $files) {{ Write-Output ('---FILE--- ' + $f); Get-Content $f }}",
+            files
+                .iter()
+                .map(|file| format!("'{file}'"))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let value = json!({
+            "tool_name": "command_run",
+            "input": {
+                "commands": [
+                    {
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "command_line": command_line
+                    }
+                ]
+            },
+            "output": {
+                "results": [
+                    {
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "success": true,
+                        "output": grouped_output
+                    }
+                ]
+            },
+            "success": true
+        });
+
+        let content = command_run_function_output_for_context(&value);
+
+        for file in &files {
+            assert!(
+                content.contains(&format!("---FILE--- {file}")),
+                "missing grouped file marker for {file}"
+            );
+            assert!(
+                content.contains(&format!("{file} important header"))
+                    || content.contains(&format!("{file} important tail")),
+                "missing retained content for {file}"
+            );
+        }
+        assert!(
+            content.matches("tokens truncated").count() >= files.len(),
+            "each oversized file section should be independently truncated"
+        );
+    }
+
+    #[test]
+    fn command_run_context_keeps_all_markers_for_large_multi_query_batch() {
+        let terms = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"];
+        let mut output = String::from("Exit code: 0\nWall time: 0.2 seconds\nOutput:\n");
+        for term in terms {
+            output.push_str(&format!(
+                "{}",
+                format!("src/{term}.py:1:{term} match\n").repeat(3_000)
+            ));
+        }
+        let value = json!({
+            "tool_name": "command_run",
+            "input": {
+                "commands": [
+                    {
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "command_line": "rg -n \"alpha|beta|gamma|delta|epsilon|zeta\" src"
+                    }
+                ]
+            },
+            "output": {
+                "results": [
+                    {
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "success": true,
+                        "output": output
+                    }
+                ]
+            },
+            "success": true
+        });
+
+        let content = command_run_function_output_for_context(&value);
+
+        for term in terms {
+            assert!(
+                content.contains(&format!("---QUERY--- {term}")),
+                "missing query marker for {term}"
+            );
+            assert!(content.contains(&format!("{term} match")));
+        }
+        assert!(
+            content.matches("tokens truncated").count() >= terms.len(),
+            "each oversized query section should be independently truncated"
+        );
+    }
+
+    #[test]
+    fn command_run_context_splits_space_separated_query_terms() {
+        let output = format!(
+            "Exit code: 0\nWall time: 0.2 seconds\nOutput:\n{}{}{}{}{}{}\n",
+            "src/a.py:1:a keyword\n".repeat(1_000),
+            "src/b.py:1:b keyword\n".repeat(1_000),
+            "src/c.py:1:c keyword\n".repeat(1_000),
+            "src/e.py:1:e function\n".repeat(1_000),
+            "src/d.py:1:d function\n".repeat(1_000),
+            "src/f.py:1:f function\n".repeat(1_000),
+        );
+        let value = json!({
+            "tool_name": "command_run",
+            "input": {
+                "commands": [
+                    {
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "command_line": "rg -n \"a b c\" src; rg -n \"e d f\" src"
+                    }
+                ]
+            },
+            "output": {
+                "results": [
+                    {
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "success": true,
+                        "output": output
+                    }
+                ]
+            },
+            "success": true
+        });
+
+        let content = command_run_function_output_for_context(&value);
+
+        for term in ["a", "b", "c", "e", "d", "f"] {
+            assert!(
+                content.contains(&format!("---QUERY--- {term}")),
+                "missing query marker for {term}: {content}"
+            );
+        }
+    }
+
+    #[test]
+    fn command_run_context_labels_bare_file_markers_from_command_line_reads() {
+        let grouped_output = format!(
+            "Exit code: 0\nWall time: 0.1 seconds\nOutput:\n{}\n---FILE---\n{}\n---FILE---\n{}\n",
+            "a content\n".repeat(3_000),
+            "b content\n".repeat(3_000),
+            "c content\n".repeat(3_000),
+        );
+        let value = json!({
+            "tool_name": "command_run",
+            "input": {
+                "commands": [
+                    {
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "command_line": "{\"command\":\"Get-Content src/a.py; Write-Host '---FILE---'; Get-Content src/b.py; Write-Host '---FILE---'; Get-Content src/c.py\",\"timeout_ms\":10000}"
+                    }
+                ]
+            },
+            "output": {
+                "results": [
+                    {
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "success": true,
+                        "output": grouped_output
+                    }
+                ]
+            },
+            "success": true
+        });
+
+        let content = command_run_function_output_for_context(&value);
+
+        assert!(content.contains("---FILE--- src/b.py"));
+        assert!(content.contains("---FILE--- src/c.py"));
+        assert!(
+            content.matches("tokens truncated").count() >= 3,
+            "bare marker sections should still be independently truncated: {content}"
+        );
     }
 
     #[test]
@@ -1572,7 +2281,6 @@ mod tests {
             runtime: runtime(&session),
             session,
             additional_messages: vec![],
-            use_previous_command_evaluations: true,
         })
         .expect("context should build");
         let contents = output
@@ -1631,7 +2339,6 @@ mod tests {
             runtime: runtime(&session),
             session,
             additional_messages: vec![],
-            use_previous_command_evaluations: false,
         })
         .expect("context should build");
 
@@ -1649,7 +2356,137 @@ mod tests {
     }
 
     #[test]
-    fn command_run_function_output_backfills_exact_current_json_text() {
+    fn command_run_tool_results_persist_exact_response_items_for_cache_prefix() {
+        let mut session = session();
+        accumulate_tool_result(
+            &mut session,
+            "command_run",
+            json!({
+                "commands": [{
+                    "step": 1,
+                    "command_type": "shell_command",
+                    "command_line": "python -m pytest tests/test_orders.py"
+                }]
+            }),
+            json!({
+                "results": [{
+                    "step": 1,
+                    "command": "shell_command",
+                    "success": false,
+                    "output": "Exit code: 1\nOutput:\norders failed"
+                }]
+            }),
+            false,
+            Some("tests failed".to_string()),
+        )
+        .expect("tool result should be logged");
+
+        let entry = session
+            .session_log
+            .iter()
+            .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+            .find(|value| value.get("type").and_then(|kind| kind.as_str()) == Some("tool_result"))
+            .expect("tool_result should be persisted");
+        let context_messages = entry["context_messages"]
+            .as_array()
+            .expect("context messages should be persisted");
+        assert_eq!(context_messages.len(), 2);
+        assert_eq!(context_messages[0]["type"], "function_call");
+        assert_eq!(context_messages[0]["name"], "command_run");
+        assert_eq!(context_messages[1]["type"], "function_call_output");
+        assert_eq!(
+            context_messages[0]["call_id"],
+            context_messages[1]["call_id"]
+        );
+
+        let output = build_context(ContextInput {
+            runtime: runtime(&session),
+            session,
+            additional_messages: vec![],
+        })
+        .expect("context should build");
+        assert!(output
+            .messages
+            .windows(2)
+            .any(|pair| pair[0] == context_messages[0] && pair[1] == context_messages[1]));
+    }
+
+    #[test]
+    fn command_run_context_prefix_is_append_only_across_later_tool_results() {
+        let mut session = session();
+        session.input.user_input = "fix the checkout bug".to_string();
+        let large_output = "Exit code: 0\nOutput:\n".to_string() + &"line\n".repeat(200);
+        accumulate_tool_result(
+            &mut session,
+            "command_run",
+            json!({
+                "commands": [{
+                    "step": 1,
+                    "command_type": "shell_command",
+                    "command_line": "Get-Content src/checkout.py"
+                }]
+            }),
+            json!({
+                "results": [{
+                    "step": 1,
+                    "command": "shell_command",
+                    "success": true,
+                    "output": large_output
+                }]
+            }),
+            true,
+            None,
+        )
+        .expect("first command_run result should be logged");
+
+        let first_messages = build_context(ContextInput {
+            runtime: runtime(&session),
+            session: session.clone(),
+            additional_messages: vec![],
+        })
+        .expect("first context should build")
+        .messages;
+
+        accumulate_tool_result(
+            &mut session,
+            "command_run",
+            json!({
+                "commands": [{
+                    "step": 1,
+                    "command_type": "apply_patch",
+                    "command_line": "*** Begin Patch\n*** Update File: src/checkout.py\n@@\n-old\n+new\n*** End Patch"
+                }]
+            }),
+            json!({
+                "results": [{
+                    "step": 1,
+                    "command": "apply_patch",
+                    "success": true,
+                    "output": "Success. Updated the following files:\nM src/checkout.py"
+                }]
+            }),
+            true,
+            None,
+        )
+        .expect("second command_run result should be logged");
+
+        let second_messages = build_context(ContextInput {
+            runtime: runtime(&session),
+            session,
+            additional_messages: vec![],
+        })
+        .expect("second context should build")
+        .messages;
+
+        assert!(second_messages.len() > first_messages.len());
+        assert_eq!(
+            &second_messages[..first_messages.len()],
+            first_messages.as_slice()
+        );
+    }
+
+    #[test]
+    fn command_run_function_output_backfills_current_json_text_with_command_type_key() {
         let value = json!({
             "tool_name": "command_run",
             "input": {
@@ -1676,7 +2513,7 @@ mod tests {
             }
         });
 
-        let output = command_run_function_output_for_context(&value, true);
+        let output = command_run_function_output_for_context(&value);
         assert_eq!(
             output,
             concat!(
@@ -1684,7 +2521,7 @@ mod tests {
                 "  \"results\": [\n",
                 "    {\n",
                 "      \"step\": 1,\n",
-                "      \"command\": \"shell_command\",\n",
+                "      \"command_type\": \"shell_command\",\n",
                 "      \"success\": false,\n",
                 "      \"output\": \"Exit code: 1\\nWall time: 2.7 seconds\\nOutput:\\nverify failed\\n\"\n",
                 "    }\n",
@@ -1696,6 +2533,58 @@ mod tests {
         assert!(!output.contains("\"stdout\""));
         assert!(!output.contains("\"stderr\""));
         assert!(!output.contains("Total output lines"));
+        assert!(!output.contains("\"command\":"));
+    }
+
+    #[test]
+    fn build_context_never_compacts_older_command_run_results_by_count() {
+        let mut session = session();
+        for index in 0..16 {
+            accumulate_tool_result(
+                &mut session,
+                "command_run",
+                json!({
+                    "commands": [{
+                        "step": index + 1,
+                        "command": "shell_command",
+                        "command_line": format!("echo unique-output-{index}")
+                    }]
+                }),
+                json!({
+                    "results": [{
+                        "step": index + 1,
+                        "command": "shell_command",
+                        "success": true,
+                        "output": format!("Exit code: 0\nOutput:\nunique-output-{index}")
+                    }]
+                }),
+                true,
+                None,
+            )
+            .expect("command_run result should be logged");
+        }
+
+        let output = build_context(ContextInput {
+            runtime: runtime(&session),
+            session,
+            additional_messages: vec![],
+        })
+        .expect("context should build");
+        let joined = output
+            .messages
+            .iter()
+            .filter_map(|message| {
+                message
+                    .get("output")
+                    .or_else(|| message.get("content"))
+                    .and_then(|value| value.as_str())
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(joined.contains("unique-output-0"));
+        assert!(joined.contains("unique-output-15"));
+        assert!(!joined.contains("older command_run output compacted"));
     }
 
     #[test]
@@ -1726,7 +2615,6 @@ mod tests {
             runtime: runtime(&session),
             session,
             additional_messages: vec![],
-            use_previous_command_evaluations: true,
         })
         .expect("context should build");
         let joined = output
@@ -1736,7 +2624,6 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(joined.contains("completed_not_helpful"));
         assert!(joined.contains("grep"));
         assert!(joined.contains("secret-output.rs"));
         assert!(joined.contains("secret_command"));
@@ -1771,7 +2658,6 @@ mod tests {
             runtime: runtime(&session),
             session,
             additional_messages: vec![],
-            use_previous_command_evaluations: false,
         })
         .expect("context should build");
         let joined = output
@@ -1781,7 +2667,6 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(joined.contains("completed_not_helpful"));
         assert!(!joined.contains("Tool result enum evaluations"));
         assert!(joined.contains("latest output"));
         assert!(joined.contains("secret-output.rs"));
@@ -1852,7 +2737,6 @@ mod tests {
             runtime: runtime(&session),
             session,
             additional_messages: vec![],
-            use_previous_command_evaluations: false,
         })
         .expect("context should build");
         let joined = output
@@ -1864,7 +2748,6 @@ mod tests {
 
         assert!(joined.contains("django__django-11049 target metadata"));
         assert!(joined.contains("predictions.jsonl"));
-        assert!(!joined.contains("previous_command_evaluations"));
     }
 
     #[test]
@@ -1885,7 +2768,6 @@ mod tests {
             runtime: runtime(&session),
             session: session.clone(),
             additional_messages: vec![],
-            use_previous_command_evaluations: false,
         })
         .expect("first context should build");
         let first_tool_message = first_output
@@ -1916,7 +2798,6 @@ mod tests {
             runtime: runtime(&session),
             session,
             additional_messages: vec![],
-            use_previous_command_evaluations: false,
         })
         .expect("second context should build");
 
@@ -1939,16 +2820,9 @@ mod tests {
             Some("tura_general"),
             Some("model"),
             false,
-            true,
         );
-        let disabled = messages_with_runtime_context(
-            &session,
-            &[],
-            Some("tura_coder"),
-            Some("model"),
-            false,
-            false,
-        );
+        let disabled =
+            messages_with_runtime_context(&session, &[], Some("tura_coder"), Some("model"), false);
 
         assert!(enabled.is_empty());
         assert!(disabled.is_empty());
@@ -1982,7 +2856,6 @@ mod tests {
             runtime: runtime(&session),
             session,
             additional_messages: vec![],
-            use_previous_command_evaluations: true,
         })
         .expect("context should build");
         let joined = output
@@ -2050,7 +2923,6 @@ mod tests {
             runtime: runtime(&session),
             session,
             additional_messages: vec![],
-            use_previous_command_evaluations: true,
         })
         .expect("context should build");
         let joined = output
@@ -2119,7 +2991,6 @@ mod tests {
             runtime: runtime(&session),
             session,
             additional_messages: vec![],
-            use_previous_command_evaluations: true,
         })
         .expect("context should build");
         let joined = output
@@ -2308,54 +3179,5 @@ mod tests {
         assert!(text.contains("SyntaxError: Invalid regular expression"));
         assert!(text.contains("python: passed"));
         assert!(!text.contains("test_ok ... ok"));
-    }
-
-    #[test]
-    fn previous_command_evaluation_targets_lists_last_command_run_commands() {
-        let mut session = session();
-        accumulate_tool_result(
-            &mut session,
-            "command_run",
-            json!({
-                "commands": [
-                    { "command": "shell_command", "command_line": "pwd" },
-                    { "command": "shell_command", "command_line": "rg needle" }
-                ]
-            }),
-            json!({ "ok": true }),
-            true,
-            None,
-        )
-        .expect("command_run result should be logged");
-
-        assert_eq!(
-            previous_command_evaluation_targets(&session),
-            vec![
-                PreviousCommandEvaluationTarget {
-                    step: 1,
-                    command: "shell_command".to_string(),
-                },
-                PreviousCommandEvaluationTarget {
-                    step: 2,
-                    command: "shell_command".to_string(),
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn previous_command_evaluation_targets_ignores_non_command_run_tool_results() {
-        let mut session = session();
-        accumulate_tool_result(
-            &mut session,
-            "write_file",
-            json!([{ "path": "src/lib.rs", "content": "updated" }]),
-            json!({ "ok": true }),
-            true,
-            None,
-        )
-        .expect("write_file result should be logged");
-
-        assert!(previous_command_evaluation_targets(&session).is_empty());
     }
 }

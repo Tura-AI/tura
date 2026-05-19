@@ -4,6 +4,7 @@ pub const POLICY: &str = include_str!("policy.toml");
 pub const SCHEMA: &str = include_str!("schema.json");
 
 use super::{apply_patch, CommandResponse};
+use crate::runtime::file_locks::Access;
 use crate::runtime::tool::{
     FunctionToolOutput, ToolCall, ToolContext, ToolError, ToolHandler, ToolPayload,
 };
@@ -33,6 +34,17 @@ impl ToolHandler for ShellCommandHandler {
         !looks_read_only_with_root(&payload_command_line(&call.payload), &ctx.session_dir)
     }
 
+    async fn access(&self, call: &ToolCall, ctx: &ToolContext) -> Access {
+        if self.is_mutating(call, ctx).await {
+            Access {
+                workspace_write: true,
+                ..Access::default()
+            }
+        } else {
+            Access::default()
+        }
+    }
+
     async fn handle(
         &self,
         call: ToolCall,
@@ -48,7 +60,7 @@ impl ToolHandler for ShellCommandHandler {
         .await;
         let success = response.success;
         Ok(FunctionToolOutput::from_value(
-            response.output,
+            shell_output_value(response),
             Some(success),
         ))
     }
@@ -77,23 +89,22 @@ pub(super) fn execute_with_shell(
     }
     let use_bash =
         shell_kind == "bash" || (cfg!(windows) && looks_posix_shell_script(&request.command));
+    let command_text = space_batched_read_command(&request.command, use_bash)
+        .unwrap_or_else(|| request.command.clone());
     let mut command = if use_bash {
         let bash = bash_executable();
         let mut command = Command::new(bash);
         command
             .arg("-lc")
-            .arg(normalize_bash_command(&request.command));
+            .arg(normalize_bash_command(&command_text));
         command
     } else if cfg!(windows) {
         let mut command = Command::new(powershell_executable());
-        command
-            .arg("-NoProfile")
-            .arg("-Command")
-            .arg(&request.command);
+        command.arg("-NoProfile").arg("-Command").arg(&command_text);
         command
     } else {
         let mut command = Command::new("/bin/bash");
-        command.arg("-lc").arg(&request.command);
+        command.arg("-lc").arg(&command_text);
         command
     };
     command.current_dir(&request.cwd);
@@ -117,23 +128,25 @@ pub(super) async fn execute_async_with_shell(
     }
     let use_bash =
         shell_kind == "bash" || (cfg!(windows) && looks_posix_shell_script(&request.command));
+    let command_text = space_batched_read_command(&request.command, use_bash)
+        .unwrap_or_else(|| request.command.clone());
     let mut command = if use_bash {
         let bash = bash_executable();
         let mut command = tokio::process::Command::new(bash);
         command
             .arg("-lc")
-            .arg(normalize_bash_command(&request.command));
+            .arg(normalize_bash_command(&command_text));
         command
     } else if cfg!(windows) {
         let mut command = tokio::process::Command::new(powershell_executable());
         command
             .arg("-NoProfile")
             .arg("-Command")
-            .arg(prefix_powershell_script_with_utf8(&request.command));
+            .arg(prefix_powershell_script_with_utf8(&command_text));
         command
     } else {
         let mut command = tokio::process::Command::new("/bin/bash");
-        command.arg("-lc").arg(&request.command);
+        command.arg("-lc").arg(&command_text);
         command
     };
     command.current_dir(&request.cwd);
@@ -393,6 +406,36 @@ fn failed_async_response(message: &str, exit_code: i32) -> CommandResponse {
         output: Value::String(message.to_string()),
         changes: Vec::new(),
     }
+}
+
+fn shell_output_value(response: CommandResponse) -> Value {
+    json_like_output(
+        response.exit_code,
+        response.stdout,
+        response.stderr,
+        response.output,
+        response.changes,
+    )
+}
+
+pub(crate) fn json_like_output(
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
+    output: Value,
+    changes: Vec<Value>,
+) -> Value {
+    let transcript = output.as_str().unwrap_or_default().to_string();
+    let mut object = serde_json::Map::new();
+    object.insert("exit_code".to_string(), Value::Number(exit_code.into()));
+    object.insert("stdout".to_string(), Value::String(stdout));
+    object.insert("stderr".to_string(), Value::String(stderr));
+    object.insert("output".to_string(), output);
+    object.insert("transcript".to_string(), Value::String(transcript));
+    if !changes.is_empty() {
+        object.insert("changes".to_string(), Value::Array(changes));
+    }
+    Value::Object(object)
 }
 
 fn configure_process_group(command: &mut Command) {
@@ -693,6 +736,250 @@ fn normalize_shell_command_text(command: &str) -> String {
     }
 }
 
+fn space_batched_read_command(command: &str, use_bash: bool) -> Option<String> {
+    if command.contains('\n') {
+        return None;
+    }
+    let parts = split_shell_sequence(command)?;
+    let parsed = parts
+        .iter()
+        .map(|part| simple_read_command(part, use_bash))
+        .collect::<Option<Vec<_>>>()?;
+    let target_count = parsed
+        .iter()
+        .map(|command| command.targets.len())
+        .sum::<usize>();
+    if target_count < 2 {
+        return None;
+    }
+
+    let mut spaced = Vec::with_capacity(target_count * 2);
+    for command in parsed {
+        for target in &command.targets {
+            if !spaced.is_empty() {
+                spaced.push(blank_line_command(use_bash).to_string());
+            }
+            spaced.push(command.command_for_target(target, use_bash));
+        }
+    }
+
+    Some(spaced.join("; "))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SimpleReadCommand {
+    prefix: Vec<String>,
+    targets: Vec<String>,
+}
+
+fn split_shell_sequence(command: &str) -> Option<Vec<&str>> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut single_quoted = false;
+    let mut double_quoted = false;
+    let mut escaped = false;
+
+    for (index, ch) in command.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' && !single_quoted {
+            escaped = true;
+            continue;
+        }
+        match ch {
+            '\'' if !double_quoted => single_quoted = !single_quoted,
+            '"' if !single_quoted => double_quoted = !double_quoted,
+            ';' if !single_quoted && !double_quoted => {
+                let part = command[start..index].trim();
+                if part.is_empty() {
+                    return None;
+                }
+                parts.push(part);
+                start = index + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+
+    if single_quoted || double_quoted {
+        return None;
+    }
+    let tail = command[start..].trim();
+    if tail.is_empty() {
+        return None;
+    }
+    parts.push(tail);
+    Some(parts)
+}
+
+fn simple_read_command(command: &str, use_bash: bool) -> Option<SimpleReadCommand> {
+    if command
+        .chars()
+        .any(|ch| matches!(ch, '|' | '>' | '<' | '&' | '`' | '{' | '}'))
+        || command.contains("$(")
+    {
+        return None;
+    }
+    let tokens = shell_words(command, use_bash)?;
+    let cmd = tokens.first()?.to_ascii_lowercase();
+    if !matches!(cmd.as_str(), "get-content" | "gc" | "cat" | "type") {
+        return None;
+    }
+
+    let mut prefix = vec![tokens[0].clone()];
+    let mut targets = Vec::new();
+    let mut index = 1usize;
+    while index < tokens.len() {
+        let token = tokens[index].as_str();
+        if token == "--" {
+            prefix.push(token.to_string());
+            index += 1;
+            continue;
+        }
+        if use_bash && token.starts_with('-') {
+            prefix.push(token.to_string());
+            index += 1;
+            continue;
+        }
+        if !use_bash && token.starts_with('-') {
+            let option = token.to_ascii_lowercase();
+            prefix.push(token.to_string());
+            index += 1;
+            if powershell_option_takes_value(&option) && index < tokens.len() {
+                if powershell_path_option(&option) {
+                    collect_read_targets(&tokens[index], &mut targets)?;
+                } else {
+                    prefix.push(tokens[index].clone());
+                }
+                index += 1;
+            }
+            continue;
+        }
+        collect_read_targets(token, &mut targets)?;
+        index += 1;
+    }
+
+    (!targets.is_empty()).then_some(SimpleReadCommand { prefix, targets })
+}
+
+impl SimpleReadCommand {
+    fn command_for_target(&self, target: &str, use_bash: bool) -> String {
+        let mut tokens = self.prefix.clone();
+        tokens.push(shell_quote_for_runtime(target, use_bash));
+        tokens.join(" ")
+    }
+}
+
+fn powershell_option_takes_value(option: &str) -> bool {
+    matches!(
+        option,
+        "-path"
+            | "-literalpath"
+            | "-filepath"
+            | "-totalcount"
+            | "-head"
+            | "-first"
+            | "-tail"
+            | "-last"
+            | "-encoding"
+            | "-readcount"
+            | "-delimiter"
+            | "-filter"
+            | "-include"
+            | "-exclude"
+    )
+}
+
+fn powershell_path_option(option: &str) -> bool {
+    matches!(option, "-path" | "-literalpath" | "-filepath")
+}
+
+fn collect_read_targets(token: &str, targets: &mut Vec<String>) -> Option<()> {
+    for part in token.split(',') {
+        let target = normalize_read_target_for_marker(part)?;
+        targets.push(target);
+    }
+    Some(())
+}
+
+fn shell_words(command: &str, escape_backslash: bool) -> Option<Vec<String>> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut single_quoted = false;
+    let mut double_quoted = false;
+    let mut escaped = false;
+
+    for ch in command.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        if escape_backslash && ch == '\\' && !single_quoted {
+            escaped = true;
+            continue;
+        }
+        match ch {
+            '\'' if !double_quoted => single_quoted = !single_quoted,
+            '"' if !single_quoted => double_quoted = !double_quoted,
+            ch if ch.is_whitespace() && !single_quoted && !double_quoted => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if escaped {
+        current.push('\\');
+    }
+    if single_quoted || double_quoted {
+        return None;
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    Some(tokens)
+}
+
+fn normalize_read_target_for_marker(value: &str) -> Option<String> {
+    let target = value.trim().trim_matches(';').trim_matches(',');
+    if target.is_empty() || target.starts_with('$') || target.starts_with('|') {
+        return None;
+    }
+    if !(target.contains('/') || target.contains('\\') || target.contains('.')) {
+        return None;
+    }
+    Some(target.to_string())
+}
+
+fn shell_quote_for_runtime(value: &str, use_bash: bool) -> String {
+    if use_bash {
+        format!("'{}'", sh_single_quote(value))
+    } else {
+        format!("'{}'", powershell_single_quote(value))
+    }
+}
+
+fn blank_line_command(use_bash: bool) -> &'static str {
+    if use_bash {
+        "printf '\\n'"
+    } else {
+        "Write-Output ''"
+    }
+}
+
+fn powershell_single_quote(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+fn sh_single_quote(value: &str) -> String {
+    value.replace('\'', "'\"'\"'")
+}
+
 fn embedded_apply_patch_text(command: &str) -> Option<String> {
     let begin = command.find("*** Begin Patch")?;
     let after_begin = &command[begin..];
@@ -896,8 +1183,9 @@ fn contains_shell_write_operator(command: &str) -> bool {
 mod tests {
     use super::{
         embedded_apply_patch_text, execute_with_shell, looks_posix_shell_script,
-        normalize_bash_command, parse_shell_request,
+        normalize_bash_command, parse_shell_request, space_batched_read_command,
     };
+    use std::fs;
     use std::path::Path;
     use std::time::{Duration, Instant};
 
@@ -1051,6 +1339,112 @@ mod tests {
 
         assert_eq!(request.command, "rg -n needle src");
         assert_eq!(request.timeout_secs, 120);
+    }
+
+    #[test]
+    fn spaces_simple_powershell_batch_reads_without_file_markers() {
+        let command = "Get-Content tests/a.py; Get-Content -Raw \"src/b.py\"; gc -Path src/c.py";
+
+        let spaced =
+            space_batched_read_command(command, false).expect("simple read batch should be spaced");
+
+        assert!(!spaced.contains("---FILE---"));
+        assert!(spaced.contains("Get-Content 'tests/a.py'"));
+        assert!(spaced.contains("Write-Output ''"));
+        assert!(spaced.contains("Get-Content -Raw 'src/b.py'"));
+        assert!(spaced.contains("gc -Path 'src/c.py'"));
+    }
+
+    #[test]
+    fn spaces_simple_bash_batch_reads_without_file_markers() {
+        let command = "cat src/a.py; cat -- 'src/b.py'";
+
+        let spaced = space_batched_read_command(command, true)
+            .expect("simple bash read batch should be spaced");
+
+        assert!(!spaced.contains("---FILE---"));
+        assert!(spaced.contains("cat 'src/a.py'"));
+        assert!(spaced.contains("printf '\\n'"));
+        assert!(spaced.contains("cat -- 'src/b.py'"));
+    }
+
+    #[test]
+    fn spaces_multi_target_read_commands() {
+        let powershell = space_batched_read_command(
+            "Get-Content -Path src/a.py,src/b.py; type .\\src\\c.py",
+            false,
+        )
+        .expect("multi-target powershell reads should be spaced");
+
+        assert!(powershell.contains("Get-Content -Path 'src/a.py'"));
+        assert!(powershell.contains("Write-Output ''"));
+        assert!(powershell.contains("Get-Content -Path 'src/b.py'"));
+        assert!(powershell.contains("type '.\\src\\c.py'"));
+        assert!(!powershell.contains("---FILE---"));
+
+        let bash = space_batched_read_command("cat src/a.py src/b.py", true)
+            .expect("multi-target bash reads should be spaced");
+        assert!(bash.contains("cat 'src/a.py'"));
+        assert!(bash.contains("printf '\\n'"));
+        assert!(bash.contains("cat 'src/b.py'"));
+        assert!(!bash.contains("---FILE---"));
+    }
+
+    #[test]
+    fn preserves_safe_read_options_when_spacing() {
+        let spaced =
+            space_batched_read_command("Get-Content -TotalCount 40 -Path src/a.py,src/b.py", false)
+                .expect("safe read options should be preserved");
+
+        assert!(spaced.contains("Get-Content -TotalCount 40 -Path 'src/a.py'"));
+        assert!(spaced.contains("Write-Output ''"));
+        assert!(spaced.contains("Get-Content -TotalCount 40 -Path 'src/b.py'"));
+    }
+
+    #[test]
+    fn does_not_space_complex_or_single_read_commands() {
+        assert!(space_batched_read_command("Get-Content src/a.py", false).is_none());
+        assert!(space_batched_read_command(
+            "Get-Content src/a.py | Select-String needle; Get-Content src/b.py",
+            false
+        )
+        .is_none());
+        assert!(space_batched_read_command(
+            "$files=@('src/a.py','src/b.py'); foreach ($f in $files) { Get-Content $f }",
+            false
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn executed_simple_batch_reads_emit_plain_output_with_blank_line_separator() {
+        let root =
+            std::env::temp_dir().join(format!("tura-shell-batch-read-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src")).expect("create temp src");
+        fs::write(root.join("src/a.txt"), "alpha\n").expect("write a");
+        fs::write(root.join("src/b.txt"), "bravo\n").expect("write b");
+
+        let (command, shell_kind) = if cfg!(windows) {
+            (
+                "Get-Content src/a.txt; Get-Content src/b.txt",
+                "shell_command",
+            )
+        } else {
+            ("cat src/a.txt; cat src/b.txt", "bash")
+        };
+        let response = execute_with_shell(command, &root, 10, shell_kind);
+        let _ = fs::remove_dir_all(&root);
+
+        assert!(response.success, "{}", response.stderr);
+        let output = response.output.as_str().unwrap_or_default();
+        assert!(!output.contains("---FILE---"), "{output}");
+        assert!(output.contains("alpha"), "{output}");
+        assert!(output.contains("bravo"), "{output}");
+        assert!(
+            output.contains("alpha\n\nbravo") || output.contains("alpha\r\n\r\nbravo"),
+            "{output}"
+        );
     }
 
     #[test]

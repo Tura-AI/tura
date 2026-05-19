@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::error;
 
@@ -9,6 +10,7 @@ use crate::state_machine::runtime_management::{
 };
 use crate::state_machine::session_management::SessionId;
 
+use super::runtime_recieve::command_run_stream_event_command;
 use super::types::{RuntimeQueueItem, ToolCallData};
 
 const COMMAND_RUN_TOOL_NAME: &str = "command_run";
@@ -20,6 +22,7 @@ pub struct CallRuntimeInput {
     pub provider_name: String,
     pub stream: bool,
     pub tool_choice: Option<serde_json::Value>,
+    pub session_directory: PathBuf,
 }
 
 pub async fn call_runtime(
@@ -92,6 +95,7 @@ pub async fn call_runtime(
             &tura_config,
             provider_messages,
             call_options,
+            input.session_directory.clone(),
         )
         .await?;
     } else {
@@ -277,17 +281,7 @@ fn parallel_tool_calls_enabled(
         }
     }
 
-    route_config
-        .providers
-        .first()
-        .map(|provider| {
-            matches!(
-                provider.provider.as_str(),
-                "openai" | "minimax" | "anthropic"
-            )
-        })
-        .filter(|supported| *supported)
-        .map(|_| true)
+    route_config.providers.first().map(|_| false)
 }
 
 fn session_service_tier() -> Option<String> {
@@ -435,7 +429,8 @@ async fn call_runtime_non_streaming(
                 .mark_first_token(finished_at)
                 .map_err(|e| format!("failed to mark first token: {}", e))?;
 
-            let usage = usage_report_from_metrics(response.metrics, started_at, finished_at);
+            let usage =
+                usage_report_from_metrics(response.metrics, started_at, finished_at, finished_at);
 
             runtime
                 .finish_success(finished_at, usage)
@@ -583,13 +578,44 @@ async fn call_runtime_streaming(
     tura_config: &Arc<tura_llm_rust::TuraConfig>,
     messages: Vec<serde_json::Value>,
     options: tura_llm_rust::CallOptions,
+    session_directory: PathBuf,
 ) -> Result<(), String> {
     let started_at = Utc::now();
     let timeout_duration = runtime_timeout(runtime);
+    let (stream_tx, mut stream_rx) =
+        tokio::sync::mpsc::unbounded_channel::<tura_llm_rust::ProviderStreamEvent>();
+    let first_stream_output_at: Arc<Mutex<Option<DateTime<Utc>>>> = Arc::new(Mutex::new(None));
+    let first_stream_output_for_sink = Arc::clone(&first_stream_output_at);
+    let sink: tura_llm_rust::ProviderStreamEventSink = Arc::new(move |event| {
+        if matches!(
+            event,
+            tura_llm_rust::ProviderStreamEvent::ProviderOutputStarted
+        ) {
+            let mut first = first_stream_output_for_sink
+                .lock()
+                .unwrap_or_else(|err| err.into_inner());
+            if first.is_none() {
+                *first = Some(Utc::now());
+            }
+        }
+        let _ = stream_tx.send(event);
+    });
+    let command_session_directory = session_directory.clone();
+    let command_task = tokio::spawn(async move {
+        let mut executor =
+            code_tools::command_run::StreamingCommandRunExecutor::new(command_session_directory);
+        while let Some(event) = stream_rx.recv().await {
+            let Some(command) = command_run_stream_event_command(event) else {
+                continue;
+            };
+            executor.push_command_value(command).await;
+        }
+        executor.finish().await
+    });
 
     let response = match tokio::time::timeout(
         timeout_duration,
-        route_config.run(tura_config.as_ref(), messages, options),
+        route_config.run_with_stream_events(tura_config.as_ref(), messages, options, Some(sink)),
     )
     .await
     {
@@ -630,9 +656,19 @@ async fn call_runtime_streaming(
         }
     };
     let finished_at = Utc::now();
+    let streamed_command_results = command_task.await.unwrap_or_default();
 
-    runtime.set_output(response.content.clone());
-    apply_provider_response(runtime, &response.content, finished_at);
+    let mut runtime_output = response.content.clone();
+    if !streamed_command_results.is_empty() {
+        runtime_output = serde_json::json!({
+            "provider_content": response.content.clone(),
+            "streamed_command_run_result": {
+                "results": streamed_command_results,
+            }
+        });
+    }
+    runtime.set_output(runtime_output);
+    apply_provider_response_with_options(runtime, &response.content, finished_at, false);
 
     if let Some(stream) = response.content.get("stream").and_then(|s| s.as_array()) {
         for chunk in stream {
@@ -642,11 +678,17 @@ async fn call_runtime_streaming(
         }
     }
 
+    let first_token_at = first_stream_output_at
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .unwrap_or(finished_at);
+
     runtime
-        .mark_first_token(finished_at)
+        .mark_first_token(first_token_at)
         .map_err(|e| format!("failed to mark first token: {}", e))?;
 
-    let usage = usage_report_from_metrics(response.metrics, started_at, finished_at);
+    let usage =
+        usage_report_from_metrics(response.metrics, started_at, finished_at, first_token_at);
 
     runtime
         .finish_success(finished_at, usage)
@@ -659,8 +701,13 @@ fn usage_report_from_metrics(
     metrics: Option<tura_llm_rust::CallMetrics>,
     started_at: DateTime<Utc>,
     finished_at: DateTime<Utc>,
+    first_token_at: DateTime<Utc>,
 ) -> Option<crate::state_machine::runtime_management::UsageReport> {
     let latency_ms = finished_at
+        .signed_duration_since(started_at)
+        .num_milliseconds()
+        .max(0) as u64;
+    let time_to_first_token_ms = first_token_at
         .signed_duration_since(started_at)
         .num_milliseconds()
         .max(0) as u64;
@@ -678,7 +725,7 @@ fn usage_report_from_metrics(
         currency: m.cost.currency.unwrap_or_else(|| "USD".to_string()),
         pricing_source: "provider".to_string(),
         latency_ms,
-        time_to_first_token_ms: latency_ms,
+        time_to_first_token_ms,
         token_per_second: tokens_per_second(m.usage.output_tokens.unwrap_or(0), latency_ms),
     })
 }
@@ -695,6 +742,15 @@ fn apply_provider_response(
     content: &Value,
     now: chrono::DateTime<Utc>,
 ) {
+    apply_provider_response_with_options(runtime, content, now, false);
+}
+
+fn apply_provider_response_with_options(
+    runtime: &mut RuntimeManagement,
+    content: &Value,
+    now: chrono::DateTime<Utc>,
+    suppress_command_run_tool_calls: bool,
+) {
     let content = tura_llm_rust::normalize_response_content(content);
 
     if let Some(text) = extract_response_text(&content) {
@@ -702,6 +758,9 @@ fn apply_provider_response(
     }
 
     for tool_call in extract_tool_calls(&content) {
+        if suppress_command_run_tool_calls && tool_call.tool_name == COMMAND_RUN_TOOL_NAME {
+            continue;
+        }
         runtime.push_tool_call(ToolCallRecord {
             tool_called_name: tool_call.tool_name,
             tool_called_input: tool_call.arguments,

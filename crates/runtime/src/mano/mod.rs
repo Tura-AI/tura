@@ -2,9 +2,9 @@ mod gateway_session;
 mod process;
 mod session_bootstrap;
 
-pub(crate) use gateway_session::persist_gateway_session;
 use crate::state_machine::agent_management::AgentManagement;
 use crate::state_machine::session_management::{SessionInput, SessionManagement};
+pub(crate) use gateway_session::persist_gateway_session;
 pub use process::{
     orchestrate, orchestrate_for_session, orchestrate_for_session_in_directory,
     process_from_user_internal,

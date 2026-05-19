@@ -78,7 +78,7 @@ impl SessionManager {
             lsp: LspSessionConfig::default(),
             kill_processes_on_start: false,
             validator_enabled: false,
-            force_planning: false,
+            force_multiple_tasks: false,
             model_variant: None,
             model_acceleration_enabled: false,
             disable_permission_restrictions: false,
@@ -123,7 +123,7 @@ pub struct SessionInfo {
     pub lsp: LspSessionConfig,
     pub kill_processes_on_start: bool,
     pub validator_enabled: bool,
-    pub force_planning: bool,
+    pub force_multiple_tasks: bool,
     #[serde(default)]
     pub model_variant: Option<String>,
     #[serde(default)]
@@ -180,7 +180,7 @@ impl SessionInfo {
             lsp: LspSessionConfig::default(),
             kill_processes_on_start: false,
             validator_enabled: false,
-            force_planning: false,
+            force_multiple_tasks: false,
             model_variant: None,
             model_acceleration_enabled: false,
             disable_permission_restrictions: management.disable_permission_restrictions,

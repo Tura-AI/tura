@@ -2,19 +2,13 @@ use chrono::Utc;
 use tracing::{error, info};
 
 use crate::agent_router::{activate_agents_by_session_type, initialize_agent_state_machine};
-use crate::context::accumulate_message;
+use crate::context::{accumulate_message, ContextualUserFragment, WorkspaceSnapshot};
 use crate::manas::{process_manas_internal, ManasInput};
 use crate::mano::gateway_session::{load_persisted_gateway_session, persist_gateway_session};
 use crate::mano::session_bootstrap::create_session_with_topic;
 use crate::mano::{ManoOverrides, ManoProcessResult};
 use crate::state_machine::session_management::{SessionInput, SessionManagement};
-use chrono::SecondsFormat;
-use std::collections::BTreeMap;
-use std::fs;
-use std::io::BufRead;
-use std::io::BufReader;
 use std::path::PathBuf;
-use std::time::SystemTime;
 
 pub struct OrchestrationConfig {
     pub redis_url: String,
@@ -224,141 +218,9 @@ fn context_shell_name() -> &'static str {
 }
 
 fn workspace_snapshot_message(cwd: &std::path::Path) -> String {
-    let mut snapshot = WorkspaceSnapshot::new(cwd);
-    collect_workspace_snapshot(cwd, cwd, 0, &mut snapshot);
-    snapshot
-        .entries
-        .sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
-    format!(
-        "<WORKSPACE_SNAPSHOT>\n{}\n</WORKSPACE_SNAPSHOT>",
-        snapshot.text()
-    )
-}
-
-struct WorkspaceSnapshot {
-    cwd: PathBuf,
-    total_files: usize,
-    total_dirs: usize,
-    suffix_counts: BTreeMap<String, usize>,
-    entries: Vec<WorkspaceSnapshotEntry>,
-}
-
-impl WorkspaceSnapshot {
-    fn new(cwd: &std::path::Path) -> Self {
-        Self {
-            cwd: cwd.to_path_buf(),
-            total_files: 0,
-            total_dirs: 0,
-            suffix_counts: BTreeMap::new(),
-            entries: Vec::new(),
-        }
-    }
-
-    fn text(&self) -> String {
-        let mut lines = vec![
-            format!("cwd: {}", self.cwd.display()),
-            "scan_depth: 2".to_string(),
-            format!("total_files: {}", self.total_files),
-            format!("total_dirs: {}", self.total_dirs),
-            format!("suffix_counts: {}", self.suffix_counts_text()),
-            "columns: modified_utc | lines | suffix | path".to_string(),
-        ];
-        lines.extend(self.entries.iter().map(|entry| {
-            format!(
-                "{} | {} | {} | {}",
-                entry.modified_utc, entry.line_count, entry.suffix, entry.relative_path
-            )
-        }));
-        lines.join("\n")
-    }
-
-    fn suffix_counts_text(&self) -> String {
-        if self.suffix_counts.is_empty() {
-            return "none".to_string();
-        }
-        self.suffix_counts
-            .iter()
-            .map(|(suffix, count)| format!("{suffix}={count}"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-}
-
-struct WorkspaceSnapshotEntry {
-    relative_path: String,
-    modified_utc: String,
-    line_count: String,
-    suffix: String,
-}
-
-fn collect_workspace_snapshot(
-    root: &std::path::Path,
-    dir: &std::path::Path,
-    depth: usize,
-    snapshot: &mut WorkspaceSnapshot,
-) {
-    let Ok(read_dir) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in read_dir.flatten() {
-        let path = entry.path();
-        let Ok(metadata) = entry.metadata() else {
-            continue;
-        };
-        if metadata.is_dir() {
-            snapshot.total_dirs += 1;
-            if depth < 2 {
-                collect_workspace_snapshot(root, &path, depth + 1, snapshot);
-            }
-            continue;
-        }
-        if !metadata.is_file() {
-            continue;
-        }
-        snapshot.total_files += 1;
-        let suffix = path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .map(|extension| format!(".{extension}"))
-            .unwrap_or_else(|| "(none)".to_string());
-        *snapshot.suffix_counts.entry(suffix.clone()).or_insert(0) += 1;
-        snapshot.entries.push(WorkspaceSnapshotEntry {
-            relative_path: path
-                .strip_prefix(root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/"),
-            modified_utc: metadata
-                .modified()
-                .map(format_system_time)
-                .unwrap_or_else(|_| "unknown".to_string()),
-            line_count: count_lines(&path)
-                .map(|count| count.to_string())
-                .unwrap_or_else(|| "unknown".to_string()),
-            suffix,
-        });
-    }
-}
-
-fn format_system_time(time: SystemTime) -> String {
-    let datetime: chrono::DateTime<Utc> = time.into();
-    datetime.to_rfc3339_opts(SecondsFormat::Secs, true)
-}
-
-fn count_lines(path: &std::path::Path) -> Option<usize> {
-    let file = fs::File::open(path).ok()?;
-    let mut reader = BufReader::new(file);
-    let mut count = 0usize;
-    let mut buffer = Vec::new();
-    loop {
-        buffer.clear();
-        let bytes = reader.read_until(b'\n', &mut buffer).ok()?;
-        if bytes == 0 {
-            break;
-        }
-        count += 1;
-    }
-    Some(count)
+    WorkspaceSnapshot::from_cwd(cwd)
+        .map(|snapshot| snapshot.render())
+        .unwrap_or_else(|| "<WORKSPACE_SNAPSHOT>\n\n</WORKSPACE_SNAPSHOT>".to_string())
 }
 
 fn session_has_initial_user_message(session: &SessionManagement) -> bool {

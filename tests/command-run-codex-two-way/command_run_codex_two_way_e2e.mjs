@@ -76,6 +76,12 @@ function parseAgentList(value) {
     ["tura-shll", "tura-shll"],
     ["tura_shll", "tura-shll"],
     ["tura-shall", "tura-shll"],
+    ["tura-multiple-tasks", "tura-multiple-tasks-shll"],
+    ["tura_multiple_tasks", "tura-multiple-tasks-shll"],
+    ["tura-multiple-tasks-shll", "tura-multiple-tasks-shll"],
+    ["tura_multiple_tasks_shll", "tura-multiple-tasks-shll"],
+    ["tura-shll-multiple-tasks", "tura-multiple-tasks-shll"],
+    ["tura_shll_multiple_tasks", "tura-multiple-tasks-shll"],
     ["tura-bash", "tura-bash"],
     ["tura_bash", "tura-bash"],
     ["tura-bash-nonstrict", "tura-bash"],
@@ -126,6 +132,10 @@ function turaCliAgentName(id) {
 
 function turaStrictJsonDisabled(id) {
   return id.endsWith("-nonstrict")
+}
+
+function turaMultipleTasksMode(id) {
+  return id.includes("multiple-tasks")
 }
 
 function isCurrentAgent(id) {
@@ -2741,7 +2751,9 @@ async function collectTuraProviderDiagnostics({ workspace, sinceMs }) {
     const commandArgs = commandRunCalls.map((call) => parseFunctionArguments(call.arguments)).filter(Boolean)
     const commandGroups = commandArgs.map((args) => (Array.isArray(args.commands) ? args.commands : []))
     const commands = commandGroups.flat()
-    const commandNames = commands.map((command) => command?.command).filter(Boolean)
+    const commandNames = commands
+      .map((command) => command?.command_type || command?.command)
+      .filter(Boolean)
     const commandLineExcerpts = commands.map((command) => String(command?.command_line || "").slice(0, 300))
     const incomingResults = parseCommandRunResultMessages(messages)
     const failedIncomingResults = incomingResults
@@ -2754,7 +2766,7 @@ async function collectTuraProviderDiagnostics({ workspace, sinceMs }) {
     const joinedCommands = `${commandNames.join(" ")} ${commandLineExcerpts.join(" ")}`
     const testLikeCommandCount = commands.filter((command) =>
       /(tools\\verify|tools\/verify|unittest|pytest|test|check|verify)/i.test(
-        `${command?.command || ""} ${command?.command_line || ""}`,
+        `${command?.command_type || command?.command || ""} ${command?.command_line || ""}`,
       ),
     ).length
     const usage = usageFromProviderLog(log)
@@ -2894,6 +2906,7 @@ async function runTuraAgent({ id = "tura", workspace, shellSurface = "shell_comm
       "exec",
       "--skip-git-repo-check",
       "--json",
+      ...(turaMultipleTasksMode(id) ? ["--multiple-tasks-mode"] : []),
       "-C",
       workspace,
       "-m",

@@ -1,13 +1,9 @@
-use crate::prompt_style::{
-    latest_planning_plan, planning_gate, task_continuity, user_new_command, PromptBuilder,
-};
+use crate::prompt_style::{task_continuity, task_delivered, user_new_command, PromptBuilder};
 use crate::state_machine::session_management::SessionManagement;
 
-use super::constants::{DISABLE_GATEWAY_CALLBACKS_ENV, PLANNING_TOOL};
+use super::constants::DISABLE_GATEWAY_CALLBACKS_ENV;
 use super::gateway_events::gateway_callback_base_url;
-use super::tool_catalog::{
-    env_flag, planning_child_depth, planning_env_enabled, planning_gate_disabled,
-};
+use super::tool_catalog::{env_flag, multiple_tasks_env_enabled};
 
 pub(super) fn messages_for_turn(
     current_messages: &[serde_json::Value],
@@ -16,16 +12,6 @@ pub(super) fn messages_for_turn(
 ) -> Vec<serde_json::Value> {
     let mut messages = current_messages.to_vec();
     let _ = (session, original_user_task);
-    if planning_env_enabled() && !planning_gate_disabled() {
-        let content = PromptBuilder::new()
-            .part(planning_gate::PLANNING_GATE)
-            .section("planning_tool", PLANNING_TOOL)
-            .render();
-        messages.push(serde_json::json!({
-            "role": "system",
-            "content": content,
-        }));
-    }
     if let Some(content) = user_new_command_message(&session.session_id) {
         messages.push(serde_json::json!({
             "role": "system",
@@ -95,38 +81,20 @@ pub(super) fn fetch_user_commands(session_id: &str) -> Vec<String> {
 
 pub(super) fn push_task_continuity_message(
     messages: &mut Vec<serde_json::Value>,
-    session: &SessionManagement,
+    _session: &SessionManagement,
     original_user_task: &str,
 ) {
-    let mut builder = PromptBuilder::new()
+    let builder = PromptBuilder::new()
         .part(task_continuity::TASK_CONTINUITY)
+        .part(if multiple_tasks_env_enabled() {
+            task_delivered::TASK_DELIVERED
+        } else {
+            ""
+        })
         .section("original_user_task", original_user_task);
-
-    if planning_env_enabled() {
-        if let Some(plan) = latest_planning_plan_from_session(session) {
-            builder = builder
-                .part(latest_planning_plan::LATEST_PLANNING_PLAN)
-                .section(
-                    "latest_planning_plan",
-                    serde_json::to_string_pretty(&plan).unwrap_or_else(|_| plan.to_string()),
-                );
-        }
-    }
 
     messages.push(serde_json::json!({
         "role": "system",
         "content": builder.render(),
     }));
-}
-
-pub(super) fn latest_planning_plan_from_session(
-    session: &SessionManagement,
-) -> Option<serde_json::Value> {
-    if session.task_plan.summary.is_empty() && session.task_plan.detailed_tasks.is_empty() {
-        return None;
-    }
-    if planning_child_depth() > 0 {
-        return Some(session.task_plan_detail_json());
-    }
-    Some(session.task_plan_summary_json())
 }

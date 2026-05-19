@@ -134,7 +134,7 @@ pub struct TaskPlan {
     /// Compact task summary visible to normal turns.
     #[serde(default)]
     pub summary: String,
-    /// Detailed planning records. Only planning/delegation paths should write these.
+    /// Detailed multiple-task records. Only multiple-task/delegation paths should write these.
     #[serde(default)]
     pub detailed_tasks: Vec<TaskStep>,
 }

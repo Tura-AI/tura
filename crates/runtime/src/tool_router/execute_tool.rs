@@ -60,6 +60,20 @@ pub async fn execute_tool(input: ExecuteToolInput) -> Result<ToolExecutionResult
             result: output_value,
         });
     }
+    if execution_tool_name == "task_delivered" {
+        let delivered = input
+            .arguments
+            .get("task_delivered")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true);
+        return Ok(ToolExecutionResult {
+            tool_name: input.tool_name.clone(),
+            arguments: input.arguments,
+            success: delivered,
+            error: (!delivered).then(|| "task_delivered must be true".to_string()),
+            result: serde_json::json!({ "task_delivered": delivered }),
+        });
+    }
 
     Err(format!(
         "unsupported tool `{}`: this runtime exposes only command_run",

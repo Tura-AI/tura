@@ -91,7 +91,7 @@ Recommended coding-agent config:
 }
 ```
 
-Additional command groups such as LSP, web, media, or planning are intentionally
+Additional command groups such as LSP, web, media, or multiple-tasks are intentionally
 disabled for this version.
 
 ## Runtime Loading

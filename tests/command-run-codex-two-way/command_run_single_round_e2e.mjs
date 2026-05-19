@@ -244,7 +244,7 @@ function parseJsonMaybe(text) {
 function commandSignature(command) {
   return {
     step: Number(command?.step || 1),
-    command: String(command?.command || ""),
+    command: String(command?.command_type || command?.command || ""),
   }
 }
 
@@ -388,16 +388,16 @@ async function inspectTuraProviderContract(sinceMs) {
   const commandDescriptions = JSON.stringify(firstToolCall?.request?.params?.tools || [])
   const commandItems = firstToolCall?.request?.params?.tools?.[0]?.function?.parameters?.properties?.commands?.items || {}
   const commandRequired = commandItems?.required || []
-  const commandHasEnum = !!commandItems?.properties?.command?.enum
+  const commandHasEnum = !!commandItems?.properties?.command_type?.enum
   const oldPathPattern = /crates[\\/]tools[\\/]interface|Pcommand_run|Icommand_run|scripts[\\/]command_run|handler\.py/i
   const toolFlow = inspectTuraToolFlow(calls)
   return {
     ok:
       toolNames.length === 1 &&
       toolNames[0] === "command_run" &&
-      commandItems?.properties?.command?.type === "string" &&
+      commandItems?.properties?.command_type?.type === "string" &&
       !commandHasEnum &&
-      JSON.stringify(commandRequired) === JSON.stringify(["command", "command_line"]) &&
+      JSON.stringify(commandRequired) === JSON.stringify(["command_type", "command_line"]) &&
       !/send_message_to_user/i.test(promptText) &&
       !/powershell:\*/i.test(promptText) &&
       !/powershell:/i.test(commandDescriptions) &&
@@ -572,6 +572,8 @@ async function inspectTuraSourceContract() {
     commandRunPrompt: path.join(turaRoot, "crates", "tools", "src", "command_run", "prompt.md"),
     shellPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "shell_command", "prompt.md"),
     applyPatchPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "apply_patch", "prompt.md"),
+    multipleTasksPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "multiple_tasks", "prompt.md"),
+    taskDeliveredSchema: path.join(turaRoot, "crates", "tools", "src", "task_delivered", "schema.json"),
     fileLocksPolicy: path.join(turaRoot, "crates", "tools", "src", "runtime", "file_locks", "policy.toml"),
     fileLocksModule: path.join(turaRoot, "crates", "tools", "src", "runtime", "file_locks", "mod.rs"),
     commandsModule: path.join(turaRoot, "crates", "tools", "src", "commands", "mod.rs"),
@@ -583,7 +585,7 @@ async function inspectTuraSourceContract() {
   const schema = existsSync(paths.commandRunSchema) ? JSON.parse(await fs.readFile(paths.commandRunSchema, "utf8")) : {}
   const commandItems = schema?.input_schema?.properties?.commands?.items || {}
   const commandRequired = commandItems?.required || []
-  const commandHasEnum = !!commandItems?.properties?.command?.enum
+  const commandHasEnum = !!commandItems?.properties?.command_type?.enum
   const commandsModuleText = commandsModule.replace(/\s+/g, " ")
   const oldDirectoriesAbsent = [
     path.join(turaRoot, "crates", "tools", "interface"),
@@ -598,16 +600,20 @@ async function inspectTuraSourceContract() {
     ok:
       filesExist &&
       oldDirectoriesAbsent &&
-      schema?.input_schema?.properties?.commands?.minItems === 5 &&
+      schema?.input_schema?.properties?.commands?.minItems === 2 &&
       schema?.input_schema?.properties?.commands?.maxItems === 15 &&
-      commandItems?.properties?.command?.type === "string" &&
+      !schema?.input_schema?.properties?.task_delivered &&
+      existsSync(paths.taskDeliveredSchema) &&
+      commandItems?.properties?.command_type?.type === "string" &&
       !commandHasEnum &&
-      JSON.stringify(commandRequired) === JSON.stringify(["command", "command_line"]) &&
+      JSON.stringify(commandRequired) === JSON.stringify(["command_type", "command_line"]) &&
       /struct FileLockManager/.test(fileLocks) &&
-      /fn run_step_group/.test(handler) &&
+      /fn run_command_run_step/.test(handler) &&
       /workspace_write/.test(fileLocks) &&
       /pub fn execute/.test(commandsModule) &&
+      /pub mod multiple_tasks/.test(commandsModule) &&
       /"apply_patch"\s*=>\s*apply_patch::execute/.test(commandsModuleText) &&
+      /"multiple_tasks"[^=]*=>\s*\{\s*multiple_tasks::execute/.test(commandsModuleText) &&
       /"bash"\s*=>\s*bash::execute/.test(commandsModuleText) &&
       /"shell_command"\s*=>\s*shell_command::execute/.test(commandsModuleText) &&
       /unsupported command_run command/.test(commandsModule) &&
@@ -617,13 +623,16 @@ async function inspectTuraSourceContract() {
     command_min_items: schema?.input_schema?.properties?.commands?.minItems,
     command_max_items: schema?.input_schema?.properties?.commands?.maxItems,
     command_required: commandRequired,
+    command_run_has_task_delivered: schema?.input_schema?.properties?.task_delivered?.type === "boolean",
+    has_task_delivered_tool: existsSync(paths.taskDeliveredSchema),
     command_has_enum: commandHasEnum,
     has_file_lock_manager: /struct FileLockManager/.test(fileLocks),
-    has_step_grouping: /fn run_step_group/.test(handler),
+    has_step_grouping: /fn run_command_run_step/.test(handler),
     has_workspace_write_lock: /workspace_write/.test(fileLocks),
     has_command_dispatch_module: /pub fn execute/.test(commandsModule),
     has_exact_internal_command_dispatch:
       /"apply_patch"\s*=>\s*apply_patch::execute/.test(commandsModuleText) &&
+      /"multiple_tasks"[^=]*=>\s*\{\s*multiple_tasks::execute/.test(commandsModuleText) &&
       /"bash"\s*=>\s*bash::execute/.test(commandsModuleText) &&
       /"shell_command"\s*=>\s*shell_command::execute/.test(commandsModuleText) &&
       /unsupported command_run command/.test(commandsModule),
@@ -731,7 +740,7 @@ async function main() {
       JSON.stringify(turaRun.provider_contract.tool_flow.batch_sizes) === JSON.stringify(codexRun.tool_flow.batch_sizes) &&
       JSON.stringify(turaRun.provider_contract.tool_flow.backfill_results_lengths) === JSON.stringify(codexRun.tool_flow.backfill_results_lengths) &&
       turaRun.analysis.completed_file_changes.length === 1 &&
-      turaRun.analysis.completed_file_changes[0]?.path === "src/app.txt",
+      String(turaRun.analysis.completed_file_changes[0]?.path || "").replace(/\\/g, "/").endsWith("src/app.txt"),
     event_count_match: turaRun?.analysis.event_count === codexRun?.analysis.event_count,
     phase_sequence_match: JSON.stringify(turaRun?.analysis.phase_sequence) === JSON.stringify(codexRun?.analysis.phase_sequence),
     completed_commands_match: JSON.stringify(turaRun?.analysis.completed_commands) === JSON.stringify(codexRun?.analysis.completed_commands),

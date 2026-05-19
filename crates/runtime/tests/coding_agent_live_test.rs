@@ -84,14 +84,12 @@ fn coding_agent_can_call_command_run_tool_e2e() {
         .and_then(|result| result.get("output"))
         .cloned()
         .unwrap_or(Value::Null);
-    assert_eq!(
-        run_output
-            .pointer("/results/0/results/0/response/exit_code")
-            .or_else(|| run_output.pointer("/results/0/exit_code"))
-            .or_else(|| run_output.pointer("/results/0/output/metadata/exit_code"))
-            .and_then(Value::as_i64),
-        Some(0)
-    );
+    assert!(run_output
+        .pointer("/results/0/output")
+        .and_then(Value::as_str)
+        .is_some_and(|output| output.starts_with("Exit code: 0\n")));
+    assert!(run_output.pointer("/results/0/exit_code").is_none());
+    assert!(run_output.pointer("/results/0/display_command").is_none());
 
     let patched_content = std::fs::read_to_string(workspace.join("src/lib.rs"))
         .expect("patched file should be readable");
@@ -222,8 +220,7 @@ fn command_run_provider_response(index: usize) -> Value {
                     { "command": "shell_command", "command_line": json!({"command":"Write-Output 4","timeout_ms":20000}).to_string(), "step": 1 },
                     { "command": "shell_command", "command_line": json!({"command":"Write-Output 5","timeout_ms":20000}).to_string(), "step": 1 }
                 ],
-                "step_summary": "Call the command_run console tool as requested.",
-                "previous_command_evaluations": []
+                "step_summary": "Call the command_run console tool as requested."
             }),
         ),
         1 => tool_response(
@@ -242,14 +239,7 @@ fn command_run_provider_response(index: usize) -> Value {
                         "command_line": json!({"command":"Get-Content src/lib.rs","timeout_ms":20000}).to_string()
                     }
                 ],
-                "step_summary": "Patch src/lib.rs and verify the edited content.",
-                "previous_command_evaluations": [
-                    { "command": "shell_command", "evaluation": "helpful_and_unreusable", "step": 1 },
-                    { "command": "shell_command", "evaluation": "helpful_and_unreusable", "step": 1 },
-                    { "command": "shell_command", "evaluation": "helpful_and_unreusable", "step": 1 },
-                    { "command": "shell_command", "evaluation": "helpful_and_unreusable", "step": 1 },
-                    { "command": "shell_command", "evaluation": "helpful_and_unreusable", "step": 1 }
-                ]
+                "step_summary": "Patch src/lib.rs and verify the edited content."
             }),
         ),
         _ => assistant_response("command_run shell and apply_patch e2e completed."),

@@ -19,7 +19,7 @@ pub struct TuraSessionConfig {
     pub context_message_limit: Option<usize>,
     pub kill_processes_on_start: Option<bool>,
     pub validator_enabled: Option<bool>,
-    pub force_planning: Option<bool>,
+    pub force_multiple_tasks: Option<bool>,
     pub command_run_stall_guard_profile: Option<String>,
     pub command_run_stall_guard_check_secs: Option<u64>,
     pub command_run_stall_guard_identical_checks: Option<u8>,
@@ -60,8 +60,8 @@ impl TuraSessionConfig {
         if next.validator_enabled.is_some() {
             self.validator_enabled = next.validator_enabled;
         }
-        if next.force_planning.is_some() {
-            self.force_planning = next.force_planning;
+        if next.force_multiple_tasks.is_some() {
+            self.force_multiple_tasks = next.force_multiple_tasks;
         }
         if next.command_run_stall_guard_profile.is_some() {
             self.command_run_stall_guard_profile = next.command_run_stall_guard_profile;
@@ -217,8 +217,8 @@ fn parse_config(content: &str) -> TuraSessionConfig {
         validator_enabled: values
             .get("validator_enabled")
             .and_then(|value| parse_bool(value)),
-        force_planning: values
-            .get("force_planning")
+        force_multiple_tasks: values
+            .get("force_multiple_tasks")
             .and_then(|value| parse_bool(value)),
         command_run_stall_guard_profile: values.get("command_run_stall_guard_profile").cloned(),
         command_run_stall_guard_check_secs: values
@@ -261,8 +261,8 @@ fn serialize_config(config: &TuraSessionConfig) -> String {
     if let Some(value) = config.validator_enabled {
         lines.push(format!("validator_enabled={value}"));
     }
-    if let Some(value) = config.force_planning {
-        lines.push(format!("force_planning={value}"));
+    if let Some(value) = config.force_multiple_tasks {
+        lines.push(format!("force_multiple_tasks={value}"));
     }
     push_line(
         &mut lines,

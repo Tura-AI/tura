@@ -142,7 +142,7 @@ fn build_agent(
     agent.add_prompt(
         AgentPromptItem {
             agent_prompt: agent_name.to_string(),
-            prompt_directory: agent_directory.join("crates/tools/src/modes/code"),
+            prompt_directory: agent_directory.join("crates/agents/src").join(agent_name),
         },
         now,
     );
@@ -215,7 +215,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn coding_agent_preset_includes_development_tools_planning_and_send_message() {
+    fn coding_agent_preset_includes_development_tools_without_multiple_tasks_and_send_message() {
         let session = SessionManagement::new(
             "test-session".to_string(),
             "test-session".to_string(),
@@ -262,8 +262,8 @@ mod tests {
             "coding_agent should keep delete_file behind command_run"
         );
         assert!(
-            !actual.contains("planning"),
-            "planning is not model-visible"
+            !actual.contains("multiple_tasks"),
+            "multiple_tasks is not model-visible"
         );
         assert!(
             !actual.contains("send_message_to_user"),

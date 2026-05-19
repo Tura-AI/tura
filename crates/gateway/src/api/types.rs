@@ -76,7 +76,7 @@ pub struct Session {
     #[serde(default)]
     pub validator_enabled: bool,
     #[serde(default)]
-    pub force_planning: bool,
+    pub force_multiple_tasks: bool,
     pub model_variant: Option<String>,
     #[serde(default)]
     pub model_acceleration_enabled: bool,
@@ -139,8 +139,8 @@ impl Serialize for Session {
         state.serialize_field("killProcessesOnStart", &self.kill_processes_on_start)?;
         state.serialize_field("validator_enabled", &self.validator_enabled)?;
         state.serialize_field("validatorEnabled", &self.validator_enabled)?;
-        state.serialize_field("force_planning", &self.force_planning)?;
-        state.serialize_field("forcePlanning", &self.force_planning)?;
+        state.serialize_field("force_multiple_tasks", &self.force_multiple_tasks)?;
+        state.serialize_field("forceMultipleTasks", &self.force_multiple_tasks)?;
         state.serialize_field("model_variant", &self.model_variant)?;
         state.serialize_field("modelVariant", &self.model_variant)?;
         state.serialize_field(

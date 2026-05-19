@@ -4,6 +4,7 @@ pub const POLICY: &str = include_str!("policy.toml");
 pub const SCHEMA: &str = include_str!("schema.json");
 
 use super::{shell_command, CommandResponse};
+use crate::runtime::file_locks::Access;
 use crate::runtime::tool::{
     FunctionToolOutput, ToolCall, ToolContext, ToolError, ToolHandler, ToolPayload,
 };
@@ -25,6 +26,17 @@ impl ToolHandler for BashHandler {
         !shell_command::looks_read_only(&payload_command_line(&call.payload))
     }
 
+    async fn access(&self, call: &ToolCall, ctx: &ToolContext) -> Access {
+        if self.is_mutating(call, ctx).await {
+            Access {
+                workspace_write: true,
+                ..Access::default()
+            }
+        } else {
+            Access::default()
+        }
+    }
+
     async fn handle(
         &self,
         call: ToolCall,
@@ -40,7 +52,13 @@ impl ToolHandler for BashHandler {
         .await;
         let success = response.success;
         Ok(FunctionToolOutput::from_value(
-            response.output,
+            shell_command::json_like_output(
+                response.exit_code,
+                response.stdout,
+                response.stderr,
+                response.output,
+                response.changes,
+            ),
             Some(success),
         ))
     }

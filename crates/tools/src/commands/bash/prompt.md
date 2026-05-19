@@ -1,1 +1,1 @@
-Use `bash` only when the task explicitly needs a bash shell. Keep the same `command_line` JSON shape with `command`, optional `workdir`, and optional `timeout_ms`.
+Use `bash` only when the task explicitly needs a bash shell. Put the bash command text in `command_line`.

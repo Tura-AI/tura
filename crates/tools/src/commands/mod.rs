@@ -1,5 +1,6 @@
 pub mod apply_patch;
 pub mod bash;
+pub mod multiple_tasks;
 pub mod shell_command;
 
 use crate::runtime::file_locks::Access;
@@ -25,6 +26,9 @@ pub fn execute(
     match canonical_command(command).as_str() {
         "apply_patch" => apply_patch::execute(command_line, session_dir),
         "bash" => bash::execute(command_line, session_dir, timeout_secs),
+        "multiple_tasks" if multiple_tasks_command_enabled() => {
+            multiple_tasks::execute(command_line, session_dir)
+        }
         "shell_command" => shell_command::execute(command_line, session_dir, timeout_secs),
         other => CommandResponse {
             success: false,
@@ -40,6 +44,7 @@ pub fn execute(
 pub fn access(command: &str, command_line: &str, session_dir: &Path) -> Access {
     match canonical_command(command).as_str() {
         "apply_patch" => apply_patch::access(command_line, session_dir),
+        "multiple_tasks" if multiple_tasks_command_enabled() => Access::default(),
         "shell_command" | "bash" if shell_command::looks_read_only(command_line) => {
             Access::default()
         }
@@ -60,6 +65,9 @@ pub fn display_command(
     if canonical_command(command) == "apply_patch" {
         return "apply_patch".to_string();
     }
+    if canonical_command(command) == "multiple_tasks" && multiple_tasks_command_enabled() {
+        return "multiple_tasks".to_string();
+    }
     shell_command::display_command(command_line, session_dir, timeout_secs)
 }
 
@@ -76,6 +84,7 @@ pub fn canonical_command(name: &str) -> String {
             active_shell_command_name().to_string()
         }
         "apply_patch" => "apply_patch".to_string(),
+        "multiple_tasks" => "multiple_tasks".to_string(),
         other => other.to_string(),
     }
 }
@@ -91,4 +100,23 @@ pub fn active_shell_command_name() -> &'static str {
         _ if cfg!(windows) => "shell_command",
         _ => "bash",
     }
+}
+
+fn multiple_tasks_command_enabled() -> bool {
+    [
+        "TURA_FORCE_MULTIPLE_TASKS",
+        "TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS",
+    ]
+    .iter()
+    .any(|name| {
+        std::env::var(name)
+            .ok()
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(false)
+    })
 }

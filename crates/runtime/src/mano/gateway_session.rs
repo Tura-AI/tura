@@ -20,8 +20,8 @@ pub(crate) fn persist_gateway_session(session: &SessionManagement) -> Result<(),
     let dir = session.session_directory.join(".tura").join("sessions");
     std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
     let path = dir.join(format!("{}.json", session.session_id));
-    let content = serde_json::to_string_pretty(&persisted_record(session))
-        .map_err(|err| err.to_string())?;
+    let content =
+        serde_json::to_string_pretty(&persisted_record(session)).map_err(|err| err.to_string())?;
     std::fs::write(path, content).map_err(|err| err.to_string())
 }
 
@@ -43,7 +43,7 @@ fn persisted_record(session: &SessionManagement) -> serde_json::Value {
             },
             "kill_processes_on_start": false,
             "validator_enabled": false,
-            "force_planning": false,
+            "force_multiple_tasks": false,
             "model_variant": null,
             "model_acceleration_enabled": false,
             "disable_permission_restrictions": session.disable_permission_restrictions,

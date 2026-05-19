@@ -1,0 +1,4 @@
+[command]
+name = "multiple_tasks"
+read_only = true
+mutates_session_state = true

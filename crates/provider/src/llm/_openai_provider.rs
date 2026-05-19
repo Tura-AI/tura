@@ -6,7 +6,8 @@ use std::collections::BTreeMap;
 use crate::llm::_utils::{deep_merge_json, strip_json_fence};
 use crate::tura_llm::{
     default_client, estimate_context_utilization, normalize_response_content, CallMetrics,
-    CallOptions, CostDetails, ProviderResponse, TuraError, UsageDetails,
+    CallOptions, CostDetails, ProviderResponse, ProviderStreamEvent, ProviderStreamEventSink,
+    TuraError, UsageDetails,
 };
 
 pub async fn openai_embed(
@@ -61,13 +62,25 @@ pub async fn call(
     messages: &[Value],
     options: &CallOptions,
 ) -> Result<ProviderResponse, TuraError> {
+    call_with_stream_events(base_url, model, provider, api_key, messages, options, None).await
+}
+
+pub async fn call_with_stream_events(
+    base_url: &str,
+    model: &str,
+    provider: &str,
+    api_key: &str,
+    messages: &[Value],
+    options: &CallOptions,
+    stream_events: Option<ProviderStreamEventSink>,
+) -> Result<ProviderResponse, TuraError> {
     if provider.eq_ignore_ascii_case("openai")
         && openai_codex_oauth_base_url_allowed(base_url)
         && std::env::var("OPENAI_LOGIN")
             .map(|value| value.eq_ignore_ascii_case("oauth"))
             .unwrap_or(false)
     {
-        return openai_codex_oauth_call(model, api_key, messages, options).await;
+        return openai_codex_oauth_call(model, api_key, messages, options, stream_events).await;
     }
 
     if options.force_search && provider.eq_ignore_ascii_case("openai") {
@@ -256,6 +269,7 @@ async fn openai_codex_oauth_call(
     access_token: &str,
     messages: &[Value],
     options: &CallOptions,
+    stream_events: Option<ProviderStreamEventSink>,
 ) -> Result<ProviderResponse, TuraError> {
     let client = reqwest::Client::builder()
         .build()
@@ -296,7 +310,7 @@ async fn openai_codex_oauth_call(
         });
     }
 
-    let data = parse_codex_response_stream(resp).await?;
+    let data = parse_codex_response_stream(resp, stream_events).await?;
     let mut content = normalize_codex_response_content(&data);
     if let Some(text) = content.as_str() {
         content = Value::String(strip_json_fence(text));
@@ -414,12 +428,16 @@ fn estimate_token_count(text: &str) -> u64 {
     chars.div_ceil(4)
 }
 
-async fn parse_codex_response_stream(resp: reqwest::Response) -> Result<Value, TuraError> {
+async fn parse_codex_response_stream(
+    resp: reqwest::Response,
+    stream_events: Option<ProviderStreamEventSink>,
+) -> Result<Value, TuraError> {
     let mut stream = resp.bytes_stream();
     let mut pending = String::new();
     let mut output_text = String::new();
     let mut completed = None;
     let mut events = Vec::new();
+    let mut command_collector = CodexCommandRunCommandCollector::default();
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|err| TuraError::Network {
@@ -430,12 +448,26 @@ async fn parse_codex_response_stream(resp: reqwest::Response) -> Result<Value, T
         while let Some(line_end) = pending.find('\n') {
             let line = pending[..line_end].trim_end_matches('\r').to_string();
             pending.drain(..=line_end);
-            process_codex_sse_line(&line, &mut output_text, &mut completed, &mut events)?;
+            process_codex_sse_line(
+                &line,
+                &mut output_text,
+                &mut completed,
+                &mut events,
+                &mut command_collector,
+                stream_events.as_ref(),
+            )?;
         }
     }
 
     if !pending.trim().is_empty() {
-        process_codex_sse_line(&pending, &mut output_text, &mut completed, &mut events)?;
+        process_codex_sse_line(
+            &pending,
+            &mut output_text,
+            &mut completed,
+            &mut events,
+            &mut command_collector,
+            stream_events.as_ref(),
+        )?;
     }
 
     Ok(build_codex_stream_root(output_text, completed, events))
@@ -446,6 +478,8 @@ fn process_codex_sse_line(
     output_text: &mut String,
     completed: &mut Option<Value>,
     events: &mut Vec<Value>,
+    command_collector: &mut CodexCommandRunCommandCollector,
+    stream_events: Option<&ProviderStreamEventSink>,
 ) -> Result<(), TuraError> {
     let line = line.trim_start();
     let Some(data) = line.strip_prefix("data:") else {
@@ -461,12 +495,44 @@ fn process_codex_sse_line(
     if let Some(response) = value.get("response") {
         *completed = Some(response.clone());
     }
+    if let Some(sink) = stream_events {
+        if is_codex_stream_output_start(&value) {
+            sink(ProviderStreamEvent::ProviderOutputStarted);
+        }
+        for event in command_collector.push_event(&value) {
+            sink(event);
+        }
+    }
     events.push(value);
 
     Ok(())
 }
 
+fn is_codex_stream_output_start(value: &Value) -> bool {
+    matches!(
+        value.get("type").and_then(Value::as_str),
+        Some(
+            "response.output_text.delta"
+                | "response.function_call_arguments.delta"
+                | "response.output_item.added"
+                | "response.content_part.added"
+        )
+    )
+}
+
 fn append_codex_stream_text(value: &Value, output_text: &mut String) {
+    if matches!(
+        value.get("type").and_then(Value::as_str),
+        Some(
+            "response.function_call_arguments.delta"
+                | "response.function_call_arguments.done"
+                | "response.output_item.added"
+                | "response.output_item.done"
+        )
+    ) {
+        return;
+    }
+
     if let Some(delta) = value
         .get("type")
         .and_then(Value::as_str)
@@ -670,81 +736,393 @@ fn codex_output_item_tool_call(item: &Value) -> Option<Value> {
 }
 
 fn codex_event_tool_calls(events: &[Value]) -> Vec<Value> {
-    let mut active: Option<String> = None;
-    let mut entries = Vec::<(String, String, String)>::new();
-
+    let mut collector = CodexToolCallStreamCollector::default();
+    let mut calls = Vec::new();
     for event in events {
+        calls.extend(collector.push_event(event));
+    }
+    calls.extend(collector.finish());
+    calls
+}
+
+#[derive(Default)]
+struct CodexToolCallStreamCollector {
+    active: Option<String>,
+    entries: Vec<CodexToolCallEntry>,
+}
+
+#[derive(Default)]
+struct CodexToolCallEntry {
+    id: String,
+    call_id: String,
+    name: String,
+    arguments: String,
+    emitted: bool,
+}
+
+impl CodexToolCallStreamCollector {
+    fn push_event(&mut self, event: &Value) -> Vec<Value> {
         if let Some(item) = event.get("item") {
             if item.get("type").and_then(Value::as_str) == Some("function_call") {
-                let id = item
-                    .get("call_id")
-                    .or_else(|| item.get("id"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("codex_tool_call")
-                    .to_string();
-                let name = item
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                let arguments = item
-                    .get("arguments")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                active = Some(id.clone());
-                if let Some(entry) = entries.iter_mut().find(|entry| entry.0 == id) {
-                    if !name.is_empty() {
-                        entry.1 = name;
-                    }
-                    if !arguments.is_empty() {
-                        entry.2 = arguments;
-                    }
-                } else {
-                    entries.push((id, name, arguments));
-                }
+                self.upsert_item(item);
             }
         }
 
-        if event.get("type").and_then(Value::as_str)
-            == Some("response.function_call_arguments.delta")
-        {
-            if let (Some(id), Some(delta)) = (
-                active.as_deref(),
-                event.get("delta").and_then(Value::as_str),
-            ) {
-                if let Some(entry) = entries.iter_mut().find(|entry| entry.0 == id) {
-                    entry.2.push_str(delta);
+        match event.get("type").and_then(Value::as_str) {
+            Some("response.function_call_arguments.delta") => {
+                if let (Some(id), Some(delta)) = (
+                    self.event_tool_id(event),
+                    event.get("delta").and_then(Value::as_str),
+                ) {
+                    if let Some(entry) = self.entry_mut(&id) {
+                        entry.arguments.push_str(delta);
+                    }
                 }
+                Vec::new()
             }
-        }
-
-        if event.get("type").and_then(Value::as_str)
-            == Some("response.function_call_arguments.done")
-        {
-            let id = event
-                .get("item_id")
-                .or_else(|| event.get("call_id"))
-                .and_then(Value::as_str)
-                .or(active.as_deref());
-            if let (Some(id), Some(arguments)) =
-                (id, event.get("arguments").and_then(Value::as_str))
-            {
-                if let Some(entry) = entries
-                    .iter_mut()
-                    .find(|entry| entry.0 == id || active.as_deref() == Some(entry.0.as_str()))
+            Some("response.function_call_arguments.done") => {
+                let id = self.event_tool_id(event);
+                if let (Some(id), Some(arguments)) =
+                    (id, event.get("arguments").and_then(Value::as_str))
                 {
-                    entry.2 = arguments.to_string();
+                    if let Some(entry) = self.entry_mut(&id) {
+                        entry.arguments = arguments.to_string();
+                    }
+                    return self.emit_ready(&id);
+                }
+                Vec::new()
+            }
+            Some("response.output_item.done") => self
+                .active
+                .clone()
+                .map(|id| self.emit_ready(&id))
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn finish(&mut self) -> Vec<Value> {
+        let ids = self
+            .entries
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect::<Vec<_>>();
+        ids.into_iter()
+            .flat_map(|id| self.emit_ready(&id))
+            .collect()
+    }
+
+    fn upsert_item(&mut self, item: &Value) {
+        let id = item
+            .get("id")
+            .or_else(|| item.get("call_id"))
+            .and_then(Value::as_str)
+            .unwrap_or("codex_tool_call")
+            .to_string();
+        let call_id = item
+            .get("call_id")
+            .or_else(|| item.get("id"))
+            .and_then(Value::as_str)
+            .unwrap_or(id.as_str())
+            .to_string();
+        let name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let arguments = item
+            .get("arguments")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        self.active = Some(id.clone());
+        if let Some(entry) = self.entry_mut(&id) {
+            if !call_id.is_empty() {
+                entry.call_id = call_id;
+            }
+            if !name.is_empty() {
+                entry.name = name;
+            }
+            if !arguments.is_empty() {
+                entry.arguments = arguments;
+            }
+        } else {
+            self.entries.push(CodexToolCallEntry {
+                id,
+                call_id,
+                name,
+                arguments,
+                emitted: false,
+            });
+        }
+    }
+
+    fn entry_mut(&mut self, id: &str) -> Option<&mut CodexToolCallEntry> {
+        self.entries
+            .iter_mut()
+            .find(|entry| entry.id == id || entry.call_id == id)
+    }
+
+    fn event_tool_id(&self, event: &Value) -> Option<String> {
+        event
+            .get("item_id")
+            .or_else(|| event.get("call_id"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .or_else(|| self.active.clone())
+    }
+
+    fn emit_ready(&mut self, id: &str) -> Vec<Value> {
+        let Some(entry) = self.entry_mut(id) else {
+            return Vec::new();
+        };
+        if entry.emitted
+            || entry.name.is_empty()
+            || serde_json::from_str::<Value>(&entry.arguments).is_err()
+        {
+            return Vec::new();
+        }
+        entry.emitted = true;
+        let call = codex_tool_call_value(
+            &entry.call_id,
+            &entry.name,
+            Value::String(entry.arguments.clone()),
+        );
+        ready_streaming_tool_call(call).into_iter().collect()
+    }
+}
+
+#[derive(Default)]
+struct CodexCommandRunCommandCollector {
+    active: Option<String>,
+    entries: Vec<CodexCommandRunCommandEntry>,
+}
+
+#[derive(Default)]
+struct CodexCommandRunCommandEntry {
+    id: String,
+    call_id: String,
+    name: String,
+    arguments: String,
+    emitted_commands: usize,
+}
+
+impl CodexCommandRunCommandCollector {
+    fn push_event(&mut self, event: &Value) -> Vec<ProviderStreamEvent> {
+        if let Some(item) = event.get("item") {
+            if item.get("type").and_then(Value::as_str) == Some("function_call") {
+                self.upsert_item(item);
+            }
+        }
+
+        match event.get("type").and_then(Value::as_str) {
+            Some("response.function_call_arguments.delta") => {
+                if let (Some(id), Some(delta)) = (
+                    self.event_tool_id(event),
+                    event.get("delta").and_then(Value::as_str),
+                ) {
+                    if let Some(entry) = self.entry_mut(&id) {
+                        entry.arguments.push_str(delta);
+                        return Self::emit_ready_commands(entry);
+                    }
+                }
+                Vec::new()
+            }
+            Some("response.function_call_arguments.done") => {
+                if let (Some(id), Some(arguments)) = (
+                    self.event_tool_id(event),
+                    event.get("arguments").and_then(Value::as_str),
+                ) {
+                    if let Some(entry) = self.entry_mut(&id) {
+                        entry.arguments = arguments.to_string();
+                        return Self::emit_ready_commands(entry);
+                    }
+                }
+                Vec::new()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn upsert_item(&mut self, item: &Value) {
+        let id = item
+            .get("id")
+            .or_else(|| item.get("call_id"))
+            .and_then(Value::as_str)
+            .unwrap_or("codex_tool_call")
+            .to_string();
+        let call_id = item
+            .get("call_id")
+            .or_else(|| item.get("id"))
+            .and_then(Value::as_str)
+            .unwrap_or(id.as_str())
+            .to_string();
+        let name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let arguments = item
+            .get("arguments")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        self.active = Some(id.clone());
+        if let Some(entry) = self.entry_mut(&id) {
+            if !call_id.is_empty() {
+                entry.call_id = call_id;
+            }
+            if !name.is_empty() {
+                entry.name = name;
+            }
+            if !arguments.is_empty() {
+                entry.arguments = arguments;
+            }
+        } else {
+            self.entries.push(CodexCommandRunCommandEntry {
+                id,
+                call_id,
+                name,
+                arguments,
+                emitted_commands: 0,
+            });
+        }
+    }
+
+    fn entry_mut(&mut self, id: &str) -> Option<&mut CodexCommandRunCommandEntry> {
+        self.entries
+            .iter_mut()
+            .find(|entry| entry.id == id || entry.call_id == id)
+    }
+
+    fn event_tool_id(&self, event: &Value) -> Option<String> {
+        event
+            .get("item_id")
+            .or_else(|| event.get("call_id"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .or_else(|| self.active.clone())
+    }
+
+    fn emit_ready_commands(entry: &mut CodexCommandRunCommandEntry) -> Vec<ProviderStreamEvent> {
+        if entry.name != "command_run" {
+            return Vec::new();
+        }
+        let commands = complete_command_run_command_objects(&entry.arguments);
+        if commands.len() <= entry.emitted_commands {
+            return Vec::new();
+        }
+        let start = entry.emitted_commands;
+        entry.emitted_commands = commands.len();
+        commands
+            .into_iter()
+            .enumerate()
+            .skip(start)
+            .map(
+                |(command_index, command)| ProviderStreamEvent::CommandRunCommandReady {
+                    tool_call_id: entry.call_id.clone(),
+                    command_index,
+                    command,
+                },
+            )
+            .collect()
+    }
+}
+
+fn complete_command_run_command_objects(arguments: &str) -> Vec<Value> {
+    let Some(array_start) = find_commands_array_start(arguments) else {
+        return Vec::new();
+    };
+    let mut commands = Vec::new();
+    let mut in_string = false;
+    let mut escape = false;
+    let mut depth = 0_i32;
+    let mut object_start = None;
+
+    for (offset, ch) in arguments[array_start + 1..].char_indices() {
+        let index = array_start + 1 + offset;
+        if in_string {
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => {
+                if depth == 0 {
+                    object_start = Some(index);
+                }
+                depth += 1;
+            }
+            '}' => {
+                if depth > 0 {
+                    depth -= 1;
+                    if depth == 0 {
+                        if let Some(start) = object_start.take() {
+                            if let Ok(value) =
+                                serde_json::from_str::<Value>(&arguments[start..=index])
+                            {
+                                commands.push(value);
+                            }
+                        }
+                    }
+                }
+            }
+            ']' if depth == 0 => break,
+            _ => {}
+        }
+    }
+
+    commands
+}
+
+fn find_commands_array_start(arguments: &str) -> Option<usize> {
+    let mut in_string = false;
+    let mut escape = false;
+    let mut key_start = None;
+    let mut last_key = None::<String>;
+
+    for (index, ch) in arguments.char_indices() {
+        if in_string {
+            if escape {
+                escape = false;
+                continue;
+            }
+            if ch == '\\' {
+                escape = true;
+                continue;
+            }
+            if ch == '"' {
+                in_string = false;
+                if let Some(start) = key_start.take() {
+                    if let Ok(key) = serde_json::from_str::<String>(&arguments[start..=index]) {
+                        last_key = Some(key);
+                    }
+                }
+            }
+            continue;
+        }
+        match ch {
+            '"' => {
+                in_string = true;
+                key_start = Some(index);
+            }
+            '[' if last_key.as_deref() == Some("commands") => return Some(index),
+            ':' | ' ' | '\n' | '\r' | '\t' => {}
+            _ => {
+                if ch != ',' {
+                    last_key = None;
                 }
             }
         }
     }
-
-    entries
-        .into_iter()
-        .filter(|(_, name, _)| !name.is_empty())
-        .map(|(id, name, arguments)| codex_tool_call_value(&id, &name, Value::String(arguments)))
-        .collect()
+    None
 }
 
 fn codex_tool_call_value(id: &str, name: &str, arguments: Value) -> Value {
@@ -1535,12 +1913,10 @@ mod tests {
         );
         assert_eq!(normalized[1]["role"], "tool");
         assert_eq!(normalized[1]["tool_call_id"], "call_abc");
-        assert!(
-            normalized[1]["content"]
-                .as_str()
-                .unwrap()
-                .contains("TURA_PROBE_OK")
-        );
+        assert!(normalized[1]["content"]
+            .as_str()
+            .unwrap()
+            .contains("TURA_PROBE_OK"));
     }
 
     #[test]
@@ -1982,7 +2358,8 @@ mod tests {
         };
 
         let result =
-            super::openai_codex_oauth_call("gpt-5.4", "test-token", &messages, &options).await;
+            super::openai_codex_oauth_call("gpt-5.4", "test-token", &messages, &options, None)
+                .await;
 
         match previous_endpoint {
             Some(value) => std::env::set_var("OPENAI_CODEX_ENDPOINT", value),
@@ -2088,6 +2465,7 @@ mod tests {
             "test-token",
             &messages,
             &options,
+            None,
         )
         .await;
 
@@ -2203,6 +2581,51 @@ mod tests {
     }
 
     #[test]
+    fn command_run_command_streaming_emits_each_complete_command_object() {
+        let mut collector = super::CodexCommandRunCommandCollector::default();
+        collector.push_event(&json!({
+            "type": "response.output_item.added",
+            "item": {
+                "id": "fc_1",
+                "call_id": "call_1",
+                "type": "function_call",
+                "name": "command_run"
+            }
+        }));
+        let first = collector.push_event(&json!({
+            "type": "response.function_call_arguments.delta",
+            "item_id": "fc_1",
+            "delta": "{\"commands\":[{\"step\":1,\"command_type\":\"shell_command\",\"command_line\":\"echo {one}\"},"
+        }));
+        assert_eq!(first.len(), 1);
+        assert_eq!(command_index_for_test(&first[0]), Some(0));
+
+        let second = collector.push_event(&json!({
+            "type": "response.function_call_arguments.delta",
+            "item_id": "fc_1",
+            "delta": "{\"step\":2,\"command_type\":\"shell_command\",\"command_line\":\"echo two\"}"
+        }));
+        assert_eq!(second.len(), 1);
+        assert_eq!(command_index_for_test(&second[0]), Some(1));
+
+        let done = collector.push_event(&json!({
+            "type": "response.function_call_arguments.done",
+            "item_id": "fc_1",
+            "arguments": "{\"commands\":[{\"step\":1,\"command_type\":\"shell_command\",\"command_line\":\"echo {one}\"},{\"step\":2,\"command_type\":\"shell_command\",\"command_line\":\"echo two\"}]}"
+        }));
+        assert!(done.is_empty());
+    }
+
+    fn command_index_for_test(event: &crate::tura_llm::ProviderStreamEvent) -> Option<usize> {
+        match event {
+            crate::tura_llm::ProviderStreamEvent::CommandRunCommandReady {
+                command_index, ..
+            } => Some(*command_index),
+            crate::tura_llm::ProviderStreamEvent::ProviderOutputStarted => None,
+        }
+    }
+
+    #[test]
     fn command_run_streaming_emits_complete_json_arguments() {
         let call = json!({
             "type": "function",
@@ -2259,6 +2682,131 @@ mod tests {
             ready[0]["function"]["arguments"]["commands"][0]["command"],
             "shell_command"
         );
+    }
+
+    #[test]
+    fn codex_stream_collector_emits_on_arguments_done_before_completed_response() {
+        let mut collector = super::CodexToolCallStreamCollector::default();
+        let added = json!({
+            "type": "response.output_item.added",
+            "item": {
+                "type": "function_call",
+                "id": "fc_early",
+                "call_id": "call_early",
+                "name": "command_run",
+                "arguments": ""
+            }
+        });
+        let delta = json!({
+            "type": "response.function_call_arguments.delta",
+            "item_id": "call_early",
+            "delta": "{\"commands\":[{\"command_type\":\"shell_command\","
+        });
+        let done = json!({
+            "type": "response.function_call_arguments.done",
+            "item_id": "call_early",
+            "arguments": "{\"commands\":[{\"command_type\":\"shell_command\",\"command_line\":\"pwd\"}]}"
+        });
+
+        assert!(collector.push_event(&added).is_empty());
+        assert!(collector.push_event(&delta).is_empty());
+        let ready = collector.push_event(&done);
+
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0]["function"]["name"], "command_run");
+        assert_eq!(
+            ready[0]["function"]["arguments"]["commands"][0]["command_type"],
+            "shell_command"
+        );
+    }
+
+    #[test]
+    fn codex_stream_collector_does_not_emit_incomplete_arguments() {
+        let mut collector = super::CodexToolCallStreamCollector::default();
+        let added = json!({
+            "type": "response.output_item.added",
+            "item": {
+                "type": "function_call",
+                "id": "fc_incomplete",
+                "call_id": "call_incomplete",
+                "name": "command_run",
+                "arguments": ""
+            }
+        });
+        let delta = json!({
+            "type": "response.function_call_arguments.delta",
+            "item_id": "call_incomplete",
+            "delta": "{\"commands\":["
+        });
+
+        assert!(collector.push_event(&added).is_empty());
+        assert!(collector.push_event(&delta).is_empty());
+        assert!(collector.finish().is_empty());
+    }
+
+    #[test]
+    fn codex_responses_stream_tool_call_does_not_pollute_output_text() {
+        let events = vec![
+            json!({
+                "type": "response.output_item.added",
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_real",
+                    "call_id": "call_real",
+                    "name": "command_run",
+                    "arguments": ""
+                }
+            }),
+            json!({
+                "type": "response.function_call_arguments.delta",
+                "item_id": "fc_real",
+                "delta": "{\"commands\":[{\"command_type\":\"shell_command\","
+            }),
+            json!({
+                "type": "response.function_call_arguments.delta",
+                "item_id": "fc_real",
+                "delta": "\"command_line\":\"Get-Content -Raw src/app.txt\"}]}"
+            }),
+            json!({
+                "type": "response.function_call_arguments.done",
+                "item_id": "fc_real",
+                "arguments": "{\"commands\":[{\"command_type\":\"shell_command\",\"command_line\":\"Get-Content -Raw src/app.txt\"}]}"
+            }),
+            json!({
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_real",
+                    "call_id": "call_real",
+                    "name": "command_run",
+                    "status": "completed",
+                    "arguments": "{\"commands\":[{\"command_type\":\"shell_command\",\"command_line\":\"Get-Content -Raw src/app.txt\"}]}"
+                }
+            }),
+        ];
+
+        let mut output_text = String::new();
+        for event in &events {
+            super::append_codex_stream_text(event, &mut output_text);
+        }
+        assert!(output_text.is_empty());
+
+        let normalized = super::normalize_codex_response_content(&json!({
+            "events": events,
+            "output_text": output_text,
+        }));
+        let tool_calls = normalized["tool_calls"]
+            .as_array()
+            .expect("Responses function_call events should normalize to tool_calls");
+
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0]["id"], "call_real");
+        assert_eq!(tool_calls[0]["function"]["name"], "command_run");
+        assert_eq!(
+            tool_calls[0]["function"]["arguments"]["commands"][0]["command_type"],
+            "shell_command"
+        );
+        assert!(normalized.get("text").is_none());
     }
 
     #[test]

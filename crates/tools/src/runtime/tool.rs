@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
 
+use super::file_locks;
+
 #[derive(Clone, Debug)]
 pub struct ToolCall {
     pub tool_name: String,
@@ -227,6 +229,17 @@ pub trait ToolHandler: Send + Sync {
 
     async fn is_mutating(&self, call: &ToolCall, ctx: &ToolContext) -> bool;
 
+    async fn access(&self, call: &ToolCall, ctx: &ToolContext) -> file_locks::Access {
+        if self.is_mutating(call, ctx).await {
+            file_locks::Access {
+                workspace_write: true,
+                ..file_locks::Access::default()
+            }
+        } else {
+            file_locks::Access::default()
+        }
+    }
+
     async fn handle(
         &self,
         call: ToolCall,
@@ -238,6 +251,7 @@ pub struct ToolRouter {
     shell: crate::commands::shell_command::ShellCommandHandler,
     bash: crate::commands::bash::BashHandler,
     apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
+    multiple_tasks: crate::commands::multiple_tasks::MultipleTasksHandler,
 }
 
 impl ToolRouter {
@@ -246,6 +260,7 @@ impl ToolRouter {
             shell: crate::commands::shell_command::ShellCommandHandler,
             bash: crate::commands::bash::BashHandler,
             apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
+            multiple_tasks: crate::commands::multiple_tasks::MultipleTasksHandler,
         }
     }
 
@@ -254,6 +269,7 @@ impl ToolRouter {
             "shell_command" => Some("shell_command"),
             "bash" => Some("bash"),
             "apply_patch" => Some("apply_patch"),
+            "multiple_tasks" if multiple_tasks_command_enabled() => Some("multiple_tasks"),
             _ => None,
         }
     }
@@ -263,6 +279,7 @@ impl ToolRouter {
             "shell_command" => Some(&self.shell),
             "bash" => Some(&self.bash),
             "apply_patch" => Some(&self.apply_patch),
+            "multiple_tasks" if multiple_tasks_command_enabled() => Some(&self.multiple_tasks),
             _ => None,
         }
     }
@@ -293,14 +310,24 @@ impl ToolRouter {
             tool_name: call.tool_name.clone(),
         });
         let mutating = force_exclusive || handler.is_mutating(&call, &ctx).await;
+        let access = if force_exclusive {
+            file_locks::Access {
+                workspace_write: true,
+                ..file_locks::Access::default()
+            }
+        } else {
+            handler.access(&call, &ctx).await
+        };
         let call_ctx = ctx.with_call_id(call.call_id.clone());
         let mut result = if mutating {
             let gate = Arc::clone(&ctx.execution_gate);
             let _guard = gate.write().await;
+            let _file_guard = file_locks::acquire(&access);
             handler.handle(call.clone(), call_ctx.clone()).await?
         } else {
             let gate = Arc::clone(&ctx.execution_gate);
             let _guard = gate.read().await;
+            let _file_guard = file_locks::acquire(&access);
             handler.handle(call.clone(), call_ctx.clone()).await?
         };
         if let Some(post) = ctx.hooks().post {
@@ -323,4 +350,23 @@ impl Default for ToolRouter {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn multiple_tasks_command_enabled() -> bool {
+    [
+        "TURA_FORCE_MULTIPLE_TASKS",
+        "TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS",
+    ]
+    .iter()
+    .any(|name| {
+        std::env::var(name)
+            .ok()
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(false)
+    })
 }

@@ -6,10 +6,11 @@ use crate::state_machine::agent_management::AgentManagement;
 use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::state_machine::session_management::SessionManagement;
 
-use super::constants::{COMMAND_RUN_TOOL, PLANNING_TOOL};
+use super::constants::{COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL};
 use super::tool_catalog::{
     filter_tools_for_turn, load_agent_capabilities, load_agent_prompt_messages,
-    planning_child_depth, planning_env_enabled, planning_tool_disabled, tool_schema_name,
+    multiple_tasks_child_depth, multiple_tasks_env_enabled, multiple_tasks_tool_disabled,
+    tool_schema_name,
 };
 
 pub(super) fn execute_turn(
@@ -26,15 +27,18 @@ pub(super) fn execute_turn(
         .ok_or_else(|| "no agent available".to_string())?;
 
     let mut tools = load_agent_capabilities(agent)?;
-    if planning_tool_disabled() {
-        tools.retain(|tool| tool_schema_name(tool) != Some(PLANNING_TOOL));
+    if multiple_tasks_env_enabled() && !multiple_tasks_tool_disabled() {
+        tools.push(super::tool_catalog::task_delivered_provider_schema()?);
+    }
+    if multiple_tasks_tool_disabled() {
+        tools.retain(|tool| tool_schema_name(tool) != Some(MULTIPLE_TASKS_TOOL));
     }
     tools = filter_tools_for_turn(
         tools,
         is_final_turn,
         force_no_tools,
-        planning_child_depth() > 0,
-        planning_env_enabled(),
+        multiple_tasks_child_depth() > 0,
+        multiple_tasks_env_enabled(),
     )?;
     let allowed_tool_names: std::collections::HashSet<String> = tools
         .iter()
@@ -91,6 +95,7 @@ pub(super) fn execute_turn(
                 provider_name: queue_item.provider_name,
                 stream: agent.provider.stream,
                 tool_choice: tool_choice_for_turn(&allowed_tool_names, is_final_turn),
+                session_directory: session.session_directory.clone(),
             },
             settings,
             config,

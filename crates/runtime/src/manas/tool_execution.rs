@@ -7,7 +7,7 @@ use crate::state_machine::session_management::{SessionManagement, TaskStatus, Ta
 use crate::tool_router::execute_tool::{execute_tool, ExecuteToolInput, ToolExecutionResult};
 
 use super::change_tracker::{append_successful_changes, capture_pending_changes};
-use super::constants::{COMMAND_RUN_TOOL, PLANNING_TOOL};
+use super::constants::{COMMAND_RUN_TOOL, TASK_DELIVERED_TOOL};
 use super::gateway_events::{
     publish_step_summary, publish_task_plan_todos, publish_tool_call_record,
     publish_tool_call_started,
@@ -61,6 +61,36 @@ pub(super) fn execute_tool_calls(
             continue;
         }
         let pending_changes = capture_pending_changes(&tool_call.tool_name, &normalized_arguments);
+        if tool_call.tool_name == COMMAND_RUN_TOOL {
+            if let Some(streamed_result) = streamed_command_run_result(runtime) {
+                let execution_result = ToolExecutionResult {
+                    tool_name: tool_call.tool_name.clone(),
+                    arguments: normalized_arguments.clone(),
+                    success: command_run_result_success(&streamed_result),
+                    error: command_run_result_error(&streamed_result),
+                    result: streamed_result,
+                };
+                append_successful_changes(
+                    &session.session_directory,
+                    &session.session_id,
+                    &runtime.runtime_id,
+                    pending_changes,
+                    &execution_result,
+                );
+                publish_tool_call_record(
+                    session,
+                    runtime,
+                    tool_call,
+                    normalized_arguments,
+                    &execution_result.result,
+                    execution_result.success,
+                    execution_result.error.as_deref(),
+                    tool_started_at,
+                );
+                results.push(execution_result);
+                continue;
+            }
+        }
         let execute_input = ExecuteToolInput {
             tool_name: tool_call.tool_name.clone(),
             arguments: normalized_arguments.clone(),
@@ -130,6 +160,7 @@ pub(super) fn execute_tool_calls(
                 if apply_tool_result_session_state_update(
                     session,
                     &tool_call.tool_name,
+                    &execution_result.arguments,
                     &execution_result.result,
                 ) {
                     publish_task_plan_todos(session);
@@ -179,6 +210,48 @@ pub(super) fn execute_tool_calls(
     Ok(results)
 }
 
+fn streamed_command_run_result(runtime: &RuntimeManagement) -> Option<serde_json::Value> {
+    runtime
+        .output
+        .as_ref()?
+        .get("streamed_command_run_result")
+        .cloned()
+}
+
+fn command_run_result_success(output: &serde_json::Value) -> bool {
+    output
+        .get("results")
+        .and_then(serde_json::Value::as_array)
+        .map(|results| {
+            results.iter().all(|result| {
+                result.get("success").and_then(serde_json::Value::as_bool) == Some(true)
+            })
+        })
+        .unwrap_or(true)
+}
+
+fn command_run_result_error(output: &serde_json::Value) -> Option<String> {
+    if command_run_result_success(output) {
+        return None;
+    }
+    output
+        .get("results")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|results| {
+            results.iter().find_map(|result| {
+                if result.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
+                    result
+                        .get("error")
+                        .and_then(serde_json::Value::as_str)
+                        .or_else(|| result.get("output").and_then(serde_json::Value::as_str))
+                        .map(ToString::to_string)
+                } else {
+                    None
+                }
+            })
+        })
+}
+
 fn command_run_hit_workspace_sandbox(
     tool_name: &str,
     result: &Result<ToolExecutionResult, String>,
@@ -200,56 +273,92 @@ fn command_run_hit_workspace_sandbox(
 fn apply_tool_result_session_state_update(
     session: &mut SessionManagement,
     tool_name: &str,
+    arguments: &serde_json::Value,
     result: &serde_json::Value,
 ) -> bool {
-    if tool_name != PLANNING_TOOL {
-        return false;
+    let mut changed = false;
+    if tool_name == COMMAND_RUN_TOOL {
+        if let Some(plan) = multiple_tasks_output_from_tool_result(result) {
+            session.task_plan.summary = plan
+                .get("user_task")
+                .and_then(|value| value.as_str())
+                .unwrap_or(&session.user_goal)
+                .to_string();
+            let steps = plan
+                .get("steps")
+                .and_then(|value| value.as_array())
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            session.task_plan.detailed_tasks = steps
+                .iter()
+                .enumerate()
+                .filter_map(|(index, step)| task_step_from_multiple_tasks_step(index, step))
+                .collect();
+            if let Some(first) = session.task_plan.detailed_tasks.first_mut() {
+                first.status = TaskStatus::InProgress;
+            }
+            changed = true;
+        }
     }
-    let Some(plan) = planning_output_from_tool_result(result) else {
-        return false;
-    };
-    session.task_plan.summary = plan
-        .get("user_task")
-        .and_then(|value| value.as_str())
-        .unwrap_or(&session.user_goal)
-        .to_string();
-    let steps = plan
-        .get("steps")
-        .and_then(|value| value.as_array())
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
-    session.task_plan.detailed_tasks = steps
-        .iter()
-        .enumerate()
-        .filter_map(|(index, step)| task_step_from_planning_step(index, step))
-        .collect();
-    session.session_last_update_at = Utc::now();
-    true
+    if tool_name == TASK_DELIVERED_TOOL
+        && arguments
+            .get("task_delivered")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+    {
+        if let Some(current) = session
+            .task_plan
+            .detailed_tasks
+            .iter_mut()
+            .find(|task| matches!(task.status, TaskStatus::InProgress | TaskStatus::Pending))
+        {
+            current.status = TaskStatus::Completed;
+            if let Some(next) = session
+                .task_plan
+                .detailed_tasks
+                .iter_mut()
+                .find(|task| task.status == TaskStatus::Pending)
+            {
+                next.status = TaskStatus::InProgress;
+            }
+            changed = true;
+        }
+    }
+    if changed {
+        session.session_last_update_at = Utc::now();
+    }
+    changed
 }
 
-fn planning_output_from_tool_result(result: &serde_json::Value) -> Option<serde_json::Value> {
-    let first = result
+fn multiple_tasks_output_from_tool_result(result: &serde_json::Value) -> Option<serde_json::Value> {
+    result
         .get("results")
         .and_then(|value| value.as_array())
-        .and_then(|items| items.first())
-        .cloned()
-        .unwrap_or_else(|| result.clone());
-    if first.get("steps").is_some() {
-        Some(first)
-    } else {
-        None
-    }
+        .and_then(|items| {
+            items.iter().find_map(|item| {
+                (item
+                    .get("command_type")
+                    .or_else(|| item.get("command"))
+                    .and_then(|value| value.as_str())
+                    == Some("multiple_tasks"))
+                .then(|| item.get("output").cloned())
+                .flatten()
+            })
+        })
+        .filter(|value| value.get("steps").is_some())
 }
 
-fn task_step_from_planning_step(index: usize, value: &serde_json::Value) -> Option<TaskStep> {
+fn task_step_from_multiple_tasks_step(index: usize, value: &serde_json::Value) -> Option<TaskStep> {
     let object = value.as_object()?;
     let task_instruction = object
         .get("task_instruction")
+        .or_else(|| object.get("deliverble"))
         .and_then(|value| value.as_str())
         .unwrap_or_default()
         .to_string();
     let step_goal = object
         .get("step_goal")
+        .or_else(|| object.get("task_summary"))
         .and_then(|value| value.as_str())
         .unwrap_or_default()
         .to_string();
@@ -292,6 +401,7 @@ fn task_step_from_planning_step(index: usize, value: &serde_json::Value) -> Opti
             .to_string(),
         step_deliverable_description: object
             .get("deliverable")
+            .or_else(|| object.get("deliverble"))
             .and_then(|value| value.as_str())
             .unwrap_or_default()
             .to_string(),

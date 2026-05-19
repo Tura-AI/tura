@@ -236,7 +236,7 @@ impl SessionStore {
             session_type: session.session_type.clone(),
             kill_processes_on_start: Some(session.kill_processes_on_start),
             validator_enabled: Some(session.validator_enabled),
-            force_planning: Some(session.force_planning),
+            force_multiple_tasks: Some(session.force_multiple_tasks),
             model_variant: session.model_variant.clone(),
             model_acceleration_enabled: Some(session.model_acceleration_enabled),
             ..TuraSessionConfig::default()
@@ -267,7 +267,7 @@ impl SessionStore {
                 ),
                 kill_processes_on_start: info.kill_processes_on_start,
                 validator_enabled: info.validator_enabled,
-                force_planning: info.force_planning,
+                force_multiple_tasks: info.force_multiple_tasks,
                 disable_permission_restrictions: info.disable_permission_restrictions,
                 model_variant: info.model_variant.clone(),
                 model_acceleration_enabled: info.model_acceleration_enabled,
@@ -296,7 +296,7 @@ impl SessionStore {
             lsp: Some(serde_json::to_value(&info.lsp).unwrap_or_else(|_| serde_json::json!({}))),
             kill_processes_on_start: info.kill_processes_on_start,
             validator_enabled: info.validator_enabled,
-            force_planning: info.force_planning,
+            force_multiple_tasks: info.force_multiple_tasks,
             disable_permission_restrictions: info.disable_permission_restrictions,
             model_variant: info.model_variant.clone(),
             model_acceleration_enabled: info.model_acceleration_enabled,
@@ -474,7 +474,7 @@ impl SessionStore {
         lsp: Option<LspSessionConfig>,
         kill_processes_on_start: bool,
         validator_enabled: bool,
-        force_planning: bool,
+        force_multiple_tasks: bool,
         model_variant: Option<String>,
         model_acceleration_enabled: bool,
         disable_permission_restrictions: bool,
@@ -491,7 +491,7 @@ impl SessionStore {
         }
         info.kill_processes_on_start = kill_processes_on_start;
         info.validator_enabled = validator_enabled;
-        info.force_planning = force_planning;
+        info.force_multiple_tasks = force_multiple_tasks;
         info.model_variant = model_variant.or(persisted_config.model_variant.clone());
         info.model_acceleration_enabled = model_acceleration_enabled;
         info.disable_permission_restrictions = disable_permission_restrictions;
@@ -516,7 +516,7 @@ impl SessionStore {
             lsp: Some(serde_json::to_value(&info.lsp).unwrap_or_else(|_| serde_json::json!({}))),
             kill_processes_on_start: info.kill_processes_on_start,
             validator_enabled: info.validator_enabled,
-            force_planning: info.force_planning,
+            force_multiple_tasks: info.force_multiple_tasks,
             model_variant: info.model_variant.clone(),
             model_acceleration_enabled: info.model_acceleration_enabled,
             disable_permission_restrictions: info.disable_permission_restrictions,
@@ -547,7 +547,7 @@ impl SessionStore {
         lsp: Option<LspSessionConfig>,
         kill_processes_on_start: Option<bool>,
         validator_enabled: Option<bool>,
-        force_planning: Option<bool>,
+        force_multiple_tasks: Option<bool>,
         disable_permission_restrictions: Option<bool>,
     ) -> Option<ApiSession> {
         let mut sessions = self.sessions.write();
@@ -592,8 +592,8 @@ impl SessionStore {
         if let Some(validator_enabled) = validator_enabled {
             info.validator_enabled = validator_enabled;
         }
-        if let Some(force_planning) = force_planning {
-            info.force_planning = force_planning;
+        if let Some(force_multiple_tasks) = force_multiple_tasks {
+            info.force_multiple_tasks = force_multiple_tasks;
         }
         if let Some(disable_permission_restrictions) = disable_permission_restrictions {
             info.disable_permission_restrictions = disable_permission_restrictions;
@@ -615,7 +615,7 @@ impl SessionStore {
             lsp: Some(serde_json::to_value(&info.lsp).unwrap_or_else(|_| serde_json::json!({}))),
             kill_processes_on_start: info.kill_processes_on_start,
             validator_enabled: info.validator_enabled,
-            force_planning: info.force_planning,
+            force_multiple_tasks: info.force_multiple_tasks,
             model_variant: info.model_variant.clone(),
             model_acceleration_enabled: info.model_acceleration_enabled,
             disable_permission_restrictions: info.disable_permission_restrictions,
@@ -1130,7 +1130,7 @@ fn api_session_from_info(info: &SessionInfo, parent_id: Option<String>) -> ApiSe
         lsp: Some(serde_json::to_value(&info.lsp).unwrap_or_else(|_| serde_json::json!({}))),
         kill_processes_on_start: info.kill_processes_on_start,
         validator_enabled: info.validator_enabled,
-        force_planning: info.force_planning,
+        force_multiple_tasks: info.force_multiple_tasks,
         disable_permission_restrictions: info.disable_permission_restrictions,
         model_variant: info.model_variant.clone(),
         model_acceleration_enabled: info.model_acceleration_enabled,

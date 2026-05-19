@@ -1,5 +1,6 @@
 use code_tools::command_run;
 use code_tools::commands;
+use code_tools::runtime::file_locks::{self, Access};
 use code_tools::runtime::tool::{
     FunctionToolOutput, ToolCall, ToolContext, ToolError, ToolPayload, ToolRouter, ToolRuntimeEvent,
 };
@@ -46,7 +47,8 @@ fn pass_current_style_command_run_output_shape() {
         "current command_run does not expose top-level ok"
     );
     assert!(output.get("output_policy").is_none());
-    assert_eq!(output["results"][0]["command"], "shell_command");
+    assert!(output["results"][0].get("command").is_none());
+    assert_eq!(output["results"][0]["command_type"], "shell_command");
     assert_eq!(output["results"][0]["success"], true);
 }
 
@@ -82,7 +84,8 @@ fn fail_empty_command_run_returns_current_style_failure_result() {
     let root = temp_workspace("empty");
     let output = command_run::execute(&json!({ "commands": [] }), &root);
 
-    assert_eq!(output["results"][0]["command"], "command_run");
+    assert!(output["results"][0].get("command").is_none());
+    assert_eq!(output["results"][0]["command_type"], "command_run");
     assert_eq!(output["results"][0]["success"], false);
     assert_eq!(
         output["results"][0]["error"],
@@ -273,14 +276,84 @@ fn pass_mutating_commands_are_barriers_between_read_batches() {
     assert_eq!(output["results"][0]["success"], true);
     assert_eq!(output["results"][1]["success"], true);
     assert_eq!(output["results"][2]["success"], true);
-    assert!(output["results"][0]["output"]["stdout"]
+    assert!(output["results"][0]["output"]
         .as_str()
         .unwrap_or_default()
         .contains("before"));
-    assert!(output["results"][2]["output"]["stdout"]
+    assert!(output["results"][2]["output"]
         .as_str()
         .unwrap_or_default()
         .contains("after"));
+}
+
+#[test]
+fn pass_read_only_commands_in_same_step_run_concurrently() {
+    let _guard = env_lock();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("parallel-read-step");
+    fs::write(root.join("state.txt"), "ready\n").unwrap();
+    let command_a = if cfg!(windows) {
+        "Test-Path state.txt; Start-Sleep -Milliseconds 900; Write-Output read-a"
+    } else {
+        "pwd; sleep 0.9; echo read-a"
+    };
+    let command_b = if cfg!(windows) {
+        "Test-Path state.txt; Start-Sleep -Milliseconds 900; Write-Output read-b"
+    } else {
+        "pwd; sleep 0.9; echo read-b"
+    };
+    let started = Instant::now();
+
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                { "step": 1, "command": "shell_command", "command_line": json!({ "command": command_a, "timeout_ms": 5000 }).to_string() },
+                { "step": 1, "command": "shell_command", "command_line": json!({ "command": command_b, "timeout_ms": 5000 }).to_string() }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["success"], true);
+    assert_eq!(output["results"][1]["success"], true);
+    assert!(
+        started.elapsed() < Duration::from_millis(1700),
+        "same-step read-only commands should run in parallel, elapsed {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn pass_file_lock_allows_parallel_reads_and_blocks_write() {
+    let read_access = Access {
+        read_paths: vec!["same.txt".to_string()],
+        ..Access::default()
+    };
+    let write_access = Access {
+        write_paths: vec!["same.txt".to_string()],
+        ..Access::default()
+    };
+    let read_a = file_locks::acquire(&read_access);
+    let read_b = file_locks::acquire(&read_access);
+    let started = Instant::now();
+    let writer = std::thread::spawn(move || {
+        let _write = file_locks::acquire(&write_access);
+        started.elapsed()
+    });
+
+    std::thread::sleep(Duration::from_millis(250));
+    assert!(
+        !writer.is_finished(),
+        "write lock must wait for active readers"
+    );
+    drop(read_a);
+    assert!(
+        !writer.is_finished(),
+        "write lock must wait for all readers"
+    );
+    drop(read_b);
+    let waited = writer.join().expect("writer thread should finish");
+    assert!(waited >= Duration::from_millis(200));
 }
 
 #[test]
@@ -348,7 +421,7 @@ async fn pass_async_command_run_entry_does_not_start_nested_runtime() {
     .await;
 
     assert_eq!(output["results"][0]["success"], true);
-    assert!(output["results"][0]["output"]["stdout"]
+    assert!(output["results"][0]["output"]
         .as_str()
         .unwrap_or_default()
         .contains("async-ok"));
@@ -372,9 +445,10 @@ fn pass_bash_surface_runs_posix_script_without_exposing_shell_command() {
     );
 
     assert_eq!(commands::canonical_command("shell_command"), "bash");
-    assert_eq!(output["results"][0]["command"], "bash");
+    assert!(output["results"][0].get("command").is_none());
+    assert_eq!(output["results"][0]["command_type"], "bash");
     assert_eq!(output["results"][0]["success"], true);
-    assert!(output["results"][0]["output"]["stdout"]
+    assert!(output["results"][0]["output"]
         .as_str()
         .unwrap_or_default()
         .contains("one"));

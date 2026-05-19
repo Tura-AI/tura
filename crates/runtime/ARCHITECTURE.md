@@ -59,9 +59,7 @@ crates/runtime/
       context_management.rs
 
     prompt_style/
-      planning_gate.rs
       task_continuity.rs
-      latest_planning.rs
       command_evaluation.rs
 
     tool_router/
@@ -206,7 +204,6 @@ Provider defaults and command lists come from agent config.
 - Provider schema conversion.
 - Active command prompt loading.
 - Final-turn filtering.
-- Planning mode filtering.
 - Command-run placement at the end of the tool list.
 - Cache-stable tool-set identity.
 
@@ -224,9 +221,7 @@ crates/runtime/src/prompt_style/
 Dynamic values are injected by builder sections such as:
 
 - `parent_user_task`
-- `workspace_context`
 - `latest_tool_result`
-- `planning_gate`
 - `response_language`
 - `runtime_state`
 

@@ -155,7 +155,7 @@ pub async fn get_session(Path(session_id): Path<String>) -> Json<Session> {
                 lsp: Some(serde_json::json!({"mode":"auto","enabled":[],"disabled":[]})),
                 kill_processes_on_start: false,
                 validator_enabled: false,
-                force_planning: false,
+                force_multiple_tasks: false,
                 disable_permission_restrictions: false,
                 model_variant: None,
                 model_acceleration_enabled: false,
@@ -185,9 +185,9 @@ pub async fn create_session(
         .validator_enabled
         .or(persisted_config.validator_enabled)
         .unwrap_or(false);
-    let force_planning = payload
-        .force_planning
-        .or(persisted_config.force_planning)
+    let force_multiple_tasks = payload
+        .force_multiple_tasks
+        .or(persisted_config.force_multiple_tasks)
         .unwrap_or(false);
     let model_variant = payload.model_variant.or(persisted_config.model_variant);
     let model_acceleration_enabled = payload
@@ -231,7 +231,7 @@ pub async fn create_session(
         Some(lsp.clone()),
         kill_processes_on_start,
         validator_enabled,
-        force_planning,
+        force_multiple_tasks,
         model_variant,
         model_acceleration_enabled,
         disable_permission_restrictions,
@@ -263,7 +263,7 @@ pub struct CreateSessionRequest {
     pub lsp: Option<LspSessionConfig>,
     pub kill_processes_on_start: Option<bool>,
     pub validator_enabled: Option<bool>,
-    pub force_planning: Option<bool>,
+    pub force_multiple_tasks: Option<bool>,
     pub model_variant: Option<String>,
     pub model_acceleration_enabled: Option<bool>,
     pub disable_permission_restrictions: Option<bool>,
@@ -757,7 +757,7 @@ pub async fn update_session(
             payload.lsp.clone(),
             payload.kill_processes_on_start,
             payload.validator_enabled,
-            payload.force_planning,
+            payload.force_multiple_tasks,
             payload.disable_permission_restrictions,
         )
         .unwrap_or_else(|| Session {
@@ -773,7 +773,7 @@ pub async fn update_session(
             lsp: Some(serde_json::json!({"mode":"auto","enabled":[],"disabled":[]})),
             kill_processes_on_start: false,
             validator_enabled: false,
-            force_planning: false,
+            force_multiple_tasks: false,
             model_variant: None,
             model_acceleration_enabled: false,
             disable_permission_restrictions: false,
@@ -813,7 +813,7 @@ pub struct UpdateSessionRequest {
     pub lsp: Option<LspSessionConfig>,
     pub kill_processes_on_start: Option<bool>,
     pub validator_enabled: Option<bool>,
-    pub force_planning: Option<bool>,
+    pub force_multiple_tasks: Option<bool>,
     pub disable_permission_restrictions: Option<bool>,
 }
 
@@ -891,7 +891,7 @@ pub async fn fork_session(
             .unwrap_or(false),
         original
             .as_ref()
-            .map(|session| session.force_planning)
+            .map(|session| session.force_multiple_tasks)
             .unwrap_or(false),
         original
             .as_ref()
@@ -1100,7 +1100,7 @@ pub async fn send_agent_message(
         )
     };
     let tool_message = payload.tool_call.as_ref().and_then(|tool_call| {
-        if let Some(todos) = planning_todos(tool_call) {
+        if let Some(todos) = multiple_tasks_todos(tool_call) {
             session_store().set_todos(&session_id, todos);
         }
         session_store().add_tool_message(
@@ -1222,8 +1222,8 @@ fn agent_message_metadata(payload: &SendAgentMessageRequest) -> Option<serde_jso
     Some(serde_json::Value::Object(metadata))
 }
 
-fn planning_todos(tool_call: &SendAgentToolCall) -> Option<Vec<serde_json::Value>> {
-    if tool_call.tool_name != "planning" {
+fn multiple_tasks_todos(tool_call: &SendAgentToolCall) -> Option<Vec<serde_json::Value>> {
+    if tool_call.tool_name != "multiple_tasks" {
         return None;
     }
 
@@ -1240,7 +1240,7 @@ fn planning_todos(tool_call: &SendAgentToolCall) -> Option<Vec<serde_json::Value
         .state
         .get("status")
         .and_then(|value| value.as_str());
-    let output_steps = planning_output_steps(tool_call);
+    let output_steps = multiple_tasks_output_steps(tool_call);
     let running_step = if status == Some("running") {
         steps
             .iter()
@@ -1251,7 +1251,7 @@ fn planning_todos(tool_call: &SendAgentToolCall) -> Option<Vec<serde_json::Value
                     item.get("index").and_then(|value| value.as_u64()) == Some(number as u64)
                 })
             })
-            .map(|(index, step)| planning_step_value(step, index + 1))
+            .map(|(index, step)| multiple_tasks_step_value(step, index + 1))
             .min()
     } else {
         None
@@ -1263,7 +1263,7 @@ fn planning_todos(tool_call: &SendAgentToolCall) -> Option<Vec<serde_json::Value
             .enumerate()
             .map(|(index, step)| {
                 let number = index + 1;
-                let step_value = planning_step_value(step, number);
+                let step_value = multiple_tasks_step_value(step, number);
                 let output_step = output_steps.iter().find(|item| {
                     item.get("index").and_then(|value| value.as_u64()) == Some(number as u64)
                 });
@@ -1292,14 +1292,14 @@ fn planning_todos(tool_call: &SendAgentToolCall) -> Option<Vec<serde_json::Value
     )
 }
 
-fn planning_step_value(step: &serde_json::Value, fallback: usize) -> usize {
+fn multiple_tasks_step_value(step: &serde_json::Value, fallback: usize) -> usize {
     step.get("step")
         .and_then(|value| value.as_u64())
         .and_then(|value| usize::try_from(value).ok())
         .unwrap_or(fallback)
 }
 
-fn planning_output_steps(tool_call: &SendAgentToolCall) -> Vec<serde_json::Value> {
+fn multiple_tasks_output_steps(tool_call: &SendAgentToolCall) -> Vec<serde_json::Value> {
     let raw = tool_call
         .metadata
         .as_ref()
@@ -1825,7 +1825,7 @@ pub async fn prompt_async(
     session_store().set_todos(
         &session_id,
         vec![serde_json::json!({
-            "id": format!("{session_id}:planning"),
+            "id": format!("{session_id}:multiple_tasks"),
             "content": "规划执行步骤",
             "status": "in_progress",
             "priority": "medium",
@@ -1933,9 +1933,9 @@ fn run_mano_for_prompt(session_id: String, payload: serde_json::Value) {
         agent: session.as_ref().and_then(|session| session.agent.clone()),
         runtime_context: prompt_runtime_context(&payload),
     };
-    let force_planning = session
+    let force_multiple_tasks = session
         .as_ref()
-        .map(|session| session.force_planning)
+        .map(|session| session.force_multiple_tasks)
         .unwrap_or(false);
     let model_override = prompt_model_override(&payload)
         .or_else(|| session.as_ref().and_then(|session| session.model.clone()))
@@ -1969,7 +1969,7 @@ fn run_mano_for_prompt(session_id: String, payload: serde_json::Value) {
         .map(|config| config.command_run_stall_guard())
         .unwrap_or_else(|| TuraSessionConfig::default().command_run_stall_guard());
     let result = with_gateway_runtime_env(|| {
-        with_force_planning_env(force_planning, || {
+        with_force_multiple_tasks_env(force_multiple_tasks, || {
             with_model_override_env(model_override.as_deref(), || {
                 with_model_options_env(reasoning_effort.as_deref(), acceleration_enabled, || {
                     with_command_run_stall_guard_env(command_run_stall_guard, || {
@@ -2101,8 +2101,8 @@ fn with_gateway_runtime_env<T>(run: impl FnOnce() -> T) -> T {
     result
 }
 
-fn with_force_planning_env<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
-    const ENV_NAME: &str = "TURA_FORCE_EXECUTE_TOOLS_PLANNING";
+fn with_force_multiple_tasks_env<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
+    const ENV_NAME: &str = "TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS";
     let previous: Option<OsString> = std::env::var_os(ENV_NAME);
     if enabled {
         std::env::set_var(ENV_NAME, "1");
@@ -2468,10 +2468,10 @@ fn sanitize_frontend_value(value: serde_json::Value) -> serde_json::Value {
 mod tests {
     use super::{
         active_lsp_languages, agent_message_metadata, api_message_from_store, filter_list_sessions,
-        first_prompt_part_id, frontend_safe_reply_message, frontend_safe_value, planning_todos,
-        prompt_message_id, prompt_model_acceleration, prompt_model_variant, prompt_text,
-        with_model_override_env, workspace_key, SendAgentMessageRequest, SendAgentToolCall,
-        SessionListParams,
+        first_prompt_part_id, frontend_safe_reply_message, frontend_safe_value,
+        multiple_tasks_todos, prompt_message_id, prompt_model_acceleration, prompt_model_variant,
+        prompt_text, with_model_override_env, workspace_key, SendAgentMessageRequest,
+        SendAgentToolCall, SessionListParams,
     };
     use crate::api::types::{Session, SessionStatus};
     use crate::session::manager::{LspMode, LspSessionConfig};
@@ -2561,9 +2561,10 @@ mod tests {
             lsp: None,
             kill_processes_on_start: false,
             validator_enabled: false,
-            force_planning: false,
+            force_multiple_tasks: false,
             model_variant: None,
             model_acceleration_enabled: false,
+            disable_permission_restrictions: false,
             status: SessionStatus::Idle,
             message_count: 0,
         }
@@ -2641,9 +2642,9 @@ mod tests {
     }
 
     #[test]
-    fn planning_tool_call_derives_todos_from_steps_and_output() {
+    fn multiple_tasks_tool_call_derives_todos_from_steps_and_output() {
         let tool_call = SendAgentToolCall {
-            tool_name: "planning".to_string(),
+            tool_name: "multiple_tasks".to_string(),
             call_id: "call-1".to_string(),
             state: serde_json::json!({
                 "status": "completed",
@@ -2665,7 +2666,7 @@ mod tests {
             metadata: None,
         };
 
-        let todos = planning_todos(&tool_call).expect("planning should produce todos");
+        let todos = multiple_tasks_todos(&tool_call).expect("multiple_tasks should produce todos");
         assert_eq!(todos[0]["content"], "Inspect wiring");
         assert_eq!(todos[0]["status"], "completed");
         assert_eq!(todos[1]["content"], "Patch the flow");
@@ -2673,9 +2674,9 @@ mod tests {
     }
 
     #[test]
-    fn planning_running_call_marks_next_step_in_progress() {
+    fn multiple_tasks_running_call_marks_next_step_in_progress() {
         let tool_call = SendAgentToolCall {
-            tool_name: "planning".to_string(),
+            tool_name: "multiple_tasks".to_string(),
             call_id: "call-1".to_string(),
             state: serde_json::json!({
                 "status": "running",
@@ -2689,15 +2690,15 @@ mod tests {
             metadata: None,
         };
 
-        let todos = planning_todos(&tool_call).expect("planning should produce todos");
+        let todos = multiple_tasks_todos(&tool_call).expect("multiple_tasks should produce todos");
         assert_eq!(todos[0]["status"], "in_progress");
         assert_eq!(todos[1]["status"], "pending");
     }
 
     #[test]
-    fn planning_running_call_marks_same_step_group_in_progress() {
+    fn multiple_tasks_running_call_marks_same_step_group_in_progress() {
         let tool_call = SendAgentToolCall {
-            tool_name: "planning".to_string(),
+            tool_name: "multiple_tasks".to_string(),
             call_id: "call-1".to_string(),
             state: serde_json::json!({
                 "status": "running",
@@ -2712,7 +2713,7 @@ mod tests {
             metadata: None,
         };
 
-        let todos = planning_todos(&tool_call).expect("planning should produce todos");
+        let todos = multiple_tasks_todos(&tool_call).expect("multiple_tasks should produce todos");
         assert_eq!(todos[0]["status"], "in_progress");
         assert_eq!(todos[1]["status"], "in_progress");
         assert_eq!(todos[2]["status"], "pending");
@@ -2806,7 +2807,6 @@ mod tests {
     #[test]
     fn frontend_safe_reply_message_hides_raw_tool_argument_payload() {
         let text = serde_json::json!({
-            "previous_command_evaluations": [{ "command": "read", "evaluation": "completed_not_helpful" }],
             "requests": [{
                 "path": "services/sd-text-to-image/main.py",
                 "start_line": 1,
@@ -2820,13 +2820,10 @@ mod tests {
     }
 
     #[test]
-    fn agent_message_metadata_keeps_send_message_feedback_for_frontend() {
+    fn agent_message_metadata_keeps_step_summary_for_frontend() {
         let metadata = agent_message_metadata(&SendAgentMessageRequest {
             reply_message: "done".to_string(),
             new_learning: String::new(),
-            previous_command_evaluations: Some(serde_json::json!([
-                { "command": "grep", "evaluation": "completed_helpful" }
-            ])),
             step_summary: Some("send final response".to_string()),
             media: vec![],
             runtime_id: Some("runtime-1".to_string()),
@@ -2834,17 +2831,9 @@ mod tests {
         })
         .expect("feedback metadata should be present");
 
-        assert_eq!(
-            metadata["previous_command_evaluations"][0]["evaluation"],
-            "completed_helpful"
-        );
         assert_eq!(metadata["step_summary"], "send final response");
         let sanitized = frontend_safe_value(Some(metadata))
             .expect("metadata should survive frontend sanitizing");
-        assert_eq!(
-            sanitized["previous_command_evaluations"][0]["evaluation"],
-            "completed_helpful"
-        );
         assert_eq!(sanitized["step_summary"], "send final response");
     }
 

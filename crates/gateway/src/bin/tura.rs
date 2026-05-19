@@ -26,14 +26,15 @@ fn run() -> Result<i32, String> {
     if config.priority {
         std::env::set_var("TURA_SESSION_ACCELERATION_ENABLED", "1");
     }
+    if config.multiple_tasks_mode {
+        std::env::set_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS", "1");
+    } else {
+        std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS");
+    }
     std::env::set_var("TURA_PROJECT_ROOT", project_root_from_exe());
     std::env::set_var("TURA_DISABLE_GATEWAY_CALLBACKS", "1");
     std::env::set_var("TURA_DISABLE_ROUTER_AUTOSTART", "1");
     std::env::set_var("TURA_FAIL_ON_RUNTIME_ERROR", "1");
-    if config.json {
-        std::env::set_var("TURA_CLI_LIVE_JSONL", "1");
-    }
-
     let prompt = config.prompt()?;
     let session_id = format!("cli-{}", uuid::Uuid::new_v4());
     if config.json {
@@ -79,6 +80,7 @@ struct CliConfig {
     model: Option<String>,
     reasoning_effort: Option<String>,
     priority: bool,
+    multiple_tasks_mode: bool,
     agent: Option<String>,
     last_message_path: Option<PathBuf>,
     prompt_parts: Vec<String>,
@@ -96,6 +98,7 @@ impl CliConfig {
             model: None,
             reasoning_effort: None,
             priority: false,
+            multiple_tasks_mode: false,
             agent: None,
             last_message_path: None,
             prompt_parts: Vec::new(),
@@ -109,6 +112,10 @@ impl CliConfig {
                 }
                 "--json" => {
                     config.json = true;
+                    index += 1;
+                }
+                "--multiple-tasks-mode" | "--enable-multiple-tasks" => {
+                    config.multiple_tasks_mode = true;
                     index += 1;
                 }
                 "-C" | "--cwd" => {
@@ -176,6 +183,9 @@ fn apply_config_arg(config: &mut CliConfig, value: &str) {
     match key.trim() {
         "model_reasoning_effort" => config.reasoning_effort = Some(value.to_string()),
         "service_tier" if value.eq_ignore_ascii_case("priority") => config.priority = true,
+        "force_multiple_tasks" | "multiple_tasks_mode" if value.eq_ignore_ascii_case("true") => {
+            config.multiple_tasks_mode = true
+        }
         _ => {}
     }
 }
@@ -325,8 +335,15 @@ fn emit_command_run_events(
     item_index: &mut usize,
     cwd: &PathBuf,
 ) -> Result<(), String> {
-    for result in flatten_command_results(value.get("output").unwrap_or(&Value::Null)) {
-        if result.get("command").and_then(Value::as_str) == Some("apply_patch") {
+    for result in flatten_command_results(
+        value.get("output").unwrap_or(&Value::Null),
+        value.get("input").unwrap_or(&Value::Null),
+    ) {
+        let command_type = result
+            .get("command_type")
+            .or_else(|| result.get("command"))
+            .and_then(Value::as_str);
+        if command_type == Some("apply_patch") {
             emit_file_change_event(&result, item_index, cwd)?;
             continue;
         }
@@ -392,6 +409,7 @@ fn file_changes(result: &Value, cwd: &PathBuf) -> Vec<Value> {
         .get("response")
         .and_then(|value| value.get("changes"))
         .or_else(|| result.get("changes"))
+        .or_else(|| result.get("output").and_then(|value| value.get("changes")))
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
@@ -404,13 +422,13 @@ fn file_changes(result: &Value, cwd: &PathBuf) -> Vec<Value> {
             .and_then(Value::as_str)
             .unwrap_or("update");
         let path = PathBuf::from(raw_path);
-        let absolute = if path.is_absolute() {
+        let display_path = if path.is_absolute() {
             path
         } else {
             cwd.join(path)
         };
         changes.push(json!({
-            "path": absolute.to_string_lossy().to_string(),
+            "path": display_path.to_string_lossy().to_string(),
             "kind": kind
         }));
     }
@@ -423,14 +441,38 @@ fn file_changes(result: &Value, cwd: &PathBuf) -> Vec<Value> {
     changes
 }
 
-fn flatten_command_results(output: &Value) -> Vec<Value> {
+fn flatten_command_results(output: &Value, input: &Value) -> Vec<Value> {
     let mut values = Vec::new();
+    let input_commands = input
+        .get("commands")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     if let Some(runs) = output.get("results").and_then(Value::as_array) {
-        for run in runs {
+        for (index, run) in runs.iter().enumerate() {
+            let mut run = run.clone();
+            if let (Some(object), Some(input_command)) =
+                (run.as_object_mut(), input_commands.get(index))
+            {
+                if let Some(command_type) = input_command
+                    .get("command_type")
+                    .or_else(|| input_command.get("command"))
+                    .cloned()
+                {
+                    object
+                        .entry("command_type".to_string())
+                        .or_insert(command_type);
+                }
+                if let Some(command_line) = input_command.get("command_line").cloned() {
+                    object
+                        .entry("command_line".to_string())
+                        .or_insert(command_line);
+                }
+            }
             if let Some(nested) = run.get("results").and_then(Value::as_array) {
                 values.extend(nested.iter().cloned());
             } else {
-                values.push(run.clone());
+                values.push(run);
             }
         }
     }
@@ -441,6 +483,10 @@ fn flatten_command_results(output: &Value) -> Vec<Value> {
 }
 
 fn display_command(result: &Value) -> String {
+    let command_type = result
+        .get("command_type")
+        .or_else(|| result.get("command"))
+        .and_then(Value::as_str);
     let command = result
         .get("display_command")
         .or_else(|| result.get("command_line"))
@@ -448,7 +494,7 @@ fn display_command(result: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or("command_run")
         .to_string();
-    if result.get("command").and_then(Value::as_str) == Some("shell_command") {
+    if command_type == Some("shell_command") {
         return display_shell_command(&command);
     }
     command
@@ -476,12 +522,22 @@ fn command_output(result: &Value) -> String {
         return text.to_string();
     }
     if let Some(text) = result.get("output").and_then(Value::as_str) {
-        return text.to_string();
+        return shell_display_output(text).to_string();
     }
     if let Some(value) = result.get("output") {
         return serde_json::to_string(value).unwrap_or_default();
     }
     String::new()
+}
+
+fn shell_display_output(text: &str) -> &str {
+    let Some(after_output) = text.split_once("\nOutput:\n").map(|(_, output)| output) else {
+        return text;
+    };
+    if text.starts_with("Exit code: ") && text.contains("\nWall time: ") {
+        return after_output;
+    }
+    text
 }
 
 fn final_message_text(session_log: &[String]) -> String {

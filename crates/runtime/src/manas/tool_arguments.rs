@@ -70,7 +70,9 @@ fn command_run_steps_to_commands(steps: serde_json::Value) -> serde_json::Value 
             .filter_map(|step| {
                 let object = step.as_object()?;
                 let command = object
-                    .get("command")
+                    .get("command_type")
+                    .or_else(|| object.get("command"))
+                    .or_else(|| object.get("commandType"))
                     .or_else(|| object.get("tool_package_name"))
                     .or_else(|| object.get("tool_name"))
                     .and_then(|value| value.as_str())
@@ -84,7 +86,7 @@ fn command_run_steps_to_commands(steps: serde_json::Value) -> serde_json::Value 
                     .filter(|value| !value.is_empty())?;
                 let mut command_object = serde_json::Map::new();
                 command_object.insert(
-                    "command".to_string(),
+                    "command_type".to_string(),
                     serde_json::Value::String(command.to_string()),
                 );
                 command_object.insert(
@@ -112,7 +114,9 @@ fn normalize_command_run_command(command: &mut serde_json::Value, session_direct
         return;
     };
     let tool_name = object
-        .get("command")
+        .get("command_type")
+        .or_else(|| object.get("command"))
+        .or_else(|| object.get("commandType"))
         .and_then(|value| value.as_str())
         .map(normalize_command_run_tool_name)
         .unwrap_or_default();

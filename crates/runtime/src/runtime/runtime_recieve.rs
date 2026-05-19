@@ -1,6 +1,7 @@
 use crate::state_machine::agent_management::AgentId;
 use crate::state_machine::runtime_management::RuntimeId;
 use crate::state_machine::session_management::SessionId;
+use std::path::PathBuf;
 
 use super::types::{StreamChunkType, ToolCallData};
 
@@ -27,6 +28,44 @@ pub async fn runtime_recieve(input: RuntimeReceiveInput) -> Result<ProcessedStre
     process_stream_data(&input.raw_stream_data, &mut processed)?;
 
     Ok(processed)
+}
+
+pub async fn execute_runtime_stream_event(
+    event: tura_llm_rust::ProviderStreamEvent,
+    session_directory: PathBuf,
+) -> Option<serde_json::Value> {
+    match event {
+        tura_llm_rust::ProviderStreamEvent::CommandRunCommandReady { command, .. } => Some(
+            code_tools::command_run::execute_streamed_command_value(command, session_directory)
+                .await,
+        ),
+        tura_llm_rust::ProviderStreamEvent::ProviderOutputStarted => None,
+    }
+}
+
+pub async fn execute_runtime_stream_command_batch(
+    commands: Vec<serde_json::Value>,
+    session_directory: PathBuf,
+) -> Option<serde_json::Value> {
+    if commands.is_empty() {
+        return None;
+    }
+    Some(
+        code_tools::command_run::execute_async_value(
+            serde_json::json!({ "commands": commands }),
+            session_directory,
+        )
+        .await,
+    )
+}
+
+pub fn command_run_stream_event_command(
+    event: tura_llm_rust::ProviderStreamEvent,
+) -> Option<serde_json::Value> {
+    match event {
+        tura_llm_rust::ProviderStreamEvent::CommandRunCommandReady { command, .. } => Some(command),
+        tura_llm_rust::ProviderStreamEvent::ProviderOutputStarted => None,
+    }
 }
 
 fn process_stream_data(

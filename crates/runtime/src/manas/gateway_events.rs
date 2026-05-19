@@ -538,7 +538,7 @@ pub(super) fn gateway_callback_base_url() -> String {
 }
 
 fn gateway_callback_session_id(session_id: &str) -> String {
-    if planning_child_depth_from_env() > 0 {
+    if multiple_tasks_child_depth_from_env() > 0 {
         if let Ok(parent_session_id) = std::env::var("TURA_PARENT_SESSION_ID") {
             let parent_session_id = parent_session_id.trim();
             if !parent_session_id.is_empty() {
@@ -550,8 +550,8 @@ fn gateway_callback_session_id(session_id: &str) -> String {
     session_id.to_string()
 }
 
-fn planning_child_depth_from_env() -> usize {
-    std::env::var("TURA_PLANNING_DEPTH")
+fn multiple_tasks_child_depth_from_env() -> usize {
+    std::env::var("TURA_MULTIPLE_TASKS_DEPTH")
         .or_else(|_| std::env::var("TURA_EXECUTE_TOOLS_DEPTH"))
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -566,12 +566,10 @@ mod tests {
     fn stable_tool_call_id_uses_normalized_execution_arguments() {
         let raw_arguments = serde_json::json!({
             "step_summary": "inspect files",
-            "previous_command_evaluations": [],
             "requests": [{ "command": "pwd" }]
         });
         let normalized_arguments = serde_json::json!({
-            "commands": [{ "command": "shell_command", "command_line": "Get-Location" }],
-            "previous_command_evaluations": []
+            "commands": [{ "command": "shell_command", "command_line": "Get-Location" }]
         });
 
         let from_normalized =

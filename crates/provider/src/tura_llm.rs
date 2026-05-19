@@ -19,6 +19,18 @@ use crate::tura_conf::TuraConfig;
 
 pub static SETTINGS: OnceLock<Arc<Settings>> = OnceLock::new();
 
+#[derive(Debug, Clone)]
+pub enum ProviderStreamEvent {
+    ProviderOutputStarted,
+    CommandRunCommandReady {
+        tool_call_id: String,
+        command_index: usize,
+        command: Value,
+    },
+}
+
+pub type ProviderStreamEventSink = Arc<dyn Fn(ProviderStreamEvent) + Send + Sync>;
+
 #[derive(Debug, Error)]
 pub enum TuraError {
     #[error("config error: {message}")]
@@ -161,6 +173,17 @@ impl ProviderConfig {
         messages: Vec<Value>,
         options: CallOptions,
     ) -> Result<ProviderResponse, TuraError> {
+        self.call_with_stream_events(conf, messages, options, None)
+            .await
+    }
+
+    pub async fn call_with_stream_events(
+        &self,
+        conf: &TuraConfig,
+        messages: Vec<Value>,
+        options: CallOptions,
+        stream_events: Option<ProviderStreamEventSink>,
+    ) -> Result<ProviderResponse, TuraError> {
         self.validate()?;
         let api_key = if self.provider.eq_ignore_ascii_case("openai")
             && openai_login_is_oauth(conf)
@@ -186,13 +209,14 @@ impl ProviderConfig {
                     .await
             }
             other => {
-                _openai_provider::call(
+                _openai_provider::call_with_stream_events(
                     &self.base_url,
                     &self.model,
                     other,
                     &api_key,
                     &messages,
                     &options,
+                    stream_events.clone(),
                 )
                 .await
             }
@@ -470,6 +494,17 @@ impl RouteConfig {
         messages: Vec<Value>,
         options: CallOptions,
     ) -> Result<ProviderResponse, TuraError> {
+        self.run_with_stream_events(conf, messages, options, None)
+            .await
+    }
+
+    pub async fn run_with_stream_events(
+        &self,
+        conf: &TuraConfig,
+        messages: Vec<Value>,
+        options: CallOptions,
+        stream_events: Option<ProviderStreamEventSink>,
+    ) -> Result<ProviderResponse, TuraError> {
         self.validate()?;
 
         let mut failures = Vec::new();
@@ -478,7 +513,10 @@ impl RouteConfig {
             if effective.temperature.is_none() {
                 effective.temperature = Some(provider.temperature);
             }
-            match provider.call(conf, messages.clone(), effective).await {
+            match provider
+                .call_with_stream_events(conf, messages.clone(), effective, stream_events.clone())
+                .await
+            {
                 Ok(result) => return Ok(result),
                 Err(err) => {
                     warn!(provider = %provider.provider, model = %provider.model, error = %err, "route fallback to next provider");
