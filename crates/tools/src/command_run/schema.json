@@ -8,7 +8,7 @@
     "properties": {
       "commands": {
         "type": "array",
-        "minItems": 2,
+        "minItems": 5,
         "maxItems": 15,
         "description": "Executable command-line instructions. Do not put progress announcements or summaries here. Include the needed discovery, read, edit, test, and verification commands for the current batch.",
         "items": {

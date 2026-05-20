@@ -7,7 +7,7 @@ use crate::state_machine::session_management::{SessionManagement, TaskStatus, Ta
 use crate::tool_router::execute_tool::{execute_tool, ExecuteToolInput, ToolExecutionResult};
 
 use super::change_tracker::{append_successful_changes, capture_pending_changes};
-use super::constants::{COMMAND_RUN_TOOL, TASK_DELIVERED_TOOL};
+use super::constants::{COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL, TASK_DELIVERED_TOOL};
 use super::gateway_events::{
     publish_step_summary, publish_task_plan_todos, publish_tool_call_record,
     publish_tool_call_started,
@@ -277,8 +277,13 @@ fn apply_tool_result_session_state_update(
     result: &serde_json::Value,
 ) -> bool {
     let mut changed = false;
-    if tool_name == COMMAND_RUN_TOOL {
-        if let Some(plan) = multiple_tasks_output_from_tool_result(result) {
+    if tool_name == COMMAND_RUN_TOOL || tool_name == MULTIPLE_TASKS_TOOL {
+        let plan = if tool_name == MULTIPLE_TASKS_TOOL && result.get("steps").is_some() {
+            Some(result.clone())
+        } else {
+            multiple_tasks_output_from_tool_result(result)
+        };
+        if let Some(plan) = plan {
             session.task_plan.summary = plan
                 .get("user_task")
                 .and_then(|value| value.as_str())
@@ -300,34 +305,61 @@ fn apply_tool_result_session_state_update(
             changed = true;
         }
     }
-    if tool_name == TASK_DELIVERED_TOOL
-        && arguments
-            .get("task_delivered")
-            .and_then(serde_json::Value::as_bool)
-            == Some(true)
-    {
-        if let Some(current) = session
-            .task_plan
-            .detailed_tasks
-            .iter_mut()
-            .find(|task| matches!(task.status, TaskStatus::InProgress | TaskStatus::Pending))
-        {
-            current.status = TaskStatus::Completed;
-            if let Some(next) = session
-                .task_plan
-                .detailed_tasks
-                .iter_mut()
-                .find(|task| task.status == TaskStatus::Pending)
-            {
-                next.status = TaskStatus::InProgress;
-            }
-            changed = true;
-        }
+    if tool_name == COMMAND_RUN_TOOL && command_run_contains_task_delivered(result) {
+        changed |= complete_active_task(session);
+    }
+    if tool_name == TASK_DELIVERED_TOOL && task_delivered_arguments_true(arguments) {
+        changed |= complete_active_task(session);
     }
     if changed {
         session.session_last_update_at = Utc::now();
     }
     changed
+}
+
+fn task_delivered_arguments_true(arguments: &serde_json::Value) -> bool {
+    arguments
+        .get("task_delivered")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+}
+
+fn command_run_contains_task_delivered(result: &serde_json::Value) -> bool {
+    result
+        .get("results")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items.iter().any(|item| {
+                item.get("success").and_then(serde_json::Value::as_bool) == Some(true)
+                    && item
+                        .get("command_type")
+                        .or_else(|| item.get("command"))
+                        .and_then(serde_json::Value::as_str)
+                        == Some(TASK_DELIVERED_TOOL)
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn complete_active_task(session: &mut SessionManagement) -> bool {
+    if let Some(current) = session
+        .task_plan
+        .detailed_tasks
+        .iter_mut()
+        .find(|task| matches!(task.status, TaskStatus::InProgress | TaskStatus::Pending))
+    {
+        current.status = TaskStatus::Completed;
+        if let Some(next) = session
+            .task_plan
+            .detailed_tasks
+            .iter_mut()
+            .find(|task| task.status == TaskStatus::Pending)
+        {
+            next.status = TaskStatus::InProgress;
+        }
+        return true;
+    }
+    false
 }
 
 fn multiple_tasks_output_from_tool_result(result: &serde_json::Value) -> Option<serde_json::Value> {

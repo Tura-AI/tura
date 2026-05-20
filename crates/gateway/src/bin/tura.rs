@@ -31,6 +31,9 @@ fn run() -> Result<i32, String> {
     } else {
         std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS");
     }
+    if let Some(max_tokens) = config.max_tokens {
+        std::env::set_var("TURA_SESSION_MAX_TOKENS", max_tokens.to_string());
+    }
     std::env::set_var("TURA_PROJECT_ROOT", project_root_from_exe());
     std::env::set_var("TURA_DISABLE_GATEWAY_CALLBACKS", "1");
     std::env::set_var("TURA_DISABLE_ROUTER_AUTOSTART", "1");
@@ -81,6 +84,7 @@ struct CliConfig {
     reasoning_effort: Option<String>,
     priority: bool,
     multiple_tasks_mode: bool,
+    max_tokens: Option<u64>,
     agent: Option<String>,
     last_message_path: Option<PathBuf>,
     prompt_parts: Vec<String>,
@@ -99,6 +103,7 @@ impl CliConfig {
             reasoning_effort: None,
             priority: false,
             multiple_tasks_mode: false,
+            max_tokens: None,
             agent: None,
             last_message_path: None,
             prompt_parts: Vec::new(),
@@ -182,6 +187,11 @@ fn apply_config_arg(config: &mut CliConfig, value: &str) {
     let value = raw_value.trim().trim_matches('"');
     match key.trim() {
         "model_reasoning_effort" => config.reasoning_effort = Some(value.to_string()),
+        "max_tokens" | "model_max_tokens" => {
+            if let Ok(max_tokens) = value.parse::<u64>() {
+                config.max_tokens = Some(max_tokens);
+            }
+        }
         "service_tier" if value.eq_ignore_ascii_case("priority") => config.priority = true,
         "force_multiple_tasks" | "multiple_tasks_mode" if value.eq_ignore_ascii_case("true") => {
             config.multiple_tasks_mode = true

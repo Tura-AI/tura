@@ -137,6 +137,26 @@ pub fn accumulate_tool_result_with_feedback(
     _command_feedback: Option<serde_json::Value>,
     _legacy_last_tool_call_summary: Option<String>,
 ) -> Result<(), String> {
+    accumulate_tool_result_with_provider_metadata(
+        session,
+        tool_name,
+        tool_input,
+        tool_output,
+        tool_success,
+        tool_error,
+        None,
+    )
+}
+
+pub fn accumulate_tool_result_with_provider_metadata(
+    session: &mut SessionManagement,
+    tool_name: &str,
+    tool_input: serde_json::Value,
+    tool_output: serde_json::Value,
+    tool_success: bool,
+    tool_error: Option<String>,
+    provider_metadata: Option<serde_json::Value>,
+) -> Result<(), String> {
     let now = Utc::now();
     let sequence = session
         .session_log
@@ -155,6 +175,9 @@ pub fn accumulate_tool_result_with_feedback(
         "sequence": sequence,
         "timestamp": now.to_rfc3339(),
     });
+    if let Some(provider_metadata) = provider_metadata {
+        tool_result_json["provider_metadata"] = provider_metadata;
+    }
     tool_result_json["context_cache"] = tool_result_context_cache(&tool_result_json);
     tool_result_json["context_message"] = immutable_tool_result_context_message(&tool_result_json);
     tool_result_json["context_messages"] =
@@ -352,14 +375,18 @@ fn command_run_responses_api_context_items(value: &serde_json::Value) -> Vec<ser
     let call_id = command_run_context_call_id(value);
     let arguments = serde_json::to_string(value.get("input").unwrap_or(&serde_json::Value::Null))
         .unwrap_or_else(|_| "{}".to_string());
+    let mut function_call = serde_json::json!({
+        "type": "function_call",
+        "name": "command_run",
+        "arguments": arguments,
+        "call_id": call_id,
+        "status": "completed",
+    });
+    if let Some(provider_metadata) = value.get("provider_metadata") {
+        function_call["provider_metadata"] = provider_metadata.clone();
+    }
     vec![
-        serde_json::json!({
-            "type": "function_call",
-            "name": "command_run",
-            "arguments": arguments,
-            "call_id": call_id,
-            "status": "completed",
-        }),
+        function_call,
         serde_json::json!({
             "type": "function_call_output",
             "call_id": call_id,

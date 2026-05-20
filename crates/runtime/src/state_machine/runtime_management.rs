@@ -26,6 +26,9 @@ pub struct ToolCallRecord {
     pub tool_called_name: String,
     /// JSON payload passed to the tool.
     pub tool_called_input: serde_json::Value,
+    /// Provider-specific metadata required to replay tool-call history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_metadata: Option<serde_json::Value>,
     /// Time the full tool call was received.
     pub tool_received_at: UtcDateTimeMs,
     /// Time execution of the tool call started.

@@ -60,6 +60,19 @@ pub async fn execute_tool(input: ExecuteToolInput) -> Result<ToolExecutionResult
             result: output_value,
         });
     }
+    if input.tool_name == "multiple_tasks" {
+        let output_value = code_tools::commands::multiple_tasks::execute_value(
+            input.arguments.clone(),
+            &input.session_directory,
+        );
+        return Ok(ToolExecutionResult {
+            tool_name: input.tool_name.clone(),
+            arguments: input.arguments,
+            success: output_value.success,
+            error: (!output_value.success).then_some(output_value.stderr.clone()),
+            result: output_value.output,
+        });
+    }
     if execution_tool_name == "task_delivered" {
         let delivered = input
             .arguments
@@ -130,6 +143,7 @@ fn tool_output_error(output: &serde_json::Value) -> Option<String> {
 
 fn canonical_tool_file_name(tool_name: &str) -> &str {
     match tool_name {
+        "multiple_tasks" => "commands/multiple_tasks",
         _ => tool_name,
     }
 }

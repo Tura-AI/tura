@@ -51,5 +51,7 @@ pub mod types {
     pub struct ToolCallData {
         pub tool_name: String,
         pub arguments: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub provider_metadata: Option<serde_json::Value>,
     }
 }

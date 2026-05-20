@@ -24,12 +24,13 @@ const codexServiceTier = process.env.COMMAND_RUN_AGENT_CODEX_SERVICE_TIER || "au
 const turaAccelerationEnabled =
   (process.env.COMMAND_RUN_AGENT_TURA_PRIORITY ||
     (codexServiceTier === "priority" ? "1" : "0")) === "1"
-const runtimeTimeoutMs = Math.min(numberEnv("COMMAND_RUN_AGENT_TIMEOUT_MS", 8 * 60_000), 8 * 60_000)
+const runtimeTimeoutMs = Math.min(numberEnv("COMMAND_RUN_AGENT_TIMEOUT_MS", 12 * 60_000), 12 * 60_000)
 const startupTimeoutMs = numberEnv("COMMAND_RUN_AGENT_STARTUP_TIMEOUT_MS", 180_000)
 const firstRoundTimeoutMs = numberEnv("COMMAND_RUN_AGENT_FIRST_ROUND_TIMEOUT_MS", 45_000)
 const precompileTura = (process.env.COMMAND_RUN_AGENT_PRECOMPILE_TURA || "0") === "1"
 const robustnessPreflight = (process.env.COMMAND_RUN_AGENT_ROBUSTNESS_PREFLIGHT || "1") === "1"
 const preflightOnly = (process.env.COMMAND_RUN_AGENT_PREFLIGHT_ONLY || "0") === "1"
+const skipStaleProcessCleanup = (process.env.COMMAND_RUN_AGENT_SKIP_STALE_PROCESS_CLEANUP || "0") === "1"
 const finalDigestEnabled = (process.env.COMMAND_RUN_AGENT_FINAL_DIGEST || "0") === "1"
 const finalDigestTimeoutMs = numberEnv("COMMAND_RUN_AGENT_FINAL_DIGEST_TIMEOUT_MS", 20_000)
 const requestedAgents = parseAgentList(process.env.COMMAND_RUN_AGENT_AGENTS || "current-bash,current-shll,tura-bash,tura-shll")
@@ -82,6 +83,12 @@ function parseAgentList(value) {
     ["tura_multiple_tasks_shll", "tura-multiple-tasks-shll"],
     ["tura-shll-multiple-tasks", "tura-multiple-tasks-shll"],
     ["tura_shll_multiple_tasks", "tura-multiple-tasks-shll"],
+    ["tura-fast-multiple-tasks", "tura-fast-multiple-tasks-shll"],
+    ["tura_fast_multiple_tasks", "tura-fast-multiple-tasks-shll"],
+    ["tura-fast-multiple-tasks-shll", "tura-fast-multiple-tasks-shll"],
+    ["tura_fast_multiple_tasks_shll", "tura-fast-multiple-tasks-shll"],
+    ["tura-fast-shll-multiple-tasks", "tura-fast-multiple-tasks-shll"],
+    ["tura_fast_shll_multiple_tasks", "tura-fast-multiple-tasks-shll"],
     ["tura-bash", "tura-bash"],
     ["tura_bash", "tura-bash"],
     ["tura-bash-nonstrict", "tura-bash"],
@@ -128,6 +135,11 @@ function isTuraAgent(id) {
 
 function turaCliAgentName(id) {
   return id.includes("fast") ? "coding_agent_fast" : "coding_agent"
+}
+
+function turaModelForAgent(id) {
+  const envKey = `COMMAND_RUN_AGENT_TURA_MODEL_${id.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`
+  return process.env[envKey] || turaModel
 }
 
 function turaStrictJsonDisabled(id) {
@@ -2127,6 +2139,7 @@ async function measureRepo(repoPath) {
 }
 
 async function stopStaleTuraRepoProcesses() {
+  if (skipStaleProcessCleanup) return { skipped: true, reason: "COMMAND_RUN_AGENT_SKIP_STALE_PROCESS_CLEANUP=1" }
   if (process.platform !== "win32") return { skipped: true, reason: "non-windows" }
   const escapedRoot = repoRoot.replaceAll("'", "''")
   const script = [
@@ -2204,9 +2217,15 @@ function emptyLlmStats(source) {
 }
 
 function addUsage(stats, usage, index, extra = {}) {
-  const input = Number(usage.input_tokens ?? usage.inputTokens ?? 0)
-  const output = Number(usage.output_tokens ?? usage.outputTokens ?? 0)
-  const reasoning = Number(usage.reasoning_output_tokens ?? usage.reasoning_tokens ?? usage.reasoningTokens ?? 0)
+  const input = Number(usage.input_tokens ?? usage.inputTokens ?? usage.prompt_tokens ?? 0)
+  const output = Number(usage.output_tokens ?? usage.outputTokens ?? usage.completion_tokens ?? 0)
+  const reasoning = Number(
+    usage.reasoning_output_tokens ??
+      usage.reasoning_tokens ??
+      usage.reasoningTokens ??
+      usage.completion_tokens_details?.reasoning_tokens ??
+      0,
+  )
   const cached = Number(
     usage.cached_input_tokens ??
       usage.input_token_details?.cached_tokens ??
@@ -2530,13 +2549,22 @@ function providerResponseFunctionCalls(response) {
   const calls = []
   const seen = new Set()
   const addCall = (item) => {
-    if (!item || (item.type !== "function_call" && item.name !== "command_run")) return
+    if (!item || (item.type !== "function_call" && item.type !== "function" && item.name !== "command_run")) return
     const key = item.call_id || item.id || JSON.stringify(item).slice(0, 200)
     if (seen.has(key)) return
     seen.add(key)
     calls.push(item)
   }
   for (const item of Array.isArray(response?.output) ? response.output : []) addCall(item)
+  for (const item of Array.isArray(response?.tool_calls) ? response.tool_calls : []) {
+    const functionCall = item?.function || {}
+    addCall({
+      type: "function_call",
+      id: item.id,
+      name: functionCall.name,
+      arguments: functionCall.arguments,
+    })
+  }
 
   const partials = new Map()
   const latestByOutputIndex = new Map()
@@ -2588,6 +2616,18 @@ function providerResponseFunctionCalls(response) {
     }
   }
   for (const item of partials.values()) addCall(item)
+  for (const candidate of Array.isArray(response?.candidates) ? response.candidates : []) {
+    for (const part of Array.isArray(candidate?.content?.parts) ? candidate.content.parts : []) {
+      const functionCall = part?.functionCall
+      if (!functionCall?.name) continue
+      addCall({
+        type: "function_call",
+        name: functionCall.name,
+        id: functionCall.id,
+        arguments: functionCall.args || {},
+      })
+    }
+  }
   return calls
 }
 
@@ -2807,10 +2847,20 @@ async function collectTuraProviderDiagnostics({ workspace, sinceMs }) {
       has_verify: /(tools\\verify|tools\/verify|verify\.ps1)/i.test(joinedCommands),
       usage: usage
         ? {
-            input_tokens: Number(usage.input_tokens || 0),
-            cached_input_tokens: Number(usage.input_tokens_details?.cached_tokens || usage.cached_input_tokens || 0),
-            output_tokens: Number(usage.output_tokens || 0),
-            reasoning_tokens: Number(usage.output_tokens_details?.reasoning_tokens || usage.reasoning_output_tokens || 0),
+            input_tokens: Number(usage.input_tokens || usage.prompt_tokens || 0),
+            cached_input_tokens: Number(
+              usage.input_tokens_details?.cached_tokens ||
+                usage.prompt_tokens_details?.cached_tokens ||
+                usage.cached_input_tokens ||
+                0,
+            ),
+            output_tokens: Number(usage.output_tokens || usage.completion_tokens || 0),
+            reasoning_tokens: Number(
+              usage.output_tokens_details?.reasoning_tokens ||
+                usage.completion_tokens_details?.reasoning_tokens ||
+                usage.reasoning_output_tokens ||
+                0,
+            ),
             total_tokens: Number(usage.total_tokens || 0),
           }
         : null,
@@ -2910,7 +2960,7 @@ async function runTuraAgent({ id = "tura", workspace, shellSurface = "shell_comm
       "-C",
       workspace,
       "-m",
-      turaModel,
+      turaModelForAgent(id),
       "--agent",
       turaCliAgentName(id),
       "--dangerously-bypass-approvals-and-sandbox",

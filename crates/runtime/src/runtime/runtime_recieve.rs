@@ -193,6 +193,7 @@ fn extract_tool_call(chunk: &serde_json::Value) -> Option<ToolCallData> {
     Some(ToolCallData {
         tool_name,
         arguments,
+        provider_metadata: None,
     })
 }
 

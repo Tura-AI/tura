@@ -85,6 +85,7 @@ pub fn canonical_command(name: &str) -> String {
         }
         "apply_patch" => "apply_patch".to_string(),
         "multiple_tasks" => "multiple_tasks".to_string(),
+        "task_delivered" => "task_delivered".to_string(),
         other => other.to_string(),
     }
 }

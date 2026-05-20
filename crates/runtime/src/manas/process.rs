@@ -15,7 +15,7 @@ use std::{
 };
 use tracing::{info, warn};
 
-use crate::context::{accumulate_tool_result_with_feedback, build_context, ContextInput};
+use crate::context::{accumulate_tool_result_with_provider_metadata, build_context, ContextInput};
 use crate::manas::ManasOverrides;
 use crate::mano::persist_gateway_session;
 use crate::state_machine::agent_management::{AgentManagement, AgentState};
@@ -130,21 +130,27 @@ pub fn process_manas_internal(
         session.increment_turn(now);
         persist_session_checkpoint(session, "runtime");
 
-        if runtime.call_result_status == RuntimeCallResultStatus::TimedOut {
+        if runtime.call_result_status == RuntimeCallResultStatus::TimedOut
+            || runtime_failure_allows_retry(&runtime)
+        {
+            let error_text = runtime_failure_text(&runtime)
+                .unwrap_or_else(|| "Provider runtime failed before producing output.".to_string());
             if let Some(wait_duration) = provider_timeout_retry_wait(provider_timeout_retries) {
                 provider_timeout_retries = provider_timeout_retries.saturating_add(1);
                 warn!(
                     session_id = %session.session_id,
                     turn = turn,
                     runtime_id = %runtime.runtime_id,
+                    status = ?runtime.call_result_status,
+                    error = %error_text,
                     retry = provider_timeout_retries,
                     wait_ms = wait_duration.as_millis(),
-                    "provider runtime timed out; waiting before retrying with full tool set"
+                    "provider runtime failed transiently; waiting before retrying with full tool set"
                 );
                 thread::sleep(wait_duration);
                 current_messages.push(serde_json::json!({
                     "role": "system",
-                    "content": format!("Provider timeout while waiting for the model response. This is transient provider failure retry {} of 3, not task completion. Retry the current task with the normal command_run tool unless the requested edits and validation are actually complete.", provider_timeout_retries)
+                    "content": format!("Provider failure while waiting for the model response: {error_text}. This is transient provider failure retry {} of 3, not task completion. Retry the current task with the normal command_run tool unless the requested edits and validation are actually complete.", provider_timeout_retries)
                 }));
                 continue;
             }
@@ -153,14 +159,34 @@ pub fn process_manas_internal(
                 session_id = %session.session_id,
                 turn = turn,
                 runtime_id = %runtime.runtime_id,
+                status = ?runtime.call_result_status,
+                error = %error_text,
                 retries = provider_timeout_retries,
-                "provider runtime timed out after retries; publishing visible failure"
+                "provider runtime failed transiently after retries; publishing visible failure"
             );
             publish_runtime_failure_message(
                 session,
                 &runtime.runtime_id,
-                "Provider runtime timed out after 3 retries before completing the task.",
+                &format!(
+                    "Provider runtime failed after 3 retries before completing the task: {error_text}"
+                ),
             );
+            break;
+        }
+        if runtime.call_result_status == RuntimeCallResultStatus::Failed {
+            let error_text = runtime_failure_text(&runtime)
+                .unwrap_or_else(|| "Provider runtime failed before producing output.".to_string());
+            warn!(
+                session_id = %session.session_id,
+                turn = turn,
+                runtime_id = %runtime.runtime_id,
+                error = %error_text,
+                "provider runtime failed"
+            );
+            publish_runtime_failure_message(session, &runtime.runtime_id, &error_text);
+            if env_flag("TURA_FAIL_ON_RUNTIME_ERROR") {
+                return Err(error_text);
+            }
             break;
         }
 
@@ -174,24 +200,35 @@ pub fn process_manas_internal(
                 command_run_turns = command_run_turns.saturating_add(1);
             }
             let tool_results = execute_tool_calls(&tool_calls, session, &runtime, redis_url)?;
-            last_task_delivered = tool_results
-                .iter()
-                .filter(|result| result.tool_name == TASK_DELIVERED_TOOL)
-                .any(|result| task_delivered_marked_true(&result.arguments));
+            last_task_delivered = tool_results.iter().any(|result| {
+                (result.tool_name == TASK_DELIVERED_TOOL
+                    && task_delivered_marked_true(&result.arguments))
+                    || command_run_result_contains_task_delivered(&result.result)
+            });
 
-            for tool_result in tool_results.iter() {
-                accumulate_tool_result_with_feedback(
+            for (index, tool_result) in tool_results.iter().enumerate() {
+                accumulate_tool_result_with_provider_metadata(
                     session,
                     &tool_result.tool_name,
                     tool_result.arguments.clone(),
                     tool_result.result.clone(),
                     tool_result.success,
                     tool_result.error.clone(),
-                    None,
-                    None,
+                    tool_calls
+                        .get(index)
+                        .and_then(|tool_call| tool_call.provider_metadata.clone()),
                 )?;
             }
             persist_session_checkpoint(session, "tool_results");
+
+            if multiple_tasks_env_enabled() && planned_tasks_all_completed(session) {
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    "all planned tasks delivered after tool results; ending session"
+                );
+                break;
+            }
 
             let context_output = build_context(ContextInput {
                 session: session.clone(),
@@ -237,9 +274,7 @@ pub fn process_manas_internal(
             let final_text = user_visible_runtime_text(&runtime.text)
                 .map(|text| text.trim().to_string())
                 .filter(|text| !text.is_empty());
-            if command_run_turns > 0
-                && (!multiple_tasks_env_enabled()
-                    || (last_task_delivered && !planned_tasks_incomplete(session)))
+            if !multiple_tasks_env_enabled()
                 && final_text
                     .as_deref()
                     .is_some_and(text_looks_like_final_answer)
@@ -247,7 +282,23 @@ pub fn process_manas_internal(
                 info!(
                     session_id = %session.session_id,
                     turn = turn,
-                    "assistant final text completed after command_run"
+                    "assistant final text completed in normal mode"
+                );
+                break;
+            }
+
+            if multiple_tasks_env_enabled()
+                && command_run_turns > 0
+                && last_task_delivered
+                && !planned_tasks_incomplete(session)
+                && final_text
+                    .as_deref()
+                    .is_some_and(text_looks_like_final_answer)
+            {
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    "assistant final text completed after task delivery"
                 );
                 break;
             }
@@ -324,6 +375,23 @@ fn task_delivered_marked_true(result: &serde_json::Value) -> bool {
         .get("task_delivered")
         .and_then(serde_json::Value::as_bool)
         == Some(true)
+}
+
+fn command_run_result_contains_task_delivered(result: &serde_json::Value) -> bool {
+    result
+        .get("results")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items.iter().any(|item| {
+                item.get("success").and_then(serde_json::Value::as_bool) == Some(true)
+                    && item
+                        .get("command_type")
+                        .or_else(|| item.get("command"))
+                        .and_then(serde_json::Value::as_str)
+                        == Some(TASK_DELIVERED_TOOL)
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn active_task_user_message(session: &SessionManagement) -> Option<serde_json::Value> {
@@ -541,6 +609,30 @@ fn provider_timeout_retry_wait(retry_count: u8) -> Option<Duration> {
     }
 }
 
+fn runtime_failure_allows_retry(runtime: &RuntimeManagement) -> bool {
+    runtime.call_result_status == RuntimeCallResultStatus::Failed
+        && runtime
+            .error
+            .as_ref()
+            .map(|error| error.retry_allowed)
+            .unwrap_or(false)
+}
+
+fn runtime_failure_text(runtime: &RuntimeManagement) -> Option<String> {
+    runtime
+        .error
+        .as_ref()
+        .and_then(|error| error.error_text.clone())
+        .or_else(|| {
+            runtime
+                .output
+                .as_ref()
+                .and_then(|output| output.get("error"))
+                .and_then(serde_json::Value::as_str)
+                .map(ToString::to_string)
+        })
+}
+
 fn apply_validator_reliability_feedback(runtime: &RuntimeManagement) {
     for record in &runtime.tool_call {
         let Some(success) = record.validator_reported_success else {
@@ -722,13 +814,17 @@ mod tests {
     use super::{
         filter_tools_for_turn, load_agent_prompt_messages, normalize_tool_arguments,
         normalize_tool_arguments_for_tool, provider_timeout_retry_wait, remove_tool,
-        require_multiple_tasks_tool_for_multiple_tasks_mode, user_visible_runtime_text,
-        COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL,
+        require_multiple_tasks_tool_for_multiple_tasks_mode, runtime_failure_allows_retry,
+        runtime_failure_text, user_visible_runtime_text, COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL,
     };
     use crate::state_machine::agent_management::{
         AgentCapabilityItem, AgentManagement, AgentPromptItem, ProviderConfig, ToolChoice,
         ValidatorConfig,
     };
+    use crate::state_machine::runtime_management::{
+        RuntimeCallResultStatus, RuntimeError, RuntimeManagement, RuntimeProviderConfig,
+    };
+    use chrono::Utc;
     use serde_json::json;
     use std::collections::HashSet;
 
@@ -747,6 +843,75 @@ mod tests {
             Some(std::time::Duration::from_secs(45))
         );
         assert_eq!(provider_timeout_retry_wait(3), None);
+    }
+
+    #[test]
+    fn retry_allowed_failed_runtime_uses_provider_retry_path() {
+        let mut runtime = runtime_for_retry_test("retryable-runtime");
+        runtime.call_result_status = RuntimeCallResultStatus::Failed;
+        runtime.error = Some(RuntimeError {
+            error_code: Some("CALL_FAILED".to_string()),
+            error_text: Some(
+                "all providers failed: openai:gpt-5.5 => network error: error decoding response body"
+                    .to_string(),
+            ),
+            retry_allowed: true,
+            fallback_allowed: true,
+            fallback_to_id: None,
+        });
+
+        assert!(runtime_failure_allows_retry(&runtime));
+        assert_eq!(
+            runtime_failure_text(&runtime).as_deref(),
+            Some(
+                "all providers failed: openai:gpt-5.5 => network error: error decoding response body"
+            )
+        );
+    }
+
+    #[test]
+    fn non_retryable_failed_runtime_does_not_use_provider_retry_path() {
+        let mut runtime = runtime_for_retry_test("non-retryable-runtime");
+        runtime.call_result_status = RuntimeCallResultStatus::Failed;
+        runtime.error = Some(RuntimeError {
+            error_code: Some("CALL_FAILED".to_string()),
+            error_text: Some("provider rejected invalid request".to_string()),
+            retry_allowed: false,
+            fallback_allowed: false,
+            fallback_to_id: None,
+        });
+
+        assert!(!runtime_failure_allows_retry(&runtime));
+        assert_eq!(
+            runtime_failure_text(&runtime).as_deref(),
+            Some("provider rejected invalid request")
+        );
+    }
+
+    fn runtime_for_retry_test(runtime_id: &str) -> RuntimeManagement {
+        let now = Utc::now();
+        let provider = "openai".to_string();
+        RuntimeManagement::new(
+            runtime_id.to_string(),
+            "session-for-retry-test".to_string(),
+            "session-for-retry-test".to_string(),
+            RuntimeProviderConfig {
+                base: ProviderConfig {
+                    tura_llm_name: provider.clone(),
+                    stream: true,
+                    temperature: 0.0,
+                    max_tokens: 0,
+                    tool_choice: ToolChoice::Auto,
+                    time_out_ms: 120_000,
+                },
+                thinking: false,
+                provider_name: provider.clone(),
+                model_name: "gpt-5.5".to_string(),
+                provider_url_name: provider.clone(),
+                provider_router_name: provider,
+            },
+            now,
+        )
     }
 
     #[test]

@@ -89,13 +89,17 @@ pub async fn call(
             .iter()
             .map(|t| {
                 if let Some(func) = t.get("function") {
+                    let mut parameters = func.get("parameters").unwrap_or(&json!({})).clone();
+                    sanitize_google_schema(&mut parameters);
                     json!({
                         "name": func.get("name").unwrap_or(&json!("")).clone(),
                         "description": func.get("description").unwrap_or(&json!("")).clone(),
-                        "parameters": func.get("parameters").unwrap_or(&json!({})).clone()
+                        "parameters": parameters
                     })
                 } else {
-                    t.clone()
+                    let mut tool = t.clone();
+                    sanitize_google_schema(&mut tool);
+                    tool
                 }
             })
             .collect();
@@ -186,12 +190,75 @@ pub async fn call(
     })
 }
 
+fn sanitize_google_schema(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            object.remove("additionalProperties");
+            for child in object.values_mut() {
+                sanitize_google_schema(child);
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                sanitize_google_schema(child);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn build_contents(messages: &[Value]) -> Value {
+    let mut call_names = std::collections::HashMap::<String, String>::new();
     let contents: Vec<Value> = messages
         .iter()
-        .map(|msg| {
+        .filter_map(|msg| {
+            if msg.get("type").and_then(Value::as_str) == Some("function_call") {
+                let name = msg
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("function")
+                    .to_string();
+                if let Some(call_id) = msg.get("call_id").and_then(Value::as_str) {
+                    call_names.insert(call_id.to_string(), name.clone());
+                }
+                let args = msg
+                    .get("arguments")
+                    .cloned()
+                    .map(parse_json_string_value)
+                    .unwrap_or_else(|| json!({}));
+                let mut part = json!({ "functionCall": { "name": name, "args": args } });
+                if let Some(signature) = google_thought_signature(msg) {
+                    part["thoughtSignature"] = json!(signature);
+                }
+                return Some(json!({
+                    "role": "model",
+                    "parts": [part]
+                }));
+            }
+
+            if msg.get("type").and_then(Value::as_str) == Some("function_call_output") {
+                let call_id = msg
+                    .get("call_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let name = call_names
+                    .get(call_id)
+                    .cloned()
+                    .unwrap_or_else(|| "function".to_string());
+                let response = msg
+                    .get("output")
+                    .cloned()
+                    .map(parse_json_string_value)
+                    .unwrap_or_else(|| json!({}));
+                return Some(json!({
+                    "role": "function",
+                    "parts": [{ "functionResponse": { "name": name, "response": response } }]
+                }));
+            }
+
             let role = match msg.get("role").and_then(Value::as_str).unwrap_or("user") {
                 "assistant" => "model",
+                "system" => "user",
                 x => x,
             };
             let parts = match msg.get("content") {
@@ -200,13 +267,36 @@ fn build_contents(messages: &[Value]) -> Value {
                 Some(other) => vec![json!({ "text": other.to_string() })],
                 None => vec![],
             };
-            json!({
-                "role": role,
-                "parts": parts
+            (!parts.is_empty()).then(|| {
+                json!({
+                    "role": role,
+                    "parts": parts
+                })
             })
         })
         .collect();
     Value::Array(contents)
+}
+
+fn google_thought_signature(msg: &Value) -> Option<String> {
+    msg.get("provider_metadata")
+        .and_then(|metadata| {
+            metadata
+                .get("google_thought_signature")
+                .or_else(|| metadata.get("thoughtSignature"))
+                .or_else(|| metadata.get("thought_signature"))
+        })
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn parse_json_string_value(value: Value) -> Value {
+    match value {
+        Value::String(text) => {
+            serde_json::from_str(&text).unwrap_or_else(|_| json!({ "output": text }))
+        }
+        other => other,
+    }
 }
 
 fn pointer_u64(value: &Value, ptr: &str) -> Option<u64> {

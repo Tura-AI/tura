@@ -264,6 +264,9 @@ async fn run_command_run_item(
     ctx: ToolContext,
     force_exclusive: bool,
 ) -> CommandRunItemResult {
+    if crate::commands::canonical_command(&command.command) == "task_delivered" {
+        return command_run_task_delivered_result(command);
+    }
     let command_name = match router.resolve_command_tool_name(&command.command) {
         Some(name) => name.to_string(),
         None => {
@@ -304,6 +307,30 @@ async fn run_command_run_item(
             command_name,
             err.to_string(),
         ),
+    }
+}
+
+fn command_run_task_delivered_result(command: CommandItem) -> CommandRunItemResult {
+    let delivered = command
+        .command_line
+        .split(|ch: char| ch.is_whitespace() || matches!(ch, ':' | '=' | ',' | ';'))
+        .any(|part| part.eq_ignore_ascii_case("true"));
+    if delivered {
+        CommandRunItemResult {
+            index: command.index,
+            step: command.effective_step(),
+            command_type: "task_delivered".to_string(),
+            success: true,
+            output: Some(json!({ "task_delivered": true })),
+            error: None,
+        }
+    } else {
+        CommandRunItemResult::failed(
+            command.index,
+            command.effective_step(),
+            "task_delivered".to_string(),
+            "task_delivered must be true".to_string(),
+        )
     }
 }
 
@@ -425,7 +452,7 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
         let canonical_command = crate::commands::canonical_command(&command.command);
         if !matches!(
             canonical_command.as_str(),
-            "shell_command" | "bash" | "apply_patch" | "multiple_tasks"
+            "shell_command" | "bash" | "apply_patch" | "multiple_tasks" | "task_delivered"
         ) {
             if looks_like_removed_structured_tool_call(&command.command, &command.command_line) {
                 continue;
@@ -771,6 +798,29 @@ mod tests {
             "Inspect files"
         );
         std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS");
+    }
+
+    #[test]
+    fn task_delivered_command_inside_command_run_is_not_shell_executed() {
+        let output = execute(
+            &json!({
+                "commands": [
+                    {
+                        "step": 1,
+                        "command_type": "task_delivered",
+                        "command_line": "task_delivered true"
+                    }
+                ]
+            }),
+            Path::new("."),
+        );
+
+        assert_eq!(output["results"][0]["command_type"], "task_delivered");
+        assert_eq!(output["results"][0]["success"], true);
+        assert_eq!(
+            output["results"][0]["output"],
+            json!({ "task_delivered": true })
+        );
     }
 
     #[test]

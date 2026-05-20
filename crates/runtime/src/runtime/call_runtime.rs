@@ -21,6 +21,7 @@ pub struct CallRuntimeInput {
     pub tools: Vec<serde_json::Value>,
     pub provider_name: String,
     pub stream: bool,
+    pub max_tokens: u32,
     pub tool_choice: Option<serde_json::Value>,
     pub session_directory: PathBuf,
 }
@@ -69,6 +70,7 @@ pub async fn call_runtime(
         stream_options: stream_options(route_config, input.stream),
         reasoning_effort: session_reasoning_effort(),
         service_tier: session_service_tier(),
+        max_tokens: session_max_tokens(input.max_tokens),
         store: Some(false),
         tool_choice: input.tool_choice.clone(),
         ..Default::default()
@@ -83,6 +85,7 @@ pub async fn call_runtime(
             "stream_options": call_options.stream_options.clone(),
             "reasoning_effort": call_options.reasoning_effort.clone(),
             "service_tier": call_options.service_tier.clone(),
+            "max_tokens": call_options.max_tokens,
             "store": call_options.store,
             "tool_choice": call_options.tool_choice.clone(),
         }
@@ -224,10 +227,17 @@ fn stream_options(
 }
 
 fn openai_compatible_usage_stream_supported(provider: &str, base_url: &str) -> bool {
-    if provider.eq_ignore_ascii_case("openai") || provider.eq_ignore_ascii_case("minimax") {
+    if provider.eq_ignore_ascii_case("openai")
+        || provider.eq_ignore_ascii_case("minimax")
+        || provider.eq_ignore_ascii_case("qwen")
+        || provider.eq_ignore_ascii_case("openrouter")
+    {
         return true;
     }
-    base_url.contains("api.openai.com") || base_url.contains("api.minimax.io")
+    base_url.contains("api.openai.com")
+        || base_url.contains("api.minimax.io")
+        || base_url.contains("dashscope")
+        || base_url.contains("openrouter.ai")
 }
 
 fn tool_name(tool: &serde_json::Value) -> Option<String> {
@@ -295,6 +305,14 @@ fn session_service_tier() -> Option<String> {
         })
         .unwrap_or(false);
     enabled.then(|| "priority".to_string())
+}
+
+fn session_max_tokens(agent_max_tokens: u32) -> Option<u64> {
+    std::env::var("TURA_SESSION_MAX_TOKENS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .or_else(|| (agent_max_tokens > 0).then_some(u64::from(agent_max_tokens)))
 }
 
 pub fn route_by_name<'a>(
@@ -381,7 +399,13 @@ fn provider_base_url(settings: &tura_llm_rust::Settings, provider: &str) -> Opti
         "antigravity" => Some("https://antigravity.google.com/v1".to_string()),
         "anthropic" => Some("https://api.anthropic.com/v1".to_string()),
         "minimax" => Some("https://api.minimax.io/v1".to_string()),
+        "openrouter" => Some("https://openrouter.ai/api/v1".to_string()),
         "openai" => Some("https://api.openai.com/v1".to_string()),
+        "qwen" => Some("https://dashscope-intl.aliyuncs.com/compatible-mode/v1".to_string()),
+        "deepseek" => Some("https://api.deepseek.com/v1".to_string()),
+        "google" => Some("https://generativelanguage.googleapis.com/v1beta".to_string()),
+        "moonshotai" => Some("https://api.moonshot.ai/v1".to_string()),
+        "xai" => Some("https://api.x.ai/v1".to_string()),
         _ => None,
     }
 }
@@ -509,6 +533,7 @@ fn extract_tool_calls(content: &Value) -> Vec<ToolCallData> {
                     calls.push(ToolCallData {
                         tool_name: name.to_string(),
                         arguments: parse_arguments(arguments),
+                        provider_metadata: None,
                     });
                 }
             }
@@ -522,6 +547,7 @@ fn extract_tool_calls(content: &Value) -> Vec<ToolCallData> {
                     calls.push(ToolCallData {
                         tool_name: name.to_string(),
                         arguments: function_call.get("args").cloned().unwrap_or(Value::Null),
+                        provider_metadata: google_function_call_metadata(part),
                     });
                 }
             }
@@ -531,6 +557,16 @@ fn extract_tool_calls(content: &Value) -> Vec<ToolCallData> {
     calls
 }
 
+fn google_function_call_metadata(part: &Value) -> Option<Value> {
+    let signature = part
+        .get("thoughtSignature")
+        .or_else(|| part.get("thought_signature"))
+        .and_then(Value::as_str)?;
+    Some(serde_json::json!({
+        "google_thought_signature": signature,
+    }))
+}
+
 fn parse_arguments(arguments: Value) -> Value {
     match arguments {
         Value::String(text) => serde_json::from_str(&text).unwrap_or(Value::String(text)),
@@ -538,9 +574,29 @@ fn parse_arguments(arguments: Value) -> Value {
     }
 }
 
+fn strip_thought_blocks(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        let lower = rest.to_ascii_lowercase();
+        let Some(start) = lower.find("<thought>") else {
+            output.push_str(rest);
+            break;
+        };
+        output.push_str(&rest[..start]);
+        let after_start = &rest[start + "<thought>".len()..];
+        let lower_after_start = after_start.to_ascii_lowercase();
+        let Some(end) = lower_after_start.find("</thought>") else {
+            break;
+        };
+        rest = &after_start[end + "</thought>".len()..];
+    }
+    output.trim().to_string()
+}
+
 #[cfg(test)]
 mod provider_message_tests {
-    use super::normalize_provider_messages;
+    use super::{normalize_provider_messages, strip_thought_blocks};
 
     #[test]
     fn normalize_provider_messages_preserves_message_boundaries_for_cache() {
@@ -569,6 +625,15 @@ mod provider_message_tests {
             normalized[5]["content"],
             "Runtime context (debug):\nunknown role text"
         );
+    }
+
+    #[test]
+    fn strip_thought_blocks_removes_visible_reasoning_text() {
+        assert_eq!(
+            strip_thought_blocks("<thought>hidden</thought>visible"),
+            "visible"
+        );
+        assert_eq!(strip_thought_blocks("a<THOUGHT>hidden</THOUGHT>b"), "ab");
     }
 }
 
@@ -753,7 +818,7 @@ fn apply_provider_response_with_options(
 ) {
     let content = tura_llm_rust::normalize_response_content(content);
 
-    if let Some(text) = extract_response_text(&content) {
+    if let Some(text) = extract_response_text(&content).map(|text| strip_thought_blocks(&text)) {
         runtime.append_text(&text);
     }
 
@@ -764,6 +829,7 @@ fn apply_provider_response_with_options(
         runtime.push_tool_call(ToolCallRecord {
             tool_called_name: tool_call.tool_name,
             tool_called_input: tool_call.arguments,
+            provider_metadata: tool_call.provider_metadata,
             tool_received_at: now,
             tool_executed_at: now,
             tool_calldata_received_at: now,

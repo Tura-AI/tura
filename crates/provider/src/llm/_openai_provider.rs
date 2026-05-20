@@ -1199,15 +1199,25 @@ async fn stream_call(
     payload: Value,
     context_window: Option<u64>,
 ) -> Result<ProviderResponse, TuraError> {
-    let mut stream = client
+    let resp = client
         .post(url)
         .json(&payload)
         .send()
         .await
         .map_err(|e| TuraError::Network {
             message: e.to_string(),
-        })?
-        .bytes_stream();
+        })?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.map_err(|e| TuraError::Network {
+            message: e.to_string(),
+        })?;
+        return Err(TuraError::HttpStatus {
+            status: status.as_u16(),
+            body,
+        });
+    }
+    let mut stream = resp.bytes_stream();
 
     let mut full_content = String::new();
     let mut tool_calls = Vec::new();
@@ -1216,98 +1226,47 @@ async fn stream_call(
     let mut completed_tool_call = false;
     let mut stream_done = false;
     let mut stream_usage = None;
+    let mut pending = String::new();
 
     while let Some(chunk) = stream.next().await {
         let data = chunk.map_err(|e| TuraError::Network {
             message: e.to_string(),
         })?;
-        let text = String::from_utf8_lossy(&data);
+        pending.push_str(&String::from_utf8_lossy(&data));
 
-        for line in text.lines() {
-            if let Some(line) = line.strip_prefix("data: ") {
-                if line == "[DONE]" {
-                    stream_done = true;
-                    break;
-                }
-                if let Ok(delta) = serde_json::from_str::<Value>(line) {
-                    if let Some(usage) = delta.get("usage").filter(|usage| !usage.is_null()) {
-                        stream_usage = Some(usage.clone());
-                    }
-                    if let Some(choice) = delta
-                        .get("choices")
-                        .and_then(|c| c.as_array())
-                        .and_then(|a| a.first())
-                    {
-                        if let Some(delta_content) =
-                            choice.get("delta").and_then(|d| d.get("content"))
-                        {
-                            if let Some(text) =
-                                delta_content.as_str().filter(|_| !completed_tool_call)
-                            {
-                                full_content.push_str(text);
-                                if emit_minimax_streaming_tool_call(
-                                    &full_content,
-                                    &mut tool_call_buffers,
-                                    &mut tool_calls,
-                                ) {
-                                    completed_tool_call = true;
-                                }
-                            }
-                        }
-                        if let Some(tool_calls_delta) =
-                            choice.get("delta").and_then(|d| d.get("tool_calls"))
-                        {
-                            if let Some(calls) = tool_calls_delta.as_array() {
-                                for call in calls {
-                                    let key = call
-                                        .get("index")
-                                        .and_then(Value::as_u64)
-                                        .map(|index| index.to_string())
-                                        .or_else(|| {
-                                            call.get("id")
-                                                .and_then(Value::as_str)
-                                                .map(ToString::to_string)
-                                        })
-                                        .unwrap_or_else(|| "0".to_string());
-                                    let buffer = tool_call_buffers.entry(key).or_default();
-                                    if let Some(id) = call.get("id").and_then(|v| v.as_str()) {
-                                        buffer.id = Some(id.to_string());
-                                    }
-                                    if let Some(name) = call
-                                        .get("function")
-                                        .and_then(|f| f.get("name"))
-                                        .and_then(|v| v.as_str())
-                                    {
-                                        buffer.name = Some(name.to_string());
-                                    }
-                                    if let Some(args) = call
-                                        .get("function")
-                                        .and_then(|f| f.get("arguments"))
-                                        .and_then(|v| v.as_str())
-                                    {
-                                        buffer.arguments.push_str(args);
-                                    }
-                                    if emit_completed_tool_call(buffer, &mut tool_calls) {
-                                        completed_tool_call = true;
-                                    }
-                                }
-                            }
-                        }
-                        if let Some(reason) = choice.get("finish_reason").and_then(|v| v.as_str()) {
-                            if reason == "tool_calls" {
-                                for buffer in tool_call_buffers.values_mut() {
-                                    emit_completed_tool_call(buffer, &mut tool_calls);
-                                }
-                            }
-                            finish_reason = Some(reason.to_string());
-                        }
-                    }
-                }
+        while let Some(line_end) = pending.find('\n') {
+            let line = pending[..line_end].trim_end_matches('\r').to_string();
+            pending.drain(..=line_end);
+            process_openai_compatible_stream_line(
+                &line,
+                &mut full_content,
+                &mut tool_calls,
+                &mut tool_call_buffers,
+                &mut finish_reason,
+                &mut completed_tool_call,
+                &mut stream_usage,
+                &mut stream_done,
+            );
+            if stream_done {
+                break;
             }
         }
         if stream_done {
             break;
         }
+    }
+    if !pending.trim().is_empty() && !stream_done {
+        let line = pending.trim_end_matches('\r').to_string();
+        process_openai_compatible_stream_line(
+            &line,
+            &mut full_content,
+            &mut tool_calls,
+            &mut tool_call_buffers,
+            &mut finish_reason,
+            &mut completed_tool_call,
+            &mut stream_usage,
+            &mut stream_done,
+        );
     }
 
     let content = if !full_content.is_empty() && !tool_calls.is_empty() {
@@ -1357,6 +1316,96 @@ async fn stream_call(
         raw: json!({ "tool_calls": tool_calls, "usage": stream_usage }),
         metrics: Some(metrics),
     })
+}
+
+fn process_openai_compatible_stream_line(
+    line: &str,
+    full_content: &mut String,
+    tool_calls: &mut Vec<Value>,
+    tool_call_buffers: &mut BTreeMap<String, StreamingToolCall>,
+    finish_reason: &mut Option<String>,
+    completed_tool_call: &mut bool,
+    stream_usage: &mut Option<Value>,
+    stream_done: &mut bool,
+) {
+    let Some(line) = line.trim_start().strip_prefix("data:") else {
+        return;
+    };
+    let line = line.trim_start();
+    if line == "[DONE]" {
+        *stream_done = true;
+        return;
+    }
+    let Ok(delta) = serde_json::from_str::<Value>(line) else {
+        return;
+    };
+    if let Some(usage) = delta.get("usage").filter(|usage| !usage.is_null()) {
+        *stream_usage = Some(usage.clone());
+    }
+    if let Some(choice) = delta
+        .get("choices")
+        .and_then(|c| c.as_array())
+        .and_then(|a| a.first())
+    {
+        if let Some(delta_content) = choice.get("delta").and_then(|d| d.get("content")) {
+            if let Some(text) = delta_content.as_str().filter(|_| !*completed_tool_call) {
+                full_content.push_str(text);
+                if emit_minimax_streaming_tool_call(full_content, tool_call_buffers, tool_calls) {
+                    *completed_tool_call = true;
+                }
+            }
+        }
+        if let Some(tool_calls_delta) = choice.get("delta").and_then(|d| d.get("tool_calls")) {
+            if let Some(calls) = tool_calls_delta.as_array() {
+                for call in calls {
+                    let key = call
+                        .get("index")
+                        .and_then(Value::as_u64)
+                        .map(|index| index.to_string())
+                        .or_else(|| {
+                            call.get("id")
+                                .and_then(Value::as_str)
+                                .map(ToString::to_string)
+                        })
+                        .unwrap_or_else(|| "0".to_string());
+                    let buffer = tool_call_buffers.entry(key).or_default();
+                    if let Some(id) = call
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .filter(|id| !id.trim().is_empty())
+                    {
+                        buffer.id = Some(id.to_string());
+                    }
+                    if let Some(name) = call
+                        .get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(Value::as_str)
+                        .filter(|name| !name.trim().is_empty())
+                    {
+                        buffer.name = Some(name.to_string());
+                    }
+                    if let Some(args) = call
+                        .get("function")
+                        .and_then(|f| f.get("arguments"))
+                        .and_then(Value::as_str)
+                    {
+                        buffer.arguments.push_str(args);
+                    }
+                    if emit_completed_tool_call(buffer, tool_calls) {
+                        *completed_tool_call = true;
+                    }
+                }
+            }
+        }
+        if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
+            if reason == "tool_calls" || reason == "stop" {
+                for buffer in tool_call_buffers.values_mut() {
+                    emit_completed_tool_call(buffer, tool_calls);
+                }
+            }
+            *finish_reason = Some(reason.to_string());
+        }
+    }
 }
 
 #[derive(Default)]
@@ -2268,6 +2317,23 @@ mod tests {
         assert_eq!(metrics.usage.output_tokens, Some(3));
         assert_eq!(metrics.usage.cached_input_tokens, Some(2048));
         assert!(metrics.cache_hit);
+    }
+
+    #[test]
+    fn qwen_stream_options_request_usage_for_cache_accounting() {
+        let payload = super::build_chat_payload(
+            "qwen",
+            "qwen3-max-2026-01-23",
+            &[json!({"role": "user", "content": "cache"})],
+            &CallOptions {
+                stream: Some(true),
+                stream_options: Some(json!({ "include_usage": true })),
+                ..CallOptions::default()
+            },
+        );
+
+        assert_eq!(payload["stream"], true);
+        assert_eq!(payload["stream_options"]["include_usage"], true);
     }
 
     #[test]

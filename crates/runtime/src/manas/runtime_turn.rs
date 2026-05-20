@@ -6,7 +6,7 @@ use crate::state_machine::agent_management::AgentManagement;
 use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::state_machine::session_management::SessionManagement;
 
-use super::constants::{COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL};
+use super::constants::{COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL, TASK_DELIVERED_TOOL};
 use super::tool_catalog::{
     filter_tools_for_turn, load_agent_capabilities, load_agent_prompt_messages,
     multiple_tasks_child_depth, multiple_tasks_env_enabled, multiple_tasks_tool_disabled,
@@ -40,11 +40,15 @@ pub(super) fn execute_turn(
         multiple_tasks_child_depth() > 0,
         multiple_tasks_env_enabled(),
     )?;
-    let allowed_tool_names: std::collections::HashSet<String> = tools
+    let mut allowed_tool_names: std::collections::HashSet<String> = tools
         .iter()
         .filter_map(tool_schema_name)
         .map(ToString::to_string)
         .collect();
+    if multiple_tasks_env_enabled() && !multiple_tasks_tool_disabled() {
+        allowed_tool_names.insert(MULTIPLE_TASKS_TOOL.to_string());
+        allowed_tool_names.insert(TASK_DELIVERED_TOOL.to_string());
+    }
     tools = move_command_run_to_end(tools);
     if debug_runtime_enabled() {
         eprintln!(
@@ -94,6 +98,7 @@ pub(super) fn execute_turn(
                 tools: queue_item.tools,
                 provider_name: queue_item.provider_name,
                 stream: agent.provider.stream,
+                max_tokens: agent.provider.max_tokens,
                 tool_choice: tool_choice_for_turn(&allowed_tool_names, is_final_turn),
                 session_directory: session.session_directory.clone(),
             },
@@ -110,6 +115,7 @@ pub(super) fn execute_turn(
         .map(|record| ToolCallData {
             tool_name: record.tool_called_name.clone(),
             arguments: record.tool_called_input.clone(),
+            provider_metadata: record.provider_metadata.clone(),
         })
         .collect();
     if debug_runtime_enabled() {
