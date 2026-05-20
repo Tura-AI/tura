@@ -1,3 +1,4 @@
+pub mod compact_context;
 pub mod runtime_fallback;
 pub mod task_continuity;
 pub mod task_delivered;

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs/promises"
-import { createWriteStream, existsSync } from "node:fs"
+import { createWriteStream, existsSync, readFileSync, writeFileSync } from "node:fs"
 import { spawn } from "node:child_process"
 import path from "node:path"
 import process from "node:process"
@@ -24,7 +24,7 @@ const codexServiceTier = process.env.COMMAND_RUN_AGENT_CODEX_SERVICE_TIER || "au
 const turaAccelerationEnabled =
   (process.env.COMMAND_RUN_AGENT_TURA_PRIORITY ||
     (codexServiceTier === "priority" ? "1" : "0")) === "1"
-const runtimeTimeoutMs = Math.min(numberEnv("COMMAND_RUN_AGENT_TIMEOUT_MS", 12 * 60_000), 12 * 60_000)
+const runtimeTimeoutMs = Math.min(numberEnv("COMMAND_RUN_AGENT_TIMEOUT_MS", 15 * 60_000), 15 * 60_000)
 const startupTimeoutMs = numberEnv("COMMAND_RUN_AGENT_STARTUP_TIMEOUT_MS", 180_000)
 const firstRoundTimeoutMs = numberEnv("COMMAND_RUN_AGENT_FIRST_ROUND_TIMEOUT_MS", 45_000)
 const precompileTura = (process.env.COMMAND_RUN_AGENT_PRECOMPILE_TURA || "0") === "1"
@@ -38,7 +38,22 @@ const turaRoot = process.env.COMMAND_RUN_AGENT_TURA_ROOT || repoRoot
 const codexCurrentRoot = process.env.COMMAND_RUN_AGENT_CODEX_CURRENT_ROOT || path.join(homeDir, "Documents", "Codex")
 const codexMainRoot = process.env.COMMAND_RUN_AGENT_CODEX_MAIN_ROOT || path.join(homeDir, "Documents", "codex-main")
 const codexMainFallbackRoot = process.env.COMMAND_RUN_AGENT_CODEX_MAIN_FALLBACK_ROOT || path.join(homeDir, "codex-main")
-const seededBehaviorDefectCount = 120
+const compactStressEnabled = (process.env.COMMAND_RUN_AGENT_COMPACT_STRESS || "0") === "1"
+const contextFullModeEnabled = (process.env.COMMAND_RUN_AGENT_CONTEXT_FULL || "0") === "1"
+const enterpriseExpansionEnabled =
+  (process.env.COMMAND_RUN_AGENT_ENTERPRISE_EXPANSION || (compactStressEnabled ? "1" : "0")) === "1"
+const hardEnterpriseExpansionEnabled =
+  (process.env.COMMAND_RUN_AGENT_HARD_ENTERPRISE_EXPANSION || (enterpriseExpansionEnabled ? "1" : "0")) === "1"
+const hardActiveGeneratedCodeEnabled =
+  (process.env.COMMAND_RUN_AGENT_HARD_ACTIVE_GENERATED_CODE || (hardEnterpriseExpansionEnabled ? "1" : "0")) === "1"
+const hardActiveScaleMultiplier = hardActiveGeneratedCodeEnabled
+  ? numberEnv("COMMAND_RUN_AGENT_HARD_ACTIVE_SCALE_MULTIPLIER", 10)
+  : 1
+const fixtureScaleMultiplier = numberEnv("COMMAND_RUN_AGENT_FIXTURE_SCALE_MULTIPLIER", compactStressEnabled ? 3 : 1)
+const fixedContextTokenBudget = contextFullModeEnabled
+  ? numberEnv("COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS", 230_000)
+  : 0
+const seededBehaviorDefectCount = 120 * fixtureScaleMultiplier
 
 const taskPrompt = taskPromptForShell("shell_command")
 
@@ -47,7 +62,7 @@ function taskPromptForShell(shellSurface) {
     shellSurface === "bash"
       ? "bash tools/verify.sh"
       : "powershell -NoProfile -ExecutionPolicy Bypass -File tools/verify.ps1"
-  return [
+  const prompt = [
   "You are running an E2E bug-fix benchmark.",
   "",
   "Repository task:",
@@ -55,10 +70,60 @@ function taskPromptForShell(shellSurface) {
   "- Do not edit tests to weaken or remove assertions.",
     `- Run \`${verifyCommand}\` until it passes.`,
   "- The bugs are cross-file and some are behind high-level workflows. Follow imports, failing behavior, and data flow instead of assuming failures are local to the first traceback.",
-  "- This is intentionally a large full-stack task with at least 100 behavioral defects across backend Python and frontend JavaScript in a 150+ file, 30k+ line repository. Fix behavior, not only the first failing assertion.",
+  `- This is intentionally a large full-stack task with at least ${100 * fixtureScaleMultiplier} behavioral defects across backend Python and frontend JavaScript in a ${150 * fixtureScaleMultiplier}+ file, ${30_000 * fixtureScaleMultiplier}+ line repository. Fix behavior, not only the first failing assertion.`,
+  ...(enterpriseExpansionEnabled
+    ? [
+        "- In addition to fixing existing defects, implement the enterprise expansion requirements described by the new acceptance tests and docs. These require new backend and frontend behavior, not just bug fixes.",
+      ]
+    : []),
+  ...(hardEnterpriseExpansionEnabled
+    ? [
+        "- The hard enterprise acceptance surface includes advanced forecasting, privacy, tax, fulfillment, fraud, SLA, executive brief, operations-console, control-plane, and control-tower requirements. Treat these as production features with exact behavior covered by tests.",
+      ]
+    : []),
+  ...(hardActiveGeneratedCodeEnabled
+    ? [
+        `- The generated support, integration, policy, frontend view, and frontend shared modules are active business code in this benchmark at ${hardActiveScaleMultiplier}x scale. Their behavior is verified by matrix tests and must be repaired where failing.`,
+      ]
+    : []),
   "- Keep public APIs stable.",
   "- Finish only after the verification script passes, then summarize the fix.",
   ].join("\n")
+  const fixedContext = fixedContextTokenBudget > 0 ? fixedRepoContextBlock(fixedContextTokenBudget) : ""
+  return fixedContext ? `${fixedContext}\n\n${prompt}` : prompt
+}
+
+function fixedRepoContextBlock(targetTokens) {
+  const targetChars = Math.min(Math.round(Math.max(0, targetTokens) * 4.8), 1_000_000)
+  if (targetChars <= 0) return ""
+  const header = [
+    "<SIMULATED_PRIOR_SESSION_CONTEXT>",
+    "This deterministic block simulates a long prior conversation about this repository. It includes user/assistant exchanges, tool-call result excerpts, file map notes, verification expectations, and live-repo background. Every tested agent receives the exact same block only when context-full mode is enabled.",
+    "Use this as background only. The live workspace remains authoritative. The actual task prompt is below this simulated context.",
+  ].join("\n")
+  const chunkLines = []
+  for (let index = 0; index < 80; index += 1) {
+    const file = `src/retail_core/generated/domain_${String(index).padStart(3, "0")}/workflow_${String(index % 17).padStart(2, "0")}.py`
+    chunkLines.push(
+      `file=${file} responsibility=retail account inventory checkout refunds reporting customer policy fulfillment adapter rule=${index} expected=business-invariant-preserved live-workspace-authoritative`,
+    )
+    chunkLines.push(
+      `tests/generated/test_domain_${String(index).padStart(3, "0")}.py validates decimal money normalization, SKU case folding, month end reconciliation, idempotent exports, stable public APIs, and narrow verification before final summary.`,
+    )
+    chunkLines.push(
+      `debug-note-${index}: failing behavior may be cross-file; prefer rg, directory scan, targeted file reads, apply_patch, then tools/verify.ps1 or tools/verify.sh depending on shell surface.`,
+    )
+    chunkLines.push(
+      `assistant-tool-result-${index}: {"results":[{"step":1,"command":"shell_command","success":true,"output":"${file}\\nclass SimulatedWorkflow${index}: pass\\n# generated repo context excerpt ${index}"}]}`,
+    )
+    chunkLines.push(
+      `user-followup-${index}: keep public APIs stable, preserve Decimal money behavior, avoid weakening tests, and finish only after the repository verification command passes.`,
+    )
+  }
+  const chunk = `${chunkLines.join("\n")}\n`
+  let body = ""
+  while (header.length + body.length < targetChars) body += chunk
+  return `${header}\n${body.slice(0, Math.max(0, targetChars - header.length))}\n</SIMULATED_PRIOR_SESSION_CONTEXT>`
 }
 
 function numberEnv(name, fallback) {
@@ -229,6 +294,22 @@ function spawnLogged(command, args, options = {}) {
     let stderr = ""
     const stdoutStream = options.stdoutPath ? createWriteStream(options.stdoutPath, { flags: "w" }) : null
     const stderrStream = options.stderrPath ? createWriteStream(options.stderrPath, { flags: "w" }) : null
+    let lastProgressWriteMs = 0
+    const writeProgressSnapshot = (status = "running") => {
+      if (!options.progressPath || typeof options.progressSnapshot !== "function") return
+      const now = performance.now()
+      if (status === "running" && now - lastProgressWriteMs < Number(options.progressIntervalMs || 5_000)) return
+      lastProgressWriteMs = now
+      try {
+        writeFileSync(
+          options.progressPath,
+          JSON.stringify(options.progressSnapshot({ stdout, stderr, status, elapsed_ms: Math.round(now - started) }), null, 2),
+          "utf8",
+        )
+      } catch {
+        // Progress snapshots are best-effort diagnostics and must not change benchmark behavior.
+      }
+    }
     let firstOutputMs = null
     const markFirstOutput = () => {
       if (firstOutputMs === null) firstOutputMs = Math.round(performance.now() - started)
@@ -244,12 +325,16 @@ function spawnLogged(command, args, options = {}) {
       stdout += chunk.toString()
       if (stdoutStream) stdoutStream.write(chunk)
       if (options.stream) process.stdout.write(chunk)
+      if (options.onStdout) options.onStdout(chunk.toString(), stdout, stderr)
+      writeProgressSnapshot()
     })
     child.stderr.on("data", (chunk) => {
       markFirstOutput()
       stderr += chunk.toString()
       if (stderrStream) stderrStream.write(chunk)
       if (options.stream) process.stderr.write(chunk)
+      if (options.onStderr) options.onStderr(chunk.toString(), stdout, stderr)
+      writeProgressSnapshot()
     })
     if (options.input) {
       child.stdin.write(options.input)
@@ -259,6 +344,7 @@ function spawnLogged(command, args, options = {}) {
       if (timer) clearTimeout(timer)
       if (stdoutStream) stdoutStream.end()
       if (stderrStream) stderrStream.end()
+      writeProgressSnapshot("error")
       resolve({
         status: -1,
         stdout,
@@ -271,6 +357,7 @@ function spawnLogged(command, args, options = {}) {
       if (timer) clearTimeout(timer)
       if (stdoutStream) stdoutStream.end()
       if (stderrStream) stderrStream.end()
+      writeProgressSnapshot(status === 0 ? "completed" : "failed")
       resolve({
         status: status ?? -1,
         stdout,
@@ -321,9 +408,9 @@ function neutralModuleContent(index) {
   const lines = [
     `"""Neutral support module ${index}.`,
     "",
-    "These files simulate a medium-large retail codebase. They are intentionally",
-    "boring and stable; the repair task lives in the public retail_core modules",
-    "and behavior tests, not in this generated support layer.",
+    "These files simulate generated business support code in a large retail",
+    "platform. In hard mode this layer is active: matrix tests import every",
+    "module and verify behavior, so generated code defects must be repaired too.",
     `"""`,
     "",
     "from __future__ import annotations",
@@ -370,27 +457,76 @@ function neutralModuleContent(index) {
 async function writeNeutralCodebase(repoPath) {
   const supportDir = path.join(repoPath, "src", "retail_core", "support")
   const integrationsDir = path.join(repoPath, "src", "retail_core", "integrations")
+  const supportCount = 70 * fixtureScaleMultiplier * hardActiveScaleMultiplier
+  const integrationCount = 20 * fixtureScaleMultiplier * hardActiveScaleMultiplier
   await fs.mkdir(supportDir, { recursive: true })
   await fs.mkdir(integrationsDir, { recursive: true })
   await writeText(path.join(supportDir, "__init__.py"), `"""Generated neutral support modules."""\n`)
   await writeText(path.join(integrationsDir, "__init__.py"), `"""Generated neutral integration modules."""\n`)
-  for (let index = 0; index < 70; index += 1) {
+  for (let index = 0; index < supportCount; index += 1) {
     await writeText(path.join(supportDir, `support_${String(index).padStart(2, "0")}.py`), neutralModuleContent(index))
   }
-  for (let index = 0; index < 20; index += 1) {
-    await writeText(path.join(integrationsDir, `adapter_${String(index).padStart(2, "0")}.py`), neutralModuleContent(index + 70))
+  for (let index = 0; index < integrationCount; index += 1) {
+    await writeText(path.join(integrationsDir, `adapter_${String(index).padStart(2, "0")}.py`), neutralModuleContent(index + supportCount))
   }
-  for (let index = 0; index < 12; index += 1) {
+  for (let index = 0; index < 12 * fixtureScaleMultiplier; index += 1) {
+    const supportIndex = index % supportCount
     await writeText(
       path.join(repoPath, "tests", `test_neutral_support_${String(index).padStart(2, "0")}.py`),
       `import unittest
 
-from retail_core.support.support_${String(index).padStart(2, "0")} import rule_${index}_0
+from retail_core.support.support_${String(supportIndex).padStart(2, "0")} import rule_${supportIndex}_0
 
 
 class NeutralSupport${index}Tests(unittest.TestCase):
     def test_rule_is_deterministic(self):
-        self.assertEqual(rule_${index}_0(10), rule_${index}_0(10))
+        self.assertEqual(rule_${supportIndex}_0(10), rule_${supportIndex}_0(10))
+
+
+if __name__ == "__main__":
+    unittest.main()
+`,
+    )
+  }
+  if (hardActiveGeneratedCodeEnabled) {
+    await writeText(
+      path.join(repoPath, "tests", "test_generated_active_support_matrix.py"),
+      `from decimal import Decimal
+import importlib
+import unittest
+
+
+SUPPORT_COUNT = ${supportCount}
+INTEGRATION_COUNT = ${integrationCount}
+
+
+class GeneratedActiveSupportMatrixTests(unittest.TestCase):
+    def assert_active_module_contract(self, module, index):
+        record_cls = getattr(module, f"SupportRecord{index}")
+        self.assertEqual(getattr(module, f"normalize_key_{index}")(f" Order_ID  {index} "), f"order-id-{index}")
+        records = [
+            record_cls("a", Decimal("1.111"), True),
+            record_cls("b", Decimal("2.222"), False),
+            record_cls("c", Decimal("3.333"), True),
+        ]
+        self.assertEqual(getattr(module, f"weighted_total_{index}")(records, Decimal("1.50")), Decimal("6.67"))
+        self.assertEqual(getattr(module, f"rule_{index}_0")(10), 10 + index + 1)
+        self.assertEqual(getattr(module, f"rule_{index}_7")(10), 10 + index + 8)
+        self.assertEqual(getattr(module, f"rule_{index}_19")(10), 10 + index + 20)
+        self.assertEqual(getattr(module, f"rule_{index}_35")(10), 10 + index + 36)
+
+    def test_all_generated_support_modules_are_active_business_code(self):
+        for index in range(SUPPORT_COUNT):
+            module = importlib.import_module(f"retail_core.support.support_{index:02d}")
+            with self.subTest(kind="support", index=index):
+                self.assert_active_module_contract(module, index)
+
+    def test_all_generated_integration_modules_are_active_business_code(self):
+        for offset in range(INTEGRATION_COUNT):
+            index = SUPPORT_COUNT + offset
+            module = importlib.import_module(f"retail_core.integrations.adapter_{offset:02d}")
+            with self.subTest(kind="integration", index=index):
+                self.assert_active_module_contract(module, index)
 
 
 if __name__ == "__main__":
@@ -436,13 +572,14 @@ def eligibility_flags(quantity: int, tier: str) -> tuple[str, ...]:
 
 async function writeBackendPolicyCodebase(repoPath) {
   const policyDir = path.join(repoPath, "src", "retail_core", "policy")
+  const policyCount = 40 * fixtureScaleMultiplier * hardActiveScaleMultiplier
   await fs.mkdir(policyDir, { recursive: true })
   await writeText(
     path.join(policyDir, "__init__.py"),
     `"""Generated backend policy modules used by integration tests."""
 `,
   )
-  for (let index = 0; index < 40; index += 1) {
+  for (let index = 0; index < policyCount; index += 1) {
     await writeText(path.join(policyDir, `policy_${String(index).padStart(2, "0")}.py`), backendPolicyModuleContent(index))
   }
   await writeText(
@@ -454,7 +591,7 @@ import unittest
 
 class BackendPolicyMatrixTests(unittest.TestCase):
     def test_generated_policy_scores_and_caps(self):
-        for index in range(40):
+        for index in range(${policyCount}):
             module = importlib.import_module(f"retail_core.policy.policy_{index:02d}")
             with self.subTest(policy=index):
                 self.assertEqual(module.score_policy(10), 10 + index + 1)
@@ -523,6 +660,8 @@ async function writeFrontendCodebase(repoPath) {
   const srcDir = path.join(repoPath, "frontend", "src", "views")
   const sharedDir = path.join(repoPath, "frontend", "src", "shared")
   const testsDir = path.join(repoPath, "frontend", "tests")
+  const viewCount = 40 * fixtureScaleMultiplier * hardActiveScaleMultiplier
+  const sharedCount = 50 * fixtureScaleMultiplier * hardActiveScaleMultiplier
   await fs.mkdir(srcDir, { recursive: true })
   await fs.mkdir(sharedDir, { recursive: true })
   await fs.mkdir(testsDir, { recursive: true })
@@ -538,10 +677,10 @@ async function writeFrontendCodebase(repoPath) {
 }
 `,
   )
-  for (let index = 0; index < 40; index += 1) {
+  for (let index = 0; index < viewCount; index += 1) {
     await writeText(path.join(srcDir, `view_${String(index).padStart(2, "0")}.mjs`), frontendModuleContent(index))
   }
-  for (let index = 0; index < 50; index += 1) {
+  for (let index = 0; index < sharedCount; index += 1) {
     await writeText(path.join(sharedDir, `shared_${String(index).padStart(2, "0")}.mjs`), frontendNeutralModuleContent(index))
   }
   await writeText(
@@ -550,7 +689,7 @@ async function writeFrontendCodebase(repoPath) {
 import assert from "node:assert/strict";
 
 test("generated view modules normalize display, routes, badges, and panel state", async () => {
-  for (let index = 0; index < 40; index += 1) {
+  for (let index = 0; index < ${viewCount}; index += 1) {
     const id = String(index).padStart(2, "0");
     const mod = await import(\`../src/views/view_\${id}.mjs\`);
     assert.equal(mod[\`formatCurrency\${index}\`](12), "$12.00", \`currency \${index}\`);
@@ -563,6 +702,1196 @@ test("generated view modules normalize display, routes, badges, and panel state"
     assert.deepEqual(mod[\`reducePanelState\${index}\`](start, { type: "reset" }), { open: false, count: 0 }, \`reset \${index}\`);
   }
 });
+`,
+  )
+  if (hardActiveGeneratedCodeEnabled) {
+    await writeText(
+      path.join(testsDir, "frontend_shared_active_matrix.test.mjs"),
+      `import test from "node:test";
+import assert from "node:assert/strict";
+
+test("generated shared modules participate in active behavior", async () => {
+  for (let index = 0; index < ${sharedCount}; index += 1) {
+    const id = String(index).padStart(2, "0");
+    const mod = await import(\`../src/shared/shared_\${id}.mjs\`);
+    assert.equal(mod.normalizeText(" Order_ID  " + index + " "), "order-id-" + index, \`normalize shared \${index}\`);
+    assert.equal(mod[\`sharedRule\${index}_0\`](10), 10 + index + 1, \`rule0 shared \${index}\`);
+    assert.equal(mod[\`sharedRule\${index}_9\`](10), 10 + index + 10, \`rule9 shared \${index}\`);
+    assert.equal(mod[\`sharedRule\${index}_21\`](10), 10 + index + 22, \`rule21 shared \${index}\`);
+    assert.equal(mod[\`sharedRule\${index}_41\`](10), 10 + index + 42, \`rule41 shared \${index}\`);
+  }
+});
+`,
+    )
+  }
+}
+
+async function writeEnterpriseExpansion(repoPath) {
+  await fs.mkdir(path.join(repoPath, "docs"), { recursive: true })
+  await writeText(
+    path.join(repoPath, "docs", "enterprise_requirements.md"),
+    `# Enterprise Expansion Requirements
+
+The enterprise tests describe new product requirements layered on top of the
+existing retail operations workflows. Implement these as production code, not
+test-specific shortcuts.
+
+Backend requirements:
+
+- Provide \`retail_core.enterprise.build_customer_360\` for account managers.
+  It must normalize customer identity, merge duplicate customers, aggregate
+  spend and refunds, preserve first-seen customer ids, sort risk flags, compute
+  open support ticket counts, and produce deterministic CSV rows.
+- Provide \`retail_core.enterprise.forecast_inventory_replenishment\` for
+  planners. It must combine on-hand, reserved, target, safety stock, lead-time
+  demand, and inbound purchase orders. Recommendations should be sorted by
+  urgency and SKU.
+- Provide \`retail_core.enterprise.reconcile_promotions_and_returns\` for
+  finance. It must combine priced orders, coupon metadata, and refunds into
+  promotion liability rows with order-level and category-level net revenue.
+- Provide \`retail_core.enterprise.build_audit_timeline\` for operations. It
+  must merge order, payment, shipment, and support events into a stable
+  chronological timeline with duplicate event ids removed.
+
+Frontend requirements:
+
+- Provide \`frontend/src/views/enterprise_dashboard.mjs\`.
+- \`buildDashboardState\` must summarize KPI cards, risk queues, inventory
+  alerts, and export metadata from backend-style payloads.
+- \`reconcileFilters\` must normalize route/query/filter state into a stable
+  object used by bookmarked enterprise views.
+- \`exportEnterpriseCsv\` must emit deterministic CSV with escaped values.
+
+Validation:
+
+- \`tests/test_enterprise_requirements.py\` validates backend behavior.
+- \`frontend/tests/enterprise_dashboard.test.mjs\` validates frontend behavior.
+- The existing \`tools/verify.ps1\` command must pass without weakening tests.
+`,
+  )
+  await writeText(
+    path.join(repoPath, "tests", "test_enterprise_requirements.py"),
+    `from decimal import Decimal
+import unittest
+
+from retail_core.addresses import Address
+from retail_core.enterprise import (
+    build_audit_timeline,
+    build_customer_360,
+    forecast_inventory_replenishment,
+    reconcile_promotions_and_returns,
+)
+from retail_core.orders import CheckoutRequest, OrderLine, price_order
+from retail_core.returns import ReturnLine, refund_for_lines
+
+
+class EnterpriseRequirementsTests(unittest.TestCase):
+    def test_customer_360_merges_identity_spend_support_and_exports(self):
+        orders = [
+            {
+                "order_id": "o-100",
+                "customer_id": "cust-1",
+                "email": " Ada@Example.COM ",
+                "shipping_state": " wa ",
+                "postal_code": " 98101 - 1234 ",
+                "total": Decimal("57.77"),
+                "refund": Decimal("24.41"),
+                "risk_flags": ["late_payment", "address_mismatch"],
+            },
+            {
+                "order_id": "o-101",
+                "customer_id": "cust-duplicate",
+                "email": "ada@example.com",
+                "shipping_state": "WA",
+                "postal_code": "98101-1234",
+                "total": Decimal("31.00"),
+                "refund": Decimal("0.00"),
+                "risk_flags": ["late_payment"],
+            },
+            {
+                "order_id": "o-200",
+                "customer_id": "cust-2",
+                "email": "grace@example.com",
+                "shipping_state": "OR",
+                "postal_code": "97035",
+                "total": Decimal("155.00"),
+                "refund": Decimal("45.00"),
+                "risk_flags": ["prior_chargeback"],
+            },
+        ]
+        tickets = [
+            {"ticket_id": "t-1", "email": "ada@example.com", "status": "open", "severity": "high"},
+            {"ticket_id": "t-2", "email": " ADA@example.com ", "status": "closed", "severity": "low"},
+            {"ticket_id": "t-3", "email": "grace@example.com", "status": "open", "severity": "medium"},
+        ]
+
+        report = build_customer_360(orders, tickets)
+
+        self.assertEqual(report["customer_count"], 2)
+        self.assertEqual(
+            report["customers"],
+            [
+                {
+                    "customer_id": "cust-1",
+                    "identity_key": "ada@example.com|WA|98101-1234",
+                    "email": "ada@example.com",
+                    "state": "WA",
+                    "postal_code": "98101-1234",
+                    "gross_spend": Decimal("88.77"),
+                    "refunds": Decimal("24.41"),
+                    "net_spend": Decimal("64.36"),
+                    "order_count": 2,
+                    "open_tickets": 1,
+                    "risk_flags": ("address_mismatch", "late_payment"),
+                },
+                {
+                    "customer_id": "cust-2",
+                    "identity_key": "grace@example.com|OR|97035",
+                    "email": "grace@example.com",
+                    "state": "OR",
+                    "postal_code": "97035",
+                    "gross_spend": Decimal("155.00"),
+                    "refunds": Decimal("45.00"),
+                    "net_spend": Decimal("110.00"),
+                    "order_count": 1,
+                    "open_tickets": 1,
+                    "risk_flags": ("prior_chargeback",),
+                },
+            ],
+        )
+        self.assertEqual(
+            report["csv_rows"],
+            [
+                "customer_id,identity_key,net_spend,open_tickets,risk_flags",
+                "cust-1,ada@example.com|WA|98101-1234,64.36,1,address_mismatch|late_payment",
+                "cust-2,grace@example.com|OR|97035,110.00,1,prior_chargeback",
+            ],
+        )
+
+    def test_inventory_forecast_accounts_for_inbound_and_lead_time_demand(self):
+        forecast = forecast_inventory_replenishment(
+            inventory=[
+                {"sku": " SKU COFFEE 1 ", "on_hand": 8, "reserved": 3, "target": 10, "safety_stock": 2},
+                {"sku": "sku_mug_2", "on_hand": 3, "reserved": 1, "target": 3, "safety_stock": 1},
+                {"sku": "sku-sticker-3", "on_hand": 50, "reserved": 0, "target": 10, "safety_stock": 0},
+            ],
+            demand=[
+                {"sku": "sku-coffee-1", "daily_units": 2, "lead_days": 4},
+                {"sku": "sku-mug-2", "daily_units": 1, "lead_days": 3},
+                {"sku": "sku-sticker-3", "daily_units": 1, "lead_days": 1},
+            ],
+            inbound=[
+                {"sku": "sku-coffee-1", "quantity": 5, "eta_days": 2},
+                {"sku": "sku-mug-2", "quantity": 1, "eta_days": 9},
+            ],
+        )
+
+        self.assertEqual(
+            forecast,
+            [
+                {
+                    "sku": "sku-coffee-1",
+                    "available": 5,
+                    "lead_time_demand": 8,
+                    "inbound_before_due": 5,
+                    "required": 15,
+                    "recommendation": 5,
+                    "urgency": "high",
+                },
+                {
+                    "sku": "sku-mug-2",
+                    "available": 2,
+                    "lead_time_demand": 3,
+                    "inbound_before_due": 0,
+                    "required": 7,
+                    "recommendation": 5,
+                    "urgency": "medium",
+                },
+            ],
+        )
+
+    def test_promotion_return_reconciliation_preserves_category_liability(self):
+        order_1 = price_order(
+            CheckoutRequest(
+                lines=[OrderLine("sku-coffee-1", 2), OrderLine("sku-mug-2", 1)],
+                destination_state="wa",
+                coupon_code="SAVE10",
+            )
+        )
+        order_2 = price_order(
+            CheckoutRequest(
+                lines=[OrderLine("sku-sticker-3", 4), OrderLine("sku-mug-2", 1)],
+                destination_state="or",
+                coupon_code="HOME5",
+                customer_tier="vip",
+            )
+        )
+        refund = refund_for_lines(order_1, [ReturnLine("sku mug 2", 1)])
+
+        reconciliation = reconcile_promotions_and_returns(
+            [
+                {"order_id": "order-1", "order": order_1, "coupon_code": "SAVE10", "refund": refund},
+                {"order_id": "order-2", "order": order_2, "coupon_code": "HOME5", "refund": Decimal("0.00")},
+            ]
+        )
+
+        self.assertEqual(reconciliation["gross_sales"], Decimal("89.77"))
+        self.assertEqual(reconciliation["refund_total"], Decimal("24.41"))
+        self.assertEqual(reconciliation["net_sales"], Decimal("65.36"))
+        self.assertEqual(
+            reconciliation["coupon_liability"],
+            [
+                {"coupon_code": "HOME5", "orders": 1, "discount": Decimal("5.00"), "refunds": Decimal("0.00")},
+                {"coupon_code": "SAVE10", "orders": 1, "discount": Decimal("5.10"), "refunds": Decimal("24.41")},
+            ],
+        )
+        self.assertEqual(
+            reconciliation["category_net_revenue"],
+            {"grocery": Decimal("25.37"), "home": Decimal("44.41"), "merch": Decimal("12.00")},
+        )
+
+    def test_audit_timeline_deduplicates_and_orders_cross_domain_events(self):
+        timeline = build_audit_timeline(
+            order_events=[
+                {"event_id": "order-created", "at": "2026-05-01T09:00:00Z", "order_id": "order-1", "actor": "checkout"},
+                {"event_id": "duplicate", "at": "2026-05-01T09:03:00Z", "order_id": "order-1", "actor": "checkout"},
+            ],
+            payment_events=[
+                {"event_id": "payment-authorized", "at": "2026-05-01T09:01:00Z", "order_id": "order-1", "actor": "payments"},
+                {"event_id": "duplicate", "at": "2026-05-01T09:04:00Z", "order_id": "order-1", "actor": "payments"},
+            ],
+            shipment_events=[
+                {"event_id": "shipment-promised", "at": "2026-05-01T09:02:00Z", "order_id": "order-1", "actor": "fulfillment"},
+            ],
+            support_events=[
+                {"event_id": "ticket-opened", "at": "2026-05-01T09:05:00Z", "order_id": "order-1", "actor": "support"},
+            ],
+        )
+
+        self.assertEqual(
+            timeline,
+            [
+                {"at": "2026-05-01T09:00:00Z", "domain": "order", "event_id": "order-created", "order_id": "order-1", "actor": "checkout"},
+                {"at": "2026-05-01T09:01:00Z", "domain": "payment", "event_id": "payment-authorized", "order_id": "order-1", "actor": "payments"},
+                {"at": "2026-05-01T09:02:00Z", "domain": "shipment", "event_id": "shipment-promised", "order_id": "order-1", "actor": "fulfillment"},
+                {"at": "2026-05-01T09:03:00Z", "domain": "order", "event_id": "duplicate", "order_id": "order-1", "actor": "checkout"},
+                {"at": "2026-05-01T09:05:00Z", "domain": "support", "event_id": "ticket-opened", "order_id": "order-1", "actor": "support"},
+            ],
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
+`,
+  )
+  await writeText(
+    path.join(repoPath, "frontend", "tests", "enterprise_dashboard.test.mjs"),
+    `import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  buildDashboardState,
+  exportEnterpriseCsv,
+  reconcileFilters,
+} from "../src/views/enterprise_dashboard.mjs";
+
+test("enterprise dashboard summarizes cross-domain state", () => {
+  const state = buildDashboardState({
+    customers: [
+      { customer_id: "cust-1", net_spend: "64.36", open_tickets: 1, risk_flags: ["late_payment", "address_mismatch"] },
+      { customer_id: "cust-2", net_spend: "110.00", open_tickets: 1, risk_flags: ["prior_chargeback"] },
+    ],
+    inventory: [
+      { sku: "sku-coffee-1", recommendation: 5, urgency: "high" },
+      { sku: "sku-mug-2", recommendation: 5, urgency: "medium" },
+    ],
+    reconciliation: {
+      net_sales: "65.36",
+      refund_total: "24.41",
+      coupon_liability: [
+        { coupon_code: "HOME5", discount: "5.00" },
+        { coupon_code: "SAVE10", discount: "5.10" },
+      ],
+    },
+  });
+
+  assert.deepEqual(state.kpis, [
+    { label: "Net sales", value: "$65.36" },
+    { label: "Refunds", value: "$24.41" },
+    { label: "Open tickets", value: "2" },
+    { label: "High urgency SKUs", value: "1" },
+  ]);
+  assert.deepEqual(state.riskQueue, [
+    { customer_id: "cust-1", risk_count: 2, risk_flags: "address_mismatch|late_payment" },
+    { customer_id: "cust-2", risk_count: 1, risk_flags: "prior_chargeback" },
+  ]);
+  assert.deepEqual(state.inventoryAlerts, ["sku-coffee-1:5:high", "sku-mug-2:5:medium"]);
+  assert.equal(state.exportName, "enterprise-dashboard-2-customers.csv");
+});
+
+test("enterprise dashboard normalizes filters and exports csv", () => {
+  assert.deepEqual(
+    reconcileFilters({
+      route: " Enterprise / Risk ",
+      query: " Ada Lovelace ",
+      filters: { state: " wa ", urgency: " HIGH ", empty: "" },
+      page: "3",
+    }),
+    {
+      route: "/enterprise/risk",
+      query: "ada lovelace",
+      filters: { state: "WA", urgency: "high" },
+      page: 3,
+    },
+  );
+
+  assert.equal(
+    exportEnterpriseCsv([
+      { customer_id: "cust-1", note: "needs, review", net_spend: "64.36" },
+      { customer_id: "cust-2", note: "clear", net_spend: "110.00" },
+    ]),
+    [
+      "customer_id,net_spend,note",
+      "cust-1,64.36,\\"needs, review\\"",
+      "cust-2,110.00,clear",
+    ].join("\\n"),
+  );
+});
+`,
+  )
+
+  if (hardEnterpriseExpansionEnabled) {
+    await writeEnterpriseAdvancedExpansion(repoPath)
+  }
+}
+
+async function writeEnterpriseAdvancedExpansion(repoPath) {
+  await writeText(
+    path.join(repoPath, "docs", "enterprise_advanced_requirements.md"),
+    `# Enterprise Advanced Requirements
+
+These requirements extend the enterprise surface with cross-domain planning,
+finance, privacy, operations, and executive reporting behavior. Implement them
+as production modules. Do not special-case the tests.
+
+Backend requirements:
+
+- Provide \`retail_core.enterprise_advanced.calculate_customer_health_scores\`.
+  It must merge customer 360 rows, support tickets, SLA breaches, fraud signals,
+  and revenue trends into deterministic health scores and next actions.
+- Provide \`retail_core.enterprise_advanced.allocate_fulfillment_batches\`.
+  It must allocate orders to warehouses using stock, distance, priority,
+  hazard restrictions, split-shipment rules, and stable tie breakers.
+- Provide \`retail_core.enterprise_advanced.reconcile_tax_jurisdictions\`.
+  It must aggregate order tax by normalized state/county/city jurisdiction and
+  reconcile over/under collection with Decimal-safe rounding.
+- Provide \`retail_core.enterprise_advanced.detect_margin_anomalies\`.
+  It must combine product cost, discounts, refunds, shipping subsidy, and
+  return rates to flag margin problems with explainable reasons.
+- Provide \`retail_core.enterprise_advanced.generate_executive_brief\`.
+  It must combine customer health, inventory forecasts, promotion liability,
+  SLA breaches, margin anomalies, and tax reconciliation into a stable brief.
+- Provide \`retail_core.enterprise_advanced.validate_privacy_exports\`.
+  It must redact PII, preserve allowed business fields, and report rejected
+  fields per row.
+- Provide \`retail_core.enterprise_advanced.build_return_fraud_signals\`.
+  It must group returns by identity, sku family, address, and time window.
+- Provide \`retail_core.enterprise_advanced.compile_sla_breach_report\`.
+  It must merge promised dates, actual shipment dates, carrier exceptions, and
+  support escalations into prioritized breach rows.
+
+Frontend requirements:
+
+- Provide \`frontend/src/views/enterprise_operations_console.mjs\`.
+- \`buildOperationsConsole\` must summarize advanced backend payloads into KPI
+  cards, work queues, exception lanes, and executive highlights.
+- \`normalizeScenarioState\` must turn route/query/filter/bookmark state into a
+  deterministic scenario object.
+- \`exportOperationsWorkbook\` must emit multiple deterministic CSV sections.
+- \`mergeDrilldownEvents\` must merge mixed-domain events, remove duplicate ids,
+  and keep stable chronological ordering.
+- \`scoreActionPriority\` must score actions from severity, age, revenue, and
+  confidence.
+
+Validation:
+
+- \`tests/test_enterprise_advanced_requirements.py\` validates backend behavior.
+- \`frontend/tests/enterprise_operations_console.test.mjs\` validates frontend behavior.
+- \`tests/test_enterprise_scenario_matrix.py\` validates edge cases and tie breakers.
+- \`frontend/tests/enterprise_operations_edge_cases.test.mjs\` validates frontend edge cases.
+- \`tests/test_enterprise_control_plane_generated.py\` validates 24 additional backend control-plane functions.
+- \`frontend/tests/enterprise_control_tower_generated.test.mjs\` validates 24 additional frontend control-tower functions.
+- The existing \`tools/verify.ps1\` command must pass without weakening tests.
+`,
+  )
+
+  await writeText(
+    path.join(repoPath, "tests", "test_enterprise_advanced_requirements.py"),
+    `from decimal import Decimal
+import unittest
+
+from retail_core.enterprise_advanced import (
+    allocate_fulfillment_batches,
+    build_return_fraud_signals,
+    calculate_customer_health_scores,
+    compile_sla_breach_report,
+    detect_margin_anomalies,
+    generate_executive_brief,
+    reconcile_tax_jurisdictions,
+    validate_privacy_exports,
+)
+
+
+class EnterpriseAdvancedRequirementsTests(unittest.TestCase):
+    def test_customer_health_scores_prioritize_revenue_risk_and_support(self):
+        rows = calculate_customer_health_scores(
+            customers=[
+                {"customer_id": "cust-1", "net_spend": Decimal("900.00"), "open_tickets": 2, "risk_flags": ("late_payment",)},
+                {"customer_id": "cust-2", "net_spend": Decimal("120.00"), "open_tickets": 0, "risk_flags": ()},
+                {"customer_id": "cust-3", "net_spend": Decimal("400.00"), "open_tickets": 1, "risk_flags": ("prior_chargeback", "address_mismatch")},
+            ],
+            sla_breaches=[
+                {"customer_id": "cust-1", "days_late": 4, "severity": "high"},
+                {"customer_id": "cust-3", "days_late": 2, "severity": "medium"},
+            ],
+            fraud_signals=[
+                {"customer_id": "cust-3", "risk_score": 82, "reason": "return velocity"},
+                {"customer_id": "cust-1", "risk_score": 40, "reason": "address churn"},
+            ],
+            revenue_trends=[
+                {"customer_id": "cust-1", "last_30": Decimal("300.00"), "previous_30": Decimal("450.00")},
+                {"customer_id": "cust-2", "last_30": Decimal("75.00"), "previous_30": Decimal("50.00")},
+                {"customer_id": "cust-3", "last_30": Decimal("100.00"), "previous_30": Decimal("180.00")},
+            ],
+        )
+
+        self.assertEqual(
+            rows,
+            [
+                {"customer_id": "cust-3", "score": 30, "tier": "critical", "next_action": "fraud_review", "reasons": ("declining_revenue", "fraud_signal", "open_support", "risk_flags", "sla_breach")},
+                {"customer_id": "cust-1", "score": 45, "tier": "watch", "next_action": "save_plan", "reasons": ("declining_revenue", "open_support", "risk_flags", "sla_breach")},
+                {"customer_id": "cust-2", "score": 96, "tier": "healthy", "next_action": "expand", "reasons": ("growing_revenue",)},
+            ],
+        )
+
+    def test_allocate_fulfillment_batches_respects_stock_priority_and_hazmat(self):
+        allocations = allocate_fulfillment_batches(
+            orders=[
+                {"order_id": "o-1", "priority": "expedite", "destination": "WA", "lines": [{"sku": "sku-coffee-1", "quantity": 4}, {"sku": "sku-haz-1", "quantity": 1}]},
+                {"order_id": "o-2", "priority": "standard", "destination": "OR", "lines": [{"sku": "sku-coffee-1", "quantity": 3}]},
+                {"order_id": "o-3", "priority": "vip", "destination": "WA", "lines": [{"sku": "sku-mug-2", "quantity": 2}]},
+            ],
+            warehouses=[
+                {"warehouse_id": "sea", "states": ["WA", "OR"], "hazmat": False, "stock": {"sku-coffee-1": 5, "sku-mug-2": 2}},
+                {"warehouse_id": "boi", "states": ["WA", "OR"], "hazmat": True, "stock": {"sku-coffee-1": 4, "sku-haz-1": 2}},
+                {"warehouse_id": "reno", "states": ["OR"], "hazmat": False, "stock": {"sku-coffee-1": 10}},
+            ],
+            distance_rank={"WA": ["sea", "boi", "reno"], "OR": ["reno", "sea", "boi"]},
+        )
+
+        self.assertEqual(
+            allocations,
+            [
+                {"order_id": "o-3", "warehouse_id": "sea", "lines": (("sku-mug-2", 2),), "status": "allocated", "split": False},
+                {"order_id": "o-1", "warehouse_id": "sea", "lines": (("sku-coffee-1", 4),), "status": "partial", "split": True},
+                {"order_id": "o-1", "warehouse_id": "boi", "lines": (("sku-haz-1", 1),), "status": "allocated", "split": True},
+                {"order_id": "o-2", "warehouse_id": "reno", "lines": (("sku-coffee-1", 3),), "status": "allocated", "split": False},
+            ],
+        )
+
+    def test_reconcile_tax_jurisdictions_aggregates_and_flags_variance(self):
+        report = reconcile_tax_jurisdictions(
+            orders=[
+                {"order_id": "o-1", "state": " wa ", "county": " King ", "city": " Seattle ", "taxable": Decimal("100.00"), "collected_tax": Decimal("10.25")},
+                {"order_id": "o-2", "state": "WA", "county": "king", "city": "seattle", "taxable": Decimal("50.00"), "collected_tax": Decimal("4.00")},
+                {"order_id": "o-3", "state": "OR", "county": " Multnomah ", "city": " Portland ", "taxable": Decimal("80.00"), "collected_tax": Decimal("0.00")},
+            ],
+            rates={
+                "WA|KING|SEATTLE": Decimal("0.1025"),
+                "OR|MULTNOMAH|PORTLAND": Decimal("0.0000"),
+            },
+        )
+
+        self.assertEqual(
+            report,
+            {
+                "jurisdictions": [
+                    {"jurisdiction": "OR|MULTNOMAH|PORTLAND", "orders": 1, "taxable": Decimal("80.00"), "expected_tax": Decimal("0.00"), "collected_tax": Decimal("0.00"), "variance": Decimal("0.00"), "status": "balanced"},
+                    {"jurisdiction": "WA|KING|SEATTLE", "orders": 2, "taxable": Decimal("150.00"), "expected_tax": Decimal("15.38"), "collected_tax": Decimal("14.25"), "variance": Decimal("-1.13"), "status": "under_collected"},
+                ],
+                "total_variance": Decimal("-1.13"),
+            },
+        )
+
+    def test_detect_margin_anomalies_explains_discount_refund_and_shipping_pressure(self):
+        anomalies = detect_margin_anomalies(
+            products=[
+                {"sku": "sku-coffee-1", "category": "grocery", "price": Decimal("12.00"), "cost": Decimal("4.00")},
+                {"sku": "sku-mug-2", "category": "home", "price": Decimal("24.00"), "cost": Decimal("18.00")},
+                {"sku": "sku-sticker-3", "category": "merch", "price": Decimal("3.00"), "cost": Decimal("0.50")},
+            ],
+            sales=[
+                {"sku": "sku-coffee-1", "units": 10, "discount": Decimal("8.00"), "refund": Decimal("0.00"), "shipping_subsidy": Decimal("4.00")},
+                {"sku": "sku-mug-2", "units": 2, "discount": Decimal("10.00"), "refund": Decimal("24.41"), "shipping_subsidy": Decimal("6.00")},
+                {"sku": "sku-sticker-3", "units": 50, "discount": Decimal("0.00"), "refund": Decimal("0.00"), "shipping_subsidy": Decimal("0.00")},
+            ],
+            minimum_margin=Decimal("0.35"),
+        )
+
+        self.assertEqual(
+            anomalies,
+            [
+                {"sku": "sku-mug-2", "margin_rate": Decimal("-0.34"), "severity": "critical", "reasons": ("discount_pressure", "refund_pressure", "shipping_subsidy")},
+                {"sku": "sku-coffee-1", "margin_rate": Decimal("0.57"), "severity": "ok", "reasons": ()},
+                {"sku": "sku-sticker-3", "margin_rate": Decimal("0.83"), "severity": "ok", "reasons": ()},
+            ],
+        )
+
+    def test_privacy_exports_redact_pii_and_report_rejected_fields(self):
+        result = validate_privacy_exports(
+            rows=[
+                {"customer_id": "cust-1", "email": "Ada@Example.com", "phone": "555-1212", "net_spend": "64.36", "risk_flags": "late_payment", "internal_note": "VIP"},
+                {"customer_id": "cust-2", "email": "", "phone": "", "net_spend": "110.00", "risk_flags": "prior_chargeback", "address": "1 Main"},
+            ],
+            allowed_fields=["customer_id", "net_spend", "risk_flags"],
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "rows": [
+                    {"customer_id": "cust-1", "net_spend": "64.36", "risk_flags": "late_payment"},
+                    {"customer_id": "cust-2", "net_spend": "110.00", "risk_flags": "prior_chargeback"},
+                ],
+                "rejected_fields": {
+                    "cust-1": ("email", "internal_note", "phone"),
+                    "cust-2": ("address", "email", "phone"),
+                },
+            },
+        )
+
+    def test_return_fraud_signals_group_velocity_address_and_sku_family(self):
+        signals = build_return_fraud_signals(
+            returns=[
+                {"return_id": "r1", "customer_id": "cust-1", "email": "ada@example.com", "address_key": "WA-98101", "sku": "sku-coffee-1", "returned_at": "2026-05-01"},
+                {"return_id": "r2", "customer_id": "cust-1", "email": "ada@example.com", "address_key": "WA-98101", "sku": "sku-coffee-2", "returned_at": "2026-05-03"},
+                {"return_id": "r3", "customer_id": "cust-9", "email": "ada@example.com", "address_key": "WA-98101", "sku": "sku-coffee-3", "returned_at": "2026-05-06"},
+                {"return_id": "r4", "customer_id": "cust-2", "email": "grace@example.com", "address_key": "OR-97035", "sku": "sku-mug-2", "returned_at": "2026-05-10"},
+            ],
+            window_days=7,
+        )
+
+        self.assertEqual(
+            signals,
+            [
+                {"identity": "ada@example.com|WA-98101", "return_count": 3, "sku_families": ("sku-coffee",), "customer_ids": ("cust-1", "cust-9"), "risk_score": 95, "reason": "velocity+shared_identity"},
+                {"identity": "grace@example.com|OR-97035", "return_count": 1, "sku_families": ("sku-mug",), "customer_ids": ("cust-2",), "risk_score": 10, "reason": "baseline"},
+            ],
+        )
+
+    def test_compile_sla_breach_report_prioritizes_late_high_value_escalations(self):
+        report = compile_sla_breach_report(
+            promises=[
+                {"order_id": "o-1", "customer_id": "cust-1", "promised_at": "2026-05-03", "order_value": Decimal("300.00")},
+                {"order_id": "o-2", "customer_id": "cust-2", "promised_at": "2026-05-04", "order_value": Decimal("45.00")},
+                {"order_id": "o-3", "customer_id": "cust-3", "promised_at": "2026-05-05", "order_value": Decimal("110.00")},
+            ],
+            shipments=[
+                {"order_id": "o-1", "delivered_at": "2026-05-07", "carrier_exception": "weather"},
+                {"order_id": "o-2", "delivered_at": "2026-05-04", "carrier_exception": ""},
+                {"order_id": "o-3", "delivered_at": "2026-05-08", "carrier_exception": "missort"},
+            ],
+            escalations=[
+                {"order_id": "o-1", "severity": "high"},
+                {"order_id": "o-3", "severity": "medium"},
+            ],
+        )
+
+        self.assertEqual(
+            report,
+            [
+                {"order_id": "o-1", "customer_id": "cust-1", "days_late": 4, "priority": 98, "reason": "high_value+support_escalation+carrier_exception"},
+                {"order_id": "o-3", "customer_id": "cust-3", "days_late": 3, "priority": 73, "reason": "support_escalation+carrier_exception"},
+            ],
+        )
+
+    def test_generate_executive_brief_combines_all_advanced_surfaces(self):
+        brief = generate_executive_brief(
+            health_scores=[
+                {"customer_id": "cust-3", "tier": "critical", "score": 30},
+                {"customer_id": "cust-1", "tier": "watch", "score": 45},
+                {"customer_id": "cust-2", "tier": "healthy", "score": 96},
+            ],
+            inventory_forecast=[
+                {"sku": "sku-coffee-1", "urgency": "high", "recommendation": 5},
+                {"sku": "sku-mug-2", "urgency": "medium", "recommendation": 5},
+            ],
+            promotion_reconciliation={"net_sales": Decimal("65.36"), "refund_total": Decimal("24.41")},
+            sla_breaches=[
+                {"order_id": "o-1", "priority": 98},
+                {"order_id": "o-3", "priority": 73},
+            ],
+            margin_anomalies=[
+                {"sku": "sku-mug-2", "severity": "critical"},
+                {"sku": "sku-coffee-1", "severity": "ok"},
+            ],
+            tax_report={"total_variance": Decimal("-1.13")},
+        )
+
+        self.assertEqual(
+            brief,
+            {
+                "headline": "2 customers need attention; 1 high urgency SKU; 1 critical margin anomaly",
+                "risk": {"critical_customers": 1, "watch_customers": 1, "sla_breaches": 2},
+                "finance": {"net_sales": Decimal("65.36"), "refund_total": Decimal("24.41"), "tax_variance": Decimal("-1.13")},
+                "actions": (
+                    "review critical customer cust-3",
+                    "replenish sku-coffee-1 by 5 units",
+                    "investigate margin anomaly sku-mug-2",
+                    "resolve SLA breach o-1",
+                ),
+            },
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
+`,
+  )
+
+  await writeText(
+    path.join(repoPath, "frontend", "tests", "enterprise_operations_console.test.mjs"),
+    `import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  buildOperationsConsole,
+  exportOperationsWorkbook,
+  mergeDrilldownEvents,
+  normalizeScenarioState,
+  scoreActionPriority,
+} from "../src/views/enterprise_operations_console.mjs";
+
+test("operations console builds executive KPIs, queues, lanes, and highlights", () => {
+  const consoleState = buildOperationsConsole({
+    brief: {
+      headline: "2 customers need attention; 1 high urgency SKU; 1 critical margin anomaly",
+      risk: { critical_customers: 1, watch_customers: 1, sla_breaches: 2 },
+      finance: { net_sales: "65.36", refund_total: "24.41", tax_variance: "-1.13" },
+      actions: ["review critical customer cust-3", "replenish sku-coffee-1 by 5 units"],
+    },
+    healthScores: [
+      { customer_id: "cust-3", tier: "critical", score: 30, next_action: "fraud_review" },
+      { customer_id: "cust-1", tier: "watch", score: 45, next_action: "save_plan" },
+    ],
+    slaBreaches: [
+      { order_id: "o-1", priority: 98, days_late: 4 },
+      { order_id: "o-3", priority: 73, days_late: 3 },
+    ],
+    marginAnomalies: [
+      { sku: "sku-mug-2", severity: "critical", margin_rate: "-0.34" },
+      { sku: "sku-coffee-1", severity: "ok", margin_rate: "0.57" },
+    ],
+  });
+
+  assert.deepEqual(consoleState.kpis, [
+    { label: "Net sales", value: "$65.36", tone: "neutral" },
+    { label: "Refunds", value: "$24.41", tone: "watch" },
+    { label: "Tax variance", value: "-$1.13", tone: "critical" },
+    { label: "SLA breaches", value: "2", tone: "critical" },
+  ]);
+  assert.deepEqual(consoleState.workQueue, [
+    { id: "cust-3", label: "fraud_review", priority: 90 },
+    { id: "o-1", label: "SLA 4 days late", priority: 98 },
+    { id: "o-3", label: "SLA 3 days late", priority: 73 },
+    { id: "cust-1", label: "save_plan", priority: 65 },
+  ]);
+  assert.deepEqual(consoleState.exceptionLanes, {
+    customer: ["cust-3", "cust-1"],
+    fulfillment: ["o-1", "o-3"],
+    margin: ["sku-mug-2"],
+  });
+  assert.equal(consoleState.headline, "2 customers need attention; 1 high urgency SKU; 1 critical margin anomaly");
+});
+
+test("scenario state normalizes nested filters, bookmarks, and dates", () => {
+  assert.deepEqual(
+    normalizeScenarioState({
+      route: " Operations / Executive ",
+      query: "  High Risk ",
+      filters: { state: " wa ", severity: " CRITICAL ", empty: "", tags: [" late ", "VIP", "late"] },
+      bookmark: { owner: " Ada ", shared: "TRUE" },
+      dateRange: { from: "2026/05/01", to: "2026-05-31" },
+      page: "04",
+    }),
+    {
+      route: "/operations/executive",
+      query: "high risk",
+      filters: { severity: "critical", state: "WA", tags: ["late", "vip"] },
+      bookmark: { owner: "ada", shared: true },
+      dateRange: { from: "2026-05-01", to: "2026-05-31" },
+      page: 4,
+    },
+  );
+});
+
+test("workbook export emits deterministic escaped multi-section csv", () => {
+  const workbook = exportOperationsWorkbook({
+    kpis: [
+      { label: "Net sales", value: "$65.36", tone: "neutral" },
+      { label: "Tax variance", value: "-$1.13", tone: "critical" },
+    ],
+    workQueue: [
+      { id: "cust-3", label: "fraud, review", priority: 90 },
+      { id: "o-1", label: "SLA 4 days late", priority: 98 },
+    ],
+  });
+
+  assert.equal(
+    workbook,
+    [
+      "[kpis]",
+      "label,value,tone",
+      "Net sales,$65.36,neutral",
+      "Tax variance,-$1.13,critical",
+      "",
+      "[work_queue]",
+      "id,label,priority",
+      "o-1,SLA 4 days late,98",
+      "cust-3,\\"fraud, review\\",90",
+    ].join("\\n"),
+  );
+});
+
+test("drilldown events dedupe by id and sort by time then domain", () => {
+  assert.deepEqual(
+    mergeDrilldownEvents([
+      { event_id: "b", at: "2026-05-01T09:02:00Z", domain: "shipment", label: "shipped" },
+      { event_id: "a", at: "2026-05-01T09:00:00Z", domain: "order", label: "created" },
+      { event_id: "dup", at: "2026-05-01T09:03:00Z", domain: "payment", label: "paid" },
+    ], [
+      { event_id: "dup", at: "2026-05-01T09:04:00Z", domain: "support", label: "duplicate later" },
+      { event_id: "c", at: "2026-05-01T09:02:00Z", domain: "payment", label: "authorized" },
+    ]),
+    [
+      { event_id: "a", at: "2026-05-01T09:00:00Z", domain: "order", label: "created" },
+      { event_id: "c", at: "2026-05-01T09:02:00Z", domain: "payment", label: "authorized" },
+      { event_id: "b", at: "2026-05-01T09:02:00Z", domain: "shipment", label: "shipped" },
+      { event_id: "dup", at: "2026-05-01T09:03:00Z", domain: "payment", label: "paid" },
+    ],
+  );
+});
+
+test("action priority combines severity age revenue and confidence", () => {
+  assert.equal(scoreActionPriority({ severity: "critical", ageHours: 50, revenue: "900.00", confidence: 0.95 }), 100);
+  assert.equal(scoreActionPriority({ severity: "high", ageHours: 12, revenue: "110.00", confidence: 0.6 }), 76);
+  assert.equal(scoreActionPriority({ severity: "low", ageHours: 1, revenue: "10.00", confidence: 0.2 }), 18);
+});
+`,
+  )
+
+  await writeText(
+    path.join(repoPath, "tests", "test_enterprise_scenario_matrix.py"),
+    `from decimal import Decimal
+import unittest
+
+from retail_core.enterprise_advanced import (
+    allocate_fulfillment_batches,
+    build_return_fraud_signals,
+    calculate_customer_health_scores,
+    compile_sla_breach_report,
+    detect_margin_anomalies,
+    generate_executive_brief,
+    reconcile_tax_jurisdictions,
+    validate_privacy_exports,
+)
+
+
+class EnterpriseScenarioMatrixTests(unittest.TestCase):
+    def test_health_scores_handle_missing_trends_as_stable(self):
+        rows = calculate_customer_health_scores(
+            customers=[{"customer_id": "c1", "net_spend": Decimal("50.00"), "open_tickets": 0, "risk_flags": ()}],
+            sla_breaches=[],
+            fraud_signals=[],
+            revenue_trends=[],
+        )
+        self.assertEqual(rows, [{"customer_id": "c1", "score": 90, "tier": "healthy", "next_action": "monitor", "reasons": ("stable_revenue",)}])
+
+    def test_health_scores_sort_ties_by_customer_id(self):
+        rows = calculate_customer_health_scores(
+            customers=[
+                {"customer_id": "c2", "net_spend": Decimal("10.00"), "open_tickets": 1, "risk_flags": ()},
+                {"customer_id": "c1", "net_spend": Decimal("10.00"), "open_tickets": 1, "risk_flags": ()},
+            ],
+            sla_breaches=[],
+            fraud_signals=[],
+            revenue_trends=[],
+        )
+        self.assertEqual([row["customer_id"] for row in rows], ["c1", "c2"])
+        self.assertEqual([row["score"] for row in rows], [82, 82])
+
+    def test_allocation_backorders_when_no_warehouse_can_ship(self):
+        rows = allocate_fulfillment_batches(
+            orders=[{"order_id": "o-9", "priority": "standard", "destination": "AK", "lines": [{"sku": "sku-x", "quantity": 2}]}],
+            warehouses=[{"warehouse_id": "sea", "states": ["WA"], "hazmat": False, "stock": {"sku-x": 1}}],
+            distance_rank={"AK": ["sea"]},
+        )
+        self.assertEqual(rows, [{"order_id": "o-9", "warehouse_id": None, "lines": (("sku-x", 2),), "status": "backorder", "split": False}])
+
+    def test_allocation_prefers_exact_stock_before_split(self):
+        rows = allocate_fulfillment_batches(
+            orders=[{"order_id": "o-4", "priority": "standard", "destination": "WA", "lines": [{"sku": "sku-coffee-1", "quantity": 5}]}],
+            warehouses=[
+                {"warehouse_id": "sea", "states": ["WA"], "hazmat": False, "stock": {"sku-coffee-1": 3}},
+                {"warehouse_id": "boi", "states": ["WA"], "hazmat": False, "stock": {"sku-coffee-1": 5}},
+            ],
+            distance_rank={"WA": ["sea", "boi"]},
+        )
+        self.assertEqual(rows, [{"order_id": "o-4", "warehouse_id": "boi", "lines": (("sku-coffee-1", 5),), "status": "allocated", "split": False}])
+
+    def test_tax_reconciliation_unknown_rate_is_flagged_not_crashed(self):
+        report = reconcile_tax_jurisdictions(
+            orders=[{"order_id": "o-x", "state": "CA", "county": "LA", "city": "Los Angeles", "taxable": Decimal("10.00"), "collected_tax": Decimal("1.00")}],
+            rates={},
+        )
+        self.assertEqual(report["jurisdictions"], [{"jurisdiction": "CA|LA|LOS ANGELES", "orders": 1, "taxable": Decimal("10.00"), "expected_tax": Decimal("0.00"), "collected_tax": Decimal("1.00"), "variance": Decimal("1.00"), "status": "missing_rate"}])
+        self.assertEqual(report["total_variance"], Decimal("1.00"))
+
+    def test_margin_anomalies_round_half_up_and_sort_critical_first(self):
+        rows = detect_margin_anomalies(
+            products=[
+                {"sku": "b", "category": "x", "price": Decimal("10.00"), "cost": Decimal("9.00")},
+                {"sku": "a", "category": "x", "price": Decimal("10.00"), "cost": Decimal("3.33")},
+            ],
+            sales=[
+                {"sku": "a", "units": 3, "discount": Decimal("0.01"), "refund": Decimal("0.00"), "shipping_subsidy": Decimal("0.00")},
+                {"sku": "b", "units": 1, "discount": Decimal("0.00"), "refund": Decimal("0.00"), "shipping_subsidy": Decimal("0.00")},
+            ],
+            minimum_margin=Decimal("0.35"),
+        )
+        self.assertEqual(rows[0]["sku"], "b")
+        self.assertEqual(rows[0]["severity"], "critical")
+        self.assertEqual(rows[1]["margin_rate"], Decimal("0.67"))
+
+    def test_privacy_exports_empty_allowed_fields_rejects_everything(self):
+        result = validate_privacy_exports([{"customer_id": "c1", "email": "a@example.com", "net_spend": "1.00"}], allowed_fields=[])
+        self.assertEqual(result, {"rows": [{}], "rejected_fields": {"c1": ("customer_id", "email", "net_spend")}})
+
+    def test_privacy_exports_uses_row_index_when_customer_id_is_missing(self):
+        result = validate_privacy_exports([{"email": "a@example.com", "net_spend": "1.00"}], allowed_fields=["net_spend"])
+        self.assertEqual(result, {"rows": [{"net_spend": "1.00"}], "rejected_fields": {"row-1": ("email",)}})
+
+    def test_fraud_signals_do_not_group_outside_window(self):
+        rows = build_return_fraud_signals(
+            returns=[
+                {"return_id": "r1", "customer_id": "c1", "email": "a@example.com", "address_key": "WA", "sku": "sku-a-1", "returned_at": "2026-05-01"},
+                {"return_id": "r2", "customer_id": "c1", "email": "a@example.com", "address_key": "WA", "sku": "sku-a-2", "returned_at": "2026-05-20"},
+            ],
+            window_days=7,
+        )
+        self.assertEqual(rows, [{"identity": "a@example.com|WA", "return_count": 2, "sku_families": ("sku-a",), "customer_ids": ("c1",), "risk_score": 40, "reason": "repeat_returns"}])
+
+    def test_sla_report_excludes_on_time_and_missing_shipments_are_critical(self):
+        rows = compile_sla_breach_report(
+            promises=[
+                {"order_id": "late", "customer_id": "c1", "promised_at": "2026-05-01", "order_value": Decimal("10.00")},
+                {"order_id": "ontime", "customer_id": "c2", "promised_at": "2026-05-01", "order_value": Decimal("10.00")},
+            ],
+            shipments=[{"order_id": "ontime", "delivered_at": "2026-05-01", "carrier_exception": ""}],
+            escalations=[],
+        )
+        self.assertEqual(rows, [{"order_id": "late", "customer_id": "c1", "days_late": None, "priority": 100, "reason": "missing_delivery"}])
+
+    def test_executive_brief_handles_empty_inputs(self):
+        brief = generate_executive_brief(
+            health_scores=[],
+            inventory_forecast=[],
+            promotion_reconciliation={"net_sales": Decimal("0.00"), "refund_total": Decimal("0.00")},
+            sla_breaches=[],
+            margin_anomalies=[],
+            tax_report={"total_variance": Decimal("0.00")},
+        )
+        self.assertEqual(brief, {"headline": "0 customers need attention; 0 high urgency SKUs; 0 critical margin anomalies", "risk": {"critical_customers": 0, "watch_customers": 0, "sla_breaches": 0}, "finance": {"net_sales": Decimal("0.00"), "refund_total": Decimal("0.00"), "tax_variance": Decimal("0.00")}, "actions": ()})
+
+    def test_executive_brief_limits_actions_to_four_highest_value_items(self):
+        brief = generate_executive_brief(
+            health_scores=[{"customer_id": f"c{i}", "tier": "critical", "score": i} for i in range(6)],
+            inventory_forecast=[{"sku": "sku-a", "urgency": "high", "recommendation": 2}],
+            promotion_reconciliation={"net_sales": Decimal("1.00"), "refund_total": Decimal("0.00")},
+            sla_breaches=[{"order_id": "o-1", "priority": 99}],
+            margin_anomalies=[{"sku": "sku-b", "severity": "critical"}],
+            tax_report={"total_variance": Decimal("0.00")},
+        )
+        self.assertEqual(len(brief["actions"]), 4)
+        self.assertEqual(brief["actions"][0], "review critical customer c0")
+
+
+if __name__ == "__main__":
+    unittest.main()
+`,
+  )
+
+  await writeText(
+    path.join(repoPath, "frontend", "tests", "enterprise_operations_edge_cases.test.mjs"),
+    `import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  buildOperationsConsole,
+  exportOperationsWorkbook,
+  mergeDrilldownEvents,
+  normalizeScenarioState,
+  scoreActionPriority,
+} from "../src/views/enterprise_operations_console.mjs";
+
+test("console handles empty payloads", () => {
+  assert.deepEqual(buildOperationsConsole({}), {
+    kpis: [
+      { label: "Net sales", value: "$0.00", tone: "neutral" },
+      { label: "Refunds", value: "$0.00", tone: "neutral" },
+      { label: "Tax variance", value: "$0.00", tone: "neutral" },
+      { label: "SLA breaches", value: "0", tone: "neutral" },
+    ],
+    workQueue: [],
+    exceptionLanes: { customer: [], fulfillment: [], margin: [] },
+    headline: "No executive brief available",
+  });
+});
+
+test("console work queue sorts by priority then id", () => {
+  const state = buildOperationsConsole({
+    brief: { finance: {}, risk: {}, actions: [], headline: "x" },
+    healthScores: [
+      { customer_id: "b", tier: "critical", score: 10, next_action: "call" },
+      { customer_id: "a", tier: "critical", score: 10, next_action: "call" },
+    ],
+    slaBreaches: [],
+    marginAnomalies: [],
+  });
+  assert.deepEqual(state.workQueue.map((item) => item.id), ["a", "b"]);
+});
+
+test("scenario state defaults invalid dates and pages", () => {
+  assert.deepEqual(
+    normalizeScenarioState({ route: "", query: null, filters: { x: null }, bookmark: {}, dateRange: { from: "bad", to: "" }, page: "-4" }),
+    { route: "/operations", query: "", filters: {}, bookmark: { owner: "", shared: false }, dateRange: { from: "", to: "" }, page: 1 },
+  );
+});
+
+test("scenario state lowercases array filters and removes duplicates", () => {
+  assert.deepEqual(normalizeScenarioState({ filters: { tags: ["VIP", " vip ", "Risk"] } }).filters, { tags: ["risk", "vip"] });
+});
+
+test("workbook export escapes quotes and newlines", () => {
+  assert.equal(
+    exportOperationsWorkbook({ kpis: [{ label: 'He said "go"', value: "A\\nB", tone: "critical" }], workQueue: [] }),
+    ['[kpis]', 'label,value,tone', '"He said ""go""","A\\nB",critical', '', '[work_queue]', 'id,label,priority'].join("\\n"),
+  );
+});
+
+test("workbook queue is sorted by descending priority", () => {
+  assert.equal(
+    exportOperationsWorkbook({ kpis: [], workQueue: [{ id: "low", label: "low", priority: 1 }, { id: "high", label: "high", priority: 99 }] }).split("\\n").slice(-2).join("\\n"),
+    "high,high,99\\nlow,low,1",
+  );
+});
+
+test("merge drilldown keeps first duplicate even when later duplicate is earlier time", () => {
+  assert.deepEqual(
+    mergeDrilldownEvents([{ event_id: "dup", at: "2026-05-02T00:00:00Z", domain: "order", label: "first" }], [{ event_id: "dup", at: "2026-05-01T00:00:00Z", domain: "payment", label: "second" }]),
+    [{ event_id: "dup", at: "2026-05-02T00:00:00Z", domain: "order", label: "first" }],
+  );
+});
+
+test("merge drilldown accepts nested event arrays", () => {
+  assert.deepEqual(
+    mergeDrilldownEvents([[{ event_id: "a", at: "2026-05-01T00:00:00Z", domain: "order", label: "a" }]], [{ event_id: "b", at: "2026-05-02T00:00:00Z", domain: "payment", label: "b" }]).map((e) => e.event_id),
+    ["a", "b"],
+  );
+});
+
+test("priority scores cap and floor", () => {
+  assert.equal(scoreActionPriority({ severity: "critical", ageHours: 999, revenue: "999999.00", confidence: 2 }), 100);
+  assert.equal(scoreActionPriority({ severity: "none", ageHours: -1, revenue: "-10.00", confidence: -1 }), 0);
+});
+
+test("priority handles decimal revenue strings", () => {
+  assert.equal(scoreActionPriority({ severity: "medium", ageHours: 24, revenue: "249.99", confidence: 0.75 }), 65);
+});
+`,
+  )
+
+  await writeEnterpriseMegaExpansion(repoPath)
+}
+
+async function writeEnterpriseMegaExpansion(repoPath) {
+  const backendRequirements = [
+    ["prioritize_revenue_recovery", "finance"],
+    ["score_customer_save_queue", "customer"],
+    ["rank_inventory_exceptions", "inventory"],
+    ["plan_vendor_recovery", "vendor"],
+    ["triage_payment_risk", "payments"],
+    ["summarize_channel_leakage", "channels"],
+    ["allocate_service_credits", "support"],
+    ["rank_store_restocking", "stores"],
+    ["prioritize_fraud_reviews", "fraud"],
+    ["score_tax_variance_queue", "tax"],
+    ["build_carrier_exception_queue", "carrier"],
+    ["rank_margin_repair_work", "margin"],
+    ["plan_workforce_interventions", "labor"],
+    ["prioritize_subscription_saves", "subscriptions"],
+    ["score_loyalty_recovery", "loyalty"],
+    ["rank_price_audit_items", "pricing"],
+    ["triage_return_quality_issues", "returns"],
+    ["plan_procurement_risk", "procurement"],
+    ["score_marketplace_exceptions", "marketplace"],
+    ["rank_export_compliance_work", "compliance"],
+    ["prioritize_data_quality_repairs", "data_quality"],
+    ["score_promotion_overrides", "promotions"],
+    ["rank_reconciliation_backlog", "reconciliation"],
+    ["plan_executive_attention", "executive"],
+  ]
+  const frontendRequirements = [
+    ["buildRevenueRecoveryLane", "finance"],
+    ["buildCustomerSaveLane", "customer"],
+    ["buildInventoryExceptionLane", "inventory"],
+    ["buildVendorRecoveryLane", "vendor"],
+    ["buildPaymentRiskLane", "payments"],
+    ["buildChannelLeakageLane", "channels"],
+    ["buildServiceCreditLane", "support"],
+    ["buildStoreRestockingLane", "stores"],
+    ["buildFraudReviewLane", "fraud"],
+    ["buildTaxVarianceLane", "tax"],
+    ["buildCarrierExceptionLane", "carrier"],
+    ["buildMarginRepairLane", "margin"],
+    ["buildWorkforceInterventionLane", "labor"],
+    ["buildSubscriptionSaveLane", "subscriptions"],
+    ["buildLoyaltyRecoveryLane", "loyalty"],
+    ["buildPriceAuditLane", "pricing"],
+    ["buildReturnQualityLane", "returns"],
+    ["buildProcurementRiskLane", "procurement"],
+    ["buildMarketplaceExceptionLane", "marketplace"],
+    ["buildExportComplianceLane", "compliance"],
+    ["buildDataQualityRepairLane", "data_quality"],
+    ["buildPromotionOverrideLane", "promotions"],
+    ["buildReconciliationBacklogLane", "reconciliation"],
+    ["buildExecutiveAttentionLane", "executive"],
+  ]
+
+  await writeText(
+    path.join(repoPath, "docs", "enterprise_control_plane_requirements.md"),
+    `# Enterprise Control Plane Requirements
+
+This file intentionally expands the long-task benchmark with many independent
+but similarly shaped production requirements. The implementation should factor
+shared normalization, scoring, sorting, and empty-state behavior instead of
+copying brittle one-off shortcuts.
+
+Backend module:
+
+- Provide \`retail_core.enterprise_control\` with these control-plane functions:
+${backendRequirements.map(([name, owner]) => `  - \`${name}\`: normalize work items, compute Decimal scores, assign tiers, de-duplicate tags, set owner \`${owner}\`, filter items below threshold, and sort by score descending then id.`).join("\n")}
+
+Frontend module:
+
+- Provide \`frontend/src/views/enterprise_control_tower.mjs\` with these lane builders:
+${frontendRequirements.map(([name, owner]) => `  - \`${name}\`: normalize work items, compute numeric scores, assign tones, de-duplicate tags, set owner \`${owner}\`, filter items below threshold, and sort by score descending then id.`).join("\n")}
+
+Validation:
+
+- \`tests/test_enterprise_control_plane_generated.py\` has two acceptance tests
+  for every backend function.
+- \`frontend/tests/enterprise_control_tower_generated.test.mjs\` has two
+  acceptance tests for every frontend function.
+`,
+  )
+
+  const backendImports = backendRequirements.map(([name]) => `    ${name},`).join("\n")
+  const backendTests = backendRequirements
+    .map(([name, owner], index) => {
+      const threshold = 12 + (index % 5)
+      const highScore = 38 + (index % 7)
+      const watchScore = 18 + (index % 4)
+      return `
+    def test_${name}_scores_filters_and_sorts(self):
+        rows = ${name}(
+            [
+                {"id": "low-${index}", "value": Decimal("2.00"), "weight": 1, "severity": "low", "confidence": Decimal("0.20"), "tags": [" skip "]},
+                {"id": "b-${index}", "value": Decimal("${10 + (index % 3)}.00"), "weight": 3, "severity": "high", "confidence": Decimal("0.80"), "tags": [" Late ", "VIP", "late"]},
+                {"id": "a-${index}", "value": Decimal("${5 + (index % 2)}.00"), "weight": 2, "severity": "medium", "confidence": Decimal("0.50"), "tags": [" New ", "new"]},
+            ],
+            threshold=Decimal("${threshold}.00"),
+        )
+        self.assertEqual(
+            rows,
+            [
+                {"id": "b-${index}", "score": Decimal("${highScore}.00"), "tier": "critical", "tags": ("late", "vip"), "owner": "${owner}"},
+                {"id": "a-${index}", "score": Decimal("${watchScore}.00"), "tier": "watch", "tags": ("new",), "owner": "${owner}"},
+            ],
+        )
+
+    def test_${name}_empty_input(self):
+        self.assertEqual(${name}([], threshold=Decimal("${threshold}.00")), [])
+`
+    })
+    .join("\n")
+
+  await writeText(
+    path.join(repoPath, "tests", "test_enterprise_control_plane_generated.py"),
+    `from decimal import Decimal
+import unittest
+
+from retail_core.enterprise_control import (
+${backendImports}
+)
+
+
+class EnterpriseControlPlaneGeneratedTests(unittest.TestCase):
+${backendTests}
+
+
+if __name__ == "__main__":
+    unittest.main()
+`,
+  )
+
+  const frontendImports = frontendRequirements.map(([name]) => `  ${name},`).join("\n")
+  const frontendTests = frontendRequirements
+    .map(([name, owner], index) => {
+      const threshold = 12 + (index % 5)
+      const highScore = 38 + (index % 7)
+      const watchScore = 18 + (index % 4)
+      return `
+test("${name} scores filters and sorts lane items", () => {
+  assert.deepEqual(
+    ${name}([
+      { id: "low-${index}", value: "2.00", weight: 1, severity: "low", confidence: 0.2, tags: [" skip "] },
+      { id: "b-${index}", value: "${10 + (index % 3)}.00", weight: 3, severity: "high", confidence: 0.8, tags: [" Late ", "VIP", "late"] },
+      { id: "a-${index}", value: "${5 + (index % 2)}.00", weight: 2, severity: "medium", confidence: 0.5, tags: [" New ", "new"] },
+    ], { threshold: ${threshold} }),
+    [
+      { id: "b-${index}", score: ${highScore}, tone: "critical", tags: ["late", "vip"], owner: "${owner}" },
+      { id: "a-${index}", score: ${watchScore}, tone: "watch", tags: ["new"], owner: "${owner}" },
+    ],
+  );
+});
+
+test("${name} handles empty lane input", () => {
+  assert.deepEqual(${name}([], { threshold: ${threshold} }), []);
+});
+`
+    })
+    .join("\n")
+
+  await writeText(
+    path.join(repoPath, "frontend", "tests", "enterprise_control_tower_generated.test.mjs"),
+    `import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+${frontendImports}
+} from "../src/views/enterprise_control_tower.mjs";
+${frontendTests}
 `,
   )
 }
@@ -608,6 +1937,33 @@ There are at least 100 seeded behavior defects across backend and frontend
 code. The repository also contains generated neutral support modules so the
 full tree is over 150 files and 30,000 lines. The tests verify public behavior
 and reconciliation invariants rather than exact implementation shape.
+${enterpriseExpansionEnabled ? `
+Enterprise expansion:
+
+- New acceptance tests add backend customer 360, inventory forecasting,
+  promotion/return reconciliation, audit timeline, and frontend dashboard
+  requirements.
+- Read \`docs/enterprise_requirements.md\` and the enterprise test files.
+- Implement missing production modules rather than weakening tests.
+` : ""}
+${hardEnterpriseExpansionEnabled ? `
+Hard enterprise expansion:
+
+- Additional acceptance tests add advanced customer health, fulfillment
+  allocation, tax reconciliation, margin anomaly detection, privacy exports,
+  return fraud signals, SLA breach reporting, executive brief generation, and
+  operations-console requirements.
+- Mega control-plane acceptance tests add 24 backend workflow functions and 24
+  frontend control-tower lane builders.
+- Active generated business-code tests scale support, integration, policy,
+  frontend view, and frontend shared modules by ${hardActiveScaleMultiplier}x
+  and verify every generated module.
+- Read \`docs/enterprise_advanced_requirements.md\`,
+  \`docs/enterprise_control_plane_requirements.md\`,
+  \`tests/test_enterprise_advanced_requirements.py\`, and
+  \`frontend/tests/enterprise_operations_console.test.mjs\`.
+- These are production feature requirements with many edge-case assertions.
+` : ""}
 `,
   )
   await writeText(
@@ -2010,6 +3366,9 @@ python tools/verify.py
   )
   await writeBackendPolicyCodebase(repoPath)
   await writeFrontendCodebase(repoPath)
+  if (enterpriseExpansionEnabled) {
+    await writeEnterpriseExpansion(repoPath)
+  }
   await writeNeutralCodebase(repoPath)
   await spawnLogged("git", ["init"], { cwd: repoPath, echo: false, timeoutMs: 20_000 })
   await spawnLogged("git", ["-c", "core.autocrlf=false", "add", "."], { cwd: repoPath, echo: false, timeoutMs: 20_000 })
@@ -2134,7 +3493,10 @@ async function measureRepo(repoPath) {
     line_count: lineCount,
     seeded_behavior_defects: seededBehaviorDefectCount,
     by_extension: byExtension,
-    meets_requested_scale: fileCount >= 150 && lineCount >= 30_000 && seededBehaviorDefectCount >= 100,
+    meets_requested_scale:
+      fileCount >= 150 * fixtureScaleMultiplier &&
+      lineCount >= 30_000 * fixtureScaleMultiplier &&
+      seededBehaviorDefectCount >= 100 * fixtureScaleMultiplier,
   }
 }
 
@@ -2204,6 +3566,7 @@ function emptyLlmStats(source) {
   return {
     source,
     llm_turns: 0,
+    provider_turns: 0,
     input_tokens: 0,
     output_tokens: 0,
     reasoning_tokens: 0,
@@ -2299,12 +3662,14 @@ function codexLlmStats(stdoutPath, stdout) {
   const stats = emptyLlmStats("codex-jsonl")
   const events = parseJsonl(stdout)
   const modelOutputs = []
+  let providerTurns = 0
   let commandStartsSinceLastOutput = 0
   let commandCompletionsSinceLastOutput = 0
   let usageEvents = 0
   events.forEach((event, eventIndex) => {
     const item = event.item || event.payload?.item || {}
     const itemType = item.type || ""
+    if (event.type === "turn.started") providerTurns += 1
     if (itemType === "command_execution" && event.type === "item.started") commandStartsSinceLastOutput += 1
     if (itemType === "command_execution" && event.type === "item.completed") commandCompletionsSinceLastOutput += 1
     if (itemType === "agent_message") {
@@ -2330,16 +3695,51 @@ function codexLlmStats(stdoutPath, stdout) {
   })
   stats.provider_usage_events = usageEvents
   stats.provider_usage_turns = stats.turns.length
+  stats.provider_turns = providerTurns || stats.turns.length || modelOutputs.length
   stats.model_output_turns = modelOutputs.length
-  stats.llm_turns = modelOutputs.length || stats.turns.length
+  stats.llm_turns = stats.provider_turns
   stats.codex_turn_accounting_note =
-    "Codex exec can report one aggregated turn.completed usage for multiple model/tool cycles; llm_turns counts received agent_message outputs, while provider_usage_turns counts usage records."
+    "provider_turns/llm_turns count turn.started provider cycles. Codex exec can report one aggregated turn.completed usage for multiple provider turns, so provider_usage_turns may be smaller than provider_turns."
   stats.model_outputs = modelOutputs
   stats.trailing_command_starts_after_last_model_output = commandStartsSinceLastOutput
   stats.trailing_command_completions_after_last_model_output = commandCompletionsSinceLastOutput
   stats.stdout_path = stdoutPath
   stats.stdout_jsonl_bytes = Buffer.byteLength(stdout || "", "utf8")
   return stats
+}
+
+async function findCodexSessionFileFromStdout(stdout) {
+  const threadId = parseJsonl(stdout).find((event) => event.type === "thread.started")?.thread_id
+  if (!threadId || !homeDir) return null
+  const sessionsRoot = path.join(homeDir, ".codex", "sessions")
+  const files = await collectJsonlFiles(sessionsRoot)
+  for (const file of files.sort().reverse()) {
+    try {
+      if ((await fs.readFile(file, "utf8")).includes(threadId)) return file
+    } catch {
+      // Ignore unreadable session files.
+    }
+  }
+  return null
+}
+
+function codexSessionStats(sessionFile) {
+  if (!sessionFile || !existsSync(sessionFile)) {
+    return { session_path: sessionFile, found: false }
+  }
+  const text = readFileSync(sessionFile, "utf8")
+  const events = parseJsonl(text)
+  return {
+    session_path: sessionFile,
+    found: true,
+    event_count: events.length,
+    turn_context_count: events.filter((event) => event.type === "turn_context").length,
+    task_started_count: events.filter((event) => event.type === "event_msg" && event.payload?.type === "task_started").length,
+    response_item_count: events.filter((event) => event.type === "response_item").length,
+    token_count_events: events.filter((event) => event.type === "event_msg" && event.payload?.type === "token_count").length,
+    context_compaction_items: events.filter((event) => /context_compaction|Compaction|compact/i.test(JSON.stringify(event))).length,
+    bytes: Buffer.byteLength(text, "utf8"),
+  }
 }
 
 function codexToolAnalysis(stdout) {
@@ -2358,6 +3758,7 @@ async function runCodexAgent({ id, root, bin, binKind = "codex", workspace, shel
   await fs.mkdir(logs, { recursive: true })
   const stdoutPath = path.join(logs, "codex.stdout.jsonl")
   const stderrPath = path.join(logs, "codex.stderr.log")
+  const progressPath = path.join(logs, "codex.progress.json")
   const lastMessagePath = path.join(logs, "last-message.md")
   const verifyPath = path.join(logs, "verify.txt")
   const started = performance.now()
@@ -2385,10 +3786,31 @@ async function runCodexAgent({ id, root, bin, binKind = "codex", workspace, shel
     input: binKind === "codex-exec" ? undefined : prompt,
     stdoutPath,
     stderrPath,
+    progressPath,
+    progressSnapshot: ({ stdout, stderr, status, elapsed_ms }) => ({
+      id,
+      agent: "codex",
+      status,
+      elapsed_ms,
+      stdout_path: stdoutPath,
+      stderr_path: stderrPath,
+      llm: codexLlmStats(stdoutPath, stdout),
+      tool_analysis: codexToolAnalysis(stdout),
+      stderr_tail: String(stderr || "").slice(-3000),
+    }),
     env: envForShellSurface(shellSurface),
   })
   await writeText(stdoutPath, result.stdout)
   await writeText(stderrPath, result.stderr)
+  const codexSessionPath = await findCodexSessionFileFromStdout(result.stdout)
+  const sessionStats = codexSessionStats(codexSessionPath)
+  const llmStats = codexLlmStats(stdoutPath, result.stdout)
+  if (Number(sessionStats.token_count_events || 0) > Number(llmStats.provider_turns || 0)) {
+    llmStats.provider_turns = Number(sessionStats.token_count_events)
+    llmStats.llm_turns = llmStats.provider_turns
+    llmStats.codex_turn_accounting_note =
+      "provider_turns/llm_turns use persisted Codex session token_count events when available; token totals may still be reported as one aggregated turn.completed usage record."
+  }
   const verify = await verifyRepo(workspace, verifyPath, shellSurface)
   const toolAnalysis = codexToolAnalysis(result.stdout)
   return {
@@ -2406,9 +3828,12 @@ async function runCodexAgent({ id, root, bin, binKind = "codex", workspace, shel
     first_output_ms: result.firstOutputMs,
     stdout_path: stdoutPath,
     stderr_path: stderrPath,
+    progress_path: progressPath,
+    session_path: codexSessionPath,
+    session_stats: sessionStats,
     last_message_path: lastMessagePath,
     stderr_tail: result.stderr.slice(-3000),
-    llm: codexLlmStats(stdoutPath, result.stdout),
+    llm: llmStats,
     tool_analysis: toolAnalysis,
     ran_test_like_command: toolAnalysis.test_like_event_count > 0,
     steps: [
@@ -2728,6 +4153,30 @@ async function providerLogFiles(root) {
   return files
 }
 
+async function collectJsonlFiles(root) {
+  const files = []
+  async function visit(dir) {
+    let entries
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    await Promise.all(
+      entries.map(async (entry) => {
+        const full = path.join(dir, entry.name)
+        if (entry.isDirectory()) {
+          await visit(full)
+        } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+          files.push(full)
+        }
+      }),
+    )
+  }
+  await visit(root)
+  return files
+}
+
 async function collectTuraProviderDiagnostics({ workspace, sinceMs }) {
   const providerLogRoot = path.join(turaRoot, "crates", "provider", "log")
   const diagnostics = {
@@ -2891,6 +4340,8 @@ async function collectTuraProviderDiagnostics({ workspace, sinceMs }) {
     if (/(timed out|timeout after|request timeout|provider timeout)/i.test(raw)) diagnostics.provider_timeout_messages += 1
   }
   diagnostics.tool_analysis = providerToolAnalysisFromDiagnostics(diagnostics)
+  diagnostics.llm.provider_turns = diagnostics.provider_call_count
+  diagnostics.llm.llm_turns = diagnostics.provider_call_count
   return diagnostics
 }
 
@@ -2948,6 +4399,7 @@ async function runTuraAgent({ id = "tura", workspace, shellSurface = "shell_comm
     if (!existsSync(bin)) throw new Error(`Compiled Tura CLI not found: ${bin}`)
     const stdoutPath = path.join(logs, "tura.stdout.jsonl")
     const stderrPath = path.join(logs, "tura.stderr.log")
+    const progressPath = path.join(logs, "tura.progress.json")
     const lastMessagePath = path.join(logs, "last-message.md")
     const messagePath = path.join(logs, "messages.json")
     const verifyPath = path.join(logs, "verify.txt")
@@ -2978,6 +4430,18 @@ async function runTuraAgent({ id = "tura", workspace, shellSurface = "shell_comm
         input: prompt,
         stdoutPath,
         stderrPath,
+        progressPath,
+        progressSnapshot: ({ stdout, stderr, status, elapsed_ms }) => ({
+          id,
+          agent: "tura",
+          status,
+          elapsed_ms,
+          stdout_path: stdoutPath,
+          stderr_path: stderrPath,
+          llm: codexLlmStats(stdoutPath, stdout),
+          tool_analysis: turaCliToolAnalysis(stdout),
+          stderr_tail: String(stderr || "").slice(-3000),
+        }),
         env: {
           ...envForShellSurface(shellSurface),
           TURA_COMMAND_RUN_SHELL: shellSurface,
@@ -3020,9 +4484,10 @@ async function runTuraAgent({ id = "tura", workspace, shellSurface = "shell_comm
       message_count: parseJsonl(result.stdout).length,
       stdout_path: stdoutPath,
       stderr_path: stderrPath,
+      progress_path: progressPath,
       last_message_path: lastMessagePath,
       stderr_tail: result.stderr.slice(-3000),
-      llm: stdoutLlm.turns.length > 0 ? stdoutLlm : providerDiagnostics.llm,
+      llm: providerDiagnostics.llm.turns.length > 0 ? providerDiagnostics.llm : stdoutLlm,
       stdout_llm: stdoutLlm,
       provider_diagnostics: providerDiagnostics,
       shell_surface_contract: shellSurfaceContract,
@@ -3060,6 +4525,7 @@ function aggregateLlm(runs) {
     (total, run) => {
       const llm = run.llm || {}
       total.llm_turns += Number(llm.llm_turns || 0)
+      total.provider_turns += Number(llm.provider_turns || llm.llm_turns || 0)
       total.input_tokens += Number(llm.input_tokens || 0)
       total.output_tokens += Number(llm.output_tokens || 0)
       total.reasoning_tokens += Number(llm.reasoning_tokens || 0)
@@ -3071,6 +4537,7 @@ function aggregateLlm(runs) {
     },
     {
       llm_turns: 0,
+      provider_turns: 0,
       input_tokens: 0,
       output_tokens: 0,
       reasoning_tokens: 0,
@@ -3080,6 +4547,125 @@ function aggregateLlm(runs) {
       latency_ms: 0,
     },
   )
+}
+
+function compactContextStats(runs) {
+  return Object.fromEntries(
+    runs.map((run) => {
+      const providerCalls = run.provider_diagnostics?.calls || []
+      const providerCompactCalls = providerCalls.filter((call) =>
+        (call.command_names || []).includes("compact_context") ||
+        (call.command_line_excerpts || []).some((text) => /compact_context/i.test(text)),
+      )
+      const stdoutEvents = parseJsonl(run.stdout_path ? "" : "")
+      return [
+        run.id,
+        {
+          provider_compact_context_calls: providerCompactCalls.length,
+          first_provider_compact_call_index: providerCompactCalls[0]?.index ?? null,
+          provider_compact_files: providerCompactCalls.map((call) => call.file),
+          compact_context_observed:
+            providerCompactCalls.length > 0 ||
+            /compact_context/i.test(JSON.stringify(run.tool_analysis || {})) ||
+            /compact_context/i.test(run.stderr_tail || ""),
+          stdout_event_count_hint: stdoutEvents.length,
+        },
+      ]
+    }),
+  )
+}
+
+function contextCompressionStats(runs) {
+  return Object.fromEntries(
+    runs.map((run) => {
+      const providerCalls = run.provider_diagnostics?.calls || []
+      const providerSamples = providerCalls
+        .filter((call) => Number(call.max_message_chars || 0) > 0)
+        .map((call) => ({
+          source: "provider_message_chars",
+          index: call.index,
+          max_context_chars: Number(call.max_message_chars || 0),
+          total_message_chars: Number(call.total_message_chars || 0),
+          input_tokens: Number(call.usage?.input_tokens || 0),
+        }))
+      const usageSamples = (run.llm?.turns || [])
+        .filter((turn) => Number(turn.input_tokens || 0) > 0)
+        .map((turn) => ({
+          source: "llm_input_tokens",
+          index: turn.index,
+          max_context_chars: null,
+          input_tokens: Number(turn.input_tokens || 0),
+        }))
+      const samples = providerSamples.length > 1 ? providerSamples : usageSamples
+      const metric = providerSamples.length > 1 ? "max_context_chars" : "input_tokens"
+      const drop = firstCompressionDrop(samples, metric)
+      const stdout = readRunStdout(run)
+      const textSignal = /(compacted state|compact(?:ed|ion)|handoff summary|context checkpoint|compressed context)/i.test(stdout)
+      return [
+        run.id,
+        {
+          observed_by_context_drop: drop.observed,
+          metric,
+          reason: drop.reason,
+          first_drop: drop.first_drop,
+          sample_count: samples.length,
+          samples: samples.slice(0, 20),
+          compact_text_signal_observed: textSignal,
+          compact_text_signal_is_size_evidence: false,
+        },
+      ]
+    }),
+  )
+}
+
+function readRunStdout(run) {
+  if (!run?.stdout_path || !existsSync(run.stdout_path)) return ""
+  try {
+    return readFileSync(run.stdout_path, "utf8")
+  } catch {
+    return ""
+  }
+}
+
+function firstCompressionDrop(samples, metric) {
+  if (!Array.isArray(samples) || samples.length < 2) {
+    return {
+      observed: false,
+      reason: "insufficient_context_size_samples",
+      first_drop: null,
+    }
+  }
+  let previousPeak = Number(samples[0]?.[metric] || 0)
+  let previousPeakIndex = samples[0]?.index ?? 1
+  for (let offset = 1; offset < samples.length; offset += 1) {
+    const current = Number(samples[offset]?.[metric] || 0)
+    const threshold = metric === "max_context_chars" ? 200_000 : 100_000
+    const absoluteDrop = previousPeak - current
+    const ratio = previousPeak > 0 ? current / previousPeak : 1
+    if (previousPeak >= threshold && absoluteDrop >= threshold * 0.5 && ratio <= 0.55) {
+      return {
+        observed: true,
+        reason: "large_context_metric_drop",
+        first_drop: {
+          from_index: previousPeakIndex,
+          to_index: samples[offset]?.index ?? offset + 1,
+          from: previousPeak,
+          to: current,
+          drop: absoluteDrop,
+          ratio: Number(ratio.toFixed(4)),
+        },
+      }
+    }
+    if (current > previousPeak) {
+      previousPeak = current
+      previousPeakIndex = samples[offset]?.index ?? offset + 1
+    }
+  }
+  return {
+    observed: false,
+    reason: "no_large_context_metric_drop",
+    first_drop: null,
+  }
 }
 
 function buildSummary({
@@ -3150,6 +4736,16 @@ function buildSummary({
       aggregate_command_run_calls: runs.reduce((total, run) => total + Number(run.tool_analysis?.command_run_calls || 0), 0),
       aggregate_codex_tool_events: runs.reduce((total, run) => total + Number(run.tool_analysis?.tool_event_count || 0), 0),
       aggregate_failed_subcommands: runs.reduce((total, run) => total + Number(run.tool_analysis?.failed_subcommands || 0), 0),
+      compact_stress: {
+        enabled: compactStressEnabled,
+        context_full_mode: contextFullModeEnabled,
+        fixed_context_token_budget: fixedContextTokenBudget,
+        fixture_scale_multiplier: fixtureScaleMultiplier,
+        hard_active_generated_code: hardActiveGeneratedCodeEnabled,
+        hard_active_scale_multiplier: hardActiveScaleMultiplier,
+        compact_context: compactContextStats(runs),
+        context_compression: contextCompressionStats(runs),
+      },
     },
     before: beforeDigests,
     after: afterDigests,

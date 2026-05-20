@@ -251,7 +251,9 @@ pub struct ToolRouter {
     shell: crate::commands::shell_command::ShellCommandHandler,
     bash: crate::commands::bash::BashHandler,
     apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
+    compact_context: crate::commands::compact_context::CompactContextHandler,
     multiple_tasks: crate::commands::multiple_tasks::MultipleTasksHandler,
+    read_media: crate::commands::read_media::ReadMediaHandler,
 }
 
 impl ToolRouter {
@@ -260,7 +262,9 @@ impl ToolRouter {
             shell: crate::commands::shell_command::ShellCommandHandler,
             bash: crate::commands::bash::BashHandler,
             apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
+            compact_context: crate::commands::compact_context::CompactContextHandler,
             multiple_tasks: crate::commands::multiple_tasks::MultipleTasksHandler,
+            read_media: crate::commands::read_media::ReadMediaHandler,
         }
     }
 
@@ -269,7 +273,9 @@ impl ToolRouter {
             "shell_command" => Some("shell_command"),
             "bash" => Some("bash"),
             "apply_patch" => Some("apply_patch"),
+            "compact_context" => Some("compact_context"),
             "multiple_tasks" if multiple_tasks_command_enabled() => Some("multiple_tasks"),
+            "read_media" => Some("read_media"),
             _ => None,
         }
     }
@@ -279,7 +285,9 @@ impl ToolRouter {
             "shell_command" => Some(&self.shell),
             "bash" => Some(&self.bash),
             "apply_patch" => Some(&self.apply_patch),
+            "compact_context" => Some(&self.compact_context),
             "multiple_tasks" if multiple_tasks_command_enabled() => Some(&self.multiple_tasks),
+            "read_media" => Some(&self.read_media),
             _ => None,
         }
     }

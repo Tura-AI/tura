@@ -39,7 +39,10 @@ fn run() -> Result<i32, String> {
     std::env::set_var("TURA_DISABLE_ROUTER_AUTOSTART", "1");
     std::env::set_var("TURA_FAIL_ON_RUNTIME_ERROR", "1");
     let prompt = config.prompt()?;
-    let session_id = format!("cli-{}", uuid::Uuid::new_v4());
+    let session_id = config
+        .session_id
+        .clone()
+        .unwrap_or_else(|| format!("cli-{}", uuid::Uuid::new_v4()));
     if config.json {
         emit_jsonl(&json!({"type": "thread.started", "thread_id": session_id}))?;
         emit_jsonl(&json!({"type": "turn.started"}))?;
@@ -86,6 +89,7 @@ struct CliConfig {
     multiple_tasks_mode: bool,
     max_tokens: Option<u64>,
     agent: Option<String>,
+    session_id: Option<String>,
     last_message_path: Option<PathBuf>,
     prompt_parts: Vec<String>,
 }
@@ -105,6 +109,7 @@ impl CliConfig {
             multiple_tasks_mode: false,
             max_tokens: None,
             agent: None,
+            session_id: None,
             last_message_path: None,
             prompt_parts: Vec::new(),
         };
@@ -138,6 +143,10 @@ impl CliConfig {
                 }
                 "--agent" => {
                     config.agent = Some(take_value(&args, index)?);
+                    index += 2;
+                }
+                "--session-id" => {
+                    config.session_id = Some(take_value(&args, index)?);
                     index += 2;
                 }
                 "-c" | "--config" => {

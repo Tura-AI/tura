@@ -4,7 +4,7 @@ use tracing::info;
 use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::state_machine::session_management::SessionManagement;
 
-use super::types::ContextState;
+use super::{types::ContextState, ContextualUserFragment, WorkspaceSnapshot};
 
 const CONTEXT_OUTPUT_MAX_TOKENS: usize = 2_500;
 const COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS: usize = 2_500;
@@ -212,20 +212,54 @@ pub fn accumulate_message(
     Ok(())
 }
 
+pub fn compact_session_context(
+    session: &mut SessionManagement,
+    compact_text: &str,
+) -> Result<(), String> {
+    let now = Utc::now();
+    let compact_text = truncate_text_to_token_budget(compact_text.trim(), 20_000);
+    let workspace_snapshot = WorkspaceSnapshot::from_cwd(&session.session_directory)
+        .map(|snapshot| snapshot.render())
+        .unwrap_or_else(|| "<WORKSPACE_SNAPSHOT>\n\n</WORKSPACE_SNAPSHOT>".to_string());
+    let environment_context = environment_context_message(&session.session_directory);
+    session.push_log(
+        serde_json::json!({
+            "type": "context_compaction",
+            "content": compact_text,
+            "workspace_snapshot": workspace_snapshot,
+            "environment_context": environment_context,
+            "timestamp": now.to_rfc3339(),
+        })
+        .to_string(),
+        now,
+    );
+    Ok(())
+}
+
 pub fn build_messages_from_session(session: &SessionManagement) -> Vec<serde_json::Value> {
     build_messages_from_session_with_options(session)
 }
 
 fn build_messages_from_session_with_options(session: &SessionManagement) -> Vec<serde_json::Value> {
-    let mut messages = session
+    let mut messages = Vec::new();
+    let mut saw_context_compaction = false;
+    for value in session
         .session_log
         .iter()
         .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
-        .flat_map(immutable_context_messages_from_log_entry)
-        .collect::<Vec<_>>();
+    {
+        if value.get("type").and_then(|kind| kind.as_str()) == Some("context_compaction") {
+            saw_context_compaction = true;
+            messages.clear();
+            messages.extend(context_compaction_messages(&value));
+            continue;
+        }
+        messages.extend(immutable_context_messages_from_log_entry(value));
+    }
 
     let initial_user_input = session.input.user_input.trim();
-    if !initial_user_input.is_empty()
+    if !saw_context_compaction
+        && !initial_user_input.is_empty()
         && !messages.iter().any(|message| {
             message.get("role").and_then(|role| role.as_str()) == Some("user")
                 && message
@@ -243,6 +277,35 @@ fn build_messages_from_session_with_options(session: &SessionManagement) -> Vec<
         );
     }
 
+    messages
+}
+
+fn context_compaction_messages(value: &serde_json::Value) -> Vec<serde_json::Value> {
+    let mut messages = Vec::new();
+    if let Some(content) = value.get("content").and_then(serde_json::Value::as_str) {
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": content,
+        }));
+    }
+    if let Some(snapshot) = value
+        .get("workspace_snapshot")
+        .and_then(serde_json::Value::as_str)
+    {
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": snapshot,
+        }));
+    }
+    if let Some(environment) = value
+        .get("environment_context")
+        .and_then(serde_json::Value::as_str)
+    {
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": environment,
+        }));
+    }
     messages
 }
 
@@ -390,7 +453,7 @@ fn command_run_responses_api_context_items(value: &serde_json::Value) -> Vec<ser
         serde_json::json!({
             "type": "function_call_output",
             "call_id": call_id,
-            "output": command_run_function_output_for_context(value),
+            "output": command_run_function_output_payload_for_context(value),
         }),
     ]
 }
@@ -420,12 +483,116 @@ fn command_run_function_output_for_context(value: &serde_json::Value) -> String 
     command_run_current_style_output_for_context(value)
 }
 
+fn command_run_function_output_payload_for_context(value: &serde_json::Value) -> serde_json::Value {
+    if let Some(content) = command_run_media_content_items_for_context(value) {
+        return serde_json::Value::Array(content);
+    }
+    serde_json::Value::String(command_run_function_output_for_context(value))
+}
+
 fn command_run_current_style_output_for_context(value: &serde_json::Value) -> String {
     command_run_current_style_output_string(value).unwrap_or_else(|| {
         let output = value.get("output").unwrap_or(&serde_json::Value::Null);
         let output = strip_command_run_context_noise(output.clone());
         serde_json::to_string_pretty(&output).unwrap_or_else(|_| output.to_string())
     })
+}
+
+fn command_run_media_content_items_for_context(
+    value: &serde_json::Value,
+) -> Option<Vec<serde_json::Value>> {
+    let output = value.get("output").unwrap_or(&serde_json::Value::Null);
+    let results = flattened_command_run_results(output);
+    if !results.iter().any(|result| {
+        result
+            .get("command_type")
+            .or_else(|| result.get("command"))
+            .and_then(serde_json::Value::as_str)
+            == Some("read_media")
+    }) {
+        return None;
+    }
+
+    let mut media_output = command_run_current_style_output_string_without_media_data(value)?;
+    media_output = command_run_truncate_text(&media_output, 8_000, None);
+    let mut content = vec![serde_json::json!({
+        "type": "input_text",
+        "text": media_output,
+    })];
+    for image_url in command_run_media_image_urls(value).into_iter().take(24) {
+        content.push(serde_json::json!({
+            "type": "input_image",
+            "image_url": image_url,
+        }));
+    }
+    Some(content)
+}
+
+fn command_run_current_style_output_string_without_media_data(
+    value: &serde_json::Value,
+) -> Option<String> {
+    let mut value = value.clone();
+    if let Some(output) = value.get_mut("output") {
+        strip_read_media_image_data(output);
+    }
+    command_run_current_style_output_string(&value)
+}
+
+fn strip_read_media_image_data(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(object) => {
+            if object.contains_key("visual_previews") {
+                if let Some(count) = object.get("visual_preview_count").cloned() {
+                    object.insert(
+                        "visual_previews".to_string(),
+                        serde_json::json!({ "omitted_from_text": true, "count": count }),
+                    );
+                } else {
+                    object.remove("visual_previews");
+                }
+            }
+            for child in object.values_mut() {
+                strip_read_media_image_data(child);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                strip_read_media_image_data(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn command_run_media_image_urls(value: &serde_json::Value) -> Vec<String> {
+    let mut urls = Vec::new();
+    collect_command_run_media_image_urls(value.get("output").unwrap_or(value), &mut urls);
+    urls
+}
+
+fn collect_command_run_media_image_urls(value: &serde_json::Value, urls: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(object) => {
+            if object.get("type").and_then(serde_json::Value::as_str) == Some("image_url") {
+                if let Some(url) = object
+                    .get("image_url")
+                    .and_then(|image_url| image_url.get("url"))
+                    .and_then(serde_json::Value::as_str)
+                {
+                    urls.push(url.to_string());
+                }
+            }
+            for child in object.values() {
+                collect_command_run_media_image_urls(child, urls);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_command_run_media_image_urls(item, urls);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -1222,6 +1389,45 @@ fn compact_json_to_string(value: &serde_json::Value) -> String {
     }
 }
 
+fn truncate_text_to_token_budget(text: &str, max_tokens: usize) -> String {
+    let max_chars = max_tokens.saturating_mul(APPROX_CHARS_PER_TOKEN);
+    if text.len() <= max_chars {
+        return text.to_string();
+    }
+    let mut out = text.chars().take(max_chars).collect::<String>();
+    out.push_str("\n\n[context checkpoint truncated to about 20,000 tokens]");
+    out
+}
+
+fn environment_context_message(cwd: &std::path::Path) -> String {
+    format!(
+        "<environment_context>\n  <cwd>{}</cwd>\n  <shell>{}</shell>\n  <current_date>{}</current_date>\n  <timezone>{}</timezone>\n</environment_context>",
+        cwd.display(),
+        context_shell_name(),
+        chrono::Local::now().format("%Y-%m-%d"),
+        std::env::var("TZ").unwrap_or_else(|_| "Europe/Paris".to_string())
+    )
+}
+
+fn context_shell_name() -> &'static str {
+    match std::env::var("TURA_COMMAND_RUN_SHELL")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("bash") => "bash",
+        Some("shell") | Some("shell_command") | Some("shll") | Some("shall") => {
+            if cfg!(windows) {
+                "powershell"
+            } else {
+                "bash"
+            }
+        }
+        _ if cfg!(windows) => "powershell",
+        _ => "bash",
+    }
+}
+
 fn context_output_byte_budget() -> usize {
     CONTEXT_OUTPUT_MAX_TOKENS * APPROX_CHARS_PER_TOKEN
 }
@@ -1768,8 +1974,10 @@ fn byte_ceil_char_boundary(text: &str, target: usize) -> usize {
 mod tests {
     use super::{
         accumulate_message, accumulate_tool_result, accumulate_tool_result_with_feedback,
-        build_context, command_run_function_output_for_context, command_run_summary_for_context,
-        command_run_truncate_text, messages_with_runtime_context, ContextInput,
+        build_context, command_run_function_output_for_context,
+        command_run_function_output_payload_for_context, command_run_summary_for_context,
+        command_run_truncate_text, compact_session_context, messages_with_runtime_context,
+        ContextInput,
     };
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
@@ -1821,6 +2029,74 @@ mod tests {
             },
             now,
         )
+    }
+
+    #[test]
+    fn compact_session_context_replaces_prior_tool_context_but_keeps_later_results() {
+        let root = tempfile::TempDir::new().expect("tempdir");
+        std::fs::create_dir_all(root.path().join("src")).expect("src dir");
+        std::fs::write(root.path().join("src").join("lib.rs"), "fn main() {}\n").expect("fixture");
+        let mut session = session();
+        session.session_directory = root.path().to_path_buf();
+
+        accumulate_tool_result(
+            &mut session,
+            "command_run",
+            json!({
+                "commands": [
+                    { "command_type": "shell_command", "command_line": "echo old" }
+                ]
+            }),
+            json!({
+                "results": [
+                    { "step": 1, "command_type": "shell_command", "success": true, "output": "old-tool-secret" }
+                ]
+            }),
+            true,
+            None,
+        )
+        .expect("old tool result");
+        compact_session_context(
+            &mut session,
+            "Checkpoint: prior tool history is no longer needed. Continue with src/lib.rs.",
+        )
+        .expect("compact should write");
+        accumulate_tool_result(
+            &mut session,
+            "command_run",
+            json!({
+                "commands": [
+                    { "command_type": "shell_command", "command_line": "echo new" }
+                ]
+            }),
+            json!({
+                "results": [
+                    { "step": 1, "command_type": "shell_command", "success": true, "output": "new-output" }
+                ]
+            }),
+            true,
+            None,
+        )
+        .expect("new tool result");
+
+        let output = build_context(ContextInput {
+            runtime: runtime(&session),
+            session,
+            additional_messages: vec![],
+        })
+        .expect("context should build");
+        let joined = output
+            .messages
+            .iter()
+            .map(|message| message.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(joined.contains("Checkpoint: prior tool history is no longer needed"));
+        assert!(joined.contains("<WORKSPACE_SNAPSHOT>"));
+        assert!(joined.contains("src/lib.rs"));
+        assert!(joined.contains("new-output"));
+        assert!(!joined.contains("old-tool-secret"));
     }
 
     #[test]
@@ -2561,6 +2837,119 @@ mod tests {
         assert!(!output.contains("\"stderr\""));
         assert!(!output.contains("Total output lines"));
         assert!(!output.contains("\"command\":"));
+    }
+
+    #[test]
+    fn read_media_command_run_context_returns_text_plus_input_images_without_base64_text_bloat() {
+        let output = command_run_function_output_payload_for_context(&json!({
+            "tool_name": "command_run",
+            "input": {
+                "commands": [
+                    { "command_type": "read_media", "command_line": "{\"paths\":[\"sample.png\"]}" }
+                ]
+            },
+            "output": {
+                "results": [
+                    {
+                        "step": 1,
+                        "command_type": "read_media",
+                        "success": true,
+                        "output": {
+                            "media_results": [
+                                {
+                                    "path": "sample.png",
+                                    "success": true,
+                                    "media_type": "image",
+                                    "extracted_text": "",
+                                    "visual_preview_count": 1,
+                                    "visual_previews": [
+                                        {
+                                            "type": "image_url",
+                                            "image_url": { "url": "data:image/jpeg;base64,AAA" }
+                                        }
+                                    ]
+                                }
+                            ],
+                            "summary_markdown": "- sample.png: image, 1 visual previews"
+                        }
+                    }
+                ]
+            }
+        }));
+        let items = output.as_array().expect("content items");
+        assert_eq!(items[0]["type"], "input_text");
+        assert_eq!(items[1]["type"], "input_image");
+        assert_eq!(items[1]["image_url"], "data:image/jpeg;base64,AAA");
+        let text = items[0]["text"].as_str().expect("text item");
+        assert!(text.contains("\"visual_preview_count\": 1"));
+        assert!(!text.contains("data:image/jpeg;base64,AAA"));
+    }
+
+    #[test]
+    fn read_media_image_context_persists_across_later_turns() {
+        let mut session = session();
+        accumulate_tool_result(
+            &mut session,
+            "command_run",
+            json!({
+                "commands": [
+                    { "command_type": "read_media", "command_line": "{\"paths\":[\"sample.png\"]}" }
+                ]
+            }),
+            json!({
+                "results": [
+                    {
+                        "step": 1,
+                        "command_type": "read_media",
+                        "success": true,
+                        "output": {
+                            "media_results": [
+                                {
+                                    "path": "sample.png",
+                                    "success": true,
+                                    "media_type": "image",
+                                    "extracted_text": "",
+                                    "visual_preview_count": 1,
+                                    "visual_previews": [
+                                        {
+                                            "type": "image_url",
+                                            "image_url": { "url": "data:image/jpeg;base64,AAA" }
+                                        }
+                                    ]
+                                }
+                            ],
+                            "summary_markdown": "- sample.png: image, 1 visual previews"
+                        }
+                    }
+                ]
+            }),
+            true,
+            None,
+        )
+        .expect("tool result should accumulate");
+        accumulate_message(
+            &mut session,
+            "assistant",
+            json!("The left panel is red and the right panel is blue."),
+        )
+        .expect("assistant message should accumulate");
+        accumulate_message(
+            &mut session,
+            "user",
+            json!("What was the color on the right side?"),
+        )
+        .expect("user message should accumulate");
+
+        let output = build_context(ContextInput {
+            runtime: runtime(&session),
+            session,
+            additional_messages: Vec::new(),
+        })
+        .expect("context should build");
+
+        let serialized = serde_json::to_string(&output.messages).expect("context serializes");
+        assert!(serialized.contains("\"type\":\"input_image\""));
+        assert!(serialized.contains("data:image/jpeg;base64,AAA"));
     }
 
     #[test]

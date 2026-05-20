@@ -2,6 +2,7 @@ use futures_util::StreamExt;
 use regex::Regex;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use crate::llm::_utils::{deep_merge_json, strip_json_fence};
 use crate::tura_llm::{
@@ -428,6 +429,60 @@ fn estimate_token_count(text: &str) -> u64 {
     chars.div_ceil(4)
 }
 
+async fn next_provider_stream_chunk<S>(
+    stream: &mut S,
+    saw_output: bool,
+    last_output_at: Instant,
+) -> Result<Option<S::Item>, TuraError>
+where
+    S: futures_util::Stream + Unpin,
+{
+    let limit = if saw_output {
+        provider_stream_idle_timeout()
+    } else {
+        provider_stream_first_output_timeout()
+    };
+    let elapsed = last_output_at.elapsed();
+    if elapsed >= limit {
+        return Err(provider_stream_timeout_error(saw_output, limit));
+    }
+    match tokio::time::timeout(limit - elapsed, stream.next()).await {
+        Ok(next) => Ok(next),
+        Err(_) => Err(provider_stream_timeout_error(saw_output, limit)),
+    }
+}
+
+fn provider_stream_first_output_timeout() -> Duration {
+    provider_stream_timeout_from_env("TURA_PROVIDER_FIRST_OUTPUT_TIMEOUT_MS", 20_000)
+}
+
+fn provider_stream_idle_timeout() -> Duration {
+    provider_stream_timeout_from_env("TURA_PROVIDER_IDLE_OUTPUT_TIMEOUT_MS", 10_000)
+}
+
+fn provider_stream_timeout_from_env(name: &str, default_ms: u64) -> Duration {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .map(Duration::from_millis)
+        .unwrap_or_else(|| Duration::from_millis(default_ms))
+}
+
+fn provider_stream_timeout_error(saw_output: bool, limit: Duration) -> TuraError {
+    let phase = if saw_output {
+        "new provider output"
+    } else {
+        "first provider output"
+    };
+    TuraError::Network {
+        message: format!(
+            "provider stream timed out waiting for {phase} after {} ms",
+            limit.as_millis()
+        ),
+    }
+}
+
 async fn parse_codex_response_stream(
     resp: reqwest::Response,
     stream_events: Option<ProviderStreamEventSink>,
@@ -438,8 +493,12 @@ async fn parse_codex_response_stream(
     let mut completed = None;
     let mut events = Vec::new();
     let mut command_collector = CodexCommandRunCommandCollector::default();
+    let mut saw_output = false;
+    let mut last_output_at = Instant::now();
 
-    while let Some(chunk) = stream.next().await {
+    while let Some(chunk) = next_provider_stream_chunk(&mut stream, saw_output, last_output_at)
+        .await?
+    {
         let chunk = chunk.map_err(|err| TuraError::Network {
             message: err.to_string(),
         })?;
@@ -448,19 +507,22 @@ async fn parse_codex_response_stream(
         while let Some(line_end) = pending.find('\n') {
             let line = pending[..line_end].trim_end_matches('\r').to_string();
             pending.drain(..=line_end);
-            process_codex_sse_line(
+            if process_codex_sse_line(
                 &line,
                 &mut output_text,
                 &mut completed,
                 &mut events,
                 &mut command_collector,
                 stream_events.as_ref(),
-            )?;
+            )? {
+                saw_output = true;
+                last_output_at = Instant::now();
+            }
         }
     }
 
     if !pending.trim().is_empty() {
-        process_codex_sse_line(
+        let _ = process_codex_sse_line(
             &pending,
             &mut output_text,
             &mut completed,
@@ -480,14 +542,14 @@ fn process_codex_sse_line(
     events: &mut Vec<Value>,
     command_collector: &mut CodexCommandRunCommandCollector,
     stream_events: Option<&ProviderStreamEventSink>,
-) -> Result<(), TuraError> {
+) -> Result<bool, TuraError> {
     let line = line.trim_start();
     let Some(data) = line.strip_prefix("data:") else {
-        return Ok(());
+        return Ok(false);
     };
     let data = data.trim();
     if data.is_empty() || data == "[DONE]" {
-        return Ok(());
+        return Ok(false);
     }
 
     let value: Value = serde_json::from_str(data).map_err(TuraError::Json)?;
@@ -495,8 +557,9 @@ fn process_codex_sse_line(
     if let Some(response) = value.get("response") {
         *completed = Some(response.clone());
     }
+    let output_event = is_codex_stream_output_start(&value);
     if let Some(sink) = stream_events {
-        if is_codex_stream_output_start(&value) {
+        if output_event {
             sink(ProviderStreamEvent::ProviderOutputStarted);
         }
         for event in command_collector.push_event(&value) {
@@ -505,7 +568,7 @@ fn process_codex_sse_line(
     }
     events.push(value);
 
-    Ok(())
+    Ok(output_event)
 }
 
 fn is_codex_stream_output_start(value: &Value) -> bool {
@@ -1227,8 +1290,12 @@ async fn stream_call(
     let mut stream_done = false;
     let mut stream_usage = None;
     let mut pending = String::new();
+    let mut saw_output = false;
+    let mut last_output_at = Instant::now();
 
-    while let Some(chunk) = stream.next().await {
+    while let Some(chunk) = next_provider_stream_chunk(&mut stream, saw_output, last_output_at)
+        .await?
+    {
         let data = chunk.map_err(|e| TuraError::Network {
             message: e.to_string(),
         })?;
@@ -1237,7 +1304,7 @@ async fn stream_call(
         while let Some(line_end) = pending.find('\n') {
             let line = pending[..line_end].trim_end_matches('\r').to_string();
             pending.drain(..=line_end);
-            process_openai_compatible_stream_line(
+            if process_openai_compatible_stream_line(
                 &line,
                 &mut full_content,
                 &mut tool_calls,
@@ -1246,7 +1313,10 @@ async fn stream_call(
                 &mut completed_tool_call,
                 &mut stream_usage,
                 &mut stream_done,
-            );
+            ) {
+                saw_output = true;
+                last_output_at = Instant::now();
+            }
             if stream_done {
                 break;
             }
@@ -1257,7 +1327,7 @@ async fn stream_call(
     }
     if !pending.trim().is_empty() && !stream_done {
         let line = pending.trim_end_matches('\r').to_string();
-        process_openai_compatible_stream_line(
+        let _ = process_openai_compatible_stream_line(
             &line,
             &mut full_content,
             &mut tool_calls,
@@ -1327,18 +1397,19 @@ fn process_openai_compatible_stream_line(
     completed_tool_call: &mut bool,
     stream_usage: &mut Option<Value>,
     stream_done: &mut bool,
-) {
+) -> bool {
     let Some(line) = line.trim_start().strip_prefix("data:") else {
-        return;
+        return false;
     };
     let line = line.trim_start();
     if line == "[DONE]" {
         *stream_done = true;
-        return;
+        return false;
     }
     let Ok(delta) = serde_json::from_str::<Value>(line) else {
-        return;
+        return false;
     };
+    let mut output_event = false;
     if let Some(usage) = delta.get("usage").filter(|usage| !usage.is_null()) {
         *stream_usage = Some(usage.clone());
     }
@@ -1349,6 +1420,9 @@ fn process_openai_compatible_stream_line(
     {
         if let Some(delta_content) = choice.get("delta").and_then(|d| d.get("content")) {
             if let Some(text) = delta_content.as_str().filter(|_| !*completed_tool_call) {
+                if !text.is_empty() {
+                    output_event = true;
+                }
                 full_content.push_str(text);
                 if emit_minimax_streaming_tool_call(full_content, tool_call_buffers, tool_calls) {
                     *completed_tool_call = true;
@@ -1357,6 +1431,9 @@ fn process_openai_compatible_stream_line(
         }
         if let Some(tool_calls_delta) = choice.get("delta").and_then(|d| d.get("tool_calls")) {
             if let Some(calls) = tool_calls_delta.as_array() {
+                if !calls.is_empty() {
+                    output_event = true;
+                }
                 for call in calls {
                     let key = call
                         .get("index")
@@ -1406,6 +1483,7 @@ fn process_openai_compatible_stream_line(
             *finish_reason = Some(reason.to_string());
         }
     }
+    output_event
 }
 
 #[derive(Default)]
@@ -2680,6 +2758,44 @@ mod tests {
             "arguments": "{\"commands\":[{\"step\":1,\"command_type\":\"shell_command\",\"command_line\":\"echo {one}\"},{\"step\":2,\"command_type\":\"shell_command\",\"command_line\":\"echo two\"}]}"
         }));
         assert!(done.is_empty());
+    }
+
+    #[test]
+    fn command_run_command_streaming_emits_split_python_command_object() {
+        let mut collector = super::CodexCommandRunCommandCollector::default();
+        collector.push_event(&json!({
+            "type": "response.output_item.added",
+            "item": {
+                "id": "fc_stream_probe",
+                "call_id": "call_stream_probe",
+                "type": "function_call",
+                "name": "command_run",
+                "arguments": ""
+            }
+        }));
+        let open = collector.push_event(&json!({
+            "type": "response.function_call_arguments.delta",
+            "item_id": "fc_stream_probe",
+            "delta": "{\"commands\":["
+        }));
+        assert!(open.is_empty());
+        let first_command = json!({
+            "step": 1,
+            "command_type": "shell_command",
+            "command_line": json!({
+                "command": "python -c \"from pathlib import Path; Path('streamed-first.txt').write_text('first')\"",
+                "timeout_ms": 20000
+            }).to_string()
+        })
+        .to_string()
+            + ",";
+        let first = collector.push_event(&json!({
+            "type": "response.function_call_arguments.delta",
+            "item_id": "fc_stream_probe",
+            "delta": first_command
+        }));
+        assert_eq!(first.len(), 1);
+        assert_eq!(command_index_for_test(&first[0]), Some(0));
     }
 
     fn command_index_for_test(event: &crate::tura_llm::ProviderStreamEvent) -> Option<usize> {

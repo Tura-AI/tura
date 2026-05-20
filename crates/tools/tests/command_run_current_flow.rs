@@ -113,6 +113,132 @@ fn fail_unsupported_internal_command_returns_model_visible_result() {
 }
 
 #[test]
+fn pass_read_media_image_returns_compact_visual_preview() {
+    let root = temp_workspace("read-media-image");
+    let image_path = root.join("sample.png");
+    let mut image = image::RgbImage::new(64, 64);
+    for (x, y, pixel) in image.enumerate_pixels_mut() {
+        *pixel = if x > y {
+            image::Rgb([220, 20, 20])
+        } else {
+            image::Rgb([20, 60, 220])
+        };
+    }
+    image.save(&image_path).expect("save image fixture");
+
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "command_type": "read_media",
+                    "command_line": "{\"paths\":[\"sample.png\"],\"max_visuals\":1,\"max_side\":256}",
+                    "step": 1
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["command_type"], "read_media");
+    assert_eq!(output["results"][0]["success"], true);
+    let media = &output["results"][0]["output"]["media_results"][0];
+    assert_eq!(media["media_type"], "image");
+    assert_eq!(media["visual_preview_count"], 1);
+    let url = media["visual_previews"][0]["image_url"]["url"]
+        .as_str()
+        .expect("image data url");
+    assert!(url.starts_with("data:image/jpeg;base64,"));
+    assert!(
+        url.len() < 80_000,
+        "preview should be compact, got {}",
+        url.len()
+    );
+}
+
+#[test]
+fn pass_read_media_pdf_text_fallback_is_context_sized() {
+    let root = temp_workspace("read-media-pdf");
+    fs::write(
+        root.join("brief.pdf"),
+        b"%PDF-1.4\n1 0 obj <<>> stream\nBT /F1 12 Tf 72 720 Td (Quarterly media brief: blue chart and revenue table.) Tj ET\nendstream endobj\n%%EOF",
+    )
+    .expect("write simple pdf fixture");
+
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "command_type": "read_media",
+                    "command_line": "{\"paths\":[\"brief.pdf\"],\"include_text\":true,\"max_text_chars\":2000,\"max_visuals\":1}",
+                    "step": 1
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["command_type"], "read_media");
+    assert_eq!(output["results"][0]["success"], true);
+    let media = &output["results"][0]["output"]["media_results"][0];
+    assert_eq!(media["media_type"], "pdf");
+    assert!(media["extracted_text"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("Quarterly media brief"));
+    assert!(
+        serde_json::to_string(&output).expect("serialize").len() < 120_000,
+        "read_media output should stay reasonably small"
+    );
+}
+
+#[test]
+fn pass_read_media_video_uses_available_frame_decoder() {
+    let root = temp_workspace("read-media-video");
+    let video_path = root.join("clip.mp4");
+    let status = std::process::Command::new("python")
+        .arg("-c")
+        .arg(
+            r#"
+import cv2, sys
+import numpy as np
+out = cv2.VideoWriter(sys.argv[1], cv2.VideoWriter_fourcc(*"mp4v"), 2.0, (64, 64))
+for i in range(6):
+    frame = np.zeros((64,64,3), dtype=np.uint8)
+    frame[:,:] = (i*30, 40, 220-i*20)
+    cv2.putText(frame, str(i), (20,40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
+    out.write(frame)
+out.release()
+"#,
+        )
+        .arg(&video_path)
+        .status()
+        .expect("run python");
+    if !status.success() {
+        eprintln!("python cv2 unavailable; skipping video decode fixture");
+        return;
+    }
+
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "command_type": "read_media",
+                    "command_line": "{\"paths\":[\"clip.mp4\"],\"max_visuals\":3,\"max_side\":128}",
+                    "step": 1
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["command_type"], "read_media");
+    assert_eq!(output["results"][0]["success"], true);
+    let media = &output["results"][0]["output"]["media_results"][0];
+    assert_eq!(media["media_type"], "video");
+    assert!(media["visual_preview_count"].as_u64().unwrap_or(0) >= 1);
+}
+
+#[test]
 fn pass_missing_steps_default_to_original_order() {
     let _guard = env_lock();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");

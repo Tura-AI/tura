@@ -53,6 +53,21 @@ crates/tools/
         prompt.md
         policy.toml
         handler.rs  # optional when split out of command_run orchestration
+      read_media/
+        mod.rs
+        schema.json
+        prompt.md
+        policy.toml
+      compact_context/
+        mod.rs
+        schema.json
+        prompt.md
+        policy.toml
+      multiple_tasks/
+        mod.rs
+        schema.json
+        prompt.md
+        policy.toml
       bash/
         mod.rs
         schema.json
@@ -118,8 +133,14 @@ Examples:
 - `bash` -> router alias -> `shell_command`
 - `shell_command` -> router command id -> tools handler
 - `apply_patch` -> router command id -> tools handler
-Only `shell_command`, `bash`, and `apply_patch` are enabled for command-run
-coding-agent sessions in this version.
+- `read_media` -> router command id -> tools handler
+- `compact_context` -> command-run lifecycle handler
+- `multiple_tasks` -> optional planning/multiple-task state handler
+
+Only `shell_command`, `bash`, `apply_patch`, read-only `read_media`, and
+`compact_context` are enabled for normal command-run coding-agent sessions in
+this version. `multiple_tasks` is injected only by the explicit multiple-task
+runtime mode.
 
 `command_run/` must not contain a command registry. New command registration
 belongs in `crates/router`.
@@ -130,6 +151,9 @@ belongs in `crates/router`.
 
 Rules:
 
+- `command_type` is the canonical provider-facing command selector. Legacy
+  `command` input can be normalized for compatibility, but prompts and schemas
+  should use `command_type`.
 - `step` is optional in the provider-facing schema to match codex-current.
   The handler normalizes missing steps to the command's original 1-based
   position.
@@ -138,6 +162,33 @@ Rules:
 - Later steps wait for earlier steps.
 - Mutating commands acquire file locks.
 - Partial results may be emitted after each step group.
+
+## Context Compaction Command
+
+`compact_context` is a lifecycle command inside `command_run`. It should always
+be scheduled as the last step in a batch. The command output is a single
+handoff summary, capped by prompt guidance to stay compact enough for the next
+agent turn.
+
+Runtime handles the command specially after execution:
+
+- Retained tool-call history is cleared.
+- The compact summary becomes the next user-context item.
+- The session and task state machine continue; compaction does not reset work.
+- Workspace snapshot and recent-file snapshot are regenerated and injected.
+- Other commands in the same batch remain ordered and are not repeated.
+
+This is the main long-context optimization path. Prompt wording only tells the
+model when to call the command; the token reduction comes from runtime context
+replacement.
+
+## Media Reading Command
+
+`read_media` is read-only and safe to run with other read-only work. It inspects
+local images, PDFs, and videos, returning concise textual observations and
+selected metadata. Raw binary payloads and base64 are not retained in context.
+Multi-turn recall should rely on the summarized media observations, not on
+re-sending the original file bytes.
 
 ## File Locks
 

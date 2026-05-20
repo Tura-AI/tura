@@ -1,0 +1,44 @@
+{
+  "name": "read_media",
+  "description": "Read local media files and return compact text plus visual previews for images, PDFs, and videos.",
+  "input_schema": {
+    "type": "object",
+    "required": ["paths"],
+    "additionalProperties": false,
+    "properties": {
+      "paths": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "items": { "type": "string" },
+        "description": "Workspace-relative or absolute media paths to inspect."
+      },
+      "include_text": {
+        "type": "boolean",
+        "x-tura-optional": true,
+        "description": "For PDFs and text-like files, include extracted text. Defaults to true."
+      },
+      "max_text_chars": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 80000,
+        "x-tura-optional": true,
+        "description": "Maximum extracted text characters per file. Defaults to 40000."
+      },
+      "max_visuals": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 12,
+        "x-tura-optional": true,
+        "description": "Maximum visual previews per file. Defaults to 6."
+      },
+      "max_side": {
+        "type": "integer",
+        "minimum": 128,
+        "maximum": 1024,
+        "x-tura-optional": true,
+        "description": "Maximum preview image side in pixels. Defaults to 512."
+      }
+    }
+  }
+}

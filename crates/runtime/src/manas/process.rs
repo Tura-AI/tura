@@ -15,7 +15,10 @@ use std::{
 };
 use tracing::{info, warn};
 
-use crate::context::{accumulate_tool_result_with_provider_metadata, build_context, ContextInput};
+use crate::context::{
+    accumulate_tool_result_with_provider_metadata, build_context, compact_session_context,
+    ContextInput,
+};
 use crate::manas::ManasOverrides;
 use crate::mano::persist_gateway_session;
 use crate::state_machine::agent_management::{AgentManagement, AgentState};
@@ -24,6 +27,7 @@ use crate::state_machine::runtime_management::{
 };
 use crate::state_machine::session_management::TaskStatus;
 use crate::state_machine::session_management::{SessionManagement, SessionState};
+use crate::tool_router::execute_tool::ToolExecutionResult;
 
 #[cfg(test)]
 use super::constants::MULTIPLE_TASKS_TOOL;
@@ -199,7 +203,8 @@ pub fn process_manas_internal(
             {
                 command_run_turns = command_run_turns.saturating_add(1);
             }
-            let tool_results = execute_tool_calls(&tool_calls, session, &runtime, redis_url)?;
+            let mut tool_results = execute_tool_calls(&tool_calls, session, &runtime, redis_url)?;
+            apply_compact_context_results(session, &mut tool_results)?;
             last_task_delivered = tool_results.iter().any(|result| {
                 (result.tool_name == TASK_DELIVERED_TOOL
                     && task_delivered_marked_true(&result.arguments))
@@ -207,6 +212,9 @@ pub fn process_manas_internal(
             });
 
             for (index, tool_result) in tool_results.iter().enumerate() {
+                if command_run_results_empty(&tool_result.result) {
+                    continue;
+                }
                 accumulate_tool_result_with_provider_metadata(
                     session,
                     &tool_result.tool_name,
@@ -394,6 +402,123 @@ fn command_run_result_contains_task_delivered(result: &serde_json::Value) -> boo
         .unwrap_or(false)
 }
 
+fn apply_compact_context_results(
+    session: &mut SessionManagement,
+    tool_results: &mut [ToolExecutionResult],
+) -> Result<(), String> {
+    for tool_result in tool_results.iter_mut() {
+        if tool_result.tool_name != COMMAND_RUN_TOOL {
+            continue;
+        }
+        let Some(summary) = compact_context_summary_from_command_run(&tool_result.result) else {
+            continue;
+        };
+        compact_session_context(session, &summary)?;
+        strip_compact_context_from_command_run(&mut tool_result.arguments, &mut tool_result.result);
+        tool_result.success = command_run_result_success_value(&tool_result.result);
+        tool_result.error = command_run_result_error_value(&tool_result.result);
+    }
+    Ok(())
+}
+
+fn compact_context_summary_from_command_run(result: &serde_json::Value) -> Option<String> {
+    result
+        .get("results")
+        .and_then(serde_json::Value::as_array)?
+        .iter()
+        .find(|item| {
+            item.get("command_type")
+                .or_else(|| item.get("command"))
+                .and_then(serde_json::Value::as_str)
+                == Some("compact_context")
+                && item.get("success").and_then(serde_json::Value::as_bool) == Some(true)
+        })
+        .and_then(|item| {
+            item.get("output")
+                .and_then(|output| {
+                    output
+                        .get("compact_context")
+                        .and_then(serde_json::Value::as_str)
+                        .or_else(|| output.as_str())
+                })
+                .map(ToString::to_string)
+        })
+}
+
+fn strip_compact_context_from_command_run(
+    arguments: &mut serde_json::Value,
+    result: &mut serde_json::Value,
+) {
+    if let Some(commands) = arguments
+        .get_mut("commands")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        commands.retain(|command| {
+            command
+                .get("command_type")
+                .or_else(|| command.get("command"))
+                .and_then(serde_json::Value::as_str)
+                .map(canonical_command_name)
+                .as_deref()
+                != Some("compact_context")
+        });
+    }
+    if let Some(results) = result
+        .get_mut("results")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        results.retain(|item| {
+            item.get("command_type")
+                .or_else(|| item.get("command"))
+                .and_then(serde_json::Value::as_str)
+                != Some("compact_context")
+        });
+    }
+}
+
+fn canonical_command_name(name: &str) -> String {
+    name.trim().to_ascii_lowercase().replace('-', "_")
+}
+
+fn command_run_results_empty(result: &serde_json::Value) -> bool {
+    result
+        .get("results")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|results| results.is_empty())
+}
+
+fn command_run_result_success_value(result: &serde_json::Value) -> bool {
+    result
+        .get("results")
+        .and_then(serde_json::Value::as_array)
+        .map(|results| {
+            results
+                .iter()
+                .all(|item| item.get("success").and_then(serde_json::Value::as_bool) == Some(true))
+        })
+        .unwrap_or(true)
+}
+
+fn command_run_result_error_value(result: &serde_json::Value) -> Option<String> {
+    if command_run_result_success_value(result) {
+        return None;
+    }
+    result
+        .get("results")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|results| {
+            results.iter().find_map(|item| {
+                if item.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
+                    item.get("error")
+                        .and_then(serde_json::Value::as_str)
+                        .map(ToString::to_string)
+                } else {
+                    None
+                }
+            })
+        })
+}
+
 fn active_task_user_message(session: &SessionManagement) -> Option<serde_json::Value> {
     let (index, task) = session
         .task_plan
@@ -495,7 +620,7 @@ fn messages_with_initial_context_prefix(
         .iter()
         .filter(|message| {
             let role = message.get("role").and_then(|role| role.as_str());
-            role != Some("user")
+            role == Some("developer")
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -812,10 +937,11 @@ fn create_dummy_runtime(runtime_id: RuntimeId, session: &SessionManagement) -> R
 #[cfg(test)]
 mod tests {
     use super::{
-        filter_tools_for_turn, load_agent_prompt_messages, normalize_tool_arguments,
-        normalize_tool_arguments_for_tool, provider_timeout_retry_wait, remove_tool,
-        require_multiple_tasks_tool_for_multiple_tasks_mode, runtime_failure_allows_retry,
-        runtime_failure_text, user_visible_runtime_text, COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL,
+        filter_tools_for_turn, load_agent_prompt_messages, messages_with_initial_context_prefix,
+        normalize_tool_arguments, normalize_tool_arguments_for_tool, provider_timeout_retry_wait,
+        remove_tool, require_multiple_tasks_tool_for_multiple_tasks_mode,
+        runtime_failure_allows_retry, runtime_failure_text, user_visible_runtime_text,
+        COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL,
     };
     use crate::state_machine::agent_management::{
         AgentCapabilityItem, AgentManagement, AgentPromptItem, ProviderConfig, ToolChoice,
@@ -843,6 +969,30 @@ mod tests {
             Some(std::time::Duration::from_secs(45))
         );
         assert_eq!(provider_timeout_retry_wait(3), None);
+    }
+
+    #[test]
+    fn initial_context_prefix_keeps_only_developer_prefix_without_replaying_history() {
+        let initial_messages = vec![
+            json!({"role": "developer", "content": "permissions"}),
+            json!({"role": "assistant", "content": "old answer"}),
+            json!({"type": "function_call", "name": "command_run", "call_id": "call_old"}),
+            json!({"type": "function_call_output", "call_id": "call_old", "output": "old output"}),
+            json!({"role": "user", "content": "new task"}),
+        ];
+        let session_messages = vec![
+            json!({"role": "user", "content": "new task"}),
+            json!({"role": "assistant", "content": "new answer"}),
+        ];
+
+        let messages =
+            messages_with_initial_context_prefix(&initial_messages, session_messages, "new task");
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["role"], "developer");
+        assert!(!messages.iter().any(|message| {
+            message.get("call_id").and_then(serde_json::Value::as_str) == Some("call_old")
+        }));
     }
 
     #[test]

@@ -1,5 +1,4 @@
 use crate::runtime::tool::{ToolCall, ToolContext, ToolPayload, ToolRouter};
-use futures::future::{BoxFuture, FutureExt};
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -94,7 +93,7 @@ pub struct StreamingCommandRunExecutor {
     ctx: ToolContext,
     active_step: Option<u64>,
     next_index: usize,
-    parallel_reads: FuturesUnordered<BoxFuture<'static, CommandRunItemResult>>,
+    parallel_reads: FuturesUnordered<tokio::task::JoinHandle<CommandRunItemResult>>,
     results: Vec<CommandRunItemResult>,
 }
 
@@ -139,9 +138,9 @@ impl StreamingCommandRunExecutor {
         if parallel_safe {
             let router = Arc::clone(&self.router);
             let ctx = self.ctx.child();
-            self.parallel_reads.push(
-                async move { run_command_run_item(&router, command, ctx, false).await }.boxed(),
-            );
+            self.parallel_reads.push(tokio::spawn(async move {
+                run_command_run_item(&router, command, ctx, false).await
+            }));
             return;
         }
 
@@ -164,7 +163,15 @@ impl StreamingCommandRunExecutor {
 
     async fn flush_parallel_reads(&mut self) {
         while let Some(result) = self.parallel_reads.next().await {
-            self.results.push(result);
+            match result {
+                Ok(result) => self.results.push(result),
+                Err(err) => self.results.push(CommandRunItemResult::failed(
+                    self.next_index,
+                    self.active_step.unwrap_or(1),
+                    "command_run".to_string(),
+                    format!("streamed command task failed: {err}"),
+                )),
+            }
         }
     }
 }
@@ -351,8 +358,14 @@ fn build_tool_call(command_name: &str, command: &CommandItem) -> Result<ToolCall
         "apply_patch" => ToolPayload::Freeform {
             input: command.command_line.clone(),
         },
+        "compact_context" => ToolPayload::Function {
+            arguments: normalize_compact_context_arguments(command)?,
+        },
         "multiple_tasks" => ToolPayload::Function {
             arguments: normalize_multiple_tasks_arguments(command)?,
+        },
+        "read_media" => ToolPayload::Function {
+            arguments: normalize_json_command_arguments(command, "read_media")?,
         },
         _ => ToolPayload::Function {
             arguments: normalize_shell_command_arguments(command)?,
@@ -452,7 +465,13 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
         let canonical_command = crate::commands::canonical_command(&command.command);
         if !matches!(
             canonical_command.as_str(),
-            "shell_command" | "bash" | "apply_patch" | "multiple_tasks" | "task_delivered"
+            "shell_command"
+                | "bash"
+                | "apply_patch"
+                | "multiple_tasks"
+                | "read_media"
+                | "task_delivered"
+                | "compact_context"
         ) {
             if looks_like_removed_structured_tool_call(&command.command, &command.command_line) {
                 continue;
@@ -467,7 +486,34 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
             command.command = crate::commands::active_shell_command_name().to_string();
         }
     }
+    validate_compact_context_position(&args.commands)?;
     Ok(args)
+}
+
+fn validate_compact_context_position(commands: &[CommandItem]) -> Result<(), String> {
+    let Some((compact_index, compact)) = commands.iter().enumerate().find(|(_, command)| {
+        crate::commands::canonical_command(&command.command) == "compact_context"
+    }) else {
+        return Ok(());
+    };
+    if commands.iter().skip(compact_index + 1).next().is_some() {
+        return Err(
+            "compact_context must be the final command in the highest step of command_run"
+                .to_string(),
+        );
+    }
+    let max_step = commands
+        .iter()
+        .map(CommandItem::effective_step)
+        .max()
+        .unwrap_or(1);
+    if compact.effective_step() != max_step {
+        return Err(
+            "compact_context must be the final command in the highest step of command_run"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn normalize_multiple_tasks_arguments(command: &CommandItem) -> Result<Value, String> {
@@ -478,6 +524,31 @@ fn normalize_multiple_tasks_arguments(command: &CommandItem) -> Result<Value, St
     let value: Value = serde_json::from_str(trimmed)
         .map_err(|err| format!("invalid multiple_tasks command_line JSON: {err}"))?;
     Ok(value)
+}
+
+fn normalize_compact_context_arguments(command: &CommandItem) -> Result<Value, String> {
+    let trimmed = command.command_line.trim();
+    if trimmed.is_empty() {
+        return Err("compact_context command_line must include checkpoint text".to_string());
+    }
+    if trimmed.starts_with('{') {
+        let value: Value = serde_json::from_str(trimmed)
+            .map_err(|err| format!("invalid compact_context command_line JSON: {err}"))?;
+        return Ok(value);
+    }
+    Ok(json!({ "summary": trimmed }))
+}
+
+fn normalize_json_command_arguments(
+    command: &CommandItem,
+    command_name: &str,
+) -> Result<Value, String> {
+    let trimmed = command.command_line.trim();
+    if trimmed.is_empty() {
+        return Err(format!("{command_name} command_line must be JSON"));
+    }
+    serde_json::from_str(trimmed)
+        .map_err(|err| format!("invalid {command_name} command_line JSON: {err}"))
 }
 
 fn parse_arguments_value(arguments: &Value) -> Result<Value, String> {
@@ -844,6 +915,61 @@ mod tests {
         assert_eq!(
             output["results"][0]["error"],
             "unsupported command_run command"
+        );
+    }
+
+    #[test]
+    fn compact_context_command_routes_and_outputs_summary() {
+        let output = execute(
+            &json!({
+                "commands": [
+                    {
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "command_line": "echo before-compact"
+                    },
+                    {
+                        "step": 2,
+                        "command_type": "compact_context",
+                        "command_line": "{\"summary\":\"Goal done partly. Next read src/lib.rs.\"}"
+                    }
+                ]
+            }),
+            Path::new("."),
+        );
+
+        assert_eq!(output["results"][1]["command_type"], "compact_context");
+        assert_eq!(output["results"][1]["success"], true);
+        assert_eq!(
+            output["results"][1]["output"]["compact_context"],
+            "Goal done partly. Next read src/lib.rs."
+        );
+    }
+
+    #[test]
+    fn compact_context_must_be_final_highest_step() {
+        let output = execute(
+            &json!({
+                "commands": [
+                    {
+                        "step": 2,
+                        "command_type": "compact_context",
+                        "command_line": "summary"
+                    },
+                    {
+                        "step": 3,
+                        "command_type": "shell_command",
+                        "command_line": "echo after"
+                    }
+                ]
+            }),
+            Path::new("."),
+        );
+
+        assert_eq!(output["results"][0]["success"], false);
+        assert_eq!(
+            output["results"][0]["error"],
+            "compact_context must be the final command in the highest step of command_run"
         );
     }
 

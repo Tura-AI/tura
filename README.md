@@ -248,13 +248,16 @@ Current important modules:
 - `src/commands/shell_command/`: shell command execution.
 - `src/commands/bash/`: Bash execution surface.
 - `src/commands/apply_patch/`: patch application command.
+- `src/commands/read_media/`: read-only local image/PDF/video inspection.
 - `src/runtime/file_locks/`: shared and exclusive workspace locks.
 - `src/modes/code/`: code-mode prompt and policy.
 
 `command_run` accepts a list of command items. Each item has a command name,
-command line or parameters, timeout, and optional step. Missing steps are
-normalized to the command's original order. Same-step read-only commands may
-run concurrently; mutating commands acquire compatible locks.
+command line or parameters, timeout, and optional step. The provider-facing
+field is named `command_type` so models do not confuse the command environment
+with the shell text in `command_line`. Missing steps are normalized to the
+command's original order. Same-step read-only commands may run concurrently;
+mutating commands acquire compatible locks.
 
 Only a compact tool surface should be shown to the model by default. Command
 schemas validate inputs, while command prompts provide concise model-facing
@@ -409,7 +412,7 @@ Conceptual request:
   "step_summary": "Inspect files and run focused checks.",
   "commands": [
     {
-      "command": "shell_command",
+      "command_type": "shell_command",
       "step": 1,
       "command_line": "rg \"pattern\" crates/runtime",
       "timeout_secs": 30
@@ -421,12 +424,30 @@ Conceptual request:
 Execution rules:
 
 - command names are canonicalized before execution
+- `command_type` is accepted as the canonical provider-facing field; legacy
+  `command` payloads are normalized at the handler boundary
 - missing `step` values are normalized
 - same-step read-only commands may run concurrently
 - later steps wait for earlier steps
 - mutating commands acquire file locks
 - unknown mutating shell commands acquire a workspace-wide exclusive lock
 - results should be structured and display-ready where possible
+
+Additional command-run commands in this version:
+
+- `compact_context`: creates a concise handoff summary, clears retained tool
+  call history after the current batch, reinjects the workspace snapshot and
+  recent-file snapshot, and continues the same session/state machine.
+- `read_media`: reads local images, PDFs, and video metadata/frames and returns
+  compact model-facing descriptions without retaining raw base64 in the next
+  context.
+- `multiple_tasks`: optional planning-mode command, injected only when the CLI
+  enables multiple-task mode. It is not part of the default coding-agent tool
+  surface.
+
+`compact_context` is intentionally architectural, not just prompt text. It is
+what keeps long Tura sessions from repeatedly sending old tool-call history
+after a stage is complete or the context approaches the configured limit.
 
 ## Runtime State Model
 
@@ -498,6 +519,12 @@ Command-run E2E drivers:
 tests/command-run-codex-two-way/
   command_run_codex_two_way_e2e.mjs
   command_run_single_round_e2e.mjs
+  command_run_context_compact_e2e.mjs
+  command_run_long_task_e2e.mjs
+  command_run_compact_context_e2e.mjs
+  command_run_read_media_e2e.mjs
+  command_run_media_recall_e2e.mjs
+  command_run_frontend_playwright_e2e.mjs
   ROBUSTNESS_TEST_MATRIX.md
 ```
 
@@ -531,9 +558,10 @@ are still in transition:
   event responsibilities.
 - Runtime keeps Mano/MANAS naming internally. Preserve that split while keeping
   public entrypoints thin and moving detailed behavior into owner modules.
-- Tools currently exposes command-run plus shell/bash/apply_patch commands.
+- Tools currently exposes command-run plus shell/bash/apply_patch/read_media commands.
+  It also contains mode-gated `compact_context` and `multiple_tasks` commands.
   New commands should be added under `crates/tools/src/commands/<name>` and
-  registered through router metadata.
+  registered through router metadata or the command-run capability gate.
 - Apps directories are present as product surfaces. Gateway remains the stable
   boundary for UI and desktop integration.
 

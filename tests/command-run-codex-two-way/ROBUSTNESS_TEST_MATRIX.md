@@ -23,6 +23,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-command-run-rob
 | Empty command batches are model-visible failures | `fail_empty_command_run_returns_current_style_failure_result` |
 | Tool outputs use current-style `results` without Tura-specific top-level noise | `pass_current_style_command_run_output_shape`, `tool_output_success_follows_current_style_command_run_results` |
 | Tool success/error extraction reads current-style result records | `tool_output_success_follows_current_style_command_run_results` |
+| `compact_context` is a command_run internal command, must be final in the highest step, and produces one checkpoint text | `compact_context_command_routes_and_outputs_summary`, `compact_context_must_be_final_highest_step` |
+| Context checkpoint hides prior tool history, preserves later non-compact command_run backfill, and reinjects workspace snapshot | `compact_session_context_replaces_prior_tool_context_but_keeps_later_results` |
+| Large context threshold injects a user continuation requiring `compact_context` | `messages_for_turn_injects_compact_context_prompt_at_default_220k_threshold` |
 | Provider schema removes invalid recursive `additionalProperties` | `provider_schema_strips_additional_properties_recursively` |
 
 ## Prompt And Surface Isolation

@@ -1,7 +1,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -115,36 +115,102 @@ fn coding_agent_can_call_command_run_tool_e2e() {
     assert!(first_tool_names.contains(&"command_run"));
 }
 
+#[test]
+fn coding_agent_executes_command_run_command_before_stream_finishes() {
+    let _lock = ENV_LOCK.lock().expect("e2e env lock should be available");
+    let workspace = create_rust_workspace();
+    let provider = MockProvider::start_codex_streaming_probe(workspace.clone());
+    let llm_config = write_codex_llm_config(&workspace);
+    let endpoint = format!("http://{}", provider.addr);
+    let _env = EnvGuard::set(&[
+        ("TURALLM_CONFIG", llm_config.to_string_lossy().as_ref()),
+        ("OPENAI_LOGIN", "oauth"),
+        ("OPENAI_API_KEY", "test-key"),
+        ("OPENAI_CODEX_ENDPOINT", endpoint.as_str()),
+        ("TURA_DISABLE_GATEWAY_CALLBACKS", "1"),
+        ("TURA_MANAS_MAX_TURNS", "2"),
+    ]);
+
+    let result = mano::process_from_gateway_session_in_directory(
+        "e2e-stream-command-before-message-done".to_string(),
+        SessionInput {
+            user_input: "Use command_run in this code file workspace to create streamed-first.txt, then create streamed-second.txt."
+                .to_string(),
+            file_input: vec![],
+            agent: None,
+            runtime_context: None,
+        },
+        workspace.clone(),
+    )
+    .expect("coding agent should complete the streaming command_run e2e flow");
+
+    assert!(
+        provider
+            .first_command_observed_before_response_finished
+            .load(Ordering::SeqCst),
+        "first streamed command did not execute before the provider finished sending the response"
+    );
+    assert_eq!(result.session.state, SessionState::Completed);
+    assert!(
+        workspace.join("streamed-first.txt").exists(),
+        "first streamed command should create streamed-first.txt"
+    );
+    assert!(
+        workspace.join("streamed-second.txt").exists(),
+        "second streamed command should create streamed-second.txt"
+    );
+}
+
 struct MockProvider {
     addr: SocketAddr,
     requests: Arc<Mutex<Vec<Value>>>,
+    first_command_observed_before_response_finished: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone, Copy)]
 enum MockMode {
     CommandRun,
+    CodexStreamingProbe,
 }
 
 impl MockProvider {
     fn start_command_run() -> Self {
-        Self::start_with_mode(MockMode::CommandRun)
+        Self::start_with_mode(MockMode::CommandRun, None)
     }
 
-    fn start_with_mode(mode: MockMode) -> Self {
+    fn start_codex_streaming_probe(workspace: PathBuf) -> Self {
+        Self::start_with_mode(MockMode::CodexStreamingProbe, Some(workspace))
+    }
+
+    fn start_with_mode(mode: MockMode, workspace: Option<PathBuf>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("mock provider should bind");
         let addr = listener.local_addr().expect("mock provider address");
         let requests = Arc::new(Mutex::new(Vec::new()));
         let counter = Arc::new(AtomicUsize::new(0));
+        let first_command_observed_before_response_finished = Arc::new(AtomicBool::new(false));
         let thread_requests = Arc::clone(&requests);
         let thread_counter = Arc::clone(&counter);
+        let thread_first_command_observed =
+            Arc::clone(&first_command_observed_before_response_finished);
 
         thread::spawn(move || {
             for stream in listener.incoming().flatten() {
-                handle_provider_connection(stream, &thread_counter, &thread_requests, mode);
+                handle_provider_connection(
+                    stream,
+                    &thread_counter,
+                    &thread_requests,
+                    mode,
+                    workspace.as_deref(),
+                    &thread_first_command_observed,
+                );
             }
         });
 
-        Self { addr, requests }
+        Self {
+            addr,
+            requests,
+            first_command_observed_before_response_finished,
+        }
     }
 }
 
@@ -153,6 +219,8 @@ fn handle_provider_connection(
     counter: &AtomicUsize,
     requests: &Arc<Mutex<Vec<Value>>>,
     mode: MockMode,
+    workspace: Option<&Path>,
+    first_command_observed_before_response_finished: &AtomicBool,
 ) {
     let mut reader = BufReader::new(stream);
     let mut content_length = 0usize;
@@ -180,6 +248,18 @@ fn handle_provider_connection(
         .expect("mock provider requests lock")
         .push(request);
     let stream = reader.get_mut();
+    if matches!(mode, MockMode::CodexStreamingProbe) {
+        if index == 0 {
+            write_codex_streaming_probe_response(
+                stream,
+                workspace.expect("codex streaming probe workspace"),
+                first_command_observed_before_response_finished,
+            );
+        } else {
+            write_codex_final_response(stream, "streaming command probe completed.");
+        }
+        return;
+    }
     if is_stream {
         let response_text = response_to_sse(&response);
         let _ = write!(
@@ -204,7 +284,198 @@ fn handle_provider_connection(
 fn provider_response(index: usize, mode: MockMode) -> Value {
     match mode {
         MockMode::CommandRun => command_run_provider_response(index),
+        MockMode::CodexStreamingProbe => assistant_response("streaming probe completed."),
     }
+}
+
+fn write_codex_streaming_probe_response(
+    stream: &mut TcpStream,
+    workspace: &Path,
+    first_command_observed_before_response_finished: &AtomicBool,
+) {
+    let _ = write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+    );
+    write_codex_sse(
+        stream,
+        json!({
+            "type": "response.output_item.added",
+            "item": {
+                "id": "fc_stream_probe",
+                "type": "function_call",
+                "call_id": "call_stream_probe",
+                "name": "command_run",
+                "arguments": ""
+            }
+        }),
+    );
+    write_codex_sse(
+        stream,
+        json!({
+            "type": "response.function_call_arguments.delta",
+            "item_id": "fc_stream_probe",
+            "delta": "{\"commands\":["
+        }),
+    );
+    write_codex_sse(
+        stream,
+        json!({
+            "type": "response.function_call_arguments.delta",
+            "item_id": "fc_stream_probe",
+            "delta": json!({
+                "step": 1,
+                "command_type": "shell_command",
+                "command_line": json!({
+                    "command": "python -c \"from pathlib import Path; Path('streamed-first.txt').write_text('first')\"",
+                    "timeout_ms": 20000
+                }).to_string()
+            }).to_string() + ","
+        }),
+    );
+    let first_path = workspace.join("streamed-first.txt");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    while std::time::Instant::now() < deadline {
+        if first_path.exists() {
+            first_command_observed_before_response_finished.store(true, Ordering::SeqCst);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    write_codex_sse(
+        stream,
+        json!({
+            "type": "response.function_call_arguments.delta",
+            "item_id": "fc_stream_probe",
+            "delta": json!({
+                "step": 2,
+                "command_type": "shell_command",
+                "command_line": json!({
+                    "command": "python -c \"from pathlib import Path; Path('streamed-second.txt').write_text('second')\"",
+                    "timeout_ms": 20000
+                }).to_string()
+            }).to_string() + "]}"
+        }),
+    );
+    write_codex_sse(
+        stream,
+        json!({
+            "type": "response.function_call_arguments.done",
+            "item_id": "fc_stream_probe",
+            "arguments": json!({
+                "commands": [
+                    {
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "command_line": json!({
+                            "command": "python -c \"from pathlib import Path; Path('streamed-first.txt').write_text('first')\"",
+                            "timeout_ms": 20000
+                        }).to_string()
+                    },
+                    {
+                        "step": 2,
+                        "command_type": "shell_command",
+                        "command_line": json!({
+                            "command": "python -c \"from pathlib import Path; Path('streamed-second.txt').write_text('second')\"",
+                            "timeout_ms": 20000
+                        }).to_string()
+                    }
+                ]
+            }).to_string()
+        }),
+    );
+    write_codex_sse(
+        stream,
+        json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_stream_probe",
+                "output": [{
+                    "id": "fc_stream_probe",
+                    "type": "function_call",
+                    "call_id": "call_stream_probe",
+                    "name": "command_run",
+                    "arguments": json!({
+                        "commands": [
+                            {
+                                "step": 1,
+                                "command_type": "shell_command",
+                                "command_line": json!({
+                                    "command": "python -c \"from pathlib import Path; Path('streamed-first.txt').write_text('first')\"",
+                                    "timeout_ms": 20000
+                                }).to_string()
+                            },
+                            {
+                                "step": 2,
+                                "command_type": "shell_command",
+                                "command_line": json!({
+                                    "command": "python -c \"from pathlib import Path; Path('streamed-second.txt').write_text('second')\"",
+                                    "timeout_ms": 20000
+                                }).to_string()
+                            }
+                        ]
+                    }).to_string()
+                }],
+                "usage": {
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "total_tokens": 2
+                }
+            }
+        }),
+    );
+    write_codex_sse_raw(stream, "data: [DONE]\n\n");
+    let _ = write!(stream, "0\r\n\r\n");
+    let _ = stream.flush();
+}
+
+fn write_codex_sse(stream: &mut TcpStream, value: Value) {
+    write_codex_sse_raw(stream, &format!("data: {}\n\n", value));
+}
+
+fn write_codex_sse_raw(stream: &mut TcpStream, data: &str) {
+    let _ = write!(stream, "{:X}\r\n{}\r\n", data.len(), data);
+    let _ = stream.flush();
+}
+
+fn write_codex_final_response(stream: &mut TcpStream, content: &str) {
+    let _ = write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+    );
+    write_codex_sse(
+        stream,
+        json!({
+            "type": "response.output_text.delta",
+            "delta": content
+        }),
+    );
+    write_codex_sse(
+        stream,
+        json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_stream_probe_final",
+                "output": [{
+                    "id": "msg_stream_probe_final",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": content
+                    }]
+                }],
+                "usage": {
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "total_tokens": 2
+                }
+            }
+        }),
+    );
+    write_codex_sse_raw(stream, "data: [DONE]\n\n");
+    let _ = write!(stream, "0\r\n\r\n");
+    let _ = stream.flush();
 }
 
 fn command_run_provider_response(index: usize) -> Value {
@@ -421,6 +692,35 @@ fn write_llm_config(workspace: &Path, addr: SocketAddr) -> PathBuf {
         "routes": routes
     });
     let path = workspace.join("tura_llm_config.json");
+    write_file(
+        &path,
+        &serde_json::to_string_pretty(&config).expect("config should serialize"),
+    );
+    path
+}
+
+fn write_codex_llm_config(workspace: &Path) -> PathBuf {
+    let mut routes = serde_json::Map::new();
+    for route in ROUTES {
+        routes.insert(
+            (*route).to_string(),
+            json!({
+                "default_temperature": 0.0,
+                "providers": [{
+                    "provider": "openai",
+                    "model": "mock-codex-stream",
+                    "temperature": 0.0
+                }]
+            }),
+        );
+    }
+    let config = json!({
+        "provider_base_url": {
+            "openai": "https://api.openai.com/v1"
+        },
+        "routes": routes
+    });
+    let path = workspace.join("tura_codex_llm_config.json");
     write_file(
         &path,
         &serde_json::to_string_pretty(&config).expect("config should serialize"),

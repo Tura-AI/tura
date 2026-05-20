@@ -573,6 +573,7 @@ async function inspectTuraSourceContract() {
     shellPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "shell_command", "prompt.md"),
     applyPatchPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "apply_patch", "prompt.md"),
     multipleTasksPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "multiple_tasks", "prompt.md"),
+    compactContextPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "compact_context", "prompt.md"),
     taskDeliveredSchema: path.join(turaRoot, "crates", "tools", "src", "task_delivered", "schema.json"),
     fileLocksPolicy: path.join(turaRoot, "crates", "tools", "src", "runtime", "file_locks", "policy.toml"),
     fileLocksModule: path.join(turaRoot, "crates", "tools", "src", "runtime", "file_locks", "mod.rs"),
@@ -600,7 +601,7 @@ async function inspectTuraSourceContract() {
     ok:
       filesExist &&
       oldDirectoriesAbsent &&
-      schema?.input_schema?.properties?.commands?.minItems === 2 &&
+      schema?.input_schema?.properties?.commands?.minItems === 5 &&
       schema?.input_schema?.properties?.commands?.maxItems === 15 &&
       !schema?.input_schema?.properties?.task_delivered &&
       existsSync(paths.taskDeliveredSchema) &&
@@ -612,7 +613,9 @@ async function inspectTuraSourceContract() {
       /workspace_write/.test(fileLocks) &&
       /pub fn execute/.test(commandsModule) &&
       /pub mod multiple_tasks/.test(commandsModule) &&
+      /pub mod compact_context/.test(commandsModule) &&
       /"apply_patch"\s*=>\s*apply_patch::execute/.test(commandsModuleText) &&
+      /"compact_context"\s*=>\s*compact_context::execute/.test(commandsModuleText) &&
       /"multiple_tasks"[^=]*=>\s*\{\s*multiple_tasks::execute/.test(commandsModuleText) &&
       /"bash"\s*=>\s*bash::execute/.test(commandsModuleText) &&
       /"shell_command"\s*=>\s*shell_command::execute/.test(commandsModuleText) &&
@@ -632,6 +635,7 @@ async function inspectTuraSourceContract() {
     has_command_dispatch_module: /pub fn execute/.test(commandsModule),
     has_exact_internal_command_dispatch:
       /"apply_patch"\s*=>\s*apply_patch::execute/.test(commandsModuleText) &&
+      /"compact_context"\s*=>\s*compact_context::execute/.test(commandsModuleText) &&
       /"multiple_tasks"[^=]*=>\s*\{\s*multiple_tasks::execute/.test(commandsModuleText) &&
       /"bash"\s*=>\s*bash::execute/.test(commandsModuleText) &&
       /"shell_command"\s*=>\s*shell_command::execute/.test(commandsModuleText) &&

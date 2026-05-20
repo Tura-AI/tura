@@ -14,6 +14,7 @@ scripts/
 
   installers/
     apps.toml
+    playwright.toml
     powershell_modules.toml
     node.toml
     python.toml
@@ -29,6 +30,8 @@ scripts/
     pandas/
       manifest.toml
       entry.py
+    playwright_node/
+      manifest.toml
 
   persistent/
     <workflow_id>/
@@ -83,6 +86,11 @@ automatically:
 
 The model should not invent installer commands when a manifest exists.
 
+`scripts/installers/playwright.toml` declares the Playwright/Chromium setup used
+by frontend-debugging E2E flows. Browser installation remains an installer
+concern so command handlers can ask for a known capability instead of embedding
+ad hoc setup commands in prompts or test fixtures.
+
 ## Package Environments
 
 Each package environment manifest defines:
@@ -96,6 +104,11 @@ Each package environment manifest defines:
 - Rebuild trigger.
 
 Router/tools should route `py:<package>` commands through this layer.
+
+`scripts/packages/playwright_node/manifest.toml` is the Node package environment
+for Playwright-based browser checks. It provides the stable dependency boundary
+for command-run sessions that need screenshots, DOM inspection, or local
+frontend smoke tests.
 
 ## Persistent Scripts
 

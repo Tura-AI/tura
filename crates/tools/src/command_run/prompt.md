@@ -18,4 +18,4 @@ Command run patterns:
 - Example investigation batch: step 1 needed `rg --files`, targeted `rg -n`, and candidate file reads.
 - Example repair batch: step 1 needed reads/searches, step 2 `apply_patch` across related files, step 3 the narrow test and focused validation searches.
 
-Supported command details are injected from `commands/<command>/prompt.md` for the active shell surface plus `apply_patch`. The `multiple_tasks` command is injected only when multiple-tasks mode is explicitly enabled.
+Supported command details are injected from `commands/<command>/prompt.md` for the active shell surface plus `apply_patch`, `read_media`, and `compact_context`. The `multiple_tasks` command is injected only when multiple-tasks mode is explicitly enabled.

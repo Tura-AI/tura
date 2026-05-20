@@ -28,7 +28,7 @@
               "type": "integer",
               "minimum": 1,
               "x-tura-optional": true,
-              "description": "Execution stage. Use the same step for independent discovery/read commands and later steps for edits, tests, and validation that depend on earlier output. Commands with the same step may run concurrently when they are safe read-only work; later steps wait for earlier steps."
+              "description": "Execution stage. Use the same step for independent discovery/read commands and later steps for edits, tests, and validation that depend on earlier output. Commands with the same step may run concurrently when they are safe read-only work; later steps wait for earlier steps. If using compact_context, it must be the final command in the highest step."
             }
           }
         }

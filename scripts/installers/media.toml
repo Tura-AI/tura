@@ -1,0 +1,53 @@
+[tool.ffmpeg]
+id = "ffmpeg"
+description = "Video frame extraction for command_run read_media."
+platforms = ["windows", "linux", "macos"]
+verify = "ffmpeg -version"
+timeout_secs = 300
+permission = "network"
+cache_key = "ffmpeg"
+
+[tool.ffmpeg.install.windows]
+command = "winget install --id Gyan.FFmpeg -e --accept-package-agreements --accept-source-agreements"
+
+[tool.ffmpeg.install.linux]
+command = "sudo apt-get update && sudo apt-get install -y ffmpeg"
+
+[tool.ffmpeg.install.macos]
+command = "brew install ffmpeg"
+
+[tool.python_cv2]
+id = "python_cv2"
+description = "Fallback video frame extraction when ffmpeg is not installed."
+platforms = ["windows", "linux", "macos"]
+verify = "python -c \"import cv2\""
+timeout_secs = 300
+permission = "network"
+cache_key = "python-opencv"
+
+[tool.python_cv2.install.windows]
+command = "python -m pip install opencv-python"
+
+[tool.python_cv2.install.linux]
+command = "python -m pip install opencv-python"
+
+[tool.python_cv2.install.macos]
+command = "python -m pip install opencv-python"
+
+[tool.python_pymupdf]
+id = "python_pymupdf"
+description = "Fallback PDF text extraction when PDFium is not installed."
+platforms = ["windows", "linux", "macos"]
+verify = "python -c \"import fitz\""
+timeout_secs = 300
+permission = "network"
+cache_key = "python-pymupdf"
+
+[tool.python_pymupdf.install.windows]
+command = "python -m pip install PyMuPDF"
+
+[tool.python_pymupdf.install.linux]
+command = "python -m pip install PyMuPDF"
+
+[tool.python_pymupdf.install.macos]
+command = "python -m pip install PyMuPDF"

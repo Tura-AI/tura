@@ -99,9 +99,20 @@ command registration, CLI forwarding, or memory/vector internals.
 Agents are configured under `crates/agents`.
 
 Agents own identity, default prompts, provider defaults, command selections,
-planning defaults, previous-command-evaluation defaults, and generated/static
-agent interfaces. Runtime loads agent config from this crate instead of
-hard-coding agent defaults.
+planning/multiple-task defaults, and generated/static agent interfaces.
+Runtime loads agent config from this crate instead of hard-coding agent
+defaults.
+
+Current agent-owned files live under:
+
+```text
+crates/agents/src/<agent_name>/
+  agent_config.json
+  prompt.md
+```
+
+Agent-specific prompt text must stay in `prompt.md`; runtime prompt fragments
+and command prompts are injected separately by their owning crates.
 
 ### `crates/provider`
 
@@ -129,7 +140,8 @@ Tools owns:
 - File locks.
 - Audit records.
 - Output truncation and display-ready normalization.
-- `shell_command`, `apply_patch`, and future commands.
+- `shell_command`, `apply_patch`, `read_media`, and future commands.
+- mode-gated commands such as `compact_context` and `multiple_tasks`.
 
 `command_run` remains the compact model-visible request shape. It accepts
 command items, asks router-owned metadata how to route those command names, and
@@ -348,7 +360,7 @@ Provider-facing shape:
   "step_summary": "Inspect files and run focused checks.",
   "commands": [
     {
-      "command": "shell_command",
+      "command_type": "shell_command",
       "step": 1,
       "command_line": "rg \"pattern\" crates/runtime",
       "timeout_secs": 30,
@@ -374,10 +386,46 @@ Built-in command families:
 
 - `shell_command`
 - `apply_patch`
+- `read_media`
+- `compact_context`
+- `multiple_tasks`
 
-This version exposes only console shell commands (`shell_command`,
-`powershell:*`, `bash:*`, `shell:*`) and `apply_patch` through
-`command_run`.
+This version exposes console shell commands (`shell_command`, `powershell:*`,
+`bash:*`, `shell:*`), `apply_patch`, read-only local media inspection, and
+mode-gated context/task lifecycle commands through `command_run`.
+
+`command_type` is the canonical provider-facing command field. Legacy
+`command` payloads may be accepted for compatibility at the handler boundary,
+but prompt and schema text should use `command_type`.
+
+### Compact Context
+
+`compact_context` is a command-run command used for long coding sessions. It is
+injected for coding agents and should be placed in the last step of a batch
+when used. The command asks the model for a structured handoff summary covering
+current progress, user requirements, relevant files/docs, completed and
+remaining work, validation status, and concrete next steps.
+
+After the command completes, runtime:
+
+- removes prior tool-call history from retained context;
+- converts the compact summary into the next user-context item;
+- preserves the active session and task state machine;
+- reinjects the workspace snapshot and recent-file snapshot just like a fresh
+  session;
+- keeps non-compact commands from the same batch and their outputs in order;
+- does not retain raw compact command scaffolding as extra prompt noise.
+
+If estimated context passes the high-water mark, runtime injects a short
+continuation prompt asking the agent to compact before continuing. The prompt is
+only a trigger; the token savings come from the context-management reset above.
+
+### Media Reading
+
+`read_media` is a read-only command for local images, PDFs, and video metadata
+or sampled frames. It returns compact textual observations to the model. Binary
+payloads and raw base64 are not kept in retained context; later turns recall the
+media through the summarized tool output.
 
 ## File Locks
 
@@ -529,6 +577,17 @@ cargo build -p gateway
 cargo build -p code-tools-suite
 cargo build -p code-tools
 ```
+
+The installer/package manifest tree also includes Playwright support for
+frontend debugging workflows:
+
+```text
+scripts/installers/playwright.toml
+scripts/packages/playwright_node/manifest.toml
+```
+
+These manifests make Node Playwright and Chromium available to command-run
+sessions without putting generated browser artifacts into source control.
 
 The normal local path is CLI-driven. Router may start managed local services as
 needed, but those services are not addressed through fixed ports:

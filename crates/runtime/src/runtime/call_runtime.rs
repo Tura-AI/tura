@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use tracing::error;
 
@@ -647,8 +647,7 @@ async fn call_runtime_streaming(
 ) -> Result<(), String> {
     let started_at = Utc::now();
     let timeout_duration = runtime_timeout(runtime);
-    let (stream_tx, mut stream_rx) =
-        tokio::sync::mpsc::unbounded_channel::<tura_llm_rust::ProviderStreamEvent>();
+    let (stream_tx, stream_rx) = mpsc::channel::<tura_llm_rust::ProviderStreamEvent>();
     let first_stream_output_at: Arc<Mutex<Option<DateTime<Utc>>>> = Arc::new(Mutex::new(None));
     let first_stream_output_for_sink = Arc::clone(&first_stream_output_at);
     let sink: tura_llm_rust::ProviderStreamEventSink = Arc::new(move |event| {
@@ -666,16 +665,20 @@ async fn call_runtime_streaming(
         let _ = stream_tx.send(event);
     });
     let command_session_directory = session_directory.clone();
-    let command_task = tokio::spawn(async move {
+    let command_task = std::thread::spawn(move || {
         let mut executor =
             code_tools::command_run::StreamingCommandRunExecutor::new(command_session_directory);
-        while let Some(event) = stream_rx.recv().await {
+        let runtime = match tokio::runtime::Runtime::new() {
+            Ok(runtime) => runtime,
+            Err(_) => return Vec::new(),
+        };
+        while let Ok(event) = stream_rx.recv() {
             let Some(command) = command_run_stream_event_command(event) else {
                 continue;
             };
-            executor.push_command_value(command).await;
+            runtime.block_on(executor.push_command_value(command));
         }
-        executor.finish().await
+        runtime.block_on(executor.finish())
     });
 
     let response = match tokio::time::timeout(
@@ -721,7 +724,7 @@ async fn call_runtime_streaming(
         }
     };
     let finished_at = Utc::now();
-    let streamed_command_results = command_task.await.unwrap_or_default();
+    let streamed_command_results = command_task.join().unwrap_or_default();
 
     let mut runtime_output = response.content.clone();
     if !streamed_command_results.is_empty() {

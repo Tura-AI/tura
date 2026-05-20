@@ -2,7 +2,9 @@ use chrono::Utc;
 use tracing::{error, info};
 
 use crate::agent_router::{activate_agents_by_session_type, initialize_agent_state_machine};
-use crate::context::{accumulate_message, ContextualUserFragment, WorkspaceSnapshot};
+use crate::context::{
+    accumulate_message, build_messages_from_session, ContextualUserFragment, WorkspaceSnapshot,
+};
 use crate::manas::{process_manas_internal, ManasInput};
 use crate::mano::gateway_session::{load_persisted_gateway_session, persist_gateway_session};
 use crate::mano::session_bootstrap::create_session_with_topic;
@@ -135,11 +137,11 @@ fn orchestrate_with_config_and_session(
 fn initial_messages_for_session(
     session: &mut SessionManagement,
 ) -> Result<Vec<serde_json::Value>, String> {
+    let permissions_message = serde_json::json!({
+        "role": "developer",
+        "content": permissions_instructions(),
+    });
     if session.session_current_turn == 0 && !session_has_initial_user_message(session) {
-        let permissions_message = serde_json::json!({
-            "role": "developer",
-            "content": permissions_instructions(),
-        });
         let snapshot_message = serde_json::json!({
             "role": "user",
             "content": workspace_snapshot_message(&session.session_directory),
@@ -178,10 +180,17 @@ fn initial_messages_for_session(
         ]);
     }
 
-    Ok(vec![serde_json::json!({
-        "role": "user",
-        "content": session.input.user_input,
-    })])
+    if !session_has_initial_user_message(session) {
+        accumulate_message(
+            session,
+            "user",
+            serde_json::Value::String(session.input.user_input.clone()),
+        )?;
+    }
+
+    let mut messages = vec![permissions_message];
+    messages.extend(build_messages_from_session(session));
+    Ok(messages)
 }
 
 fn permissions_instructions() -> &'static str {
@@ -369,6 +378,78 @@ mod tests {
             .any(|entry| entry == "persisted-session-loaded"));
 
         let _ = fs::remove_dir_all(session.session_directory);
+    }
+
+    #[test]
+    fn resumed_session_initial_messages_include_prior_image_tool_context_and_new_user_turn() {
+        let root = std::env::temp_dir().join(format!(
+            "tura-resume-image-context-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        fs::create_dir_all(&root).expect("test workspace should be created");
+        let old_input = SessionInput {
+            user_input: "inspect image".to_string(),
+            file_input: Vec::new(),
+            agent: None,
+            runtime_context: None,
+        };
+        let mut session = SessionManagement::new(
+            "resume-image-session".to_string(),
+            "resume-image".to_string(),
+            root.clone(),
+            false,
+            "coding".to_string(),
+            old_input,
+            "inspect image".to_string(),
+            Utc::now(),
+        );
+        session.session_current_turn = 2;
+        session.push_log(
+            serde_json::json!({
+                "type": "tool_result",
+                "tool_name": "command_run",
+                "context_messages": [
+                    {
+                        "type": "function_call",
+                        "name": "command_run",
+                        "call_id": "call_image",
+                        "arguments": "{\"commands\":[]}",
+                        "status": "completed"
+                    },
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call_image",
+                        "output": [
+                            {"type": "input_text", "text": "image inspected"},
+                            {"type": "input_image", "image_url": "data:image/png;base64,AAA"}
+                        ]
+                    }
+                ]
+            })
+            .to_string(),
+            Utc::now(),
+        );
+        session.prepare_for_new_user_turn(
+            SessionInput {
+                user_input: "what was in the previous image?".to_string(),
+                file_input: Vec::new(),
+                agent: None,
+                runtime_context: None,
+            },
+            Utc::now(),
+        );
+
+        let messages =
+            initial_messages_for_session(&mut session).expect("resume messages should build");
+        let serialized = serde_json::to_string(&messages).expect("messages json");
+
+        assert!(serialized.contains("data:image/png;base64,AAA"));
+        assert!(serialized.contains("what was in the previous image?"));
+        assert!(messages.iter().any(|message| {
+            message.get("role").and_then(serde_json::Value::as_str) == Some("developer")
+        }));
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

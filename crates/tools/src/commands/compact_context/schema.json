@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "Context checkpoint text to preserve for the next model turn."
+    }
+  },
+  "required": ["summary"],
+  "additionalProperties": false
+}

@@ -399,7 +399,10 @@ name = "code-tools"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64",
  "futures",
+ "image",
+ "pdfium-render",
  "serde",
  "serde_json",
  "tokio",
