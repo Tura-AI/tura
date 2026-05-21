@@ -38,18 +38,18 @@ fn approximate_message_tokens(messages: &[serde_json::Value]) -> usize {
 
 fn estimate_message_model_visible_chars(message: &serde_json::Value) -> usize {
     let raw = serde_json::to_string(message).unwrap_or_default().len();
-    let mut image_payload_chars = 0usize;
-    let mut image_replacement_chars = 0usize;
-    accumulate_image_data_url_estimate_adjustment(
+    let mut media_payload_chars = 0usize;
+    let mut media_replacement_chars = 0usize;
+    accumulate_media_payload_estimate_adjustment(
         message,
-        &mut image_payload_chars,
-        &mut image_replacement_chars,
+        &mut media_payload_chars,
+        &mut media_replacement_chars,
     );
-    raw.saturating_sub(image_payload_chars)
-        .saturating_add(image_replacement_chars)
+    raw.saturating_sub(media_payload_chars)
+        .saturating_add(media_replacement_chars)
 }
 
-fn accumulate_image_data_url_estimate_adjustment(
+fn accumulate_media_payload_estimate_adjustment(
     value: &serde_json::Value,
     payload_chars: &mut usize,
     replacement_chars: &mut usize,
@@ -59,14 +59,35 @@ fn accumulate_image_data_url_estimate_adjustment(
             if object.get("type").and_then(serde_json::Value::as_str) == Some("input_image") {
                 if let Some(image_url) = object.get("image_url").and_then(serde_json::Value::as_str)
                 {
-                    if let Some(payload) = parse_base64_image_data_url(image_url) {
+                    if let Some(payload) = parse_base64_media_data_url(image_url, "image/") {
                         *payload_chars = payload_chars.saturating_add(payload.len());
                         *replacement_chars = replacement_chars.saturating_add(4096);
                     }
                 }
             }
+            if object.get("type").and_then(serde_json::Value::as_str) == Some("input_audio") {
+                if let Some(payload) = object
+                    .get("input_audio")
+                    .and_then(|input_audio| input_audio.get("data"))
+                    .and_then(serde_json::Value::as_str)
+                {
+                    *payload_chars = payload_chars.saturating_add(payload.len());
+                    *replacement_chars = replacement_chars.saturating_add(8192);
+                }
+                if let Some(audio_url) = object
+                    .get("audio_url")
+                    .or_else(|| object.get("input_audio"))
+                    .and_then(|audio| audio.get("url"))
+                    .and_then(serde_json::Value::as_str)
+                {
+                    if let Some(payload) = parse_base64_media_data_url(audio_url, "audio/") {
+                        *payload_chars = payload_chars.saturating_add(payload.len());
+                        *replacement_chars = replacement_chars.saturating_add(8192);
+                    }
+                }
+            }
             for child in object.values() {
-                accumulate_image_data_url_estimate_adjustment(
+                accumulate_media_payload_estimate_adjustment(
                     child,
                     payload_chars,
                     replacement_chars,
@@ -75,7 +96,7 @@ fn accumulate_image_data_url_estimate_adjustment(
         }
         serde_json::Value::Array(items) => {
             for item in items {
-                accumulate_image_data_url_estimate_adjustment(
+                accumulate_media_payload_estimate_adjustment(
                     item,
                     payload_chars,
                     replacement_chars,
@@ -86,7 +107,7 @@ fn accumulate_image_data_url_estimate_adjustment(
     }
 }
 
-fn parse_base64_image_data_url(url: &str) -> Option<&str> {
+fn parse_base64_media_data_url<'a>(url: &'a str, mime_prefix: &str) -> Option<&'a str> {
     if !url
         .get(.."data:".len())
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"))
@@ -101,8 +122,8 @@ fn parse_base64_image_data_url(url: &str) -> Option<&str> {
     let mime_type = metadata_parts.next().unwrap_or_default();
     let has_base64_marker = metadata_parts.any(|part| part.eq_ignore_ascii_case("base64"));
     if !mime_type
-        .get(.."image/".len())
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("image/"))
+        .get(..mime_prefix.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(mime_prefix))
     {
         return None;
     }
@@ -343,6 +364,54 @@ mod tests {
             })],
             &session,
             "remember the image",
+        );
+        let joined = messages
+            .iter()
+            .map(|message| message.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(!joined.contains("above about 220,000 tokens"));
+        std::env::remove_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD");
+    }
+
+    #[test]
+    fn audio_payloads_are_discounted_for_compact_threshold_estimation() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        std::env::set_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD", "50000");
+        let now = Utc::now();
+        let session = SessionManagement::new(
+            "sess-audio-estimate".to_string(),
+            "audio estimate".to_string(),
+            PathBuf::from("C:/workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "remember the audio".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+            },
+            "remember the audio".to_string(),
+            now,
+        );
+
+        let messages = messages_for_turn(
+            &[serde_json::json!({
+                "type": "function_call_output",
+                "call_id": "call_audio",
+                "output": [
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "format": "mp3",
+                            "data": "A".repeat(240_000)
+                        }
+                    }
+                ]
+            })],
+            &session,
+            "remember the audio",
         );
         let joined = messages
             .iter()

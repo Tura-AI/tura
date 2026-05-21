@@ -1,4 +1,4 @@
-Use `multiple_tasks` only when the user explicitly gives multiple independent goal tasks with separate deliverables. Call it only right after receiving that request and before execution starts. Do not call it in the middle of execution.
+Use `multiple_tasks` only when the user explicitly gives multiple independent goal tasks with separate deliverables. Call it only right after receiving that request, or after reading code and documentation reveals the task's true complexity, and before execution starts. Do not call it in the middle of execution.
 
 Do not use `multiple_tasks` for a single goal that merely needs several execution steps such as inspect, edit, test, and summarize. Multi-step execution inside one goal is not multiple tasks. If the request is one objective, even a hard one, `multiple_tasks` is forbidden.
 

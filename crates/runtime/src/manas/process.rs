@@ -140,6 +140,15 @@ pub fn process_manas_internal(
             let error_text = runtime_failure_text(&runtime)
                 .unwrap_or_else(|| "Provider runtime failed before producing output.".to_string());
             if let Some(wait_duration) = provider_timeout_retry_wait(provider_timeout_retries) {
+                let removed_media = provider_unsupported_content_type(&error_text)
+                    .map(|content_type| {
+                        let removed = replace_unsupported_content_type_in_messages(
+                            &mut current_messages,
+                            content_type,
+                        );
+                        (content_type, removed)
+                    })
+                    .filter(|(_, removed)| *removed > 0);
                 provider_timeout_retries = provider_timeout_retries.saturating_add(1);
                 warn!(
                     session_id = %session.session_id,
@@ -152,6 +161,14 @@ pub fn process_manas_internal(
                     "provider runtime failed transiently; waiting before retrying with full tool set"
                 );
                 thread::sleep(wait_duration);
+                if let Some((content_type, removed)) = removed_media {
+                    current_messages.push(serde_json::json!({
+                        "role": "system",
+                        "content": format!(
+                            "The provider rejected `{content_type}` media content. {removed} item(s) were omitted from the next request and replaced with text placeholders; continue using the remaining text and supported media."
+                        )
+                    }));
+                }
                 current_messages.push(serde_json::json!({
                     "role": "system",
                     "content": format!("Provider failure while waiting for the model response: {error_text}. This is transient provider failure retry {} of 3, not task completion. Retry the current task with the normal command_run tool unless the requested edits and validation are actually complete.", provider_timeout_retries)
@@ -758,6 +775,61 @@ fn runtime_failure_text(runtime: &RuntimeManagement) -> Option<String> {
         })
 }
 
+fn provider_unsupported_content_type(error_text: &str) -> Option<&'static str> {
+    let normalized = error_text.to_ascii_lowercase();
+    if normalized.contains("invalid file data") || normalized.contains("unsupported mime type") {
+        return Some("input_file");
+    }
+    for content_type in ["input_file", "input_image", "input_audio"] {
+        let quoted = format!("'{content_type}'");
+        let double_quoted = format!("\"{content_type}\"");
+        if normalized.contains("invalid value")
+            && (normalized.contains(&quoted) || normalized.contains(&double_quoted))
+        {
+            return Some(content_type);
+        }
+    }
+    None
+}
+
+fn replace_unsupported_content_type_in_messages(
+    messages: &mut [serde_json::Value],
+    content_type: &'static str,
+) -> usize {
+    messages
+        .iter_mut()
+        .map(|message| replace_unsupported_content_type(message, content_type))
+        .sum()
+}
+
+fn replace_unsupported_content_type(
+    value: &mut serde_json::Value,
+    content_type: &'static str,
+) -> usize {
+    match value {
+        serde_json::Value::Object(object) => {
+            if object.get("type").and_then(serde_json::Value::as_str) == Some(content_type) {
+                *value = serde_json::json!({
+                    "type": "input_text",
+                    "text": format!(
+                        "[Unsupported media omitted: provider rejected `{content_type}` content.]"
+                    )
+                });
+                return 1;
+            }
+            object
+                .values_mut()
+                .map(|child| replace_unsupported_content_type(child, content_type))
+                .sum()
+        }
+        serde_json::Value::Array(items) => items
+            .iter_mut()
+            .map(|child| replace_unsupported_content_type(child, content_type))
+            .sum(),
+        _ => 0,
+    }
+}
+
 fn apply_validator_reliability_feedback(runtime: &RuntimeManagement) {
     for record in &runtime.tool_call {
         let Some(success) = record.validator_reported_success else {
@@ -939,9 +1011,10 @@ mod tests {
     use super::{
         filter_tools_for_turn, load_agent_prompt_messages, messages_with_initial_context_prefix,
         normalize_tool_arguments, normalize_tool_arguments_for_tool, provider_timeout_retry_wait,
-        remove_tool, require_multiple_tasks_tool_for_multiple_tasks_mode,
-        runtime_failure_allows_retry, runtime_failure_text, user_visible_runtime_text,
-        COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL,
+        provider_unsupported_content_type, remove_tool,
+        replace_unsupported_content_type_in_messages,
+        require_multiple_tasks_tool_for_multiple_tasks_mode, runtime_failure_allows_retry,
+        runtime_failure_text, user_visible_runtime_text, COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL,
     };
     use crate::state_machine::agent_management::{
         AgentCapabilityItem, AgentManagement, AgentPromptItem, ProviderConfig, ToolChoice,
@@ -969,6 +1042,30 @@ mod tests {
             Some(std::time::Duration::from_secs(45))
         );
         assert_eq!(provider_timeout_retry_wait(3), None);
+    }
+
+    #[test]
+    fn provider_schema_error_removes_rejected_media_content_type() {
+        let error = "http status 400: Invalid value: 'input_file'. Supported values are: 'input_text', 'input_image'";
+        assert_eq!(provider_unsupported_content_type(error), Some("input_file"));
+
+        let mut messages = vec![json!({
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": [
+                { "type": "input_text", "text": "kept" },
+                { "type": "input_file", "filename": "tone.mp3", "file_data": "data:audio/mpeg;base64,QUJD" },
+                { "type": "input_image", "image_url": "data:image/jpeg;base64,AAA" }
+            ]
+        })];
+
+        let removed = replace_unsupported_content_type_in_messages(&mut messages, "input_file");
+        assert_eq!(removed, 1);
+        let serialized = serde_json::to_string(&messages).expect("serialize");
+        assert!(serialized.contains("Unsupported media omitted"));
+        assert!(serialized.contains("input_image"));
+        assert!(!serialized.contains("file_data"));
+        assert!(!serialized.contains("tone.mp3"));
     }
 
     #[test]

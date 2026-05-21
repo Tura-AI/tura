@@ -496,8 +496,8 @@ async fn parse_codex_response_stream(
     let mut saw_output = false;
     let mut last_output_at = Instant::now();
 
-    while let Some(chunk) = next_provider_stream_chunk(&mut stream, saw_output, last_output_at)
-        .await?
+    while let Some(chunk) =
+        next_provider_stream_chunk(&mut stream, saw_output, last_output_at).await?
     {
         let chunk = chunk.map_err(|err| TuraError::Network {
             message: err.to_string(),
@@ -1293,8 +1293,8 @@ async fn stream_call(
     let mut saw_output = false;
     let mut last_output_at = Instant::now();
 
-    while let Some(chunk) = next_provider_stream_chunk(&mut stream, saw_output, last_output_at)
-        .await?
+    while let Some(chunk) =
+        next_provider_stream_chunk(&mut stream, saw_output, last_output_at).await?
     {
         let data = chunk.map_err(|e| TuraError::Network {
             message: e.to_string(),

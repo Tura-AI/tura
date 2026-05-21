@@ -254,6 +254,7 @@ pub struct ToolRouter {
     compact_context: crate::commands::compact_context::CompactContextHandler,
     multiple_tasks: crate::commands::multiple_tasks::MultipleTasksHandler,
     read_media: crate::commands::read_media::ReadMediaHandler,
+    web_discover: crate::commands::web_discover::WebDiscoverHandler,
 }
 
 impl ToolRouter {
@@ -265,6 +266,7 @@ impl ToolRouter {
             compact_context: crate::commands::compact_context::CompactContextHandler,
             multiple_tasks: crate::commands::multiple_tasks::MultipleTasksHandler,
             read_media: crate::commands::read_media::ReadMediaHandler,
+            web_discover: crate::commands::web_discover::WebDiscoverHandler,
         }
     }
 
@@ -276,6 +278,7 @@ impl ToolRouter {
             "compact_context" => Some("compact_context"),
             "multiple_tasks" if multiple_tasks_command_enabled() => Some("multiple_tasks"),
             "read_media" => Some("read_media"),
+            "web_discover" => Some("web_discover"),
             _ => None,
         }
     }
@@ -288,6 +291,7 @@ impl ToolRouter {
             "compact_context" => Some(&self.compact_context),
             "multiple_tasks" if multiple_tasks_command_enabled() => Some(&self.multiple_tasks),
             "read_media" => Some(&self.read_media),
+            "web_discover" => Some(&self.web_discover),
             _ => None,
         }
     }

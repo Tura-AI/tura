@@ -14,6 +14,45 @@ function Test-CommandAvailable {
   $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Ensure-PythonRequirements {
+  $python = Get-Command python -ErrorAction SilentlyContinue
+  if (-not $python) {
+    Write-Warning "Python was not found; skipping requirements.txt installation."
+    return
+  }
+
+  $requirementsPath = Join-Path $repoRoot "requirements.txt"
+  if (-not (Test-Path $requirementsPath)) {
+    return
+  }
+
+  $checkScript = @"
+import importlib.util
+import sys
+
+packages = {
+    "ddgs": "ddgs",
+    "duckduckgo-search": "duckduckgo_search",
+    "imageio-ffmpeg": "imageio_ffmpeg",
+    "opencv-python": "cv2",
+    "Pillow": "PIL",
+    "PyMuPDF": "fitz",
+    "yt-dlp": "yt_dlp",
+}
+
+missing = [name for name, module in packages.items() if importlib.util.find_spec(module) is None]
+if missing:
+    print(", ".join(missing))
+    sys.exit(1)
+"@
+
+  python -c $checkScript
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "Installing missing Python requirements from requirements.txt..."
+    python -m pip install -r $requirementsPath
+  }
+}
+
 function Ensure-ReadMediaFallbacks {
   $python = Get-Command python -ErrorAction SilentlyContinue
   if ($python) {
@@ -29,8 +68,13 @@ function Ensure-ReadMediaFallbacks {
     return
   }
   if (-not $python) {
-    Write-Warning "read_media video previews need ffmpeg or python with opencv-python. Neither python nor ffmpeg was found."
+    Write-Warning "read_media video/audio previews need ffmpeg. Install ffmpeg or Python with imageio-ffmpeg."
     return
+  }
+  python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())" 2>$null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "Installing read_media project ffmpeg package imageio-ffmpeg..."
+    python -m pip install imageio-ffmpeg
   }
   python -c "import cv2" 2>$null
   if ($LASTEXITCODE -eq 0) {
@@ -38,6 +82,32 @@ function Ensure-ReadMediaFallbacks {
   }
   Write-Host "Installing read_media fallback package opencv-python..."
   python -m pip install opencv-python
+}
+
+function Ensure-WebDiscoverFallbacks {
+  $python = Get-Command python -ErrorAction SilentlyContinue
+  if (-not $python) {
+    Write-Warning "web_discover DuckDuckGo image fallback needs Python with the ddgs package."
+    return
+  }
+  python -c "import ddgs" 2>$null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "Installing web_discover DuckDuckGo image fallback package ddgs..."
+    python -m pip install ddgs
+  }
+  python -c "import duckduckgo_search" 2>$null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "Installing web_discover DuckDuckGo text fallback package duckduckgo-search..."
+    python -m pip install duckduckgo-search
+  }
+  $ytdlp = Get-Command yt-dlp -ErrorAction SilentlyContinue
+  if (-not $ytdlp) {
+    python -c "import yt_dlp" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host "Installing web_discover downloader package yt-dlp..."
+      python -m pip install yt-dlp
+    }
+  }
 }
 
 function Ensure-PlaywrightNodeSupport {
@@ -60,7 +130,9 @@ function Ensure-PlaywrightNodeSupport {
   npx playwright install chromium
 }
 
+Ensure-PythonRequirements
 Ensure-ReadMediaFallbacks
+Ensure-WebDiscoverFallbacks
 Ensure-PlaywrightNodeSupport
 
 if ($BuildOnly) {

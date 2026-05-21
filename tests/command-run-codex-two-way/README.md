@@ -12,6 +12,7 @@ This folder is a standalone copy of the command-run benchmark focused on the two
 - `command_run_compact_context_e2e.mjs` directly probes the Tura `compact_context` command and verifies that long contexts can be replaced by a compact handoff without resetting the session state machine.
 - `command_run_read_media_e2e.mjs` verifies `read_media` command execution and context size behavior for images, PDFs, and videos.
 - `command_run_media_recall_e2e.mjs` verifies that media observations remain recallable across turns without retaining raw base64 in context.
+- `command_run_newjeans_official_media_e2e.mjs` runs a live web/media task with `tura-fast-shll` by default: download official unified-style NewJeans headshots for Minji, Hanni, Danielle, Haerin, and Hyein, inspect them with `read_media`, and report operations, session logs, token usage, and the required `SAME_STYLE` verdict.
 - `command_run_frontend_playwright_e2e.mjs` compares current, codex-main, and Tura on a Playwright-heavy frontend repair task with live per-agent logs and hidden validation.
 - `records/summaries/` contains the existing `command-run-agent-three-way-*.json` summary reports.
 - `records/runs/` contains the existing per-run `codex-current/` and `codex-main/` execution logs, including stdout JSONL, stderr, and last-message files when present.

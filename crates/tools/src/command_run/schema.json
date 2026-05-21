@@ -1,6 +1,6 @@
 {
   "name": "command_run",
-  "description": "Run Codex tools as a pure batch+step command runner. Always use commands[]. Prefer one complete batch for predictable work: discover/read/search the needed context, edit, test, and validate in ordered steps when dependencies are clear. Keep related path listing, targeted search, and candidate file reads in the same batch and same read-only step when they are independent. Use early steps for needed discovery/read/search commands and later steps for apply_patch, generated writes, tests, builds, and verification that should wait for earlier results. Mutating or unknown commands act as barriers and run one at a time. Different steps run in ascending order.",
+  "description": "Run Codex tools as a pure batch+step command runner. Always use commands[]. Prefer one complete batch for predictable work: discover/read/search/download the needed context, edit, test, and validate in ordered steps when dependencies are clear. Keep related path listing, targeted search, downloaded artifact discovery, and candidate file reads in the same batch and same read-only step when they are independent. Use early steps for needed discovery/read/search/download commands and later steps for apply_patch, generated writes, tests, builds, and verification that should wait for earlier results. Mutating or unknown commands act as barriers and run one at a time. Different steps run in ascending order.",
   "input_schema": {
     "type": "object",
     "required": ["commands"],
@@ -29,6 +29,12 @@
               "minimum": 1,
               "x-tura-optional": true,
               "description": "Execution stage. Use the same step for independent discovery/read commands and later steps for edits, tests, and validation that depend on earlier output. Commands with the same step may run concurrently when they are safe read-only work; later steps wait for earlier steps. If using compact_context, it must be the final command in the highest step."
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "minimum": 1,
+              "x-tura-optional": true,
+              "description": "Per-command timeout in milliseconds. Defaults to 90000."
             }
           }
         }

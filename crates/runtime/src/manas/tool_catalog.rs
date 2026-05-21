@@ -368,12 +368,14 @@ fn command_run_description_for_active_shell(original: &str) -> String {
         code_tools::commands::bash::PROMPT
     };
     let mut description = format!(
-        "{prefix} Available commands: apply_patch, {active}, read_media, compact_context.\nCommand run patterns:\n{}\nCommand line formats:\n- apply_patch: {}\n- {active}: {}\n- read_media: {} Schema: {}\n- compact_context: {} Schema: {}",
+        "{prefix} Available commands: apply_patch, {active}, read_media, web_discover, compact_context.\nCommand run patterns:\n{}\nCommand line formats:\n- apply_patch: {}\n- {active}: {}\n- read_media: {} Schema: {}\n- web_discover: {} Schema: {}\n- compact_context: {} Schema: {}",
         command_run_usage_patterns(),
         current_apply_patch_command_format(),
         current_shell_command_format(active, shell_prompt),
         compact_prompt(code_tools::commands::read_media::PROMPT),
         compact_schema(code_tools::commands::read_media::SCHEMA),
+        compact_prompt(code_tools::commands::web_discover::PROMPT),
+        compact_schema(code_tools::commands::web_discover::SCHEMA),
         compact_prompt(code_tools::commands::compact_context::PROMPT),
         compact_schema(code_tools::commands::compact_context::SCHEMA),
     );
@@ -384,8 +386,8 @@ fn command_run_description_for_active_shell(original: &str) -> String {
             compact_schema(code_tools::commands::multiple_tasks::SCHEMA),
         ));
         description = description.replace(
-            &format!("Available commands: apply_patch, {active}, read_media, compact_context."),
-            &format!("Available commands: apply_patch, {active}, read_media, compact_context, multiple_tasks."),
+            &format!("Available commands: apply_patch, {active}, read_media, web_discover, compact_context."),
+            &format!("Available commands: apply_patch, {active}, read_media, web_discover, compact_context, multiple_tasks."),
         );
     }
     description
@@ -400,12 +402,15 @@ fn command_run_usage_patterns() -> &'static str {
 - Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.
 - Context compaction: after a meaningful phase completes, or when context is near 200,000 tokens and feels crowded, put `compact_context` as the final command in the highest step with a concise handoff summary for the next turn.
 - Example investigation batch: step 1 needed `rg --files`, targeted `rg -n`, and candidate file reads.
-- Example repair batch: step 1 needed reads/searches, step 2 `apply_patch` across related files, step 3 the narrow test and focused validation searches."#
+- Example repair batch: step 1 `apply_patch` across related files, step 2 write or update a focused test script when needed, step 3 run the narrow test and focused validation searches.
+- Example media batch: step 1 use `web_discover` or generation to collect the needed media, docs, or repo artifacts, step 2 use `read_media` or focused reads to verify the resulting media or repo content."#
 }
 
 fn current_apply_patch_command_format() -> String {
     let grammar = "start: begin_patch hunk+ end_patch\nbegin_patch: \"*** Begin Patch\" LF\nend_patch: \"*** End Patch\" LF?\n\nhunk: add_hunk | delete_hunk | update_hunk\nadd_hunk: \"*** Add File: \" filename LF add_line+\ndelete_hunk: \"*** Delete File: \" filename LF\nupdate_hunk: \"*** Update File: \" filename LF change_move? change?\n\nfilename: /(.+)/\nadd_line: \"+\" /(.*)/ LF -> line\n\nchange_move: \"*** Move to: \" filename LF\nchange: (change_context | change_line)+ eof_line?\nchange_context: (\"@@\" | \"@@ \" /(.+)/) LF\nchange_line: (\"+\" | \"-\" | \" \") /(.*)/ LF\neof_line: \"*** End of File\" LF\n\n%import common.LF\n";
-    format!("Use one patch for coordinated multi-file source edits after reads. Patches validate context and fail on mismatch. Raw freeform body. Format type `grammar`, syntax `lark`. Definition: {grammar}")
+    format!(
+        "Use one patch for coordinated multi-file source edits after reads. Patches validate context and fail on mismatch. Raw freeform body. Format type `grammar`, syntax `lark`. Definition: {grammar}"
+    )
 }
 
 fn current_shell_command_format(active: &str, shell_prompt: &str) -> String {
@@ -652,10 +657,11 @@ mod tests {
             .unwrap_or_default();
 
         assert!(description.contains(
-            "Available commands: apply_patch, shell_command, read_media, compact_context."
+            "Available commands: apply_patch, shell_command, read_media, web_discover, compact_context."
         ));
         assert!(description.contains("- shell_command:"));
         assert!(description.contains("- read_media:"));
+        assert!(description.contains("- web_discover:"));
         assert!(description.contains("- compact_context:"));
         assert!(!description.contains("- multiple_tasks:"));
         assert!(description.contains("\"command\":{\"type\":\"string\""));
@@ -679,10 +685,12 @@ mod tests {
             .as_str()
             .unwrap_or_default();
 
-        assert!(description
-            .contains("Available commands: apply_patch, bash, read_media, compact_context."));
+        assert!(description.contains(
+            "Available commands: apply_patch, bash, read_media, web_discover, compact_context."
+        ));
         assert!(description.contains("- bash:"));
         assert!(description.contains("- read_media:"));
+        assert!(description.contains("- web_discover:"));
         assert!(description.contains("- compact_context:"));
         assert!(!description.contains("- multiple_tasks:"));
         assert!(description.contains("\"command\":{\"type\":\"string\""));
@@ -705,7 +713,7 @@ mod tests {
             .unwrap_or_default();
 
         assert!(description.contains(
-            "Available commands: apply_patch, shell_command, read_media, compact_context, multiple_tasks."
+            "Available commands: apply_patch, shell_command, read_media, web_discover, compact_context, multiple_tasks."
         ));
         assert!(description.contains("- multiple_tasks:"));
 

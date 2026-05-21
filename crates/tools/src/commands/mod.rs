@@ -4,6 +4,7 @@ pub mod compact_context;
 pub mod multiple_tasks;
 pub mod read_media;
 pub mod shell_command;
+pub mod web_discover;
 
 use crate::runtime::file_locks::Access;
 use serde_json::Value;
@@ -34,6 +35,7 @@ pub fn execute(
         }
         "read_media" => read_media::execute(command_line, session_dir),
         "shell_command" => shell_command::execute(command_line, session_dir, timeout_secs),
+        "web_discover" => web_discover::execute(command_line, session_dir, timeout_secs),
         other => CommandResponse {
             success: false,
             exit_code: 1,
@@ -51,6 +53,7 @@ pub fn access(command: &str, command_line: &str, session_dir: &Path) -> Access {
         "compact_context" => Access::default(),
         "multiple_tasks" if multiple_tasks_command_enabled() => Access::default(),
         "read_media" => read_media::access(command_line, session_dir),
+        "web_discover" => web_discover::access(command_line, session_dir),
         "shell_command" | "bash" if shell_command::looks_read_only(command_line) => {
             Access::default()
         }
@@ -80,6 +83,9 @@ pub fn display_command(
     if canonical_command(command) == "read_media" {
         return "read_media".to_string();
     }
+    if canonical_command(command) == "web_discover" {
+        return "web_discover".to_string();
+    }
     shell_command::display_command(command_line, session_dir, timeout_secs)
 }
 
@@ -101,6 +107,9 @@ pub fn canonical_command(name: &str) -> String {
         }
         "multiple_tasks" => "multiple_tasks".to_string(),
         "read_media" | "view_media" | "inspect_media" => "read_media".to_string(),
+        "web_discover" | "web_search" | "web_fetch" | "discover_web" | "search_web" => {
+            "web_discover".to_string()
+        }
         "task_delivered" => "task_delivered".to_string(),
         other => other.to_string(),
     }

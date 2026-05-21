@@ -6,6 +6,7 @@ allowed_network_during_setup = true
 cache = ".tura/packages/read_media"
 
 dependencies = [
+  "imageio-ffmpeg",
   "opencv-python",
   "pillow",
   "pymupdf",

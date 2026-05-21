@@ -1,14 +1,14 @@
-Use `read_media` when the task depends on local PDFs, images, screenshots, videos, or generated media artifacts.
+Use `read_media` to inspect local images, PDFs, videos, audio, documents, and generated media artifacts.
 
-`command_line` must be a JSON object. Always use `paths`, even for one file:
+Input is CLI-style. Positional values are files or directories; options apply globally:
 
-```json
-{"paths":["brief.pdf","profile.png"],"include_text":true,"max_text_chars":40000,"max_visuals":6}
+```text
+media/downloads --max-files 10 --max-side 512
 ```
 
 Behavior:
-- Images return compact metadata and a downscaled JPEG preview.
-- PDFs return extracted text when available plus compressed page previews.
-- Videos return sampled compressed frame previews.
-- Use this to inspect or validate media deliverables. It is for local files, not web search.
-- Prefer workspace-relative paths when the media is inside the session workspace. If the user provided an absolute path, pass it unchanged.
+- One file: PDFs can return text/pages, videos can return frames/compressed audio, audio returns compressed audio capped to 1000000 bytes, text/code returns text, and supported small binary docs can be attached.
+- Directory or multiple files: read the newest `max_files` files and return one compact thumbnail per file in a top-level contact sheet.
+- Unknown binary formats are not uploaded; they return metadata/text placeholders.
+- Defaults: `max_files=20`, `max_visuals=6`, `max_side=512`, `max_text_chars=40000`.
+- Prefer passing a media directory directly when you need to verify newly downloaded/generated media in the same batch.

@@ -525,6 +525,18 @@ fn command_run_media_content_items_for_context(
             "image_url": image_url,
         }));
     }
+    let audio_preview_count = command_run_media_audio_preview_count(value);
+    if audio_preview_count > 0 {
+        content.push(serde_json::json!({
+            "type": "input_text",
+            "text": format!(
+                "[Audio media omitted: {audio_preview_count} compressed audio preview(s) were produced by read_media, but the current Responses provider does not support audio input. Use the visual previews, metadata, and any extracted text instead.]"
+            ),
+        }));
+    }
+    for input_file in command_run_media_input_files(value).into_iter().take(8) {
+        content.push(input_file);
+    }
     Some(content)
 }
 
@@ -533,12 +545,12 @@ fn command_run_current_style_output_string_without_media_data(
 ) -> Option<String> {
     let mut value = value.clone();
     if let Some(output) = value.get_mut("output") {
-        strip_read_media_image_data(output);
+        strip_read_media_payload_data(output);
     }
     command_run_current_style_output_string(&value)
 }
 
-fn strip_read_media_image_data(value: &mut serde_json::Value) {
+fn strip_read_media_payload_data(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(object) => {
             if object.contains_key("visual_previews") {
@@ -551,13 +563,33 @@ fn strip_read_media_image_data(value: &mut serde_json::Value) {
                     object.remove("visual_previews");
                 }
             }
+            if object.contains_key("audio_previews") {
+                if let Some(count) = object.get("audio_preview_count").cloned() {
+                    object.insert(
+                        "audio_previews".to_string(),
+                        serde_json::json!({ "omitted_from_text": true, "count": count }),
+                    );
+                } else {
+                    object.remove("audio_previews");
+                }
+            }
+            if object.contains_key("file_attachments") {
+                if let Some(count) = object.get("file_attachment_count").cloned() {
+                    object.insert(
+                        "file_attachments".to_string(),
+                        serde_json::json!({ "omitted_from_text": true, "count": count }),
+                    );
+                } else {
+                    object.remove("file_attachments");
+                }
+            }
             for child in object.values_mut() {
-                strip_read_media_image_data(child);
+                strip_read_media_payload_data(child);
             }
         }
         serde_json::Value::Array(items) => {
             for item in items {
-                strip_read_media_image_data(item);
+                strip_read_media_payload_data(item);
             }
         }
         _ => {}
@@ -589,6 +621,79 @@ fn collect_command_run_media_image_urls(value: &serde_json::Value, urls: &mut Ve
         serde_json::Value::Array(items) => {
             for item in items {
                 collect_command_run_media_image_urls(item, urls);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn command_run_media_input_files(value: &serde_json::Value) -> Vec<serde_json::Value> {
+    let mut inputs = Vec::new();
+    collect_command_run_media_input_files(value.get("output").unwrap_or(value), &mut inputs);
+    inputs
+}
+
+fn collect_command_run_media_input_files(
+    value: &serde_json::Value,
+    inputs: &mut Vec<serde_json::Value>,
+) {
+    match value {
+        serde_json::Value::Object(object) => {
+            if object.get("type").and_then(serde_json::Value::as_str) == Some("file") {
+                if let Some(data) = object
+                    .get("data_base64")
+                    .and_then(serde_json::Value::as_str)
+                {
+                    let file_name = object
+                        .get("file_name")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("attachment");
+                    let mime_type = object
+                        .get("mime_type")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("application/octet-stream");
+                    if mime_type == "application/octet-stream" {
+                        return;
+                    }
+                    inputs.push(serde_json::json!({
+                        "type": "input_file",
+                        "filename": file_name,
+                        "file_data": format!("data:{mime_type};base64,{data}"),
+                    }));
+                }
+            }
+            for child in object.values() {
+                collect_command_run_media_input_files(child, inputs);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_command_run_media_input_files(item, inputs);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn command_run_media_audio_preview_count(value: &serde_json::Value) -> usize {
+    let mut count = 0;
+    collect_command_run_media_audio_preview_count(value.get("output").unwrap_or(value), &mut count);
+    count
+}
+
+fn collect_command_run_media_audio_preview_count(value: &serde_json::Value, count: &mut usize) {
+    match value {
+        serde_json::Value::Object(object) => {
+            if object.get("type").and_then(serde_json::Value::as_str) == Some("audio_url") {
+                *count += 1;
+            }
+            for child in object.values() {
+                collect_command_run_media_audio_preview_count(child, count);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_command_run_media_audio_preview_count(item, count);
             }
         }
         _ => {}
@@ -2883,6 +2988,117 @@ mod tests {
         let text = items[0]["text"].as_str().expect("text item");
         assert!(text.contains("\"visual_preview_count\": 1"));
         assert!(!text.contains("data:image/jpeg;base64,AAA"));
+    }
+
+    #[test]
+    fn read_media_command_run_context_omits_audio_media_without_base64_text_bloat() {
+        let output = command_run_function_output_payload_for_context(&json!({
+            "tool_name": "command_run",
+            "input": {
+                "commands": [
+                    { "command_type": "read_media", "command_line": "{\"paths\":[\"tone.wav\"]}" }
+                ]
+            },
+            "output": {
+                "results": [
+                    {
+                        "step": 1,
+                        "command_type": "read_media",
+                        "success": true,
+                        "output": {
+                            "media_results": [
+                                {
+                                    "path": "tone.wav",
+                                    "success": true,
+                                    "media_type": "audio",
+                                    "extracted_text": "",
+                                    "visual_preview_count": 0,
+                                    "visual_previews": [],
+                                    "audio_preview_count": 1,
+                                    "audio_previews": [
+                                        {
+                                            "type": "audio_url",
+                                            "audio_url": {
+                                                "url": "data:audio/mpeg;base64,QUJD",
+                                                "format": "mp3"
+                                            }
+                                        }
+                                    ]
+                                }
+                            ],
+                            "summary_markdown": "- tone.wav: audio, 0 visual previews, 1 audio previews"
+                        }
+                    }
+                ]
+            }
+        }));
+        let items = output.as_array().expect("content items");
+        assert_eq!(items[0]["type"], "input_text");
+        assert_eq!(items[1]["type"], "input_text");
+        assert!(items[1]["text"]
+            .as_str()
+            .expect("audio placeholder")
+            .contains("Audio media omitted"));
+        let text = items[0]["text"].as_str().expect("text item");
+        assert!(text.contains("\"audio_preview_count\": 1"));
+        assert!(!text.contains("data:audio/mpeg;base64,QUJD"));
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn read_media_command_run_context_returns_document_attachment_as_input_file_without_base64_text_bloat(
+    ) {
+        let output = command_run_function_output_payload_for_context(&json!({
+            "tool_name": "command_run",
+            "input": {
+                "commands": [
+                    { "command_type": "read_media", "command_line": "report.docx --max-files 1" }
+                ]
+            },
+            "output": {
+                "results": [
+                    {
+                        "step": 1,
+                        "command_type": "read_media",
+                        "success": true,
+                        "output": {
+                            "media_results": [
+                                {
+                                    "path": "report.docx",
+                                    "success": true,
+                                    "media_type": "document",
+                                    "extracted_text": "",
+                                    "visual_preview_count": 0,
+                                    "visual_previews": [],
+                                    "audio_preview_count": 0,
+                                    "audio_previews": [],
+                                    "file_attachment_count": 1,
+                                    "file_attachments": [
+                                        {
+                                            "type": "file",
+                                            "file_name": "report.docx",
+                                            "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                            "data_base64": "QUJD"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        }));
+        let items = output.as_array().expect("content items");
+        assert_eq!(items[0]["type"], "input_text");
+        assert_eq!(items[1]["type"], "input_file");
+        assert_eq!(items[1]["filename"], "report.docx");
+        assert_eq!(
+            items[1]["file_data"],
+            "data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,QUJD"
+        );
+        let text = items[0]["text"].as_str().expect("text item");
+        assert!(text.contains("\"file_attachment_count\": 1"));
+        assert!(!text.contains("QUJD"));
     }
 
     #[test]

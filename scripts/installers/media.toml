@@ -34,6 +34,24 @@ command = "python -m pip install opencv-python"
 [tool.python_cv2.install.macos]
 command = "python -m pip install opencv-python"
 
+[tool.python_imageio_ffmpeg]
+id = "python_imageio_ffmpeg"
+description = "Project-local ffmpeg binary fallback for read_media when system ffmpeg is not on PATH."
+platforms = ["windows", "linux", "macos"]
+verify = "python -c \"import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())\""
+timeout_secs = 300
+permission = "network"
+cache_key = "python-imageio-ffmpeg"
+
+[tool.python_imageio_ffmpeg.install.windows]
+command = "python -m pip install imageio-ffmpeg"
+
+[tool.python_imageio_ffmpeg.install.linux]
+command = "python -m pip install imageio-ffmpeg"
+
+[tool.python_imageio_ffmpeg.install.macos]
+command = "python -m pip install imageio-ffmpeg"
+
 [tool.python_pymupdf]
 id = "python_pymupdf"
 description = "Fallback PDF text extraction when PDFium is not installed."
@@ -51,3 +69,21 @@ command = "python -m pip install PyMuPDF"
 
 [tool.python_pymupdf.install.macos]
 command = "python -m pip install PyMuPDF"
+
+[tool.ytdlp]
+id = "yt-dlp"
+description = "Video and audio downloading for command_run web_discover."
+platforms = ["windows", "linux", "macos"]
+verify = "yt-dlp --version"
+timeout_secs = 300
+permission = "network"
+cache_key = "yt-dlp"
+
+[tool.ytdlp.install.windows]
+command = "python -m pip install yt-dlp"
+
+[tool.ytdlp.install.linux]
+command = "python -m pip install yt-dlp"
+
+[tool.ytdlp.install.macos]
+command = "python -m pip install yt-dlp"

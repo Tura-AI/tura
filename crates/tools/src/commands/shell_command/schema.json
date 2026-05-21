@@ -11,10 +11,6 @@
       "step": {
         "type": "integer",
         "minimum": 1
-      },
-      "timeout_secs": {
-        "type": "integer",
-        "minimum": 1
       }
     }
   },

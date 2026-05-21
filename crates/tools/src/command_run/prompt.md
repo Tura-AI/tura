@@ -1,12 +1,14 @@
 `command_run` is the only model-visible execution tool for coding work.
 
 Run Codex tools as a pure batch+step command runner. Always use `commands[]`.
-Prefer one complete batch for predictable work: discover/read/search the needed
-context, edit, test, and validate in ordered steps when dependencies are clear.
+Prefer one complete batch for predictable work: discover/read/search/download
+the needed context, edit, test, and validate in ordered steps when dependencies are clear.
 Use early steps for needed discovery/read/search commands. Use later steps for
 `apply_patch`, generated writes, tests, builds, and verification that should wait
 for earlier results. Mutating or unknown commands act as barriers and run one at
 a time. Different steps run in ascending order.
+Each command defaults to a 90 second timeout. If a command reasonably needs more
+or less time, set `timeout_ms` on that command item.
 
 Command run patterns:
 - Batch investigation: use early commands for the specific discovery, searches, and file reads needed to understand the failure surface.
@@ -16,6 +18,7 @@ Command run patterns:
 - Verification: run the relevant test or build command after edits in the same `command_run` when the edit target is already clear.
 - Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.
 - Example investigation batch: step 1 needed `rg --files`, targeted `rg -n`, and candidate file reads.
-- Example repair batch: step 1 needed reads/searches, step 2 `apply_patch` across related files, step 3 the narrow test and focused validation searches.
+- Example repair batch: step 1 `apply_patch` across related files, step 2 write or update a focused test script when needed, step 3 run the narrow test and focused validation searches.
+- Example media batch: step 1 delete useless media/doc artifacts, step 2 search/download/generate the needed media, docs, or repo artifacts, step 3 read and verify the resulting media or repo content.
 
-Supported command details are injected from `commands/<command>/prompt.md` for the active shell surface plus `apply_patch`, `read_media`, and `compact_context`. The `multiple_tasks` command is injected only when multiple-tasks mode is explicitly enabled.
+Supported command details are injected from `commands/<command>/prompt.md` for the active shell surface plus `apply_patch`, `read_media`, `web_discover`, and `compact_context`. The `multiple_tasks` command is injected only when multiple-tasks mode is explicitly enabled.

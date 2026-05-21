@@ -5,13 +5,15 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
+
+const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 90_000;
 
 #[derive(Clone, Debug)]
 struct CommandRunArgs {
     commands: Vec<CommandItem>,
     workdir: Option<String>,
     timeout_ms: Option<u64>,
-    timeout_secs: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -19,9 +21,9 @@ struct CommandItem {
     index: usize,
     command: String,
     command_line: String,
+    inline_arguments: Option<Value>,
     workdir: Option<String>,
     step: Option<u64>,
-    timeout_secs: Option<u64>,
     timeout_ms: Option<u64>,
 }
 
@@ -296,8 +298,14 @@ async fn run_command_run_item(
             );
         }
     };
-    match router.dispatch(call, ctx, force_exclusive).await {
-        Ok(result) => CommandRunItemResult {
+    let timeout_ms = command.effective_timeout_ms();
+    match tokio::time::timeout(
+        Duration::from_millis(timeout_ms),
+        router.dispatch(call, ctx, force_exclusive),
+    )
+    .await
+    {
+        Ok(Ok(result)) => CommandRunItemResult {
             index: command.index,
             step: command.effective_step(),
             command_type: command_name.clone(),
@@ -308,11 +316,17 @@ async fn run_command_run_item(
             )),
             error: None,
         },
-        Err(err) => CommandRunItemResult::failed(
+        Ok(Err(err)) => CommandRunItemResult::failed(
             command.index,
             command.effective_step(),
             command_name,
             err.to_string(),
+        ),
+        Err(_) => CommandRunItemResult::failed(
+            command.index,
+            command.effective_step(),
+            command_name,
+            format!("command timed out after {timeout_ms}ms"),
         ),
     }
 }
@@ -365,7 +379,10 @@ fn build_tool_call(command_name: &str, command: &CommandItem) -> Result<ToolCall
             arguments: normalize_multiple_tasks_arguments(command)?,
         },
         "read_media" => ToolPayload::Function {
-            arguments: normalize_json_command_arguments(command, "read_media")?,
+            arguments: normalize_json_or_cli_command_arguments(command, "read_media")?,
+        },
+        "web_discover" => ToolPayload::Function {
+            arguments: normalize_json_or_cli_command_arguments(command, "web_discover")?,
         },
         _ => ToolPayload::Function {
             arguments: normalize_shell_command_arguments(command)?,
@@ -389,18 +406,15 @@ fn normalize_shell_command_arguments(command: &CommandItem) -> Result<Value, Str
                     .entry("workdir".to_string())
                     .or_insert_with(|| Value::String(workdir.to_string()));
             }
-            object.entry("timeout_ms".to_string()).or_insert_with(|| {
-                json!(command
-                    .timeout_ms
-                    .or_else(|| command.timeout_secs.map(|secs| secs * 1000))
-                    .unwrap_or(120_000))
-            });
+            object
+                .entry("timeout_ms".to_string())
+                .or_insert_with(|| json!(command.timeout_ms.unwrap_or(DEFAULT_COMMAND_TIMEOUT_MS)));
         }
         return Ok(value);
     }
     let mut arguments = json!({
         "command": command.command_line,
-        "timeout_ms": command.timeout_ms.or_else(|| command.timeout_secs.map(|secs| secs * 1000)).unwrap_or(120_000),
+        "timeout_ms": command.effective_timeout_ms(),
     });
     if let (Some(workdir), Some(object)) = (command.workdir.as_deref(), arguments.as_object_mut()) {
         object.insert("workdir".to_string(), Value::String(workdir.to_string()));
@@ -415,7 +429,6 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
     };
     let top_workdir = string_field(object, &["workdir", "cwd"]);
     let top_timeout_ms = u64_field(object, &["timeout_ms", "timeoutMs"]);
-    let top_timeout_secs = u64_field(object, &["timeout_secs", "timeoutSecs"]);
     let command_values = if let Some(commands) = object.get("commands") {
         command_values(commands)
     } else if let Some(steps) = object.get("steps") {
@@ -427,7 +440,6 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
         commands: Vec::new(),
         workdir: top_workdir,
         timeout_ms: top_timeout_ms,
-        timeout_secs: top_timeout_secs,
     };
     for value in command_values {
         args.commands.push(parse_command_item(&value)?);
@@ -442,9 +454,6 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
         }
         if command.timeout_ms.is_none() {
             command.timeout_ms = args.timeout_ms;
-        }
-        if command.timeout_secs.is_none() {
-            command.timeout_secs = args.timeout_secs;
         }
         if let Some(patch) = command
             .command_line
@@ -470,6 +479,7 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
                 | "apply_patch"
                 | "multiple_tasks"
                 | "read_media"
+                | "web_discover"
                 | "task_delivered"
                 | "compact_context"
         ) {
@@ -488,6 +498,23 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
     }
     validate_compact_context_position(&args.commands)?;
     Ok(args)
+}
+
+fn normalize_json_or_cli_command_arguments(
+    command: &CommandItem,
+    command_name: &str,
+) -> Result<Value, String> {
+    let trimmed = command.command_line.trim();
+    if trimmed.is_empty() {
+        if let Some(arguments) = &command.inline_arguments {
+            return Ok(arguments.clone());
+        }
+    }
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        normalize_json_command_arguments(command, command_name)
+    } else {
+        Ok(json!({ "cli": command.command_line }))
+    }
 }
 
 fn validate_compact_context_position(commands: &[CommandItem]) -> Result<(), String> {
@@ -574,9 +601,9 @@ fn parse_command_item(value: &Value) -> Result<CommandItem, String> {
             index: 0,
             command: text.to_string(),
             command_line: String::new(),
+            inline_arguments: None,
             workdir: None,
             step: None,
-            timeout_secs: None,
             timeout_ms: None,
         });
     }
@@ -633,15 +660,64 @@ fn parse_command_item(value: &Value) -> Result<CommandItem, String> {
         ],
     )
     .unwrap_or_default();
+    let inline_arguments = inline_command_arguments(object);
     Ok(CommandItem {
         index: 0,
         command,
         command_line,
+        inline_arguments,
         workdir: string_field(object, &["workdir", "cwd"]),
         step: u64_field(object, &["step"]),
-        timeout_secs: u64_field(object, &["timeout_secs", "timeoutSecs"]),
         timeout_ms: u64_field(object, &["timeout_ms", "timeoutMs"]),
     })
+}
+
+fn inline_command_arguments(object: &serde_json::Map<String, Value>) -> Option<Value> {
+    for name in [
+        "arguments",
+        "argument",
+        "parameters",
+        "parameter",
+        "params",
+        "options",
+        "input_json",
+        "inputJson",
+    ] {
+        if let Some(value) = object.get(name) {
+            return Some(value.clone());
+        }
+    }
+
+    let mut arguments = object.clone();
+    for name in [
+        "command_type",
+        "commandType",
+        "command",
+        "cmd",
+        "tool",
+        "name",
+        "tool_name",
+        "toolName",
+        "tool_package_name",
+        "toolPackageName",
+        "command_line",
+        "commandLine",
+        "command_code",
+        "commandCode",
+        "input",
+        "args",
+        "code",
+        "script",
+        "payload",
+        "workdir",
+        "cwd",
+        "step",
+        "timeout_ms",
+        "timeoutMs",
+    ] {
+        arguments.remove(name);
+    }
+    (!arguments.is_empty()).then_some(Value::Object(arguments))
 }
 
 fn string_field(object: &serde_json::Map<String, Value>, names: &[&str]) -> Option<String> {
@@ -692,6 +768,10 @@ fn extract_apply_patch_body(text: &str) -> Option<String> {
 impl CommandItem {
     fn effective_step(&self) -> u64 {
         self.step.unwrap_or((self.index + 1) as u64).max(1)
+    }
+
+    fn effective_timeout_ms(&self) -> u64 {
+        self.timeout_ms.unwrap_or(DEFAULT_COMMAND_TIMEOUT_MS).max(1)
     }
 
     async fn is_parallel_safe_read(&self, router: &ToolRouter, ctx: &ToolContext) -> bool {

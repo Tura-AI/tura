@@ -1,4 +1,5 @@
 use chrono::Utc;
+use std::io::Write;
 use tracing::warn;
 
 use crate::prompt_style::{runtime_fallback, tool_progress};
@@ -19,6 +20,7 @@ pub(super) fn publish_runtime_failure_message(
         || runtime_fallback::no_tool_results_runtime_failed(error),
         |summary| runtime_fallback::tool_results_then_runtime_failed(&summary, error),
     );
+    emit_cli_agent_message(&reply_message);
 
     if let Err(publish_error) = publish_gateway_agent_message(
         &session.session_id,
@@ -33,6 +35,22 @@ pub(super) fn publish_runtime_failure_message(
             "failed to publish visible runtime failure"
         );
     }
+}
+
+fn emit_cli_agent_message(reply_message: &str) {
+    if !env_flag("TURA_CLI_LIVE_JSONL") {
+        return;
+    }
+    let event = serde_json::json!({
+        "type": "item.completed",
+        "item": {
+            "id": "item_runtime_failure",
+            "type": "agent_message",
+            "text": reply_message,
+        }
+    });
+    println!("{event}");
+    let _ = std::io::stdout().flush();
 }
 
 pub(super) fn summarize_single_tool_output(tool_name: &str, output: &serde_json::Value) -> String {
