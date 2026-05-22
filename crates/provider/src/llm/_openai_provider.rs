@@ -282,8 +282,8 @@ async fn openai_codex_oauth_call(
     let mut request = client
         .post(openai_codex_endpoint())
         .bearer_auth(access_token)
-        .header("originator", "tura-os")
-        .header("User-Agent", "tura-os")
+        .header("originator", "codex_cli_rs")
+        .header("User-Agent", codex_cli_user_agent())
         .json(&payload);
     if let Some(session_id) = codex_session_id(options) {
         request = request
@@ -332,6 +332,15 @@ async fn openai_codex_oauth_call(
         raw: data,
         metrics: Some(metrics),
     })
+}
+
+fn codex_cli_user_agent() -> String {
+    format!(
+        "codex_cli_rs/{} ({}; {})",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    )
 }
 
 fn codex_session_id(options: &CallOptions) -> Option<&str> {
