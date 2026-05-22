@@ -8,13 +8,14 @@ import { performance } from "node:perf_hooks"
 import { fileURLToPath } from "node:url"
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
-const repoRoot = path.resolve(scriptDir, "..", "..")
+const repoRoot = path.resolve(scriptDir, "..", "..", "..")
 const homeDir = process.env.USERPROFILE || process.env.HOME || ""
 const runId = process.env.COMMAND_RUN_AGENT_RUN_ID || `frontend-playwright-${Date.now()}`
 const runRoot = path.join(repoRoot, "target", "command-run-frontend-playwright", runId)
 const summaryPath = path.join(runRoot, "summary.json")
 const model = process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "gpt-5.5"
 const turaModel = process.env.COMMAND_RUN_AGENT_TURA_MODEL || (model.includes("/") ? model : `openai/${model}`)
+const claudeModel = process.env.COMMAND_RUN_AGENT_CLAUDE_MODEL || "opus"
 const reasoning = process.env.COMMAND_RUN_AGENT_REASONING_EFFORT || "low"
 const timeoutMs = Number(process.env.COMMAND_RUN_AGENT_TIMEOUT_MS || 20 * 60_000)
 const agents = parseAgents(process.env.COMMAND_RUN_AGENT_AGENTS || "current-shll,codex-main,tura-fast-shll")
@@ -32,6 +33,7 @@ const codexCurrentExe = path.join(
   process.platform === "win32" ? "codex.exe" : "codex",
 )
 const codexMainExe = findCodexMainExe()
+const claudeExe = findClaudeExe()
 
 function findCodexMainExe() {
   const exeName = process.platform === "win32" ? "codex.exe" : "codex"
@@ -46,6 +48,18 @@ function findCodexMainExe() {
   return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[0]
 }
 
+function findClaudeExe() {
+  const exeName = process.platform === "win32" ? "claude.exe" : "claude"
+  const candidates = [
+    process.env.COMMAND_RUN_AGENT_CLAUDE_EXE,
+    process.platform === "win32"
+      ? path.join(homeDir, "AppData", "Local", "Packages", "Claude_pzs8sxrjxfjjc", "LocalCache", "Roaming", "Claude", "claude-code", "2.1.128", exeName)
+      : null,
+    "claude",
+  ].filter(Boolean)
+  return candidates.find((candidate) => candidate === "claude" || fs.existsSync(candidate)) || candidates[0]
+}
+
 function parseAgents(value) {
   const alias = new Map([
     ["current", "current-shll"],
@@ -54,8 +68,14 @@ function parseAgents(value) {
     ["main", "codex-main"],
     ["codex-main", "codex-main"],
     ["tura", "tura-fast-shll"],
+    ["tura-shll", "tura-shll"],
+    ["tura-coding", "tura-shll"],
+    ["tura-coding-agent", "tura-shll"],
     ["tura-fast", "tura-fast-shll"],
     ["tura-fast-shll", "tura-fast-shll"],
+    ["claude", "claude-code"],
+    ["claude-code", "claude-code"],
+    ["claude-opus", "claude-code"],
   ])
   return String(value)
     .split(",")
@@ -811,10 +831,11 @@ function parseJsonl(text) {
 function usageFromEvents(events) {
   const usage = { input: 0, cached: 0, output: 0, reasoning: 0, total: 0 }
   for (const event of events) {
-    const u = event.usage || event.payload?.info?.last_token_usage
+    const u = event.usage || event.message?.usage || event.payload?.info?.last_token_usage
     if (!u) continue
     usage.input += Number(u.input_tokens || u.prompt_tokens || 0)
     usage.cached += Number(u.cached_input_tokens || u.input_tokens_details?.cached_tokens || u.prompt_tokens_details?.cached_tokens || 0)
+    usage.cached += Number(u.cache_read_input_tokens || 0)
     usage.output += Number(u.output_tokens || u.completion_tokens || 0)
     usage.reasoning += Number(u.reasoning_output_tokens || u.reasoning_tokens || u.output_tokens_details?.reasoning_tokens || u.completion_tokens_details?.reasoning_tokens || 0)
     usage.total += Number(u.total_tokens || 0)
@@ -828,6 +849,8 @@ function countEvents(events) {
   let turns = 0
   for (const event of events) {
     if (event.type === "turn.started") turns += 1
+    if (event.type === "system" && event.subtype === "init") turns += 1
+    if (Array.isArray(event.message?.content) && event.message.content.some((part) => part?.type === "tool_use")) commands += 1
     if (event.item?.type === "command_execution" && event.item.status === "completed") {
       commands += 1
       if (event.item.exit_code && event.item.exit_code !== 0) failures += 1
@@ -922,7 +945,7 @@ async function runCurrentLike(agentId, exe, workspace, agentDir, agentPort) {
   return { first, second, threadId, error: first.error || second.error || null }
 }
 
-async function runTura(workspace, agentDir, agentPort) {
+async function runTura(workspace, agentDir, agentPort, agentPrompt = "coding_agent_fast") {
   runOk("cargo", ["build", "-p", "gateway", "--bin", "tura"], { cwd: repoRoot, timeoutMs: 240_000 })
   const sessionId = `frontend-${Date.now()}`
   const common = [
@@ -932,7 +955,7 @@ async function runTura(workspace, agentDir, agentPort) {
     "--session-id",
     sessionId,
     "--agent",
-    "coding_agent_fast",
+    agentPrompt,
     "-m",
     turaModel,
     "-c",
@@ -966,6 +989,53 @@ async function runTura(workspace, agentDir, agentPort) {
         statusPath: path.join(agentDir, "phase2.status.json"),
       })
   return { first, second, threadId: sessionId, error: first.error || second.error || null }
+}
+
+async function runClaudeCode(workspace, agentDir, agentPort) {
+  const common = [
+    "--print",
+    "--model",
+    claudeModel,
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--dangerously-skip-permissions",
+  ]
+  const first = await runLive(claudeExe, [...common, smokeOnly ? promptSmoke(agentPort) : promptPhase1(agentPort)], {
+    cwd: workspace,
+    timeoutMs,
+    stdoutPath: path.join(agentDir, "phase1.stdout.jsonl"),
+    stderrPath: path.join(agentDir, "phase1.stderr.log"),
+    statusPath: path.join(agentDir, "phase1.status.json"),
+  })
+  const firstEvents = parseJsonl(first.stdout)
+  const threadId = firstEvents.find((event) => event.type === "result")?.session_id
+    || firstEvents.find((event) => event.session_id)?.session_id
+  const second = threadId && !smokeOnly
+    ? await runLive(
+        claudeExe,
+        [
+          "--print",
+          "--resume",
+          threadId,
+          "--model",
+          claudeModel,
+          "--output-format",
+          "stream-json",
+          "--verbose",
+          "--dangerously-skip-permissions",
+          promptPhase2(agentPort),
+        ],
+        {
+          cwd: workspace,
+          timeoutMs,
+          stdoutPath: path.join(agentDir, "phase2.stdout.jsonl"),
+          stderrPath: path.join(agentDir, "phase2.stderr.log"),
+          statusPath: path.join(agentDir, "phase2.status.json"),
+        },
+      )
+    : emptyRun(smokeOnly ? "smoke mode skipped phase2" : "claude-code did not emit session_id")
+  return { first, second, threadId, error: first.error || second.error || null }
 }
 
 function writeRunLogs(agentDir, result) {
@@ -1020,7 +1090,11 @@ async function runAgent(agentId, template, evaluator, index) {
     } else if (agentId === "codex-main") {
       result = await runCurrentLike(agentId, codexMainExe, workspace, agentDir, agentPort)
     } else if (agentId === "tura-fast-shll") {
-      result = await runTura(workspace, agentDir, agentPort)
+      result = await runTura(workspace, agentDir, agentPort, "coding_agent_fast")
+    } else if (agentId === "tura-shll") {
+      result = await runTura(workspace, agentDir, agentPort, "coding_agent")
+    } else if (agentId === "claude-code") {
+      result = await runClaudeCode(workspace, agentDir, agentPort)
     } else {
       throw new Error(`unsupported agent ${agentId}`)
     }
@@ -1079,6 +1153,7 @@ async function main() {
     run_id: runId,
     run_root: runRoot,
     model,
+    claude_model: claudeModel,
     reasoning,
     timeout_ms: timeoutMs,
     smoke_only: smokeOnly,

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-const repoRoot = path.resolve(import.meta.dirname, "..", "..");
+const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..");
 
 function run(command, args) {
   const result = spawnSync(command, args, {

@@ -6,7 +6,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
-const repoRoot = path.resolve(scriptDir, "..", "..")
+const repoRoot = path.resolve(scriptDir, "..", "..", "..")
 const homeDir = process.env.USERPROFILE || process.env.HOME || ""
 const runId = process.env.COMMAND_RUN_AGENT_RUN_ID || `multimedia-research-${Date.now()}`
 const runRoot = path.join(repoRoot, "target", "command-run-newjeans-media-e2e", runId)

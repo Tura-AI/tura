@@ -1,6 +1,8 @@
-# Command Run Codex Two Way E2E
+# Command Run Codex Two Way Long E2E
 
-This folder is a standalone copy of the command-run benchmark focused on the two Codex implementations only.
+This folder contains long-running command-run benchmark drivers. These scripts
+spawn real agents, compare Tura/Codex variants, and may call live providers.
+Small command-run probes live under `tests/unit/command-run/`.
 
 ## Contents
 
@@ -9,24 +11,22 @@ This folder is a standalone copy of the command-run benchmark focused on the two
 - `command_run_context_compact_e2e.mjs` runs the compact-context benchmark with a fixed long starting context and no enterprise expansion.
 - `command_run_long_task_e2e.mjs` runs the expanded long-task benchmark with enterprise backend/frontend acceptance tests, hard enterprise scenario-matrix tests, mega control-plane/control-tower generated tests, active generated support/integration/policy/view/shared code, and no fixed starting context block.
 - `command_run_compact_stress_e2e.mjs` is a compatibility wrapper for the compact-context benchmark.
-- `command_run_compact_context_e2e.mjs` directly probes the Tura `compact_context` command and verifies that long contexts can be replaced by a compact handoff without resetting the session state machine.
-- `command_run_read_media_e2e.mjs` verifies `read_media` command execution and context size behavior for images, PDFs, and videos.
 - `command_run_media_recall_e2e.mjs` verifies that media observations remain recallable across turns without retaining raw base64 in context.
 - `command_run_newjeans_official_media_e2e.mjs` runs a live web/media task with `tura-fast-shll` by default: download official unified-style NewJeans headshots for Minji, Hanni, Danielle, Haerin, and Hyein, inspect them with `read_media`, and report operations, session logs, token usage, and the required `SAME_STYLE` verdict.
 - `command_run_frontend_playwright_e2e.mjs` compares current, codex-main, and Tura on a Playwright-heavy frontend repair task with live per-agent logs and hidden validation.
-- `records/summaries/` contains the existing `command-run-agent-three-way-*.json` summary reports.
-- `records/runs/` contains the existing per-run `codex-current/` and `codex-main/` execution logs, including stdout JSONL, stderr, and last-message files when present.
+- Historical generated records from the previous layout now live under
+  `target/command-run-codex-two-way-records/`.
 
 ## Run
 
-From this folder:
+From the repository root:
 
 ```powershell
 $env:COMMAND_RUN_AGENT_CODEX_MODEL='gpt-5.5'
 $env:COMMAND_RUN_AGENT_REASONING_EFFORT='low'
 $env:COMMAND_RUN_AGENT_CODEX_SERVICE_TIER='priority'
 $env:COMMAND_RUN_AGENT_TIMEOUT_MS='300000'
-node .\command_run_codex_two_way_e2e.mjs
+node .\tests\long-e2e\command-run-codex-two-way\command_run_codex_two_way_e2e.mjs
 ```
 
 Useful optional overrides:

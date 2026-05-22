@@ -6,7 +6,7 @@ import path from "node:path"
 import process from "node:process"
 import { performance } from "node:perf_hooks"
 
-const repoRoot = process.env.REPO_ROOT || process.cwd()
+const repoRoot = process.env.REPO_ROOT || path.resolve(import.meta.dirname, "..", "..", "..")
 const homeDir = process.env.USERPROFILE || process.env.HOME || ""
 const runId = process.env.COMMAND_RUN_AGENT_RUN_ID || `${Date.now()}`
 const runRoot =

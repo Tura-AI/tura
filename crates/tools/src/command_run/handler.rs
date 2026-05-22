@@ -5,7 +5,6 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 90_000;
 
@@ -298,14 +297,8 @@ async fn run_command_run_item(
             );
         }
     };
-    let timeout_ms = command.effective_timeout_ms();
-    match tokio::time::timeout(
-        Duration::from_millis(timeout_ms),
-        router.dispatch(call, ctx, force_exclusive),
-    )
-    .await
-    {
-        Ok(Ok(result)) => CommandRunItemResult {
+    match router.dispatch(call, ctx, force_exclusive).await {
+        Ok(result) => CommandRunItemResult {
             index: command.index,
             step: command.effective_step(),
             command_type: command_name.clone(),
@@ -316,17 +309,11 @@ async fn run_command_run_item(
             )),
             error: None,
         },
-        Ok(Err(err)) => CommandRunItemResult::failed(
+        Err(err) => CommandRunItemResult::failed(
             command.index,
             command.effective_step(),
             command_name,
             err.to_string(),
-        ),
-        Err(_) => CommandRunItemResult::failed(
-            command.index,
-            command.effective_step(),
-            command_name,
-            format!("command timed out after {timeout_ms}ms"),
         ),
     }
 }

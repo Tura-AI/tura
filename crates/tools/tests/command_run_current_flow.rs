@@ -1309,6 +1309,14 @@ fn pass_timeout_returns_quick_failure() {
     );
 
     assert_eq!(output["results"][0]["success"], false);
+    assert!(output["results"][0]["output"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("Timed out after"));
+    assert!(
+        output["results"][0].get("error").is_none(),
+        "timeout must be returned by the shell runtime as model-visible tool output, not by dropping command_run dispatch"
+    );
     assert!(started.elapsed() < Duration::from_secs(5));
 }
 
@@ -1331,6 +1339,14 @@ fn fail_timeout_kills_descendant_process_tree_quickly() {
     );
 
     assert_eq!(output["results"][0]["success"], false);
+    assert!(output["results"][0]["output"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("Timed out after"));
+    assert!(
+        output["results"][0].get("error").is_none(),
+        "descendant timeout must be converted by the shell runtime instead of outer command_run timeout"
+    );
     assert!(started.elapsed() < Duration::from_secs(5));
 }
 

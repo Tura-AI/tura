@@ -432,6 +432,7 @@ pub struct CallOptions {
     pub user: Option<String>,
     pub safety_identifier: Option<String>,
     pub prompt_cache_key: Option<String>,
+    pub codex_session_id: Option<String>,
     pub reasoning_effort: Option<String>,
     pub prediction: Option<Value>,
     pub modalities: Option<Vec<String>>,

@@ -398,6 +398,7 @@ fn command_run_usage_patterns() -> &'static str {
 - Keep related path listing, targeted search, and candidate file reads in the same command_run batch and same read-only step when they are independent.
 - Parallel reads: put independent safe read-only commands in the same step when they do not depend on each other.
 - Code repair loop: use early steps for needed discovery/reads, a later step for one multi-file `apply_patch`, and final steps in the same command_run for tests plus focused validation searches.
+- Avoid embedding long generated source code or complex quoting directly in shell/bash command lines; for complex logic, invoke a script/interpreter from shell/bash rather than encoding the logic in shell syntax.
 - Verification: run the relevant test or build command after edits in the same command_run when the edit target is already clear.
 - Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.
 - Context compaction: after a meaningful phase completes, or when context is near 200,000 tokens and feels crowded, put `compact_context` as the final command in the highest step with a concise handoff summary for the next turn.
@@ -414,14 +415,21 @@ fn current_apply_patch_command_format() -> String {
 }
 
 fn current_shell_command_format(active: &str, shell_prompt: &str) -> String {
-    let guidance = if active == "shell_command" {
-        "Use for tests, builds, scripts, package tools, and host-shell behavior. Put verification after edits in a later step."
-    } else {
-        "Use for tests, builds, scripts, package tools, and host-shell behavior. Put verification after edits in a later step."
-    };
+    let guidance = format!(
+        "Use for tests, builds, scripts, package tools, and host-shell behavior. Put verification after edits in a later step. {}",
+        long_running_service_guidance(active)
+    );
     let schema = "{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\",\"description\":\"The shell script to execute in the user's default shell\"},\"workdir\":{\"type\":\"string\",\"description\":\"The working directory to execute the command in\"},\"timeout_ms\":{\"type\":\"number\",\"description\":\"The timeout for the command in milliseconds\"}},\"required\":[\"command\"],\"additionalProperties\":false}";
     let _ = shell_prompt;
     format!("{guidance} JSON object string matching this schema: {schema}")
+}
+
+fn long_running_service_guidance(active: &str) -> &'static str {
+    if active == "shell_command" && cfg!(windows) {
+        "For long-running local servers, use Start-Process -WindowStyle Hidden -PassThru, wait for readiness, run probes, then stop it with try/finally."
+    } else {
+        "For long-running local servers, start them in the background, wait for readiness, run probes, then clean them up."
+    }
 }
 
 fn compact_prompt(text: &str) -> String {
@@ -667,6 +675,12 @@ mod tests {
         assert!(description.contains("\"command\":{\"type\":\"string\""));
         assert!(description.contains("\"workdir\":{\"type\":\"string\""));
         assert!(description.contains("\"timeout_ms\":{\"type\":\"number\""));
+        if cfg!(windows) {
+            assert!(description.contains("Start-Process -WindowStyle Hidden -PassThru"));
+            assert!(description.contains("try/finally"));
+        } else {
+            assert!(description.contains("start them in the background"));
+        }
         assert!(!description.contains("Available commands: apply_patch, bash"));
         assert!(!description.contains("- bash:"));
 
@@ -696,6 +710,7 @@ mod tests {
         assert!(description.contains("\"command\":{\"type\":\"string\""));
         assert!(description.contains("\"workdir\":{\"type\":\"string\""));
         assert!(description.contains("\"timeout_ms\":{\"type\":\"number\""));
+        assert!(description.contains("start them in the background"));
         assert!(!description.contains("shell_command"));
 
         std::env::remove_var("TURA_COMMAND_RUN_SHELL");

@@ -6,7 +6,7 @@ import path from "node:path"
 import process from "node:process"
 import { performance } from "node:perf_hooks"
 
-const repoRoot = process.env.REPO_ROOT || process.cwd()
+const repoRoot = process.env.REPO_ROOT || path.resolve(import.meta.dirname, "..", "..", "..")
 loadDotEnv(path.join(repoRoot, ".env"))
 
 const homeDir = process.env.USERPROFILE || process.env.HOME || ""

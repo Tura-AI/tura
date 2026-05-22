@@ -3,7 +3,7 @@ import { spawn } from "node:child_process"
 import path from "node:path"
 import process from "node:process"
 
-const repoRoot = path.resolve(import.meta.dirname, "..", "..")
+const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..")
 const mainScript = path.join(import.meta.dirname, "command_run_context_compact_e2e.mjs")
 const timeoutMs = process.env.COMMAND_RUN_AGENT_TIMEOUT_MS || process.argv[2] || "120000"
 const runId = process.env.COMMAND_RUN_AGENT_RUN_ID || `compact-stress-${Date.now()}`

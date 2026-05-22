@@ -27,7 +27,7 @@ drivers. The following local artifacts are ignored:
 - `storage/`
 - `sessions/`
 - provider call logs under `crates/provider/log/`
-- generated command-run records under `tests/command-run-codex-two-way/records`
+- generated command-run records under `target/command-run-codex-two-way-records`
 - local Qdrant binary `db/qdrant/qdrant.exe`
 
 ## Top-Level Layout
@@ -502,7 +502,8 @@ or router flows need coordinated startup:
 
 ## Testing
 
-Tests are split by crate and by end-to-end command-run scripts.
+Tests are split by crate, lightweight command-run probes, and long end-to-end
+command-run scripts.
 
 Crate-native tests:
 
@@ -513,17 +514,28 @@ cargo test -p tura_router
 cargo test -p tura-llm-rust
 ```
 
-Command-run E2E drivers:
+Command-run unit/probe scripts:
 
 ```text
-tests/command-run-codex-two-way/
-  command_run_codex_two_way_e2e.mjs
+tests/unit/command-run/
   command_run_single_round_e2e.mjs
-  command_run_context_compact_e2e.mjs
-  command_run_long_task_e2e.mjs
   command_run_compact_context_e2e.mjs
   command_run_read_media_e2e.mjs
+  command_run_three_stream_probe_e2e.mjs
+  command_run_google_image_api_fallback_e2e.mjs
+```
+
+Long command-run E2E drivers:
+
+```text
+tests/long-e2e/command-run-codex-two-way/
+  command_run_codex_two_way_e2e.mjs
+  command_run_original_e2e.mjs
+  command_run_context_compact_e2e.mjs
+  command_run_compact_stress_e2e.mjs
+  command_run_long_task_e2e.mjs
   command_run_media_recall_e2e.mjs
+  command_run_newjeans_official_media_e2e.mjs
   command_run_frontend_playwright_e2e.mjs
   ROBUSTNESS_TEST_MATRIX.md
 ```

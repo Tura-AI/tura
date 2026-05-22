@@ -67,6 +67,7 @@ pub async fn call_runtime(
         stream: Some(input.stream),
         parallel_tool_calls: parallel_tool_calls_enabled(route_config, !input_tools.is_empty()),
         prompt_cache_key,
+        codex_session_id: Some("tura-os".to_string()),
         stream_options: stream_options(route_config, input.stream),
         reasoning_effort: session_reasoning_effort(),
         service_tier: session_service_tier(),
@@ -82,6 +83,7 @@ pub async fn call_runtime(
             "stream": input.stream,
             "parallel_tool_calls": call_options.parallel_tool_calls,
             "prompt_cache_key": call_options.prompt_cache_key.clone(),
+            "codex_session_id": call_options.codex_session_id.clone(),
             "stream_options": call_options.stream_options.clone(),
             "reasoning_effort": call_options.reasoning_effort.clone(),
             "service_tier": call_options.service_tier.clone(),
@@ -167,7 +169,7 @@ fn session_reasoning_effort() -> Option<String> {
 fn prompt_cache_key(
     route_config: &tura_llm_rust::RouteConfig,
     route_name: &str,
-    session_id: &SessionId,
+    _session_id: &SessionId,
     tools: &[serde_json::Value],
 ) -> Option<String> {
     let provider = route_config.providers.first()?;
@@ -182,13 +184,12 @@ fn prompt_cache_key(
     tool_names.sort();
     let tool_sig = tool_names.join(",");
     let hash_input = format!(
-        "{}\n{}\n{}\n{}\n{}",
-        route_name, session_id, provider.provider, provider.model, tool_sig
+        "{}\n{}\n{}\n{}",
+        route_name, provider.provider, provider.model, tool_sig
     );
     Some(format!(
-        "turaosv2:{}:{}:{}",
+        "turaosv2:{}:{}",
         short_key_part(route_name),
-        short_key_part(session_id),
         fnv1a64_hex(&hash_input)
     ))
 }
@@ -968,9 +969,9 @@ mod tests {
             assert!(
                 prompt_cache_key(&route, "tura_coder", &"sess-a".to_string(), &tools_a)
                     .unwrap()
-                    .starts_with("turaosv2:tura-coder:sess-a:")
+                    .starts_with("turaosv2:tura-coder:")
             );
-            assert_ne!(
+            assert_eq!(
                 prompt_cache_key(&route, "tura_coder", &"sess-a".to_string(), &tools_a),
                 prompt_cache_key(&route, "tura_coder", &"sess-b".to_string(), &tools_a)
             );

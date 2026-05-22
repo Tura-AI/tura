@@ -34,6 +34,7 @@ packages = {
     "ddgs": "ddgs",
     "duckduckgo-search": "duckduckgo_search",
     "imageio-ffmpeg": "imageio_ffmpeg",
+    "libclang": "clang",
     "opencv-python": "cv2",
     "Pillow": "PIL",
     "PyMuPDF": "fitz",
@@ -46,10 +47,51 @@ if missing:
     sys.exit(1)
 "@
 
-  python -c $checkScript
+  $checkScript | python -
   if ($LASTEXITCODE -ne 0) {
     Write-Host "Installing missing Python requirements from requirements.txt..."
     python -m pip install -r $requirementsPath
+  }
+}
+
+function Ensure-RustLibclang {
+  $python = Get-Command python -ErrorAction SilentlyContinue
+  if (-not $python) {
+    Write-Warning "Rust media bindings need libclang. Python was not found, so the libclang wheel cannot be used."
+    return
+  }
+
+  $findLibclangScript = @'
+import pathlib
+import sys
+
+try:
+    import clang
+except Exception:
+    sys.exit(1)
+
+root = pathlib.Path(clang.__file__).resolve().parent
+candidates = [
+    root / "native",
+    root,
+]
+for candidate in candidates:
+    if any(candidate.glob("libclang*.dll")) or any(candidate.glob("libclang*.so*")) or any(candidate.glob("libclang*.dylib")):
+        print(candidate)
+        sys.exit(0)
+sys.exit(1)
+'@
+
+  $libclangPath = $findLibclangScript | python -
+
+  if ($LASTEXITCODE -ne 0 -or -not $libclangPath) {
+    Write-Host "Installing Rust build libclang wheel..."
+    python -m pip install -r (Join-Path $repoRoot "requirements.txt")
+    $libclangPath = $findLibclangScript | python -
+  }
+
+  if ($LASTEXITCODE -eq 0 -and $libclangPath) {
+    $env:LIBCLANG_PATH = "$libclangPath".Trim()
   }
 }
 
@@ -131,6 +173,7 @@ function Ensure-PlaywrightNodeSupport {
 }
 
 Ensure-PythonRequirements
+Ensure-RustLibclang
 Ensure-ReadMediaFallbacks
 Ensure-WebDiscoverFallbacks
 Ensure-PlaywrightNodeSupport

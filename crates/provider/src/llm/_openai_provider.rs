@@ -282,10 +282,17 @@ async fn openai_codex_oauth_call(
     let mut request = client
         .post(openai_codex_endpoint())
         .bearer_auth(access_token)
-        .header("originator", "opencode")
-        .header("User-Agent", "opencode")
-        .header("session_id", "tura-codex-validation")
+        .header("originator", "tura-os")
+        .header("User-Agent", "tura-os")
         .json(&payload);
+    if let Some(session_id) = codex_session_id(options) {
+        request = request
+            .header("session_id", session_id)
+            .header("session-id", session_id)
+            .header("thread_id", session_id)
+            .header("thread-id", session_id)
+            .header("x-client-request-id", session_id);
+    }
     if let Ok(account_id) = std::env::var("OPENAI_ACCOUNT_ID") {
         if !account_id.trim().is_empty() {
             request = request.header("ChatGPT-Account-Id", account_id);
@@ -325,6 +332,14 @@ async fn openai_codex_oauth_call(
         raw: data,
         metrics: Some(metrics),
     })
+}
+
+fn codex_session_id(options: &CallOptions) -> Option<&str> {
+    options
+        .codex_session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn build_codex_oauth_payload(model: &str, messages: &[Value], options: &CallOptions) -> Value {
