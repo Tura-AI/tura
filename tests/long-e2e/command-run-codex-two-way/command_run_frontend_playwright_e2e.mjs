@@ -843,6 +843,27 @@ function usageFromEvents(events) {
   return usage
 }
 
+function usageFromRuns(agentId, result) {
+  const first = usageFromEvents(parseJsonl(result.first.stdout))
+  const second = usageFromEvents(parseJsonl(result.second.stdout))
+  if (
+    agentId.startsWith("tura-") &&
+    second.input >= first.input &&
+    second.cached >= first.cached &&
+    second.output >= first.output &&
+    second.reasoning >= first.reasoning
+  ) {
+    return second
+  }
+  return {
+    input: first.input + second.input,
+    cached: first.cached + second.cached,
+    output: first.output + second.output,
+    reasoning: first.reasoning + second.reasoning,
+    total: first.total + second.total,
+  }
+}
+
 function countEvents(events) {
   let commands = 0
   let failures = 0
@@ -1116,7 +1137,7 @@ async function runAgent(agentId, template, evaluator, index) {
     phase1_status: result.first.status,
     phase2_status: result.second.status,
     error: runError || result.error || null,
-    usage: usageFromEvents(events),
+    usage: usageFromRuns(agentId, result),
     events: countEvents(events),
     validation,
   }
