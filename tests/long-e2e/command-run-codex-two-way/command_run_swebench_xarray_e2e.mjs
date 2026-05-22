@@ -1,0 +1,909 @@
+#!/usr/bin/env node
+import assert from "node:assert/strict"
+import os from "node:os"
+import { spawn, spawnSync } from "node:child_process"
+import fs from "node:fs"
+import path from "node:path"
+import process from "node:process"
+import { performance } from "node:perf_hooks"
+import { fileURLToPath } from "node:url"
+
+const scriptDir = path.dirname(fileURLToPath(import.meta.url))
+const repoRoot = path.resolve(scriptDir, "..", "..", "..")
+const homeDir = process.env.USERPROFILE || process.env.HOME || ""
+const benchmarkRoot = process.env.COMMAND_RUN_AGENT_BENCHMARK_ROOT || path.join(homeDir, "Documents", "benchmark")
+const swebenchRoot = process.env.COMMAND_RUN_AGENT_SWEBENCH_ROOT || path.join(benchmarkRoot, "SWE-bench")
+const swebenchDataset = process.env.COMMAND_RUN_AGENT_SWEBENCH_DATASET || "SWE-bench/SWE-bench_Verified"
+const runId = process.env.COMMAND_RUN_AGENT_RUN_ID || `swebench-xarray-${Date.now()}`
+const runRoot = path.join(repoRoot, "target", "command-run-swebench-xarray", runId)
+const summaryPath = path.join(runRoot, "summary.json")
+
+const VERIFIED_INSTANCE_PREFIX_BY_REPO = Object.freeze({
+  "astropy/astropy": "astropy__astropy",
+  "django/django": "django__django",
+  "matplotlib/matplotlib": "matplotlib__matplotlib",
+  "mwaskom/seaborn": "mwaskom__seaborn",
+  "pallets/flask": "pallets__flask",
+  "psf/requests": "psf__requests",
+  "pydata/xarray": "pydata__xarray",
+  "pylint-dev/pylint": "pylint-dev__pylint",
+  "pytest-dev/pytest": "pytest-dev__pytest",
+  "scikit-learn/scikit-learn": "scikit-learn__scikit-learn",
+  "sphinx-doc/sphinx": "sphinx-doc__sphinx",
+  "sympy/sympy": "sympy__sympy",
+})
+
+const model = process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "gpt-5.5"
+const turaModel = process.env.COMMAND_RUN_AGENT_TURA_MODEL || (model.includes("/") ? model : `openai/${model}`)
+const reasoning = process.env.COMMAND_RUN_AGENT_REASONING_EFFORT || "low"
+const serviceTier = process.env.COMMAND_RUN_AGENT_SERVICE_TIER || "priority"
+const timeoutMs = Number(process.env.COMMAND_RUN_AGENT_TIMEOUT_MS || 60 * 60_000)
+const agents = parseAgents(process.env.COMMAND_RUN_AGENT_AGENTS || "tura-fast-shll,current-shll,codex-main")
+const requestedInstances = process.env.COMMAND_RUN_AGENT_SWEBENCH_INSTANCE_IDS || ""
+const requestedInstanceIds = parseInstanceSpecs(requestedInstances)
+assert(requestedInstanceIds.length > 0, "COMMAND_RUN_AGENT_SWEBENCH_INSTANCE_IDS is required")
+const requestedRepos = process.env.COMMAND_RUN_AGENT_SWEBENCH_REPOS || process.env.COMMAND_RUN_AGENT_SWEBENCH_REPO
+  ? parseRepoSpecs(process.env.COMMAND_RUN_AGENT_SWEBENCH_REPOS || process.env.COMMAND_RUN_AGENT_SWEBENCH_REPO)
+  : inferReposFromInstanceIds(requestedInstanceIds)
+const prepOnly = (process.env.COMMAND_RUN_AGENT_PREP_ONLY || "0") === "1"
+const runHarness = (process.env.COMMAND_RUN_AGENT_RUN_HARNESS || "0") === "1"
+const harnessOnly = (process.env.COMMAND_RUN_AGENT_HARNESS_ONLY || "0") === "1"
+const harnessMaxWorkers = Number(process.env.COMMAND_RUN_AGENT_HARNESS_MAX_WORKERS || Math.max(1, Math.min(8, os.cpus().length - 1 || 1)))
+const harnessCacheLevel = process.env.COMMAND_RUN_AGENT_HARNESS_CACHE_LEVEL || "instance"
+const harnessClean = process.env.COMMAND_RUN_AGENT_HARNESS_CLEAN || "false"
+
+const turaExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura.exe" : "tura")
+const codexCurrentExe = path.join(
+  process.env.COMMAND_RUN_AGENT_CODEX_CURRENT_ROOT || path.join(homeDir, "Documents", "Codex"),
+  "codex-rs",
+  "target",
+  "debug",
+  process.platform === "win32" ? "codex.exe" : "codex",
+)
+const codexMainExe = findCodexMainExe()
+
+function findCodexMainExe() {
+  const exeName = process.platform === "win32" ? "codex.exe" : "codex"
+  const candidates = [
+    process.env.COMMAND_RUN_AGENT_CODEX_MAIN_ROOT,
+    path.join(homeDir, "Documents", "codex-main"),
+    path.join(homeDir, "codex-main"),
+    path.join(homeDir, "RustroverProjects", "codex-main"),
+  ]
+    .filter(Boolean)
+    .map((root) => path.join(root, "codex-rs", "target", "debug", exeName))
+  return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[0]
+}
+
+function parseAgents(value) {
+  const alias = new Map([
+    ["current", "current-shll"],
+    ["current-shll", "current-shll"],
+    ["codex-current", "current-shll"],
+    ["main", "codex-main"],
+    ["codex-main", "codex-main"],
+    ["tura", "tura-fast-shll"],
+    ["tura-shll", "tura-shll"],
+    ["tura-coding", "tura-shll"],
+    ["tura-coding-agent", "tura-shll"],
+    ["tura-fast", "tura-fast-shll"],
+    ["tura-fast-shll", "tura-fast-shll"],
+  ])
+  return String(value)
+    .split(",")
+    .map((item) => alias.get(item.trim().toLowerCase()))
+    .filter(Boolean)
+}
+
+function parseRepoSpecs(value) {
+  const raw = String(value || "").trim()
+  let items
+  if (raw.startsWith("[")) {
+    const parsed = JSON.parse(raw)
+    assert(Array.isArray(parsed), "COMMAND_RUN_AGENT_SWEBENCH_REPOS JSON must be an array")
+    items = parsed
+  } else {
+    items = raw.split(",")
+  }
+  const repos = items
+    .map((item) => normalizeRepoName(String(item).trim()))
+    .filter(Boolean)
+  assert(repos.length > 0, "at least one SWE-bench repo is required")
+  return [...new Set(repos)]
+}
+
+function parseInstanceSpecs(value) {
+  const raw = String(value || "").trim()
+  if (!raw) return []
+  if (raw.startsWith("[")) {
+    const parsed = JSON.parse(raw)
+    assert(Array.isArray(parsed), "COMMAND_RUN_AGENT_SWEBENCH_INSTANCE_IDS JSON must be an array")
+    return parsed.map((item) => String(item).trim()).filter(Boolean)
+  }
+  return raw.split(",").map((item) => item.trim()).filter(Boolean)
+}
+
+function inferReposFromInstanceIds(instanceIds) {
+  const repos = []
+  for (const id of instanceIds) {
+    const repo = repoForInstanceId(id)
+    if (repo && !repos.includes(repo)) repos.push(repo)
+  }
+  assert(repos.length > 0, `could not infer any SWE-bench repo from issue ids: ${instanceIds.join(", ")}`)
+  return repos
+}
+
+function repoForInstanceId(instanceId) {
+  for (const [repo, prefix] of Object.entries(VERIFIED_INSTANCE_PREFIX_BY_REPO)) {
+    if (instanceId.startsWith(`${prefix}-`)) return repo
+  }
+  return null
+}
+
+function normalizeRepoName(value) {
+  if (!value) return ""
+  return value.includes("/") ? value : value.replace("__", "/")
+}
+
+function repoSlug(repo) {
+  return normalizeRepoName(repo).replace("/", "__")
+}
+
+function sourceRepoFor(repo) {
+  const normalized = normalizeRepoName(repo)
+  const slug = repoSlug(normalized)
+  const specific = process.env[`COMMAND_RUN_AGENT_REPO_${slug.toUpperCase().replaceAll("-", "_")}_PATH`]
+  if (specific) return specific
+  if (normalized === "pydata/xarray" && process.env.COMMAND_RUN_AGENT_XARRAY_REPO) return process.env.COMMAND_RUN_AGENT_XARRAY_REPO
+  return path.join(benchmarkRoot, "repos", slug)
+}
+
+function selectedIssueTable(rows) {
+  const table = Object.fromEntries(requestedRepos.map((repo) => [repo, []]))
+  for (const row of rows) {
+    const repo = normalizeRepoName(row.repo)
+    if (table[repo]) table[repo].push(row.instance_id)
+  }
+  for (const ids of Object.values(table)) ids.sort((a, b) => a.localeCompare(b))
+  return table
+}
+
+function issueBelongsToSelectedRepo(instanceId) {
+  for (const repo of requestedRepos) {
+    const prefix = VERIFIED_INSTANCE_PREFIX_BY_REPO[repo]
+    if (prefix && instanceId.startsWith(`${prefix}-`)) return true
+  }
+  return false
+}
+
+function mkdirp(dir) {
+  fs.mkdirSync(dir, { recursive: true })
+}
+
+function writeFile(file, text) {
+  mkdirp(path.dirname(file))
+  fs.writeFileSync(file, text)
+}
+
+function run(command, args, options = {}) {
+  const started = performance.now()
+  const result = spawnSync(command, args, {
+    cwd: options.cwd || repoRoot,
+    input: options.input,
+    text: true,
+    encoding: "utf8",
+    timeout: options.timeoutMs || timeoutMs,
+    maxBuffer: options.maxBuffer || 512 * 1024 * 1024,
+    env: { ...process.env, ...(options.env || {}) },
+    windowsHide: true,
+  })
+  return {
+    command,
+    args,
+    status: result.status,
+    signal: result.signal,
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    duration_ms: Math.round(performance.now() - started),
+    error: result.error ? String(result.error.stack || result.error.message || result.error) : null,
+  }
+}
+
+function runOk(command, args, options = {}) {
+  const result = run(command, args, options)
+  if (result.status !== 0) {
+    throw new Error(`${command} ${args.join(" ")} failed with ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}\nERROR:\n${result.error || ""}`)
+  }
+  return result
+}
+
+function runLive(command, args, options = {}) {
+  const started = performance.now()
+  const stdoutPath = options.stdoutPath
+  const stderrPath = options.stderrPath
+  const statusPath = options.statusPath
+  if (stdoutPath) mkdirp(path.dirname(stdoutPath))
+  if (stderrPath) mkdirp(path.dirname(stderrPath))
+  const stdoutStream = stdoutPath ? fs.createWriteStream(stdoutPath, { flags: "w" }) : null
+  const stderrStream = stderrPath ? fs.createWriteStream(stderrPath, { flags: "w" }) : null
+  let stdout = ""
+  let stderr = ""
+  let firstOutputMs = null
+  let timedOut = false
+
+  function writeStatus(extra) {
+    if (!statusPath) return
+    writeFile(statusPath, JSON.stringify({
+      command,
+      args,
+      cwd: options.cwd || repoRoot,
+      elapsed_ms: Math.round(performance.now() - started),
+      ...extra,
+    }, null, 2))
+  }
+
+  writeStatus({ status: "running" })
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd || repoRoot,
+      env: { ...process.env, ...(options.env || {}) },
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    })
+
+    const timer = setTimeout(() => {
+      timedOut = true
+      try {
+        if (process.platform === "win32" && child.pid) {
+          spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true })
+        } else {
+          child.kill("SIGKILL")
+        }
+      } catch {}
+    }, options.timeoutMs || timeoutMs)
+
+    child.stdout?.on("data", (chunk) => {
+      if (firstOutputMs === null) firstOutputMs = Math.round(performance.now() - started)
+      const text = chunk.toString("utf8")
+      stdout += text
+      stdoutStream?.write(text)
+      writeStatus({ status: "running", stdout_bytes: Buffer.byteLength(stdout), stderr_bytes: Buffer.byteLength(stderr) })
+    })
+    child.stderr?.on("data", (chunk) => {
+      const text = chunk.toString("utf8")
+      stderr += text
+      stderrStream?.write(text)
+      writeStatus({ status: "running", stdout_bytes: Buffer.byteLength(stdout), stderr_bytes: Buffer.byteLength(stderr) })
+    })
+    child.on("error", (error) => {
+      clearTimeout(timer)
+      stdoutStream?.end()
+      stderrStream?.end()
+      const result = {
+        command,
+        args,
+        status: null,
+        signal: null,
+        stdout,
+        stderr,
+        duration_ms: Math.round(performance.now() - started),
+        first_output_ms: firstOutputMs,
+        error: String(error.stack || error.message || error),
+      }
+      writeStatus({ status: "error", result })
+      resolve(result)
+    })
+    child.on("close", (status, signal) => {
+      clearTimeout(timer)
+      stdoutStream?.end()
+      stderrStream?.end()
+      const result = {
+        command,
+        args,
+        status,
+        signal,
+        stdout,
+        stderr,
+        duration_ms: Math.round(performance.now() - started),
+        first_output_ms: firstOutputMs,
+        error: timedOut ? `timed out after ${options.timeoutMs || timeoutMs}ms` : null,
+      }
+      writeStatus({ status: timedOut ? "timeout" : "closed", result })
+      resolve(result)
+    })
+    if (options.input) child.stdin.end(options.input)
+    else child.stdin.end()
+  })
+}
+
+function parseJsonl(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line)
+      } catch {
+        return { raw: line }
+      }
+    })
+}
+
+function usageFromJsonl(stdout) {
+  const totals = { usage_events: 0, input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_input_tokens: 0, total_tokens: 0 }
+  for (const event of parseJsonl(stdout)) {
+    const usage = event.type === "turn.completed"
+      ? event.usage
+      : event.type === "event_msg" && event.payload?.type === "token_count"
+        ? event.payload?.info?.last_token_usage
+        : null
+    if (!usage) continue
+    totals.usage_events += 1
+    totals.input_tokens += Number(usage.input_tokens || usage.prompt_tokens || 0)
+    totals.output_tokens += Number(usage.output_tokens || usage.completion_tokens || 0)
+    totals.reasoning_tokens += Number(usage.output_tokens_details?.reasoning_tokens || usage.completion_tokens_details?.reasoning_tokens || 0)
+    totals.cached_input_tokens += Number(usage.input_tokens_details?.cached_tokens || usage.prompt_tokens_details?.cached_tokens || 0)
+    totals.total_tokens += Number(usage.total_tokens || 0)
+  }
+  return totals
+}
+
+function eventStats(stdout) {
+  const events = parseJsonl(stdout)
+  return {
+    events: events.length,
+    agent_messages: events.filter((event) => event.item?.type === "agent_message").length,
+    commands_started: events.filter((event) => event.type === "item.started" && event.item?.type === "command_execution").length,
+    commands_completed: events.filter((event) => event.type === "item.completed" && event.item?.type === "command_execution").length,
+    commands_failed: events.filter((event) => event.type === "item.completed" && event.item?.type === "command_execution" && event.item?.status === "failed").length,
+    file_changes: events.filter((event) => event.item?.type === "file_change").length,
+    file_changes_failed: events.filter((event) => event.item?.type === "file_change" && event.item?.status === "failed").length,
+  }
+}
+
+function performanceStats(result, usage, patch) {
+  const elapsedSeconds = result.duration_ms > 0 ? result.duration_ms / 1000 : null
+  const outputTps = elapsedSeconds ? Number((Number(usage.output_tokens || 0) / elapsedSeconds).toFixed(2)) : null
+  const totalTps = elapsedSeconds ? Number((Number(usage.total_tokens || usage.input_tokens + usage.output_tokens || 0) / elapsedSeconds).toFixed(2)) : null
+  return {
+    elapsed_ms: result.duration_ms,
+    elapsed_s: elapsedSeconds === null ? null : Number(elapsedSeconds.toFixed(3)),
+    first_output_ms: result.first_output_ms,
+    usage_events: usage.usage_events,
+    input_tokens: usage.input_tokens,
+    output_tokens: usage.output_tokens,
+    reasoning_tokens: usage.reasoning_tokens,
+    cached_input_tokens: usage.cached_input_tokens,
+    total_tokens: usage.total_tokens,
+    output_tps_total_wall: outputTps,
+    total_tps_total_wall: totalTps,
+    patch_bytes: patch.patch_bytes,
+    changed_files: patch.changed_files,
+  }
+}
+
+function serviceTierConfigArgs() {
+  const tier = String(serviceTier || "").trim()
+  if (!tier || tier === "default" || tier === "none" || tier === "off") return []
+  return ["-c", `service_tier="${tier}"`]
+}
+
+function turaServiceTierConfigArgs() {
+  const tier = String(serviceTier || "").trim()
+  if (!tier || tier === "default" || tier === "none" || tier === "off") return []
+  return ["-c", `service_tier=${tier}`]
+}
+
+async function fetchVerifiedInstances() {
+  const cachePath = path.join(runRoot, "verified-instances.json")
+  mkdirp(path.dirname(cachePath))
+  const localCandidates = [
+    path.join(benchmarkRoot, "verified-instances.json"),
+    path.join(benchmarkRoot, "verified-xarray-instances.json"),
+    path.join(benchmarkRoot, "verified_repo_difficulty_stats.json"),
+  ]
+  for (const candidate of localCandidates) {
+    if (!fs.existsSync(candidate)) continue
+    try {
+      const data = JSON.parse(fs.readFileSync(candidate, "utf8"))
+      const rows = Array.isArray(data)
+        ? data
+        : Array.isArray(data.instance_stats)
+          ? data.instance_stats
+          : []
+      if (rows.length > 0 && rows.every((row) => row.instance_id && row.repo && row.base_commit && row.problem_statement)) {
+        const selectedRows = rows.filter((row) => requestedRepos.includes(normalizeRepoName(row.repo)))
+        const coveredRepos = new Set(selectedRows.map((row) => normalizeRepoName(row.repo)))
+        const coversAllRequestedRepos = requestedRepos.every((repo) => coveredRepos.has(repo))
+        if (selectedRows.length > 0 && coversAllRequestedRepos) {
+          writeFile(cachePath, JSON.stringify(selectedRows.map(redactedInstance), null, 2))
+          return selectedRows
+        }
+      }
+    } catch {
+      // Ignore malformed local caches and try Hugging Face.
+    }
+  }
+  const rows = []
+  for (let offset = 0; ; offset += 100) {
+    const url = new URL("https://datasets-server.huggingface.co/rows")
+    url.searchParams.set("dataset", "SWE-bench/SWE-bench_Verified")
+    url.searchParams.set("config", "default")
+    url.searchParams.set("split", "test")
+    url.searchParams.set("offset", String(offset))
+    url.searchParams.set("length", "100")
+    const response = await fetchWithRetry(url)
+    const data = await response.json()
+    const got = data.rows || []
+    rows.push(...got.map((item) => item.row).filter((row) => requestedRepos.includes(normalizeRepoName(row.repo))))
+    if (got.length < 100) break
+  }
+  writeFile(cachePath, JSON.stringify(rows.map(redactedInstance), null, 2))
+  return rows
+}
+
+async function fetchWithRetry(url, tries = 5) {
+  let lastError = null
+  for (let attempt = 1; attempt <= tries; attempt += 1) {
+    try {
+      const response = await fetch(url, { headers: { "user-agent": "tura-swebench-xarray-e2e" } })
+      if (response.ok) return response
+      lastError = new Error(`HTTP ${response.status}`)
+    } catch (error) {
+      lastError = error
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000 * attempt * 2))
+  }
+  throw new Error(`failed to fetch ${url}: ${lastError?.message || lastError}`)
+}
+
+function selectInstances(allInstances) {
+  const byId = new Map(allInstances.map((item) => [item.instance_id, item]))
+  const dropped = []
+  const selected = []
+  for (const id of requestedInstanceIds) {
+    if (!issueBelongsToSelectedRepo(id)) {
+      dropped.push({ instance_id: id, reason: "not in selected repos" })
+      continue
+    }
+    const found = byId.get(id)
+    if (!found) {
+      dropped.push({ instance_id: id, reason: "not found in selected Verified rows" })
+      continue
+    }
+    selected.push(found)
+  }
+  if (selected.length === 0) {
+    throw new Error(`no runnable issues remain after filtering; dropped ${JSON.stringify(dropped)}`)
+  }
+  return { instances: selected, dropped_instance_ids: dropped }
+}
+
+function buildTasks(instances) {
+  return instances.map((instance) => ({
+    task_id: instance.instance_id,
+    repo: normalizeRepoName(instance.repo),
+    mode: "single_issue",
+    instances: [instance],
+    harness_compatible: true,
+  }))
+}
+
+function prepareWorkspace(task, agentId) {
+  const agentDir = path.join(runRoot, task.task_id, agentId)
+  const workspace = path.join(agentDir, "workspace")
+  const sourceRepo = sourceRepoFor(task.repo)
+  mkdirp(agentDir)
+  assert(fs.existsSync(path.join(sourceRepo, ".git")), `missing source repo for ${task.repo}: ${sourceRepo}`)
+  if (fs.existsSync(workspace)) fs.rmSync(workspace, { recursive: true, force: true })
+  runOk("git", ["clone", "--no-hardlinks", sourceRepo, workspace], { timeoutMs: 20 * 60_000 })
+  if (task.mode === "single_issue") {
+    runOk("git", ["checkout", "--force", task.instances[0].base_commit], { cwd: workspace, timeoutMs: 10 * 60_000 })
+  }
+  runOk("git", ["clean", "-fdx"], { cwd: workspace, timeoutMs: 10 * 60_000 })
+  writeFile(path.join(agentDir, "task.json"), JSON.stringify(redactedTask(task), null, 2))
+  writeFile(path.join(agentDir, "prompt.md"), taskPrompt(task))
+  return { agentDir, workspace }
+}
+
+function redactedInstance(instance) {
+  return {
+    repo: instance.repo,
+    instance_id: instance.instance_id,
+    base_commit: instance.base_commit,
+    created_at: instance.created_at,
+    version: instance.version,
+    difficulty: instance.difficulty,
+    problem_statement: instance.problem_statement,
+  }
+}
+
+function redactedTask(task) {
+  return {
+    task_id: task.task_id,
+    repo: task.repo,
+    mode: task.mode,
+    harness_compatible: task.harness_compatible,
+    instances: task.instances.map(redactedInstance),
+  }
+}
+
+function taskPrompt(task) {
+  const instance = task.instances[0]
+  return `We need modify the repository to fix the following issue.
+
+${instance.problem_statement}
+
+Treat the issue statement as a symptom report, not authoritative root-cause guidance. The reporter may point to the wrong file, function, or fix.
+
+Before editing production code, derive tests in two layers:
+1. A symptom regression test that reproduces the reported failure.
+2. A root-cause or public API contract test that would fail at the underlying abstraction boundary, not merely at the reported call site.
+
+Do not accept a fix just because the symptom regression test passes. After the first passing patch, actively look for false-positive fixes by asking:
+- Did I only mask the error at the call site?
+- Is there a lower-level object/API whose invariant should now hold?
+- Are nearby classes/functions expected to expose the same behavior?
+- Would this fix work for equivalent callers, not only the reproduction?
+
+Make the minimal necessary code changes, avoid unrelated changes, and make sure the issue is fixed.
+`
+}
+
+async function runCurrentLike(agentId, exe, workspace, agentDir, prompt) {
+  const args = [
+    "exec",
+    "--json",
+    "--skip-git-repo-check",
+    "-C",
+    workspace,
+    "-m",
+    model,
+    "--dangerously-bypass-approvals-and-sandbox",
+    "-c",
+    `model_reasoning_effort="${reasoning}"`,
+    ...serviceTierConfigArgs(),
+  ]
+  return runLive(exe, args, {
+    cwd: workspace,
+    input: prompt,
+    timeoutMs,
+    stdoutPath: path.join(agentDir, "stdout.jsonl"),
+    stderrPath: path.join(agentDir, "stderr.log"),
+    statusPath: path.join(agentDir, "status.json"),
+  })
+}
+
+async function runTura(agentId, workspace, agentDir, prompt, agentPrompt) {
+  runOk("cargo", ["build", "-p", "gateway", "--bin", "tura"], { cwd: repoRoot, timeoutMs: 240_000 })
+  const sessionId = `swebench-xarray-${agentId}-${Date.now()}`
+  const args = [
+    "exec",
+    "--json",
+    "--skip-git-repo-check",
+    "--session-id",
+    sessionId,
+    "--agent",
+    agentPrompt,
+    "-m",
+    turaModel,
+    "-c",
+    `model_reasoning_effort=${reasoning}`,
+    ...turaServiceTierConfigArgs(),
+    "--cwd",
+    workspace,
+  ]
+  return runLive(turaExe, args, {
+    cwd: workspace,
+    input: prompt,
+    timeoutMs,
+    stdoutPath: path.join(agentDir, "stdout.jsonl"),
+    stderrPath: path.join(agentDir, "stderr.log"),
+    statusPath: path.join(agentDir, "status.json"),
+    env: {
+      TURA_COMMAND_RUN_SHELL: "shell_command",
+      TURA_COMMAND_RUN_STRICT_JSON: "0",
+      COMMAND_RUN_AGENT_TIMEOUT_MS: String(timeoutMs),
+    },
+  })
+}
+
+function collectPatch(workspace, agentDir) {
+  const diff = run("git", ["diff", "--binary"], { cwd: workspace, timeoutMs: 120_000 })
+  const status = run("git", ["status", "--short"], { cwd: workspace, timeoutMs: 120_000 })
+  const diffCheck = run("git", ["diff", "--check"], { cwd: workspace, timeoutMs: 120_000 })
+  writeFile(path.join(agentDir, "model.patch"), diff.stdout)
+  writeFile(path.join(agentDir, "git-status.txt"), status.stdout)
+  writeFile(path.join(agentDir, "git-diff-check.txt"), `${diffCheck.stdout}${diffCheck.stderr}`)
+  return {
+    patch_path: path.join(agentDir, "model.patch"),
+    patch_bytes: Buffer.byteLength(diff.stdout || "", "utf8"),
+    changed_files: status.stdout.split(/\r?\n/).filter(Boolean).length,
+    git_status: status.stdout,
+    diff_check_exit_code: diffCheck.status,
+    diff_check_output: `${diffCheck.stdout}${diffCheck.stderr}`.slice(-2000),
+  }
+}
+
+function shellQuotePs(value) {
+  return `'${String(value).replaceAll("'", "''")}'`
+}
+
+function writePredictionBundles(results) {
+  const predictionsRoot = path.join(runRoot, "predictions")
+  mkdirp(predictionsRoot)
+  const byAgent = new Map()
+  for (const item of results) {
+    for (const result of item.results) {
+      if (!byAgent.has(result.agent)) byAgent.set(result.agent, [])
+      const patch = fs.existsSync(result.patch.patch_path) ? fs.readFileSync(result.patch.patch_path, "utf8") : ""
+      for (const instanceId of result.prediction_instance_ids) byAgent.get(result.agent).push({
+        instance_id: instanceId,
+        model_name_or_path: `${result.agent}:${result.agent.startsWith("tura-") ? turaModel : model}`,
+        model_patch: patch,
+      })
+    }
+  }
+
+  const bundles = []
+  for (const [agent, predictions] of byAgent) {
+    const dir = path.join(predictionsRoot, agent)
+    mkdirp(dir)
+    const predsJsonl = path.join(dir, "all_preds.jsonl")
+    writeFile(predsJsonl, predictions.map((prediction) => JSON.stringify(prediction)).join("\n") + "\n")
+    writeFile(path.join(dir, "README.md"), [
+      `# ${agent} SWE-bench predictions`,
+      "",
+      `Dataset: ${swebenchDataset}`,
+      `Run ID: ${runId}`,
+      `Model: ${agent.startsWith("tura-") ? turaModel : model}`,
+      `Reasoning effort: ${reasoning}`,
+      `Service tier: ${serviceTier}`,
+      "",
+      "This folder is a prediction bundle. It is not a completed SWE-bench harness evaluation until run_evaluation produces logs and report.json files.",
+      "",
+    ].join("\n"))
+    bundles.push({ agent, predictions: predictions.length, all_preds_jsonl: predsJsonl, dir })
+  }
+  return bundles
+}
+
+function loadPredictionBundlesFromDisk() {
+  const predictionsRoot = path.join(runRoot, "predictions")
+  if (!fs.existsSync(predictionsRoot)) {
+    throw new Error(`missing predictions directory for harness-only run: ${predictionsRoot}`)
+  }
+  return fs.readdirSync(predictionsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
+      const dir = path.join(predictionsRoot, entry.name)
+      const allPredsJsonl = path.join(dir, "all_preds.jsonl")
+      if (!fs.existsSync(allPredsJsonl)) throw new Error(`missing predictions file: ${allPredsJsonl}`)
+      const predictions = fs.readFileSync(allPredsJsonl, "utf8").split(/\r?\n/).filter(Boolean).length
+      return { agent: entry.name, predictions, all_preds_jsonl: allPredsJsonl, dir }
+    })
+}
+
+function comparisonRows(results) {
+  return results.flatMap((item) =>
+    item.results.map((result) => ({
+      task_id: item.task.task_id,
+      repo: item.task.repo,
+      instance_ids: item.task.instances.map((instance) => instance.instance_id),
+      harness_compatible: item.task.harness_compatible,
+      agent: result.agent,
+      exit_code: result.exit_code,
+      elapsed_ms: result.elapsed_ms,
+      first_output_ms: result.first_output_ms,
+      input_tokens: result.performance.input_tokens,
+      output_tokens: result.performance.output_tokens,
+      reasoning_tokens: result.performance.reasoning_tokens,
+      cached_input_tokens: result.performance.cached_input_tokens,
+      total_tokens: result.performance.total_tokens,
+      output_tps_total_wall: result.performance.output_tps_total_wall,
+      total_tps_total_wall: result.performance.total_tps_total_wall,
+      usage_events: result.performance.usage_events,
+      events: result.events.events,
+      agent_messages: result.events.agent_messages,
+      commands_started: result.events.commands_started,
+      commands_completed: result.events.commands_completed,
+      commands_failed: result.events.commands_failed,
+      file_changes: result.events.file_changes,
+      file_changes_failed: result.events.file_changes_failed,
+      patch_bytes: result.patch.patch_bytes,
+      changed_files: result.patch.changed_files,
+      has_tracked_patch: result.patch.patch_bytes > 0,
+    })),
+  )
+}
+
+function writeHarnessScripts(predictionBundles, instances, mode = "single_issue") {
+  const commands = []
+  const instanceIds = instances.map((instance) => instance.instance_id)
+  const instanceArgs = instanceIds.length > 0 ? ` --instance_ids ${instanceIds.map(shellQuotePs).join(" ")}` : ""
+  for (const bundle of predictionBundles) {
+    const harnessRunId = `${runId}-${bundle.agent}`.replace(/[^A-Za-z0-9_.-]+/g, "-")
+    commands.push([
+      "python -m swebench.harness.run_evaluation",
+      `  --dataset_name ${shellQuotePs(swebenchDataset)}`,
+      `  --predictions_path ${shellQuotePs(bundle.all_preds_jsonl)}`,
+      `  --max_workers ${harnessMaxWorkers}`,
+      `  --cache_level ${shellQuotePs(harnessCacheLevel)}`,
+      `  --clean ${shellQuotePs(harnessClean)}`,
+      `  --run_id ${shellQuotePs(harnessRunId)}`,
+      instanceArgs ? ` ${instanceArgs.trimStart()}` : "",
+    ].filter(Boolean).join(" `\n"))
+  }
+  const checkedCommands = commands.flatMap((command) => [
+    command,
+    "if ($LASTEXITCODE -ne 0) { throw \"SWE-bench harness command failed with exit code $LASTEXITCODE\" }",
+    "",
+  ])
+  const ps1 = path.join(runRoot, "run_swebench_harness.ps1")
+  writeFile(ps1, [
+    "$ErrorActionPreference = 'Stop'",
+    `Set-Location ${shellQuotePs(swebenchRoot)}`,
+    "",
+    ...checkedCommands,
+  ].join("\n"))
+  writeFile(path.join(runRoot, "harness-plan.json"), JSON.stringify({
+    swebench_root: swebenchRoot,
+    dataset: swebenchDataset,
+    mode,
+    max_workers: harnessMaxWorkers,
+    cache_level: harnessCacheLevel,
+    clean: harnessClean,
+    instance_ids: instanceIds,
+    commands,
+    note: "Run this script after ensuring SWE-bench harness dependencies and Docker are ready. Completed harness runs produce official evaluation logs/report.json files.",
+  }, null, 2))
+  return { script: ps1, commands }
+}
+
+async function maybeRunHarness(harnessPlan) {
+  if (!runHarness && !harnessOnly) return { ran: false, reason: "COMMAND_RUN_AGENT_RUN_HARNESS is not 1" }
+  if (!fs.existsSync(swebenchRoot)) return { ran: false, error: `missing SWE-bench root: ${swebenchRoot}` }
+  const result = run(process.platform === "win32" ? "powershell.exe" : "pwsh", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    harnessPlan.script,
+  ], { cwd: swebenchRoot, timeoutMs: Number(process.env.COMMAND_RUN_AGENT_HARNESS_TIMEOUT_MS || 6 * 60 * 60_000) })
+  writeFile(path.join(runRoot, "harness.stdout.log"), result.stdout)
+  writeFile(path.join(runRoot, "harness.stderr.log"), result.stderr)
+  return {
+    ran: true,
+    mode: harnessPlan.mode,
+    max_workers: harnessMaxWorkers,
+    exit_code: result.status,
+    stdout_path: path.join(runRoot, "harness.stdout.log"),
+    stderr_path: path.join(runRoot, "harness.stderr.log"),
+    error: result.error,
+  }
+}
+
+async function runAgentOnTask(agentId, task) {
+  const { agentDir, workspace } = prepareWorkspace(task, agentId)
+  const prompt = taskPrompt(task)
+  const started = performance.now()
+  let result
+  let error = null
+  try {
+    if (agentId === "current-shll") result = await runCurrentLike(agentId, codexCurrentExe, workspace, agentDir, prompt)
+    else if (agentId === "codex-main") result = await runCurrentLike(agentId, codexMainExe, workspace, agentDir, prompt)
+    else if (agentId === "tura-fast-shll") result = await runTura(agentId, workspace, agentDir, prompt, "coding_agent_fast")
+    else if (agentId === "tura-shll") result = await runTura(agentId, workspace, agentDir, prompt, "coding_agent")
+    else throw new Error(`unsupported agent ${agentId}`)
+  } catch (err) {
+    error = String(err?.stack || err?.message || err)
+    result = { status: null, signal: null, stdout: "", stderr: "", duration_ms: 0, first_output_ms: null, error }
+  }
+  const patch = collectPatch(workspace, agentDir)
+  const usage = usageFromJsonl(result.stdout)
+  const events = eventStats(result.stdout)
+  const summary = {
+    agent: agentId,
+    task_id: task.task_id,
+    repo: task.repo,
+    mode: task.mode,
+    harness_compatible: task.harness_compatible,
+    prediction_instance_ids: task.instances.map((instance) => instance.instance_id),
+    workspace,
+    elapsed_ms: Math.round(performance.now() - started),
+    exit_code: result.status,
+    signal: result.signal,
+    first_output_ms: result.first_output_ms,
+    error: error || result.error || null,
+    stdout_path: path.join(agentDir, "stdout.jsonl"),
+    stderr_path: path.join(agentDir, "stderr.log"),
+    usage,
+    events,
+    performance: performanceStats(result, usage, patch),
+    patch,
+  }
+  writeFile(path.join(agentDir, "agent-summary.json"), JSON.stringify(summary, null, 2))
+  return summary
+}
+
+async function main() {
+  mkdirp(runRoot)
+  if (harnessOnly) {
+    if (!fs.existsSync(summaryPath)) throw new Error(`COMMAND_RUN_AGENT_HARNESS_ONLY=1 requires existing summary: ${summaryPath}`)
+    const existingSummary = JSON.parse(fs.readFileSync(summaryPath, "utf8"))
+    const instances = existingSummary.instances || []
+    assert(instances.length > 0, `existing summary has no instances: ${summaryPath}`)
+    const predictionBundles = loadPredictionBundlesFromDisk()
+    const harnessPlan = writeHarnessScripts(predictionBundles, instances, "single_issue")
+    const harness = await maybeRunHarness(harnessPlan)
+    const summary = {
+      ...existingSummary,
+      harness_only: true,
+      harness_plan: harnessPlan,
+      harness,
+    }
+    writeFile(summaryPath, JSON.stringify(summary, null, 2))
+    console.log(JSON.stringify({ ok: harness.ran && harness.exit_code === 0, run_id: runId, run_root: runRoot, harness_only: true, harness }, null, 2))
+    if (harness.ran && harness.exit_code !== 0 && process.env.COMMAND_RUN_AGENT_ALLOW_FAILURE !== "1") process.exitCode = 1
+    return
+  }
+  const allInstances = await fetchVerifiedInstances()
+  const selection = selectInstances(allInstances)
+  const instances = selection.instances
+  const tasks = buildTasks(instances)
+  const plan = {
+    run_id: runId,
+    run_root: runRoot,
+    source_repos: Object.fromEntries(requestedRepos.map((repo) => [repo, sourceRepoFor(repo)])),
+    requested_repos: requestedRepos,
+    requested_instance_ids: requestedInstanceIds,
+    dropped_instance_ids: selection.dropped_instance_ids,
+    issue_table: selectedIssueTable(allInstances),
+    mode: "single_issue",
+    harness_compatible: tasks.every((task) => task.harness_compatible),
+    model,
+    tura_model: turaModel,
+    reasoning,
+    service_tier: serviceTier,
+    timeout_ms: timeoutMs,
+    harness_max_workers: harnessMaxWorkers,
+    agents,
+    instances: instances.map(redactedInstance),
+    tasks: tasks.map(redactedTask),
+  }
+  writeFile(path.join(runRoot, "plan.json"), JSON.stringify(plan, null, 2))
+  if (prepOnly) {
+    writeFile(summaryPath, JSON.stringify({ ok: true, prep_only: true, ...plan }, null, 2))
+    console.log(JSON.stringify({ ok: true, prep_only: true, ...plan }, null, 2))
+    return
+  }
+  assert(fs.existsSync(turaExe), `missing tura executable: ${turaExe}`)
+  assert(fs.existsSync(codexCurrentExe), `missing current codex executable: ${codexCurrentExe}`)
+  assert(fs.existsSync(codexMainExe), `missing codex-main executable: ${codexMainExe}`)
+
+  const results = []
+  for (const task of tasks) {
+    console.log(`[swebench-xarray-e2e] running ${task.task_id} with ${agents.join(", ")}`)
+    const taskResults = await Promise.all(agents.map((agent) => runAgentOnTask(agent, task)))
+    results.push({ task: redactedTask(task), results: taskResults })
+  }
+  const predictionBundles = writePredictionBundles(results)
+  const harnessPlan = writeHarnessScripts(predictionBundles, instances)
+  const harness = await maybeRunHarness(harnessPlan)
+  const comparison = comparisonRows(results)
+  const summary = {
+    ok: results.every((item) => item.results.every((result) => result.exit_code === 0 && result.patch.patch_bytes > 0)),
+    ...plan,
+    comparison,
+    prediction_bundles: predictionBundles,
+    harness_plan: harnessPlan,
+    harness,
+    results,
+  }
+  writeFile(summaryPath, JSON.stringify(summary, null, 2))
+  console.log(JSON.stringify(summary, null, 2))
+  if (!summary.ok && process.env.COMMAND_RUN_AGENT_ALLOW_FAILURE !== "1") process.exitCode = 1
+}
+
+await main()
