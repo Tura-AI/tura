@@ -1,6 +1,6 @@
 {
   "name": "command_run",
-  "description": "Run tools as a pure batch+step command runner. Always use commands[]. command_run results must be returned through the tool/runtime result channel only; do not copy, summarize as JSON, or replay command_run results in assistant content. Prefer one complete batch for predictable work: discover/read/search/download the needed context, edit, test, and validate in ordered steps when dependencies are clear. Keep related path listing, targeted search, downloaded artifact discovery, and candidate file reads in the same batch and same read-only step when they are independent. Use early steps for needed discovery/read/search/download commands and later steps for apply_patch, generated writes, tests, builds, and verification that should wait for earlier results. Mutating or unknown commands act as barriers and run one at a time. Different steps run in ascending order.",
+  "description": "Run tools as a pure batch+step command runner. Always use commands[]. command_run results must be returned through the tool/runtime result channel only; do not copy, summarize as JSON, or replay command_run results in assistant content. Use assistant content only for concise reasoning, progress, and conclusions. Prefer one complete batch for predictable work: discover/read/search/download the needed context, edit, test, and validate in ordered steps when dependencies are clear. Keep related path listing, targeted search, downloaded artifact discovery, and candidate file reads in the same batch and same read-only step when they are independent. Use early steps for needed discovery/read/search/download commands and later steps for apply_patch, generated writes, tests, builds, and verification that should wait for earlier results. Mutating or unknown commands act as barriers and run one at a time. Different steps run in ascending order.",
   "input_schema": {
     "type": "object",
     "required": ["commands"],
@@ -34,7 +34,7 @@
               "type": "integer",
               "minimum": 1,
               "x-tura-optional": true,
-              "description": "Per-command timeout in milliseconds. Defaults to 90000."
+              "description": "Per-command timeout in milliseconds. Defaults to 15000."
             }
           }
         }

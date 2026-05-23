@@ -393,8 +393,9 @@ Prompt text has separate owners:
 
 - Agent prompts: `crates/agents/src/<agent>/prompt.md`
 - Runtime prompt fragments: `crates/runtime/src/prompt_style/`
-- Tool prompts: `crates/tools/src/command_run/prompt.md` and
-  `crates/tools/src/commands/<command>/prompt.md`
+- The `command_run` visible tool description: `crates/tools/src/command_run/schema.json`,
+  augmented at runtime by `crates/runtime/src/manas/tool_catalog.rs`
+- Command prompts: `crates/tools/src/commands/<command>/prompt.md`
 
 Fixed runtime prompt text should be Rust constants under `prompt_style/`.
 Dynamic runtime values should be injected by named builder sections. Tool

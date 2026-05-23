@@ -14,6 +14,7 @@ Small command-run probes live under `tests/unit/command-run/`.
 - `command_run_media_recall_e2e.mjs` verifies that media observations remain recallable across turns without retaining raw base64 in context.
 - `command_run_newjeans_official_media_e2e.mjs` runs a live web/media task with `tura-fast-shll` by default: download official unified-style NewJeans headshots for Minji, Hanni, Danielle, Haerin, and Hyein, inspect them with `read_media`, and report operations, session logs, token usage, and the required `SAME_STYLE` verdict.
 - `command_run_frontend_playwright_e2e.mjs` compares current, codex-main, and Tura on a Playwright-heavy frontend repair task with live per-agent logs and hidden validation.
+- `command_run_background_services_e2e.mjs` checks that Tura agents start multiple persistent local services in the background, probe readiness, and clean them up across `shell_command` and `bash` command surfaces.
 - `agent_swebench_test.mjs` compares Tura and Codex agents on explicit SWE-bench Verified issue ids using issue statements only, with priority `gpt-5.5` low-reasoning defaults and per-agent patch/log capture.
 - Historical generated records from the previous layout now live under
   `target/command-run-codex-two-way-records/`.
@@ -29,6 +30,19 @@ $env:COMMAND_RUN_AGENT_CODEX_SERVICE_TIER='priority'
 $env:COMMAND_RUN_AGENT_TIMEOUT_MS='300000'
 node .\tests\long-e2e\command-run-codex-two-way\command_run_codex_two_way_e2e.mjs
 ```
+
+Run the background-service command-run probe:
+
+```powershell
+$env:COMMAND_RUN_BACKGROUND_SERVICES_AGENTS='tura-fast-shll,tura-shll,tura-fast-bash,tura-bash'
+$env:COMMAND_RUN_BACKGROUND_SERVICES_TIMEOUT_MS='240000'
+node .\tests\long-e2e\command-run-codex-two-way\command_run_background_services_e2e.mjs
+```
+
+This probe creates a tiny Node HTTP service fixture per agent. Each agent must
+start two services in the background, wait for both `/ready` endpoints, run
+probes, stop both services, and write `service-results.json`. The external
+runner also checks that no fixture service is left running.
 
 Useful optional overrides:
 

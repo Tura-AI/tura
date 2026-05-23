@@ -26,7 +26,6 @@ crates/tools/
       mod.rs
       handler.rs
       schema.json
-      prompt.md
       policy.toml
 
     runtime/
@@ -119,8 +118,10 @@ Each command has:
 - `policy.toml`: read/write/network/background/permission policy.
 - Tests.
 
-Schemas are not automatically dumped into prompt context. Runtime should inject
-compact prompts for active commands.
+The `command_run` visible tool is the exception: its model-facing description
+comes from `command_run/schema.json` and is augmented by
+`crates/runtime/src/manas/tool_catalog.rs`. Schemas are not automatically dumped
+into prompt context. Runtime should inject compact prompts for active commands.
 
 ## Registry Boundary
 

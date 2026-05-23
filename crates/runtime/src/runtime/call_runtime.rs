@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use tracing::error;
 
@@ -798,20 +798,7 @@ fn cli_live_command_run_events(
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let status = if success { "completed" } else { "failed" };
-        let aggregated_output = result
-            .get("output")
-            .map(|output| {
-                output.as_str().map(ToString::to_string).unwrap_or_else(|| {
-                    serde_json::to_string_pretty(output).unwrap_or_else(|_| output.to_string())
-                })
-            })
-            .or_else(|| {
-                result
-                    .get("error")
-                    .and_then(serde_json::Value::as_str)
-                    .map(ToString::to_string)
-            })
-            .unwrap_or_default();
+        let aggregated_output = cli_live_command_aggregated_output(command_type, result);
         let item_type = if command_type == "apply_patch" {
             "file_change"
         } else {
@@ -830,6 +817,106 @@ fn cli_live_command_run_events(
         *item_index += 1;
     }
     events
+}
+
+fn cli_live_command_aggregated_output(command_type: &str, result: &serde_json::Value) -> String {
+    result
+        .get("output")
+        .map(|output| {
+            let output = if command_type == "read_media" {
+                redacted_read_media_output(output)
+            } else {
+                output.clone()
+            };
+            output.as_str().map(ToString::to_string).unwrap_or_else(|| {
+                serde_json::to_string_pretty(&output).unwrap_or_else(|_| output.to_string())
+            })
+        })
+        .or_else(|| {
+            result
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .map(ToString::to_string)
+        })
+        .unwrap_or_default()
+}
+
+fn redacted_read_media_output(output: &serde_json::Value) -> serde_json::Value {
+    let mut redacted = output.clone();
+    redact_media_payload_data(&mut redacted);
+    redacted
+}
+
+fn redact_media_payload_data(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(object) => {
+            let preview_count = object
+                .get("visual_preview_count")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!(null));
+            if object.contains_key("visual_previews") {
+                object.insert(
+                    "visual_previews".to_string(),
+                    serde_json::json!({
+                        "redacted_from_cli_log": true,
+                        "count": preview_count,
+                        "reason": "media payload is sent through the provider media channel"
+                    }),
+                );
+            }
+            let audio_count = object
+                .get("audio_preview_count")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!(null));
+            if object.contains_key("audio_previews") {
+                object.insert(
+                    "audio_previews".to_string(),
+                    serde_json::json!({
+                        "redacted_from_cli_log": true,
+                        "count": audio_count,
+                        "reason": "media payload is sent through the provider media channel"
+                    }),
+                );
+            }
+            let file_count = object
+                .get("file_attachment_count")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!(null));
+            if object.contains_key("file_attachments") {
+                object.insert(
+                    "file_attachments".to_string(),
+                    serde_json::json!({
+                        "redacted_from_cli_log": true,
+                        "count": file_count,
+                        "reason": "file payload is sent through the provider file channel"
+                    }),
+                );
+            }
+            if let Some(serde_json::Value::String(url)) = object.get_mut("url") {
+                if is_base64_data_url(url) {
+                    *url = "[redacted media data URL]".to_string();
+                }
+            }
+            if let Some(serde_json::Value::String(data)) = object.get_mut("data_base64") {
+                if !data.is_empty() {
+                    *data = "[redacted base64 file payload]".to_string();
+                }
+            }
+            for child in object.values_mut() {
+                redact_media_payload_data(child);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                redact_media_payload_data(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_base64_data_url(value: &str) -> bool {
+    value.starts_with("data:") && value.contains(";base64,")
 }
 
 fn env_flag(name: &str) -> bool {
@@ -1013,9 +1100,55 @@ mod tests {
         assert_eq!(events[0]["type"], "item.completed");
         assert_eq!(events[0]["item"]["type"], "file_change");
         assert_eq!(events[0]["item"]["status"], "failed");
-        assert!(events[0]["item"]["aggregated_output"]
+        assert!(
+            events[0]["item"]["aggregated_output"]
+                .as_str()
+                .is_some_and(|text| text.contains("ContextMismatch"))
+        );
+    }
+
+    #[test]
+    fn cli_live_command_run_events_redact_read_media_payloads() {
+        let mut item_index = 0;
+        let events = cli_live_command_run_events(
+            &[serde_json::json!({
+                "command_type": "read_media",
+                "success": true,
+                "output": {
+                    "summary_markdown": "- reference/desktop.png: image, 1 visual preview",
+                    "visual_preview_count": 1,
+                    "visual_previews": [{
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:image/jpeg;base64,AAA"
+                        }
+                    }],
+                    "media_results": [{
+                        "path": "reference/desktop.png",
+                        "visual_preview_count": 1,
+                        "visual_previews": [{
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "data:image/jpeg;base64,BBB"
+                            }
+                        }],
+                        "file_attachment_count": 1,
+                        "file_attachments": [{
+                            "data_base64": "QUJD"
+                        }]
+                    }]
+                }
+            })],
+            &mut item_index,
+        );
+
+        let output = events[0]["item"]["aggregated_output"]
             .as_str()
-            .is_some_and(|text| text.contains("ContextMismatch")));
+            .expect("aggregated output is text");
+        assert!(output.contains("reference/desktop.png"));
+        assert!(output.contains("redacted_from_cli_log"));
+        assert!(!output.contains("data:image/jpeg;base64"));
+        assert!(!output.contains("QUJD"));
     }
 
     #[test]

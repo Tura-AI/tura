@@ -78,10 +78,20 @@ function parseAgents(value) {
     ["claude-code", "claude-code"],
     ["claude-opus", "claude-code"],
   ])
-  return String(value)
+  const parsed = String(value)
     .split(",")
     .map((item) => alias.get(item.trim().toLowerCase()))
     .filter(Boolean)
+  const counts = new Map()
+  return parsed.map((agent) => {
+    const next = (counts.get(agent) || 0) + 1
+    counts.set(agent, next)
+    return next === 1 ? agent : `${agent}-${next}`
+  })
+}
+
+function agentKind(agentId) {
+  return String(agentId).replace(/-\d+$/, "")
 }
 
 function run(command, args, options = {}) {
@@ -807,7 +817,7 @@ function createHiddenEvaluator() {
 function promptPhase1(port) {
   return `You are in a front-end repair benchmark. The workspace contains a half-finished React page and three reference screenshots in reference/desktop.png, reference/mobile.png, and reference/modal.png. The screenshots show the intended visual quality; the current app has many display and interaction bugs.
 
-Do not edit files under reference/. Do not ask for hidden tests. Run npm install if dependencies are missing. Start the Vite app before Playwright probes, for example npm run start -- --port ${port} --strictPort, then run the Playwright npm scripts with PORT=${port}. Use Playwright from the provided npm scripts to inspect, screenshot, interact with the page, and compare against the reference screenshots. Use your image-reading capability on generated screenshots and the reference screenshots when helpful.
+Do not edit files under reference/. Do not ask for hidden tests. Run npm install if dependencies are missing. Start the Vite app before Playwright probes, for example npm run start -- --port ${port} --strictPort. Because Vite is a long-running server, start it in the background, wait until http://127.0.0.1:${port} is ready, run the Playwright npm scripts with PORT=${port}, and then clean up the server; do not leave a foreground server command blocking the agent run. Use Playwright from the provided npm scripts to inspect, screenshot, interact with the page, and compare against the reference screenshots. Use your image-reading capability on generated screenshots and the reference screenshots when helpful.
 
 Fix the page so the desktop, mobile, and modal states match the references in layout intent and quality. Also fix obvious interaction problems around filtering, search, create, complete, details, accessibility names, overflow, and responsive behavior. Use the provided scripts and screenshots to verify. Finish with a concise summary and mention the screenshots or probes you ran.`
 }
@@ -827,7 +837,7 @@ function promptPhase2(port) {
 - Add a lightweight two-stage animation: cards should enter smoothly on load/filter changes, and the create-task success state should animate without breaking prefers-reduced-motion.
 - Preserve keyboard-accessible labels and avoid horizontal overflow on mobile.
 
-You may read and use the visible tools/probe scripts. Start the Vite app before Playwright probes on port ${port}, then use Playwright to demonstrate the new interactions and take updated screenshots.`
+You may read and use the visible tools/probe scripts. Start the Vite app in the background before Playwright probes on port ${port}, wait for readiness, run the probes/screenshots, and clean up the server so the command does not block the run.`
 }
 
 function parseJsonl(text) {
@@ -1115,16 +1125,17 @@ async function runAgent(agentId, template, evaluator, index) {
   const started = performance.now()
   let result
   let runError = null
+  const kind = agentKind(agentId)
   try {
-    if (agentId === "current-shll") {
+    if (kind === "current-shll") {
       result = await runCurrentLike(agentId, codexCurrentExe, workspace, agentDir, agentPort)
-    } else if (agentId === "codex-main") {
+    } else if (kind === "codex-main") {
       result = await runCurrentLike(agentId, codexMainExe, workspace, agentDir, agentPort)
-    } else if (agentId === "tura-fast-shll") {
+    } else if (kind === "tura-fast-shll") {
       result = await runTura(workspace, agentDir, agentPort, "coding_agent_fast")
-    } else if (agentId === "tura-shll") {
+    } else if (kind === "tura-shll") {
       result = await runTura(workspace, agentDir, agentPort, "coding_agent")
-    } else if (agentId === "claude-code") {
+    } else if (kind === "claude-code") {
       result = await runClaudeCode(workspace, agentDir, agentPort)
     } else {
       throw new Error(`unsupported agent ${agentId}`)

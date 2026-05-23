@@ -2,6 +2,7 @@
 import assert from "node:assert/strict"
 import os from "node:os"
 import { spawn, spawnSync } from "node:child_process"
+import crypto from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
 import process from "node:process"
@@ -41,15 +42,15 @@ const timeoutMs = Number(process.env.COMMAND_RUN_AGENT_TIMEOUT_MS || 60 * 60_000
 const agents = parseAgents(process.env.COMMAND_RUN_AGENT_AGENTS || "tura-fast-shll,current-shll,codex-main")
 const agentRuns = buildAgentRuns(agents)
 const workspacePrepConcurrency = Number(process.env.COMMAND_RUN_AGENT_WORKSPACE_PREP_CONCURRENCY || (process.platform === "win32" ? 1 : Math.min(4, Math.max(1, os.cpus().length - 1 || 1))))
+const harnessOnly = (process.env.COMMAND_RUN_AGENT_HARNESS_ONLY || "0") === "1"
 const requestedInstances = process.env.COMMAND_RUN_AGENT_SWEBENCH_INSTANCE_IDS || ""
 const requestedInstanceIds = parseInstanceSpecs(requestedInstances)
-assert(requestedInstanceIds.length > 0, "COMMAND_RUN_AGENT_SWEBENCH_INSTANCE_IDS is required")
+if (!harnessOnly) assert(requestedInstanceIds.length > 0, "COMMAND_RUN_AGENT_SWEBENCH_INSTANCE_IDS is required")
 const requestedRepos = process.env.COMMAND_RUN_AGENT_SWEBENCH_REPOS || process.env.COMMAND_RUN_AGENT_SWEBENCH_REPO
   ? parseRepoSpecs(process.env.COMMAND_RUN_AGENT_SWEBENCH_REPOS || process.env.COMMAND_RUN_AGENT_SWEBENCH_REPO)
-  : inferReposFromInstanceIds(requestedInstanceIds)
+  : requestedInstanceIds.length > 0 ? inferReposFromInstanceIds(requestedInstanceIds) : []
 const prepOnly = (process.env.COMMAND_RUN_AGENT_PREP_ONLY || "0") === "1"
 const runHarness = (process.env.COMMAND_RUN_AGENT_RUN_HARNESS || "0") === "1"
-const harnessOnly = (process.env.COMMAND_RUN_AGENT_HARNESS_ONLY || "0") === "1"
 const harnessMaxWorkers = Number(process.env.COMMAND_RUN_AGENT_HARNESS_MAX_WORKERS || Math.max(1, Math.min(8, os.cpus().length - 1 || 1)))
 const harnessCacheLevel = process.env.COMMAND_RUN_AGENT_HARNESS_CACHE_LEVEL || "instance"
 const harnessClean = process.env.COMMAND_RUN_AGENT_HARNESS_CLEAN || "false"
@@ -373,16 +374,91 @@ function usageFromJsonl(stdout) {
       ? event.usage
       : event.type === "event_msg" && event.payload?.type === "token_count"
         ? event.payload?.info?.last_token_usage
-        : null
+        : event.type === "runtime_usage"
+          ? event.usage
+          : null
     if (!usage) continue
-    totals.usage_events += 1
-    totals.input_tokens += Number(usage.input_tokens || usage.prompt_tokens || 0)
-    totals.output_tokens += Number(usage.output_tokens || usage.completion_tokens || 0)
-    totals.reasoning_tokens += Number(usage.output_tokens_details?.reasoning_tokens || usage.completion_tokens_details?.reasoning_tokens || 0)
-    totals.cached_input_tokens += Number(usage.input_tokens_details?.cached_tokens || usage.prompt_tokens_details?.cached_tokens || 0)
-    totals.total_tokens += Number(usage.total_tokens || 0)
+    addUsage(totals, usage)
   }
   return totals
+}
+
+function usageFromTuraSessions(workspace) {
+  const sessionsDir = path.join(workspace, ".tura", "sessions")
+  const totals = { usage_events: 0, input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_input_tokens: 0, total_tokens: 0 }
+  if (!fs.existsSync(sessionsDir)) return totals
+  for (const file of listFiles(sessionsDir)) {
+    if (!file.endsWith(".json") && !file.endsWith(".jsonl")) continue
+    const content = fs.readFileSync(file, "utf8")
+    if (file.endsWith(".jsonl")) {
+      for (const event of parseJsonl(content)) {
+        if (event.type === "runtime_usage" && event.usage) addUsage(totals, event.usage)
+      }
+      continue
+    }
+    let session
+    try {
+      session = JSON.parse(content)
+    } catch {
+      continue
+    }
+    collectRuntimeUsage(session, totals)
+  }
+  return totals
+}
+
+function collectRuntimeUsage(value, totals, depth = 0) {
+  if (depth > 8 || value === null || value === undefined) return
+  if (typeof value === "string") {
+    const parsed = tryParseJson(value)
+    if (parsed) collectRuntimeUsage(parsed, totals, depth + 1)
+    return
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectRuntimeUsage(item, totals, depth + 1)
+    return
+  }
+  if (typeof value !== "object") return
+  if (value.type === "runtime_usage" && value.usage) addUsage(totals, value.usage)
+  for (const child of Object.values(value)) collectRuntimeUsage(child, totals, depth + 1)
+}
+
+function listFiles(rootDir) {
+  const files = []
+  const stack = [rootDir]
+  while (stack.length > 0) {
+    const current = stack.pop()
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const fullPath = path.join(current, entry.name)
+      if (entry.isDirectory()) stack.push(fullPath)
+      else files.push(fullPath)
+    }
+  }
+  return files
+}
+
+function tryParseJson(text) {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+function addUsage(totals, usage) {
+  totals.usage_events += 1
+  totals.input_tokens += Number(usage.input_tokens || usage.prompt_tokens || 0)
+  totals.output_tokens += Number(usage.output_tokens || usage.completion_tokens || 0)
+  totals.reasoning_tokens += Number(usage.reasoning_tokens || usage.output_tokens_details?.reasoning_tokens || usage.completion_tokens_details?.reasoning_tokens || 0)
+  totals.cached_input_tokens += Number(usage.cached_input_tokens || usage.input_tokens_details?.cached_tokens || usage.prompt_tokens_details?.cached_tokens || 0)
+  totals.total_tokens += Number(usage.total_tokens || usage.input_tokens + usage.output_tokens || usage.prompt_tokens + usage.completion_tokens || 0)
+}
+
+function chooseUsage(stdout, workspace) {
+  const stdoutUsage = usageFromJsonl(stdout)
+  const sessionUsage = usageFromTuraSessions(workspace)
+  if (sessionUsage.usage_events > stdoutUsage.usage_events) return { ...sessionUsage, source: "tura_sessions" }
+  return { ...stdoutUsage, source: stdoutUsage.usage_events > 0 ? "stdout_jsonl" : "none" }
 }
 
 function eventStats(stdout) {
@@ -557,6 +633,7 @@ function isolateWorkspaceGitHistory(workspace, task) {
   runOk("git", ["config", "user.email", "agent-swebench-test@example.invalid"], { cwd: workspace, timeoutMs: 30_000 })
   runOk("git", ["config", "user.name", "agent-swebench-test"], { cwd: workspace, timeoutMs: 30_000 })
   runOk("git", ["config", "core.autocrlf", "false"], { cwd: workspace, timeoutMs: 30_000 })
+  repairWorkspaceGitPermissions(workspace)
   writeFile(path.join(workspace, ".tura", "swebench-workspace.json"), JSON.stringify({
     instance_ids: task.instances.map((instance) => instance.instance_id),
     original_base_commit: originalHead,
@@ -569,17 +646,15 @@ function isolateWorkspaceGitHistory(workspace, task) {
 function runGitAddWithRetry(workspace) {
   const attempts = []
   for (let attempt = 1; attempt <= 4; attempt += 1) {
-    const result = run("git", ["add", "-A"], { cwd: workspace, timeoutMs: 5 * 60_000 })
+    repairWorkspaceGitPermissions(workspace)
+    const result = run("git", ["-c", "core.fscache=false", "-c", "core.preloadindex=false", "add", "-A"], { cwd: workspace, timeoutMs: 5 * 60_000 })
     attempts.push(result)
     if (result.status === 0) return
     const output = `${result.stderr}\n${result.error || ""}`
     if (!/Permission denied|unable to write file|index\.lock|File exists|resource busy/i.test(output)) {
       throw new Error(`git add -A failed with ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}\nERROR:\n${result.error || ""}`)
     }
-    if (process.platform === "win32") {
-      run("icacls", [path.join(workspace, ".git"), "/grant", "CodexSandboxUsers:(OI)(CI)F"], { cwd: workspace, timeoutMs: 60_000 })
-      run("icacls", [path.join(workspace, ".git"), "/grant", "Users:(OI)(CI)F"], { cwd: workspace, timeoutMs: 60_000 })
-    }
+    repairWorkspaceGitPermissions(workspace)
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500 * attempt)
   }
   const details = attempts.map((attempt, index) => [
@@ -589,6 +664,39 @@ function runGitAddWithRetry(workspace) {
     `ERROR:\n${attempt.error || ""}`,
   ].join("\n")).join("\n\n")
   throw new Error(`git add -A failed after ${attempts.length} attempts\n${details}`)
+}
+
+function repairWorkspaceGitPermissions(workspace) {
+  const gitDir = path.join(workspace, ".git")
+  if (!fs.existsSync(gitDir)) return
+  try {
+    chmodTree(gitDir)
+  } catch {
+    // Best-effort: Windows ACL repair below is usually the important part.
+  }
+  if (process.platform !== "win32") return
+  run("attrib", ["-R", path.join(gitDir, "*"), "/S", "/D"], { cwd: workspace, timeoutMs: 60_000 })
+  const grants = ["*S-1-5-32-545:(OI)(CI)F", "*S-1-1-0:(OI)(CI)F", "Users:(OI)(CI)F", "Everyone:(OI)(CI)F"]
+  const whoami = run("whoami", [], { cwd: workspace, timeoutMs: 30_000 })
+  if (whoami.status === 0 && whoami.stdout.trim()) {
+    grants.unshift(`${whoami.stdout.trim()}:(OI)(CI)F`)
+  }
+  for (const grant of grants) {
+    run("icacls", [gitDir, "/grant", grant, "/T", "/C", "/Q"], { cwd: workspace, timeoutMs: 120_000 })
+  }
+}
+
+function chmodTree(rootDir) {
+  const stack = [rootDir]
+  while (stack.length > 0) {
+    const current = stack.pop()
+    fs.chmodSync(current, 0o777)
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const fullPath = path.join(current, entry.name)
+      if (entry.isDirectory()) stack.push(fullPath)
+      else fs.chmodSync(fullPath, 0o666)
+    }
+  }
 }
 
 function redactedInstance(instance) {
@@ -615,7 +723,7 @@ function redactedTask(task) {
 
 function taskPrompt(task) {
   const instance = task.instances[0]
-  return `Fix the bug or issue described below. Treat the report, docs, stack traces, and suggested causes as clues, not proof of the root cause or correct fix. First identify the underlying contract and the smallest stable boundary where the behavior should be guaranteed; be especially suspicious of lazy evaluation, deferred execution, caches, cloning, shared mutable state, partial or repeated execution, and compile/render/serialization steps that may trigger failures later than the reported call site. After any transformation that changes the externally visible shape or meaning of data, aggressively revalidate dependent references, aliases, indexes, caches, and invariants against the final exposed shape instead of reusing assumptions from an earlier internal shape. Work backward from the failure to the earliest invariant boundary, and make regression tests exercise derived/transformed paths before and after evaluation so stale references, cached state, and shape mismatches cannot hide. Make the minimal necessary production change, avoid unrelated refactors or new abstractions, and do not mask the failure at the call site when the invariant belongs deeper in the system. Do not search the internet.
+  return `Fix the bug or issue described below. Treat the report, docs, stack traces, and suggested causes as clues, not proof of the root cause or correct fix. First identify the underlying contract and the smallest stable boundary where the behavior should be guaranteed; be especially suspicious of lazy evaluation, deferred execution, caches, cloning, shared mutable state, partial or repeated execution, and compile/render/serialization steps that may trigger failures later than the reported call site. After any transformation that changes the externally visible shape or meaning of data, aggressively revalidate dependent references, aliases, indexes, caches, and invariants against the final exposed shape instead of reusing assumptions from an earlier internal shape. Validate with focused tests or checks that would fail on the original bug and cover equivalent callers or nearby paths, not only the exact reproduction. Make the minimal necessary production change, avoid unrelated refactors or new abstractions, and do not mask the failure at the call site when the invariant belongs deeper in the system. Do not search the internet.
 
 ${instance.problem_statement}
 `
@@ -647,6 +755,7 @@ async function runCurrentLike(agentId, exe, workspace, agentDir, prompt) {
 
 async function runTura(agentId, workspace, agentDir, prompt, agentPrompt) {
   const sessionId = `agent-swebench-test-${agentId}-${process.pid}-${Date.now()}`
+  const internalPrompt = snapshotTuraInternalPrompt(agentDir, agentPrompt)
   const args = [
     "exec",
     "--json",
@@ -663,7 +772,7 @@ async function runTura(agentId, workspace, agentDir, prompt, agentPrompt) {
     "--cwd",
     workspace,
   ]
-  return runLive(turaExe, args, {
+  const result = await runLive(turaExe, args, {
     cwd: workspace,
     input: prompt,
     timeoutMs,
@@ -671,12 +780,29 @@ async function runTura(agentId, workspace, agentDir, prompt, agentPrompt) {
     stderrPath: path.join(agentDir, "stderr.log"),
     statusPath: path.join(agentDir, "status.json"),
     env: {
+      TURA_PROJECT_ROOT: repoRoot,
       TURA_COMMAND_RUN_SHELL: "shell_command",
       TURA_COMMAND_RUN_STRICT_JSON: "0",
       TURA_SESSION_REASONING_EFFORT: reasoning,
       COMMAND_RUN_AGENT_TIMEOUT_MS: String(timeoutMs),
     },
   })
+  return { ...result, tura_internal_prompt: internalPrompt }
+}
+
+function snapshotTuraInternalPrompt(agentDir, agentPrompt) {
+  const promptPath = path.join(repoRoot, "crates", "agents", "src", agentPrompt, "prompt.md")
+  assert(fs.existsSync(promptPath), `missing Tura internal prompt: ${promptPath}`)
+  const content = fs.readFileSync(promptPath, "utf8")
+  const snapshotPath = path.join(agentDir, "tura-internal-prompt.md")
+  writeFile(snapshotPath, content)
+  return {
+    agent_prompt: agentPrompt,
+    prompt_path: promptPath,
+    snapshot_path: snapshotPath,
+    sha256: crypto.createHash("sha256").update(content).digest("hex"),
+    bytes: Buffer.byteLength(content),
+  }
 }
 
 function collectPatch(workspace, agentDir) {
@@ -696,17 +822,58 @@ function collectPatch(workspace, agentDir) {
   }
   const diff = run("git", ["diff", "--binary"], { cwd: workspace, timeoutMs: 120_000 })
   const status = run("git", ["status", "--short"], { cwd: workspace, timeoutMs: 120_000 })
-  const diffCheck = run("git", ["diff", "--check"], { cwd: workspace, timeoutMs: 120_000 })
-  writeFile(path.join(agentDir, "model.patch"), diff.stdout)
+  const patchText = normalizePatchLineEndings(diff.stdout || "")
+  const diffCheck = checkNormalizedPatchWhitespace(patchText)
+  writeFile(path.join(agentDir, "model.patch"), patchText)
   writeFile(path.join(agentDir, "git-status.txt"), status.stdout)
-  writeFile(path.join(agentDir, "git-diff-check.txt"), `${diffCheck.stdout}${diffCheck.stderr}`)
+  writeFile(path.join(agentDir, "git-diff-check.txt"), diffCheck.output)
   return {
     patch_path: path.join(agentDir, "model.patch"),
-    patch_bytes: Buffer.byteLength(diff.stdout || "", "utf8"),
+    patch_bytes: Buffer.byteLength(patchText, "utf8"),
     changed_files: status.stdout.split(/\r?\n/).filter(Boolean).length,
     git_status: status.stdout,
-    diff_check_exit_code: diffCheck.status,
-    diff_check_output: `${diffCheck.stdout}${diffCheck.stderr}`.slice(-2000),
+    diff_check_exit_code: diffCheck.exit_code,
+    diff_check_output: diffCheck.output.slice(-2000),
+  }
+}
+
+function normalizePatchLineEndings(patchText) {
+  return String(patchText || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+}
+
+function normalizePatchForHarness(patchText) {
+  return normalizePatchLineEndings(patchText)
+    .split("\n")
+    .map((line) => line.endsWith("\r") ? line.slice(0, -1) : line)
+    .join("\n")
+}
+
+function checkNormalizedPatchWhitespace(patchText) {
+  const problems = []
+  let currentFile = null
+  let newLine = 0
+  for (const line of String(patchText || "").split("\n")) {
+    if (line.startsWith("+++ b/")) {
+      currentFile = line.slice("+++ b/".length)
+      continue
+    }
+    if (line.startsWith("@@")) {
+      const match = /\+(\d+)(?:,\d+)?/.exec(line)
+      newLine = match ? Number(match[1]) : 0
+      continue
+    }
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      const content = line.slice(1)
+      if (/[ \t]$/.test(content)) problems.push(`${currentFile || "(unknown)"}:${newLine}: trailing whitespace.`)
+      newLine += 1
+      continue
+    }
+    if (line.startsWith("-") && !line.startsWith("---")) continue
+    if (newLine > 0) newLine += 1
+  }
+  return {
+    exit_code: problems.length > 0 ? 2 : 0,
+    output: problems.length > 0 ? `${problems.join("\n")}\n` : "",
   }
 }
 
@@ -725,7 +892,7 @@ function writePredictionBundles(results) {
   for (const item of results) {
     for (const result of item.results) {
       if (!byAgent.has(result.agent)) byAgent.set(result.agent, [])
-      const patch = fs.existsSync(result.patch.patch_path) ? fs.readFileSync(result.patch.patch_path, "utf8") : ""
+      const patch = fs.existsSync(result.patch.patch_path) ? normalizePatchForHarness(fs.readFileSync(result.patch.patch_path, "utf8")) : ""
       for (const instanceId of result.prediction_instance_ids) byAgent.get(result.agent).push({
         instance_id: instanceId,
         model_name_or_path: `${result.agent}:${result.agent.startsWith("tura-") ? turaModel : model}`,
@@ -768,9 +935,25 @@ function loadPredictionBundlesFromDisk() {
       const dir = path.join(predictionsRoot, entry.name)
       const allPredsJsonl = path.join(dir, "all_preds.jsonl")
       if (!fs.existsSync(allPredsJsonl)) throw new Error(`missing predictions file: ${allPredsJsonl}`)
+      normalizePredictionBundleFile(allPredsJsonl)
       const predictions = fs.readFileSync(allPredsJsonl, "utf8").split(/\r?\n/).filter(Boolean).length
       return { agent: entry.name, predictions, all_preds_jsonl: allPredsJsonl, dir }
     })
+}
+
+function normalizePredictionBundleFile(allPredsJsonl) {
+  const lines = fs.readFileSync(allPredsJsonl, "utf8").split(/\r?\n/).filter(Boolean)
+  let changed = false
+  const normalized = lines.map((line) => {
+    const prediction = JSON.parse(line)
+    if (typeof prediction.model_patch === "string") {
+      const patch = normalizePatchForHarness(prediction.model_patch)
+      if (patch !== prediction.model_patch) changed = true
+      prediction.model_patch = patch
+    }
+    return JSON.stringify(prediction)
+  })
+  if (changed) writeFile(allPredsJsonl, normalized.join("\n") + "\n")
 }
 
 function comparisonRows(results) {
@@ -960,7 +1143,7 @@ async function runAgentOnTask(agentRun, task, prepared = null) {
     result = { status: null, signal: null, stdout: "", stderr: "", duration_ms: 0, first_output_ms: null, error }
   }
   const patch = collectPatch(workspace, agentDir)
-  const usage = usageFromJsonl(result.stdout)
+  const usage = chooseUsage(result.stdout, workspace)
   const events = eventStats(result.stdout)
   const summary = {
     agent: agentRun.run_id,
@@ -980,6 +1163,7 @@ async function runAgentOnTask(agentRun, task, prepared = null) {
     stderr_path: path.join(agentDir, "stderr.log"),
     usage,
     events,
+    tura_internal_prompt: result.tura_internal_prompt || null,
     performance: performanceStats(result, usage, patch),
     patch,
   }

@@ -421,7 +421,7 @@ fn current_apply_patch_command_format() -> String {
 
 fn current_shell_command_format(active: &str, shell_prompt: &str) -> String {
     let guidance = format!(
-        "Use for tests, builds, scripts, package tools, and host-shell behavior. Put verification after edits in a later step. {}",
+        "Use for tests, builds, scripts, package tools, and host-shell behavior. Default timeout is 15 seconds; set timeout_ms explicitly for legitimate long-running one-shot commands. Put verification after edits in a later step. {}",
         long_running_service_guidance(active)
     );
     let schema = "{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\",\"description\":\"The shell script to execute in the user's default shell\"},\"workdir\":{\"type\":\"string\",\"description\":\"The working directory to execute the command in\"},\"timeout_ms\":{\"type\":\"number\",\"description\":\"The timeout for the command in milliseconds\"}},\"required\":[\"command\"],\"additionalProperties\":false}";
@@ -430,11 +430,8 @@ fn current_shell_command_format(active: &str, shell_prompt: &str) -> String {
 }
 
 fn long_running_service_guidance(active: &str) -> &'static str {
-    if active == "shell_command" && cfg!(windows) {
-        "For long-running local servers, use Start-Process -WindowStyle Hidden -PassThru, wait for readiness, run probes, then stop it with try/finally."
-    } else {
-        "For long-running local servers, start them in the background, wait for readiness, run probes, then clean them up."
-    }
+    let _ = active;
+    "Persistent services must never be used as blocking foreground commands. If a command can keep running after readiness, it must be backgrounded or wrapped in a persisted startup script with bounded readiness checks and cleanup; otherwise the command is considered hung and incorrect."
 }
 
 fn compact_prompt(text: &str) -> String {
@@ -497,7 +494,7 @@ mod tests {
     fn command_run_interface() -> serde_json::Value {
         serde_json::json!({
             "name": COMMAND_RUN_TOOL,
-            "description": "Run Codex tools as a pure batch+step command runner. Available commands: apply_patch, bash, shell_command.\nCommand line formats:\n- apply_patch: patch\n- bash: bash details\n- shell_command: shell details",
+            "description": "Run Codex tools as a pure batch+step command runner. Use assistant content only for concise reasoning, progress, and conclusions. Available commands: apply_patch, bash, shell_command.\nCommand line formats:\n- apply_patch: patch\n- bash: bash details\n- shell_command: shell details",
             "input_schema": {
                 "type": "object",
                 "required": ["commands"],
@@ -672,6 +669,9 @@ mod tests {
         assert!(description.contains(
             "Available commands: apply_patch, shell_command, read_media, web_discover, compact_context."
         ));
+        assert!(description.contains(
+            "Use assistant content only for concise reasoning, progress, and conclusions."
+        ));
         assert!(description.contains("- shell_command:"));
         assert!(description.contains("- read_media:"));
         assert!(description.contains("- web_discover:"));
@@ -680,12 +680,15 @@ mod tests {
         assert!(description.contains("\"command\":{\"type\":\"string\""));
         assert!(description.contains("\"workdir\":{\"type\":\"string\""));
         assert!(description.contains("\"timeout_ms\":{\"type\":\"number\""));
-        if cfg!(windows) {
-            assert!(description.contains("Start-Process -WindowStyle Hidden -PassThru"));
-            assert!(description.contains("try/finally"));
-        } else {
-            assert!(description.contains("start them in the background"));
-        }
+        assert!(description.contains("Default timeout is 15 seconds"));
+        assert!(
+            description
+                .contains("Persistent services must never be used as blocking foreground commands")
+        );
+        assert!(description.contains("otherwise the command is considered hung and incorrect"));
+        assert!(!description.contains("Start-Process -WindowStyle Hidden -PassThru"));
+        assert!(!description.contains("Stop-Process -Id $p1.Id,$p2.Id -Force"));
+        assert!(!description.contains("p1=$(node server.mjs 4173"));
         assert!(!description.contains("Available commands: apply_patch, bash"));
         assert!(!description.contains("- bash:"));
 
@@ -707,6 +710,9 @@ mod tests {
         assert!(description.contains(
             "Available commands: apply_patch, bash, read_media, web_discover, compact_context."
         ));
+        assert!(description.contains(
+            "Use assistant content only for concise reasoning, progress, and conclusions."
+        ));
         assert!(description.contains("- bash:"));
         assert!(description.contains("- read_media:"));
         assert!(description.contains("- web_discover:"));
@@ -715,7 +721,15 @@ mod tests {
         assert!(description.contains("\"command\":{\"type\":\"string\""));
         assert!(description.contains("\"workdir\":{\"type\":\"string\""));
         assert!(description.contains("\"timeout_ms\":{\"type\":\"number\""));
-        assert!(description.contains("start them in the background"));
+        assert!(description.contains("Default timeout is 15 seconds"));
+        assert!(
+            description
+                .contains("Persistent services must never be used as blocking foreground commands")
+        );
+        assert!(description.contains("otherwise the command is considered hung and incorrect"));
+        assert!(!description.contains("Start-Process -WindowStyle Hidden -PassThru"));
+        assert!(!description.contains("Stop-Process -Id $p1.Id,$p2.Id -Force"));
+        assert!(!description.contains("p1=$(node server.mjs 4173"));
         assert!(!description.contains("shell_command"));
 
         std::env::remove_var("TURA_COMMAND_RUN_SHELL");

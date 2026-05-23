@@ -1,12 +1,12 @@
 use crate::runtime::tool::{ToolCall, ToolContext, ToolPayload, ToolRouter};
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 90_000;
+const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 15_000;
 
 #[derive(Clone, Debug)]
 struct CommandRunArgs {
@@ -879,9 +879,11 @@ fn error_payload(message: String) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{execute, StreamingCommandRunExecutor};
-    use serde_json::json;
+    use super::{
+        StreamingCommandRunExecutor, execute, normalize_shell_command_arguments, parse_args,
+    };
     use serde_json::Value;
+    use serde_json::json;
     use std::path::Path;
     use std::sync::Mutex;
 
@@ -1233,6 +1235,25 @@ mod tests {
     }
 
     #[test]
+    fn shell_commands_default_to_15_second_timeout() {
+        let args = parse_args(&json!({
+            "commands": [
+                {
+                    "command": "shell_command",
+                    "command_line": "echo timeout-default-ok",
+                    "step": 1
+                }
+            ]
+        }))
+        .expect("parse command_run args");
+
+        let arguments = normalize_shell_command_arguments(&args.commands[0])
+            .expect("normalize shell arguments");
+
+        assert_eq!(arguments["timeout_ms"], json!(15_000));
+    }
+
+    #[test]
     fn command_line_without_command_type_accepts_workdir_and_timeout() {
         let temp_dir = std::env::temp_dir().join(format!(
             "tura-command-run-default-shell-workdir-{}",
@@ -1261,9 +1282,11 @@ mod tests {
             output["results"][0]["command_type"],
             crate::commands::active_shell_command_name()
         );
-        assert!(output["results"][0]["output"]
-            .as_str()
-            .is_some_and(|text| text.replace('\\', "/").contains("/subdir")));
+        assert!(
+            output["results"][0]["output"]
+                .as_str()
+                .is_some_and(|text| text.replace('\\', "/").contains("/subdir"))
+        );
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
@@ -1426,9 +1449,11 @@ mod tests {
             output["results"][0]["output"]["output"]["error_type"],
             "ContextMismatch"
         );
-        assert!(output["results"][1]["output"]["warning"]
-            .as_str()
-            .is_some_and(|text| text.contains("previous apply_patch")));
+        assert!(
+            output["results"][1]["output"]["warning"]
+                .as_str()
+                .is_some_and(|text| text.contains("previous apply_patch"))
+        );
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 

@@ -216,8 +216,10 @@ Prompt text has three owners:
 
 - Agent prompts: `crates/agents/<agent>/prompts/`.
 - Runtime prompt fragments: `crates/runtime/src/prompt_style/`.
-- Tool/command prompts: `crates/tools/src/command_run/prompt.md` and
-  `crates/tools/src/commands/<command>/prompt.md`.
+- The `command_run` visible tool description:
+  `crates/tools/src/command_run/schema.json`, augmented at runtime by
+  `crates/runtime/src/manas/tool_catalog.rs`.
+- Command prompts: `crates/tools/src/commands/<command>/prompt.md`.
 
 Rules:
 
