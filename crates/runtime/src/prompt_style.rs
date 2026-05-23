@@ -1,3 +1,4 @@
+pub mod agent_identity;
 pub mod compact_context;
 pub mod runtime_fallback;
 pub mod task_continuity;

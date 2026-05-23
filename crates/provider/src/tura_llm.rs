@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use chrono::Utc;
 use regex::Regex;
@@ -18,6 +18,7 @@ use crate::llm::_openai_provider;
 use crate::tura_conf::TuraConfig;
 
 pub static SETTINGS: OnceLock<Arc<Settings>> = OnceLock::new();
+static PROVIDER_LATENCY_TIMEOUTS: OnceLock<RwLock<ProviderLatencyTimeouts>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub enum ProviderStreamEvent {
@@ -561,6 +562,129 @@ pub struct RootConfig {
     pub routes: HashMap<String, RawRouteConfig>,
     #[serde(default)]
     pub provider_auth: HashMap<String, ProviderAuthConfig>,
+    #[serde(default)]
+    pub provider_latency: ProviderLatencyConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderLatencyConfig {
+    #[serde(default = "default_latency_level")]
+    pub active: String,
+    #[serde(default = "default_latency_levels")]
+    pub levels: HashMap<String, ProviderLatencyTimeouts>,
+}
+
+impl Default for ProviderLatencyConfig {
+    fn default() -> Self {
+        Self {
+            active: default_latency_level(),
+            levels: default_latency_levels(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ProviderLatencyTimeouts {
+    pub idle_output_timeout_ms: u64,
+    pub first_output_timeout_ms: u64,
+    pub total_timeout_ms: u64,
+}
+
+impl Default for ProviderLatencyTimeouts {
+    fn default() -> Self {
+        Self {
+            idle_output_timeout_ms: 20_000,
+            first_output_timeout_ms: 40_000,
+            total_timeout_ms: 240_000,
+        }
+    }
+}
+
+fn default_latency_level() -> String {
+    "low".to_string()
+}
+
+fn default_latency_levels() -> HashMap<String, ProviderLatencyTimeouts> {
+    HashMap::from([
+        (
+            "low".to_string(),
+            ProviderLatencyTimeouts {
+                idle_output_timeout_ms: 20_000,
+                first_output_timeout_ms: 40_000,
+                total_timeout_ms: 240_000,
+            },
+        ),
+        (
+            "medium".to_string(),
+            ProviderLatencyTimeouts {
+                idle_output_timeout_ms: 30_000,
+                first_output_timeout_ms: 60_000,
+                total_timeout_ms: 360_000,
+            },
+        ),
+        (
+            "high".to_string(),
+            ProviderLatencyTimeouts {
+                idle_output_timeout_ms: 80_000,
+                first_output_timeout_ms: 160_000,
+                total_timeout_ms: 960_000,
+            },
+        ),
+        (
+            "highest".to_string(),
+            ProviderLatencyTimeouts {
+                idle_output_timeout_ms: 100_000,
+                first_output_timeout_ms: 180_000,
+                total_timeout_ms: 1_200_000,
+            },
+        ),
+    ])
+}
+
+impl ProviderLatencyConfig {
+    pub fn selected_timeouts(&self) -> ProviderLatencyTimeouts {
+        let active = std::env::var("TURA_PROVIDER_LATENCY_LEVEL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                std::env::var("TURA_SESSION_REASONING_EFFORT")
+                    .ok()
+                    .and_then(|value| latency_level_for_reasoning_effort(&value))
+            })
+            .unwrap_or_else(|| self.active.clone());
+        self.levels
+            .get(active.trim())
+            .copied()
+            .or_else(|| self.levels.get("low").copied())
+            .unwrap_or_default()
+    }
+}
+
+fn latency_level_for_reasoning_effort(reasoning_effort: &str) -> Option<String> {
+    match reasoning_effort.trim().to_ascii_lowercase().as_str() {
+        "" | "default" => None,
+        "none" | "minimal" | "low" => Some("low".to_string()),
+        "medium" => Some("medium".to_string()),
+        "high" => Some("high".to_string()),
+        "xhigh" | "x-high" | "extra-high" | "ultra-high" | "ultrahigh" | "highest" => {
+            Some("highest".to_string())
+        }
+        _ => None,
+    }
+}
+
+pub fn set_provider_latency_timeouts(timeouts: ProviderLatencyTimeouts) {
+    let lock =
+        PROVIDER_LATENCY_TIMEOUTS.get_or_init(|| RwLock::new(ProviderLatencyTimeouts::default()));
+    if let Ok(mut guard) = lock.write() {
+        *guard = timeouts;
+    }
+}
+
+pub fn provider_latency_timeouts() -> ProviderLatencyTimeouts {
+    let lock =
+        PROVIDER_LATENCY_TIMEOUTS.get_or_init(|| RwLock::new(ProviderLatencyTimeouts::default()));
+    lock.read().map(|guard| *guard).unwrap_or_default()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -848,7 +972,10 @@ pub fn project_root() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_response_content;
+    use super::{
+        normalize_response_content, provider_latency_timeouts, set_provider_latency_timeouts,
+        ProviderLatencyConfig, ProviderLatencyTimeouts,
+    };
     use serde_json::json;
 
     #[test]
@@ -912,5 +1039,60 @@ mod tests {
         let content = normalize_response_content(&raw);
 
         assert_eq!(content[0]["type"], "function_call");
+    }
+
+    #[test]
+    fn provider_latency_defaults_match_low_profile() {
+        let selected = ProviderLatencyConfig::default().selected_timeouts();
+
+        assert_eq!(selected.idle_output_timeout_ms, 20_000);
+        assert_eq!(selected.first_output_timeout_ms, 40_000);
+        assert_eq!(selected.total_timeout_ms, 240_000);
+    }
+
+    #[test]
+    fn provider_latency_level_tracks_reasoning_effort() {
+        assert_eq!(
+            super::latency_level_for_reasoning_effort("minimal").as_deref(),
+            Some("low")
+        );
+        assert_eq!(
+            super::latency_level_for_reasoning_effort("low").as_deref(),
+            Some("low")
+        );
+        assert_eq!(
+            super::latency_level_for_reasoning_effort("medium").as_deref(),
+            Some("medium")
+        );
+        assert_eq!(
+            super::latency_level_for_reasoning_effort("high").as_deref(),
+            Some("high")
+        );
+        assert_eq!(
+            super::latency_level_for_reasoning_effort("xhigh").as_deref(),
+            Some("highest")
+        );
+        assert_eq!(
+            super::latency_level_for_reasoning_effort("highest").as_deref(),
+            Some("highest")
+        );
+        assert_eq!(
+            super::latency_level_for_reasoning_effort("default"),
+            None
+        );
+    }
+
+    #[test]
+    fn provider_latency_global_timeout_state_is_configurable() {
+        set_provider_latency_timeouts(ProviderLatencyTimeouts {
+            idle_output_timeout_ms: 50_000,
+            first_output_timeout_ms: 90_000,
+            total_timeout_ms: 600_000,
+        });
+
+        let selected = provider_latency_timeouts();
+        assert_eq!(selected.idle_output_timeout_ms, 50_000);
+        assert_eq!(selected.first_output_timeout_ms, 90_000);
+        assert_eq!(selected.total_timeout_ms, 600_000);
     }
 }

@@ -5,6 +5,7 @@
 target/
 storage/
 sessions/
+scripts/packages/python/
 
 crates/provider/log/
 tests/command-run-codex-two-way/records/runs/

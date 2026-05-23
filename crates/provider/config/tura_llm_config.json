@@ -25,6 +25,31 @@
       "updated_at": "2026-05-08T16:06:48.367503300+00:00"
     }
   },
+  "provider_latency": {
+    "active": "low",
+    "levels": {
+      "low": {
+        "idle_output_timeout_ms": 20000,
+        "first_output_timeout_ms": 40000,
+        "total_timeout_ms": 240000
+      },
+      "medium": {
+        "idle_output_timeout_ms": 30000,
+        "first_output_timeout_ms": 60000,
+        "total_timeout_ms": 360000
+      },
+      "high": {
+        "idle_output_timeout_ms": 80000,
+        "first_output_timeout_ms": 160000,
+        "total_timeout_ms": 960000
+      },
+      "highest": {
+        "idle_output_timeout_ms": 100000,
+        "first_output_timeout_ms": 180000,
+        "total_timeout_ms": 1200000
+      }
+    }
+  },
   "provider_base_url": {
     "anthropic": "https://api.anthropic.com/v1",
     "antigravity": "https://antigravity.google.com/v1",

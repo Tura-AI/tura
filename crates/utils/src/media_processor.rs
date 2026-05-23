@@ -1,13 +1,11 @@
 use std::fs;
-use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose, Engine as _};
-use image::{
-    codecs::jpeg::JpegEncoder, imageops::FilterType, DynamicImage, GenericImageView, ImageFormat,
-};
+use image::{codecs::jpeg::JpegEncoder, imageops::FilterType, DynamicImage, GenericImageView};
+#[cfg(feature = "opencv-video")]
 use opencv::{core::Vector, imgcodecs, imgproc, prelude::*, videoio};
 use pdfium_render::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -240,7 +238,7 @@ impl MediaProcessor {
         let mut extracted_text = String::new();
 
         for page in doc.pages().iter() {
-            let text = page.text().all();
+            let text = page.text()?.all();
             if !text.is_empty() {
                 extracted_text.push_str(&text);
                 extracted_text.push('\n');
@@ -267,47 +265,56 @@ impl MediaProcessor {
         max_frames: Option<usize>,
         quality: i32,
     ) -> Result<Vec<String>> {
-        let video_path = video_path.as_ref();
-        let max_frames = max_frames.unwrap_or(self.video_frames);
-        if max_frames == 0 {
+        #[cfg(not(feature = "opencv-video"))]
+        {
+            let _ = (video_path, max_frames, quality);
             return Ok(Vec::new());
         }
 
-        let path_str = video_path.to_string_lossy();
-        let mut cap = videoio::VideoCapture::from_file(&path_str, videoio::CAP_ANY)
-            .with_context(|| format!("failed to open video: {}", video_path.display()))?;
-
-        if !videoio::VideoCapture::is_opened(&cap)? {
-            return Ok(Vec::new());
-        }
-
-        let total_frames = cap.get(videoio::CAP_PROP_FRAME_COUNT)? as usize;
-        let total_frames = total_frames.max(1);
-        let step = (total_frames / max_frames).max(1);
-
-        let mut frames_base64 = Vec::new();
-        let mut frame = Mat::default();
-        let mut count = 0usize;
-
-        loop {
-            let ok = cap.read(&mut frame)?;
-            if !ok || frame.empty() {
-                break;
+        #[cfg(feature = "opencv-video")]
+        {
+            let video_path = video_path.as_ref();
+            let max_frames = max_frames.unwrap_or(self.video_frames);
+            if max_frames == 0 {
+                return Ok(Vec::new());
             }
 
-            if count % step == 0 {
-                let processed = resize_mat_keep_ratio(&frame, self.max_video_frame_size)?;
-                let b64 = mat_to_jpeg_base64(&processed, quality)?;
-                frames_base64.push(b64);
-                if frames_base64.len() >= max_frames {
+            let path_str = video_path.to_string_lossy();
+            let mut cap = videoio::VideoCapture::from_file(&path_str, videoio::CAP_ANY)
+                .with_context(|| format!("failed to open video: {}", video_path.display()))?;
+
+            if !videoio::VideoCapture::is_opened(&cap)? {
+                return Ok(Vec::new());
+            }
+
+            let total_frames = cap.get(videoio::CAP_PROP_FRAME_COUNT)? as usize;
+            let total_frames = total_frames.max(1);
+            let step = (total_frames / max_frames).max(1);
+
+            let mut frames_base64 = Vec::new();
+            let mut frame = Mat::default();
+            let mut count = 0usize;
+
+            loop {
+                let ok = cap.read(&mut frame)?;
+                if !ok || frame.empty() {
                     break;
                 }
+
+                if count % step == 0 {
+                    let processed = resize_mat_keep_ratio(&frame, self.max_video_frame_size)?;
+                    let b64 = mat_to_jpeg_base64(&processed, quality)?;
+                    frames_base64.push(b64);
+                    if frames_base64.len() >= max_frames {
+                        break;
+                    }
+                }
+
+                count += 1;
             }
 
-            count += 1;
+            Ok(frames_base64)
         }
-
-        Ok(frames_base64)
     }
 
     pub async fn process_attachments(
@@ -474,7 +481,7 @@ impl MediaProcessor {
                     "text": format!(
                         "\n\n--- PDF Text ({}) ---\n{}\n--- End ---\n",
                         file_name,
-                        truncate_chars(pdf_text, 20_000)
+                        truncate_chars(&pdf_text, 20_000)
                     )
                 }));
             }
@@ -572,6 +579,7 @@ fn encode_jpeg(img: &DynamicImage, quality: u8) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+#[cfg(feature = "opencv-video")]
 fn resize_mat_keep_ratio(src: &Mat, max_side: u32) -> Result<Mat> {
     let width = src.cols();
     let height = src.rows();
@@ -597,6 +605,7 @@ fn resize_mat_keep_ratio(src: &Mat, max_side: u32) -> Result<Mat> {
     Ok(dst)
 }
 
+#[cfg(feature = "opencv-video")]
 fn mat_to_jpeg_base64(mat: &Mat, quality: i32) -> Result<String> {
     let mut buf = Vector::<u8>::new();
     let mut params = Vector::<i32>::new();
@@ -608,7 +617,6 @@ fn mat_to_jpeg_base64(mat: &Mat, quality: i32) -> Result<String> {
 
 fn bind_pdfium() -> Result<Pdfium> {
     let bindings = Pdfium::bind_to_system_library()
-        .or_else(|_| Pdfium::bind_to_embedded_library())
         .context("failed to bind pdfium; install pdfium or enable embedded pdfium feature")?;
     Ok(Pdfium::new(bindings))
 }

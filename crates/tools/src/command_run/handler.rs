@@ -110,7 +110,7 @@ impl StreamingCommandRunExecutor {
         }
     }
 
-    pub async fn push_command_value(&mut self, command: Value) {
+    pub async fn push_command_value(&mut self, command: Value) -> Vec<Value> {
         let mut command = match parse_single_streamed_command(command, self.next_index) {
             Ok(command) => command,
             Err((step, message)) => {
@@ -121,7 +121,7 @@ impl StreamingCommandRunExecutor {
                     message,
                 ));
                 self.next_index += 1;
-                return;
+                return self.drain_finished_results();
             }
         };
         command.index = self.next_index;
@@ -142,24 +142,18 @@ impl StreamingCommandRunExecutor {
             self.parallel_reads.push(tokio::spawn(async move {
                 run_command_run_item(&router, command, ctx, false).await
             }));
-            return;
+            return self.drain_finished_results();
         }
 
         self.flush_parallel_reads().await;
         let result = run_command_run_item(&self.router, command, self.ctx.child(), true).await;
         self.results.push(result);
+        self.drain_finished_results()
     }
 
     pub async fn finish(mut self) -> Vec<Value> {
         self.flush_parallel_reads().await;
-        self.results
-            .sort_by_key(|result| (result.step, result.index));
-        self.results
-            .into_iter()
-            .map(|result| {
-                serde_json::to_value(result).unwrap_or_else(|err| error_payload(err.to_string()))
-            })
-            .collect()
+        self.drain_finished_results()
     }
 
     async fn flush_parallel_reads(&mut self) {
@@ -174,6 +168,17 @@ impl StreamingCommandRunExecutor {
                 )),
             }
         }
+    }
+
+    pub fn drain_finished_results(&mut self) -> Vec<Value> {
+        self.results
+            .sort_by_key(|result| (result.step, result.index));
+        std::mem::take(&mut self.results)
+            .into_iter()
+            .map(|result| {
+                serde_json::to_value(result).unwrap_or_else(|err| error_payload(err.to_string()))
+            })
+            .collect()
     }
 }
 
@@ -227,6 +232,7 @@ async fn run_command_run_step(
 ) -> Vec<CommandRunItemResult> {
     let mut results = Vec::new();
     let mut parallel_reads = Vec::new();
+    let mut prior_apply_patch_failed = false;
 
     for command in commands {
         let force_exclusive = !command.is_parallel_safe_read(router, &ctx).await;
@@ -238,10 +244,27 @@ async fn run_command_run_step(
         results.extend(
             run_parallel_items(router, std::mem::take(&mut parallel_reads), ctx.child()).await,
         );
-        results.push(run_command_run_item(router, command, ctx.child(), true).await);
+        let mut result = run_command_run_item(router, command, ctx.child(), true).await;
+        if prior_apply_patch_failed {
+            result.add_warning(
+                "A previous apply_patch command in this batch failed; this command may have run against an unchanged or partially changed tree.",
+            );
+        }
+        if result.command_type == "apply_patch" && !result.success {
+            prior_apply_patch_failed = true;
+        }
+        results.push(result);
     }
 
-    results.extend(run_parallel_items(router, parallel_reads, ctx).await);
+    let mut remaining = run_parallel_items(router, parallel_reads, ctx).await;
+    if prior_apply_patch_failed {
+        for result in &mut remaining {
+            result.add_warning(
+                "A previous apply_patch command in this batch failed; this command may have run against an unchanged or partially changed tree.",
+            );
+        }
+    }
+    results.extend(remaining);
     results
 }
 
@@ -792,6 +815,20 @@ impl CommandRunItemResult {
             error: Some(error),
         }
     }
+
+    fn add_warning(&mut self, warning: &str) {
+        let value = self.output.take().unwrap_or(Value::Null);
+        self.output = Some(match value {
+            Value::Object(mut object) => {
+                object.insert("warning".to_string(), Value::String(warning.to_string()));
+                Value::Object(object)
+            }
+            other => json!({
+                "warning": warning,
+                "output": other,
+            }),
+        });
+    }
 }
 
 fn looks_like_shell_command_text(command: &str) -> bool {
@@ -842,7 +879,7 @@ fn error_payload(message: String) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::execute;
+    use super::{execute, StreamingCommandRunExecutor};
     use serde_json::json;
     use serde_json::Value;
     use std::path::Path;
@@ -1353,6 +1390,75 @@ mod tests {
             std::fs::read_to_string(temp_dir.join("app.txt")).expect("read fixture"),
             "new\n"
         );
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn later_batch_command_warns_after_apply_patch_failure() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "tura-command-run-patch-failure-warning-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).expect("temp dir");
+        std::fs::write(temp_dir.join("app.txt"), "actual\n").expect("fixture");
+
+        let output = execute(
+            &json!({
+                "commands": [
+                    {
+                        "command": "apply_patch",
+                        "command_line": "*** Begin Patch\n*** Update File: app.txt\n@@\n-missing\n+new\n*** End Patch\n",
+                        "step": 1
+                    },
+                    {
+                        "command": "shell_command",
+                        "command_line": "echo after",
+                        "step": 1
+                    }
+                ]
+            }),
+            &temp_dir,
+        );
+
+        assert_eq!(output["results"][0]["success"], false);
+        assert_eq!(
+            output["results"][0]["output"]["output"]["error_type"],
+            "ContextMismatch"
+        );
+        assert!(output["results"][1]["output"]["warning"]
+            .as_str()
+            .is_some_and(|text| text.contains("previous apply_patch")));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn streaming_executor_returns_apply_patch_result_without_finish() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "tura-command-run-streaming-immediate-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).expect("temp dir");
+        std::fs::write(temp_dir.join("app.txt"), "old\n").expect("fixture");
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let mut executor = StreamingCommandRunExecutor::new(temp_dir.clone());
+
+        let immediate = runtime.block_on(executor.push_command_value(json!({
+            "command": "apply_patch",
+            "command_line": "*** Begin Patch\n*** Update File: app.txt\n@@\n-old\n+new\n*** End Patch\n",
+            "step": 1
+        })));
+
+        assert_eq!(immediate.len(), 1);
+        assert_eq!(immediate[0]["command_type"], "apply_patch");
+        assert_eq!(immediate[0]["success"], true);
+        assert_eq!(
+            std::fs::read_to_string(temp_dir.join("app.txt")).expect("fixture"),
+            "new\n"
+        );
+        let final_results = runtime.block_on(executor.finish());
+        assert!(final_results.is_empty());
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

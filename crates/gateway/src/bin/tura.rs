@@ -38,6 +38,11 @@ fn run() -> Result<i32, String> {
     std::env::set_var("TURA_DISABLE_GATEWAY_CALLBACKS", "1");
     std::env::set_var("TURA_DISABLE_ROUTER_AUTOSTART", "1");
     std::env::set_var("TURA_FAIL_ON_RUNTIME_ERROR", "1");
+    if config.json {
+        std::env::set_var("TURA_CLI_LIVE_JSONL", "1");
+    } else {
+        std::env::remove_var("TURA_CLI_LIVE_JSONL");
+    }
     let prompt = config.prompt()?;
     let session_id = config
         .session_id
@@ -290,7 +295,9 @@ fn write_jsonl(
                     }))?;
                     item_index += 1;
                 }
-                emit_command_run_events(&value, &mut item_index, cwd)?;
+                if !cli_live_jsonl_enabled() {
+                    emit_command_run_events(&value, &mut item_index, cwd)?;
+                }
             }
         }
     }
@@ -303,6 +310,17 @@ fn write_jsonl(
     io::stdout()
         .flush()
         .map_err(|err| format!("failed to flush stdout: {err}"))
+}
+
+fn cli_live_jsonl_enabled() -> bool {
+    std::env::var("TURA_CLI_LIVE_JSONL")
+        .ok()
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
 }
 
 fn aggregate_runtime_usage(session_log: &[String]) -> Value {

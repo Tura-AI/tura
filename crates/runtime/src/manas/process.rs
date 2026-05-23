@@ -990,7 +990,7 @@ fn create_dummy_runtime(runtime_id: RuntimeId, session: &SessionManagement) -> R
         provider_name: provider_name.clone(),
         model_name: String::new(),
         provider_url_name: String::new(),
-        provider_router_name: provider_name,
+        llm_provider_name: provider_name,
     };
 
     let mut runtime = RuntimeManagement::new(
@@ -1155,7 +1155,7 @@ mod tests {
                 provider_name: provider.clone(),
                 model_name: "gpt-5.5".to_string(),
                 provider_url_name: provider.clone(),
-                provider_router_name: provider,
+                llm_provider_name: provider,
             },
             now,
         )

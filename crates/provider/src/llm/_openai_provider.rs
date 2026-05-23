@@ -2,9 +2,12 @@ use futures_util::StreamExt;
 use regex::Regex;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use crate::llm::_utils::{deep_merge_json, strip_json_fence};
+use crate::llm::_utils::{
+    deep_merge_json, provider_first_output_timeout, provider_idle_output_timeout,
+    provider_timeout_error, send_provider_request_first_response, strip_json_fence,
+};
 use crate::tura_llm::{
     default_client, estimate_context_utilization, normalize_response_content, CallMetrics,
     CallOptions, CostDetails, ProviderResponse, ProviderStreamEvent, ProviderStreamEventSink,
@@ -23,14 +26,7 @@ pub async fn openai_embed(
         "model": model,
         "input": text,
     });
-    let resp = client
-        .post(url)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| TuraError::Network {
-            message: e.to_string(),
-        })?;
+    let resp = send_provider_request_first_response(client.post(url).json(&payload)).await?;
     let status = resp.status();
     let data: Value = resp.json().await.map_err(|e| TuraError::Network {
         message: e.to_string(),
@@ -97,14 +93,7 @@ pub async fn call_with_stream_events(
         return stream_call(base_url, &client, url, payload, options.context_window).await;
     }
 
-    let resp = client
-        .post(url)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| TuraError::Network {
-            message: e.to_string(),
-        })?;
+    let resp = send_provider_request_first_response(client.post(url).json(&payload)).await?;
     let status = resp.status();
     let req_id = resp
         .headers()
@@ -284,24 +273,15 @@ async fn openai_codex_oauth_call(
         .bearer_auth(access_token)
         .header("originator", "codex_cli_rs")
         .header("User-Agent", codex_cli_user_agent())
+        .header("session_id", "tura-codex-validation")
         .json(&payload);
-    if let Some(session_id) = codex_session_id(options) {
-        request = request
-            .header("session_id", session_id)
-            .header("session-id", session_id)
-            .header("thread_id", session_id)
-            .header("thread-id", session_id)
-            .header("x-client-request-id", session_id);
-    }
     if let Ok(account_id) = std::env::var("OPENAI_ACCOUNT_ID") {
         if !account_id.trim().is_empty() {
             request = request.header("ChatGPT-Account-Id", account_id);
         }
     }
 
-    let resp = request.send().await.map_err(|err| TuraError::Network {
-        message: err.to_string(),
-    })?;
+    let resp = send_provider_request_first_response(request).await?;
     let status = resp.status();
     let req_id = resp
         .headers()
@@ -341,14 +321,6 @@ fn codex_cli_user_agent() -> String {
         std::env::consts::OS,
         std::env::consts::ARCH
     )
-}
-
-fn codex_session_id(options: &CallOptions) -> Option<&str> {
-    options
-        .codex_session_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
 }
 
 fn build_codex_oauth_payload(model: &str, messages: &[Value], options: &CallOptions) -> Value {
@@ -462,48 +434,17 @@ where
     S: futures_util::Stream + Unpin,
 {
     let limit = if saw_output {
-        provider_stream_idle_timeout()
+        provider_idle_output_timeout()
     } else {
-        provider_stream_first_output_timeout()
+        provider_first_output_timeout()
     };
     let elapsed = last_output_at.elapsed();
     if elapsed >= limit {
-        return Err(provider_stream_timeout_error(saw_output, limit));
+        return Err(provider_timeout_error(saw_output, limit));
     }
     match tokio::time::timeout(limit - elapsed, stream.next()).await {
         Ok(next) => Ok(next),
-        Err(_) => Err(provider_stream_timeout_error(saw_output, limit)),
-    }
-}
-
-fn provider_stream_first_output_timeout() -> Duration {
-    provider_stream_timeout_from_env("TURA_PROVIDER_FIRST_OUTPUT_TIMEOUT_MS", 20_000)
-}
-
-fn provider_stream_idle_timeout() -> Duration {
-    provider_stream_timeout_from_env("TURA_PROVIDER_IDLE_OUTPUT_TIMEOUT_MS", 10_000)
-}
-
-fn provider_stream_timeout_from_env(name: &str, default_ms: u64) -> Duration {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .map(Duration::from_millis)
-        .unwrap_or_else(|| Duration::from_millis(default_ms))
-}
-
-fn provider_stream_timeout_error(saw_output: bool, limit: Duration) -> TuraError {
-    let phase = if saw_output {
-        "new provider output"
-    } else {
-        "first provider output"
-    };
-    TuraError::Network {
-        message: format!(
-            "provider stream timed out waiting for {phase} after {} ms",
-            limit.as_millis()
-        ),
+        Err(_) => Err(provider_timeout_error(saw_output, limit)),
     }
 }
 
@@ -1286,14 +1227,7 @@ async fn stream_call(
     payload: Value,
     context_window: Option<u64>,
 ) -> Result<ProviderResponse, TuraError> {
-    let resp = client
-        .post(url)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| TuraError::Network {
-            message: e.to_string(),
-        })?;
+    let resp = send_provider_request_first_response(client.post(url).json(&payload)).await?;
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.map_err(|e| TuraError::Network {
@@ -1681,14 +1615,7 @@ async fn openai_force_search(
         deep_merge_json(&mut payload, extra_body.clone());
     }
 
-    let resp = client
-        .post(url)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| TuraError::Network {
-            message: e.to_string(),
-        })?;
+    let resp = send_provider_request_first_response(client.post(url).json(&payload)).await?;
     let status = resp.status();
     let req_id = resp
         .headers()
@@ -1730,7 +1657,13 @@ fn should_pass_service_tier(provider: &str, model: &str) -> bool {
 }
 
 fn normalized_reasoning_effort(options: &CallOptions) -> Option<String> {
-    normalized_non_default_option(options.reasoning_effort.as_deref())
+    normalized_non_default_option(options.reasoning_effort.as_deref()).map(|value| {
+        if value.eq_ignore_ascii_case("highest") {
+            "xhigh".to_string()
+        } else {
+            value
+        }
+    })
 }
 
 fn normalized_service_tier(options: &CallOptions) -> Option<String> {
@@ -2102,6 +2035,19 @@ mod tests {
 
         assert_eq!(payload["reasoning_effort"], "high");
         assert_eq!(payload["service_tier"], "priority");
+    }
+
+    #[test]
+    fn provider_payload_maps_highest_reasoning_to_xhigh() {
+        let messages = vec![json!({"role": "user", "content": "ping"})];
+        let options = CallOptions {
+            reasoning_effort: Some("highest".to_string()),
+            ..CallOptions::default()
+        };
+
+        let payload = build_chat_payload("openai", "gpt-5.2", &messages, &options);
+
+        assert_eq!(payload["reasoning_effort"], "xhigh");
     }
 
     #[test]

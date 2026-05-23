@@ -75,13 +75,21 @@ pub fn runtime_provider_config_from_tura(
         })
         .unwrap_or_else(|| primary.clone());
 
+    let mut base = provider_config.clone();
+    let provider_total_timeout_ms = std::env::var("TURA_PROVIDER_TOTAL_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or_else(|| tura_llm_rust::provider_latency_timeouts().total_timeout_ms);
+    base.time_out_ms = provider_total_timeout_ms;
+
     Ok(RuntimeProviderConfig {
-        base: provider_config.clone(),
+        base,
         thinking,
         provider_name: provider_config.tura_llm_name.clone(),
         model_name: selected.model.clone(),
         provider_url_name: selected.base_url.clone(),
-        provider_router_name: selected.provider.clone(),
+        llm_provider_name: selected.provider.clone(),
     })
 }
 

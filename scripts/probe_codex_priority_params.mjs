@@ -8,6 +8,8 @@ const DEFAULT_ROUNDS = 2;
 
 const roundsArg = process.argv.find((arg) => arg.startsWith("--rounds="));
 const rounds = roundsArg ? Number(roundsArg.split("=")[1]) : DEFAULT_ROUNDS;
+const callsPerGroupArg = process.argv.find((arg) => arg.startsWith("--calls-per-group="));
+const callsPerGroup = callsPerGroupArg ? Number(callsPerGroupArg.split("=")[1]) : 1;
 const variantsArg = process.argv.find((arg) => arg.startsWith("--variants="));
 const variantFilter = variantsArg
   ? new Set(
@@ -212,6 +214,9 @@ const selectedVariants = variantFilter
 if (!selectedVariants.length) {
   throw new Error(`No variants selected by --variants=${variantsArg}`);
 }
+if (!Number.isInteger(callsPerGroup) || callsPerGroup < 1) {
+  throw new Error(`Invalid --calls-per-group=${callsPerGroupArg}`);
+}
 
 function eventBlocks(buffer) {
   const blocks = buffer.split(/\r?\n\r?\n/);
@@ -234,9 +239,10 @@ function parseEvent(block) {
   }
 }
 
-async function runVariant(round, variant) {
-  const req = codexBaseline(round, variant.name);
-  variant.mutate(req, round, variant.name);
+async function runVariant(round, variant, call = 1) {
+  const callVariantName = `${variant.name}-call${call}`;
+  const req = codexBaseline(round, callVariantName);
+  variant.mutate(req, round, callVariantName);
 
   const started = performance.now();
   const res = await fetch(ENDPOINT, {
@@ -248,6 +254,7 @@ async function runVariant(round, variant) {
   if (!res.ok) {
     return {
       round,
+      call,
       variant: variant.name,
       ok: false,
       status: res.status,
@@ -305,6 +312,7 @@ async function runVariant(round, variant) {
 
   return {
     round,
+    call,
     variant: variant.name,
     ok: true,
     response_tier: responseTier || "unknown",
@@ -359,9 +367,14 @@ await refreshAuthIfNeeded();
 const results = [];
 for (let round = 1; round <= rounds; round += 1) {
   for (const variant of selectedVariants) {
-    const result = await runVariant(round, variant);
-    results.push(result);
-    console.log(JSON.stringify(result));
+    const group = Array.from({ length: callsPerGroup }, (_, index) =>
+      runVariant(round, variant, index + 1),
+    );
+    const groupResults = await Promise.all(group);
+    for (const result of groupResults) {
+      results.push(result);
+      console.log(JSON.stringify(result));
+    }
   }
 }
 
@@ -370,5 +383,5 @@ console.log("SUMMARY");
 console.table(summary);
 fs.writeFileSync(
   "priority-param-probe-results.json",
-  `${JSON.stringify({ rounds, results, summary }, null, 2)}\n`,
+  `${JSON.stringify({ rounds, callsPerGroup, results, summary }, null, 2)}\n`,
 );

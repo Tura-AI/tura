@@ -24,6 +24,7 @@ pub async fn load_settings() -> Result<Settings, TuraError> {
     let path = config_path();
     let content = fs::read_to_string(&path).await.map_err(TuraError::io)?;
     let cfg: RootConfig = serde_json::from_str(&content)?;
+    crate::tura_llm::set_provider_latency_timeouts(cfg.provider_latency.selected_timeouts());
 
     let build = |name: &str| -> Result<crate::tura_llm::RouteConfig, TuraError> {
         let route = cfg.routes.get(name).cloned().unwrap_or(RawRouteConfig {

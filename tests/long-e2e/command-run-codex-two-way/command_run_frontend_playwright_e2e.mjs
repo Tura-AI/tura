@@ -17,6 +17,7 @@ const model = process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "gpt-5.5"
 const turaModel = process.env.COMMAND_RUN_AGENT_TURA_MODEL || (model.includes("/") ? model : `openai/${model}`)
 const claudeModel = process.env.COMMAND_RUN_AGENT_CLAUDE_MODEL || "opus"
 const reasoning = process.env.COMMAND_RUN_AGENT_REASONING_EFFORT || "low"
+const serviceTier = process.env.COMMAND_RUN_AGENT_SERVICE_TIER || "priority"
 const timeoutMs = Number(process.env.COMMAND_RUN_AGENT_TIMEOUT_MS || 20 * 60_000)
 const agents = parseAgents(process.env.COMMAND_RUN_AGENT_AGENTS || "current-shll,codex-main,tura-fast-shll")
 const prepOnly = (process.env.COMMAND_RUN_AGENT_PREP_ONLY || "0") === "1"
@@ -127,6 +128,18 @@ function emptyRun(reason) {
     duration_ms: 0,
     error: reason,
   }
+}
+
+function serviceTierConfigArgs() {
+  const tier = String(serviceTier || "").trim()
+  if (!tier || tier === "default" || tier === "none" || tier === "off") return []
+  return ["-c", `service_tier="${tier}"`]
+}
+
+function turaServiceTierConfigArgs() {
+  const tier = String(serviceTier || "").trim()
+  if (!tier || tier === "default" || tier === "none" || tier === "off") return []
+  return ["-c", `service_tier=${tier}`]
 }
 
 function runLive(command, args, options = {}) {
@@ -925,8 +938,7 @@ async function runCurrentLike(agentId, exe, workspace, agentDir, agentPort) {
     "--dangerously-bypass-approvals-and-sandbox",
     "-c",
     `model_reasoning_effort="${reasoning}"`,
-    "-c",
-    `service_tier="priority"`,
+    ...serviceTierConfigArgs(),
   ]
   const first = await runLive(exe, [...common, smokeOnly ? promptSmoke(agentPort) : promptPhase1(agentPort)], {
     cwd: workspace,
@@ -949,8 +961,7 @@ async function runCurrentLike(agentId, exe, workspace, agentDir, agentPort) {
           "--dangerously-bypass-approvals-and-sandbox",
           "-c",
           `model_reasoning_effort="${reasoning}"`,
-          "-c",
-          `service_tier="priority"`,
+          ...serviceTierConfigArgs(),
           threadId,
           promptPhase2(agentPort),
         ],
@@ -981,8 +992,7 @@ async function runTura(workspace, agentDir, agentPort, agentPrompt = "coding_age
     turaModel,
     "-c",
     `model_reasoning_effort=${reasoning}`,
-    "-c",
-    "service_tier=priority",
+    ...turaServiceTierConfigArgs(),
     "--cwd",
     workspace,
   ]

@@ -2130,7 +2130,7 @@ mod tests {
                 provider_name: provider_name.clone(),
                 model_name: String::new(),
                 provider_url_name: String::new(),
-                provider_router_name: provider_name,
+                llm_provider_name: provider_name,
             },
             now,
         )

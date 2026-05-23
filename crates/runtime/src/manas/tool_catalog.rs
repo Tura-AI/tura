@@ -201,7 +201,12 @@ pub(super) fn load_agent_prompt_messages(
             if standard_path.exists() {
                 standard_path
             } else {
-                prompt_item.prompt_directory.join("prompt")
+                let legacy_path = prompt_item.prompt_directory.join("prompt");
+                if legacy_path.exists() {
+                    legacy_path
+                } else {
+                    prompt_item.prompt_directory.join("fallback_agent.md")
+                }
             }
         };
 
@@ -463,7 +468,7 @@ fn sanitize_provider_schema(mut value: serde_json::Value) -> serde_json::Value {
 mod tests {
     use super::*;
     use crate::state_machine::agent_management::{
-        AgentCapabilityItem, ProviderConfig, ToolChoice, ValidatorConfig,
+        AgentCapabilityItem, AgentPromptItem, ProviderConfig, ToolChoice, ValidatorConfig,
     };
     use chrono::Utc;
     use std::collections::HashSet;
@@ -805,6 +810,63 @@ mod tests {
         assert!(!joined.contains("apply_patch prompt"));
         assert!(!joined.contains("shell command_run prompt"));
         assert!(!joined.contains("bash command_run prompt"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn agent_prompt_loader_uses_fallback_agent_md_when_prompt_md_is_absent() {
+        let run_id = format!(
+            "tura-fallback-agent-prompt-test-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let root = std::env::temp_dir().join(run_id);
+        let prompt_dir = root.join("modes").join("code");
+        std::fs::create_dir_all(&prompt_dir).expect("fallback prompt dir should be created");
+        std::fs::write(
+            prompt_dir.join("fallback_agent.md"),
+            "fallback agent prompt",
+        )
+        .expect("fallback prompt should be written");
+
+        let now = Utc::now();
+        let mut agent = AgentManagement::new(
+            "agent".to_string(),
+            "coding_agent".to_string(),
+            root.clone(),
+            None,
+            true,
+            ProviderConfig {
+                tura_llm_name: "test".to_string(),
+                stream: false,
+                temperature: 0.0,
+                max_tokens: 0,
+                tool_choice: ToolChoice::Auto,
+                time_out_ms: 1000,
+            },
+            ValidatorConfig {
+                need_validator: false,
+                validator_name: None,
+            },
+            now,
+        );
+        agent.add_prompt(
+            AgentPromptItem {
+                agent_prompt: "fallback_agent".to_string(),
+                prompt_directory: prompt_dir,
+            },
+            now,
+        );
+
+        let messages = load_agent_prompt_messages(&agent, &HashSet::new())
+            .expect("prompt loading should succeed");
+        let joined = messages
+            .iter()
+            .filter_map(|message| message.get("content").and_then(|content| content.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(joined.contains("fallback agent prompt"));
 
         let _ = std::fs::remove_dir_all(root);
     }

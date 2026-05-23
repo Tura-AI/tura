@@ -14,7 +14,7 @@ Small command-run probes live under `tests/unit/command-run/`.
 - `command_run_media_recall_e2e.mjs` verifies that media observations remain recallable across turns without retaining raw base64 in context.
 - `command_run_newjeans_official_media_e2e.mjs` runs a live web/media task with `tura-fast-shll` by default: download official unified-style NewJeans headshots for Minji, Hanni, Danielle, Haerin, and Hyein, inspect them with `read_media`, and report operations, session logs, token usage, and the required `SAME_STYLE` verdict.
 - `command_run_frontend_playwright_e2e.mjs` compares current, codex-main, and Tura on a Playwright-heavy frontend repair task with live per-agent logs and hidden validation.
-- `command_run_swebench_xarray_e2e.mjs` compares `tura-fast-shll`, current Codex, and codex-main on explicit SWE-bench Verified issue ids using issue statements only, with priority `gpt-5.5` low-reasoning defaults and per-agent patch/log capture.
+- `agent_swebench_test.mjs` compares Tura and Codex agents on explicit SWE-bench Verified issue ids using issue statements only, with priority `gpt-5.5` low-reasoning defaults and per-agent patch/log capture.
 - Historical generated records from the previous layout now live under
   `target/command-run-codex-two-way-records/`.
 
@@ -45,7 +45,7 @@ $env:COMMAND_RUN_AGENT_CODEX_MODEL='gpt-5.5'
 $env:COMMAND_RUN_AGENT_REASONING_EFFORT='low'
 $env:COMMAND_RUN_AGENT_SERVICE_TIER='priority'
 $env:COMMAND_RUN_AGENT_SWEBENCH_INSTANCE_IDS='pydata__xarray-4075'
-node .\tests\long-e2e\command-run-codex-two-way\command_run_swebench_xarray_e2e.mjs
+node .\tests\long-e2e\command-run-codex-two-way\agent_swebench_test.mjs
 ```
 
 `COMMAND_RUN_AGENT_SWEBENCH_INSTANCE_IDS` is required. Pass a comma-separated
@@ -55,33 +55,29 @@ statement, and writes one prediction per issue. If
 `COMMAND_RUN_AGENT_SWEBENCH_REPOS` is also set, issue ids outside those repos
 are discarded and recorded in `dropped_instance_ids`.
 
+For isolation, each selected issue and agent run gets its own cloned workspace
+under `target/agent-swebench-test/<run_id>/<issue>/<agent_run>/workspace`.
+Duplicate agent names are allowed; later duplicates get a numeric suffix such as
+`tura-fast-shll-2`. Workspace preparation is intentionally throttled before the
+agents start, because Windows/git can fail under parallel clone/init/add load.
+Override this with `COMMAND_RUN_AGENT_WORKSPACE_PREP_CONCURRENCY`; the default is
+`1` on Windows and up to `4` elsewhere. After preparation, agents for the same
+issue still run concurrently. Tura is built once before the concurrent agent
+phase instead of once per Tura agent.
+
 To run multiple issues, pass multiple ids:
 
 ```powershell
 $env:COMMAND_RUN_AGENT_SWEBENCH_INSTANCE_IDS='pydata__xarray-4075,pallets__flask-5014'
-node .\tests\long-e2e\command-run-codex-two-way\command_run_swebench_xarray_e2e.mjs
+node .\tests\long-e2e\command-run-codex-two-way\agent_swebench_test.mjs
 ```
 
 Single-issue prompt shape:
 
 ```text
-We need modify the repository to fix the following issue.
+Fix the bug or issue described below. Treat the report, docs, stack traces, and suggested causes as clues, not proof of the root cause or correct fix. First identify the underlying contract and the smallest stable boundary where the behavior should be guaranteed; be especially suspicious of lazy evaluation, deferred execution, caches, cloning, shared mutable state, partial or repeated execution, and compile/render/serialization steps that may trigger failures later than the reported call site. After any transformation that changes the externally visible shape or meaning of data, aggressively revalidate dependent references, aliases, indexes, caches, and invariants against the final exposed shape instead of reusing assumptions from an earlier internal shape. Work backward from the failure to the earliest invariant boundary, and make regression tests exercise derived/transformed paths before and after evaluation so stale references, cached state, and shape mismatches cannot hide. Make the minimal necessary production change, avoid unrelated refactors or new abstractions, and do not mask the failure at the call site when the invariant belongs deeper in the system. Do not search the internet.
 
 <problem_statement>
-
-Treat the issue statement as a symptom report, not authoritative root-cause guidance. The reporter may point to the wrong file, function, or fix.
-
-Before editing production code, derive tests in two layers:
-1. A symptom regression test that reproduces the reported failure.
-2. A root-cause or public API contract test that would fail at the underlying abstraction boundary, not merely at the reported call site.
-
-Do not accept a fix just because the symptom regression test passes. After the first passing patch, actively look for false-positive fixes by asking:
-- Did I only mask the error at the call site?
-- Is there a lower-level object/API whose invariant should now hold?
-- Are nearby classes/functions expected to expose the same behavior?
-- Would this fix work for equivalent callers, not only the reproduction?
-
-Make the minimal necessary code changes, avoid unrelated changes, and make sure the issue is fixed.
 ```
 
 Harness evaluation is optional. To run agents and then immediately evaluate
@@ -90,7 +86,7 @@ their prediction bundles for the same issue ids:
 ```powershell
 $env:COMMAND_RUN_AGENT_RUN_HARNESS='1'
 $env:COMMAND_RUN_AGENT_HARNESS_MAX_WORKERS='8'
-node .\tests\long-e2e\command-run-codex-two-way\command_run_swebench_xarray_e2e.mjs
+node .\tests\long-e2e\command-run-codex-two-way\agent_swebench_test.mjs
 ```
 
 To evaluate an existing run without rerunning agents, reuse its run id and set
@@ -98,10 +94,10 @@ To evaluate an existing run without rerunning agents, reuse its run id and set
 and `predictions\<agent>\all_preds.jsonl` files:
 
 ```powershell
-$env:COMMAND_RUN_AGENT_RUN_ID='swebench-xarray-issues-4agents'
+$env:COMMAND_RUN_AGENT_RUN_ID='agent-swebench-test-issues-4agents'
 $env:COMMAND_RUN_AGENT_HARNESS_ONLY='1'
 $env:COMMAND_RUN_AGENT_HARNESS_MAX_WORKERS='8'
-node .\tests\long-e2e\command-run-codex-two-way\command_run_swebench_xarray_e2e.mjs
+node .\tests\long-e2e\command-run-codex-two-way\agent_swebench_test.mjs
 ```
 
 `COMMAND_RUN_AGENT_HARNESS_MAX_WORKERS` controls SWE-bench `--max_workers`; it
@@ -115,13 +111,20 @@ the same issue image four times.
 `false`, so cached instance images are retained across future runs. Docker will
 keep those images until they are explicitly removed with Docker cleanup commands
 or Docker Desktop storage pruning.
+On Windows the harness defaults to `COMMAND_RUN_AGENT_HARNESS_BACKEND=docker-linux`:
+the runner builds or reuses `tura-swebench-harness:latest`, mounts the local
+SWE-bench checkout and run directory into that Linux container, and executes the
+official SWE-bench harness there. The effective harness worker count is capped
+at the number of unique selected issue ids, so all predictions for the same
+issue reuse the same cached SWE-bench instance image instead of starting
+parallel workers for that issue.
 
 To query/validate selected issue ids without running agents, use prep-only:
 
 ```powershell
 $env:COMMAND_RUN_AGENT_PREP_ONLY='1'
 $env:COMMAND_RUN_AGENT_SWEBENCH_INSTANCE_IDS='pydata__xarray-4075,pallets__flask-5014'
-node .\tests\long-e2e\command-run-codex-two-way\command_run_swebench_xarray_e2e.mjs
+node .\tests\long-e2e\command-run-codex-two-way\agent_swebench_test.mjs
 ```
 
 ## SWE-bench Verified Repo Issue Table

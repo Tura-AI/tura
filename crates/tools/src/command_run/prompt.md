@@ -1,6 +1,9 @@
 `command_run` is the only model-visible execution tool for coding work.
 
 Run tools as a pure batch+step command runner. Always use `commands[]`.
+`command_run` results must be returned through the tool/runtime result channel only.
+Do not copy, summarize as JSON, or replay `command_run` results in assistant content.
+Use assistant content only for concise reasoning, progress, and conclusions.
 Prefer one complete batch for predictable work: discover/read/search/download
 the needed context, edit, test, and validate in ordered steps when dependencies are clear.
 Use early steps for needed discovery/read/search commands. Use later steps for

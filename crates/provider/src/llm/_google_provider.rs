@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::llm::_utils::deep_merge_json;
+use crate::llm::_utils::{deep_merge_json, send_provider_request_first_response};
 use crate::tura_llm::{
     default_client, estimate_context_utilization, CallMetrics, CallOptions, CostDetails,
     ProviderResponse, TuraError, UsageDetails,
@@ -26,15 +26,10 @@ pub async fn google_embed(
         "taskType": "RETRIEVAL_DOCUMENT"
     });
 
-    let resp = client
-        .post(url)
-        .header("Authorization", "")
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| TuraError::Network {
-            message: e.to_string(),
-        })?;
+    let resp = send_provider_request_first_response(
+        client.post(url).header("Authorization", "").json(&payload),
+    )
+    .await?;
     let status = resp.status();
     let data: Value = resp.json().await.map_err(|e| TuraError::Network {
         message: e.to_string(),
@@ -116,15 +111,10 @@ pub async fn call(
         deep_merge_json(&mut payload, extra.clone());
     }
 
-    let resp = client
-        .post(url)
-        .header("Authorization", "")
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| TuraError::Network {
-            message: e.to_string(),
-        })?;
+    let resp = send_provider_request_first_response(
+        client.post(url).header("Authorization", "").json(&payload),
+    )
+    .await?;
     let status = resp.status();
     let req_id = resp
         .headers()

@@ -1,6 +1,9 @@
 use crate::context::messages_with_runtime_context;
+use crate::prompt_style::{agent_identity, PromptBuilder};
 use crate::runtime::call_runtime::{call_runtime, CallRuntimeInput};
-use crate::runtime::create_runtime::{create_runtime, CreateRuntimeInput};
+use crate::runtime::create_runtime::{
+    create_runtime, runtime_provider_config_from_tura, CreateRuntimeInput,
+};
 use crate::runtime::types::ToolCallData;
 use crate::state_machine::agent_management::AgentManagement;
 use crate::state_machine::runtime_management::RuntimeManagement;
@@ -60,7 +63,6 @@ pub(super) fn execute_turn(
                 .collect::<Vec<_>>()
         );
     }
-    let mut runtime_messages = load_agent_prompt_messages(agent, &allowed_tool_names)?;
     let model_name = std::env::var("TURA_SESSION_MODEL_OVERRIDE").ok();
     let turn_messages = messages_with_runtime_context(
         session,
@@ -69,7 +71,6 @@ pub(super) fn execute_turn(
         model_name.as_deref(),
         is_first_llm_call,
     );
-    runtime_messages.extend(turn_messages);
 
     let tura_runtime = tokio::runtime::Runtime::new()
         .map_err(|err| format!("failed to create tokio runtime: {err}"))?;
@@ -78,6 +79,22 @@ pub(super) fn execute_turn(
         let settings = tura_llm_rust::Settings::default()
             .await
             .map_err(|err| format!("failed to load tura llm settings: {err}"))?;
+        let runtime_provider_config =
+            runtime_provider_config_from_tura(&agent.provider, settings.as_ref(), false)?;
+        let identity = PromptBuilder::new()
+            .part(agent_identity::agent_identity(
+                "Tura",
+                &runtime_provider_config.model_name,
+                &runtime_provider_config.llm_provider_name,
+                "简体中文",
+            ))
+            .render();
+        let mut runtime_messages = vec![serde_json::json!({
+            "role": "system",
+            "content": identity,
+        })];
+        runtime_messages.extend(load_agent_prompt_messages(agent, &allowed_tool_names)?);
+        runtime_messages.extend(turn_messages);
         let (runtime, queue_item) = create_runtime(CreateRuntimeInput {
             session_id: session.session_id.clone(),
             agent_id: agent.agent_id.clone(),

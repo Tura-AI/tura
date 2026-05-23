@@ -61,8 +61,9 @@ pub struct RuntimeProviderConfig {
     pub model_name: String,
     /// Provider URL alias/name.
     pub provider_url_name: String,
-    /// Internal provider router name.
-    pub provider_router_name: String,
+    /// Underlying LLM provider name, such as openai, google, or anthropic.
+    #[serde(alias = "provider_router_name")]
+    pub llm_provider_name: String,
 }
 
 /// Error object returned by the model/provider.

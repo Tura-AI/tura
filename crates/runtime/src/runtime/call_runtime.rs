@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
@@ -67,7 +68,6 @@ pub async fn call_runtime(
         stream: Some(input.stream),
         parallel_tool_calls: parallel_tool_calls_enabled(route_config, !input_tools.is_empty()),
         prompt_cache_key,
-        codex_session_id: Some("tura-os".to_string()),
         stream_options: stream_options(route_config, input.stream),
         reasoning_effort: session_reasoning_effort(),
         service_tier: session_service_tier(),
@@ -83,7 +83,6 @@ pub async fn call_runtime(
             "stream": input.stream,
             "parallel_tool_calls": call_options.parallel_tool_calls,
             "prompt_cache_key": call_options.prompt_cache_key.clone(),
-            "codex_session_id": call_options.codex_session_id.clone(),
             "stream_options": call_options.stream_options.clone(),
             "reasoning_effort": call_options.reasoning_effort.clone(),
             "service_tier": call_options.service_tier.clone(),
@@ -169,7 +168,7 @@ fn session_reasoning_effort() -> Option<String> {
 fn prompt_cache_key(
     route_config: &tura_llm_rust::RouteConfig,
     route_name: &str,
-    _session_id: &SessionId,
+    session_id: &SessionId,
     tools: &[serde_json::Value],
 ) -> Option<String> {
     let provider = route_config.providers.first()?;
@@ -184,12 +183,13 @@ fn prompt_cache_key(
     tool_names.sort();
     let tool_sig = tool_names.join(",");
     let hash_input = format!(
-        "{}\n{}\n{}\n{}",
-        route_name, provider.provider, provider.model, tool_sig
+        "{}\n{}\n{}\n{}\n{}",
+        route_name, session_id, provider.provider, provider.model, tool_sig
     );
     Some(format!(
-        "turaosv2:{}:{}",
+        "turaosv2:{}:{}:{}",
         short_key_part(route_name),
+        short_key_part(session_id),
         fnv1a64_hex(&hash_input)
     ))
 }
@@ -673,13 +673,20 @@ async fn call_runtime_streaming(
             Ok(runtime) => runtime,
             Err(_) => return Vec::new(),
         };
+        let mut results = Vec::new();
+        let mut live_item_index = 0usize;
         while let Ok(event) = stream_rx.recv() {
             let Some(command) = command_run_stream_event_command(event) else {
                 continue;
             };
-            runtime.block_on(executor.push_command_value(command));
+            let completed = runtime.block_on(executor.push_command_value(command));
+            emit_cli_live_command_run_results(&completed, &mut live_item_index);
+            results.extend(completed);
         }
-        runtime.block_on(executor.finish())
+        let completed = runtime.block_on(executor.finish());
+        emit_cli_live_command_run_results(&completed, &mut live_item_index);
+        results.extend(completed);
+        results
     });
 
     let response = match tokio::time::timeout(
@@ -764,6 +771,74 @@ async fn call_runtime_streaming(
         .map_err(|e| format!("failed to finish runtime success: {}", e))?;
 
     Ok(())
+}
+
+fn emit_cli_live_command_run_results(results: &[serde_json::Value], item_index: &mut usize) {
+    if !env_flag("TURA_CLI_LIVE_JSONL") {
+        return;
+    }
+    for event in cli_live_command_run_events(results, item_index) {
+        println!("{event}");
+    }
+    let _ = std::io::stdout().flush();
+}
+
+fn cli_live_command_run_events(
+    results: &[serde_json::Value],
+    item_index: &mut usize,
+) -> Vec<serde_json::Value> {
+    let mut events = Vec::new();
+    for result in results {
+        let command_type = result
+            .get("command_type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("command");
+        let success = result
+            .get("success")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let status = if success { "completed" } else { "failed" };
+        let aggregated_output = result
+            .get("output")
+            .map(|output| {
+                output.as_str().map(ToString::to_string).unwrap_or_else(|| {
+                    serde_json::to_string_pretty(output).unwrap_or_else(|_| output.to_string())
+                })
+            })
+            .or_else(|| {
+                result
+                    .get("error")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .unwrap_or_default();
+        let item_type = if command_type == "apply_patch" {
+            "file_change"
+        } else {
+            "command_execution"
+        };
+        events.push(serde_json::json!({
+            "type": "item.completed",
+            "item": {
+                "id": format!("item_live_command_{}", *item_index),
+                "type": item_type,
+                "command": command_type,
+                "aggregated_output": aggregated_output,
+                "status": status,
+            }
+        }));
+        *item_index += 1;
+    }
+    events
+}
+
+fn env_flag(name: &str) -> bool {
+    std::env::var(name).ok().is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
 }
 
 fn usage_report_from_metrics(
@@ -878,7 +953,10 @@ pub async fn dequeue_runtime(
 
 #[cfg(test)]
 mod tests {
-    use super::{prompt_cache_key, session_reasoning_effort, session_service_tier, stream_options};
+    use super::{
+        cli_live_command_run_events, prompt_cache_key, session_reasoning_effort,
+        session_service_tier, stream_options,
+    };
     use std::ffi::OsString;
     use std::sync::{Mutex, OnceLock};
 
@@ -913,6 +991,31 @@ mod tests {
         with_env(REASONING_ENV, Some(" default "), || {
             assert_eq!(session_reasoning_effort(), None);
         });
+    }
+
+    #[test]
+    fn cli_live_command_run_events_emit_per_completed_command() {
+        let mut item_index = 0;
+        let events = cli_live_command_run_events(
+            &[serde_json::json!({
+                "command_type": "apply_patch",
+                "success": false,
+                "output": {
+                    "error_type": "ContextMismatch",
+                    "message": "patch context not found"
+                }
+            })],
+            &mut item_index,
+        );
+
+        assert_eq!(item_index, 1);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["type"], "item.completed");
+        assert_eq!(events[0]["item"]["type"], "file_change");
+        assert_eq!(events[0]["item"]["status"], "failed");
+        assert!(events[0]["item"]["aggregated_output"]
+            .as_str()
+            .is_some_and(|text| text.contains("ContextMismatch")));
     }
 
     #[test]
@@ -969,9 +1072,9 @@ mod tests {
             assert!(
                 prompt_cache_key(&route, "tura_coder", &"sess-a".to_string(), &tools_a)
                     .unwrap()
-                    .starts_with("turaosv2:tura-coder:")
+                    .starts_with("turaosv2:tura-coder:sess-a:")
             );
-            assert_eq!(
+            assert_ne!(
                 prompt_cache_key(&route, "tura_coder", &"sess-a".to_string(), &tools_a),
                 prompt_cache_key(&route, "tura_coder", &"sess-b".to_string(), &tools_a)
             );
