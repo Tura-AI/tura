@@ -1,0 +1,952 @@
+import {
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+} from "solid-js";
+import ArrowDown from "lucide-solid/icons/arrow-down";
+import ArrowUp from "lucide-solid/icons/arrow-up";
+import Plus from "lucide-solid/icons/plus";
+import SquareTerminal from "lucide-solid/icons/square-terminal";
+import type {
+  Command,
+  Message,
+  MessagePart,
+  ServiceStatusResponse,
+  Session,
+} from "@tura/gateway-sdk";
+import {
+  type AppState,
+  messageCreatedAt,
+  partText,
+  sessionTitle,
+} from "../state/global-store";
+import { classNames, formatTime, jsonPreview } from "../state/format";
+import { t } from "../i18n";
+import {
+  asRecord,
+  diffLines,
+  formatDuration,
+  isPatchRecord,
+  isToolPart,
+  messageDurationMs,
+  toolRecords,
+  toolStatus,
+} from "./message-tools";
+import { RichText } from "./message-rich-text";
+
+export function ConversationView(props: {
+  state: AppState;
+  session?: Session;
+  messages: Message[];
+  slashCommands: Command[];
+  onComposerText: (text: string) => void;
+  onSubmit: () => void;
+}) {
+  const [selectedToolId, setSelectedToolId] = createSignal<string>();
+  const [inspectorParts, setInspectorParts] = createSignal<MessagePart[]>([]);
+  const [inspectorOpen, setInspectorOpen] = createSignal(false);
+  const [inspectorWidth, setInspectorWidth] = createSignal(430);
+  const [transcriptPinned, setTranscriptPinned] = createSignal(true);
+  const groupedMessages = createMemo(() =>
+    groupConversationTurns(props.messages),
+  );
+  const streamSignature = createMemo(() =>
+    groupedMessages()
+      .flatMap((message) => message.parts)
+      .map(
+        (part) =>
+          `${part.id}:${partText(part).length}:${toolStatus(asRecord(part.state))}`,
+      )
+      .join("|"),
+  );
+  let transcriptEl: HTMLElement | undefined;
+
+  function transcriptAtBottom() {
+    if (!transcriptEl) {
+      return true;
+    }
+    return (
+      transcriptEl.scrollHeight -
+        transcriptEl.scrollTop -
+        transcriptEl.clientHeight <
+      28
+    );
+  }
+
+  function scrollTranscriptToBottom(behavior: ScrollBehavior = "smooth") {
+    if (!transcriptEl) {
+      return;
+    }
+    setTranscriptPinned(true);
+    requestAnimationFrame(() => {
+      transcriptEl?.scrollTo({
+        top: transcriptEl.scrollHeight,
+        behavior,
+      });
+    });
+  }
+
+  function handleTranscriptScroll() {
+    setTranscriptPinned(transcriptAtBottom());
+  }
+
+  createEffect(() => {
+    streamSignature();
+    if (transcriptPinned()) {
+      scrollTranscriptToBottom("auto");
+    }
+  });
+
+  return (
+    <section
+      class={classNames(
+        "conversation-view",
+        inspectorOpen() && "inspector-open",
+      )}
+      style={{ "--inspector-width": `${inspectorWidth()}px` }}
+    >
+      <header class="page-head">
+        <div class="page-title">
+          <span>{t("conversation")}</span>
+          <h1>
+            {props.session ? sessionTitle(props.session) : t("newSession")}
+          </h1>
+        </div>
+      </header>
+      <div class="conversation-grid">
+        <div class="conversation-main">
+          <Transcript
+            session={props.session}
+            messages={groupedMessages()}
+            loading={props.state.loading}
+            activeToolId={selectedToolId()}
+            onTranscript={(element) => {
+              transcriptEl = element;
+            }}
+            onScroll={handleTranscriptScroll}
+            onTool={(part, parts) => {
+              setSelectedToolId(part.id);
+              setInspectorParts(parts);
+              setInspectorOpen(true);
+            }}
+          />
+          <Show when={!transcriptPinned()}>
+            <button
+              class="scroll-follow"
+              type="button"
+              title={t("scrollToBottom")}
+              onClick={() => scrollTranscriptToBottom()}
+            >
+              <ArrowDown size={18} strokeWidth={1.7} />
+            </button>
+          </Show>
+          <Composer
+            text={props.state.composerText}
+            submitting={props.state.submitting}
+            slashCommands={props.slashCommands}
+            onText={props.onComposerText}
+            onSubmit={props.onSubmit}
+          />
+        </div>
+      </div>
+      <ToolInspector
+        parts={inspectorParts()}
+        serviceStatus={props.state.serviceStatus}
+        selectedId={selectedToolId()}
+        open={inspectorOpen()}
+        width={inspectorWidth()}
+        onWidth={setInspectorWidth}
+        onSelect={setSelectedToolId}
+        onClose={() => setInspectorOpen(false)}
+      />
+    </section>
+  );
+}
+
+function groupConversationTurns(messages: Message[]): Message[] {
+  const grouped: Message[] = [];
+  let assistantGroup: Message[] = [];
+
+  function flushAssistantGroup() {
+    if (assistantGroup.length === 0) {
+      return;
+    }
+    grouped.push(mergeAssistantMessages(assistantGroup));
+    assistantGroup = [];
+  }
+
+  for (const message of messages) {
+    if (message.role === "assistant") {
+      assistantGroup.push(message);
+      continue;
+    }
+    flushAssistantGroup();
+    grouped.push(message);
+  }
+  flushAssistantGroup();
+  return grouped;
+}
+
+function mergeAssistantMessages(messages: Message[]): Message {
+  const first = messages[0]!;
+  const last = messages.at(-1)!;
+  const withText = [...messages]
+    .reverse()
+    .find((message) =>
+      message.parts.some((part) => !isToolPart(part) && partText(part).trim()),
+    );
+  const providerMessage = withText ?? last;
+  return {
+    ...providerMessage,
+    id: messages.map((message) => message.id).join("+"),
+    created_at: first.created_at ?? first.time?.created,
+    updated_at: last.updated_at ?? last.time?.updated,
+    time: {
+      created: messageCreatedAt(first),
+      updated: last.time?.updated ?? last.updated_at ?? messageCreatedAt(last),
+    },
+    parts: messages.flatMap((message) => message.parts),
+  };
+}
+
+function ToolInspector(props: {
+  parts: MessagePart[];
+  serviceStatus?: ServiceStatusResponse;
+  selectedId?: string;
+  open: boolean;
+  width: number;
+  onWidth: (width: number) => void;
+  onSelect: (partId: string) => void;
+  onClose: () => void;
+}) {
+  const records = createMemo(() => toolRecords(props.parts));
+  const [expandedId, setExpandedId] = createSignal<string>();
+  const totalDuration = createMemo(() =>
+    formatDuration(
+      records().reduce(
+        (duration, record) => duration + (record.durationMs ?? 0),
+        0,
+      ),
+    ),
+  );
+  let dragStart = 0;
+  let widthStart = 0;
+  let resizing = false;
+
+  createEffect(() => {
+    if (!props.open) {
+      setExpandedId(undefined);
+    }
+  });
+
+  function startResize(clientX: number) {
+    resizing = true;
+    dragStart = clientX;
+    widthStart = props.width;
+    document.body.classList.add("resizing-inspector");
+    window.addEventListener("mousemove", resizeMouse);
+    window.addEventListener("touchmove", resizeTouch, { passive: false });
+    window.addEventListener("mouseup", stopResize, { once: true });
+    window.addEventListener("touchend", stopResize, { once: true });
+    window.addEventListener("touchcancel", stopResize, { once: true });
+  }
+
+  function handleMouseDown(event: MouseEvent) {
+    event.preventDefault();
+    startResize(event.clientX);
+  }
+
+  function handleTouchStart(event: TouchEvent) {
+    const touch = event.touches[0];
+    if (!touch) return;
+    event.preventDefault();
+    startResize(touch.clientX);
+  }
+
+  function updateWidth(clientX: number) {
+    const next = widthStart + dragStart - clientX;
+    const rail =
+      Number.parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue("--rail"),
+      ) || 0;
+    const max = Math.min(760, Math.max(320, window.innerWidth - rail - 360));
+    props.onWidth(Math.min(max, Math.max(320, next)));
+  }
+
+  function resizeMouse(event: MouseEvent) {
+    if (!resizing) return;
+    updateWidth(event.clientX);
+  }
+
+  function resizeTouch(event: TouchEvent) {
+    const touch = event.touches[0];
+    if (!resizing || !touch) return;
+    event.preventDefault();
+    updateWidth(touch.clientX);
+  }
+
+  function stopResize() {
+    resizing = false;
+    window.removeEventListener("mousemove", resizeMouse);
+    window.removeEventListener("touchmove", resizeTouch);
+    document.body.classList.remove("resizing-inspector");
+  }
+
+  onCleanup(() => {
+    window.removeEventListener("mousemove", resizeMouse);
+    window.removeEventListener("touchmove", resizeTouch);
+    document.body.classList.remove("resizing-inspector");
+  });
+
+  return (
+    <aside
+      class={classNames("tool-inspector", props.open && "open")}
+      data-empty={records().length === 0}
+      aria-hidden={!props.open}
+      style={{ "--inspector-width": `${props.width}px` }}
+    >
+      <div
+        class="inspector-resize"
+        role="separator"
+        aria-orientation="vertical"
+        onMouseDown={handleMouseDown}
+        onTouchStart={handleTouchStart}
+      />
+      <Show
+        when={records().length > 0}
+        fallback={
+          <>
+            <header>
+              <span>{t("console")}</span>
+              <small>{t("idle")}</small>
+            </header>
+            <div class="inspector-empty">{t("selectStep")}</div>
+          </>
+        }
+      >
+        <>
+          <header>
+            <span>{t("runCommands", { count: records().length })}</span>
+            <small>{totalDuration()}</small>
+            <button
+              class="inspector-close"
+              type="button"
+              title={t("close")}
+              onClick={props.onClose}
+            >
+              ×
+            </button>
+          </header>
+          <div class="inspector-scroll">
+            <nav
+              class="inspector-steps inspector-records"
+              aria-label="Tool steps"
+            >
+              <For each={records()}>
+                {(record, index) => {
+                  const expanded = createMemo(() => expandedId() === record.id);
+                  const groupStart = createMemo(() => {
+                    const previous = records()[index() - 1];
+                    return !!(
+                      previous?.groupId &&
+                      record.groupId &&
+                      previous.groupId !== record.groupId
+                    );
+                  });
+                  return (
+                    <section
+                      data-part-id={record.partId}
+                      class={classNames(
+                        "inspector-record",
+                        expanded() && "expanded",
+                        groupStart() && "group-start",
+                        isPatchRecord(record) && "patch-record",
+                      )}
+                    >
+                      <button
+                        class="inspector-record-toggle"
+                        type="button"
+                        aria-expanded={expanded()}
+                        onClick={() => {
+                          props.onSelect(record.id);
+                          setExpandedId(expanded() ? undefined : record.id);
+                        }}
+                      >
+                        <span>{record.title}</span>
+                        <small>
+                          {toolStatusLabel(record.status)} ·{" "}
+                          {formatDuration(record.durationMs)}
+                        </small>
+                      </button>
+                      <Show when={expanded()}>
+                        <div class="inspector-record-body">
+                          <section class="inspector-block">
+                            <span>{t("command")}</span>
+                            <pre
+                              class="inspector-code inspector-command"
+                              textContent={record.command}
+                            />
+                          </section>
+                          <Show
+                            when={isPatchRecord(record)}
+                            fallback={
+                              <section class="inspector-block">
+                                <span>{t("console")}</span>
+                                <pre
+                                  class="inspector-code inspector-console"
+                                  textContent={record.output}
+                                />
+                              </section>
+                            }
+                          >
+                            <section class="inspector-block">
+                              <span>{t("patch")}</span>
+                              <DiffPanel
+                                output={record.output}
+                                command={record.command}
+                              />
+                            </section>
+                          </Show>
+                          <footer class="inspector-status">
+                            <span>{toolStatusLabel(record.status)}</span>
+                            <span>
+                              {serviceStatusLabel(props.serviceStatus)}
+                            </span>
+                            <span>
+                              {t("exitCode")}:{" "}
+                              {record.exitCode === undefined
+                                ? "--"
+                                : record.exitCode}
+                            </span>
+                          </footer>
+                        </div>
+                      </Show>
+                    </section>
+                  );
+                }}
+              </For>
+            </nav>
+          </div>
+        </>
+      </Show>
+    </aside>
+  );
+}
+
+function DiffPanel(props: { output: string; command: string }) {
+  const lines = createMemo(() => diffLines(props.output));
+  const added = createMemo(
+    () => lines().filter((line) => line.kind === "add").length,
+  );
+  const deleted = createMemo(
+    () => lines().filter((line) => line.kind === "del").length,
+  );
+  const file = createMemo(() => diffFileLabel(props.output) ?? props.command);
+  return (
+    <div class="diff-view github-diff">
+      <div class="diff-head">
+        <span>{file()}</span>
+        <small>
+          +{added()} -{deleted()}
+        </small>
+      </div>
+      <For each={lines()}>
+        {(line, index) => (
+          <code
+            class={classNames(
+              line.kind === "add" && "diff-add",
+              line.kind === "del" && "diff-del",
+            )}
+          >
+            <span>{index() + 1}</span>
+            <span>{line.text}</span>
+          </code>
+        )}
+      </For>
+    </div>
+  );
+}
+
+function Transcript(props: {
+  session?: Session;
+  messages: Message[];
+  loading: boolean;
+  activeToolId?: string;
+  onTranscript: (element: HTMLElement) => void;
+  onScroll: () => void;
+  onTool: (part: MessagePart, parts: MessagePart[]) => void;
+}) {
+  const latestId = createMemo(() => props.messages.at(-1)?.id);
+  return (
+    <section
+      class="transcript"
+      ref={props.onTranscript}
+      onScroll={props.onScroll}
+    >
+      <Show
+        when={!props.loading}
+        fallback={<div class="center-state">{t("loading")}</div>}
+      >
+        <Show
+          when={props.session}
+          fallback={<div class="center-state">{t("ready")}</div>}
+        >
+          <For
+            each={props.messages}
+            fallback={
+              <div class="center-state">{sessionTitle(props.session!)}</div>
+            }
+          >
+            {(message) => (
+              <MessageCell
+                message={message}
+                activeToolId={props.activeToolId}
+                isLatest={latestId() === message.id}
+                sessionStatus={props.session?.status}
+                onTool={props.onTool}
+              />
+            )}
+          </For>
+        </Show>
+      </Show>
+    </section>
+  );
+}
+
+function MessageCell(props: {
+  message: Message;
+  activeToolId?: string;
+  isLatest: boolean;
+  sessionStatus?: Session["status"];
+  onTool: (part: MessagePart, parts: MessagePart[]) => void;
+}) {
+  const textParts = createMemo(() =>
+    props.message.parts.filter((part) => !isToolPart(part)),
+  );
+  const toolParts = createMemo(() => props.message.parts.filter(isToolPart));
+  const isPending = createMemo(
+    () =>
+      props.message.role === "assistant" &&
+      toolParts().some(
+        (part) => toolStatus(asRecord(part.state)) === "running",
+      ),
+  );
+  const visibleTextParts = createMemo(() => {
+    const visible = textParts().filter((part) => partText(part).trim());
+    const showProcessText =
+      props.sessionStatus === undefined
+        ? isPending()
+        : props.sessionStatus !== "idle";
+    if (
+      props.message.role !== "assistant" ||
+      showProcessText ||
+      visible.length <= 1
+    ) {
+      return visible;
+    }
+    return [visible[visible.length - 1]!];
+  });
+  const summaryText = createMemo(() =>
+    visibleTextParts().map(partText).filter(Boolean).join("\n\n"),
+  );
+  const hasSummary = createMemo(() => summaryText().trim().length > 0);
+  const assistantBlocks = createMemo(() =>
+    assistantPartBlocks(
+      props.message.parts,
+      new Set(visibleTextParts().map((part) => part.id)),
+    ),
+  );
+  const turnDuration = createMemo(() =>
+    formatDuration(messageDurationMs(props.message)),
+  );
+
+  return (
+    <article class={classNames("message", props.message.role)}>
+      <Show when={props.message.role === "user"}>
+        <div class="message-user-shell">
+          <For each={textParts()}>
+            {(part) => <TextPartCell part={part} streaming={false} />}
+          </For>
+        </div>
+      </Show>
+      <Show when={props.message.role !== "user"}>
+        <div class="message-body">
+          <div class="assistant-response">
+            <div class="message-avatar-wrap" aria-hidden="true">
+              <img
+                class="agent-avatar"
+                src="/assets/conversation-avatar.png"
+                alt=""
+              />
+            </div>
+            <div class="assistant-stack assistant-text">
+              <For each={assistantBlocks()}>
+                {(block) => (
+                  <Show
+                    when={block.type === "tools"}
+                    fallback={
+                      <div class="assistant-text-block">
+                        <For each={block.parts}>
+                          {(part) => (
+                            <TextPartCell
+                              part={part}
+                              streaming={
+                                props.isLatest &&
+                                props.message.role === "assistant"
+                              }
+                            />
+                          )}
+                        </For>
+                      </div>
+                    }
+                  >
+                    <RunSummary
+                      parts={block.parts}
+                      activeToolId={props.activeToolId}
+                      pending={isPending()}
+                      duration={formatDuration(blockDurationMs(block.parts))}
+                      onTool={(part) => props.onTool(part, block.parts)}
+                    />
+                  </Show>
+                )}
+              </For>
+              <Show when={hasSummary()}>
+                <div class="message-head assistant-meta">
+                  <span>{agentMeta(props.message)}</span>
+                  <span>
+                    {formatTime(messageCreatedAt(props.message))} ·{" "}
+                    {turnDuration()}
+                  </span>
+                </div>
+              </Show>
+            </div>
+          </div>
+        </div>
+      </Show>
+    </article>
+  );
+}
+
+type AssistantBlock = {
+  type: "text" | "tools";
+  parts: MessagePart[];
+};
+
+function assistantPartBlocks(
+  parts: MessagePart[],
+  visibleTextIds: Set<string>,
+): AssistantBlock[] {
+  const blocks: AssistantBlock[] = [];
+  let toolBuffer: MessagePart[] = [];
+
+  function flushTools() {
+    if (toolBuffer.length > 0) {
+      blocks.push({ type: "tools", parts: toolBuffer });
+      toolBuffer = [];
+    }
+  }
+
+  for (const part of parts) {
+    if (isToolPart(part)) {
+      toolBuffer.push(part);
+      continue;
+    }
+    if (!visibleTextIds.has(part.id)) {
+      continue;
+    }
+    flushTools();
+    blocks.push({ type: "text", parts: [part] });
+  }
+  flushTools();
+  return blocks;
+}
+
+function blockDurationMs(parts: MessagePart[]): number | undefined {
+  const durations = parts
+    .map((part) => messagePartDurationMs(part))
+    .filter((value): value is number => value !== undefined);
+  return durations.length
+    ? durations.reduce((total, value) => total + value, 0)
+    : undefined;
+}
+
+function messagePartDurationMs(part: MessagePart): number | undefined {
+  const state = asRecord(part.state);
+  const time = asRecord(state.time);
+  const start =
+    numericField(time, "start") ||
+    numericField(time, "started") ||
+    numericField(state, "started_at");
+  const end =
+    numericField(time, "end") ||
+    numericField(time, "ended") ||
+    numericField(state, "completed_at");
+  if (!start) {
+    return undefined;
+  }
+  return Math.max(0, epochMs(end ?? Date.now()) - epochMs(start));
+}
+
+function numericField(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function epochMs(value: number) {
+  return value > 10_000_000_000 ? value : value * 1000;
+}
+
+function RunSummary(props: {
+  parts: MessagePart[];
+  activeToolId?: string;
+  pending: boolean;
+  duration: string;
+  onTool: (part: MessagePart) => void;
+}) {
+  const recordCount = createMemo(() => toolRecords(props.parts).length);
+  const selectedPart = createMemo(
+    () =>
+      props.parts.find((part) => part.id === props.activeToolId) ??
+      preferredToolPart(props.parts),
+  );
+  const label = createMemo(() =>
+    t(props.pending ? "runningCommands" : "runCommands", {
+      count: recordCount(),
+    }),
+  );
+  return (
+    <button
+      class="run-summary"
+      type="button"
+      title={`${label()} · ${props.duration}`}
+      onClick={() => {
+        const part = selectedPart();
+        if (part) {
+          props.onTool(part);
+        }
+      }}
+    >
+      <SquareTerminal size={14} strokeWidth={1.8} />
+      <span>{label()}</span>
+      <span class="run-summary-time">{props.duration}</span>
+      <span class="run-summary-chevron">›</span>
+    </button>
+  );
+}
+
+function TextPartCell(props: { part: MessagePart; streaming: boolean }) {
+  const text = createMemo(() => partText(props.part));
+  return (
+    <div class="part text-part">
+      <Show
+        when={text()}
+        fallback={
+          <pre>{jsonPreview(props.part.state || props.part.metadata)}</pre>
+        }
+      >
+        {(value) => <TypingText text={value()} active={props.streaming} />}
+      </Show>
+    </div>
+  );
+}
+
+function TypingText(props: { text: string; active: boolean }) {
+  const [visible, setVisible] = createSignal(props.active ? "" : props.text);
+  let timer: number | undefined;
+
+  createEffect(() => {
+    const text = props.text;
+    if (!props.active) {
+      setVisible(text);
+      return;
+    }
+    if (timer) {
+      window.clearInterval(timer);
+    }
+    const current = visible();
+    const start = text.startsWith(current) ? current.length : 0;
+    if (start === 0) {
+      setVisible("");
+    }
+    let index = start;
+    timer = window.setInterval(() => {
+      index = Math.min(
+        text.length,
+        index + Math.max(1, Math.ceil((text.length - index) / 24)),
+      );
+      setVisible(text.slice(0, index));
+      if (index >= text.length && timer) {
+        window.clearInterval(timer);
+        timer = undefined;
+      }
+    }, 18);
+  });
+
+  onCleanup(() => {
+    if (timer) {
+      window.clearInterval(timer);
+    }
+  });
+
+  return <RichText text={visible()} active={props.active} />;
+}
+
+function Composer(props: {
+  text: string;
+  submitting: boolean;
+  slashCommands: Command[];
+  onText: (text: string) => void;
+  onSubmit: () => void;
+}) {
+  let fileInput: HTMLInputElement | undefined;
+  return (
+    <footer class="bottom-composer composer">
+      <Show when={props.slashCommands.length > 0}>
+        <div class="slash-menu">
+          <For each={props.slashCommands}>
+            {(command) => (
+              <button onClick={() => props.onText(`/${command.name} `)}>
+                <span>/{command.name}</span>
+                <small>{command.description}</small>
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
+      <div class="composer-input">
+        <textarea
+          value={props.text}
+          rows={3}
+          style={{ height: composerInputHeight(props.text) }}
+          onInput={(event) => props.onText(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+              event.preventDefault();
+              void props.onSubmit();
+            }
+          }}
+          placeholder={t("writeMessage")}
+        />
+      </div>
+      <div class="composer-toolbar">
+        <button
+          class="composer-attach"
+          type="button"
+          title={t("attachFile")}
+          onClick={() => fileInput?.click()}
+        >
+          <Plus size={18} strokeWidth={1.7} />
+        </button>
+        <input
+          ref={fileInput}
+          class="composer-file-input"
+          type="file"
+          multiple
+          tabIndex={-1}
+        />
+        <div class="composer-settings" aria-hidden="true" />
+        <button
+          class="composer-send"
+          type="button"
+          title={t("send")}
+          disabled={props.submitting || !props.text.trim()}
+          onClick={props.onSubmit}
+        >
+          <ArrowUp size={16} strokeWidth={1.8} />
+        </button>
+      </div>
+    </footer>
+  );
+}
+
+function composerInputHeight(value: string): string {
+  const lines = Math.min(
+    8,
+    Math.max(
+      3,
+      value.split(/\r\n|\r|\n/u).length + Math.floor(value.length / 88),
+    ),
+  );
+  return `${lines * 22 + 18}px`;
+}
+
+function toolStatusLabel(status: string): string {
+  switch (status) {
+    case "completed":
+    case "success":
+    case "done":
+      return t("completed");
+    case "running":
+    case "in_progress":
+      return t("running");
+    case "failed":
+    case "error":
+      return t("failed");
+    case "pending":
+      return t("pending");
+    default:
+      return status;
+  }
+}
+
+function serviceStatusLabel(status?: ServiceStatusResponse): string {
+  if (!status) {
+    return `${t("backgroundService")}: ${t("unknown")}`;
+  }
+  const processes = sessionProcessCount(status.session_processes);
+  const lspCount = status.lsp?.length ?? 0;
+  const health = status.router?.status || status.mano?.status || "unknown";
+  const parts = [
+    toolServiceStatusLabel(health),
+    processes === 0
+      ? t("serviceNoProcesses")
+      : t("serviceProcesses", { count: processes }),
+    lspCount > 0 ? t("serviceLsp", { count: lspCount }) : "",
+  ].filter(Boolean);
+  return `${t("backgroundService")}: ${parts.join(" · ")}`;
+}
+
+function toolServiceStatusLabel(status: string): string {
+  switch (status) {
+    case "connected":
+      return t("connected");
+    case "checking":
+      return t("checking");
+    case "error":
+      return t("failed");
+    default:
+      return status || t("unknown");
+  }
+}
+
+function sessionProcessCount(value: unknown): number {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const processes = record.processes;
+  return Array.isArray(processes) ? processes.length : 0;
+}
+
+function diffFileLabel(output: string): string | undefined {
+  const match = output.match(/^diff --git a\/(.+?) b\/(.+)$/mu);
+  return match?.[2] ?? match?.[1];
+}
+
+function preferredToolPart(parts: MessagePart[]): MessagePart | undefined {
+  return (
+    [...parts].reverse().find((part) => part.tool !== "runtime") ?? parts.at(-1)
+  );
+}
+
+function agentMeta(message: Message): string {
+  const model = [message.providerID, message.modelID].filter(Boolean).join("/");
+  const cost = message.cost ? `$${message.cost.toFixed(4)}` : "";
+  const detail = [model, cost].filter(Boolean).join(" · ");
+  return detail ? `Tura (${detail})` : "Tura";
+}

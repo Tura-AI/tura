@@ -3,7 +3,11 @@
 use crate::api::types::*;
 use crate::mock::global_store;
 use axum::{extract::Query, http::StatusCode, Json};
+use base64::Engine;
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
+use std::time::UNIX_EPOCH;
 
 // ============================================================================
 // File List
@@ -23,6 +27,9 @@ pub struct FileInfo {
     pub file_type: String,
     pub absolute: String,
     pub ignored: bool,
+    pub git_status: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub modified_at: Option<u64>,
 }
 
 pub async fn list_files(Query(params): Query<ListFilesQuery>) -> Json<Vec<FileInfo>> {
@@ -32,6 +39,8 @@ pub async fn list_files(Query(params): Query<ListFilesQuery>) -> Json<Vec<FileIn
     let Some(full_path) = safe_join(&root, params.path.as_deref().unwrap_or_default()) else {
         return Json(Vec::new());
     };
+
+    let git_statuses = git_status_map(&root, params.path.as_deref().unwrap_or_default());
 
     let mut entries = std::fs::read_dir(&full_path)
         .map(|dir| {
@@ -44,9 +53,11 @@ pub async fn list_files(Query(params): Query<ListFilesQuery>) -> Json<Vec<FileIn
                     return None;
                 }
 
+                let relative_path = relative_display_path(&root, &path);
+                let normalized_relative_path = normalize_git_path(&relative_path);
                 Some(FileInfo {
                     name,
-                    path: relative_display_path(&root, &path),
+                    path: relative_path,
                     file_type: if metadata.is_dir() {
                         "directory".to_string()
                     } else {
@@ -54,6 +65,17 @@ pub async fn list_files(Query(params): Query<ListFilesQuery>) -> Json<Vec<FileIn
                     },
                     absolute: display_path(&path),
                     ignored: false,
+                    git_status: git_statuses.get(&normalized_relative_path).cloned(),
+                    size_bytes: if metadata.is_file() {
+                        Some(metadata.len())
+                    } else {
+                        None
+                    },
+                    modified_at: metadata
+                        .modified()
+                        .ok()
+                        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+                        .map(|duration| duration.as_millis() as u64),
                 })
             })
             .collect::<Vec<_>>()
@@ -69,6 +91,64 @@ pub async fn list_files(Query(params): Query<ListFilesQuery>) -> Json<Vec<FileIn
     );
 
     Json(entries)
+}
+
+fn git_status_map(root: &Path, relative_path: &str) -> HashMap<String, String> {
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(root)
+        .arg("status")
+        .arg("--porcelain=v1")
+        .arg("--ignored=matching")
+        .arg("--")
+        .arg(relative_path);
+
+    let Ok(output) = command.output() else {
+        return HashMap::new();
+    };
+    if !output.status.success() {
+        return HashMap::new();
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(parse_git_status_line)
+        .collect()
+}
+
+fn parse_git_status_line(line: &str) -> Option<(String, String)> {
+    if line.len() < 4 {
+        return None;
+    }
+    let status = line.get(0..2)?.trim();
+    let raw_path = line
+        .get(3..)?
+        .rsplit(" -> ")
+        .next()?
+        .trim()
+        .trim_matches('"');
+    Some((
+        normalize_git_path(raw_path),
+        git_status_label(status).to_string(),
+    ))
+}
+
+fn git_status_label(status: &str) -> &'static str {
+    match status {
+        "M" | "MM" | "AM" | "RM" => "modified",
+        "A" => "added",
+        "D" => "deleted",
+        "R" => "renamed",
+        "C" => "copied",
+        "??" => "untracked",
+        "!!" => "ignored",
+        _ => "changed",
+    }
+}
+
+fn normalize_git_path(path: &str) -> String {
+    path.replace('\\', "/").trim_matches('/').to_string()
 }
 
 // ============================================================================
@@ -107,6 +187,15 @@ pub async fn get_file_content(
         )
     })?;
 
+    if let Some(mime_type) = media_mime_type(&path) {
+        return Ok(Json(FileContentResponse {
+            content_type: "media".to_string(),
+            content: base64::engine::general_purpose::STANDARD.encode(bytes),
+            encoding: Some("base64".to_string()),
+            mime_type: Some(mime_type.to_string()),
+        }));
+    }
+
     match String::from_utf8(bytes) {
         Ok(content) => Ok(Json(FileContentResponse {
             content_type: "text".to_string(),
@@ -121,6 +210,44 @@ pub async fn get_file_content(
             mime_type: None,
         })),
     }
+}
+
+pub async fn open_file(
+    Query(params): Query<FileContentQuery>,
+) -> Result<Json<FileOpenResponse>, (StatusCode, String)> {
+    let root = workspace_root(params.directory).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "No workspace directory was provided for file open".to_string(),
+        )
+    })?;
+    let path = safe_join(&root, &params.path).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "File path must stay inside the workspace".to_string(),
+        )
+    })?;
+    if !path.exists() {
+        return Err((StatusCode::NOT_FOUND, "File was not found".to_string()));
+    }
+
+    open_with_system_default(&path).map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to open file: {error}"),
+        )
+    })?;
+
+    Ok(Json(FileOpenResponse {
+        path: relative_display_path(&root, &path),
+        opened: true,
+    }))
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FileOpenResponse {
+    pub path: String,
+    pub opened: bool,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -413,6 +540,52 @@ fn should_hide(name: &str) -> bool {
             | "dist"
             | "build"
     )
+}
+
+fn media_mime_type(path: &Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => Some("image/png"),
+        Some("jpg") | Some("jpeg") => Some("image/jpeg"),
+        Some("gif") => Some("image/gif"),
+        Some("webp") => Some("image/webp"),
+        Some("svg") => Some("image/svg+xml"),
+        Some("pdf") => Some("application/pdf"),
+        Some("mp4") => Some("video/mp4"),
+        Some("webm") => Some("video/webm"),
+        Some("mov") => Some("video/quicktime"),
+        Some("mp3") => Some("audio/mpeg"),
+        Some("wav") => Some("audio/wav"),
+        Some("ogg") => Some("audio/ogg"),
+        _ => None,
+    }
+}
+
+fn open_with_system_default(path: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .args(["/C", "start", ""])
+            .arg(path)
+            .spawn()?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open").arg(path).spawn()?;
+        return Ok(());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open").arg(path).spawn()?;
+        return Ok(());
+    }
 }
 
 fn relative_display_path(root: &Path, path: &Path) -> String {

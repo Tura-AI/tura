@@ -2,8 +2,8 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, mpsc};
-use std::time::Duration;
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant};
 use tracing::error;
 
 use crate::state_machine::runtime_management::{
@@ -15,6 +15,7 @@ use super::runtime_recieve::command_run_stream_event_command;
 use super::types::{RuntimeQueueItem, ToolCallData};
 
 const COMMAND_RUN_TOOL_NAME: &str = "command_run";
+const DEFAULT_STREAMED_COMMAND_RUN_POST_RESULT_TIMEOUT_MS: u64 = 15_000;
 
 pub struct CallRuntimeInput {
     pub runtime: RuntimeManagement,
@@ -650,6 +651,9 @@ async fn call_runtime_streaming(
     let timeout_duration = runtime_timeout(runtime);
     let (stream_tx, stream_rx) = mpsc::channel::<tura_llm_rust::ProviderStreamEvent>();
     let first_stream_output_at: Arc<Mutex<Option<DateTime<Utc>>>> = Arc::new(Mutex::new(None));
+    let streamed_command_results: Arc<Mutex<Vec<serde_json::Value>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let last_streamed_command_result_at: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
     let first_stream_output_for_sink = Arc::clone(&first_stream_output_at);
     let sink: tura_llm_rust::ProviderStreamEventSink = Arc::new(move |event| {
         if matches!(
@@ -666,6 +670,8 @@ async fn call_runtime_streaming(
         let _ = stream_tx.send(event);
     });
     let command_session_directory = session_directory.clone();
+    let command_results_for_task = Arc::clone(&streamed_command_results);
+    let last_command_result_for_task = Arc::clone(&last_streamed_command_result_at);
     let command_task = std::thread::spawn(move || {
         let mut executor =
             code_tools::command_run::StreamingCommandRunExecutor::new(command_session_directory);
@@ -681,21 +687,50 @@ async fn call_runtime_streaming(
             };
             let completed = runtime.block_on(executor.push_command_value(command));
             emit_cli_live_command_run_results(&completed, &mut live_item_index);
+            if !completed.is_empty() {
+                {
+                    let mut shared = command_results_for_task
+                        .lock()
+                        .unwrap_or_else(|err| err.into_inner());
+                    shared.extend(completed.clone());
+                }
+                *last_command_result_for_task
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner()) = Some(Instant::now());
+            }
             results.extend(completed);
         }
         let completed = runtime.block_on(executor.finish());
         emit_cli_live_command_run_results(&completed, &mut live_item_index);
+        if !completed.is_empty() {
+            {
+                let mut shared = command_results_for_task
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner());
+                shared.extend(completed.clone());
+            }
+            *last_command_result_for_task
+                .lock()
+                .unwrap_or_else(|err| err.into_inner()) = Some(Instant::now());
+        }
         results.extend(completed);
         results
     });
 
-    let response = match tokio::time::timeout(
-        timeout_duration,
-        route_config.run_with_stream_events(tura_config.as_ref(), messages, options, Some(sink)),
-    )
-    .await
-    {
-        Err(_) => {
+    let post_command_result_timeout = streamed_command_run_post_result_timeout();
+    let route_config_for_task = route_config.clone();
+    let tura_config_for_task = Arc::clone(tura_config);
+    let provider_task = tokio::spawn(async move {
+        route_config_for_task
+            .run_with_stream_events(tura_config_for_task.as_ref(), messages, options, Some(sink))
+            .await
+    });
+    tokio::pin!(provider_task);
+    let timeout_sleep = tokio::time::sleep(timeout_duration);
+    tokio::pin!(timeout_sleep);
+    let response = loop {
+        tokio::select! {
+            _ = &mut timeout_sleep => {
             let finished_at = Utc::now();
             let message = format!(
                 "runtime call timed out after {} ms",
@@ -712,23 +747,103 @@ async fn call_runtime_streaming(
                 message,
                 RuntimeCallResultStatus::TimedOut,
             )?;
+            provider_task.abort();
             return Ok(());
-        }
-        Ok(Ok(response)) => response,
-        Ok(Err(e)) => {
-            let finished_at = Utc::now();
-            error!(error = %e, "runtime call failed");
-            runtime.set_output(serde_json::json!({
-                "error": e.to_string()
-            }));
-            finish_runtime_failure(
-                runtime,
-                finished_at,
-                "CALL_FAILED",
-                e.to_string(),
-                RuntimeCallResultStatus::Failed,
-            )?;
-            return Ok(());
+            }
+            response = &mut provider_task => {
+                break match response {
+                    Ok(Ok(response)) => response,
+                    Ok(Err(e)) => {
+                        let finished_at = Utc::now();
+                        error!(error = %e, "runtime call failed");
+                        runtime.set_output(serde_json::json!({
+                            "error": e.to_string()
+                        }));
+                        finish_runtime_failure(
+                            runtime,
+                            finished_at,
+                            "CALL_FAILED",
+                            e.to_string(),
+                            RuntimeCallResultStatus::Failed,
+                        )?;
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        let finished_at = Utc::now();
+                        let message = format!("runtime provider task failed: {e}");
+                        error!(error = %message, "runtime provider task failed");
+                        runtime.set_output(serde_json::json!({
+                            "error": message
+                        }));
+                        finish_runtime_failure(
+                            runtime,
+                            finished_at,
+                            "CALL_FAILED",
+                            message,
+                            RuntimeCallResultStatus::Failed,
+                        )?;
+                        return Ok(());
+                    }
+                };
+            }
+            _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                let should_finish_from_streamed_command_run = {
+                    let has_results = !streamed_command_results
+                        .lock()
+                        .unwrap_or_else(|err| err.into_inner())
+                        .is_empty();
+                    let last_result_at = *last_streamed_command_result_at
+                        .lock()
+                        .unwrap_or_else(|err| err.into_inner());
+                    has_results
+                        && last_result_at
+                            .map(|last| last.elapsed() >= post_command_result_timeout)
+                            .unwrap_or(false)
+                };
+                if should_finish_from_streamed_command_run {
+                    let finished_at = Utc::now();
+                    let results = streamed_command_results
+                        .lock()
+                        .unwrap_or_else(|err| err.into_inner())
+                        .clone();
+                    runtime.set_output(serde_json::json!({
+                        "provider_content": {
+                            "text": "Provider stream did not finish after streamed command_run completed; advancing with completed command_run results."
+                        },
+                        "streamed_command_run_result": {
+                            "results": results,
+                            "early_finish_reason": "post_command_run_stream_timeout",
+                            "post_result_timeout_ms": post_command_result_timeout.as_millis(),
+                        }
+                    }));
+                    runtime.push_tool_call(ToolCallRecord {
+                        tool_called_name: COMMAND_RUN_TOOL_NAME.to_string(),
+                        tool_called_input: serde_json::json!({}),
+                        provider_metadata: None,
+                        tool_received_at: finished_at,
+                        tool_executed_at: finished_at,
+                        tool_calldata_received_at: finished_at,
+                        tool_reported_success: false,
+                        agent_reported_success: false,
+                        agent_reported_helpful: false,
+                        agent_reported_summary: String::new(),
+                        validator_reported_success: None,
+                    });
+                    runtime
+                        .mark_first_token(
+                            first_stream_output_at
+                                .lock()
+                                .unwrap_or_else(|err| err.into_inner())
+                                .unwrap_or(finished_at),
+                        )
+                        .map_err(|e| format!("failed to mark first token: {}", e))?;
+                    runtime
+                        .finish_success(finished_at, None)
+                        .map_err(|e| format!("failed to finish runtime success: {}", e))?;
+                    provider_task.abort();
+                    return Ok(());
+                }
+            }
         }
     };
     let finished_at = Utc::now();
@@ -771,6 +886,14 @@ async fn call_runtime_streaming(
         .map_err(|e| format!("failed to finish runtime success: {}", e))?;
 
     Ok(())
+}
+
+fn streamed_command_run_post_result_timeout() -> Duration {
+    let millis = std::env::var("TURA_STREAMED_COMMAND_RUN_POST_RESULT_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_STREAMED_COMMAND_RUN_POST_RESULT_TIMEOUT_MS);
+    Duration::from_millis(millis.max(1))
 }
 
 fn emit_cli_live_command_run_results(results: &[serde_json::Value], item_index: &mut usize) {
@@ -1100,11 +1223,9 @@ mod tests {
         assert_eq!(events[0]["type"], "item.completed");
         assert_eq!(events[0]["item"]["type"], "file_change");
         assert_eq!(events[0]["item"]["status"], "failed");
-        assert!(
-            events[0]["item"]["aggregated_output"]
-                .as_str()
-                .is_some_and(|text| text.contains("ContextMismatch"))
-        );
+        assert!(events[0]["item"]["aggregated_output"]
+            .as_str()
+            .is_some_and(|text| text.contains("ContextMismatch")));
     }
 
     #[test]

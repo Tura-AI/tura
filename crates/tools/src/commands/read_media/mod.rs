@@ -1290,12 +1290,7 @@ fn process_document(path: &Path, args: &ReadMediaArgs) -> Result<MediaContent, S
         .map_err(|err| format!("failed to read document metadata: {err}"))?;
     if metadata.len() > MAX_DOCUMENT_ATTACHMENT_BYTES {
         return Ok(MediaContent {
-            text: format!(
-                "[File attachment omitted: {} is larger than the 1000000 byte attachment limit.]",
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("document")
-            ),
+            text: String::new(),
             visual_previews: Vec::new(),
             audio_previews: Vec::new(),
             file_attachments: Vec::new(),

@@ -10,6 +10,8 @@ use code_tools_suite::state_machine::session_management::{
 use std::path::PathBuf;
 use uuid::Uuid;
 
+use crate::session::config::DEFAULT_SESSION_REASONING_EFFORT;
+
 const DEFAULT_SESSION_DIRECTORY: &str = "sessions";
 pub const CODING_AGENT_NAME: &str = "coding_agent";
 pub const CODING_AGENT_FAST_NAME: &str = "coding_agent_fast";
@@ -79,8 +81,8 @@ impl SessionManager {
             kill_processes_on_start: false,
             validator_enabled: false,
             force_multiple_tasks: false,
-            model_variant: None,
-            model_acceleration_enabled: false,
+            model_variant: Some(DEFAULT_SESSION_REASONING_EFFORT.to_string()),
+            model_acceleration_enabled: true,
             disable_permission_restrictions: false,
             use_last_tool_call_response,
             status: SessionStatus::from_state(management.state),
@@ -181,8 +183,8 @@ impl SessionInfo {
             kill_processes_on_start: false,
             validator_enabled: false,
             force_multiple_tasks: false,
-            model_variant: None,
-            model_acceleration_enabled: false,
+            model_variant: Some(DEFAULT_SESSION_REASONING_EFFORT.to_string()),
+            model_acceleration_enabled: true,
             disable_permission_restrictions: management.disable_permission_restrictions,
             use_last_tool_call_response: management.use_last_tool_call_response,
             status: SessionStatus::from_state(management.state),

@@ -9,9 +9,12 @@ use crate::runtime::tool::{
     FunctionToolOutput, ToolCall, ToolContext, ToolError, ToolHandler, ToolPayload,
 };
 use serde_json::Value;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
 use std::process::{Command, Stdio};
 use std::thread;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
 
@@ -161,30 +164,50 @@ fn run_command_with_timeout(mut command: Command, timeout_secs: u64) -> CommandR
         .stderr(Stdio::piped());
     configure_process_group(&mut command);
     match command.spawn() {
-        Ok(mut child) => loop {
-            match child.try_wait() {
-                Ok(Some(_status)) => match child.wait_with_output() {
-                    Ok(output) => {
-                        let wall = started.elapsed().as_secs_f32();
-                        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                        let exit_code = output.status.code().unwrap_or(1);
-                        let mut text = format!(
-                            "Exit code: {exit_code}\nWall time: {:.1} seconds\nOutput:\n{}",
-                            wall, stdout
+        Ok(mut child) => {
+            let stdout_task = child
+                .stdout
+                .take()
+                .map(|stream| thread::spawn(move || read_blocking_stream(stream)));
+            let stderr_task = child
+                .stderr
+                .take()
+                .map(|stream| thread::spawn(move || read_blocking_stream(stream)));
+            loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        let (stdout, stderr) = drain_blocking_stream_tasks(
+                            stdout_task,
+                            stderr_task,
+                            Duration::from_secs(2),
                         );
-                        if !stderr.is_empty() {
-                            text.push_str("\nStderr:\n");
-                            text.push_str(&stderr);
+                        return command_response_from_status(started, status, stdout, stderr);
+                    }
+                    Ok(None) => {
+                        if started.elapsed() >= Duration::from_secs(timeout_secs) {
+                            kill_child_process_tree(child.id());
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            let (stdout, stderr) = drain_blocking_stream_tasks(
+                                stdout_task,
+                                stderr_task,
+                                Duration::from_secs(2),
+                            );
+                            let mut message = format!("Timed out after {timeout_secs} seconds");
+                            if !stderr.is_empty() {
+                                message.push_str("\nStderr tail:\n");
+                                message.push_str(&tail_chars(&stderr, 4000));
+                            }
+                            return CommandResponse {
+                                success: false,
+                                exit_code: -1,
+                                stdout,
+                                stderr,
+                                output: Value::String(message),
+                                changes: Vec::new(),
+                            };
                         }
-                        return CommandResponse {
-                            success: output.status.success(),
-                            exit_code,
-                            stdout,
-                            stderr,
-                            output: Value::String(text),
-                            changes: Vec::new(),
-                        };
+                        thread::sleep(Duration::from_millis(50));
                     }
                     Err(err) => {
                         return CommandResponse {
@@ -196,37 +219,9 @@ fn run_command_with_timeout(mut command: Command, timeout_secs: u64) -> CommandR
                             changes: Vec::new(),
                         };
                     }
-                },
-                Ok(None) => {
-                    if started.elapsed() >= Duration::from_secs(timeout_secs) {
-                        kill_child_process_tree(child.id());
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return CommandResponse {
-                            success: false,
-                            exit_code: -1,
-                            stdout: String::new(),
-                            stderr: format!("Timed out after {timeout_secs} seconds"),
-                            output: Value::String(format!(
-                                "Timed out after {timeout_secs} seconds"
-                            )),
-                            changes: Vec::new(),
-                        };
-                    }
-                    thread::sleep(Duration::from_millis(50));
-                }
-                Err(err) => {
-                    return CommandResponse {
-                        success: false,
-                        exit_code: 1,
-                        stdout: String::new(),
-                        stderr: err.to_string(),
-                        output: Value::String(err.to_string()),
-                        changes: Vec::new(),
-                    };
                 }
             }
-        },
+        }
         Err(err) => CommandResponse {
             success: false,
             exit_code: 1,
@@ -236,6 +231,72 @@ fn run_command_with_timeout(mut command: Command, timeout_secs: u64) -> CommandR
             changes: Vec::new(),
         },
     }
+}
+
+fn read_blocking_stream<R: Read>(mut stream: R) -> String {
+    let mut output = Vec::new();
+    let _ = stream.read_to_end(&mut output);
+    String::from_utf8_lossy(&output).to_string()
+}
+
+fn drain_blocking_stream_tasks(
+    mut stdout_task: Option<JoinHandle<String>>,
+    mut stderr_task: Option<JoinHandle<String>>,
+    timeout: Duration,
+) -> (String, String) {
+    fn finished(task: &Option<JoinHandle<String>>) -> bool {
+        task.as_ref().is_none_or(JoinHandle::is_finished)
+    }
+
+    let started = Instant::now();
+    while !(finished(&stdout_task) && finished(&stderr_task)) && started.elapsed() < timeout {
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    fn take_if_finished(task: &mut Option<JoinHandle<String>>) -> String {
+        if task.as_ref().is_some_and(JoinHandle::is_finished) {
+            let task = task.take().expect("task was checked as present");
+            task.join().unwrap_or_default()
+        } else {
+            String::new()
+        }
+    }
+
+    let stdout = take_if_finished(&mut stdout_task);
+    let stderr = take_if_finished(&mut stderr_task);
+    (stdout, stderr)
+}
+
+fn command_response_from_status(
+    started: Instant,
+    status: ExitStatus,
+    stdout: String,
+    stderr: String,
+) -> CommandResponse {
+    let wall = started.elapsed().as_secs_f32();
+    let exit_code = status.code().unwrap_or(1);
+    let mut text = format!(
+        "Exit code: {exit_code}\nWall time: {:.1} seconds\nOutput:\n{}",
+        wall, stdout
+    );
+    if !stderr.is_empty() {
+        text.push_str("\nStderr:\n");
+        text.push_str(&stderr);
+    }
+    CommandResponse {
+        success: status.success(),
+        exit_code,
+        stdout,
+        stderr,
+        output: Value::String(text),
+        changes: Vec::new(),
+    }
+}
+
+fn tail_chars(text: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let start = chars.len().saturating_sub(max_chars);
+    chars[start..].iter().collect()
 }
 
 async fn run_tokio_command_with_timeout(
@@ -1494,6 +1555,25 @@ mod tests {
         assert!(
             started.elapsed() < Duration::from_secs(5),
             "timeout should not wait for orphaned descendants"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn exited_parent_returns_even_when_descendant_holds_output_pipes() {
+        let started = Instant::now();
+        let response = execute_with_shell(
+            r#"{"command":"sh -c 'sleep 3 &'","timeout_ms":10000}"#,
+            Path::new("."),
+            120,
+            "bash",
+        );
+
+        assert!(response.success);
+        assert_eq!(response.exit_code, 0);
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "early parent exit should not wait for descendant-held pipes"
         );
     }
 }

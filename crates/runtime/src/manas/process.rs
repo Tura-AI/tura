@@ -30,13 +30,14 @@ use crate::state_machine::session_management::{SessionManagement, SessionState};
 use crate::tool_router::execute_tool::ToolExecutionResult;
 
 #[cfg(test)]
+use super::agent_prompts::load_agent_prompt_messages;
+#[cfg(test)]
 use super::constants::MULTIPLE_TASKS_TOOL;
 #[cfg(test)]
 use super::tool_arguments::{normalize_tool_arguments, normalize_tool_arguments_for_tool};
 #[cfg(test)]
 use super::tool_catalog::{
-    filter_tools_for_turn, load_agent_prompt_messages, remove_tool,
-    require_multiple_tasks_tool_for_multiple_tasks_mode,
+    filter_tools_for_turn, remove_tool, require_multiple_tasks_tool_for_multiple_tasks_mode,
 };
 
 pub struct ManasInput<'a> {
@@ -1505,9 +1506,7 @@ mod tests {
             now,
         );
 
-        let active_tool_names = HashSet::from([COMMAND_RUN_TOOL.to_string()]);
-        let messages = load_agent_prompt_messages(&agent, &active_tool_names)
-            .expect("prompt loading should succeed");
+        let messages = load_agent_prompt_messages(&agent).expect("prompt loading should succeed");
         let content = messages
             .iter()
             .filter_map(|message| message.get("content").and_then(|content| content.as_str()))

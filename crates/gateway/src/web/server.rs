@@ -38,6 +38,99 @@ pub fn build_router() -> Router {
         .route("/global/config", patch(api::global::patch_config))
         .route("/global/dispose", post(api::global::dispose))
         .route("/global/upgrade", post(api::global::upgrade))
+        // Multica-compatible product surface
+        .route("/api/config", get(api::product::public_config))
+        .route("/api/me", get(api::product::current_user))
+        .route("/api/me", patch(api::product::patch_current_user))
+        .route("/api/workspaces", get(api::product::list_workspaces))
+        .route("/api/workspaces", post(api::product::create_workspace))
+        .route(
+            "/api/workspaces/{workspaceID}",
+            get(api::product::get_workspace),
+        )
+        .route(
+            "/api/workspaces/{workspaceID}",
+            patch(api::product::patch_workspace),
+        )
+        .route(
+            "/api/workspaces/{workspaceID}/members",
+            get(api::product::list_workspace_members),
+        )
+        .route("/api/issues", get(api::product::list_issues))
+        .route("/api/issues", post(api::product::create_issue))
+        .route("/api/issues/grouped", get(api::product::grouped_issues))
+        .route("/api/issues/search", get(api::product::search_issues))
+        .route(
+            "/api/issues/quick-create",
+            post(api::product::quick_create_issue),
+        )
+        .route(
+            "/api/issues/batch-update",
+            post(api::product::batch_update_issues),
+        )
+        .route("/api/issues/{issueID}", get(api::product::get_issue))
+        .route("/api/issues/{issueID}", patch(api::product::patch_issue))
+        .route(
+            "/api/issues/{issueID}/comments",
+            get(api::product::list_issue_comments),
+        )
+        .route(
+            "/api/issues/{issueID}/timeline",
+            get(api::product::issue_timeline),
+        )
+        .route(
+            "/api/issues/{issueID}/active-task",
+            get(api::product::issue_active_task),
+        )
+        .route(
+            "/api/issues/{issueID}/task-runs",
+            get(api::product::issue_task_runs),
+        )
+        .route(
+            "/api/issues/{issueID}/usage",
+            get(api::product::issue_usage),
+        )
+        .route("/api/projects", get(api::product::list_product_projects))
+        .route("/api/projects", post(api::product::create_product_project))
+        .route(
+            "/api/projects/search",
+            get(api::product::search_product_projects),
+        )
+        .route(
+            "/api/projects/{projectID}",
+            get(api::product::get_product_project),
+        )
+        .route(
+            "/api/projects/{projectID}",
+            patch(api::product::patch_product_project),
+        )
+        .route("/api/agents", get(api::product::list_product_agents))
+        .route("/api/agent-templates", get(api::product::agent_templates))
+        .route("/api/runtimes", get(api::product::list_runtimes))
+        .route("/api/skills", get(api::product::list_product_skills))
+        .route("/api/autopilots", get(api::product::list_autopilots))
+        .route("/api/chat/sessions", get(api::product::list_chat_sessions))
+        .route("/api/inbox", get(api::product::list_inbox))
+        .route(
+            "/api/inbox/unread-count",
+            get(api::product::inbox_unread_count),
+        )
+        .route(
+            "/api/dashboard/usage/daily",
+            get(api::product::dashboard_usage_daily),
+        )
+        .route(
+            "/api/dashboard/usage/by-agent",
+            get(api::product::dashboard_usage_by_agent),
+        )
+        .route(
+            "/api/dashboard/usage/agent-runtime",
+            get(api::product::dashboard_agent_runtime),
+        )
+        .route(
+            "/api/agent-task-snapshot",
+            get(api::product::agent_task_snapshot),
+        )
         // Auth
         .route("/auth/{providerID}", put(api::provider::set_auth))
         .route("/auth/{providerID}", delete(api::provider::remove_auth))
@@ -175,6 +268,7 @@ pub fn build_router() -> Router {
         .route("/file", post(api::file::write_file))
         .route("/file/content", get(api::file::get_file_content))
         .route("/file/content", post(api::file::write_file))
+        .route("/file/open", post(api::file::open_file))
         .route("/file/status", get(api::file::get_file_status))
         // Find
         .route("/find", get(api::file::find_files))
@@ -186,6 +280,26 @@ pub fn build_router() -> Router {
         .route(
             "/provider/model/validate",
             post(api::provider::validate_model),
+        )
+        .route(
+            "/provider/{providerID}/validate",
+            post(api::provider::provider_auth_validate),
+        )
+        .route(
+            "/provider/{providerID}/auth/status",
+            get(api::provider::provider_auth_status),
+        )
+        .route(
+            "/provider/{providerID}/auth/refresh",
+            post(api::provider::provider_auth_refresh),
+        )
+        .route(
+            "/provider/{providerID}/auth/validate",
+            post(api::provider::provider_auth_validate),
+        )
+        .route(
+            "/provider/{providerID}/auth/logout",
+            post(api::provider::provider_auth_logout),
         )
         .route(
             "/provider/{providerID}/oauth/authorize",

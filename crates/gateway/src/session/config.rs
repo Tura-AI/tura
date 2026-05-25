@@ -5,7 +5,14 @@ use std::path::{Path, PathBuf};
 const TURA_DIR: &str = ".tura";
 const CONFIG_FILE: &str = "config.conf";
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub const DEFAULT_SESSION_MODEL: &str = "openai/gpt-5.5";
+pub const DEFAULT_SESSION_PROVIDER: &str = "openai";
+pub const DEFAULT_SESSION_MODEL_ID: &str = "gpt-5.5";
+pub const DEFAULT_SESSION_AGENT: &str = "coding_agent";
+pub const DEFAULT_SESSION_TYPE: &str = "coding";
+pub const DEFAULT_SESSION_REASONING_EFFORT: &str = "low";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct TuraSessionConfig {
     pub language: Option<String>,
@@ -23,6 +30,28 @@ pub struct TuraSessionConfig {
     pub command_run_stall_guard_profile: Option<String>,
     pub command_run_stall_guard_check_secs: Option<u64>,
     pub command_run_stall_guard_identical_checks: Option<u8>,
+}
+
+impl Default for TuraSessionConfig {
+    fn default() -> Self {
+        Self {
+            language: None,
+            model: Some(DEFAULT_SESSION_MODEL.to_string()),
+            active_provider: Some(DEFAULT_SESSION_PROVIDER.to_string()),
+            active_model: Some(DEFAULT_SESSION_MODEL_ID.to_string()),
+            active_agent: Some(DEFAULT_SESSION_AGENT.to_string()),
+            session_type: Some(DEFAULT_SESSION_TYPE.to_string()),
+            model_variant: Some(DEFAULT_SESSION_REASONING_EFFORT.to_string()),
+            model_acceleration_enabled: Some(true),
+            context_message_limit: None,
+            kill_processes_on_start: None,
+            validator_enabled: None,
+            force_multiple_tasks: None,
+            command_run_stall_guard_profile: None,
+            command_run_stall_guard_check_secs: None,
+            command_run_stall_guard_identical_checks: None,
+        }
+    }
 }
 
 impl TuraSessionConfig {
@@ -198,12 +227,30 @@ fn parse_config(content: &str) -> TuraSessionConfig {
 
     let mut config = TuraSessionConfig {
         language: values.get("language").cloned(),
-        model: values.get("model").cloned(),
-        active_provider: values.get("active_provider").cloned(),
-        active_model: values.get("active_model").cloned(),
-        active_agent: values.get("active_agent").cloned(),
-        session_type: values.get("session_type").cloned(),
-        model_variant: values.get("model_variant").cloned(),
+        model: values
+            .get("model")
+            .cloned()
+            .or_else(|| Some(DEFAULT_SESSION_MODEL.to_string())),
+        active_provider: values
+            .get("active_provider")
+            .cloned()
+            .or_else(|| Some(DEFAULT_SESSION_PROVIDER.to_string())),
+        active_model: values
+            .get("active_model")
+            .cloned()
+            .or_else(|| Some(DEFAULT_SESSION_MODEL_ID.to_string())),
+        active_agent: values
+            .get("active_agent")
+            .cloned()
+            .or_else(|| Some(DEFAULT_SESSION_AGENT.to_string())),
+        session_type: values
+            .get("session_type")
+            .cloned()
+            .or_else(|| Some(DEFAULT_SESSION_TYPE.to_string())),
+        model_variant: values
+            .get("model_variant")
+            .cloned()
+            .or_else(|| Some(DEFAULT_SESSION_REASONING_EFFORT.to_string())),
         model_acceleration_enabled: values
             .get("model_acceleration_enabled")
             .and_then(|value| parse_bool(value)),
@@ -230,6 +277,9 @@ fn parse_config(content: &str) -> TuraSessionConfig {
             .and_then(|value| value.parse::<u8>().ok())
             .filter(|value| *value > 0),
     };
+    if config.model_acceleration_enabled.is_none() {
+        config.model_acceleration_enabled = Some(true);
+    }
     config.fill_model_parts();
     config
 }

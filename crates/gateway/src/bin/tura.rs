@@ -16,7 +16,12 @@ fn main() {
 }
 
 fn run() -> Result<i32, String> {
-    let config = CliConfig::parse(std::env::args().skip(1).collect())?;
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if wants_help(&args) {
+        print_help();
+        return Ok(0);
+    }
+    let config = CliConfig::parse(args)?;
     if let Some(model) = config.model.as_deref() {
         std::env::set_var("TURA_SESSION_MODEL_OVERRIDE", normalize_model(model));
     }
@@ -82,6 +87,53 @@ fn run() -> Result<i32, String> {
     }
 
     Ok(0)
+}
+
+fn wants_help(args: &[String]) -> bool {
+    matches!(
+        args.first().map(String::as_str),
+        Some("help") | Some("--help") | Some("-h")
+    ) || args.first().is_some_and(|arg| arg == "exec")
+        && matches!(
+            args.get(1).map(String::as_str),
+            Some("help") | Some("--help") | Some("-h")
+        )
+}
+
+fn print_help() {
+    println!(
+        "\
+Tura Rust CLI
+
+Usage:
+  tura exec [OPTIONS] [PROMPT...]
+  tura [OPTIONS] [PROMPT...]
+
+Options:
+  -C, --cwd PATH                  workspace directory for the session
+  -m, --model MODEL               model override; bare names become openai/MODEL
+      --agent NAME                agent override
+      --session-id ID             reuse a deterministic session id
+      --json                      emit JSONL events instead of final text only
+      --output-last-message PATH  write the final assistant message to PATH
+      --multiple-tasks-mode       enable the multiple_tasks command surface
+      --enable-multiple-tasks     alias for --multiple-tasks-mode
+  -c, --config KEY=VALUE          runtime override:
+                                  model_reasoning_effort, max_tokens,
+                                  model_max_tokens, service_tier=priority,
+                                  force_multiple_tasks=true
+      --skip-git-repo-check       accepted for compatibility
+      --dangerously-bypass-approvals-and-sandbox
+                                  accepted for compatibility
+  -h, --help                      show this help
+
+If PROMPT is omitted, tura reads it from stdin.
+
+Examples:
+  tura exec -C . -m openai/gpt-5 \"Inspect the workspace\"
+  echo \"Summarize the architecture\" | tura exec --json
+"
+    );
 }
 
 #[derive(Debug)]

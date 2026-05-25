@@ -30,15 +30,58 @@ drivers. The following local artifacts are ignored:
 - generated command-run records under `target/command-run-codex-two-way-records`
 - local Qdrant binary `db/qdrant/qdrant.exe`
 
+## Quick Start
+
+Install and build the local toolchain dependencies:
+
+```powershell
+.\scripts\install.ps1
+```
+
+```bash
+./scripts/install.sh
+```
+
+Run a prompt through the Rust CLI:
+
+```powershell
+.\scripts\start.ps1 "Inspect the workspace"
+```
+
+```bash
+./scripts/start.sh "Inspect the workspace"
+```
+
+Run the gateway server for the TypeScript CLI/TUI:
+
+```powershell
+.\scripts\start.ps1 -Gateway -Port 4096
+```
+
+```bash
+./scripts/start.sh --gateway --port 4096
+```
+
+Run the TypeScript terminal client:
+
+```powershell
+.\scripts\start.ps1 -Tui --help
+```
+
+```bash
+./scripts/start.sh --tui --help
+```
+
+See `docs/INSTALLATION.md` for platform notes, install flags, and
+troubleshooting.
+
 ## Top-Level Layout
 
 ```text
 .
   apps/
-    cli/
-    telegram/
-    ui/
-    ui-desktop/
+    gui/
+    tui/
 
   config/
 
@@ -56,9 +99,12 @@ drivers. The following local artifacts are ignored:
     qdrant/
 
   scripts/
+    install.ps1
+    install.sh
+    start.ps1
+    start.sh
     installers/
     packages/
-    persistent/
 
   storage/
   target/
@@ -183,13 +229,18 @@ Current important files:
 
 - `src/coding_agent.rs`
 - `src/coding_agent/agent_config.json`
+- `src/coding_agent/persona.md`
+- `src/coding_agent/communication_style.md`
 - `src/coding_agent/prompt.md`
 - `src/coding_agent_fast/agent_config.json`
+- `src/coding_agent_fast/persona.md`
+- `src/coding_agent_fast/communication_style.md`
 - `src/coding_agent_fast/prompt.md`
 
-Each agent currently owns an `agent_config.json` and a `prompt.md`. The coding
-agents share the same capability surface and differ by prompt behavior. The
-active capability in this version is `command_run`.
+Each agent currently owns an `agent_config.json`, `persona.md`,
+`communication_style.md`, and `prompt.md`. The coding agents share the same
+capability surface and differ by prompt behavior. The active capability in this
+version is `command_run`.
 
 ### `crates/provider`
 
@@ -332,15 +383,11 @@ runtime, provider, router, or tools should stay in the owning crate.
 
 The `apps/` directory is reserved for user-facing surfaces:
 
-- `apps/cli/`
-- `apps/telegram/`
-- `apps/ui/`
-- `apps/ui-desktop/`
+- `apps/tui/`: TypeScript terminal client and future interactive TUI.
+- `apps/gui/`: Bun/Solid/Vite GUI workspace and gateway SDK package.
 
-In this snapshot, the pushed repository primarily contains the backend
-workspace and architecture docs. UI package source may be populated separately
-as the frontend surface evolves. Gateway is the integration boundary consumed
-by UI and desktop apps.
+Gateway is the integration boundary consumed by terminal and GUI clients. Apps
+must not call runtime, provider, tools, or router internals directly.
 
 ## Scripts
 
@@ -349,22 +396,38 @@ persistent reusable workflows.
 
 Current tracked scripts:
 
+- `scripts/install.ps1`
+- `scripts/install.sh`
 - `scripts/start.ps1`
+- `scripts/start.sh`
 - `scripts/test-command-run-robustness.ps1`
 - `scripts/ARCHITECTURE.md`
 
-Target script structure:
+Current script structure:
 
 ```text
 scripts/
+  install.ps1
+  install.sh
+  start.ps1
+  start.sh
   installers/
   packages/
-  persistent/
 ```
 
 Scripts must not hard-code one run's workspace paths or output locations.
 Persistent scripts should read task-specific values from stdin JSON or
 `TURA_COMMAND_PARAMS`.
+
+Install/start scripts are cross-platform:
+
+- Windows: `scripts/install.ps1`, `scripts/start.ps1`
+- Linux/macOS: `scripts/install.sh`, `scripts/start.sh`
+
+They verify Git, Cargo, Node/npm, and optional Python/Bun tooling; install
+project-local Python fallback packages; install/build `apps/tui`; install
+`apps/gui` when Bun is present; ensure Playwright Chromium when requested; and
+build/check the core Rust packages by Cargo package name.
 
 ## Configuration And Secrets
 
@@ -464,17 +527,23 @@ paths that already follow local patterns.
 
 ## Local Development
 
-The project is a Rust workspace. On Windows PowerShell, useful commands are:
+The project is a Rust workspace with a TypeScript terminal client. For the full
+local setup, prefer the install scripts:
+
+```powershell
+.\scripts\install.ps1
+```
+
+```bash
+./scripts/install.sh
+```
+
+Rust commands:
 
 ```powershell
 cargo check
 cargo test
 cargo fmt
-```
-
-Focused checks by touched surface:
-
-```powershell
 cargo check -p gateway
 cargo check -p code-tools-suite
 cargo check -p code-tools
@@ -494,12 +563,21 @@ The router binary is:
 cargo run -p tura_router
 ```
 
-The scripts directory may provide higher-level startup commands when local UI
-or router flows need coordinated startup:
+The gateway server binary is:
 
 ```powershell
-.\scripts\start.ps1
+cargo run -p gateway --bin gateway
 ```
+
+The TypeScript CLI/TUI lives under `apps/tui`:
+
+```powershell
+npm --prefix apps/tui ci
+npm --prefix apps/tui run build
+node apps/tui/dist/index.js --help
+```
+
+See `docs/CLI_TUI.md` for the terminal command surface and examples.
 
 ## Testing
 
@@ -580,6 +658,9 @@ are still in transition:
 
 ## Related Documentation
 
+- `docs/INSTALLATION.md`: platform setup, install/start scripts, and
+  troubleshooting.
+- `docs/CLI_TUI.md`: Rust CLI and TypeScript CLI/TUI command reference.
 - `ARCHITECTURE.md`: whole-project architecture and target boundaries.
 - `crates/gateway/ARCHITECTURE.md`: gateway API and session boundary.
 - `crates/runtime/ARCHITECTURE.md`: Mano/MANAS runtime architecture.

@@ -5,6 +5,7 @@ import { spawn, spawnSync } from "node:child_process"
 import path from "node:path"
 import process from "node:process"
 import { performance } from "node:perf_hooks"
+import { isolatedProcessOptions, killProcessTree } from "./process_helpers.mjs"
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..")
 const runId = process.env.COMMAND_RUN_BACKGROUND_SERVICES_RUN_ID || `background-services-${Date.now()}`
@@ -125,12 +126,16 @@ async function spawnLogged(command, args, options = {}) {
   let stdout = ""
   let stderr = ""
   let timedOut = false
-  const child = spawn(command, args, {
+  let settled = false
+  let childExitStatus = null
+  let childExitSignal = null
+  const timeoutLimitMs = options.timeoutMs || timeoutMs
+  const child = spawn(command, args, isolatedProcessOptions({
     cwd: options.cwd || repoRoot,
     env: { ...process.env, ...(options.env || {}) },
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
-  })
+  }))
   if (options.input) {
     child.stdin.write(options.input)
     child.stdin.end()
@@ -147,35 +152,38 @@ async function spawnLogged(command, args, options = {}) {
   })
   const timer = setTimeout(() => {
     timedOut = true
-    if (process.platform === "win32" && child.pid) {
-      spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true })
-    } else {
-      child.kill("SIGKILL")
-    }
-  }, options.timeoutMs || timeoutMs)
+    killProcessTree(child.pid)
+    setTimeout(() => {
+      settle(childExitStatus ?? 1, childExitSignal)
+    }, Number(options.timeoutCloseGraceMs || 3_000))
+  }, timeoutLimitMs)
+  function settle(status, signal, error = null) {
+    if (settled) return
+    settled = true
+    clearTimeout(timer)
+    resolveResult({
+      status,
+      signal,
+      stdout,
+      stderr,
+      timed_out: timedOut,
+      duration_ms: Math.round(performance.now() - started),
+      error: error || (timedOut ? `timed out after ${timeoutLimitMs}ms` : null),
+    })
+  }
+  let resolveResult
   return await new Promise((resolve) => {
+    resolveResult = resolve
+    child.on("exit", (status, signal) => {
+      childExitStatus = status
+      childExitSignal = signal
+      setTimeout(() => settle(timedOut ? (status ?? 1) : status, signal), Number(options.exitCloseGraceMs || 1_000))
+    })
     child.on("close", (status, signal) => {
-      clearTimeout(timer)
-      resolve({
-        status,
-        signal,
-        stdout,
-        stderr,
-        timed_out: timedOut,
-        duration_ms: Math.round(performance.now() - started),
-      })
+      settle(timedOut ? (status ?? 1) : status, signal)
     })
     child.on("error", (error) => {
-      clearTimeout(timer)
-      resolve({
-        status: null,
-        signal: null,
-        stdout,
-        stderr,
-        timed_out: timedOut,
-        duration_ms: Math.round(performance.now() - started),
-        error: String(error.stack || error.message || error),
-      })
+      settle(null, null, String(error.stack || error.message || error))
     })
   })
 }

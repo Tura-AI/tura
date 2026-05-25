@@ -105,7 +105,7 @@ Current important behavior:
 - Anthropic currently exposes `Claude Browser Token` through gateway, but this
   is a manual browser-token flow, not a full Claude Code or subscription OAuth
   integration.
-- Gemini/Google subscription OAuth and Obsidian auth are not implemented.
+- Gemini/Google subscription OAuth and Antigravity auth are not implemented.
 - Gateway package currently does not expose a normal `gateway` binary even
   though router expects `target/debug/gateway.exe`.
 
@@ -120,7 +120,7 @@ Implement a complete provider auth and provider runtime integration surface for:
 - Anthropic API key.
 - Gemini / Google subscription OAuth when available.
 - Gemini / Google API key.
-- Obsidian provider auth if a supported provider endpoint/token source exists.
+- Antigravity provider auth if a supported provider endpoint/token source exists.
 - Antigravity browser/subscription token.
 - Antigravity API key.
 - Generic OpenAI-compatible API-key providers.
@@ -169,7 +169,7 @@ Suggested provider ids:
 - `google-api`
 - `gemini`
 - `gemini-api`
-- `obsidian`
+- `Antigravity`
 - `antigravity`
 - `antigravity-api`
 - `openrouter`
@@ -489,9 +489,9 @@ Required provider-owned work:
 - Add support for OAuth bearer auth versus API-key query param depending on
   login method.
 
-### Obsidian
+### Antigravity
 
-No complete Obsidian provider route is currently visible in this repository.
+No complete Antigravity provider route is currently visible in this repository.
 Before implementing runtime behavior, document and verify:
 
 - provider endpoint
@@ -1033,7 +1033,7 @@ Tests:
 - Expired token refreshes.
 - API-key mode remains unaffected.
 
-### Obsidian
+### Antigravity
 
 Provider crate:
 
@@ -1435,7 +1435,7 @@ cargo build -p tura-llm-rust
 - Do not let gateway calculate usage.
 - Do not let provider open browsers.
 - Do not let runtime own login.
-- Do not make Obsidian appear connected unless an actual provider endpoint and
+- Do not make Antigravity appear connected unless an actual provider endpoint and
   token path are verified.
 
 ## Suggested First Pull Request Scope

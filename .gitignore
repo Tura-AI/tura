@@ -6,11 +6,20 @@ target/
 storage/
 sessions/
 scripts/packages/python/
+node_modules/
+/package-lock.json
 
 crates/provider/log/
 tests/command-run-codex-two-way/records/runs/
 tests/command-run-codex-two-way/records/summaries/
 db/qdrant/qdrant.exe
+.tura/
+artifacts/
+tmp/
+apps/**/test-results/
+**/__pycache__/
+*.pyc
+priority-param-probe-results.json
 
 *.log
 *.tmp

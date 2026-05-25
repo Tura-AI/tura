@@ -4,6 +4,7 @@ import { spawn, spawnSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { isolatedProcessOptions, killProcessTree } from "./process_helpers.mjs"
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(scriptDir, "..", "..", "..")
@@ -93,20 +94,47 @@ function runOk(command, args, options = {}) {
 
 function runAsync(command, args, options = {}) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
+    let settled = false
+    let childExitStatus = null
+    let childExitSignal = null
+    const timeoutLimitMs = options.timeoutMs || timeoutMs
+    let closeGraceTimer = null
+    let timeoutGraceTimer = null
+    const child = spawn(command, args, isolatedProcessOptions({
       cwd: options.cwd || repoRoot,
       shell: false,
       windowsHide: true,
       env: { ...process.env, ...(options.env || {}) },
       stdio: ["pipe", "pipe", "pipe"],
-    })
+    }))
     let stdout = ""
     let stderr = ""
     let timedOut = false
+
+    function settle(status, signal, error = null) {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      clearTimeout(closeGraceTimer)
+      clearTimeout(timeoutGraceTimer)
+      resolve({
+        command,
+        args,
+        status,
+        signal,
+        stdout,
+        stderr,
+        error: error || (timedOut ? `Error: ${command} timed out after ${timeoutLimitMs}ms` : null),
+      })
+    }
+
     const timer = setTimeout(() => {
       timedOut = true
-      child.kill("SIGTERM")
-    }, options.timeoutMs || timeoutMs)
+      killProcessTree(child.pid)
+      timeoutGraceTimer = setTimeout(() => {
+        settle(childExitStatus ?? 1, childExitSignal)
+      }, Number(options.timeoutCloseGraceMs || 3_000))
+    }, timeoutLimitMs)
     child.stdout.setEncoding("utf8")
     child.stderr.setEncoding("utf8")
     child.stdout.on("data", (chunk) => {
@@ -116,28 +144,17 @@ function runAsync(command, args, options = {}) {
       stderr += chunk
     })
     child.on("error", (error) => {
-      clearTimeout(timer)
-      resolve({
-        command,
-        args,
-        status: null,
-        signal: null,
-        stdout,
-        stderr,
-        error: String(error.stack || error.message || error),
-      })
+      settle(null, null, String(error.stack || error.message || error))
+    })
+    child.on("exit", (status, signal) => {
+      childExitStatus = status
+      childExitSignal = signal
+      closeGraceTimer = setTimeout(() => {
+        settle(timedOut ? (status ?? 1) : status, signal)
+      }, Number(options.exitCloseGraceMs || 1_000))
     })
     child.on("close", (status, signal) => {
-      clearTimeout(timer)
-      resolve({
-        command,
-        args,
-        status,
-        signal,
-        stdout,
-        stderr,
-        error: timedOut ? `Error: ${command} timed out after ${options.timeoutMs || timeoutMs}ms` : null,
-      })
+      settle(timedOut ? (status ?? 1) : status, signal)
     })
     if (options.input) child.stdin.end(options.input)
     else child.stdin.end()

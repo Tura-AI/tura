@@ -9,11 +9,11 @@ use crate::state_machine::agent_management::AgentManagement;
 use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::state_machine::session_management::SessionManagement;
 
+use super::agent_prompts::load_agent_prompt_messages;
 use super::constants::{COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL, TASK_DELIVERED_TOOL};
 use super::tool_catalog::{
-    filter_tools_for_turn, load_agent_capabilities, load_agent_prompt_messages,
-    multiple_tasks_child_depth, multiple_tasks_env_enabled, multiple_tasks_tool_disabled,
-    tool_schema_name,
+    filter_tools_for_turn, load_agent_capabilities, multiple_tasks_child_depth,
+    multiple_tasks_env_enabled, multiple_tasks_tool_disabled, tool_schema_name,
 };
 
 pub(super) fn execute_turn(
@@ -93,7 +93,7 @@ pub(super) fn execute_turn(
             "role": "system",
             "content": identity,
         })];
-        runtime_messages.extend(load_agent_prompt_messages(agent, &allowed_tool_names)?);
+        runtime_messages.extend(load_agent_prompt_messages(agent)?);
         runtime_messages.extend(turn_messages);
         let (runtime, queue_item) = create_runtime(CreateRuntimeInput {
             session_id: session.session_id.clone(),

@@ -13,6 +13,7 @@ use std::fs;
 use std::io;
 use std::path::Path as FsPath;
 use tokio::time::{sleep, timeout, Duration, Instant};
+use tura_llm_rust::{AuthMethodKind, OAuthAuthorizeKind};
 use uuid::Uuid;
 
 // ============================================================================
@@ -279,20 +280,10 @@ fn route_by_name<'a>(
 }
 
 fn provider_display_name(provider_id: &str) -> String {
-    match provider_id {
-        "antigravity" => "Antigravity Oauth",
-        "antigravity-api" => "Antigravity API",
-        "minimax" => "MiniMax",
-        "openrouter" => "OpenRouter",
-        "openai" => "OpenAI Codex",
-        "openai-api" => "OpenAI API",
-        "anthropic" => "Claude Oauth",
-        "anthropic-api" => "Anthropic API",
-        "google" => "Google",
-        "xai" => "xAI",
-        other => other,
-    }
-    .to_string()
+    tura_llm_rust::provider_auth_registry_entry(provider_id)
+        .map(|entry| entry.display_name)
+        .unwrap_or(provider_id)
+        .to_string()
 }
 
 fn configured_model_for_provider(
@@ -425,57 +416,12 @@ fn browser_login_provider_defaults() -> [(&'static str, &'static str); 3] {
     ]
 }
 
-fn provider_model_catalog() -> [(&'static str, &'static [&'static str]); 9] {
-    [
-        (
-            "openai",
-            &[
-                "gpt-5.5",
-                "gpt-5.4",
-                "gpt-5.4-mini",
-                "gpt-5.3-codex",
-                "gpt-5.3-codex-spark",
-                "gpt-5.2",
-            ],
-        ),
-        (
-            "openai-api",
-            &[
-                "gpt-5.5",
-                "gpt-5.4",
-                "gpt-5.4-mini",
-                "gpt-5.2",
-                "gpt-4.1",
-                "gpt-4.1-mini",
-                "o4-mini",
-            ],
-        ),
-        ("anthropic", &["claude-sonnet-4.5", "claude-opus-4.6"]),
-        (
-            "anthropic-api",
-            &["claude-sonnet-4.5", "claude-opus-4.6", "claude-haiku-4.5"],
-        ),
-        ("antigravity", &["antigravity-browser"]),
-        ("antigravity-api", &["gemini-3-pro", "gemini-3-flash"]),
-        ("minimax", &["minimax-m2.7", "minimax-m2.5", "minimax-m2.1"]),
-        (
-            "openrouter",
-            &[
-                "minimax/minimax-m2.7",
-                "minimax/minimax-m2.5",
-                "anthropic/claude-opus-4.6",
-                "anthropic/claude-sonnet-4.5",
-                "openai/gpt-5.4",
-                "openai/gpt-5.3-codex",
-                "google/gemini-3-pro",
-                "google/gemini-3-flash",
-            ],
-        ),
-        (
-            "google",
-            &["gemini-3-pro", "gemini-3-flash", "gemini-2.5-pro"],
-        ),
-    ]
+fn provider_model_catalog() -> Vec<(&'static str, &'static [&'static str])> {
+    tura_llm_rust::provider_auth_registry()
+        .iter()
+        .filter(|entry| !entry.supported_models.is_empty())
+        .map(|entry| (entry.provider_id, entry.supported_models))
+        .collect()
 }
 
 fn model_supported_by_provider(provider_id: &str, model_id: &str) -> bool {
@@ -487,12 +433,7 @@ fn model_supported_by_provider(provider_id: &str, model_id: &str) -> bool {
 }
 
 fn provider_runtime_id(provider_id: &str) -> &str {
-    match provider_id {
-        "openai-api" => "openai",
-        "anthropic-api" => "anthropic",
-        "antigravity-api" => "antigravity",
-        other => other,
-    }
+    tura_llm_rust::runtime_provider_id(provider_id)
 }
 
 fn providers_enabled_set() -> std::collections::HashSet<String> {
@@ -666,12 +607,107 @@ pub async fn set_auth(
     Path(provider_id): Path<String>,
     Json(payload): Json<ProviderAuth>,
 ) -> Json<bool> {
+    if payload
+        .access
+        .as_deref()
+        .or(payload.key.as_deref())
+        .map(str::trim)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        return Json(false);
+    }
     let saved = persist_provider_auth(&provider_id, &payload).is_ok();
     Json(saved && global_store().set_auth(&provider_id, payload))
 }
 
 pub async fn remove_auth(Path(provider_id): Path<String>) -> Json<bool> {
-    Json(global_store().remove_auth(&provider_id))
+    Json(logout_provider_auth(&provider_id).is_ok() && global_store().remove_auth(&provider_id))
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProviderAuthStatusResponse {
+    pub provider_id: String,
+    pub display_name: String,
+    pub login: Option<String>,
+    pub configured: bool,
+    pub authenticated: bool,
+    pub expired: Option<bool>,
+    pub account_id: Option<String>,
+    pub token_env: Option<String>,
+    pub login_env: Option<String>,
+    pub refresh_env: Option<String>,
+    pub expires_env: Option<String>,
+    pub updated_at: Option<String>,
+    pub auth_state: tura_llm_rust::AuthState,
+    pub runtime_state: tura_llm_rust::ProviderRuntimeState,
+    pub last_error_category: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProviderAuthActionResponse {
+    pub ok: bool,
+    pub provider_id: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<ProviderAuthStatusResponse>,
+}
+
+pub async fn provider_auth_status(
+    Path(provider_id): Path<String>,
+) -> Json<ProviderAuthStatusResponse> {
+    Json(build_provider_auth_status(&provider_id))
+}
+
+pub async fn provider_auth_validate(
+    Path(provider_id): Path<String>,
+) -> Json<ProviderAuthActionResponse> {
+    let status = build_provider_auth_status(&provider_id);
+    let ok = status.authenticated;
+    Json(ProviderAuthActionResponse {
+        ok,
+        provider_id,
+        message: if ok {
+            "provider auth is configured".to_string()
+        } else {
+            "provider auth is not configured".to_string()
+        },
+        status: Some(status),
+    })
+}
+
+pub async fn provider_auth_refresh(
+    Path(provider_id): Path<String>,
+) -> Json<ProviderAuthActionResponse> {
+    let status = build_provider_auth_status(&provider_id);
+    let can_refresh = tura_llm_rust::provider_auth_registry_entry(&provider_id)
+        .map(|entry| entry.capabilities.supports_oauth_refresh)
+        .unwrap_or(false);
+    Json(ProviderAuthActionResponse {
+        ok: can_refresh && status.authenticated,
+        provider_id,
+        message: if can_refresh {
+            "refresh is handled by the provider runtime during requests".to_string()
+        } else {
+            "provider auth method does not support refresh".to_string()
+        },
+        status: Some(status),
+    })
+}
+
+pub async fn provider_auth_logout(
+    Path(provider_id): Path<String>,
+) -> Json<ProviderAuthActionResponse> {
+    let result = logout_provider_auth(&provider_id);
+    let status = build_provider_auth_status(&provider_id);
+    Json(ProviderAuthActionResponse {
+        ok: result.is_ok(),
+        provider_id,
+        message: result
+            .map(|_| "provider auth logged out".to_string())
+            .unwrap_or_else(|error| format!("provider auth logout failed: {error}")),
+        status: Some(status),
+    })
 }
 
 // ============================================================================
@@ -688,61 +724,58 @@ pub struct ProviderAuthQuery {
 pub struct ProviderAuthMethod {
     #[serde(rename = "type")]
     pub method_type: String,
+    pub kind: AuthMethodKind,
+    pub login: String,
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompts: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub login_env: Option<String>,
 }
 
 pub async fn provider_auth(
     Query(_params): Query<ProviderAuthQuery>,
 ) -> Json<HashMap<String, Vec<ProviderAuthMethod>>> {
     let mut response = HashMap::new();
-    for provider in global_store().list_providers() {
-        let methods = provider_auth_methods(&provider.id);
+    for entry in tura_llm_rust::provider_auth_registry() {
+        let methods = provider_auth_methods(entry.provider_id);
         if !methods.is_empty() {
-            response.insert(provider.id.clone(), methods);
+            response.insert(entry.provider_id.to_string(), methods);
         }
     }
     Json(response)
 }
 
 fn provider_auth_methods(provider_id: &str) -> Vec<ProviderAuthMethod> {
-    match provider_id {
-        "openai" => vec![ProviderAuthMethod {
-            method_type: "oauth".to_string(),
-            label: "ChatGPT Pro/Plus (browser)".to_string(),
+    let Some(entry) = tura_llm_rust::provider_auth_registry_entry(provider_id) else {
+        return Vec::new();
+    };
+    entry
+        .auth_methods
+        .iter()
+        .map(|method| ProviderAuthMethod {
+            method_type: legacy_auth_method_type(method.kind).to_string(),
+            kind: method.kind,
+            login: method.login.to_string(),
+            label: method.label.to_string(),
             prompts: None,
-        }],
-        "openai-api" => vec![ProviderAuthMethod {
-            method_type: "api".to_string(),
-            label: "API Key".to_string(),
-            prompts: None,
-        }],
-        "antigravity" => vec![ProviderAuthMethod {
-            method_type: "oauth".to_string(),
-            label: "Antigravity Browser Token".to_string(),
-            prompts: None,
-        }],
-        "antigravity-api" => vec![ProviderAuthMethod {
-            method_type: "api".to_string(),
-            label: "API Key".to_string(),
-            prompts: None,
-        }],
-        "anthropic" => vec![ProviderAuthMethod {
-            method_type: "oauth".to_string(),
-            label: "Claude Browser Token".to_string(),
-            prompts: None,
-        }],
-        "anthropic-api" => vec![ProviderAuthMethod {
-            method_type: "api".to_string(),
-            label: "API Key".to_string(),
-            prompts: None,
-        }],
-        _ => vec![ProviderAuthMethod {
-            method_type: "api".to_string(),
-            label: "API Key".to_string(),
-            prompts: None,
-        }],
+            token_env: entry.token_env.map(ToString::to_string),
+            login_env: entry.login_env.map(ToString::to_string),
+        })
+        .collect()
+}
+
+fn legacy_auth_method_type(kind: AuthMethodKind) -> &'static str {
+    match kind {
+        AuthMethodKind::ApiKey => "api",
+        AuthMethodKind::OAuthPkce | AuthMethodKind::BrowserToken | AuthMethodKind::DeviceCode => {
+            "oauth"
+        }
+        AuthMethodKind::LocalCliToken => "local",
+        AuthMethodKind::AwsCredentials => "aws",
+        AuthMethodKind::None => "none",
     }
 }
 
@@ -756,23 +789,27 @@ pub async fn oauth_authorize(
     Json(payload): Json<OAuthAuthorizePayload>,
 ) -> Json<OAuthAuthorizeResponse> {
     let methods = provider_auth_methods(&provider_id);
-    let method = methods.get(payload.method).and_then(|method| {
-        if method.method_type == "oauth" {
-            Some(OAuthMethod::Auto)
-        } else {
-            None
-        }
+    let selected_method = methods.get(payload.method).filter(|method| {
+        matches!(
+            method.kind,
+            AuthMethodKind::OAuthPkce | AuthMethodKind::BrowserToken
+        )
     });
 
-    if method.is_none() {
+    let Some(selected_method) = selected_method else {
         return Json(OAuthAuthorizeResponse {
             url: String::new(),
             method: OAuthMethod::Code,
             instructions: "Invalid auth method".to_string(),
         });
-    }
+    };
 
-    let (url, method, instructions) = if provider_id == "openai" {
+    let entry = tura_llm_rust::provider_auth_registry_entry(&provider_id);
+    let authorize_kind = entry
+        .and_then(|entry| entry.oauth_authorize_kind)
+        .unwrap_or(OAuthAuthorizeKind::Unsupported);
+
+    let (url, method, instructions) = if authorize_kind == OAuthAuthorizeKind::OpenAiPkce {
         let state = oauth_state();
         let code_verifier = oauth_code_verifier();
         let code_challenge = oauth_code_challenge(&code_verifier);
@@ -791,7 +828,7 @@ pub async fn oauth_authorize(
             "Complete authorization in your browser. This window will close automatically."
                 .to_string(),
         )
-    } else if matches!(provider_id.as_str(), "antigravity" | "anthropic") {
+    } else if authorize_kind == OAuthAuthorizeKind::BrowserTokenPaste {
         let code = random_confirmation_code(&provider_id, payload.method);
         let url = browser_login_url(&provider_id);
         global_store().set_oauth_state(
@@ -807,19 +844,21 @@ pub async fn oauth_authorize(
             OAuthMethod::Code,
             format!("Open the login page, copy your browser token, and paste it here. Confirmation: {code}"),
         )
+    } else if selected_method.kind == AuthMethodKind::OAuthPkce {
+        (
+            String::new(),
+            OAuthMethod::Code,
+            format!(
+                "{} OAuth is listed but is not implemented yet.",
+                provider_display_name(&provider_id)
+            ),
+        )
     } else {
-        let url = format!("https://auth.example.com/oauth/{provider_id}");
-        let code = random_confirmation_code(&provider_id, payload.method);
-        global_store().set_oauth_state(
-            &provider_id,
-            "code".to_string(),
-            Some(code),
-            url.clone(),
-            Some(oauth_state()),
-            None,
-        );
-        let instructions = format!("Open {url} in your browser and complete authentication");
-        (url, OAuthMethod::Code, instructions)
+        (
+            String::new(),
+            OAuthMethod::Code,
+            "This provider does not support browser authorization.".to_string(),
+        )
     };
 
     Json(OAuthAuthorizeResponse {
@@ -1270,24 +1309,24 @@ fn persist_provider_auth(provider_id: &str, auth: &ProviderAuth) -> io::Result<(
     upsert_env_value(&env_path, &api_key, key)?;
     std::env::set_var(&api_key, key);
 
-    if auth.auth_type == "api"
-        && matches!(
-            provider_id,
-            "openai-api" | "anthropic-api" | "antigravity-api"
-        )
-    {
+    let requested_login = auth
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("login"))
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| login_value_for_auth(provider_id, auth));
+
+    if auth.auth_type == "api" || requested_login == "api" {
         let login_key = provider_login_key(provider_id);
         upsert_env_value(&env_path, &login_key, "api")?;
         std::env::set_var(&login_key, "api");
+
+        upsert_provider_auth_config(provider_id, "api", Some(&login_key), auth, None)?;
     }
 
-    if auth.auth_type == "oauth" {
-        let login = auth
-            .metadata
-            .as_ref()
-            .and_then(|metadata| metadata.get("login"))
-            .and_then(|value| value.as_str())
-            .unwrap_or("oauth");
+    if auth.auth_type == "oauth" || matches!(requested_login.as_str(), "oauth" | "browser") {
+        let login = requested_login.as_str();
         let login_key = provider_login_key(provider_id);
         upsert_env_value(&env_path, &login_key, login)?;
         std::env::set_var(&login_key, login);
@@ -1336,6 +1375,237 @@ fn persist_provider_auth(provider_id: &str, auth: &ProviderAuth) -> io::Result<(
     Ok(())
 }
 
+fn login_value_for_auth(provider_id: &str, auth: &ProviderAuth) -> String {
+    if let Some(login) = auth
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("login"))
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+    {
+        return login.to_string();
+    }
+    if auth.auth_type == "api" {
+        return "api".to_string();
+    }
+    tura_llm_rust::provider_default_auth_method(provider_id)
+        .map(|method| method.login.to_string())
+        .unwrap_or_else(|| {
+            if auth.auth_type == "oauth" {
+                "oauth".to_string()
+            } else {
+                auth.auth_type.clone()
+            }
+        })
+}
+
+fn build_provider_auth_status(provider_id: &str) -> ProviderAuthStatusResponse {
+    let entry = tura_llm_rust::provider_auth_registry_entry(provider_id);
+    let config_entry = read_provider_auth_config(provider_id);
+    let login = config_entry
+        .as_ref()
+        .and_then(|entry| entry.login.clone())
+        .or_else(|| {
+            entry
+                .and_then(|entry| entry.login_env)
+                .and_then(|key| std::env::var(key).ok())
+        })
+        .or_else(|| {
+            entry
+                .and_then(|entry| entry.login_env)
+                .and_then(|key| tura_llm_rust::TuraConfig::default().get(key))
+        });
+    let token_env = config_entry
+        .as_ref()
+        .and_then(|entry| entry.token_env.clone())
+        .or_else(|| {
+            entry
+                .and_then(|entry| entry.token_env)
+                .map(ToString::to_string)
+        });
+    let refresh_env = config_entry
+        .as_ref()
+        .and_then(|entry| entry.refresh_env.clone())
+        .or_else(|| {
+            entry
+                .and_then(|entry| entry.refresh_env)
+                .map(ToString::to_string)
+        });
+    let expires_env = config_entry
+        .as_ref()
+        .and_then(|entry| entry.expires_env.clone())
+        .or_else(|| {
+            entry
+                .and_then(|entry| entry.expires_env)
+                .map(ToString::to_string)
+        });
+    let account_env = config_entry
+        .as_ref()
+        .and_then(|entry| entry.account_env.clone())
+        .or_else(|| {
+            entry
+                .and_then(|entry| entry.account_env)
+                .map(ToString::to_string)
+        });
+
+    let configured = provider_key_exists(provider_id) || bedrock_credentials_exist(provider_id);
+    let expires_at = expires_env
+        .as_deref()
+        .and_then(config_value)
+        .and_then(|value| value.parse::<i64>().ok());
+    let expired = expires_at.map(|expires_at| expires_at <= Utc::now().timestamp_millis());
+    let authenticated = configured && expired != Some(true);
+    let auth_state = if authenticated {
+        if matches!(login.as_deref(), Some("api")) {
+            tura_llm_rust::AuthState::ApiKeyConfigured
+        } else {
+            tura_llm_rust::AuthState::Authenticated
+        }
+    } else if expired == Some(true) {
+        tura_llm_rust::AuthState::Expired
+    } else {
+        tura_llm_rust::AuthState::NotConfigured
+    };
+    let runtime_state = if entry.and_then(|entry| entry.disabled_reason).is_some() {
+        tura_llm_rust::ProviderRuntimeState::Disabled
+    } else if authenticated {
+        tura_llm_rust::ProviderRuntimeState::Ready
+    } else if configured {
+        tura_llm_rust::ProviderRuntimeState::Configured
+    } else {
+        tura_llm_rust::ProviderRuntimeState::MissingAuth
+    };
+
+    ProviderAuthStatusResponse {
+        provider_id: provider_id.to_string(),
+        display_name: provider_display_name(provider_id),
+        login,
+        configured,
+        authenticated,
+        expired,
+        account_id: config_entry
+            .as_ref()
+            .and_then(|entry| entry.account_id.clone())
+            .or_else(|| account_env.as_deref().and_then(config_value)),
+        token_env,
+        login_env: config_entry
+            .as_ref()
+            .and_then(|entry| entry.login_env.clone())
+            .or_else(|| {
+                entry
+                    .and_then(|entry| entry.login_env)
+                    .map(ToString::to_string)
+            }),
+        refresh_env,
+        expires_env,
+        updated_at: config_entry.and_then(|entry| entry.updated_at),
+        auth_state,
+        runtime_state,
+        last_error_category: entry
+            .and_then(|entry| entry.disabled_reason)
+            .map(ToString::to_string),
+    }
+}
+
+fn read_provider_auth_config(provider_id: &str) -> Option<tura_llm_rust::ProviderAuthConfig> {
+    let path = tura_llm_config_path();
+    let content = fs::read_to_string(path).ok()?;
+    let root: tura_llm_rust::RootConfig = serde_json::from_str(&content).ok()?;
+    root.provider_auth.get(provider_id).cloned()
+}
+
+fn config_value(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| tura_llm_rust::TuraConfig::default().get(key))
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn bedrock_credentials_exist(provider_id: &str) -> bool {
+    provider_id == "bedrock"
+        && [
+            "AWS_ACCESS_KEY_ID",
+            "AWS_PROFILE",
+            "AWS_REGION",
+            "AWS_DEFAULT_REGION",
+        ]
+        .iter()
+        .any(|key| config_value(key).is_some())
+}
+
+fn logout_provider_auth(provider_id: &str) -> io::Result<()> {
+    let status = build_provider_auth_status(provider_id);
+    let env_path = std::env::var("TURA_ENV_PATH")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            tura_llm_rust::TuraConfig::default()
+                .env_path()
+                .to_path_buf()
+        });
+
+    let current_login = status.login.as_deref();
+    let should_clear_shared_token = match provider_id {
+        "openai" => current_login == Some("oauth"),
+        "openai-api" => current_login != Some("oauth"),
+        "anthropic" | "antigravity" => current_login == Some("browser"),
+        "anthropic-api" | "antigravity-api" => current_login != Some("browser"),
+        _ => true,
+    };
+
+    if should_clear_shared_token {
+        if let Some(token_env) = status.token_env.as_deref() {
+            upsert_env_value(&env_path, token_env, "")?;
+            std::env::remove_var(token_env);
+        }
+    }
+    if let Some(login_env) = status.login_env.as_deref() {
+        upsert_env_value(&env_path, login_env, "")?;
+        std::env::remove_var(login_env);
+    }
+    for key in [
+        status.refresh_env.as_deref(),
+        status.expires_env.as_deref(),
+        tura_llm_rust::provider_auth_registry_entry(provider_id)
+            .and_then(|entry| entry.account_env),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        upsert_env_value(&env_path, key, "")?;
+        std::env::remove_var(key);
+    }
+
+    update_provider_auth_config_status(provider_id, "revoked")
+}
+
+fn update_provider_auth_config_status(provider_id: &str, status: &str) -> io::Result<()> {
+    let path = tura_llm_config_path();
+    let content = fs::read_to_string(&path)?;
+    let mut root: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    if let Some(entry) = root
+        .get_mut("provider_auth")
+        .and_then(|value| value.as_object_mut())
+        .and_then(|provider_auth| provider_auth.get_mut(provider_id))
+        .and_then(|entry| entry.as_object_mut())
+    {
+        entry.insert(
+            "status".to_string(),
+            serde_json::Value::String(status.to_string()),
+        );
+        entry.insert(
+            "updated_at".to_string(),
+            serde_json::Value::String(Utc::now().to_rfc3339()),
+        );
+    }
+    let formatted = serde_json::to_string_pretty(&root)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    fs::write(path, format!("{formatted}\n"))
+}
+
 fn tura_llm_config_path() -> std::path::PathBuf {
     std::env::var("TURALLM_CONFIG")
         .ok()
@@ -1379,8 +1649,18 @@ fn upsert_provider_auth_config(
         *provider_auth = serde_json::json!({});
     }
 
+    let auth_type = match login {
+        "api" => "api_key",
+        "browser" => "browser_token",
+        "local" => "local_cli_token",
+        "device" => "device_code",
+        "aws" => "aws_credentials",
+        _ => "oauth",
+    };
+    let registry_entry = tura_llm_rust::provider_auth_registry_entry(provider_id);
+
     let mut entry = serde_json::json!({
-        "type": "oauth",
+        "type": auth_type,
         "login": login,
         "status": "connected",
         "provider": provider_runtime_id(provider_id),
@@ -1389,6 +1669,24 @@ fn upsert_provider_auth_config(
         "login_env": login_env,
         "updated_at": Utc::now().to_rfc3339(),
     });
+    if let Some(registry_entry) = registry_entry {
+        if let Some(refresh_env) = registry_entry.refresh_env {
+            entry["refresh_env"] = serde_json::Value::String(refresh_env.to_string());
+        }
+        if let Some(expires_env) = registry_entry.expires_env {
+            entry["expires_env"] = serde_json::Value::String(expires_env.to_string());
+        }
+        if let Some(account_env) = registry_entry.account_env {
+            entry["account_env"] = serde_json::Value::String(account_env.to_string());
+        }
+        if !registry_entry.default_base_url.is_empty() {
+            entry["endpoint"] =
+                serde_json::Value::String(registry_entry.default_base_url.to_string());
+        }
+        if let Some(reason) = registry_entry.disabled_reason {
+            entry["unsupported_reason"] = serde_json::Value::String(reason.to_string());
+        }
+    }
     if provider_id == "openai" && login == "oauth" {
         entry["endpoint"] = serde_json::Value::String(
             "https://chatgpt.com/backend-api/codex/responses".to_string(),
@@ -1411,23 +1709,15 @@ fn upsert_provider_auth_config(
 }
 
 fn provider_env_key(provider_id: &str) -> String {
-    match provider_id {
-        "openai-api" => return "OPENAI_API_KEY".to_string(),
-        "anthropic-api" => return "ANTHROPIC_API_KEY".to_string(),
-        "antigravity-api" => return "ANTIGRAVITY_API_KEY".to_string(),
-        _ => {}
-    }
-    format!("{}_API_KEY", provider_id.to_ascii_uppercase())
+    tura_llm_rust::provider_token_env(provider_id)
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("{}_API_KEY", provider_id.to_ascii_uppercase()))
 }
 
 fn provider_login_key(provider_id: &str) -> String {
-    match provider_id {
-        "openai-api" => return "OPENAI_LOGIN".to_string(),
-        "anthropic-api" => return "ANTHROPIC_LOGIN".to_string(),
-        "antigravity-api" => return "ANTIGRAVITY_LOGIN".to_string(),
-        _ => {}
-    }
-    format!("{}_LOGIN", provider_id.to_ascii_uppercase())
+    tura_llm_rust::provider_login_env(provider_id)
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("{}_LOGIN", provider_id.to_ascii_uppercase()))
 }
 
 fn provider_key_exists(provider_id: &str) -> bool {
@@ -1495,4 +1785,60 @@ fn upsert_env_value(path: &FsPath, key: &str, value: &str) -> io::Result<()> {
 fn quote_env_value(value: &str) -> String {
     let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
     format!("\"{escaped}\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_auth_methods_are_projected_from_registry() {
+        let openai = provider_auth_methods("openai");
+        assert_eq!(openai.len(), 1);
+        assert_eq!(openai[0].kind, AuthMethodKind::OAuthPkce);
+        assert_eq!(openai[0].method_type, "oauth");
+        assert_eq!(openai[0].token_env.as_deref(), Some("OPENAI_API_KEY"));
+
+        let anthropic = provider_auth_methods("anthropic");
+        assert_eq!(anthropic[0].kind, AuthMethodKind::BrowserToken);
+        assert_eq!(anthropic[0].login, "browser");
+
+        let openrouter = provider_auth_methods("openrouter");
+        assert_eq!(openrouter[0].kind, AuthMethodKind::ApiKey);
+        assert_eq!(openrouter[0].method_type, "api");
+        assert_eq!(
+            openrouter[0].token_env.as_deref(),
+            Some("OPENROUTER_API_KEY")
+        );
+    }
+
+    #[test]
+    fn provider_env_keys_use_registry_compatibility_aliases() {
+        assert_eq!(provider_env_key("openai-api"), "OPENAI_API_KEY");
+        assert_eq!(provider_login_key("anthropic-api"), "ANTHROPIC_LOGIN");
+        assert_eq!(provider_env_key("gemini-api"), "GEMINI_API_KEY");
+    }
+
+    #[test]
+    fn login_value_for_auth_prefers_metadata_and_registry_defaults() {
+        let auth = ProviderAuth {
+            auth_type: "oauth".to_string(),
+            key: Some("secret".to_string()),
+            access: None,
+            refresh: None,
+            expires: None,
+            account_id: None,
+            metadata: None,
+        };
+        assert_eq!(login_value_for_auth("anthropic", &auth), "browser");
+
+        let with_metadata = ProviderAuth {
+            metadata: Some(HashMap::from([(
+                "login".to_string(),
+                serde_json::Value::String("oauth".to_string()),
+            )])),
+            ..auth
+        };
+        assert_eq!(login_value_for_auth("anthropic", &with_metadata), "oauth");
+    }
 }

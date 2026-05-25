@@ -36,13 +36,25 @@ impl Default for HealthResponse {
 // Config Types
 // ============================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub language: Option<String>,
     pub theme: Option<String>,
     pub model: Option<String>,
     pub agent: Option<String>,
     pub skill_folders: Vec<String>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            language: None,
+            theme: None,
+            model: Some(crate::session::config::DEFAULT_SESSION_MODEL.to_string()),
+            agent: Some(crate::session::config::DEFAULT_SESSION_AGENT.to_string()),
+            skill_folders: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

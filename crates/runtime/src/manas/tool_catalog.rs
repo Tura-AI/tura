@@ -188,48 +188,6 @@ pub(super) fn project_directory_with_tools() -> Result<PathBuf, String> {
     Ok(current)
 }
 
-pub(super) fn load_agent_prompt_messages(
-    agent: &AgentManagement,
-    active_tool_names: &std::collections::HashSet<String>,
-) -> Result<Vec<serde_json::Value>, String> {
-    let mut messages = Vec::new();
-    let mut loaded_prompt_paths = std::collections::HashSet::new();
-
-    for prompt_item in &agent.agent_prompt {
-        let prompt_path = {
-            let standard_path = prompt_item.prompt_directory.join("prompt.md");
-            if standard_path.exists() {
-                standard_path
-            } else {
-                let legacy_path = prompt_item.prompt_directory.join("prompt");
-                if legacy_path.exists() {
-                    legacy_path
-                } else {
-                    prompt_item.prompt_directory.join("fallback_agent.md")
-                }
-            }
-        };
-
-        if prompt_path.exists() {
-            let content = std::fs::read_to_string(&prompt_path).map_err(|err| {
-                format!(
-                    "failed to read agent prompt {}: {err}",
-                    prompt_path.display()
-                )
-            })?;
-            loaded_prompt_paths.insert(prompt_path.clone());
-            messages.push(serde_json::json!({
-                "role": "system",
-                "content": content,
-            }));
-        }
-    }
-
-    let _ = active_tool_names;
-
-    Ok(messages)
-}
-
 fn should_hide_from_coding_agent_context(agent: &AgentManagement, tool_name: &str) -> bool {
     matches!(
         agent.agent_name.as_str(),
@@ -465,10 +423,9 @@ fn sanitize_provider_schema(mut value: serde_json::Value) -> serde_json::Value {
 mod tests {
     use super::*;
     use crate::state_machine::agent_management::{
-        AgentCapabilityItem, AgentPromptItem, ProviderConfig, ToolChoice, ValidatorConfig,
+        AgentCapabilityItem, ProviderConfig, ToolChoice, ValidatorConfig,
     };
     use chrono::Utc;
-    use std::collections::HashSet;
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -681,10 +638,8 @@ mod tests {
         assert!(description.contains("\"workdir\":{\"type\":\"string\""));
         assert!(description.contains("\"timeout_ms\":{\"type\":\"number\""));
         assert!(description.contains("Default timeout is 15 seconds"));
-        assert!(
-            description
-                .contains("Persistent services must never be used as blocking foreground commands")
-        );
+        assert!(description
+            .contains("Persistent services must never be used as blocking foreground commands"));
         assert!(description.contains("otherwise the command is considered hung and incorrect"));
         assert!(!description.contains("Start-Process -WindowStyle Hidden -PassThru"));
         assert!(!description.contains("Stop-Process -Id $p1.Id,$p2.Id -Force"));
@@ -722,10 +677,8 @@ mod tests {
         assert!(description.contains("\"workdir\":{\"type\":\"string\""));
         assert!(description.contains("\"timeout_ms\":{\"type\":\"number\""));
         assert!(description.contains("Default timeout is 15 seconds"));
-        assert!(
-            description
-                .contains("Persistent services must never be used as blocking foreground commands")
-        );
+        assert!(description
+            .contains("Persistent services must never be used as blocking foreground commands"));
         assert!(description.contains("otherwise the command is considered hung and incorrect"));
         assert!(!description.contains("Start-Process -WindowStyle Hidden -PassThru"));
         assert!(!description.contains("Stop-Process -Id $p1.Id,$p2.Id -Force"));
@@ -811,76 +764,21 @@ mod tests {
             now,
         );
 
-        let messages =
-            load_agent_prompt_messages(&agent, &HashSet::from([COMMAND_RUN_TOOL.to_string()]))
-                .expect("prompt loading should succeed");
-        let joined = messages
+        let tools = load_agent_capabilities(&agent).expect("tool loading should succeed");
+        let descriptions = tools
             .iter()
-            .filter_map(|message| message.get("content").and_then(|content| content.as_str()))
+            .filter_map(|tool| {
+                tool.get("function")
+                    .and_then(|function| function.get("description"))
+                    .and_then(|description| description.as_str())
+            })
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(!joined.contains("common command_run prompt"));
-        assert!(!joined.contains("apply_patch prompt"));
-        assert!(!joined.contains("shell command_run prompt"));
-        assert!(!joined.contains("bash command_run prompt"));
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn agent_prompt_loader_uses_fallback_agent_md_when_prompt_md_is_absent() {
-        let run_id = format!(
-            "tura-fallback-agent-prompt-test-{}",
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        );
-        let root = std::env::temp_dir().join(run_id);
-        let prompt_dir = root.join("modes").join("code");
-        std::fs::create_dir_all(&prompt_dir).expect("fallback prompt dir should be created");
-        std::fs::write(
-            prompt_dir.join("fallback_agent.md"),
-            "fallback agent prompt",
-        )
-        .expect("fallback prompt should be written");
-
-        let now = Utc::now();
-        let mut agent = AgentManagement::new(
-            "agent".to_string(),
-            "coding_agent".to_string(),
-            root.clone(),
-            None,
-            true,
-            ProviderConfig {
-                tura_llm_name: "test".to_string(),
-                stream: false,
-                temperature: 0.0,
-                max_tokens: 0,
-                tool_choice: ToolChoice::Auto,
-                time_out_ms: 1000,
-            },
-            ValidatorConfig {
-                need_validator: false,
-                validator_name: None,
-            },
-            now,
-        );
-        agent.add_prompt(
-            AgentPromptItem {
-                agent_prompt: "fallback_agent".to_string(),
-                prompt_directory: prompt_dir,
-            },
-            now,
-        );
-
-        let messages = load_agent_prompt_messages(&agent, &HashSet::new())
-            .expect("prompt loading should succeed");
-        let joined = messages
-            .iter()
-            .filter_map(|message| message.get("content").and_then(|content| content.as_str()))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        assert!(joined.contains("fallback agent prompt"));
+        assert!(!descriptions.contains("common command_run prompt"));
+        assert!(!descriptions.contains("apply_patch prompt"));
+        assert!(!descriptions.contains("shell command_run prompt"));
+        assert!(!descriptions.contains("bash command_run prompt"));
 
         let _ = std::fs::remove_dir_all(root);
     }

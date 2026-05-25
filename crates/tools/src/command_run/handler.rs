@@ -1,7 +1,7 @@
 use crate::runtime::tool::{ToolCall, ToolContext, ToolPayload, ToolRouter};
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -880,10 +880,10 @@ fn error_payload(message: String) -> Value {
 #[cfg(test)]
 mod tests {
     use super::{
-        StreamingCommandRunExecutor, execute, normalize_shell_command_arguments, parse_args,
+        execute, normalize_shell_command_arguments, parse_args, StreamingCommandRunExecutor,
     };
-    use serde_json::Value;
     use serde_json::json;
+    use serde_json::Value;
     use std::path::Path;
     use std::sync::Mutex;
 
@@ -1282,11 +1282,9 @@ mod tests {
             output["results"][0]["command_type"],
             crate::commands::active_shell_command_name()
         );
-        assert!(
-            output["results"][0]["output"]
-                .as_str()
-                .is_some_and(|text| text.replace('\\', "/").contains("/subdir"))
-        );
+        assert!(output["results"][0]["output"]
+            .as_str()
+            .is_some_and(|text| text.replace('\\', "/").contains("/subdir")));
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
@@ -1449,11 +1447,9 @@ mod tests {
             output["results"][0]["output"]["output"]["error_type"],
             "ContextMismatch"
         );
-        assert!(
-            output["results"][1]["output"]["warning"]
-                .as_str()
-                .is_some_and(|text| text.contains("previous apply_patch"))
-        );
+        assert!(output["results"][1]["output"]["warning"]
+            .as_str()
+            .is_some_and(|text| text.contains("previous apply_patch")));
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 

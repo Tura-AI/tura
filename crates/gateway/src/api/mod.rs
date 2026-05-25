@@ -4,6 +4,7 @@ pub mod file;
 pub mod global;
 pub mod mcp;
 pub mod misc;
+pub mod product;
 pub mod project;
 pub mod provider;
 pub mod pty;

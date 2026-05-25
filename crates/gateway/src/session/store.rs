@@ -1444,6 +1444,7 @@ mod tests {
     #[test]
     fn user_commands_are_shared_from_parent_to_child_sessions() {
         let store = SessionStore::new();
+        let child_id = format!("child-{}", Uuid::new_v4());
         let session = store.create_session(
             Some("C:/workspace".to_string()),
             None,
@@ -1460,7 +1461,7 @@ mod tests {
 
         store.register_child_session(
             &session.id,
-            "child-1",
+            &child_id,
             Some("C:/workspace".to_string()),
             Some("Subtask".to_string()),
             Some("read files".to_string()),
@@ -1472,17 +1473,17 @@ mod tests {
             vec!["focus on tests"]
         );
         assert_eq!(
-            store.user_commands_for_session("child-1"),
+            store.user_commands_for_session(&child_id),
             vec!["focus on tests"]
         );
 
-        store.append_user_command("child-1", "also update docs");
+        store.append_user_command(&child_id, "also update docs");
         assert_eq!(
             store.user_commands_for_session(&session.id),
             vec!["focus on tests", "also update docs"]
         );
         assert_eq!(
-            store.user_commands_for_session("child-1"),
+            store.user_commands_for_session(&child_id),
             vec!["focus on tests", "also update docs"]
         );
     }
@@ -1529,6 +1530,8 @@ mod tests {
     #[test]
     fn cancellation_scope_includes_root_and_descendants_from_child() {
         let store = SessionStore::new();
+        let child_id = format!("child-{}", uuid::Uuid::new_v4());
+        let grandchild_id = format!("grandchild-{}", uuid::Uuid::new_v4());
         let root = store.create_session(
             Some("C:/workspace".to_string()),
             None,
@@ -1545,26 +1548,22 @@ mod tests {
 
         store.register_child_session(
             &root.id,
-            "child-1",
+            &child_id,
             Some("C:/workspace".to_string()),
             Some("Subtask 1".to_string()),
             Some("first".to_string()),
         );
         store.register_child_session(
-            "child-1",
-            "grandchild-1",
+            &child_id,
+            &grandchild_id,
             Some("C:/workspace".to_string()),
             Some("Subtask 1.1".to_string()),
             Some("nested".to_string()),
         );
 
         assert_eq!(
-            store.cancellation_scope_session_ids("child-1"),
-            vec![
-                root.id.clone(),
-                "child-1".to_string(),
-                "grandchild-1".to_string()
-            ]
+            store.cancellation_scope_session_ids(&child_id),
+            vec![root.id.clone(), child_id, grandchild_id]
         );
     }
 

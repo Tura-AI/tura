@@ -28,6 +28,7 @@ crates/runtime/
     manas/
       mod.rs
       process.rs
+      agent_prompts.rs
       constants.rs
       prompt_messages.rs
       runtime_turn.rs
@@ -202,13 +203,27 @@ Provider defaults and command lists come from agent config.
 
 - Active command loading from `crates/tools`.
 - Provider schema conversion.
-- Active command prompt loading.
+- Command prompt compaction and provider-tool description injection.
 - Final-turn filtering.
 - Command-run placement at the end of the tool list.
 - Cache-stable tool-set identity.
 
 Tool execution is delegated to `crates/tools`; runtime does not implement shell,
 patch, file lock, or package environment behavior.
+
+## Agent Prompts
+
+`manas/agent_prompts.rs` owns loading non-tool agent prompt resources from the
+selected agent prompt directory:
+
+1. `persona.md`
+2. `communication_style.md`
+3. `prompt.md`
+
+Legacy `prompt` and `fallback_agent.md` remain compatibility fallbacks for the
+main prompt resource. Agent prompt loading must stay separate from command/tool
+prompt loading so agent identity and communication behavior do not depend on the
+active tool set.
 
 ## Prompt Assembly
 
@@ -226,6 +241,10 @@ Dynamic values are injected by builder sections such as:
 - `runtime_state`
 
 Do not load runtime prompt fragments from markdown by string name.
+
+Provider-facing turn assembly happens in `manas/runtime_turn.rs`: runtime
+identity from `prompt_style/` is injected first, then agent prompt resources from
+`manas/agent_prompts.rs`, then dynamic session context and user/task messages.
 
 ## Provider Integration
 

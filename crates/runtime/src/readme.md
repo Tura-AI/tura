@@ -165,7 +165,7 @@ parent_agent_id为空
 report_to_user 为 true
 provider都使用tura_coder，stream 为yes，tempature 为0.5 max token 为空， tool choice 为 auto，time_out_ms 为 90秒
 agent_prompt 为 coding_agent，
-agent_prompt目录为 项目目录下 crates/agents/src/{agent_name}/prompt.md，agent配置从 crates/agents/src/{agent_name}/agent_config.json 读取
+agent_prompt目录为 项目目录下 crates/agents/src/{agent_name}，由 manas/agent_prompts.rs 按顺序读取 persona.md、communication_style.md、prompt.md；agent配置从 crates/agents/src/{agent_name}/agent_config.json 读取
 agent_capabilities 使用统一 coding_agent 能力集；当前版本只保留 command_run，其中 command_run 只支持 shell/bash 控制台命令和 apply_patch.
 （不需要找对应的tools 先都mock）
 validator_name 为空， need_validator 为 false，

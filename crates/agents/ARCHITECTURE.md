@@ -24,9 +24,13 @@ crates/agents/
     coding_agent.rs
     coding_agent/
       agent_config.json
+      persona.md
+      communication_style.md
       prompt.md
     coding_agent_fast/
       agent_config.json
+      persona.md
+      communication_style.md
       prompt.md
 ```
 
@@ -36,10 +40,12 @@ but new agent work must use `crates/agents/src/{agent_name}`.
 
 ## Agent Config
 
-Each agent owns exactly two runtime-loaded files:
+Each agent owns these runtime-loaded files:
 
 - `agent_config.json`: JSON config consumed by `crates/runtime`.
-- `prompt.md`: exact model-facing system prompt text.
+- `persona.md`: model-facing persona text.
+- `communication_style.md`: model-facing user communication instructions.
+- `prompt.md`: model-facing task and tool behavior instructions.
 
 `agent_config.json` defines:
 
@@ -51,25 +57,26 @@ Each agent owns exactly two runtime-loaded files:
 - `validator`.
 
 The coding agents must keep identical capabilities. `coding_agent_fast` differs
-from `coding_agent` only by its `prompt.md` content.
+from `coding_agent` only by its prompt resource content.
 
 ## Prompt Ownership
 
-The default coding agent prompt lives at:
+The default coding agent prompt resources live under:
 
 ```text
-crates/agents/src/coding_agent/prompt.md
+crates/agents/src/coding_agent/
 ```
 
-The fast coding agent prompt lives at:
+The fast coding agent prompt resources live under:
 
 ```text
-crates/agents/src/coding_agent_fast/prompt.md
+crates/agents/src/coding_agent_fast/
 ```
 
-Runtime prompt loading must send the selected `prompt.md` file text to the provider
-unchanged. Moving prompt ownership into `crates/agents/src/{agent_name}` must not
-alter the model-facing context.
+Runtime prompt loading in `crates/runtime/src/manas/agent_prompts.rs` sends
+`persona.md`, `communication_style.md`, then the selected `prompt.md` text to
+the provider. Moving prompt ownership into `crates/agents/src/{agent_name}` must
+not alter the model-facing context.
 
 ## Command Selection
 

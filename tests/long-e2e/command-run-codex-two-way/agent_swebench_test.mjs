@@ -8,6 +8,7 @@ import path from "node:path"
 import process from "node:process"
 import { performance } from "node:perf_hooks"
 import { fileURLToPath } from "node:url"
+import { endStream, isolatedProcessOptions, killProcessTree } from "./process_helpers.mjs"
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(scriptDir, "..", "..", "..")
@@ -267,6 +268,9 @@ function runLive(command, args, options = {}) {
   let stderr = ""
   let firstOutputMs = null
   let timedOut = false
+  let settled = false
+  let childExitStatus = null
+  let childExitSignal = null
 
   function writeStatus(extra) {
     if (!statusPath) return
@@ -281,23 +285,49 @@ function runLive(command, args, options = {}) {
 
   writeStatus({ status: "running" })
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
+    const timeoutLimitMs = options.timeoutMs || timeoutMs
+    let closeGraceTimer = null
+    let timeoutGraceTimer = null
+
+    function settle(statusLabel, status, signal, error) {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      clearTimeout(closeGraceTimer)
+      clearTimeout(timeoutGraceTimer)
+      endStream(stdoutStream)
+      endStream(stderrStream)
+      const result = {
+        command,
+        args,
+        status,
+        signal,
+        stdout,
+        stderr,
+        duration_ms: Math.round(performance.now() - started),
+        first_output_ms: firstOutputMs,
+        error,
+      }
+      writeStatus({ status: statusLabel, result })
+      resolve(result)
+    }
+
+    const child = spawn(command, args, isolatedProcessOptions({
       cwd: options.cwd || repoRoot,
       env: { ...process.env, ...(options.env || {}) },
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
-    })
+    }))
 
     const timer = setTimeout(() => {
       timedOut = true
       try {
-        if (process.platform === "win32" && child.pid) {
-          spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true })
-        } else {
-          child.kill("SIGKILL")
-        }
+        killProcessTree(child.pid)
       } catch {}
-    }, options.timeoutMs || timeoutMs)
+      timeoutGraceTimer = setTimeout(() => {
+        settle("timeout", childExitStatus ?? 1, childExitSignal, `timed out after ${timeoutLimitMs}ms`)
+      }, Number(options.timeoutCloseGraceMs || 3_000))
+    }, timeoutLimitMs)
 
     child.stdout?.on("data", (chunk) => {
       if (firstOutputMs === null) firstOutputMs = Math.round(performance.now() - started)
@@ -313,40 +343,27 @@ function runLive(command, args, options = {}) {
       writeStatus({ status: "running", stdout_bytes: Buffer.byteLength(stdout), stderr_bytes: Buffer.byteLength(stderr) })
     })
     child.on("error", (error) => {
-      clearTimeout(timer)
-      stdoutStream?.end()
-      stderrStream?.end()
-      const result = {
-        command,
-        args,
-        status: null,
-        signal: null,
-        stdout,
-        stderr,
-        duration_ms: Math.round(performance.now() - started),
-        first_output_ms: firstOutputMs,
-        error: String(error.stack || error.message || error),
-      }
-      writeStatus({ status: "error", result })
-      resolve(result)
+      settle("error", null, null, String(error.stack || error.message || error))
+    })
+    child.on("exit", (status, signal) => {
+      childExitStatus = status
+      childExitSignal = signal
+      closeGraceTimer = setTimeout(() => {
+        settle(
+          timedOut ? "timeout" : "closed",
+          timedOut ? (status ?? 1) : status,
+          signal,
+          timedOut ? `timed out after ${timeoutLimitMs}ms` : null,
+        )
+      }, Number(options.exitCloseGraceMs || 1_000))
     })
     child.on("close", (status, signal) => {
-      clearTimeout(timer)
-      stdoutStream?.end()
-      stderrStream?.end()
-      const result = {
-        command,
-        args,
-        status,
+      settle(
+        timedOut ? "timeout" : "closed",
+        timedOut ? (status ?? 1) : status,
         signal,
-        stdout,
-        stderr,
-        duration_ms: Math.round(performance.now() - started),
-        first_output_ms: firstOutputMs,
-        error: timedOut ? `timed out after ${options.timeoutMs || timeoutMs}ms` : null,
-      }
-      writeStatus({ status: timedOut ? "timeout" : "closed", result })
-      resolve(result)
+        timedOut ? `timed out after ${timeoutLimitMs}ms` : null,
+      )
     })
     if (options.input) child.stdin.end(options.input)
     else child.stdin.end()

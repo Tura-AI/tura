@@ -1,0 +1,520 @@
+# apps/tui Architecture
+
+## Goal
+
+`apps/tui` provides the terminal-facing Tura client. Both the non-interactive
+CLI and the interactive TUI are TypeScript/Node applications in the same package.
+They should reference the interaction shape of
+`../Codex/codex-rs/cli`, `../Codex/codex-rs/exec`, and
+`../Codex/codex-rs/tui`, but only as UX and boundary references.
+
+The TypeScript CLI/TUI must not embed the agent runtime, provider calls, command
+execution, config persistence, or session store. Those responsibilities already
+exist in `crates/gateway`, `crates/runtime`, `crates/router`,
+`crates/provider`, and `crates/tools`.
+
+The first implementation target is a conservative, non-interactive CLI path.
+The interactive TUI should share the same TypeScript gateway client, event
+stream, output formatting, and API types after the command path is stable.
+
+## Non-Goals
+
+- Do not call `crates/runtime` directly from the CLI/TUI app.
+- Do not call `crates/provider` directly from the CLI/TUI app.
+- Do not run shell commands, tools, service workers, or managed services from the
+  CLI/TUI app.
+- Do not read or write `.tura/config.conf`, `.env`, or provider config files
+  directly.
+- Do not create a separate local session/message database for the CLI/TUI app.
+- Do not fork Codex wholesale into this repository. Port only the terminal
+  interaction patterns that are useful.
+- Do not make `/tui/*` compatibility routes the main implementation path.
+
+## Reference From Codex
+
+Use Codex as an interaction and module-boundary reference, not as a backend
+architecture reference.
+
+- `codex-rs/cli/src/main.rs`: command tree, shared root flags, subcommand
+  dispatch, `resume`, login/logout style, completion, and debug/admin commands.
+- `codex-rs/exec/src/cli.rs`: non-interactive command flags and output modes.
+- `codex-rs/exec/src/event_processor_with_jsonl_output.rs`: stable machine
+  output shape.
+- `codex-rs/exec/src/event_processor_with_human_output.rs`: compact human
+  output and status rendering.
+- `codex-rs/tui/src/app.rs`: central app loop that owns UI state and dispatches
+  app events.
+- `codex-rs/tui/src/tui/event_stream.rs`: terminal event stream pattern.
+- `codex-rs/tui/src/history_cell*`, `bottom_pane*`, `status*`,
+  `markdown_render*`, and `diff_render*`: reusable UI concepts for transcript,
+  permissions, status, markdown, and diffs.
+
+Tura should keep the terminal UX spirit: compact transcript, clear status,
+resume flow, model/session selectors, permission prompts, useful exit messages,
+and deterministic automation output. Tura should replace Codex's in-process
+core calls with gateway HTTP and SSE calls.
+
+## Package And Directory Strategy
+
+Keep CLI and TUI in one TypeScript package under `apps/tui` for the first
+implementation. The non-interactive CLI and the interactive TUI share most of
+the important code:
+
+- `gateway/client.ts` for HTTP calls.
+- `gateway/events.ts` for `/event` SSE parsing and normalization.
+- `types/` for gateway DTOs and terminal-facing event types.
+- `output/` for human, JSON, and NDJSON formatting.
+- `commands/` for non-interactive CLI subcommands.
+- `tui/` for interactive terminal UI state, reducers, rendering, and widgets.
+
+Do not split `apps/cli` and `apps/tui` into separate implementations unless the
+shared TypeScript gateway client first becomes a dedicated internal package.
+Otherwise DTOs, event handling, completion detection, and permission behavior
+will drift.
+
+`apps/tui` should be a Node/TypeScript package, with dependencies limited to
+client/UI concerns:
+
+- `typescript` plus the repo's chosen runner/build tool, such as `tsx`,
+  `tsup`, or the existing workspace default.
+- `commander`, `clipanion`, or `yargs` for command parsing. Prefer the package
+  already used elsewhere in Tura if one exists when implementation starts.
+- Node `fetch` or `undici` for gateway HTTP.
+- `eventsource-parser` or a small local parser for `/event` SSE.
+- `zod` only where runtime validation materially improves gateway error
+  reporting; otherwise keep DTOs as TypeScript interfaces.
+- `ink` or another React-style terminal UI library for the interactive TUI.
+- `chalk`/`kleur` only for human terminal color output.
+
+Keep DTOs local to `apps/tui/src/types` at first. The gateway JSON shape is the
+client contract; generated SDK types should only be introduced after the gateway
+has stable OpenAPI for these routes.
+
+## Proposed Layout
+
+```text
+apps/tui/
+  ARCHITECTURE.md
+  package.json
+  tsconfig.json
+  src/
+    index.ts
+    cli.ts
+    gateway/
+      client.ts
+      events.ts
+      errors.ts
+      directory.ts
+    commands/
+      run.ts
+      resume.ts
+      session.ts
+      config.ts
+      provider.ts
+      permission.ts
+      command.ts
+      status.ts
+      completion.ts
+    output/
+      human.ts
+      json.ts
+      ndjson.ts
+      final-result.ts
+    tui/
+      app.tsx
+      event-loop.ts
+      reducer.ts
+      keymap.ts
+      render.tsx
+      widgets/
+        transcript.tsx
+        composer.tsx
+        status.tsx
+        sessions.tsx
+        permissions.tsx
+        models.tsx
+        diff.tsx
+    types/
+      config.ts
+      session.ts
+      message.ts
+      event.ts
+      provider.ts
+      permission.ts
+```
+
+The initial non-interactive implementation only needs `cli.ts`,
+`gateway/client.ts`, `gateway/events.ts`, `output/*`, `commands/run.ts`,
+`commands/resume.ts`, `commands/session.ts`, `commands/provider.ts`,
+`commands/permission.ts`, `commands/command.ts`, `commands/status.ts`, and the
+`types/` files needed to describe gateway responses. The `tui/` module can be
+introduced after the command path is stable.
+
+## Gateway-Only Communication
+
+All frontend/backend communication must go through `crates/gateway`.
+
+Default gateway URL resolution:
+
+1. `--gateway-url`
+2. `TURA_GATEWAY_URL`
+3. `http://127.0.0.1:4096`
+
+Every request that is workspace-scoped must send the current directory through
+both compatible mechanisms until the API is fully documented:
+
+```text
+query:  ?directory=<workspace path>
+header: x-opencode-directory: <percent-encoded workspace path>
+```
+
+The CLI/TUI app may start or health-check the gateway only through an approved
+launcher path. It must not replace the gateway with direct crate calls.
+
+Core endpoint map:
+
+```text
+health                         GET    /global/health
+global events                  GET    /event
+global config                  GET    /config
+global config patch            PATCH  /config
+workspace session config       GET    /session/config?directory=...
+workspace session config patch PATCH  /session/config?directory=...
+list sessions                  GET    /session?directory=...
+create session                 POST   /session
+session status                 GET    /session/status
+get session                    GET    /session/{sessionID}
+update session                 PATCH  /session/{sessionID}
+delete session                 DELETE /session/{sessionID}
+list messages                  GET    /session/{sessionID}/message
+send prompt sync               POST   /session/{sessionID}/message
+send prompt async              POST   /session/{sessionID}/prompt_async
+abort turn                     POST   /session/{sessionID}/abort
+todos                          GET    /session/{sessionID}/todo
+permissions                    GET    /permission
+permission reply               POST   /permission/{requestID}/reply
+questions                      GET    /question
+question reply                 POST   /question/{requestID}/reply
+question reject                POST   /question/{requestID}/reject
+agents                         GET    /agent
+providers/models               GET    /provider
+provider auth status           GET    /provider/{providerID}/auth/status
+provider auth validate         POST   /provider/{providerID}/auth/validate
+provider logout                POST   /provider/{providerID}/auth/logout
+provider oauth authorize       POST   /provider/{providerID}/oauth/authorize
+commands                       GET    /command
+execute slash command          POST   /command
+vcs info/diff                  GET    /vcs, GET /vcs/diff
+services status                GET    /service/status
+skills/plugins                 GET    /skill, GET /plugin
+paths                          GET    /path
+```
+
+The existing `/tui/*` routes in gateway are compatibility shortcuts. The new
+TypeScript CLI/TUI should prefer the richer session/message/config endpoints,
+and only use `/tui/*` for compatibility shims or very early smoke tests.
+
+## Non-Interactive CLI
+
+The first command surface should be small and automation-friendly:
+
+```text
+tura run [PROMPT...] [--cwd PATH] [--session ID]
+         [--model PROVIDER/MODEL] [--agent NAME]
+         [--output text|json|ndjson] [--json]
+         [--no-stream] [--timeout SEC]
+         [--last-message-file PATH]
+
+tura resume [SESSION_ID|--last] [PROMPT...]
+            [--output text|json|ndjson] [--json]
+
+tura session list [--cwd PATH] [--all] [--json]
+tura session show SESSION_ID [--json]
+tura session delete SESSION_ID
+
+tura config get [--cwd PATH] [--json]
+tura config set KEY=VALUE... [--cwd PATH]
+
+tura provider list [--json]
+tura provider status [PROVIDER] [--json]
+
+tura permission list [--json]
+tura permission reply REQUEST_ID --approve|--deny
+
+tura command list [--json]
+tura command run NAME [ARGS...]
+
+tura status [--json]
+tura completion SHELL
+```
+
+Root flags:
+
+```text
+--gateway-url URL
+--cwd PATH
+--json
+--color auto|always|never
+--verbose
+```
+
+`--json` is an alias for `--output json` where the command has an output mode.
+Per-run `--model` and `--agent` flags are request-scoped and must not persist
+settings. Persistent changes belong to `tura config set`.
+
+## Run Flow
+
+Use `/prompt_async` as the default execution endpoint because it returns
+immediately and lets the CLI stream `/event`. Keep `/message` only as a
+compatibility fallback because it currently runs synchronously.
+
+```text
+parse args
+  -> resolve cwd and gateway url
+  -> GET /global/health
+  -> GET /session/config?directory=...
+  -> optionally validate --model through /provider/model/validate
+  -> POST /session when --session is absent
+  -> POST /session/{sessionID}/prompt_async
+  -> subscribe GET /event unless --no-stream
+  -> filter envelopes by directory and sessionID
+  -> render events through selected output mode
+  -> hydrate final messages through GET /session/{sessionID}/message
+  -> exit with deterministic code
+```
+
+`/event` currently emits SSE data as:
+
+```json
+{
+  "directory": "./workspace",
+  "payload": {
+    "type": "message.updated",
+    "properties": {}
+  }
+}
+```
+
+The TypeScript client should parse this envelope first, then narrow on
+`payload.type`.
+
+## Prompt Payload
+
+The CLI should send a frontend-compatible prompt payload to `/prompt_async`:
+
+```json
+{
+  "messageID": "msg_cli_<uuid>",
+  "parts": [
+    {
+      "id": "part_cli_<uuid>",
+      "type": "text",
+      "text": "user prompt"
+    }
+  ],
+  "model": "openai/gpt-5.5",
+  "agent": "coding_agent",
+  "source": "cli"
+}
+```
+
+Gateway already extracts:
+
+- text from `parts[].text`
+- frontend message/part ids from `messageID` and `parts[].id`
+- runtime model override from `model`
+- runtime options from fields like `variant` and
+  `model_acceleration_enabled`
+
+The same prompt shape should be reused by the later interactive TUI so terminal
+clients behave consistently.
+
+## Completion Detection
+
+Until gateway exposes an explicit `turn.completed` event, use conservative
+completion rules:
+
+1. Record the submitted frontend message id and initial message count.
+2. Treat `session.status` with `idle` after submission as a completion signal.
+3. Also accept a new assistant `message.updated` after the submitted user
+   message when no busy status remains.
+4. On timeout, call `POST /session/{sessionID}/abort` and exit `4`.
+5. If gateway returns or emits error status, exit `1`.
+
+After completion, fetch `GET /session/{sessionID}/message` and extract the last
+assistant text part as the final result.
+
+## Output And Exit Codes
+
+`text` output:
+
+- human-readable status lines on stderr
+- final assistant text on stdout
+- compact tool summaries, permission notices, and final resume command
+
+`json` output:
+
+```json
+{
+  "sessionID": "...",
+  "status": "completed",
+  "finalText": "...",
+  "messages": [],
+  "usage": null
+}
+```
+
+`ndjson` output:
+
+- one JSON object per event
+- include raw gateway envelope and normalized event fields
+- finish with a final `{"type":"cli.completed",...}` or
+  `{"type":"cli.failed",...}` record
+
+Exit codes:
+
+```text
+0 completed
+1 gateway/runtime/provider error
+2 invalid CLI usage
+3 permission denied or cancelled
+4 timeout
+5 gateway unavailable
+```
+
+## Interactive TUI
+
+The interactive TUI should reuse the same TypeScript `GatewayClient`, event
+stream parser, gateway types, command parser, output formatting primitives,
+completion detection, and permission semantics. Its job is local terminal state
+and rendering only.
+
+Recommended state model:
+
+```text
+GatewayClient
+  -> EventIngestor maps /event SSE payloads into typed events
+  -> AppState stores selected workspace, session, messages, todos, permissions
+  -> reducer updates state
+  -> Ink/terminal renderer draws transcript, composer, status bar, overlays
+```
+
+UI surfaces to port from the Codex TUI idea:
+
+- transcript cells for user messages, assistant messages, tool calls, diffs,
+  command output, and errors
+- composer with multiline input and slash-command completion
+- status header with model, agent, cwd, branch, service status, and token usage
+- session picker for resume/fork/open
+- model/provider picker
+- permission approval pane
+- todo pane
+- diff viewer
+- help/keymap overlay
+
+The TUI should not invent hidden state. Every durable choice should be reflected
+through gateway config APIs.
+
+## Config And Settings
+
+Use the current Tura architecture:
+
+- Workspace/session settings live behind
+  `GET/PATCH /session/config?directory=...`, backed by
+  `.tura/config.conf` through `crates/gateway/src/session/config.rs`.
+- Global UI settings live behind `GET/PATCH /config`.
+- Provider/model catalog and auth state live behind `/provider` and
+  `/provider/{providerID}/auth/*`.
+- Provider credentials and `tura_llm_config.json` updates are owned by
+  gateway/provider code.
+- Commands are discovered by gateway from `.tura/commands`, `.opencode/*`,
+  `command`, and `commands`.
+- Skills/plugins are discovered by gateway through `/skill` and `/plugin`.
+
+The TypeScript CLI/TUI may cache config for rendering, but it must treat gateway
+as source of truth and invalidate local state after config patches.
+
+## Session And Event Semantics
+
+The TUI should treat `sessionID` as the stable root of a conversation. It should
+hydrate on startup by calling:
+
+```text
+GET /session/{sessionID}
+GET /session/{sessionID}/message
+GET /session/{sessionID}/todo
+GET /permission
+GET /service/status
+```
+
+Then it should attach to `/event` and filter by session directory and
+`sessionID`. Events should be idempotent because `/event` may replay or scan new
+messages from the store.
+
+Non-interactive `run` and interactive TUI turns should share completion
+detection until gateway adds explicit final-turn events.
+
+## Permissions
+
+Permission handling remains gateway-owned.
+
+Interactive TUI:
+
+- poll/subscribe for permission events
+- render a permission pane
+- reply through `POST /permission/{requestID}/reply`
+
+Non-interactive CLI:
+
+- default to fail fast when permission is required
+- show pending permission details in text mode
+- emit the raw permission request in JSON/NDJSON modes
+- exit `3` unless a future gateway-backed policy explicitly supports
+  non-interactive auto approval
+- never bypass gateway permission APIs
+
+## Testing Strategy
+
+Initial tests:
+
+- unit tests for CLI parsing and output formatting
+- gateway client tests against a mock HTTP server
+- SSE envelope parser tests
+- NDJSON golden tests for non-interactive `run`
+- timeout and gateway-unavailable tests
+
+Later interactive tests:
+
+- reducer tests for gateway event ingestion
+- terminal UI snapshot tests for transcript/status/permission panes
+- resize tests for compact and wide terminal widths
+
+## Implementation Phases
+
+1. Create the TypeScript package, root CLI parser, gateway client, DTOs,
+   health/status, and config commands.
+2. Implement `session list/show/delete` and provider status commands.
+3. Implement `run --output ndjson` with `/prompt_async`, `/event`, timeout, and
+   final message hydration.
+4. Add human text output, JSON output, `resume`, and deterministic completion
+   detection.
+5. Add permission list/reply, slash-command execution, and completion
+   generation.
+6. Introduce interactive TUI state/reducer/rendering on the same client layer.
+7. Add richer transcript rendering, diff rendering, model picker, session
+   picker, and help overlay.
+
+## Open Gateway Gaps
+
+The current gateway is already close, but these refinements would make TUI/CLI
+cleaner:
+
+- explicit final-turn event or stable turn id in `/prompt_async` and `/event`
+- `turn.started`, `turn.completed`, `turn.failed`, and `turn.cancelled` events
+- SSE `id:` fields for reliable stream resume
+- documented request/response DTOs for `/session/{id}/message` and
+  `/prompt_async`
+- one canonical prompt payload for CLI/GUI/TUI
+- stable error envelope for all endpoints
+- explicit non-interactive session marker so `resume --include-non-interactive`
+  can be faithfully supported

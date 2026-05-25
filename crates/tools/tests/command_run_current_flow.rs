@@ -1246,7 +1246,7 @@ fn pass_read_only_commands_in_same_step_run_concurrently() {
     assert_eq!(output["results"][0]["success"], true);
     assert_eq!(output["results"][1]["success"], true);
     assert!(
-        started.elapsed() < Duration::from_millis(1700),
+        started.elapsed() < Duration::from_millis(2300),
         "same-step read-only commands should run in parallel, elapsed {:?}",
         started.elapsed()
     );

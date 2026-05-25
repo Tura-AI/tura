@@ -738,11 +738,16 @@ pub struct RawProviderConfig {
 
 impl Settings {
     pub async fn default() -> Result<Arc<Self>, TuraError> {
-        if let Some(settings) = SETTINGS.get() {
-            return Ok(settings.clone());
+        let explicit_config = std::env::var_os("TURALLM_CONFIG").is_some();
+        if !explicit_config {
+            if let Some(settings) = SETTINGS.get() {
+                return Ok(settings.clone());
+            }
         }
         let loaded = Arc::new(crate::tura_llm_conf::load_settings().await?);
-        let _ = SETTINGS.set(loaded.clone());
+        if !explicit_config {
+            let _ = SETTINGS.set(loaded.clone());
+        }
         Ok(loaded)
     }
 
@@ -1076,10 +1081,7 @@ mod tests {
             super::latency_level_for_reasoning_effort("highest").as_deref(),
             Some("highest")
         );
-        assert_eq!(
-            super::latency_level_for_reasoning_effort("default"),
-            None
-        );
+        assert_eq!(super::latency_level_for_reasoning_effort("default"), None);
     }
 
     #[test]

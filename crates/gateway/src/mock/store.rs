@@ -2,6 +2,7 @@
 //! This module provides in-memory mock data that simulates the OpenCode backend
 
 use crate::api::types::*;
+use crate::session::config::DEFAULT_SESSION_REASONING_EFFORT;
 use crate::session::manager::{coding_agent_provider, CODING_AGENT_NAME};
 use crate::types::OutboundAction;
 use chrono::Utc;
@@ -76,8 +77,8 @@ impl Store {
             validator_enabled: false,
             force_multiple_tasks: false,
             disable_permission_restrictions: false,
-            model_variant: None,
-            model_acceleration_enabled: false,
+            model_variant: Some(DEFAULT_SESSION_REASONING_EFFORT.to_string()),
+            model_acceleration_enabled: true,
             status: SessionStatus::Idle,
             message_count: 0,
         };
@@ -191,8 +192,8 @@ impl Store {
             validator_enabled: false,
             force_multiple_tasks: false,
             disable_permission_restrictions: false,
-            model_variant: None,
-            model_acceleration_enabled: false,
+            model_variant: Some(DEFAULT_SESSION_REASONING_EFFORT.to_string()),
+            model_acceleration_enabled: true,
             status: SessionStatus::Idle,
             message_count: 0,
         };

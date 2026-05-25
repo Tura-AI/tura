@@ -108,10 +108,13 @@ Current agent-owned files live under:
 ```text
 crates/agents/src/<agent_name>/
   agent_config.json
+  persona.md
+  communication_style.md
   prompt.md
 ```
 
-Agent-specific prompt text must stay in `prompt.md`; runtime prompt fragments
+Agent-specific prompt text must stay in agent prompt resources
+(`persona.md`, `communication_style.md`, `prompt.md`); runtime prompt fragments
 and command prompts are injected separately by their owning crates.
 
 ### `crates/provider`
@@ -214,7 +217,8 @@ apps/ui
 
 Prompt text has three owners:
 
-- Agent prompts: `crates/agents/<agent>/prompts/`.
+- Agent prompts: `crates/agents/src/<agent_name>/`, loaded by
+  `crates/runtime/src/manas/agent_prompts.rs`.
 - Runtime prompt fragments: `crates/runtime/src/prompt_style/`.
 - The `command_run` visible tool description:
   `crates/tools/src/command_run/schema.json`, augmented at runtime by

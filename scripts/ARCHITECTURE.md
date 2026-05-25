@@ -49,19 +49,38 @@ migration, but the documented target is `scripts/packages/<package>`.
 Install scripts should:
 
 - Verify Git, Rust, Cargo, Bun, Node, Python, and the platform shell.
-- Install frontend dependencies.
+- Install `apps/tui` dependencies from `package-lock.json`.
+- Install `apps/gui` dependencies when Bun is available.
 - Run `cargo fetch`.
-- Build core crates.
-- Build tools.
-- Run frontend typecheck.
+- Build `gateway` binaries `tura` and `gateway`.
+- Build `tura_router`.
+- Check runtime, tools, provider, agents, and utils packages by Cargo package
+  name.
+- Install Python fallback packages into `scripts/packages/python`, never the
+  repository root or a tracked package directory.
+- Export `PYTHONPATH` and `LIBCLANG_PATH` for the current script invocation
+  when local fallback packages are installed.
+- Install Playwright Chromium unless explicitly skipped.
 - Respect a skip-tool-install flag.
 - Avoid writing generated logs or screenshots into tracked paths.
+- Fail with actionable messages when required system toolchains are missing.
+
+Supported first-party install entrypoints:
+
+```text
+scripts/install.ps1     Windows PowerShell
+scripts/install.sh      Linux/macOS POSIX shell
+```
 
 ## Start Scripts
 
 Start scripts should:
 
 - Prefer CLI-driven startup.
+- Default to running `cargo run -p gateway --bin tura -- exec ...`.
+- Support a gateway-server mode for the TypeScript CLI/TUI:
+  `cargo run -p gateway --bin gateway`.
+- Support a TUI-client mode that runs `node apps/tui/dist/index.js ...`.
 - Start the router binary when CLI forwarding or managed lifecycle is needed,
   for example
   `cargo run -p tura_router -- forward <command> [args...]`.
@@ -69,6 +88,13 @@ Start scripts should:
 - Avoid introducing independent service startup paths.
 - Let router pull up and monitor managed local services/processes.
 - Print CLI endpoints, UI URLs, and health status when applicable.
+
+Supported first-party start entrypoints:
+
+```text
+scripts/start.ps1       Windows PowerShell
+scripts/start.sh        Linux/macOS POSIX shell
+```
 
 ## Auto Install Manifests
 

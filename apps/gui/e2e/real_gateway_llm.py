@@ -1,0 +1,794 @@
+import asyncio
+import json
+import os
+import time
+import traceback
+from pathlib import Path
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+from playwright.async_api import async_playwright
+
+
+ROOT = Path(__file__).resolve().parents[3]
+COMMUNICATION_STYLE = (
+    ROOT / "crates" / "agents" / "src" / "coding_agent" / "communication_style.md"
+)
+OUT = Path(
+    os.environ.get(
+        "TURA_GUI_E2E_OUT",
+        ROOT / "apps" / "gui" / "test-results" / "real-gateway-llm",
+    )
+)
+GUI_URL = os.environ.get("TURA_GUI_URL", "http://127.0.0.1:5180")
+GATEWAY_URL = os.environ.get("TURA_GATEWAY_URL", "http://127.0.0.1:4096")
+MODEL = os.environ.get("TURA_E2E_MODEL", "openai/gpt-5.5")
+PROMPT_NONCE = os.environ.get("TURA_E2E_NONCE", f"tura-tool-e2e-{int(time.time())}")
+EXPECTED = os.environ.get("TURA_E2E_EXPECTED", f"TURA_TOOL_E2E_DONE {PROMPT_NONCE}")
+COMMAND_MARKER = os.environ.get("TURA_E2E_COMMAND_MARKER", f"TURA_PLAYWRIGHT_STEP {PROMPT_NONCE}")
+TIMEOUT_MS = int(os.environ.get("TURA_E2E_TIMEOUT_MS", "600000"))
+
+VIEWPORTS = [
+    (1920, 1080),
+    (1440, 900),
+    (1024, 768),
+    (390, 844),
+]
+
+
+def real_tool_prompt() -> str:
+    return os.environ.get(
+        "TURA_E2E_PROMPT",
+        (
+            "This is a real GUI to gateway to coding agent e2e test. "
+            "Complete a complex frontend Playwright task using command_run. "
+            "First read tests/long-e2e/command-run-codex-two-way/command_run_frontend_playwright_e2e.mjs "
+            "and use its Vite + Playwright screenshot/probe style as the reference pattern; do not run the whole benchmark. "
+            "Then run the prepared helper exactly as: "
+            f"node apps/gui/e2e/agent_playwright_complex_task.mjs {PROMPT_NONCE}. "
+            "The helper creates a temporary Vite frontend fixture under target/gui-agent-playwright/, "
+            "starts Vite, runs Playwright probes, captures desktop/mobile/modal/streaming/error-state screenshots, "
+            "and cleans up its server. Do not rely on command_run workdir; run commands from the repository root or use explicit paths. "
+            "Use at least three command_run command records: read the reference script, run the helper, then inspect "
+            f"target/gui-agent-playwright/{PROMPT_NONCE}/summary.json and the artifact file list. "
+            "The helper output must print these exact marker prefixes with the nonce: "
+            f"{COMMAND_MARKER} setup, {COMMAND_MARKER} desktop, {COMMAND_MARKER} mobile, "
+            f"{COMMAND_MARKER} modal, {COMMAND_MARKER} streaming, {COMMAND_MARKER} error-state, "
+            f"{COMMAND_MARKER} cleanup. "
+            "After verifying the screenshots/probes, reply with exactly this final line: "
+            f"{EXPECTED}"
+        ),
+    )
+
+
+async def page_metrics(page):
+    return await page.evaluate(
+        """
+        () => {
+          const box = (sel) => {
+            const el = document.querySelector(sel);
+            const rect = el?.getBoundingClientRect();
+            return rect ? {
+              x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+              left: rect.left, right: rect.right, top: rect.top,
+              bottom: rect.bottom, center: rect.x + rect.width / 2,
+            } : null;
+          };
+          const text = (sel) => document.querySelector(sel)?.innerText ?? '';
+          const messages = Array.from(document.querySelectorAll('.message'));
+          const assistantMessages = Array.from(document.querySelectorAll('.message.assistant'));
+          const latestAssistant = assistantMessages.reverse().find((message) => message.querySelector('.assistant-text')) ?? null;
+          const assistantText = latestAssistant?.querySelector('.assistant-text') ?? null;
+          const avatar = latestAssistant?.querySelector('.agent-avatar') ?? null;
+          const h1 = document.querySelector('.page-title h1');
+          const textarea = document.querySelector('.bottom-composer textarea');
+          const textareaRect = textarea?.getBoundingClientRect();
+          const toolbarRect = document.querySelector('.composer-toolbar')?.getBoundingClientRect();
+          const italic = document.querySelector('.rich-text i, .rich-text em');
+          return {
+            url: window.location.href,
+            title: h1?.innerText ?? '',
+            bodyText: document.body.innerText,
+            messageCount: messages.length,
+            lastMessage: messages.at(-1)?.innerText ?? '',
+            assistantText: assistantText?.innerText ?? '',
+            runSummaryText: text('.run-summary'),
+            runSummaryCount: document.querySelectorAll('.run-summary').length,
+            assistantMessageCount: document.querySelectorAll('.message.assistant').length,
+            inspectorText: text('.tool-inspector'),
+            error: text('.error-strip'),
+            main: box('.conversation-main'),
+            grid: box('.conversation-grid'),
+            composer: box('.bottom-composer'),
+            composerToolbar: box('.composer-toolbar'),
+            textarea: box('.bottom-composer textarea'),
+            pageAvatar: box('.page-avatar'),
+            avatar: box('.agent-avatar'),
+            assistantTextBox: box('.assistant-text'),
+            runSummary: box('.run-summary'),
+            scrollFollow: box('.scroll-follow'),
+            railMoreCount: document.querySelectorAll('.rail-more').length,
+            visibleSessionRows: document.querySelectorAll('.session-row').length,
+            newSessionPrompt: text('.new-session-prompt'),
+            newSessionTitle: document.querySelector('.new-session-center h1')?.innerText ?? '',
+            workspacePickerLabel: document.querySelector('.workspace-picker-label')?.innerText ?? '',
+            workspacePickRows: document.querySelectorAll('.workspace-pick-row').length,
+            workspaceSearchValue: document.querySelector('.workspace-search')?.value ?? '',
+            workspaceActionCount: document.querySelectorAll('.workspace-picker-actions button').length,
+            nameDialog: text('.name-dialog'),
+            overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+            bodyOverflowX: document.body.scrollWidth - window.innerWidth,
+            h1Scroll: h1 ? { scrollHeight: h1.scrollHeight, clientHeight: h1.clientHeight } : null,
+            avatarLoaded: avatar ? avatar.complete && avatar.naturalWidth > 0 : false,
+            avatarBottomDelta: avatar && assistantText ? Math.abs(avatar.getBoundingClientRect().bottom - assistantText.getBoundingClientRect().bottom) : null,
+            titleAvatarCount: document.querySelectorAll('.page-head .page-avatar').length,
+            textareaStartsAboveToolbar: textareaRect && toolbarRect ? textareaRect.top < toolbarRect.top : false,
+            italicFontStyle: italic ? getComputedStyle(italic).fontStyle : '',
+            rich: {
+              bold: document.querySelectorAll('.rich-text b').length,
+              italic: document.querySelectorAll('.rich-text i').length,
+              underline: document.querySelectorAll('.rich-text u').length,
+              strike: document.querySelectorAll('.rich-text s').length,
+              link: document.querySelectorAll('.rich-text a[href^="https://"]').length,
+              inlineCode: document.querySelectorAll('.rich-text > code, .rich-text code').length,
+              spoiler: document.querySelectorAll('.rich-spoiler').length,
+              blockquote: document.querySelectorAll('.rich-text blockquote').length,
+              codeBlock: document.querySelectorAll('.rich-text pre code').length,
+              media: document.querySelectorAll('.rich-media img').length,
+              gallery: document.querySelectorAll('.rich-gallery').length,
+              galleryImages: document.querySelectorAll('.rich-gallery img').length,
+              lightbox: document.querySelectorAll('.media-lightbox').length,
+              sticker: document.querySelectorAll('.rich-sticker').length,
+              reaction: document.querySelectorAll('.rich-react').length,
+            },
+            inspector: {
+              steps: document.querySelectorAll('.inspector-steps button').length,
+              diffAdd: document.querySelectorAll('.diff-add').length,
+              diffDel: document.querySelectorAll('.diff-del').length,
+              status: document.querySelector('.inspector-status')?.innerText ?? '',
+              console: document.querySelector('.inspector-console')?.innerText ?? '',
+            },
+          };
+        }
+        """
+    )
+
+
+async def validate_layout(metrics, viewport, require_answer=False):
+    checks = [
+        ("no-horizontal-overflow", metrics["overflowX"] <= 1 and metrics["bodyOverflowX"] <= 1),
+        (
+            "h1-not-clipped",
+            not metrics["h1Scroll"]
+            or metrics["h1Scroll"]["scrollHeight"] <= metrics["h1Scroll"]["clientHeight"] + 2,
+        ),
+        ("textarea-above-toolbar", bool(metrics["textareaStartsAboveToolbar"])),
+        ("no-title-avatar", metrics["titleAvatarCount"] == 0),
+    ]
+    if require_answer or metrics["assistantMessageCount"] > 0:
+        checks.append(("assistant-avatar-visible", bool(metrics["avatar"] and metrics["avatar"]["width"] >= 50)))
+        checks.append(("avatar-loaded", bool(metrics["avatarLoaded"])))
+    if metrics["main"] and metrics["grid"] and viewport[0] >= 641:
+        checks.append(("main-centered", abs(metrics["main"]["center"] - metrics["grid"]["center"]) <= 1))
+    if metrics["composer"] and metrics["main"] and viewport[0] >= 641:
+        checks.append(("composer-centered", abs(metrics["composer"]["center"] - metrics["main"]["center"]) <= 1))
+    if metrics["avatarBottomDelta"] is not None:
+        checks.append(("avatar-text-bottom", metrics["avatarBottomDelta"] <= 2))
+    if require_answer:
+        checks.append(("real-tool-answer-visible", EXPECTED in (metrics.get("assistantText") or "")))
+    return [{"name": name, "ok": ok} for name, ok in checks]
+
+
+def as_checks(items):
+    return [{"name": name, "ok": ok} for name, ok in items]
+
+
+async def goto_gui(page, query):
+    url = f"{GUI_URL}/?{urlencode(query)}" if query else f"{GUI_URL}/"
+    await page.goto(url, wait_until="domcontentloaded")
+    try:
+        await page.wait_for_selector(".bottom-composer textarea", timeout=30000)
+    except Exception:
+        await page.reload(wait_until="domcontentloaded")
+        await page.wait_for_selector(".bottom-composer textarea", timeout=30000)
+    if "e2eFixture" not in query:
+        await page.wait_for_function(
+            "() => {"
+            " const text = document.body.innerText;"
+            " return !text.includes('加载中') && !text.includes('Loading') && !text.includes('没有工作区') && !text.includes('No workspace');"
+            "}",
+            timeout=45000,
+        )
+
+
+async def wait_for_avatar_decode(page):
+    try:
+        await page.wait_for_function(
+            "() => {"
+            " const avatar = document.querySelector('.agent-avatar');"
+            " return !avatar || (avatar.complete && avatar.naturalWidth > 0);"
+            "}",
+            timeout=5000,
+        )
+    except Exception:
+        pass
+
+
+async def run_display_matrix(browser, results, browser_errors):
+    style_source = COMMUNICATION_STYLE.read_text(encoding="utf-8")
+    required_source_terms = [
+        "<b>",
+        "<i>",
+        "<code>",
+        "<blockquote>",
+        "[MEDIA:",
+        "[EMOJI:sticker:",
+        "[EMOJI:react:",
+    ]
+    missing_terms = [term for term in required_source_terms if term not in style_source]
+    page = await new_page(browser, browser_errors, 1920, 1080)
+    await goto_gui(
+        page,
+        {
+            "gatewayUrl": GATEWAY_URL,
+            "tab": "conversation",
+            "e2eFixture": "communication-protocol",
+        },
+    )
+    await page.wait_for_function(
+        "() => document.querySelectorAll('.rich-spoiler').length >= 1"
+        " && document.querySelectorAll('.rich-gallery img').length >= 3"
+        " && document.querySelectorAll('.rich-react').length >= 1",
+        timeout=8000,
+    )
+    await page.screenshot(path=str(OUT / "style-01-matrix-1920x1080.png"), full_page=True)
+    metrics = await page_metrics(page)
+    checks = await validate_layout(metrics, (1920, 1080))
+    checks.extend(
+        as_checks(
+            [
+            ("communication-style-source-covered", not missing_terms),
+            ("rich-bold", metrics["rich"]["bold"] >= 1),
+            ("rich-italic", metrics["rich"]["italic"] >= 1),
+            ("italic-computed-style", "italic" in metrics["italicFontStyle"] or "oblique" in metrics["italicFontStyle"]),
+            ("rich-underline", metrics["rich"]["underline"] >= 1),
+            ("rich-strike", metrics["rich"]["strike"] >= 1),
+            ("rich-link", metrics["rich"]["link"] >= 1),
+            ("rich-inline-code", metrics["rich"]["inlineCode"] >= 1),
+            ("rich-spoiler", metrics["rich"]["spoiler"] >= 1),
+            ("rich-blockquote", metrics["rich"]["blockquote"] >= 1),
+            ("rich-code-block", metrics["rich"]["codeBlock"] >= 1),
+            ("rich-gallery", metrics["rich"]["gallery"] >= 1),
+            ("rich-gallery-images", metrics["rich"]["galleryImages"] >= 3),
+            ("rich-sticker", metrics["rich"]["sticker"] >= 1),
+            ("rich-reaction", metrics["rich"]["reaction"] >= 1),
+            ("collapsed-tool-summary", bool(metrics["runSummaryText"].strip())),
+            ("idle-process-text-collapsed", "正在解析消息协议" not in metrics["assistantText"]),
+            ]
+        )
+    )
+    gallery_item = page.locator(".rich-gallery-item")
+    if await gallery_item.count() > 0:
+        await gallery_item.first.click()
+        await page.wait_for_selector(".media-lightbox", timeout=5000)
+        await page.screenshot(path=str(OUT / "style-01b-lightbox-1920x1080.png"), full_page=True)
+        lightbox_metrics = await page_metrics(page)
+        results.append(
+            {
+                "name": "style-lightbox-1920x1080",
+                "metrics": lightbox_metrics,
+                "checks": (await validate_layout(lightbox_metrics, (1920, 1080)))
+                + as_checks(
+                    [
+                        ("lightbox-open", lightbox_metrics["rich"]["lightbox"] == 1),
+                        ("lightbox-no-overflow", lightbox_metrics["overflowX"] <= 1),
+                    ]
+                ),
+            }
+        )
+        await page.locator(".media-window-actions button").last.click()
+        await page.wait_for_timeout(150)
+    results.append({"name": "style-matrix-1920x1080", "metrics": metrics, "checks": checks})
+
+    summary = page.locator(".run-summary")
+    if await summary.count() != 1:
+        results.append(
+            {
+                "name": "style-inspector-open",
+                "metrics": metrics,
+                "checks": [{"name": "run-summary-single", "ok": False}],
+            }
+        )
+    else:
+        await summary.click()
+        await page.wait_for_timeout(350)
+        screenshot_step = page.locator(".inspector-steps button").filter(has_text="screenshot localhost")
+        if await screenshot_step.count() == 1:
+            await screenshot_step.click()
+            await page.wait_for_timeout(150)
+        await page.screenshot(path=str(OUT / "style-02-inspector-1920x1080.png"), full_page=True)
+        inspector_metrics = await page_metrics(page)
+        inspector_checks = await validate_layout(inspector_metrics, (1920, 1080))
+        inspector_checks.extend(
+            as_checks(
+                [
+                ("inspector-lists-all-tools", inspector_metrics["inspector"]["steps"] >= 5),
+                ("inspector-console-command", "screenshot localhost snake page" in inspector_metrics["inspectorText"]),
+                ("inspector-console-stream", "streaming text remained stable" in inspector_metrics["inspector"]["console"]),
+                ("inspector-status-exit-code", "退出码" in inspector_metrics["inspector"]["status"] or "Exit code" in inspector_metrics["inspector"]["status"]),
+                ("inspector-has-completed", "完成" in inspector_metrics["inspectorText"] or "Completed" in inspector_metrics["inspectorText"]),
+                ("inspector-has-running", "运行中" in inspector_metrics["inspectorText"] or "Running" in inspector_metrics["inspectorText"]),
+                ("inspector-has-failed", "失败" in inspector_metrics["inspectorText"] or "Failed" in inspector_metrics["inspectorText"]),
+                ]
+            )
+        )
+        results.append(
+            {
+                "name": "style-inspector-1920x1080",
+                "metrics": inspector_metrics,
+                "checks": inspector_checks,
+            }
+        )
+        patch_step = page.locator(".inspector-steps button").filter(has_text="app/src/pages/snake.tsx")
+        if await patch_step.count() == 1:
+            await patch_step.click()
+            await page.wait_for_timeout(150)
+        await page.screenshot(path=str(OUT / "style-03-diff-1920x1080.png"), full_page=True)
+        diff_metrics = await page_metrics(page)
+        results.append(
+            {
+                "name": "style-diff-1920x1080",
+                "metrics": diff_metrics,
+                "checks": (await validate_layout(diff_metrics, (1920, 1080)))
+                + as_checks(
+                    [
+                        ("diff-add-visible", diff_metrics["inspector"]["diffAdd"] >= 1),
+                        ("diff-del-visible", diff_metrics["inspector"]["diffDel"] >= 1),
+                        ("diff-status-exit-code", "退出码" in diff_metrics["inspector"]["status"] or "Exit code" in diff_metrics["inspector"]["status"]),
+                    ]
+                ),
+            }
+        )
+    await page.close()
+
+    mobile = await new_page(browser, browser_errors, 390, 844)
+    await goto_gui(
+        mobile,
+        {
+            "gatewayUrl": GATEWAY_URL,
+            "tab": "conversation",
+            "e2eFixture": "communication-protocol",
+        },
+    )
+    await mobile.wait_for_function(
+        "() => document.querySelectorAll('.rich-spoiler').length >= 1",
+        timeout=8000,
+    )
+    await wait_for_avatar_decode(mobile)
+    await mobile.screenshot(path=str(OUT / "style-03-matrix-390x844.png"), full_page=True)
+    mobile_metrics = await page_metrics(mobile)
+    results.append(
+        {
+            "name": "style-matrix-390x844",
+            "metrics": mobile_metrics,
+            "checks": await validate_layout(mobile_metrics, (390, 844)),
+        }
+    )
+    await mobile.close()
+
+    pending = await new_page(browser, browser_errors, 1920, 1080)
+    await goto_gui(
+        pending,
+        {
+            "gatewayUrl": GATEWAY_URL,
+            "tab": "conversation",
+            "e2eFixture": "snake-pending",
+        },
+    )
+    await pending.wait_for_function(
+        "() => document.querySelector('.assistant-text')?.innerText.includes('正在检查棋盘布局')",
+        timeout=8000,
+    )
+    await wait_for_avatar_decode(pending)
+    await pending.screenshot(path=str(OUT / "style-04-pending-process-1920x1080.png"), full_page=True)
+    pending_metrics = await page_metrics(pending)
+    pending_cursor_count = await pending.locator(".assistant-text .typing-text").count()
+    first_summary = pending.locator(".run-summary").first
+    if await first_summary.count() == 1:
+        await first_summary.click()
+        await pending.wait_for_timeout(180)
+    await pending.screenshot(path=str(OUT / "style-05-pending-command-scope-1920x1080.png"), full_page=True)
+    scoped_metrics = await page_metrics(pending)
+    results.append(
+        {
+            "name": "style-pending-process-1920x1080",
+            "metrics": pending_metrics,
+            "checks": (await validate_layout(pending_metrics, (1920, 1080)))
+            + as_checks(
+                [
+                    ("pending-process-text-visible", "正在检查棋盘布局" in pending_metrics["assistantText"]),
+                    ("pending-process-summary-running", "正在运行" in pending_metrics["runSummaryText"]),
+                    ("pending-process-streaming-cursor", pending_cursor_count >= 1),
+                    ("pending-has-separated-command-blocks", pending_metrics["runSummaryCount"] >= 2),
+                ]
+            ),
+        }
+    )
+    results.append(
+        {
+            "name": "style-pending-command-scope-1920x1080",
+            "metrics": scoped_metrics,
+            "checks": (await validate_layout(scoped_metrics, (1920, 1080)))
+            + as_checks(
+                [
+                    ("scoped-command-count", scoped_metrics["inspector"]["steps"] == 2),
+                    ("scoped-command-no-later-browser-step", "Screenshot and motion check" not in scoped_metrics["inspectorText"]),
+                ]
+            ),
+        }
+    )
+    await pending.close()
+
+    new_page_view = await new_page(browser, browser_errors, 1920, 1080)
+    await goto_gui(
+        new_page_view,
+        {
+            "gatewayUrl": GATEWAY_URL,
+            "tab": "new",
+            "e2eFixture": "communication-protocol",
+        },
+    )
+    await new_page_view.wait_for_selector(".workspace-picker", timeout=8000)
+    search = new_page_view.locator(".workspace-search")
+    await search.fill("tura")
+    await new_page_view.wait_for_timeout(150)
+    searched_metrics = await page_metrics(new_page_view)
+    await new_page_view.screenshot(path=str(OUT / "style-06b-new-session-search-1920x1080.png"), full_page=True)
+    await search.fill("")
+    await new_page_view.locator(".workspace-picker-actions button").filter(has_text="创建新工作区").click()
+    await new_page_view.wait_for_selector(".name-dialog", timeout=5000)
+    dialog_metrics = await page_metrics(new_page_view)
+    await new_page_view.screenshot(path=str(OUT / "style-06c-new-session-create-dialog-1920x1080.png"), full_page=True)
+    await new_page_view.locator(".name-dialog button").filter(has_text="取消").click()
+    await new_page_view.wait_for_timeout(150)
+    await new_page_view.evaluate(
+        """
+        () => {
+            window.showDirectoryPicker = async () => ({ name: "tura" });
+        }
+        """
+    )
+    await new_page_view.locator(".workspace-picker-actions button").filter(has_text="使用已有目录").click()
+    await new_page_view.wait_for_timeout(250)
+    existing_metrics = await page_metrics(new_page_view)
+    await new_page_view.screenshot(path=str(OUT / "style-06d-new-session-existing-directory-1920x1080.png"), full_page=True)
+    await new_page_view.locator(".workspace-picker-actions button").filter(has_text="使用默认工作区").click()
+    await new_page_view.wait_for_timeout(250)
+    default_metrics = await page_metrics(new_page_view)
+    await new_page_view.screenshot(path=str(OUT / "style-06-new-session-1920x1080.png"), full_page=True)
+    new_metrics = await page_metrics(new_page_view)
+    results.append(
+        {
+            "name": "style-new-session-1920x1080",
+            "metrics": new_metrics,
+            "checks": as_checks(
+                [
+                    ("new-session-title-visible", "我们今天一起做点什么" in new_metrics["bodyText"]),
+                    ("new-session-old-title-removed", "我们从哪开始工作" not in new_metrics["bodyText"]),
+                    ("new-session-title-in-top-position", new_metrics["newSessionTitle"].strip() == "我们今天一起做点什么？"),
+                    ("new-session-workspace-label-visible", new_metrics["workspacePickerLabel"].strip() == "选择工作区"),
+                    ("new-session-workspaces-visible", new_metrics["workspacePickRows"] >= 1),
+                    ("new-session-search-works", searched_metrics["workspaceSearchValue"] == "tura" and searched_metrics["workspacePickRows"] >= 1),
+                    ("new-session-actions-visible", new_metrics["workspaceActionCount"] == 3),
+                    ("new-session-create-dialog-works", "创建新工作区" in dialog_metrics["nameDialog"]),
+                    ("new-session-existing-directory-click", existing_metrics["workspacePickRows"] >= 1),
+                    ("new-session-default-workspace-click", default_metrics["workspacePickRows"] >= 1),
+                ]
+            ),
+        }
+    )
+    await new_page_view.close()
+
+
+def approve_pending_permissions():
+    try:
+        with urlopen(f"{GATEWAY_URL}/permission", timeout=5) as response:
+            permissions = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return
+    for permission in permissions:
+        permission_id = permission.get("id")
+        if not permission_id:
+            continue
+        payload = json.dumps({"approve": True}).encode("utf-8")
+        request = Request(
+            f"{GATEWAY_URL}/permission/{permission_id}/reply",
+            data=payload,
+            headers={"content-type": "application/json"},
+            method="POST",
+        )
+        try:
+            urlopen(request, timeout=5).read()
+        except Exception:
+            pass
+
+
+async def submit_real_tool_prompt(page):
+    await page.wait_for_function(
+        "() => {"
+        " const text = document.body.innerText;"
+        " return !text.includes('加载中') && !text.includes('Loading') && !text.includes('没有工作区') && !text.includes('No workspace');"
+        "}",
+        timeout=45000,
+    )
+    textarea = page.locator(".bottom-composer textarea")
+    await textarea.fill(real_tool_prompt())
+    await page.wait_for_function(
+        "() => {"
+        " const textarea = document.querySelector('.bottom-composer textarea');"
+        " const button = document.querySelector('.composer-send');"
+        " return textarea && textarea.value.trim().length > 0 && button && !button.disabled;"
+        "}",
+        timeout=10000,
+    )
+    await page.locator(".composer-send").click()
+    await page.wait_for_timeout(1000)
+    submit_state = await page.evaluate(
+        """
+        () => ({
+          messages: document.querySelectorAll('.message').length,
+          disabled: Boolean(document.querySelector('.composer-send')?.disabled),
+          value: document.querySelector('.bottom-composer textarea')?.value ?? '',
+          error: document.querySelector('.error-strip')?.innerText ?? '',
+        })
+        """
+    )
+    if (
+        submit_state["messages"] == 0
+        and not submit_state["disabled"]
+        and submit_state["value"].strip()
+        and not submit_state["error"]
+    ):
+        await textarea.press("Control+Enter")
+        await page.wait_for_timeout(1000)
+
+
+async def open_new_session_interactively(page):
+    history = page.locator(".main-tabs button").filter(has_text="会话记录")
+    if await history.count() == 0:
+        history = page.locator(".main-tabs button").filter(has_text="Sessions")
+    await history.first.click()
+    await page.wait_for_timeout(500)
+    await page.screenshot(path=str(OUT / "tool-01b-session-history-click-1920x1080.png"), full_page=True)
+
+    new_session = page.locator(".main-tabs button").filter(has_text="新会话")
+    if await new_session.count() == 0:
+        new_session = page.locator(".main-tabs button").filter(has_text="New session")
+    await new_session.first.click()
+    await page.wait_for_selector(".new-session-view .bottom-composer textarea", timeout=30000)
+    await page.screenshot(path=str(OUT / "tool-01c-new-session-click-1920x1080.png"), full_page=True)
+
+    workspace = page.locator(".workspace-pick-row").first
+    if await workspace.count() > 0:
+        await workspace.click()
+        await page.wait_for_timeout(500)
+    await page.screenshot(path=str(OUT / "tool-01d-workspace-picked-1920x1080.png"), full_page=True)
+
+
+async def wait_for_real_tool_completion(page):
+    deadline = time.monotonic() + TIMEOUT_MS / 1000
+    last = None
+    streaming_shots = 0
+    next_streaming_shot = 0.0
+    while time.monotonic() < deadline:
+        approve_pending_permissions()
+        metrics = await page_metrics(page)
+        last = metrics
+        text = (metrics.get("assistantText") or "") + "\n" + (metrics.get("bodyText") or "")
+        if any(token in text for token in ["模型调用失败", "all providers failed", "rate_limit", "insufficient_quota"]):
+            raise AssertionError("Provider returned an error: " + text[-1200:])
+        if (
+            metrics["runSummary"]
+            and EXPECTED not in (metrics.get("assistantText") or "")
+            and streaming_shots < 4
+            and time.monotonic() >= next_streaming_shot
+        ):
+            if streaming_shots == 0 and not metrics.get("inspectorText"):
+                summary = page.locator(".run-summary")
+                if await summary.count() == 1:
+                    await summary.click()
+                    await page.wait_for_timeout(300)
+            streaming_shots += 1
+            await page.screenshot(
+                path=str(OUT / f"tool-streaming-{streaming_shots:02d}-1920x1080.png"),
+                full_page=True,
+            )
+            next_streaming_shot = time.monotonic() + 4
+        if EXPECTED in (metrics.get("assistantText") or "") and metrics["runSummary"]:
+            return metrics
+        await page.wait_for_timeout(1500)
+    raise AssertionError(
+        "Timed out waiting for real command tool completion. Last metrics: "
+        + json.dumps(last, ensure_ascii=False)
+    )
+
+
+async def select_inspector_record_with_text(page, needle):
+    buttons = page.locator(".inspector-steps button")
+    count = await buttons.count()
+    best = await page_metrics(page)
+    for index in range(count):
+        await buttons.nth(index).click()
+        await page.wait_for_timeout(250)
+        metrics = await page_metrics(page)
+        best = metrics
+        text = metrics["inspector"].get("console") or ""
+        if needle in text:
+            return metrics
+    return best
+
+
+async def run_real_tool_session(browser, results, browser_errors):
+    page = await new_page(browser, browser_errors, 1920, 1080)
+    await goto_gui(page, {})
+    await page.screenshot(path=str(OUT / "tool-01-app-open-1920x1080.png"), full_page=True)
+    await open_new_session_interactively(page)
+    await page.screenshot(path=str(OUT / "tool-01-new-session-1920x1080.png"), full_page=True)
+    before = await page_metrics(page)
+    results.append(
+        {
+            "name": "tool-new-session-1920x1080",
+            "metrics": before,
+            "checks": (await validate_layout(before, (1920, 1080)))
+            + as_checks(
+                [
+                    ("interactive-no-new-session-url", "newSession" not in before["url"]),
+                    ("interactive-no-session-id-url", "sessionId" not in before["url"]),
+                    ("interactive-new-session-prompt", before["newSessionTitle"].strip() == "我们今天一起做点什么？"),
+                    ("interactive-workspace-picker", before["workspacePickRows"] >= 1),
+                ]
+            ),
+        }
+    )
+
+    await submit_real_tool_prompt(page)
+    await page.screenshot(path=str(OUT / "tool-02-after-submit-1920x1080.png"), full_page=True)
+    answered = await wait_for_real_tool_completion(page)
+    await wait_for_avatar_decode(page)
+    await page.screenshot(path=str(OUT / "tool-03-after-answer-1920x1080.png"), full_page=True)
+    results.append(
+        {
+            "name": "tool-after-answer-1920x1080",
+            "metrics": answered,
+            "checks": (await validate_layout(answered, (1920, 1080), True))
+            + as_checks(
+                [
+                ("tool-summary-visible", bool(answered["runSummaryText"].strip())),
+                ("single-merged-run-summary", answered["runSummaryCount"] == 1),
+                ("single-merged-assistant-turn", answered["assistantMessageCount"] == 1),
+                ("interactive-created-session-title", bool(answered["title"].strip()) and answered["title"] not in {"新会话", "New session"}),
+                ("interactive-created-without-url-param", "newSession" not in answered["url"] and "sessionId" not in answered["url"]),
+                ]
+            ),
+        }
+    )
+
+    summary = page.locator(".run-summary")
+    if await summary.count() == 1:
+        await summary.click()
+        await page.wait_for_timeout(500)
+    inspector = await select_inspector_record_with_text(page, COMMAND_MARKER)
+    await page.screenshot(path=str(OUT / "tool-04-inspector-1920x1080.png"), full_page=True)
+    results.append(
+        {
+            "name": "tool-inspector-1920x1080",
+            "metrics": inspector,
+            "checks": (await validate_layout(inspector, (1920, 1080), True))
+            + as_checks(
+                [
+                ("inspector-open", bool(inspector["inspectorText"].strip())),
+                ("playwright-markers-visible", inspector["inspector"]["console"].count(COMMAND_MARKER) >= 4),
+                ("playwright-reference-visible", "playwright" in inspector["inspectorText"].lower()),
+                ("inspector-has-multiple-records", inspector["inspector"]["steps"] >= 2 or inspector["inspectorText"].count("step") >= 2),
+                ("inspector-stream-console", "TURA_PLAYWRIGHT_STEP" in inspector["inspector"]["console"]),
+                ("inspector-status-exit-code", "退出码" in inspector["inspector"]["status"] or "Exit code" in inspector["inspector"]["status"]),
+                ("expected-final-visible", EXPECTED in inspector["bodyText"]),
+                ]
+            ),
+        }
+    )
+    await page.close()
+
+    for width, height in VIEWPORTS[1:]:
+        page = await new_page(browser, browser_errors, width, height)
+        await goto_gui(
+            page,
+            {
+                "gatewayUrl": GATEWAY_URL,
+                "tab": "conversation",
+                "model": MODEL,
+            },
+        )
+        await page.wait_for_timeout(1200)
+        await wait_for_avatar_decode(page)
+        await page.screenshot(path=str(OUT / f"tool-05-after-answer-{width}x{height}.png"), full_page=True)
+        metrics = await page_metrics(page)
+        results.append(
+            {
+                "name": f"tool-after-answer-{width}x{height}",
+                "metrics": metrics,
+                "checks": await validate_layout(metrics, (width, height), False),
+            }
+        )
+        await page.close()
+
+
+async def new_page(browser, browser_errors, width, height):
+    page = await browser.new_page(viewport={"width": width, "height": height})
+    page.on(
+        "console",
+        lambda message: browser_errors.append(
+            {"kind": "console", "type": message.type, "text": message.text}
+        )
+        if message.type in {"error", "warning"}
+        else None,
+    )
+    page.on(
+        "pageerror",
+        lambda error: browser_errors.append({"kind": "pageerror", "text": str(error)}),
+    )
+    return page
+
+
+async def run():
+    OUT.mkdir(parents=True, exist_ok=True)
+    results = []
+    browser_errors = []
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch()
+        await run_display_matrix(browser, results, browser_errors)
+        await run_real_tool_session(browser, results, browser_errors)
+        await browser.close()
+
+    failures = []
+    for result in results:
+        for check in result["checks"]:
+            if not check["ok"]:
+                failures.append({"result": result["name"], "check": check["name"]})
+
+    ignored_browser_errors = [
+        error
+        for error in browser_errors
+        if "favicon" in error.get("text", "").lower()
+        or "err_network_changed" in error.get("text", "").lower()
+    ]
+    blocking_browser_errors = [
+        error for error in browser_errors if error not in ignored_browser_errors
+    ]
+    if blocking_browser_errors:
+        failures.append({"result": "browser", "check": "browser-errors", "detail": blocking_browser_errors})
+
+    report = {
+        "out": str(OUT),
+        "gatewayUrl": GATEWAY_URL,
+        "guiUrl": GUI_URL,
+        "model": MODEL,
+        "expected": EXPECTED,
+        "commandMarker": COMMAND_MARKER,
+        "failures": failures,
+        "browserErrors": blocking_browser_errors,
+        "ignoredBrowserErrors": ignored_browser_errors,
+        "results": results,
+    }
+    (OUT / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps({"out": str(OUT), "failure_count": len(failures), "failures": failures}, ensure_ascii=False, indent=2))
+    if failures:
+        raise SystemExit(1)
+
+
+try:
+    asyncio.run(run())
+except Exception:
+    OUT.mkdir(parents=True, exist_ok=True)
+    (OUT / "exception.txt").write_text(traceback.format_exc(), encoding="utf-8")
+    raise

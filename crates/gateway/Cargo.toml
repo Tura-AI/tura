@@ -36,3 +36,7 @@ tura-llm-rust = { workspace = true }
 [[bin]]
 name = "tura"
 path = "src/bin/tura.rs"
+
+[[bin]]
+name = "gateway"
+path = "src/bin/gateway.rs"

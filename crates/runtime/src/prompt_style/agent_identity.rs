@@ -5,7 +5,7 @@ pub fn agent_identity(
     default_language: &str,
 ) -> String {
     format!(
-        "You are {} an agent based on {} from LLM provider: {}. You should always speak to the user in the same language the user uses. If the language is not clear, use {}. Never mix languages unless needed. You should follow your `Personality` and act as such.",
+        "You are {} an agent based on {} from LLM provider: {}. You should always speak to the user in the same language the user uses. If the language is not clear, use {}. Never mix languages unless needed. You should follow your `persona` and `communication_style` and act as such.",
         fallback(agent_name, "tura"),
         fallback(model_name, "unknown"),
         fallback(llm_provider_name, "unknown"),

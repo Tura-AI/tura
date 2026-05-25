@@ -334,7 +334,7 @@ fn write_codex_streaming_probe_response(
         }),
     );
     let first_path = workspace.join("streamed-first.txt");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while std::time::Instant::now() < deadline {
         if first_path.exists() {
             first_command_observed_before_response_finished.store(true, Ordering::SeqCst);

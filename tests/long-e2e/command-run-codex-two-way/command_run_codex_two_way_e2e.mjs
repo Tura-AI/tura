@@ -5,6 +5,7 @@ import { spawn } from "node:child_process"
 import path from "node:path"
 import process from "node:process"
 import { performance } from "node:perf_hooks"
+import { endStream, isolatedProcessOptions, killProcessTree } from "./process_helpers.mjs"
 
 const repoRoot = process.env.REPO_ROOT || path.resolve(import.meta.dirname, "..", "..", "..")
 const homeDir = process.env.USERPROFILE || process.env.HOME || ""
@@ -283,13 +284,19 @@ function spawnLogged(command, args, options = {}) {
   return new Promise((resolve) => {
     const started = performance.now()
     if (options.echo !== false) console.log(`$ ${[command, ...args].map(quote).join(" ")}`)
-    const child = spawn(command, args, {
+    let settled = false
+    let timedOut = false
+    let childExitStatus = null
+    const timeoutLimitMs = options.timeoutMs
+    let closeGraceTimer = null
+    let timeoutGraceTimer = null
+    const child = spawn(command, args, isolatedProcessOptions({
       cwd: options.cwd,
       env: { ...process.env, ...(options.env || {}) },
       shell: options.shell || false,
       windowsHide: true,
       stdio: [options.input ? "pipe" : "ignore", "pipe", "pipe"],
-    })
+    }))
     let stdout = ""
     let stderr = ""
     const stdoutStream = options.stdoutPath ? createWriteStream(options.stdoutPath, { flags: "w" }) : null
@@ -314,10 +321,32 @@ function spawnLogged(command, args, options = {}) {
     const markFirstOutput = () => {
       if (firstOutputMs === null) firstOutputMs = Math.round(performance.now() - started)
     }
+    function settle(status, error = null) {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      clearTimeout(closeGraceTimer)
+      clearTimeout(timeoutGraceTimer)
+      endStream(stdoutStream)
+      endStream(stderrStream)
+      writeProgressSnapshot(status === 0 ? "completed" : timedOut ? "timeout" : "failed")
+      resolve({
+        status: status ?? -1,
+        stdout,
+        stderr: error ? `${stderr}${stderr ? "\n" : ""}${error}` : stderr,
+        durationMs: Math.round(performance.now() - started),
+        firstOutputMs,
+      })
+    }
+
     const timer = options.timeoutMs
       ? setTimeout(() => {
+          timedOut = true
           stderr += `\nTimed out after ${options.timeoutMs}ms`
-          child.kill()
+          killProcessTree(child.pid)
+          timeoutGraceTimer = setTimeout(() => {
+            settle(childExitStatus ?? 1)
+          }, Number(options.timeoutCloseGraceMs || 3_000))
         }, options.timeoutMs)
       : null
     child.stdout.on("data", (chunk) => {
@@ -341,30 +370,17 @@ function spawnLogged(command, args, options = {}) {
       child.stdin.end()
     }
     child.on("error", (error) => {
-      if (timer) clearTimeout(timer)
-      if (stdoutStream) stdoutStream.end()
-      if (stderrStream) stderrStream.end()
-      writeProgressSnapshot("error")
-      resolve({
-        status: -1,
-        stdout,
-        stderr: `${stderr}${stderr ? "\n" : ""}${error.stack || error.message}`,
-        durationMs: Math.round(performance.now() - started),
-        firstOutputMs,
-      })
+      settle(-1, error.stack || error.message)
+    })
+    child.on("exit", (status, signal) => {
+      childExitStatus = status
+      void signal
+      closeGraceTimer = setTimeout(() => {
+        settle(timedOut ? (status ?? 1) : status)
+      }, Number(options.exitCloseGraceMs || 1_000))
     })
     child.on("close", (status) => {
-      if (timer) clearTimeout(timer)
-      if (stdoutStream) stdoutStream.end()
-      if (stderrStream) stderrStream.end()
-      writeProgressSnapshot(status === 0 ? "completed" : "failed")
-      resolve({
-        status: status ?? -1,
-        stdout,
-        stderr,
-        durationMs: Math.round(performance.now() - started),
-        firstOutputMs,
-      })
+      settle(timedOut ? (status ?? 1) : status)
     })
   })
 }

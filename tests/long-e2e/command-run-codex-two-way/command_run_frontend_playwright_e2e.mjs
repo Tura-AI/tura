@@ -6,6 +6,7 @@ import path from "node:path"
 import process from "node:process"
 import { performance } from "node:perf_hooks"
 import { fileURLToPath } from "node:url"
+import { endStream, isolatedProcessOptions, killProcessTree } from "./process_helpers.mjs"
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(scriptDir, "..", "..", "..")
@@ -65,11 +66,15 @@ function parseAgents(value) {
   const alias = new Map([
     ["current", "current-shll"],
     ["current-shll", "current-shll"],
+    ["current-bash", "current-bash"],
     ["codex-current", "current-shll"],
     ["main", "codex-main"],
     ["codex-main", "codex-main"],
+    ["codex-main-shll", "codex-main"],
+    ["codex-main-bash", "codex-main-bash"],
     ["tura", "tura-fast-shll"],
     ["tura-shll", "tura-shll"],
+    ["tura-bash", "tura-bash"],
     ["tura-coding", "tura-shll"],
     ["tura-coding-agent", "tura-shll"],
     ["tura-fast", "tura-fast-shll"],
@@ -92,6 +97,29 @@ function parseAgents(value) {
 
 function agentKind(agentId) {
   return String(agentId).replace(/-\d+$/, "")
+}
+
+function shellSurfaceForAgent(agentId) {
+  return agentKind(agentId).endsWith("-bash") ? "bash" : "shell_command"
+}
+
+function bashBinForHost() {
+  if (process.platform !== "win32") return "bash"
+  const candidates = [
+    "C:\\Program Files\\Git\\bin\\bash.exe",
+    "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+    "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+  ]
+  return candidates.find((candidate) => fs.existsSync(candidate)) || "bash"
+}
+
+function envForShellSurface(shellSurface) {
+  if (shellSurface !== "bash" || process.platform !== "win32") return {}
+  const bashBin = bashBinForHost()
+  const bashDir = path.dirname(bashBin)
+  return fs.existsSync(bashBin)
+    ? { PATH: `${bashDir}${path.delimiter}${process.env.PATH || ""}` }
+    : {}
 }
 
 function run(command, args, options = {}) {
@@ -164,6 +192,9 @@ function runLive(command, args, options = {}) {
   let stdout = ""
   let stderr = ""
   let timedOut = false
+  let settled = false
+  let childExitStatus = null
+  let childExitSignal = null
 
   function writeStatus(extra) {
     if (!statusPath) return
@@ -179,24 +210,50 @@ function runLive(command, args, options = {}) {
 
   writeStatus({ status: "running" })
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
+    const timeoutLimitMs = options.timeoutMs || timeoutMs
+    let closeGraceTimer = null
+    let timeoutGraceTimer = null
+
+    function settle(statusLabel, status, signal, error) {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      clearTimeout(closeGraceTimer)
+      clearTimeout(timeoutGraceTimer)
+      endStream(stdoutStream)
+      endStream(stderrStream)
+      const result = {
+        command,
+        args,
+        status,
+        signal,
+        stdout,
+        stderr,
+        duration_ms: Math.round(performance.now() - started),
+        error,
+      }
+      writeStatus({ status: statusLabel, result })
+      resolve(result)
+    }
+
+    const child = spawn(command, args, isolatedProcessOptions({
       cwd: options.cwd || repoRoot,
       env: { ...process.env, ...(options.env || {}) },
       stdio: ["ignore", "pipe", "pipe"],
       shell: options.shell || false,
       windowsHide: true,
-    })
+    }))
 
     const timer = setTimeout(() => {
       timedOut = true
+      writeStatus({ status: "timeout_killing", stdout_bytes: Buffer.byteLength(stdout), stderr_bytes: Buffer.byteLength(stderr) })
       try {
-        if (process.platform === "win32" && child.pid) {
-          spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true })
-        } else {
-          child.kill("SIGKILL")
-        }
+        killProcessTree(child.pid)
       } catch {}
-    }, options.timeoutMs || timeoutMs)
+      timeoutGraceTimer = setTimeout(() => {
+        settle("timeout", childExitStatus ?? 1, childExitSignal, `timed out after ${timeoutLimitMs}ms`)
+      }, Number(options.timeoutCloseGraceMs || 3_000))
+    }, timeoutLimitMs)
 
     child.stdout?.on("data", (chunk) => {
       const text = chunk.toString("utf8")
@@ -212,39 +269,29 @@ function runLive(command, args, options = {}) {
     })
 
     child.on("error", (error) => {
-      clearTimeout(timer)
-      stdoutStream?.end()
-      stderrStream?.end()
-      const result = {
-        command,
-        args,
-        status: null,
-        signal: null,
-        stdout,
-        stderr,
-        duration_ms: Math.round(performance.now() - started),
-        error: String(error.stack || error.message || error),
-      }
-      writeStatus({ status: "error", result })
-      resolve(result)
+      settle("error", null, null, String(error.stack || error.message || error))
+    })
+
+    child.on("exit", (status, signal) => {
+      childExitStatus = status
+      childExitSignal = signal
+      closeGraceTimer = setTimeout(() => {
+        settle(
+          timedOut ? "timeout" : "closed",
+          timedOut ? (status ?? 1) : status,
+          signal,
+          timedOut ? `timed out after ${timeoutLimitMs}ms` : null,
+        )
+      }, Number(options.exitCloseGraceMs || 1_000))
     })
 
     child.on("close", (status, signal) => {
-      clearTimeout(timer)
-      stdoutStream?.end()
-      stderrStream?.end()
-      const result = {
-        command,
-        args,
-        status,
+      settle(
+        timedOut ? "timeout" : "closed",
+        timedOut ? (status ?? 1) : status,
         signal,
-        stdout,
-        stderr,
-        duration_ms: Math.round(performance.now() - started),
-        error: timedOut ? `timed out after ${options.timeoutMs || timeoutMs}ms` : null,
-      }
-      writeStatus({ status: timedOut ? "timeout" : "closed", result })
-      resolve(result)
+        timedOut ? `timed out after ${timeoutLimitMs}ms` : null,
+      )
     })
   })
 }
@@ -280,6 +327,8 @@ function createFixtureTemplate() {
       inspect: "node tools/inspect.mjs",
       "check:a11y": "node tools/a11y_check.mjs",
       "probe:flow": "node tools/probe_flow.mjs",
+      "verify:all": "node tools/with_vite.mjs -- npm run verify:all:inner",
+      "verify:all:inner": "npm run screenshot:desktop && npm run screenshot:mobile && npm run screenshot:modal && npm run probe:flow && npm run check:a11y && npm run smoke:playwright",
       "smoke:playwright": "node tools/playwright_smoke.mjs"
     },
     dependencies: {
@@ -298,6 +347,7 @@ function createFixtureTemplate() {
   writeFile(path.join(template, "tools", "inspect.mjs"), inspectScript())
   writeFile(path.join(template, "tools", "a11y_check.mjs"), a11yScript())
   writeFile(path.join(template, "tools", "probe_flow.mjs"), probeScript())
+  writeFile(path.join(template, "tools", "with_vite.mjs"), withViteScript())
   writeFile(path.join(template, "tools", "playwright_smoke.mjs"), playwrightSmokeScript())
   writeFile(path.join(template, "REFERENCE_NOTES.md"), referenceNotes())
   return template
@@ -537,7 +587,9 @@ This is a front-end repair benchmark. Use the visible screenshots in \`reference
 
 Recommended workflow:
 - Run \`npm install\` if dependencies are missing.
-- Run \`npm run screenshot:desktop\`, \`npm run screenshot:mobile\`, and \`npm run screenshot:modal\`.
+- Prefer \`PORT=<port> npm run verify:all\` for Vite-backed checks. This helper starts Vite in the background, monitors readiness and early service exit, prints exit code plus log tails on failure, and cleans up the service.
+- If you start any background service manually, monitor both readiness and process exit in the same loop; if the service exits before ready, return failure immediately with exit code and stderr/stdout tail.
+- Run \`npm run screenshot:desktop\`, \`npm run screenshot:mobile\`, and \`npm run screenshot:modal\` only after Vite is ready.
 - Inspect generated screenshots in \`artifacts/\` with the available image-reading tool.
 - Fix visual and interaction issues in \`src/App.jsx\` and \`src/styles.css\`.
 - Use Playwright scripts to verify interactions. The hidden evaluator checks behavior after the task is complete.
@@ -569,6 +621,110 @@ console.log(\`wrote artifacts/\${mode}.png\`);
 `
 }
 
+function withViteScript() {
+  return `import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const separator = process.argv.indexOf("--");
+const commandArgs = separator >= 0 ? process.argv.slice(separator + 1) : [];
+if (commandArgs.length === 0) {
+  console.error("Usage: node tools/with_vite.mjs [port] -- <command...>");
+  process.exit(2);
+}
+
+let port = Number(process.env.PORT || 4173);
+if (separator > 2 && /^\\d+$/.test(process.argv[2] || "")) {
+  port = Number(process.argv[2]);
+}
+
+const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+const outDir = fileURLToPath(new URL("../artifacts/", import.meta.url));
+fs.mkdirSync(outDir, { recursive: true });
+const serverOut = path.join(outDir, "vite.stdout.log");
+const serverErr = path.join(outDir, "vite.stderr.log");
+
+function tail(file) {
+  try {
+    return fs.existsSync(file) ? fs.readFileSync(file, "utf8").slice(-4000) : "";
+  } catch {
+    return "";
+  }
+}
+
+function killProcessTree(pid) {
+  if (!pid) return;
+  if (process.platform === "win32") {
+    spawn("taskkill", ["/pid", String(pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
+  } else {
+    try { process.kill(-pid, "SIGTERM"); } catch { try { process.kill(pid, "SIGTERM"); } catch {} }
+  }
+}
+
+function startServer() {
+  return spawn(npmCmd, ["run", "start", "--", "--port", String(port), "--strictPort"], {
+    cwd: process.cwd(),
+    stdio: ["ignore", fs.openSync(serverOut, "w"), fs.openSync(serverErr, "w")],
+    windowsHide: true,
+    shell: process.platform === "win32",
+    detached: process.platform !== "win32",
+  });
+}
+
+async function waitForReady(child) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      const code = child.exitCode ?? child.signalCode ?? 1;
+      console.error(\`Background service exited before readiness. PID=\${child.pid} ExitCode=\${code}\\nStderr tail:\\n\${tail(serverErr)}\\nStdout tail:\\n\${tail(serverOut)}\`);
+      killProcessTree(child.pid);
+      process.exit(typeof code === "number" ? code || 1 : 1);
+    }
+    try {
+      const response = await fetch(\`http://127.0.0.1:\${port}\`);
+      if (response.ok) return;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  console.error(\`Background service did not become ready before timeout. PID=\${child.pid}\\nStderr tail:\\n\${tail(serverErr)}\\nStdout tail:\\n\${tail(serverOut)}\`);
+  killProcessTree(child.pid);
+  process.exit(1);
+}
+
+function runCommand() {
+  const child = spawn(commandArgs[0], commandArgs.slice(1), {
+    cwd: process.cwd(),
+    env: { ...process.env, PORT: String(port) },
+    stdio: "inherit",
+    shell: process.platform === "win32",
+    windowsHide: true,
+  });
+  return new Promise((resolve) => {
+    child.on("exit", (code, signal) => resolve({ code, signal }));
+    child.on("error", (error) => {
+      console.error(error.message);
+      resolve({ code: 1, signal: null });
+    });
+  });
+}
+
+const server = startServer();
+server.on("error", (error) => {
+  console.error(\`Failed to start background service: \${error.message}\`);
+  process.exit(1);
+});
+
+try {
+  await waitForReady(server);
+  const result = await runCommand();
+  process.exitCode = result.code ?? (result.signal ? 1 : 0);
+} finally {
+  killProcessTree(server.pid);
+}
+`
+}
+
 function playwrightSmokeScript() {
   return `import { spawn } from "node:child_process";
 import { chromium } from "playwright";
@@ -580,19 +736,35 @@ const port = Number(process.env.PORT || process.argv[2] || 4173);
 const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
 const outDir = fileURLToPath(new URL("../artifacts/", import.meta.url));
 fs.mkdirSync(outDir, { recursive: true });
+const serverOut = path.join(outDir, "vite.stdout.log");
+const serverErr = path.join(outDir, "vite.stderr.log");
+
+function killProcessTree(pid) {
+  if (!pid) return;
+  if (process.platform === "win32") {
+    spawn("taskkill", ["/pid", String(pid), "/t", "/f"], { windowsHide: true });
+  } else {
+    try { process.kill(-pid, "SIGTERM"); } catch { try { process.kill(pid, "SIGTERM"); } catch {} }
+  }
+}
 
 function startServer() {
   return spawn(npmCmd, ["run", "start", "--", "--port", String(port), "--strictPort"], {
     cwd: process.cwd(),
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", fs.openSync(serverOut, "w"), fs.openSync(serverErr, "w")],
     windowsHide: true,
     shell: process.platform === "win32",
+    detached: process.platform !== "win32",
   });
 }
 
-async function waitForServer() {
+async function waitForServer(child) {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      const tail = fs.existsSync(serverErr) ? fs.readFileSync(serverErr, "utf8").slice(-4000) : "";
+      throw new Error(\`Vite exited before readiness with code \${child.exitCode}; stderr tail:\\n\${tail}\`);
+    }
     try {
       const response = await fetch(\`http://127.0.0.1:\${port}\`);
       if (response.ok) return;
@@ -605,17 +777,13 @@ async function waitForServer() {
 function stopServer(child) {
   if (!child || child.killed) return;
   try {
-    if (process.platform === "win32" && child.pid) {
-      spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true });
-    } else {
-      child.kill("SIGTERM");
-    }
+    killProcessTree(child.pid);
   } catch {}
 }
 
 const server = startServer();
 try {
-  await waitForServer();
+  await waitForServer(server);
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 980 }, deviceScaleFactor: 1 });
   await page.goto(\`http://127.0.0.1:\${port}\`, { waitUntil: "networkidle" });
@@ -814,22 +982,34 @@ function createHiddenEvaluator() {
   return path.join(hiddenDir, "evaluate.mjs")
 }
 
-function promptPhase1(port) {
+function shellSurfaceNote(shellSurface) {
+  return shellSurface === "bash"
+    ? "The active shell surface for this run is bash. Use bash-compatible commands when you run shell steps, and prefer the provided npm scripts for Vite/Playwright verification."
+    : "The active shell surface for this run is shell_command. Use the normal platform shell commands and prefer the provided npm scripts for Vite/Playwright verification."
+}
+
+function promptPhase1(port, shellSurface = "shell_command") {
   return `You are in a front-end repair benchmark. The workspace contains a half-finished React page and three reference screenshots in reference/desktop.png, reference/mobile.png, and reference/modal.png. The screenshots show the intended visual quality; the current app has many display and interaction bugs.
 
-Do not edit files under reference/. Do not ask for hidden tests. Run npm install if dependencies are missing. Start the Vite app before Playwright probes, for example npm run start -- --port ${port} --strictPort. Because Vite is a long-running server, start it in the background, wait until http://127.0.0.1:${port} is ready, run the Playwright npm scripts with PORT=${port}, and then clean up the server; do not leave a foreground server command blocking the agent run. Use Playwright from the provided npm scripts to inspect, screenshot, interact with the page, and compare against the reference screenshots. Use your image-reading capability on generated screenshots and the reference screenshots when helpful.
+${shellSurfaceNote(shellSurface)}
+
+Do not edit files under reference/. Do not ask for hidden tests. Run npm install if dependencies are missing. Prefer PORT=${port} npm run verify:all for Vite-backed verification; this helper starts Vite in the background, waits for readiness, fails immediately if the service exits before readiness with exit code and log tails, and cleans up the service. If you start Vite manually, you must use the same behavior: keep the process handle/PID, poll both http://127.0.0.1:${port} readiness and process exit, return failure immediately with stderr/stdout tails if Vite exits early, and kill only that process tree on readiness timeout. Do not leave a foreground or orphaned server command blocking the agent run. Use Playwright from the provided npm scripts to inspect, screenshot, interact with the page, and compare against the reference screenshots. Use your image-reading capability on generated screenshots and the reference screenshots when helpful.
 
 Fix the page so the desktop, mobile, and modal states match the references in layout intent and quality. Also fix obvious interaction problems around filtering, search, create, complete, details, accessibility names, overflow, and responsive behavior. Use the provided scripts and screenshots to verify. Finish with a concise summary and mention the screenshots or probes you ran.`
 }
 
-function promptSmoke(port) {
+function promptSmoke(port, shellSurface = "shell_command") {
   return `Smoke test only. Do not repair the app. Confirm the local frontend and Playwright path works.
 
-Run npm install if dependencies are missing. Then run PORT=${port} npm run smoke:playwright. Finish by reporting the screenshot path and one observed page detail from that script output.`
+${shellSurfaceNote(shellSurface)}
+
+Run npm install if dependencies are missing. Then run PORT=${port} npm run smoke:playwright. The smoke script monitors Vite readiness and early service exit; if it fails, report the CLI error and log tail. Finish by reporting the screenshot path and one observed page detail from that script output.`
 }
 
-function promptPhase2(port) {
+function promptPhase2(port, shellSurface = "shell_command") {
   return `Follow-up feature task. Keep the visual repairs from phase 1. Add these product features and verify them with Playwright interaction and screenshots:
+
+${shellSurfaceNote(shellSurface)}
 
 - Add row selection with individual checkboxes and a select-all control.
 - Add a bulk complete action that completes selected tasks and records the action in the audit log.
@@ -837,7 +1017,7 @@ function promptPhase2(port) {
 - Add a lightweight two-stage animation: cards should enter smoothly on load/filter changes, and the create-task success state should animate without breaking prefers-reduced-motion.
 - Preserve keyboard-accessible labels and avoid horizontal overflow on mobile.
 
-You may read and use the visible tools/probe scripts. Start the Vite app in the background before Playwright probes on port ${port}, wait for readiness, run the probes/screenshots, and clean up the server so the command does not block the run.`
+You may read and use the visible tools/probe scripts. Prefer PORT=${port} npm run verify:all for Vite-backed checks. If you start Vite manually before Playwright probes, keep the process handle/PID, poll both readiness and process exit, fail immediately with exit code and stderr/stdout tail if Vite exits before readiness, and clean up only that process tree so the command does not block the run.`
 }
 
 function parseJsonl(text) {
@@ -904,29 +1084,28 @@ function countEvents(events) {
 }
 
 function startServer(workspace, port) {
-  return spawn(npmCmd, ["run", "start", "--", "--port", String(port), "--strictPort"], {
+  const child = spawn(npmCmd, ["run", "start", "--", "--port", String(port), "--strictPort"], isolatedProcessOptions({
     cwd: workspace,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "ignore", "ignore"],
     env: process.env,
     shell: process.platform === "win32",
     windowsHide: true,
-  })
+  }))
+  child.once("error", () => {})
+  return child
 }
 
 function stopServer(child) {
   if (!child || child.killed) return
   try {
-    if (process.platform === "win32" && child.pid) {
-      spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true })
-    } else {
-      child.kill("SIGTERM")
-    }
+    killProcessTree(child.pid)
   } catch {}
 }
 
-async function waitForServer(port) {
+async function waitForServer(port, child = null) {
   const deadline = Date.now() + 30_000
   while (Date.now() < deadline) {
+    if (child?.exitCode !== null || child?.signalCode !== null) return false
     try {
       const response = await fetch(`http://127.0.0.1:${port}`)
       if (response.ok) return true
@@ -936,7 +1115,7 @@ async function waitForServer(port) {
   return false
 }
 
-async function runCurrentLike(agentId, exe, workspace, agentDir, agentPort) {
+async function runCurrentLike(agentId, exe, workspace, agentDir, agentPort, shellSurface = "shell_command") {
   const common = [
     "exec",
     "--json",
@@ -950,8 +1129,10 @@ async function runCurrentLike(agentId, exe, workspace, agentDir, agentPort) {
     `model_reasoning_effort="${reasoning}"`,
     ...serviceTierConfigArgs(),
   ]
-  const first = await runLive(exe, [...common, smokeOnly ? promptSmoke(agentPort) : promptPhase1(agentPort)], {
+  const env = envForShellSurface(shellSurface)
+  const first = await runLive(exe, [...common, smokeOnly ? promptSmoke(agentPort, shellSurface) : promptPhase1(agentPort, shellSurface)], {
     cwd: workspace,
+    env,
     timeoutMs,
     stdoutPath: path.join(agentDir, "phase1.stdout.jsonl"),
     stderrPath: path.join(agentDir, "phase1.stderr.log"),
@@ -973,10 +1154,11 @@ async function runCurrentLike(agentId, exe, workspace, agentDir, agentPort) {
           `model_reasoning_effort="${reasoning}"`,
           ...serviceTierConfigArgs(),
           threadId,
-          promptPhase2(agentPort),
+          promptPhase2(agentPort, shellSurface),
         ],
         {
           cwd: workspace,
+          env,
           timeoutMs,
           stdoutPath: path.join(agentDir, "phase2.stdout.jsonl"),
           stderrPath: path.join(agentDir, "phase2.stderr.log"),
@@ -987,7 +1169,7 @@ async function runCurrentLike(agentId, exe, workspace, agentDir, agentPort) {
   return { first, second, threadId, error: first.error || second.error || null }
 }
 
-async function runTura(workspace, agentDir, agentPort, agentPrompt = "coding_agent_fast") {
+async function runTura(workspace, agentDir, agentPort, agentPrompt = "coding_agent_fast", shellSurface = "shell_command") {
   runOk("cargo", ["build", "-p", "gateway", "--bin", "tura"], { cwd: repoRoot, timeoutMs: 240_000 })
   const sessionId = `frontend-${Date.now()}`
   const common = [
@@ -1007,11 +1189,12 @@ async function runTura(workspace, agentDir, agentPort, agentPrompt = "coding_age
     workspace,
   ]
   const env = {
-    TURA_COMMAND_RUN_SHELL: "shell_command",
+    TURA_COMMAND_RUN_SHELL: shellSurface,
     TURA_COMMAND_RUN_STRICT_JSON: "0",
     COMMAND_RUN_AGENT_TIMEOUT_MS: String(timeoutMs),
+    ...envForShellSurface(shellSurface),
   }
-  const first = await runLive(turaExe, [...common, smokeOnly ? promptSmoke(agentPort) : promptPhase1(agentPort)], {
+  const first = await runLive(turaExe, [...common, smokeOnly ? promptSmoke(agentPort, shellSurface) : promptPhase1(agentPort, shellSurface)], {
     cwd: workspace,
     env,
     timeoutMs,
@@ -1021,7 +1204,7 @@ async function runTura(workspace, agentDir, agentPort, agentPrompt = "coding_age
   })
   const second = smokeOnly
     ? emptyRun("smoke mode skipped phase2")
-    : await runLive(turaExe, [...common, promptPhase2(agentPort)], {
+    : await runLive(turaExe, [...common, promptPhase2(agentPort, shellSurface)], {
         cwd: workspace,
         env,
         timeoutMs,
@@ -1089,7 +1272,7 @@ function writeRunLogs(agentDir, result) {
 async function evaluate(workspace, evaluator, port) {
   const server = startServer(workspace, port)
   try {
-    const ready = await waitForServer(port)
+    const ready = await waitForServer(port, server)
     if (!ready) {
       return { pass: false, error: "dev server did not become ready" }
     }
@@ -1126,15 +1309,20 @@ async function runAgent(agentId, template, evaluator, index) {
   let result
   let runError = null
   const kind = agentKind(agentId)
+  const shellSurface = shellSurfaceForAgent(agentId)
   try {
-    if (kind === "current-shll") {
-      result = await runCurrentLike(agentId, codexCurrentExe, workspace, agentDir, agentPort)
+    if (kind === "current-shll" || kind === "current-bash") {
+      result = await runCurrentLike(agentId, codexCurrentExe, workspace, agentDir, agentPort, shellSurface)
     } else if (kind === "codex-main") {
-      result = await runCurrentLike(agentId, codexMainExe, workspace, agentDir, agentPort)
+      result = await runCurrentLike(agentId, codexMainExe, workspace, agentDir, agentPort, shellSurface)
+    } else if (kind === "codex-main-bash") {
+      result = await runCurrentLike(agentId, codexMainExe, workspace, agentDir, agentPort, shellSurface)
     } else if (kind === "tura-fast-shll") {
-      result = await runTura(workspace, agentDir, agentPort, "coding_agent_fast")
+      result = await runTura(workspace, agentDir, agentPort, "coding_agent_fast", shellSurface)
     } else if (kind === "tura-shll") {
-      result = await runTura(workspace, agentDir, agentPort, "coding_agent")
+      result = await runTura(workspace, agentDir, agentPort, "coding_agent", shellSurface)
+    } else if (kind === "tura-bash") {
+      result = await runTura(workspace, agentDir, agentPort, "coding_agent", shellSurface)
     } else if (kind === "claude-code") {
       result = await runClaudeCode(workspace, agentDir, agentPort)
     } else {
@@ -1151,6 +1339,7 @@ async function runAgent(agentId, template, evaluator, index) {
     id: agentId,
     workspace,
     agent_port: agentPort,
+    shell_surface: shellSurface,
     thread_id: result.threadId,
     elapsed_ms: Math.round(performance.now() - started),
     phase1_ms: result.first.duration_ms,
