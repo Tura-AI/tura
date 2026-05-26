@@ -50,14 +50,15 @@ pub fn access(command_line: &str, session_dir: &Path) -> Access {
     let Ok(args) = parse_args_text(command_line) else {
         return Access::default();
     };
-    let mut access = Access::default();
-    access.read_paths = args
-        .paths
-        .iter()
-        .filter_map(|path| workspace_relative_path(path, session_dir))
-        .map(|path| path.display().to_string())
-        .collect();
-    access
+    Access {
+        read_paths: args
+            .paths
+            .iter()
+            .filter_map(|path| workspace_relative_path(path, session_dir))
+            .map(|path| path.display().to_string())
+            .collect(),
+        ..Access::default()
+    }
 }
 
 pub struct ReadMediaHandler;
@@ -376,14 +377,15 @@ fn access_for_value(value: &Value, session_dir: &Path) -> Access {
     let Ok(args) = parse_args_value(value.clone()) else {
         return Access::default();
     };
-    let mut access = Access::default();
-    access.read_paths = args
-        .paths
-        .iter()
-        .filter_map(|path| workspace_relative_path(path, session_dir))
-        .map(|path| path.display().to_string())
-        .collect();
-    access
+    Access {
+        read_paths: args
+            .paths
+            .iter()
+            .filter_map(|path| workspace_relative_path(path, session_dir))
+            .map(|path| path.display().to_string())
+            .collect(),
+        ..Access::default()
+    }
 }
 
 fn run_read_media(
@@ -575,7 +577,7 @@ fn render_contact_sheet(items: &[SheetItem]) -> Result<DynamicImage, String> {
     let cols = if items.len() <= 4 { 2 } else { 4 };
     let tile_w = 240u32;
     let tile_h = 190u32;
-    let rows = (items.len() + cols - 1) / cols;
+    let rows = items.len().div_ceil(cols);
     let mut sheet = RgbImage::from_pixel(
         tile_w * cols as u32,
         tile_h * rows as u32,
@@ -876,7 +878,7 @@ fn file_tile_preview(path: &Path, args: &ReadMediaArgs) -> Vec<Value> {
         .unwrap_or("FILE")
         .to_ascii_uppercase();
     let size = std::fs::metadata(path)
-        .map(|metadata| format!("{} KB", (metadata.len() + 1023) / 1024))
+        .map(|metadata| format!("{} KB", metadata.len().div_ceil(1024)))
         .unwrap_or_else(|_| "UNKNOWN SIZE".to_string());
     draw_text(&mut image, 24, 42, &kind, Rgb([20, 20, 20]));
     draw_text(&mut image, 24, 96, &name, Rgb([20, 20, 20]));

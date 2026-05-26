@@ -1,22 +1,48 @@
 import type { JsonObject } from "./common.js";
 
 export type SessionStatusValue = "idle" | "busy" | "error";
+export type PlanStatus =
+  | "todo"
+  | "doing"
+  | "question"
+  | "done"
+  | "archived";
+export type StartCondition =
+  | "session_idle"
+  | "user_action"
+  | "scheduled_task"
+  | "polling_task";
+
+export interface PollInterval {
+  m?: number;
+  d?: number;
+  h?: number;
+  s?: number;
+}
+
+export interface TaskManagement {
+  nonce_id?: string;
+  step?: number;
+  task_summary?: string;
+  delivery?: string;
+  sub_session_id?: string;
+  start_at?: string | number;
+  poll_interval?: PollInterval;
+  status?: PlanStatus;
+  plan_summary?: string;
+  tasks?: TaskManagement[];
+}
 
 export interface Session {
   id: string;
-  slug?: string;
   name?: string | null;
-  title?: string | null;
-  parentID?: string | null;
   parent_id?: string | null;
   created_at?: number;
   updated_at?: number;
-  time?: { created?: number; updated?: number };
   directory?: string | null;
   model?: string | null;
   agent?: string | null;
   session_type?: string | null;
-  sessionType?: string | null;
   lsp?: unknown;
   kill_processes_on_start?: boolean;
   validator_enabled?: boolean;
@@ -25,6 +51,9 @@ export interface Session {
   model_acceleration_enabled?: boolean;
   status?: SessionStatusValue;
   message_count?: number;
+  task_management?: TaskManagement;
+  plan_summary?: string | null;
+  session_display_name?: string | null;
 }
 
 export interface MessagePart {
@@ -84,6 +113,7 @@ export interface CreateSessionRequest {
   kill_processes_on_start?: boolean;
   validator_enabled?: boolean;
   force_multiple_tasks?: boolean;
+  task_management?: TaskManagement;
 }
 
 export interface PromptPayload {
@@ -106,11 +136,17 @@ export interface RunResult {
 }
 
 export function sessionTitle(session: Session): string {
-  return (session.title || session.name || session.id || "New Session").toString();
+  return (
+    session.session_display_name ||
+    session.plan_summary ||
+    session.name ||
+    session.id ||
+    "New Session"
+  ).toString();
 }
 
 export function sessionUpdatedAt(session: Session): number {
-  return session.updated_at ?? session.time?.updated ?? 0;
+  return session.updated_at ?? 0;
 }
 
 export function sessionStatusText(status: unknown): SessionStatusValue {
@@ -119,10 +155,78 @@ export function sessionStatusText(status: unknown): SessionStatusValue {
     return "idle";
   }
   if (status && typeof status === "object") {
-    const type = (status as JsonObject).type;
+    const object = status as JsonObject;
+    const nested = object.status;
+    if (nested) return sessionStatusText(nested);
+    const type = object.type;
     if (type === "busy" || type === "error") return type;
   }
   return "idle";
+}
+
+export function sessionTaskManagement(session: Session): TaskManagement {
+  return session.task_management ?? {};
+}
+
+export function sessionPlanSummary(session: Session): string {
+  const task = sessionTaskManagement(session);
+  return (
+    session.plan_summary ||
+    task.plan_summary ||
+    sessionTitle(session)
+  ).toString();
+}
+
+export function sessionTaskSummary(session: Session): string {
+  const task = sessionTaskManagement(session);
+  return (
+    task.task_summary ||
+    sessionPlanSummary(session)
+  ).toString();
+}
+
+export function sessionPlanStatus(session: Session): PlanStatus {
+  const task = sessionTaskManagement(session);
+  const status = task.status;
+  return isLifecyclePlanStatus(status) ? status : "todo";
+}
+
+export const sessionTaskStatus = sessionPlanStatus;
+
+export function sessionStartCondition(session: Session): StartCondition {
+  const task = sessionTaskManagement(session);
+  if (hasPollInterval(task.poll_interval)) return "polling_task";
+  return task.start_at ? "scheduled_task" : "user_action";
+}
+
+export function sessionStartAt(session: Session): string | number | undefined {
+  const task = sessionTaskManagement(session);
+  return task.start_at;
+}
+
+export function sessionPollInterval(session: Session): PollInterval {
+  const task = sessionTaskManagement(session);
+  return task.poll_interval ?? {};
+}
+
+export function sessionDirectory(session: Session): string {
+  return session.directory ?? "";
+}
+
+export function isPlanStatus(value: unknown): value is PlanStatus {
+  return isLifecyclePlanStatus(value);
+}
+
+function isLifecyclePlanStatus(value: unknown): value is Exclude<PlanStatus, StartCondition> {
+  return value === "todo" || value === "doing" || value === "question" || value === "done" || value === "archived";
+}
+
+function hasPollInterval(value: PollInterval | undefined): boolean {
+  return Boolean(value && (value.m || value.d || value.h || value.s));
+}
+
+export function isStartCondition(value: unknown): value is StartCondition {
+  return value === "session_idle" || value === "user_action" || value === "scheduled_task" || value === "polling_task";
 }
 
 export function normalizeMessage(value: Message | MessageEnvelope): Message {

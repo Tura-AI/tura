@@ -26,17 +26,6 @@ pub struct WorkerEnvelope {
     pub payload: Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkerResponse {
-    pub ok: bool,
-    pub worker_id: String,
-    pub service_name: String,
-    pub output: Value,
-    pub stderr: String,
-    pub exit_code: i32,
-    pub mode: String,
-}
-
 #[derive(Debug, Clone)]
 pub struct WorkerHandle {
     pub worker_id: String,

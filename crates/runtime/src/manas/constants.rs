@@ -1,6 +1,6 @@
 pub(super) const MULTIPLE_TASKS_TOOL: &str = "multiple_tasks";
 pub(super) const COMMAND_RUN_TOOL: &str = "command_run";
-pub(super) const TASK_DELIVERED_TOOL: &str = "task_delivered";
+pub(super) const TASK_STATUS_COMMAND: &str = "task_status";
 pub(super) const APPLY_DIFF_TOOL: &str = "apply_patch";
 pub(super) const DELETE_FILE_TOOL: &str = "rm";
 pub(super) const WRITE_FILE_TOOL: &str = "tee";

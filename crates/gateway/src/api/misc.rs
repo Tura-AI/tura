@@ -314,7 +314,7 @@ fn select_directory(title: Option<&str>) -> anyhow::Result<Option<String>> {
             return Ok(None);
         }
         let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        return Ok((!path.is_empty()).then_some(path));
+        Ok((!path.is_empty()).then_some(path))
     }
 
     #[cfg(not(target_os = "windows"))]

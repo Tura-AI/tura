@@ -131,6 +131,10 @@ pub struct AgentManagement {
 
 impl AgentManagement {
     /// Creates a new agent in `Idle` state.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "agent state construction mirrors the serialized state-machine fields"
+    )]
     pub fn new(
         agent_id: AgentId,
         agent_name: AgentName,

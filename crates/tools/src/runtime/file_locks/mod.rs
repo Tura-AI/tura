@@ -148,3 +148,37 @@ fn can_acquire(state: &LockState, key: &str, mode: LockMode) -> bool {
     state.readers.get(WORKSPACE_LOCK).copied().unwrap_or(0) == 0
         && state.readers.get(key).copied().unwrap_or(0) == 0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    #[test]
+    fn workspace_write_blocks_path_locks_until_released() {
+        let manager = Arc::new(FileLockManager::new());
+        let workspace_guard = manager.acquire(&Access {
+            workspace_write: true,
+            ..Access::default()
+        });
+        let acquired = Arc::new(AtomicBool::new(false));
+        let worker_manager = Arc::clone(&manager);
+        let worker_acquired = Arc::clone(&acquired);
+
+        let worker = std::thread::spawn(move || {
+            let _guard = worker_manager.acquire(&Access {
+                write_paths: vec!["src/lib.rs".to_string()],
+                ..Access::default()
+            });
+            worker_acquired.store(true, Ordering::SeqCst);
+        });
+
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(!acquired.load(Ordering::SeqCst));
+        drop(workspace_guard);
+        worker.join().expect("worker should acquire after release");
+        assert!(acquired.load(Ordering::SeqCst));
+    }
+}

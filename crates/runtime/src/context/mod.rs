@@ -6,7 +6,8 @@ mod workspace_snapshot;
 pub use context_management::{
     accumulate_message, accumulate_tool_result, accumulate_tool_result_with_feedback,
     accumulate_tool_result_with_provider_metadata, build_context, build_messages_from_session,
-    compact_session_context, messages_with_runtime_context, ContextInput, ContextOutput,
+    compact_session_context, messages_with_runtime_context, user_input_content_matches,
+    user_input_content_value, ContextInput, ContextOutput,
 };
 pub(crate) use workspace_snapshot::WorkspaceSnapshot;
 

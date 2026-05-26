@@ -119,7 +119,7 @@ impl WorkerProcess {
         }
 
         let parsed: Value = serde_json::from_str(line.trim())?;
-        if !parsed.get("ok").is_some() {
+        if parsed.get("ok").is_none() {
             warn!(
                 worker_id = worker_id,
                 service_name = service_name,

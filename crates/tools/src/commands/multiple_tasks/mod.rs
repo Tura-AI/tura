@@ -13,8 +13,13 @@ use std::path::Path;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct MultipleTask {
+    nonce_id: String,
+    #[serde(default)]
+    step: Option<u64>,
+    #[serde(default)]
     task_summary: String,
-    deliverble: String,
+    #[serde(default)]
+    delivery: String,
 }
 
 pub struct MultipleTasksHandler;
@@ -98,7 +103,7 @@ fn normalize_multiple_tasks_output(value: Value, _session_dir: &Path) -> Result<
     let tasks_value = normalize_provider_task_value(value)?;
     let tasks: Vec<MultipleTask> = serde_json::from_value(tasks_value).map_err(|err| {
         format!(
-            "multiple_tasks expects an array of objects with task_summary and deliverble: {err}"
+            "multiple_tasks expects an array of objects with required nonce_id and optional step, task_summary, and delivery: {err}"
         )
     })?;
     if tasks.len() < 2 {
@@ -113,8 +118,10 @@ fn normalize_multiple_tasks_output(value: Value, _session_dir: &Path) -> Result<
         .map(|(index, task)| {
             json!({
                 "index": index + 1,
+                "nonce_id": task.nonce_id.trim(),
+                "step": task.step.unwrap_or(index as u64),
                 "task_summary": task.task_summary.trim(),
-                "deliverble": task.deliverble.trim()
+                "delivery": task.delivery.trim()
             })
         })
         .collect::<Vec<_>>();
@@ -138,13 +145,11 @@ fn normalize_provider_task_value(value: Value) -> Result<Value, String> {
             return normalize_provider_task_value(parse_provider_task_field(value)?);
         }
     }
-    if object.contains_key("task_summary")
-        || object.contains_key("deliverble")
-        || object.contains_key("deliverable")
+    if object.contains_key("nonce_id")
+        || object.contains_key("task_summary")
+        || object.contains_key("delivery")
     {
-        return Ok(Value::Array(vec![normalize_task_object(Value::Object(
-            object.clone(),
-        ))]));
+        return Ok(Value::Array(vec![Value::Object(object.clone())]));
     }
     Ok(Value::Object(object.clone()))
 }
@@ -186,19 +191,7 @@ fn parse_powershell_task_object(text: &str) -> Option<Value> {
         }
         object.insert(key.to_string(), Value::String(value.to_string()));
     }
-    (!object.is_empty()).then(|| normalize_task_object(Value::Object(object)))
-}
-
-fn normalize_task_object(value: Value) -> Value {
-    let Some(mut object) = value.as_object().cloned() else {
-        return value;
-    };
-    if !object.contains_key("deliverble") {
-        if let Some(deliverable) = object.get("deliverable").cloned() {
-            object.insert("deliverble".to_string(), deliverable);
-        }
-    }
-    Value::Object(object)
+    (!object.is_empty()).then_some(Value::Object(object))
 }
 
 #[cfg(test)]
@@ -210,14 +203,14 @@ mod tests {
     #[test]
     fn multiple_tasks_accepts_task_array() {
         let output = execute(
-            r#"[{"task_summary":"Inspect code","deliverble":"Find files and criteria."},{"task_summary":"Patch code","deliverble":"Edit files and run tests."}]"#,
+            r#"[{"nonce_id":"inspect","task_summary":"Inspect code","delivery":"Find files and criteria."},{"nonce_id":"patch","task_summary":"Patch code","delivery":"Edit files and run tests."}]"#,
             Path::new("."),
         );
 
         assert!(output.success, "{}", output.stderr);
         assert_eq!(output.output["steps"][0]["task_summary"], "Inspect code");
         assert_eq!(
-            output.output["steps"][1]["deliverble"],
+            output.output["steps"][1]["delivery"],
             "Edit files and run tests."
         );
     }
@@ -226,7 +219,7 @@ mod tests {
     fn multiple_tasks_rejects_single_task() {
         let output = execute(
             &json!([
-                {"task_summary":"Only step","deliverble":"One thing."}
+                {"nonce_id":"only","task_summary":"Only step","delivery":"One thing."}
             ])
             .to_string(),
             Path::new("."),
@@ -240,7 +233,7 @@ mod tests {
     fn multiple_tasks_accepts_command_line_json_wrapper() {
         let output = execute_value(
             json!({
-                "command_line": "[{\"task_summary\":\"One\",\"deliverble\":\"First.\"},{\"task_summary\":\"Two\",\"deliverble\":\"Second.\"}]"
+                "command_line": "[{\"nonce_id\":\"one\",\"task_summary\":\"One\",\"delivery\":\"First.\"},{\"nonce_id\":\"two\",\"task_summary\":\"Two\",\"delivery\":\"Second.\"}]"
             }),
             Path::new("."),
         );
@@ -253,7 +246,7 @@ mod tests {
     fn multiple_tasks_accepts_gemini_items_powershell_wrapper() {
         let output = execute_value(
             json!({
-                "items": ["@{deliverble=First deliverable.; task_summary=First task}"]
+                "items": ["@{nonce_id=first; delivery=First deliverable.; task_summary=First task}"]
             }),
             Path::new("."),
         );

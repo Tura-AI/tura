@@ -10,8 +10,10 @@ use crate::session::manager::{
     normalize_session_type, runtime_provider_for_session, LspSessionConfig, SessionInfo,
     SessionManager, SessionStatus as SessionStatusMano,
 };
-use chrono::Utc;
-use code_tools_suite::state_machine::session_management::SessionState;
+use chrono::{DateTime, Utc};
+use code_tools_suite::state_machine::session_management::{
+    PlanStatus, PollInterval, SessionState, StartCondition, TaskStep,
+};
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -68,6 +70,13 @@ struct PersistedSessionRecord {
     parent_id: Option<String>,
     messages: Vec<Message>,
     todos: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduledTaskRun {
+    pub session_id: String,
+    pub task_summary: String,
+    pub start_condition: StartCondition,
 }
 
 impl Default for SessionStore {
@@ -171,7 +180,7 @@ impl SessionStore {
         self.todos.write().insert(session_id.clone(), record.todos);
         if let Some(parent_id) = record.parent_id.filter(|value| !value.trim().is_empty()) {
             let mut children = self.children.write();
-            let entry = children.entry(parent_id).or_insert_with(Vec::new);
+            let entry = children.entry(parent_id).or_default();
             if !entry.iter().any(|id| id == &session_id) {
                 entry.push(session_id);
             }
@@ -252,61 +261,16 @@ impl SessionStore {
         self.sessions
             .read()
             .values()
-            .map(|info| ApiSession {
-                id: info.id.clone(),
-                name: info.name.clone(),
-                parent_id: parent_by_child.get(&info.id).cloned(),
-                created_at: info.created_at,
-                updated_at: info.updated_at,
-                directory: info.directory.clone(),
-                model: info.model.clone(),
-                agent: info.agent.clone(),
-                session_type: info.session_type.clone(),
-                lsp: Some(
-                    serde_json::to_value(&info.lsp).unwrap_or_else(|_| serde_json::json!({})),
-                ),
-                kill_processes_on_start: info.kill_processes_on_start,
-                validator_enabled: info.validator_enabled,
-                force_multiple_tasks: info.force_multiple_tasks,
-                disable_permission_restrictions: info.disable_permission_restrictions,
-                model_variant: info.model_variant.clone(),
-                model_acceleration_enabled: info.model_acceleration_enabled,
-                status: match info.status {
-                    SessionStatusMano::Idle => ApiSessionStatus::Idle,
-                    SessionStatusMano::Busy => ApiSessionStatus::Busy,
-                    SessionStatusMano::Error => ApiSessionStatus::Error,
-                },
-                message_count: info.message_count,
-            })
+            .map(|info| api_session_from_info(info, parent_by_child.get(&info.id).cloned()))
             .collect()
     }
 
     pub fn get_session(&self, session_id: &str) -> Option<ApiSession> {
         let parent_id = self.parent_for_child(session_id);
-        self.sessions.read().get(session_id).map(|info| ApiSession {
-            id: info.id.clone(),
-            name: info.name.clone(),
-            parent_id,
-            created_at: info.created_at,
-            updated_at: info.updated_at,
-            directory: info.directory.clone(),
-            model: info.model.clone(),
-            agent: info.agent.clone(),
-            session_type: info.session_type.clone(),
-            lsp: Some(serde_json::to_value(&info.lsp).unwrap_or_else(|_| serde_json::json!({}))),
-            kill_processes_on_start: info.kill_processes_on_start,
-            validator_enabled: info.validator_enabled,
-            force_multiple_tasks: info.force_multiple_tasks,
-            disable_permission_restrictions: info.disable_permission_restrictions,
-            model_variant: info.model_variant.clone(),
-            model_acceleration_enabled: info.model_acceleration_enabled,
-            status: match info.status {
-                SessionStatusMano::Idle => ApiSessionStatus::Idle,
-                SessionStatusMano::Busy => ApiSessionStatus::Busy,
-                SessionStatusMano::Error => ApiSessionStatus::Error,
-            },
-            message_count: info.message_count,
-        })
+        self.sessions
+            .read()
+            .get(session_id)
+            .map(|info| api_session_from_info(info, parent_id))
     }
 
     pub fn get_session_info(&self, session_id: &str) -> Option<SessionInfo> {
@@ -369,7 +333,7 @@ impl SessionStore {
         }
         let root_id = self.root_session_id(session_id);
         let mut commands = self.user_commands.write();
-        let entry = commands.entry(root_id).or_insert_with(Vec::new);
+        let entry = commands.entry(root_id).or_default();
         entry.push(command.to_string());
         entry.clone()
     }
@@ -405,9 +369,7 @@ impl SessionStore {
             }
             {
                 let mut children = self.children.write();
-                let entry = children
-                    .entry(parent_session_id.to_string())
-                    .or_insert_with(Vec::new);
+                let entry = children.entry(parent_session_id.to_string()).or_default();
                 if !entry.iter().any(|id| id == child_session_id) {
                     entry.push(child_session_id.to_string());
                 }
@@ -443,16 +405,14 @@ impl SessionStore {
         self.messages
             .write()
             .entry(child_session_id.to_string())
-            .or_insert_with(Vec::new);
+            .or_default();
         self.todos
             .write()
             .entry(child_session_id.to_string())
-            .or_insert_with(Vec::new);
+            .or_default();
         {
             let mut children = self.children.write();
-            let entry = children
-                .entry(parent_session_id.to_string())
-                .or_insert_with(Vec::new);
+            let entry = children.entry(parent_session_id.to_string()).or_default();
             if !entry.iter().any(|id| id == child_session_id) {
                 entry.push(child_session_id.to_string());
             }
@@ -465,6 +425,10 @@ impl SessionStore {
         session
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "gateway session creation mirrors the persisted session schema"
+    )]
     pub fn create_session(
         &self,
         directory: Option<String>,
@@ -503,30 +467,7 @@ impl SessionStore {
         info.management.use_last_tool_call_response = info.use_last_tool_call_response;
         let session_id = info.id.clone();
 
-        let session = ApiSession {
-            id: info.id.clone(),
-            name: info.name.clone(),
-            parent_id: None,
-            created_at: info.created_at,
-            updated_at: info.updated_at,
-            directory: info.directory.clone(),
-            model: info.model.clone(),
-            agent: info.agent.clone(),
-            session_type: info.session_type.clone(),
-            lsp: Some(serde_json::to_value(&info.lsp).unwrap_or_else(|_| serde_json::json!({}))),
-            kill_processes_on_start: info.kill_processes_on_start,
-            validator_enabled: info.validator_enabled,
-            force_multiple_tasks: info.force_multiple_tasks,
-            model_variant: info.model_variant.clone(),
-            model_acceleration_enabled: info.model_acceleration_enabled,
-            disable_permission_restrictions: info.disable_permission_restrictions,
-            status: match info.status {
-                SessionStatusMano::Idle => ApiSessionStatus::Idle,
-                SessionStatusMano::Busy => ApiSessionStatus::Busy,
-                SessionStatusMano::Error => ApiSessionStatus::Error,
-            },
-            message_count: info.message_count,
-        };
+        let session = api_session_from_info(&info, None);
 
         self.sessions.write().insert(session_id.clone(), info);
         self.messages.write().insert(session_id, Vec::new());
@@ -537,6 +478,10 @@ impl SessionStore {
         session
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "gateway session update applies independent optional patch fields"
+    )]
     pub fn update_session(
         &self,
         session_id: &str,
@@ -549,7 +494,9 @@ impl SessionStore {
         validator_enabled: Option<bool>,
         force_multiple_tasks: Option<bool>,
         disable_permission_restrictions: Option<bool>,
+        task_management: Option<serde_json::Value>,
     ) -> Option<ApiSession> {
+        let parent_id = self.parent_for_child(session_id);
         let mut sessions = self.sessions.write();
         let info = sessions.get_mut(session_id)?;
         let has_model_override = model.is_some();
@@ -599,33 +546,23 @@ impl SessionStore {
             info.disable_permission_restrictions = disable_permission_restrictions;
             info.management.disable_permission_restrictions = disable_permission_restrictions;
         }
+        if let Some(task_management) = task_management {
+            let mut patched = info.clone();
+            match apply_task_management_patch(&mut patched, task_management) {
+                Ok(()) => {
+                    info.name = patched.name;
+                    info.management.session_name = patched.management.session_name;
+                    info.management.task_plan = patched.management.task_plan;
+                }
+                Err(err) => {
+                    tracing::warn!(session_id, error = %err, "invalid task management patch ignored");
+                }
+            }
+        }
 
         info.updated_at = Utc::now().timestamp_millis();
 
-        let session = ApiSession {
-            id: info.id.clone(),
-            name: info.name.clone(),
-            parent_id: self.parent_for_child(session_id),
-            created_at: info.created_at,
-            updated_at: info.updated_at,
-            directory: info.directory.clone(),
-            model: info.model.clone(),
-            agent: info.agent.clone(),
-            session_type: info.session_type.clone(),
-            lsp: Some(serde_json::to_value(&info.lsp).unwrap_or_else(|_| serde_json::json!({}))),
-            kill_processes_on_start: info.kill_processes_on_start,
-            validator_enabled: info.validator_enabled,
-            force_multiple_tasks: info.force_multiple_tasks,
-            model_variant: info.model_variant.clone(),
-            model_acceleration_enabled: info.model_acceleration_enabled,
-            disable_permission_restrictions: info.disable_permission_restrictions,
-            status: match info.status {
-                SessionStatusMano::Idle => ApiSessionStatus::Idle,
-                SessionStatusMano::Busy => ApiSessionStatus::Busy,
-                SessionStatusMano::Error => ApiSessionStatus::Error,
-            },
-            message_count: info.message_count,
-        };
+        let session = api_session_from_info(info, parent_id);
         drop(sessions);
         self.persist_active_config(&session);
         self.persist_session(session_id);
@@ -798,14 +735,22 @@ impl SessionStore {
         };
 
         let mut messages = self.messages.write();
-        let session_messages = messages
-            .entry(session_id.to_string())
-            .or_insert_with(Vec::new);
+        let session_messages = messages.entry(session_id.to_string()).or_default();
         session_messages.push(message.clone());
 
         if let Some(info) = self.sessions.write().get_mut(session_id) {
             info.message_count = session_messages.len();
             info.updated_at = now;
+            if role == MessageRole::User {
+                if let Some(text) = message.parts.first().and_then(|part| part.text.clone()) {
+                    if info.management.input.user_input.trim().is_empty() {
+                        info.management.input.user_input = text.clone();
+                    }
+                    info.management
+                        .session_log
+                        .push(format!("user_input: {text}"));
+                }
+            }
         }
         drop(messages);
         self.persist_session(session_id);
@@ -886,9 +831,7 @@ impl SessionStore {
 
         {
             let mut messages = self.messages.write();
-            let session_messages = messages
-                .entry(session_id.to_string())
-                .or_insert_with(Vec::new);
+            let session_messages = messages.entry(session_id.to_string()).or_default();
             if let Some(message) = session_messages.iter_mut().find(|message| {
                 message.parts.iter().any(|part| {
                     part.part_type == "tool"
@@ -954,9 +897,7 @@ impl SessionStore {
         };
 
         let mut messages = self.messages.write();
-        let session_messages = messages
-            .entry(session_id.to_string())
-            .or_insert_with(Vec::new);
+        let session_messages = messages.entry(session_id.to_string()).or_default();
         session_messages.push(message.clone());
 
         if let Some(info) = self.sessions.write().get_mut(session_id) {
@@ -1035,6 +976,69 @@ impl SessionStore {
                 },
             },
         });
+    }
+
+    pub fn claim_due_task_runs(&self, now: DateTime<Utc>) -> Vec<ScheduledTaskRun> {
+        let mut claimed = Vec::new();
+        let mut persist_ids = Vec::new();
+        {
+            let mut sessions = self.sessions.write();
+            for info in sessions.values_mut() {
+                if !matches!(info.status, SessionStatusMano::Idle) {
+                    continue;
+                }
+
+                let Some(task_index) = info
+                    .management
+                    .task_plan
+                    .detailed_tasks
+                    .iter()
+                    .position(|task| task_is_scheduler_eligible(task, now))
+                else {
+                    continue;
+                };
+
+                let plan_summary = info.management.task_plan.plan_summary.clone();
+                let task = &mut info.management.task_plan.detailed_tasks[task_index];
+                let start_condition = task.start_condition;
+                let task_summary = task_display_summary(task, &plan_summary);
+                task.status = PlanStatus::Doing;
+                if matches!(start_condition, StartCondition::PollingTask) {
+                    task.start_at = next_polling_start(task.start_at, task.poll_interval, now);
+                }
+
+                info.status = SessionStatusMano::Busy;
+                info.updated_at = now.timestamp_millis();
+                info.management.state = SessionState::Running;
+                info.management.session_last_update_at = now;
+                claimed.push(ScheduledTaskRun {
+                    session_id: info.id.clone(),
+                    task_summary,
+                    start_condition,
+                });
+                persist_ids.push(info.id.clone());
+            }
+        }
+
+        for session_id in persist_ids {
+            self.persist_session(&session_id);
+            if let Some(session) = self.get_session(&session_id) {
+                self.push_event(GlobalEvent::SessionUpdated {
+                    properties: crate::api::types::SessionUpdatedProperties {
+                        session_id: session_id.clone(),
+                        info: session,
+                    },
+                });
+            }
+            self.push_event(GlobalEvent::SessionStatus {
+                properties: crate::api::types::SessionStatusProperties {
+                    session_id,
+                    status: serde_json::json!({ "type": "busy" }),
+                },
+            });
+        }
+
+        claimed
     }
 
     pub fn replace_management(
@@ -1117,6 +1121,20 @@ impl SessionStore {
 }
 
 fn api_session_from_info(info: &SessionInfo, parent_id: Option<String>) -> ApiSession {
+    let plan_summary = info.management.task_plan.plan_summary.trim().to_string();
+    let plan_summary = (!plan_summary.is_empty()).then_some(plan_summary);
+    let first_task_summary = info
+        .management
+        .task_plan
+        .detailed_tasks
+        .first()
+        .map(|task| task.task_summary.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let session_display_name = plan_summary
+        .clone()
+        .or(first_task_summary)
+        .or_else(|| info.name.clone().filter(|value| !value.trim().is_empty()))
+        .or_else(|| Some("New Session".to_string()));
     ApiSession {
         id: info.id.clone(),
         name: info.name.clone(),
@@ -1140,7 +1158,323 @@ fn api_session_from_info(info: &SessionInfo, parent_id: Option<String>) -> ApiSe
             SessionStatusMano::Error => ApiSessionStatus::Error,
         },
         message_count: info.message_count,
+        task_management: info.management.task_management_json(),
+        plan_summary,
+        session_display_name,
     }
+}
+
+fn ensure_first_task(info: &mut SessionInfo) -> &mut TaskStep {
+    if info.management.task_plan.detailed_tasks.is_empty() {
+        let summary = info
+            .management
+            .task_plan
+            .plan_summary
+            .clone()
+            .if_empty(|| info.management.session_name.clone());
+        let nonce_id = format!("{}:0", info.management.session_id);
+        info.management.task_plan.detailed_tasks.push(TaskStep {
+            nonce_id,
+            step: 0,
+            sub_session_id: String::new(),
+            start_at: Utc::now(),
+            poll_interval: PollInterval::default(),
+            start_condition: StartCondition::UserAction,
+            task_name: summary.clone(),
+            status: PlanStatus::Todo,
+            task_summary: summary.clone(),
+            step_task: summary,
+            ..TaskStep::default()
+        });
+    }
+    info.management
+        .task_plan
+        .detailed_tasks
+        .first_mut()
+        .expect("first task should exist")
+}
+
+trait EmptyStringExt {
+    fn if_empty(self, fallback: impl FnOnce() -> String) -> String;
+}
+
+impl EmptyStringExt for String {
+    fn if_empty(self, fallback: impl FnOnce() -> String) -> String {
+        if self.trim().is_empty() {
+            fallback()
+        } else {
+            self
+        }
+    }
+}
+
+fn apply_task_management_patch(
+    info: &mut SessionInfo,
+    patch: serde_json::Value,
+) -> Result<(), String> {
+    if let Some(tasks) = patch.as_array() {
+        return apply_task_list_patch(info, tasks);
+    }
+    let Some(object) = patch.as_object() else {
+        return Err("task_management must be an object or array".to_string());
+    };
+    if let Some(tasks) = object.get("tasks").and_then(serde_json::Value::as_array) {
+        apply_task_list_patch(info, tasks)?;
+    }
+
+    if let Some(summary) = string_field(object, &["plan_summary"]) {
+        info.management.task_plan.plan_summary = summary.clone();
+        if info.name.as_deref().is_none_or(str::is_empty) {
+            info.name = Some(summary.clone());
+        }
+        if info.management.session_name.trim().is_empty()
+            || info.management.session_name == "New Session"
+        {
+            info.management.session_name = summary;
+        }
+    }
+
+    if !object_has_any_field(object, TASK_MANAGEMENT_TASK_PATCH_FIELDS) {
+        return Ok(());
+    }
+
+    let task_summary = {
+        let task = ensure_first_task(info);
+        apply_single_task_patch(task, object)?;
+        task.task_summary.clone()
+    };
+    if info.management.task_plan.plan_summary.trim().is_empty() {
+        info.management.task_plan.plan_summary = task_summary;
+    }
+    Ok(())
+}
+
+const TASK_MANAGEMENT_TASK_PATCH_FIELDS: &[&str] = &[
+    "nonce_id",
+    "step",
+    "task_summary",
+    "delivery",
+    "sub_session_id",
+    "start_at",
+    "poll_interval",
+    "status",
+];
+
+fn apply_task_list_patch(
+    info: &mut SessionInfo,
+    tasks: &[serde_json::Value],
+) -> Result<(), String> {
+    for value in tasks {
+        let Some(object) = value.as_object() else {
+            return Err("tasks entries must be objects".to_string());
+        };
+        let nonce_id = string_field(object, &["nonce_id"]).unwrap_or_else(|| {
+            format!(
+                "{}:{}",
+                info.management.session_id,
+                info.management.task_plan.detailed_tasks.len()
+            )
+        });
+        let position = info
+            .management
+            .task_plan
+            .detailed_tasks
+            .iter()
+            .position(|task| task.nonce_id == nonce_id);
+        let index = match position {
+            Some(index) => index,
+            None => {
+                let step = number_field(object, &["step"])
+                    .unwrap_or(info.management.task_plan.detailed_tasks.len() as u64);
+                info.management.task_plan.detailed_tasks.push(TaskStep {
+                    nonce_id: nonce_id.clone(),
+                    step,
+                    start_at: Utc::now(),
+                    start_condition: StartCondition::UserAction,
+                    ..TaskStep::default()
+                });
+                info.management.task_plan.detailed_tasks.len() - 1
+            }
+        };
+        apply_single_task_patch(&mut info.management.task_plan.detailed_tasks[index], object)?;
+        if info.management.task_plan.detailed_tasks[index]
+            .nonce_id
+            .trim()
+            .is_empty()
+        {
+            info.management.task_plan.detailed_tasks[index].nonce_id = nonce_id;
+        }
+    }
+    Ok(())
+}
+
+fn apply_single_task_patch(
+    task: &mut TaskStep,
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    if let Some(nonce_id) = string_field(object, &["nonce_id"]) {
+        task.nonce_id = nonce_id;
+    }
+    if let Some(step) = number_field(object, &["step"]) {
+        task.step = step;
+    }
+    if let Some(summary) = string_field(object, &["task_summary"]) {
+        task.task_summary = summary.clone();
+        task.task_name = summary.clone();
+        if task.step_task.trim().is_empty() {
+            task.step_task = summary;
+        }
+    }
+    if let Some(delivery) = string_field(object, &["delivery"]) {
+        task.step_deliverable_description = delivery;
+    }
+    if let Some(sub_session_id) = string_field(object, &["sub_session_id"]) {
+        task.sub_session_id = sub_session_id;
+    }
+    if let Some(value) = first_field(object, &["status"]) {
+        apply_unified_status(task, value)?;
+    }
+    if let Some(value) = first_field(object, &["poll_interval"]) {
+        task.poll_interval = serde_json::from_value(value.clone())
+            .map_err(|err| format!("invalid poll interval: {err}"))?;
+        if task.poll_interval.m != 0
+            || task.poll_interval.d != 0
+            || task.poll_interval.h != 0
+            || task.poll_interval.s != 0
+        {
+            task.start_condition = StartCondition::PollingTask;
+        }
+    }
+    if let Some(value) = first_field(object, &["start_at"]) {
+        task.start_at = parse_start_at(value)?;
+        if !matches!(task.start_condition, StartCondition::PollingTask) {
+            task.start_condition = StartCondition::ScheduledTask;
+        }
+    }
+    Ok(())
+}
+
+fn apply_unified_status(task: &mut TaskStep, value: &serde_json::Value) -> Result<(), String> {
+    match value.as_str() {
+        Some("session_idle") => {
+            task.status = PlanStatus::Todo;
+            task.start_condition = StartCondition::SessionIdle;
+            Ok(())
+        }
+        Some("user_action") => {
+            task.status = PlanStatus::Todo;
+            task.start_condition = StartCondition::UserAction;
+            Ok(())
+        }
+        Some("scheduled_task") => {
+            task.status = PlanStatus::Todo;
+            task.start_condition = StartCondition::ScheduledTask;
+            Ok(())
+        }
+        Some("polling_task") => {
+            task.status = PlanStatus::Todo;
+            task.start_condition = StartCondition::PollingTask;
+            Ok(())
+        }
+        _ => {
+            task.status = serde_json::from_value(value.clone())
+                .map_err(|err| format!("invalid status: {err}"))?;
+            Ok(())
+        }
+    }
+}
+
+fn first_field<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    names: &[&str],
+) -> Option<&'a serde_json::Value> {
+    names.iter().find_map(|name| object.get(*name))
+}
+
+fn object_has_any_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    names: &[&str],
+) -> bool {
+    names.iter().any(|name| object.contains_key(*name))
+}
+
+fn string_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    names: &[&str],
+) -> Option<String> {
+    first_field(object, names)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn number_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    names: &[&str],
+) -> Option<u64> {
+    first_field(object, names).and_then(serde_json::Value::as_u64)
+}
+
+fn parse_start_at(value: &serde_json::Value) -> Result<DateTime<Utc>, String> {
+    if let Some(text) = value.as_str() {
+        return DateTime::parse_from_rfc3339(text)
+            .map(|datetime| datetime.with_timezone(&Utc))
+            .map_err(|err| format!("invalid start_at: {err}"));
+    }
+    if let Some(millis) = value.as_i64() {
+        return DateTime::<Utc>::from_timestamp_millis(millis)
+            .ok_or_else(|| "invalid start_at milliseconds".to_string());
+    }
+    Err("start_at must be RFC3339 or epoch milliseconds".to_string())
+}
+
+fn task_is_scheduler_eligible(task: &TaskStep, now: DateTime<Utc>) -> bool {
+    if matches!(task.status, PlanStatus::Done | PlanStatus::Archived) {
+        return false;
+    }
+    match task.start_condition {
+        StartCondition::ScheduledTask | StartCondition::PollingTask => {
+            matches!(task.status, PlanStatus::Todo | PlanStatus::Question) && task.start_at <= now
+        }
+        StartCondition::SessionIdle => {
+            matches!(task.status, PlanStatus::Todo | PlanStatus::Question)
+        }
+        StartCondition::UserAction => false,
+    }
+}
+
+fn task_display_summary(task: &TaskStep, plan_summary: &str) -> String {
+    [
+        task.task_summary.as_str(),
+        task.task_name.as_str(),
+        task.step_task.as_str(),
+        plan_summary,
+    ]
+    .into_iter()
+    .map(str::trim)
+    .find(|value| !value.is_empty())
+    .unwrap_or("Continue planned task")
+    .to_string()
+}
+
+fn next_polling_start(
+    previous_start: DateTime<Utc>,
+    interval: PollInterval,
+    now: DateTime<Utc>,
+) -> DateTime<Utc> {
+    let seconds = interval
+        .s
+        .saturating_add(interval.m.saturating_mul(60))
+        .saturating_add(interval.h.saturating_mul(60 * 60))
+        .saturating_add(interval.d.saturating_mul(24 * 60 * 60));
+    let seconds = seconds.max(1);
+    let step = chrono::Duration::seconds(seconds.min(i64::MAX as u64) as i64);
+    let mut next = previous_start + step;
+    while next <= now {
+        next += step;
+    }
+    next
 }
 
 fn info_directory(info: &SessionInfo) -> Option<PathBuf> {
@@ -1278,6 +1612,10 @@ lazy_static::lazy_static! {
 
 pub fn session_store() -> &'static SessionStore {
     &SESSION_STORE
+}
+
+fn new_message_id(now: i64) -> String {
+    format!("msg-{now:013}-{}", Uuid::new_v4())
 }
 
 #[cfg(test)]
@@ -1528,6 +1866,53 @@ mod tests {
     }
 
     #[test]
+    fn child_session_derives_workspace_and_task_instruction_context() {
+        let store = SessionStore::new();
+        let child_id = format!("child-{}", Uuid::new_v4());
+        let parent = store.create_session(
+            Some("C:/workspace".to_string()),
+            None,
+            None,
+            Some("coding".to_string()),
+            None,
+            false,
+            false,
+            true,
+            None,
+            false,
+            true,
+        );
+
+        let child = store.register_child_session(
+            &parent.id,
+            &child_id,
+            parent.directory.clone(),
+            Some("Backend subtask".to_string()),
+            Some("Read docs/backend/ACCEPTANCE.md and implement the backend module.".to_string()),
+        );
+        let child_info = store
+            .get_session_info(&child_id)
+            .expect("child session info should exist");
+        let messages = store.get_messages(&child_id);
+
+        assert_eq!(child.parent_id.as_deref(), Some(parent.id.as_str()));
+        assert_eq!(child.directory.as_deref(), Some("C:/workspace"));
+        assert_eq!(
+            child_info.management.session_directory,
+            PathBuf::from("C:/workspace")
+        );
+        assert!(child_info.management.disable_permission_restrictions);
+        assert!(messages.iter().any(|message| {
+            message.role == MessageRole::User
+                && message.parts.iter().any(|part| {
+                    part.text
+                        .as_deref()
+                        .is_some_and(|text| text.contains("docs/backend/ACCEPTANCE.md"))
+                })
+        }));
+    }
+
+    #[test]
     fn cancellation_scope_includes_root_and_descendants_from_child() {
         let store = SessionStore::new();
         let child_id = format!("child-{}", uuid::Uuid::new_v4());
@@ -1596,6 +1981,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .expect("session should update");
 
@@ -1605,8 +1991,803 @@ mod tests {
         assert_eq!(stored.name.as_deref(), Some("修复登录流程"));
         assert_eq!(stored.management.session_name, "修复登录流程");
     }
-}
 
-fn new_message_id(now: i64) -> String {
-    format!("msg-{now:013}-{}", Uuid::new_v4())
+    #[test]
+    fn update_session_task_management_persists_and_lists_status() {
+        let store = SessionStore::new();
+        let session = store.create_session(
+            Some("C:/workspace".to_string()),
+            None,
+            None,
+            Some("coding".to_string()),
+            None,
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+
+        let updated = store
+            .update_session(
+                &session.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(serde_json::json!({
+                    "plan_summary": "计划入口名称",
+                    "task_summary": "执行状态机名称",
+                    "status": "question",
+                    "start_at": "2026-05-25T08:30:00Z",
+                    "poll_interval": { "m": 0, "d": 1, "h": 2, "s": 3 },
+                    "sub_session_id": "sub-1",
+                    "step": 2
+                })),
+            )
+            .expect("session should update");
+
+        assert_eq!(updated.plan_summary.as_deref(), Some("计划入口名称"));
+        assert_eq!(
+            updated.task_management["status"],
+            serde_json::json!("question")
+        );
+        assert!(updated.task_management.get("start_condition").is_none());
+        assert_eq!(updated.task_management["step"], serde_json::json!(2));
+
+        let listed = store
+            .list_sessions()
+            .into_iter()
+            .find(|item| item.id == session.id)
+            .expect("session should be listed");
+        assert_eq!(listed.session_display_name.as_deref(), Some("计划入口名称"));
+        assert_eq!(listed.task_management["sub_session_id"], "sub-1");
+    }
+
+    #[test]
+    fn single_task_patch_defaults_nonce_to_session_step_zero() {
+        let store = SessionStore::new();
+        let session = store.create_session(
+            Some("C:/workspace".to_string()),
+            None,
+            None,
+            Some("coding".to_string()),
+            None,
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+
+        let updated = store
+            .update_session(
+                &session.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(serde_json::json!({
+                    "plan_summary": "Single task contract",
+                    "task_summary": "Run one task"
+                })),
+            )
+            .expect("session should update");
+
+        assert_eq!(
+            updated.task_management["nonce_id"],
+            serde_json::json!(format!("{}:0", session.id))
+        );
+        assert_eq!(updated.task_management["step"], serde_json::json!(0));
+    }
+
+    #[test]
+    fn multi_task_patch_matches_nonce_and_creates_defaulted_tasks() {
+        let store = SessionStore::new();
+        let session = store.create_session(
+            Some("C:/workspace".to_string()),
+            None,
+            None,
+            Some("coding".to_string()),
+            None,
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+
+        let planned = store
+            .update_session(
+                &session.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(serde_json::json!({
+                    "plan_summary": "Multi task contract",
+                    "tasks": [
+                        {
+                            "nonce_id": "inspect",
+                            "step": 0,
+                            "task_summary": "Inspect wiring",
+                            "delivery": "Find the files."
+                        },
+                        {
+                            "nonce_id": "verify",
+                            "step": 1,
+                            "task_summary": "Verify wiring",
+                            "delivery": "Delivery spelling.",
+                            "status": "question"
+                        }
+                    ]
+                })),
+            )
+            .expect("initial multi-task patch should update");
+
+        assert_eq!(
+            planned.task_management["tasks"]
+                .as_array()
+                .expect("task_management.tasks should be an array")
+                .len(),
+            2
+        );
+
+        let updated = store
+            .update_session(
+                &session.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(serde_json::json!({
+                    "tasks": [
+                        {
+                            "nonce_id": "inspect",
+                            "status": "done"
+                        },
+                        {
+                            "task_summary": "Generated follow-up"
+                        }
+                    ]
+                })),
+            )
+            .expect("follow-up multi-task patch should update");
+
+        let tasks = updated.task_management["tasks"]
+            .as_array()
+            .expect("multi-task state should serialize as tasks array");
+        assert_eq!(tasks.len(), 3);
+        assert_eq!(tasks[0]["nonce_id"], "inspect");
+        assert_eq!(tasks[0]["status"], "done");
+        assert_eq!(tasks[1]["nonce_id"], "verify");
+        assert_eq!(tasks[1]["status"], "question");
+        assert_eq!(tasks[1]["delivery"], "Delivery spelling.");
+        assert_eq!(tasks[2]["nonce_id"], format!("{}:2", session.id));
+        assert_eq!(tasks[2]["step"], 2);
+        assert_eq!(tasks[2]["task_summary"], "Generated follow-up");
+        assert!(tasks[2].get("status").is_none());
+        assert!(tasks[2].get("start_condition").is_none());
+    }
+
+    #[test]
+    fn task_management_patch_accepts_all_contract_enums() {
+        let store = SessionStore::new();
+        let session = store.create_session(
+            Some("C:/workspace".to_string()),
+            None,
+            None,
+            Some("coding".to_string()),
+            None,
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+
+        for status in ["todo", "doing", "question", "done", "archived"] {
+            let updated = store
+                .update_session(
+                    &session.id,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(serde_json::json!({ "status": status })),
+                )
+                .expect("session should update");
+            if status == "todo" {
+                assert!(updated.task_management.get("status").is_none());
+            } else {
+                assert_eq!(updated.task_management["status"], status);
+            }
+        }
+
+        for start_condition in [
+            "session_idle",
+            "user_action",
+            "scheduled_task",
+            "polling_task",
+        ] {
+            let updated = store
+                .update_session(
+                    &session.id,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(serde_json::json!({ "status": start_condition })),
+                )
+                .expect("session should update");
+            assert!(updated.task_management.get("start_condition").is_none());
+            assert!(updated.task_management.get("status").is_none());
+        }
+    }
+
+    #[test]
+    fn invalid_task_management_patch_keeps_previous_state() {
+        let root = std::env::temp_dir().join(format!("tura-invalid-task-{}", Uuid::new_v4()));
+        let directory = root.to_string_lossy().to_string();
+        let store = SessionStore::new();
+        let session = store.create_session(
+            Some(directory.clone()),
+            None,
+            None,
+            Some("coding".to_string()),
+            None,
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        let valid = store
+            .update_session(
+                &session.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(serde_json::json!({
+                    "plan_summary": "Stable plan",
+                    "task_summary": "Stable task",
+                    "status": "todo",
+                    "start_condition": "user_action",
+                    "start_at": "2026-05-25T08:30:00Z",
+                    "poll_interval": { "m": 0, "d": 0, "h": 1, "s": 0 }
+                })),
+            )
+            .expect("valid patch should update");
+        let previous_task_management = valid.task_management.clone();
+        let previous_plan_summary = valid.plan_summary.clone();
+
+        let invalid_status = store
+            .update_session(
+                &session.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(serde_json::json!({
+                    "plan_summary": "Should not leak",
+                    "task_summary": "Should not leak",
+                    "status": "blocked"
+                })),
+            )
+            .expect("invalid patch remains non-fatal");
+        assert_eq!(invalid_status.task_management, previous_task_management);
+        assert_eq!(invalid_status.plan_summary, previous_plan_summary);
+
+        let invalid_date = store
+            .update_session(
+                &session.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(serde_json::json!({
+                    "status": "done",
+                    "start_at": "not-a-date"
+                })),
+            )
+            .expect("invalid date remains non-fatal");
+        assert_eq!(invalid_date.task_management, previous_task_management);
+
+        let hydrated = SessionStore::new();
+        hydrated.hydrate_directory(Some(directory));
+        let persisted = hydrated
+            .get_session(&session.id)
+            .expect("persisted session should hydrate");
+        assert_eq!(persisted.task_management, previous_task_management);
+        assert_eq!(persisted.plan_summary, previous_plan_summary);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_display_name_falls_back_to_new_session() {
+        let mut info = SessionManager::create_session(
+            Some("C:/workspace".to_string()),
+            None,
+            None,
+            Some("coding".to_string()),
+        );
+        info.name = None;
+        info.management.session_name.clear();
+        info.management.task_plan.plan_summary.clear();
+
+        let session = api_session_from_info(&info, None);
+
+        assert_eq!(session.session_display_name.as_deref(), Some("New Session"));
+    }
+
+    #[test]
+    fn user_messages_are_recorded_in_session_management_log() {
+        let store = SessionStore::new();
+        let session = store.create_session(
+            Some("C:/workspace".to_string()),
+            None,
+            None,
+            Some("coding".to_string()),
+            None,
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+
+        store
+            .add_message(&session.id, MessageRole::User, "补充新的约束".to_string())
+            .expect("message should be stored");
+        let info = store
+            .get_session_info(&session.id)
+            .expect("session info should exist");
+        assert!(info
+            .management
+            .session_log
+            .iter()
+            .any(|entry| entry.contains("补充新的约束")));
+    }
+
+    #[test]
+    fn user_messages_preserve_and_hydrate_pending_task_management_state() {
+        let root = std::env::temp_dir().join(format!("tura-message-task-{}", Uuid::new_v4()));
+        let directory = root.to_string_lossy().to_string();
+        let store = SessionStore::new();
+        let session = store.create_session(
+            Some(directory.clone()),
+            None,
+            None,
+            Some("coding".to_string()),
+            None,
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        let start_at = (Utc::now() + chrono::Duration::hours(2)).to_rfc3339();
+        let scheduled = store
+            .update_session(
+                &session.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(serde_json::json!({
+                    "plan_summary": "Pending scheduled plan",
+                    "task_summary": "Ask before continuing",
+                    "status": "question",
+                    "start_condition": "scheduled_task",
+                    "start_at": start_at,
+                    "poll_interval": { "m": 5, "d": 0, "h": 1, "s": 30 }
+                })),
+            )
+            .expect("scheduled task state should update");
+        let previous_task_management = scheduled.task_management.clone();
+
+        store
+            .add_message(
+                &session.id,
+                MessageRole::User,
+                "用户补充：保持计划等待，不要自动改状态".to_string(),
+            )
+            .expect("message should be stored");
+
+        let after_message = store
+            .get_session(&session.id)
+            .expect("session should remain available");
+        assert_eq!(after_message.task_management, previous_task_management);
+
+        let hydrated = SessionStore::new();
+        hydrated.hydrate_directory(Some(directory));
+        let persisted = hydrated
+            .get_session(&session.id)
+            .expect("hydrated session should exist");
+        assert_eq!(persisted.task_management, previous_task_management);
+        let info = hydrated
+            .get_session_info(&session.id)
+            .expect("hydrated session info should exist");
+        assert!(info
+            .management
+            .session_log
+            .iter()
+            .any(|entry| entry.contains("保持计划等待")));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scheduler_claims_due_idle_tasks_and_skips_ineligible_tasks() {
+        let root = std::env::temp_dir().join(format!("tura-scheduled-task-{}", Uuid::new_v4()));
+        let directory = root.to_string_lossy().to_string();
+        let store = SessionStore::new();
+        let now = Utc::now();
+        let due = (now - chrono::Duration::minutes(5)).to_rfc3339();
+        let future = (now + chrono::Duration::minutes(5)).to_rfc3339();
+        let scheduled = store.create_session(
+            Some(directory.clone()),
+            None,
+            None,
+            Some("coding".to_string()),
+            None,
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        let busy = store.create_session(
+            Some(directory.clone()),
+            None,
+            None,
+            Some("coding".to_string()),
+            None,
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        let done = store.create_session(
+            Some(directory.clone()),
+            None,
+            None,
+            Some("coding".to_string()),
+            None,
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        let user_action = store.create_session(
+            Some(directory.clone()),
+            None,
+            None,
+            Some("coding".to_string()),
+            None,
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        let future_scheduled = store.create_session(
+            Some(directory.clone()),
+            None,
+            None,
+            Some("coding".to_string()),
+            None,
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        let idle = store.create_session(
+            Some(directory.clone()),
+            None,
+            None,
+            Some("coding".to_string()),
+            None,
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+
+        store.update_session(
+            &scheduled.id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(serde_json::json!({
+                "task_summary": "due scheduled",
+                "status": "todo",
+                "start_at": due
+            })),
+        );
+        store.update_session(
+            &busy.id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(serde_json::json!({
+                "task_summary": "busy scheduled",
+                "status": "todo",
+                "start_at": due
+            })),
+        );
+        store.update_session_status(&busy.id, SessionStatusMano::Busy);
+        store.update_session(
+            &done.id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(serde_json::json!({
+                "task_summary": "done scheduled",
+                "status": "done",
+                "start_at": due
+            })),
+        );
+        store.update_session(
+            &user_action.id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(serde_json::json!({
+                "task_summary": "manual only",
+                "status": "todo"
+            })),
+        );
+        store.update_session(
+            &future_scheduled.id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(serde_json::json!({
+                "task_summary": "future scheduled",
+                "status": "todo",
+                "start_at": future
+            })),
+        );
+        store.update_session(
+            &idle.id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(serde_json::json!({
+                "task_summary": "idle pending",
+                "status": "session_idle"
+            })),
+        );
+
+        let claimed = store.claim_due_task_runs(now);
+        let mut claimed_ids = claimed
+            .iter()
+            .map(|run| run.session_id.as_str())
+            .collect::<Vec<_>>();
+        claimed_ids.sort_unstable();
+        let mut expected_ids = vec![scheduled.id.as_str(), idle.id.as_str()];
+        expected_ids.sort_unstable();
+
+        assert_eq!(claimed_ids, expected_ids);
+        assert_eq!(
+            store
+                .get_session(&scheduled.id)
+                .expect("scheduled should exist")
+                .task_management["status"],
+            "doing"
+        );
+        store.update_session_status(&scheduled.id, SessionStatusMano::Idle);
+        assert!(
+            store
+                .claim_due_task_runs(now + chrono::Duration::minutes(1))
+                .iter()
+                .all(|run| run.session_id != scheduled.id),
+            "scheduled task should not be claimed again after it is already doing"
+        );
+        assert_eq!(
+            store
+                .get_session(&idle.id)
+                .expect("idle should exist")
+                .status,
+            ApiSessionStatus::Busy
+        );
+        assert_eq!(
+            store
+                .get_session(&done.id)
+                .expect("done should exist")
+                .task_management["status"],
+            "done"
+        );
+        assert_eq!(
+            store
+                .get_session(&future_scheduled.id)
+                .expect("future should exist")
+                .task_management
+                .get("status"),
+            None
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scheduler_claim_persists_next_polling_start() {
+        let root = std::env::temp_dir().join(format!("tura-polling-task-{}", Uuid::new_v4()));
+        let directory = root.to_string_lossy().to_string();
+        let store = SessionStore::new();
+        let now = Utc::now();
+        let due = now - chrono::Duration::minutes(30);
+        let session = store.create_session(
+            Some(directory.clone()),
+            None,
+            None,
+            Some("coding".to_string()),
+            None,
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        store.update_session(
+            &session.id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(serde_json::json!({
+                "task_summary": "poll repo",
+                "status": "todo",
+                "start_condition": "polling_task",
+                "start_at": due.to_rfc3339(),
+                "poll_interval": { "m": 0, "d": 0, "h": 1, "s": 0 }
+            })),
+        );
+
+        let claimed = store.claim_due_task_runs(now);
+
+        assert_eq!(claimed.len(), 1);
+        let updated = store
+            .get_session(&session.id)
+            .expect("session should exist after claim");
+        let next_start = DateTime::parse_from_rfc3339(
+            updated
+                .task_management
+                .get("start_at")
+                .and_then(serde_json::Value::as_str)
+                .expect("start_at should serialize"),
+        )
+        .expect("start_at should parse")
+        .with_timezone(&Utc);
+        assert!(next_start > now);
+
+        let hydrated = SessionStore::new();
+        hydrated.hydrate_directory(Some(directory));
+        let persisted = hydrated
+            .get_session(&session.id)
+            .expect("persisted polling session should hydrate");
+        assert_eq!(
+            persisted.task_management["start_at"],
+            updated.task_management["start_at"]
+        );
+        store.update_session_status(&session.id, SessionStatusMano::Idle);
+        assert!(
+            store.claim_due_task_runs(now).is_empty(),
+            "polling task should not be reclaimed until its next start_at is due"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

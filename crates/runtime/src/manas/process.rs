@@ -1,4 +1,4 @@
-use super::constants::{COMMAND_RUN_TOOL, TASK_DELIVERED_TOOL};
+use super::constants::{COMMAND_RUN_TOOL, TASK_STATUS_COMMAND};
 use super::final_response::user_visible_runtime_text;
 use super::gateway_events::{publish_runtime_failure_message, publish_runtime_usage_record};
 use super::prompt_messages::{messages_for_turn, push_task_continuity_message};
@@ -87,7 +87,7 @@ pub fn process_manas_internal(
     let mut provider_timeout_retries = 0_u8;
     let mut no_tool_retries = 0_u8;
     let mut command_run_turns = 0_u64;
-    let mut last_task_delivered = false;
+    let mut last_task_done = false;
     loop {
         turn = turn.saturating_add(1);
         info!(
@@ -223,11 +223,9 @@ pub fn process_manas_internal(
             }
             let mut tool_results = execute_tool_calls(&tool_calls, session, &runtime, redis_url)?;
             apply_compact_context_results(session, &mut tool_results)?;
-            last_task_delivered = tool_results.iter().any(|result| {
-                (result.tool_name == TASK_DELIVERED_TOOL
-                    && task_delivered_marked_true(&result.arguments))
-                    || command_run_result_contains_task_delivered(&result.result)
-            });
+            last_task_done = tool_results
+                .iter()
+                .any(|result| command_run_result_contains_task_status_done(&result.result));
 
             for (index, tool_result) in tool_results.iter().enumerate() {
                 if command_run_results_empty(&tool_result.result) {
@@ -269,7 +267,7 @@ pub fn process_manas_internal(
             );
             if let Some(next_task) = active_task_user_message(session) {
                 current_messages.push(next_task);
-            } else if planned_tasks_all_completed(session) && last_task_delivered {
+            } else if planned_tasks_all_completed(session) && last_task_done {
                 current_messages.push(serde_json::json!({
                     "role": "system",
                     "content": "All planned tasks are marked delivered. Provide the final user-facing answer now."
@@ -315,7 +313,7 @@ pub fn process_manas_internal(
 
             if multiple_tasks_env_enabled()
                 && command_run_turns > 0
-                && last_task_delivered
+                && last_task_done
                 && !planned_tasks_incomplete(session)
                 && final_text
                     .as_deref()
@@ -337,13 +335,13 @@ pub fn process_manas_internal(
                 let multiple_tasks_delivery_missing = multiple_tasks_env_enabled()
                     && command_run_turns > 0
                     && planned_tasks_incomplete(session)
-                    && !last_task_delivered;
+                    && !last_task_done;
                 let completion_guard = if multiple_tasks_delivery_missing {
-                    "The active planned task is not marked delivered. If it is complete and verified, call task_delivered with task_delivered true now. Do not call command_run only to rerun verification or status. Use command_run only if work remains."
+                    "The active planned task is not marked done. If it is complete and verified, call command_run with task_status status done now. If user input is needed, use task_status status question. Do not call command_run only to rerun verification or status. Use command_run for workspace work that remains."
                 } else if planned_tasks_incomplete(session) {
                     "The planned task list is not complete. Continue the active planned task with command_run."
                 } else {
-                    "Continue the original task now by calling command_run to inspect, edit, test, or write required files."
+                    "If the task is complete and verified, call command_run with task_status status done. If user feedback or more information is needed, call command_run with task_status status question. If work remains, continue the original task with command_run to inspect, edit, test, or write required files."
                 };
                 let retry_reason = if multiple_tasks_delivery_missing {
                     "The previous text response did not update the multiple_tasks state."
@@ -396,14 +394,7 @@ pub fn process_manas_internal(
     })
 }
 
-fn task_delivered_marked_true(result: &serde_json::Value) -> bool {
-    result
-        .get("task_delivered")
-        .and_then(serde_json::Value::as_bool)
-        == Some(true)
-}
-
-fn command_run_result_contains_task_delivered(result: &serde_json::Value) -> bool {
+fn command_run_result_contains_task_status_done(result: &serde_json::Value) -> bool {
     result
         .get("results")
         .and_then(|value| value.as_array())
@@ -414,7 +405,13 @@ fn command_run_result_contains_task_delivered(result: &serde_json::Value) -> boo
                         .get("command_type")
                         .or_else(|| item.get("command"))
                         .and_then(serde_json::Value::as_str)
-                        == Some(TASK_DELIVERED_TOOL)
+                        == Some(TASK_STATUS_COMMAND)
+                    && item
+                        .get("output")
+                        .and_then(|output| output.get("task_status"))
+                        .and_then(|status| status.get("status"))
+                        .and_then(serde_json::Value::as_str)
+                        == Some("done")
             })
         })
         .unwrap_or(false)
@@ -543,11 +540,11 @@ fn active_task_user_message(session: &SessionManagement) -> Option<serde_json::V
         .detailed_tasks
         .iter()
         .enumerate()
-        .find(|(_, task)| task.status == TaskStatus::InProgress)?;
+        .find(|(_, task)| task.status == TaskStatus::Doing)?;
     Some(serde_json::json!({
         "role": "user",
         "content": format!(
-            "Continue planned task {}.\nTask summary: {}\nDeliverble: {}\n\nUse command_run only for remaining workspace work. If this task is complete and verified, call task_delivered with task_delivered true; do not rerun verification only to finish.",
+            "Continue planned task {}.\nTask summary: {}\nDeliverable: {}\n\nUse command_run only for remaining workspace work. If this task is complete and verified, call command_run with task_status status done. If user feedback or more information is needed, call command_run with task_status status question. Do not rerun verification only to finish.",
             index + 1,
             task.task_summary,
             task.step_deliverable_description
@@ -560,7 +557,7 @@ fn planned_tasks_incomplete(session: &SessionManagement) -> bool {
         .task_plan
         .detailed_tasks
         .iter()
-        .any(|task| task.status != TaskStatus::Completed)
+        .any(|task| task.status != TaskStatus::Done)
 }
 
 fn planned_tasks_all_completed(session: &SessionManagement) -> bool {

@@ -109,49 +109,6 @@ pub(super) fn summarize_single_tool_output(tool_name: &str, output: &serde_json:
         .join("\n")
 }
 
-#[allow(dead_code)]
-pub(super) fn extract_reply_message_hint(text: &str) -> Option<String> {
-    for line in text.lines() {
-        let trimmed = line.trim().trim_start_matches(['-', '*', ' ']).trim();
-        let Some(index) = trimmed
-            .find("reply_message")
-            .or_else(|| trimmed.find("reply message"))
-        else {
-            continue;
-        };
-        let after_key = &trimmed[index..];
-        let Some(separator) = after_key.find(':').or_else(|| after_key.find('：')) else {
-            continue;
-        };
-        let value = after_key[separator + 1..]
-            .trim()
-            .trim_matches(['"', '\'', '`'])
-            .trim();
-        if !value.is_empty() {
-            return Some(value.to_string());
-        }
-    }
-
-    let candidates: Vec<_> = text
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .filter(|line| {
-            let lower = line.to_ascii_lowercase();
-            !lower.contains("tool")
-                && !lower.contains("user is asking")
-                && !lower.contains("let me")
-                && !line.contains("用户要求")
-                && !line.contains("工具")
-                && !line.contains("让我")
-                && !line.starts_with("new_learning:")
-                && !line.starts_with("runtime_id:")
-        })
-        .collect();
-
-    candidates.last().map(|line| (*line).to_string())
-}
-
 pub(super) fn publish_step_summary(
     session: &SessionManagement,
     runtime: &RuntimeManagement,
@@ -225,6 +182,10 @@ pub(super) fn publish_runtime_usage_record(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "gateway event payload assembly keeps call timing and result fields explicit"
+)]
 pub(super) fn publish_tool_call_record(
     session: &SessionManagement,
     runtime: &RuntimeManagement,
@@ -495,10 +456,11 @@ pub(super) fn publish_task_plan_todos(session: &SessionManagement) {
         .enumerate()
         .map(|(index, task)| {
             let status = match task.status {
-                crate::state_machine::session_management::TaskStatus::Pending => "pending",
-                crate::state_machine::session_management::TaskStatus::InProgress => "in_progress",
-                crate::state_machine::session_management::TaskStatus::Completed => "completed",
-                crate::state_machine::session_management::TaskStatus::Cancelled => "cancelled",
+                crate::state_machine::session_management::TaskStatus::Todo => "todo",
+                crate::state_machine::session_management::TaskStatus::Doing => "doing",
+                crate::state_machine::session_management::TaskStatus::Question => "question",
+                crate::state_machine::session_management::TaskStatus::Done => "done",
+                crate::state_machine::session_management::TaskStatus::Archived => "archived",
             };
             let content = first_non_empty([
                 task.task_name.as_str(),

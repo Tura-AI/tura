@@ -2,7 +2,12 @@ import type { TuraCommand } from "../types/command.js";
 import type { GlobalConfig, SessionConfig } from "../types/config.js";
 import type { GatewayEventEnvelope } from "../types/event.js";
 import type { PermissionReplyResponse, PermissionRequest, QuestionRequest } from "../types/permission.js";
-import type { ProviderAuthStatus, ProviderListResponse } from "../types/provider.js";
+import type {
+  OAuthAuthorizeResponse,
+  ProviderAuthMethodsResponse,
+  ProviderAuthStatus,
+  ProviderListResponse,
+} from "../types/provider.js";
 import type { CreateSessionRequest, Message, MessageEnvelope, PromptPayload, Session, TodoItem } from "../types/session.js";
 import { normalizeMessage, sessionStatusText } from "../types/session.js";
 import { directoryHeader } from "./directory.js";
@@ -131,8 +136,16 @@ export class GatewayClient {
     return this.get("/provider");
   }
 
+  async listProviderAuthMethods(): Promise<ProviderAuthMethodsResponse> {
+    return this.get("/provider/auth", { directory: this.directory });
+  }
+
   async providerAuthStatus(providerID: string): Promise<ProviderAuthStatus> {
     return this.get(`/provider/${encodeURIComponent(providerID)}/auth/status`);
+  }
+
+  async providerOauthAuthorize(providerID: string, method = 0): Promise<OAuthAuthorizeResponse> {
+    return this.post(`/provider/${encodeURIComponent(providerID)}/oauth/authorize`, { method }, { directory: this.directory });
   }
 
   async providerLogout(providerID: string): Promise<unknown> {

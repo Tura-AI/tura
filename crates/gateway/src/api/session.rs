@@ -16,12 +16,15 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path as StdPath, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::time::Duration;
+
+use code_tools_suite::state_machine::session_management::StartCondition;
 
 // ============================================================================
 // Session List & Create
@@ -161,6 +164,9 @@ pub async fn get_session(Path(session_id): Path<String>) -> Json<Session> {
                 model_acceleration_enabled: false,
                 status: SessionStatus::Idle,
                 message_count: 0,
+                task_management: serde_json::json!({}),
+                plan_summary: None,
+                session_display_name: None,
             })
         })
 }
@@ -223,7 +229,7 @@ pub async fn create_session(
     let lsp = payload.lsp.clone().unwrap_or_else(|| {
         default_lsp_for_session(&requested_session_type, requested_agent.as_deref())
     });
-    let session = session_store().create_session(
+    let mut session = session_store().create_session(
         directory,
         payload.model.or(persisted_config.model),
         requested_agent,
@@ -236,6 +242,23 @@ pub async fn create_session(
         model_acceleration_enabled,
         disable_permission_restrictions,
     );
+    if let Some(task_management) = payload.task_management {
+        if let Some(updated) = session_store().update_session(
+            &session.id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(task_management),
+        ) {
+            session = updated;
+        }
+    }
     if should_start_session_lsp(
         session.session_type.as_deref(),
         session.agent.as_deref(),
@@ -267,6 +290,7 @@ pub struct CreateSessionRequest {
     pub model_variant: Option<String>,
     pub model_acceleration_enabled: Option<bool>,
     pub disable_permission_restrictions: Option<bool>,
+    pub task_management: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -759,6 +783,7 @@ pub async fn update_session(
             payload.validator_enabled,
             payload.force_multiple_tasks,
             payload.disable_permission_restrictions,
+            payload.task_management,
         )
         .unwrap_or_else(|| Session {
             id: session_id.clone(),
@@ -779,6 +804,9 @@ pub async fn update_session(
             disable_permission_restrictions: false,
             status: SessionStatus::Idle,
             message_count: 0,
+            task_management: serde_json::json!({}),
+            plan_summary: None,
+            session_display_name: None,
         });
 
     if let Some(lsp) = payload.lsp {
@@ -803,6 +831,61 @@ pub async fn update_session(
     Json(session)
 }
 
+pub async fn update_session_task_management(
+    Path(session_id): Path<String>,
+    Json(payload): Json<UpdateSessionTaskManagementRequest>,
+) -> Json<Session> {
+    let session = session_store()
+        .update_session(
+            &session_id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(payload.task_management),
+        )
+        .unwrap_or_else(|| Session {
+            id: session_id.clone(),
+            name: None,
+            parent_id: None,
+            created_at: 0,
+            updated_at: 0,
+            directory: None,
+            model: None,
+            agent: Some("coding_agent".to_string()),
+            session_type: Some("coding".to_string()),
+            lsp: Some(serde_json::json!({"mode":"auto","enabled":[],"disabled":[]})),
+            kill_processes_on_start: false,
+            validator_enabled: false,
+            force_multiple_tasks: false,
+            model_variant: None,
+            model_acceleration_enabled: false,
+            disable_permission_restrictions: false,
+            status: SessionStatus::Idle,
+            message_count: 0,
+            task_management: serde_json::json!({}),
+            plan_summary: None,
+            session_display_name: None,
+        });
+    session_store().push_event(GlobalEvent::SessionUpdated {
+        properties: SessionUpdatedProperties {
+            session_id: session.id.clone(),
+            info: session.clone(),
+        },
+    });
+    Json(session)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateSessionTaskManagementRequest {
+    pub task_management: serde_json::Value,
+}
+
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct UpdateSessionRequest {
     pub title: Option<String>,
@@ -815,6 +898,7 @@ pub struct UpdateSessionRequest {
     pub validator_enabled: Option<bool>,
     pub force_multiple_tasks: Option<bool>,
     pub disable_permission_restrictions: Option<bool>,
+    pub task_management: Option<serde_json::Value>,
 }
 
 pub async fn abort_session(Path(session_id): Path<String>) -> Json<AbortResponse> {
@@ -919,7 +1003,17 @@ pub async fn session_status() -> Json<std::collections::HashMap<String, serde_js
     let sessions = session_store().list_sessions();
     let statuses = sessions
         .into_iter()
-        .map(|s| (s.id, session_status_value(&s.status)))
+        .map(|s| {
+            (
+                s.id.clone(),
+                serde_json::json!({
+                    "status": session_status_value(&s.status),
+                    "task_management": s.task_management,
+                    "plan_summary": s.plan_summary,
+                    "session_display_name": s.session_display_name,
+                }),
+            )
+        })
         .collect();
     Json(statuses)
 }
@@ -928,6 +1022,9 @@ pub async fn session_status() -> Json<std::collections::HashMap<String, serde_js
 pub struct SessionStatusResponse {
     pub session_id: String,
     pub status: SessionStatus,
+    pub task_management: serde_json::Value,
+    pub plan_summary: Option<String>,
+    pub session_display_name: Option<String>,
 }
 
 pub(crate) fn session_status_value(status: &SessionStatus) -> serde_json::Value {
@@ -1016,9 +1113,18 @@ pub async fn update_session_status_for_runtime(
         SessionStatusMano::Busy => SessionStatus::Busy,
         SessionStatusMano::Error => SessionStatus::Error,
     };
+    let session = session_store().get_session(&session_id);
     Json(SessionStatusResponse {
         session_id,
         status: api_status,
+        task_management: session
+            .as_ref()
+            .map(|session| session.task_management.clone())
+            .unwrap_or_else(|| serde_json::json!({})),
+        plan_summary: session
+            .as_ref()
+            .and_then(|session| session.plan_summary.clone()),
+        session_display_name: session.and_then(|session| session.session_display_name),
     })
 }
 
@@ -1208,9 +1314,7 @@ fn agent_message_metadata(payload: &SendAgentMessageRequest) -> Option<serde_jso
         .map(str::trim)
         .filter(|value| !value.is_empty());
 
-    if step_summary.is_none() {
-        return None;
-    }
+    step_summary?;
 
     let mut metadata = serde_json::Map::new();
     if let Some(step_summary) = step_summary {
@@ -1855,6 +1959,107 @@ pub async fn prompt_async(
     StatusCode::NO_CONTENT
 }
 
+pub fn start_task_scheduler() {
+    tokio::spawn(async {
+        let mut interval = tokio::time::interval(Duration::from_secs(15));
+        loop {
+            interval.tick().await;
+            run_due_task_scheduler_tick();
+        }
+    });
+}
+
+fn run_due_task_scheduler_tick() {
+    for run in session_store().claim_due_task_runs(chrono::Utc::now()) {
+        let prompt = scheduler_prompt_payload(&run.task_summary, run.start_condition);
+        let content = prompt_text(&prompt).unwrap_or_else(|| run.task_summary.clone());
+        let initial_count = session_store().get_messages(&run.session_id).len();
+        let _ = session_store().add_message_with_metadata(
+            &run.session_id,
+            SessionMessageRole::User,
+            content,
+            Some(serde_json::json!({
+                "kind": "task_scheduler",
+                "start_condition": run.start_condition,
+            })),
+        );
+        session_store().set_todos(
+            &run.session_id,
+            vec![serde_json::json!({
+                "id": format!("{}:scheduled-task", run.session_id),
+                "content": run.task_summary,
+                "status": "in_progress",
+                "priority": "medium",
+            })],
+        );
+        watch_direct_mano_messages(run.session_id.clone(), initial_count);
+        std::thread::spawn(move || {
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_mano_for_prompt(run.session_id.clone(), prompt);
+                if matches!(run.start_condition, StartCondition::PollingTask) {
+                    reset_polling_task_after_run(&run.session_id);
+                }
+            }))
+            .is_err()
+            {
+                tracing::error!(session_id = %run.session_id, "scheduled task panicked");
+                session_store().update_session_status(&run.session_id, SessionStatusMano::Error);
+                session_store().finish_todos(&run.session_id, false);
+                add_agent_fallback_message(
+                    &run.session_id,
+                    "Scheduled task failed before completion.".to_string(),
+                );
+            }
+        });
+    }
+}
+
+fn scheduler_prompt_payload(
+    task_summary: &str,
+    start_condition: StartCondition,
+) -> serde_json::Value {
+    let trigger = match start_condition {
+        StartCondition::SessionIdle => "session became idle",
+        StartCondition::ScheduledTask => "scheduled start time arrived",
+        StartCondition::PollingTask => "polling interval became due",
+        StartCondition::UserAction => "user action",
+    };
+    serde_json::json!({
+        "parts": [{
+            "id": format!("part_scheduler_{}", uuid::Uuid::new_v4()),
+            "type": "text",
+            "text": format!("Continue the pending task because the {trigger}: {task_summary}")
+        }],
+        "source": "task_scheduler"
+    })
+}
+
+fn reset_polling_task_after_run(session_id: &str) {
+    let Some(session) = session_store().get_session(session_id) else {
+        return;
+    };
+    let current_status = session
+        .task_management
+        .get("status")
+        .and_then(serde_json::Value::as_str);
+    if matches!(current_status, Some("done" | "archived")) {
+        return;
+    }
+    let _ = session_store().update_session(
+        session_id,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(serde_json::json!({ "status": "todo" })),
+    );
+}
+
 fn watch_direct_mano_messages(session_id: String, initial_count: usize) {
     std::thread::spawn(move || {
         let mut seen = initial_count;
@@ -2464,6 +2669,84 @@ fn sanitize_frontend_value(value: serde_json::Value) -> serde_json::Value {
     }
 }
 
+pub async fn tui_action(payload: Option<Json<serde_json::Value>>) -> Json<serde_json::Value> {
+    let payload = payload
+        .map(|Json(payload)| payload)
+        .unwrap_or(serde_json::Value::Null);
+    let action = payload
+        .get("action")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("submit-prompt");
+    if matches!(
+        action,
+        "submit-prompt" | "append-prompt" | "execute-command"
+    ) {
+        let content = payload
+            .get("prompt")
+            .or_else(|| payload.get("input"))
+            .or_else(|| payload.get("message"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("Prompt submitted")
+            .to_string();
+        let session_id = payload
+            .get("sessionID")
+            .or_else(|| payload.get("session_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                session_store()
+                    .create_session(
+                        global_store().get_current_directory(),
+                        None,
+                        None,
+                        Some("coding".to_string()),
+                        None,
+                        false,
+                        false,
+                        false,
+                        None,
+                        false,
+                        false,
+                    )
+                    .id
+            });
+        let prompt_payload = serde_json::json!({
+            "parts": [{
+                "id": format!("tui-part-{}", uuid::Uuid::new_v4()),
+                "type": "text",
+                "text": content
+            }]
+        });
+        session_store().clear_cancelled(&session_id);
+        let _ = session_store().add_message(&session_id, SessionMessageRole::User, content);
+        session_store().update_session_status(&session_id, SessionStatusMano::Busy);
+        let session_id_for_task = session_id.clone();
+        tokio::task::spawn_blocking(move || {
+            run_mano_for_prompt(session_id_for_task, prompt_payload);
+        });
+        return Json(serde_json::json!({
+            "ok": true,
+            "action": action,
+            "sessionID": session_id,
+            "status": "submitted"
+        }));
+    }
+    if action == "clear-prompt" {
+        return Json(serde_json::json!({
+            "ok": true,
+            "action": action,
+            "prompt": ""
+        }));
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "action": action,
+        "payload": payload,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -2475,6 +2758,12 @@ mod tests {
     };
     use crate::api::types::{Session, SessionStatus};
     use crate::session::manager::{LspMode, LspSessionConfig};
+    use crate::session_store;
+    use axum::{
+        extract::{Path, Query},
+        http::HeaderMap,
+        Json,
+    };
     use std::fs;
     use std::sync::{Mutex, OnceLock};
 
@@ -2567,6 +2856,9 @@ mod tests {
             disable_permission_restrictions: false,
             status: SessionStatus::Idle,
             message_count: 0,
+            task_management: serde_json::json!({}),
+            plan_summary: None,
+            session_display_name: None,
         }
     }
 
@@ -2639,6 +2931,177 @@ mod tests {
         assert_eq!(workspace_key(r"C:\repo\"), "C:/repo");
         assert_eq!(workspace_key("C:/"), "C:/");
         assert_eq!(workspace_key("///"), "/");
+    }
+
+    #[tokio::test]
+    async fn session_status_includes_task_management_display_fields() {
+        let directory = std::env::temp_dir()
+            .join(format!("tura-session-status-{}", uuid::Uuid::new_v4()))
+            .to_string_lossy()
+            .to_string();
+        let session = session_store().create_session(
+            Some(directory),
+            None,
+            None,
+            Some("coding".to_string()),
+            None,
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        session_store()
+            .update_session(
+                &session.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(serde_json::json!({
+                    "plan_summary": "Status Contract",
+                    "task_summary": "Status task",
+                    "status": "question"
+                })),
+            )
+            .expect("session task management should update");
+
+        let Json(statuses) = super::session_status().await;
+        let status = statuses
+            .get(&session.id)
+            .expect("status map should include new session");
+
+        assert_eq!(status["task_management"]["status"], "question");
+        assert_eq!(status["plan_summary"], "Status Contract");
+        assert_eq!(status["session_display_name"], "Status Contract");
+    }
+
+    #[tokio::test]
+    async fn create_session_accepts_task_management_and_serializes_session_fields() {
+        let directory = std::env::temp_dir()
+            .join(format!("tura-create-session-plan-{}", uuid::Uuid::new_v4()))
+            .to_string_lossy()
+            .to_string();
+        let Json(session) = super::create_session(
+            HeaderMap::new(),
+            Query(super::SessionDirectoryParams { directory: None }),
+            Some(Json(super::CreateSessionRequest {
+                directory: Some(directory.clone()),
+                model: None,
+                agent: None,
+                session_type: Some("chat".to_string()),
+                lsp: None,
+                kill_processes_on_start: Some(false),
+                validator_enabled: Some(false),
+                force_multiple_tasks: Some(false),
+                model_variant: None,
+                model_acceleration_enabled: Some(false),
+                disable_permission_restrictions: Some(false),
+                task_management: Some(serde_json::json!({
+                    "plan_summary": "Create Route Plan",
+                    "task_summary": "Create route task"
+                })),
+            })),
+        )
+        .await;
+
+        assert_eq!(session.directory.as_deref(), Some(directory.as_str()));
+        assert_eq!(session.plan_summary.as_deref(), Some("Create Route Plan"));
+        assert_eq!(
+            session.session_display_name.as_deref(),
+            Some("Create Route Plan")
+        );
+        assert_eq!(session.task_management["task_summary"], "Create route task");
+
+        let value = serde_json::to_value(&session).expect("session should serialize");
+        assert!(value["name"].as_str().is_some_and(|name| !name.is_empty()));
+        assert!(value["task_management"].get("status").is_none());
+        assert!(value["task_management"].get("start_condition").is_none());
+        assert_eq!(value["plan_summary"], "Create Route Plan");
+        assert_eq!(value["session_display_name"], "Create Route Plan");
+        let object = value.as_object().expect("session JSON should be an object");
+        assert_eq!(object.len(), 21);
+
+        let Json(listed) = super::list_sessions(
+            HeaderMap::new(),
+            Query(SessionListParams {
+                directory: Some(directory.clone()),
+                include_children: true,
+                ..SessionListParams::default()
+            }),
+        )
+        .await;
+        assert!(listed.iter().any(|item| item.id == session.id
+            && item.task_management.get("status").is_none()
+            && item.task_management.get("start_condition").is_none()));
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    async fn task_management_route_patches_session_and_returns_session_fields() {
+        let directory = std::env::temp_dir()
+            .join(format!(
+                "tura-task-management-route-{}",
+                uuid::Uuid::new_v4()
+            ))
+            .to_string_lossy()
+            .to_string();
+        let session = session_store().create_session(
+            Some(directory.clone()),
+            None,
+            None,
+            Some("chat".to_string()),
+            None,
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+
+        let Json(updated) = super::update_session_task_management(
+            Path(session.id.clone()),
+            Json(super::UpdateSessionTaskManagementRequest {
+                task_management: serde_json::json!({
+                    "plan_summary": "Dedicated Patch Route",
+                    "task_summary": "Patch task",
+                    "status": "question",
+                    "start_at": "2026-05-25T08:30:00Z"
+                }),
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            updated.plan_summary.as_deref(),
+            Some("Dedicated Patch Route")
+        );
+        assert_eq!(
+            updated.session_display_name.as_deref(),
+            Some("Dedicated Patch Route")
+        );
+        assert_eq!(updated.task_management["status"], "question");
+        assert!(updated.task_management.get("start_condition").is_none());
+
+        let value = serde_json::to_value(&updated).expect("session should serialize");
+        assert_eq!(value["task_management"]["status"], "question");
+        assert_eq!(value["plan_summary"], "Dedicated Patch Route");
+        assert_eq!(value["session_display_name"], "Dedicated Patch Route");
+        let object = value.as_object().expect("session JSON should be an object");
+        assert_eq!(object.len(), 21);
+
+        let Json(fetched) = super::get_session(Path(session.id)).await;
+        assert_eq!(fetched.task_management["status"], "question");
+
+        let _ = fs::remove_dir_all(directory);
     }
 
     #[test]
@@ -2881,82 +3344,4 @@ mod tests {
 
         assert_eq!(languages, vec!["java"]);
     }
-}
-
-pub async fn tui_action(payload: Option<Json<serde_json::Value>>) -> Json<serde_json::Value> {
-    let payload = payload
-        .map(|Json(payload)| payload)
-        .unwrap_or(serde_json::Value::Null);
-    let action = payload
-        .get("action")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("submit-prompt");
-    if matches!(
-        action,
-        "submit-prompt" | "append-prompt" | "execute-command"
-    ) {
-        let content = payload
-            .get("prompt")
-            .or_else(|| payload.get("input"))
-            .or_else(|| payload.get("message"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("Prompt submitted")
-            .to_string();
-        let session_id = payload
-            .get("sessionID")
-            .or_else(|| payload.get("session_id"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string)
-            .unwrap_or_else(|| {
-                session_store()
-                    .create_session(
-                        global_store().get_current_directory(),
-                        None,
-                        None,
-                        Some("coding".to_string()),
-                        None,
-                        false,
-                        false,
-                        false,
-                        None,
-                        false,
-                        false,
-                    )
-                    .id
-            });
-        let prompt_payload = serde_json::json!({
-            "parts": [{
-                "id": format!("tui-part-{}", uuid::Uuid::new_v4()),
-                "type": "text",
-                "text": content
-            }]
-        });
-        session_store().clear_cancelled(&session_id);
-        let _ = session_store().add_message(&session_id, SessionMessageRole::User, content);
-        session_store().update_session_status(&session_id, SessionStatusMano::Busy);
-        let session_id_for_task = session_id.clone();
-        tokio::task::spawn_blocking(move || {
-            run_mano_for_prompt(session_id_for_task, prompt_payload);
-        });
-        return Json(serde_json::json!({
-            "ok": true,
-            "action": action,
-            "sessionID": session_id,
-            "status": "submitted"
-        }));
-    }
-    if action == "clear-prompt" {
-        return Json(serde_json::json!({
-            "ok": true,
-            "action": action,
-            "prompt": ""
-        }));
-    }
-    Json(serde_json::json!({
-        "ok": true,
-        "action": action,
-        "payload": payload,
-    }))
 }

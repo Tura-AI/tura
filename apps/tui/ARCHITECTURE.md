@@ -4,9 +4,8 @@
 
 `apps/tui` provides the terminal-facing Tura client. Both the non-interactive
 CLI and the interactive TUI are TypeScript/Node applications in the same package.
-They should reference the interaction shape of
-`../Codex/codex-rs/cli`, `../Codex/codex-rs/exec`, and
-`../Codex/codex-rs/tui`, but only as UX and boundary references.
+They should follow the repository's own gateway/session/runtime boundaries and
+reuse terminal interaction patterns only when they fit the current code.
 
 The TypeScript CLI/TUI must not embed the agent runtime, provider calls, command
 execution, config persistence, or session store. Those responsibilities already
@@ -26,33 +25,14 @@ stream, output formatting, and API types after the command path is stable.
 - Do not read or write `.tura/config.conf`, `.env`, or provider config files
   directly.
 - Do not create a separate local session/message database for the CLI/TUI app.
-- Do not fork Codex wholesale into this repository. Port only the terminal
-  interaction patterns that are useful.
 - Do not make `/tui/*` compatibility routes the main implementation path.
 
-## Reference From Codex
+## Terminal Interaction Goals
 
-Use Codex as an interaction and module-boundary reference, not as a backend
-architecture reference.
-
-- `codex-rs/cli/src/main.rs`: command tree, shared root flags, subcommand
-  dispatch, `resume`, login/logout style, completion, and debug/admin commands.
-- `codex-rs/exec/src/cli.rs`: non-interactive command flags and output modes.
-- `codex-rs/exec/src/event_processor_with_jsonl_output.rs`: stable machine
-  output shape.
-- `codex-rs/exec/src/event_processor_with_human_output.rs`: compact human
-  output and status rendering.
-- `codex-rs/tui/src/app.rs`: central app loop that owns UI state and dispatches
-  app events.
-- `codex-rs/tui/src/tui/event_stream.rs`: terminal event stream pattern.
-- `codex-rs/tui/src/history_cell*`, `bottom_pane*`, `status*`,
-  `markdown_render*`, and `diff_render*`: reusable UI concepts for transcript,
-  permissions, status, markdown, and diffs.
-
-Tura should keep the terminal UX spirit: compact transcript, clear status,
-resume flow, model/session selectors, permission prompts, useful exit messages,
-and deterministic automation output. Tura should replace Codex's in-process
-core calls with gateway HTTP and SSE calls.
+Tura should keep a compact transcript, clear status, resume flow,
+model/session selectors, permission prompts, useful exit messages, and
+deterministic automation output. All durable state and backend work still goes
+through gateway HTTP and SSE calls.
 
 ## Package And Directory Strategy
 
@@ -213,6 +193,52 @@ paths                          GET    /path
 The existing `/tui/*` routes in gateway are compatibility shortcuts. The new
 TypeScript CLI/TUI should prefer the richer session/message/config endpoints,
 and only use `/tui/*` for compatibility shims or very early smoke tests.
+
+## Session Plan Commands
+
+The CLI/TUI plan surface is a terminal projection of gateway session
+task-management state. It must use the same routes as GUI and must not read
+session files directly.
+Terminal API types must stay benchmark-agnostic. Benchmark-specific prompts,
+artifacts, and evaluator checks belong in e2e scripts, not TUI session models.
+
+Current plan commands are backed by:
+
+```text
+GET    /session?directory=<workspace>&includeChildren=true
+POST   /session
+GET    /session/{sessionID}
+PATCH  /session/{sessionID}
+PATCH  /session/{sessionID}/task-management
+GET    /session/status
+GET    /session/{sessionID}/todo
+```
+
+Terminal plan display should prefer `session_display_name`, then
+`plan_summary`, then task `task_summary`, then session `name`. A short session
+id can be shown as metadata.
+
+Task status values are:
+
+```text
+todo
+doing
+question
+done
+archived
+```
+
+Archived tickets are hidden from normal plan output unless the user passes an
+explicit archived flag. The TUI may show archived counts in compact status
+rendering.
+
+Single-task patches use object `task_management`. Multi-task nonce-specific
+patches should use `task_management.tasks[]` entries with `nonce_id`, matching
+gateway's current patch semantics.
+
+Schedule fields are UTC in gateway responses and requests. Terminal output may
+format them in local time for humans, while JSON/NDJSON output should preserve
+the gateway value.
 
 ## Non-Interactive CLI
 
@@ -514,7 +540,7 @@ cleaner:
 - SSE `id:` fields for reliable stream resume
 - documented request/response DTOs for `/session/{id}/message` and
   `/prompt_async`
-- one canonical prompt payload for CLI/GUI/TUI
+- one prompt payload for CLI/GUI/TUI
 - stable error envelope for all endpoints
 - explicit non-interactive session marker so `resume --include-non-interactive`
   can be faithfully supported

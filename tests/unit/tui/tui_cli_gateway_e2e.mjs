@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import fs from "node:fs/promises"
 import http from "node:http"
+import { createRequire } from "node:module"
 import path from "node:path"
 import process from "node:process"
 import { performance } from "node:perf_hooks"
@@ -12,6 +13,7 @@ const repoRoot = process.env.REPO_ROOT || path.resolve(import.meta.dirname, ".."
 const nodeBin = process.execPath
 const tuiBin = path.join(repoRoot, "apps", "tui", "dist", "index.js")
 const runRoot = path.join(repoRoot, "target", "tui-cli-gateway-e2e", String(Date.now()))
+const tuiRequire = createRequire(path.join(repoRoot, "apps", "tui", "package.json"))
 
 function sendJson(res, value, status = 200) {
   const body = JSON.stringify(value)
@@ -63,9 +65,36 @@ function startGateway() {
     agent: "coding_agent",
     skill_folders: [],
   }
+  const task = (id, title, status, offset = 0, directory = runRoot, _trigger = "user_action") => ({
+    nonce_id: `${id}:0`,
+    step: 0,
+    plan_summary: title,
+    task_summary: `执行任务：${title}`,
+    delivery: "tui session plan e2e",
+    sub_session_id: "",
+    start_at: new Date(Date.now() + offset).toISOString(),
+    poll_interval: { m: 0, d: 0, h: 1, s: 0 },
+    status: status,
+  })
+  const makeSession = (id, title, status, offset = 0, directory = runRoot, trigger = "user_action") => ({
+    id,
+    name: title,
+    directory,
+    status: status === "doing" ? "busy" : "idle",
+    model: config.model,
+    agent: config.active_agent,
+    model_variant: config.model_variant,
+    model_acceleration_enabled: config.model_acceleration_enabled,
+    created_at: Date.now() - offset - 1000,
+    updated_at: Date.now() - offset,
+    message_count: 0,
+    plan_summary: title,
+    session_display_name: title,
+    task_management: task(id, title, status, offset, directory, trigger),
+  })
   let session = {
     id: "sess-e2e",
-    title: "TUI e2e",
+    name: "TUI e2e",
     directory: runRoot,
     status: "idle",
     model: config.model,
@@ -75,7 +104,18 @@ function startGateway() {
     created_at: Date.now(),
     updated_at: Date.now(),
     message_count: 0,
+    plan_summary: "TUI e2e",
+    session_display_name: "TUI e2e",
+    task_management: task("sess-e2e", "TUI e2e", "todo"),
   }
+  let sessions = [
+    session,
+    makeSession("plan-doing-002", "实现拖拽状态切换", "doing", 2000),
+    makeSession("plan-question-003", "等待用户补充权限", "question", 3000, runRoot, "scheduled_task"),
+    makeSession("plan-done-004", "完成 gateway 字段回传", "done", 4000),
+    makeSession("plan-archived-005", "隐藏旧会话工单", "archived", 5000),
+    makeSession("plan-other-006", "其他目录里的待办", "todo", 6000, path.join(runRoot, "other")),
+  ]
   const providerList = {
     all: [
       {
@@ -149,8 +189,29 @@ function startGateway() {
       return sendJson(res, true)
     }
     if (req.method === "GET" && url.pathname === "/provider") return sendJson(res, providerList)
+    if (req.method === "GET" && url.pathname === "/provider/auth") {
+      return sendJson(res, {
+        openai: [
+          {
+            type: "oauth",
+            kind: "OAuthPkce",
+            login: "oauth",
+            label: "OpenAI OAuth",
+            token_env: "OPENAI_API_KEY",
+            login_env: "OPENAI_LOGIN",
+          },
+        ],
+      })
+    }
     if (req.method === "GET" && url.pathname === "/provider/openai/auth/status") {
       return sendJson(res, { provider_id: "openai", configured: true, authenticated: true, auth_state: "authenticated", runtime_state: "ready" })
+    }
+    if (req.method === "POST" && url.pathname === "/provider/openai/oauth/authorize") {
+      return sendJson(res, {
+        url: "https://auth.example.test/openai",
+        method: "auto",
+        instructions: "OpenAI OAuth test login started.",
+      })
     }
     if (req.method === "POST" && url.pathname === "/provider/openai/auth/logout") {
       records.providerLogouts.push("openai")
@@ -178,8 +239,12 @@ function startGateway() {
     if (req.method === "POST" && url.pathname === "/session") {
       const payload = await readJson(req)
       records.createSessions.push(payload)
+      const id = payload.task_management ? `plan-local-${records.createSessions.length}` : session.id
+      const planName = payload.task_management?.plan_summary ?? session.name
       session = {
         ...session,
+        id,
+        name: planName,
         directory: payload.directory ?? session.directory,
         model: payload.model ?? config.model,
         agent: payload.agent ?? config.active_agent,
@@ -187,19 +252,43 @@ function startGateway() {
         model_variant: payload.model_variant ?? config.model_variant,
         model_acceleration_enabled: payload.model_acceleration_enabled ?? config.model_acceleration_enabled,
         force_multiple_tasks: payload.force_multiple_tasks,
+        plan_summary: planName,
+        session_display_name: planName,
+        task_management: payload.task_management ?? session.task_management,
       }
+      sessions = [session, ...sessions.filter((item) => item.id !== session.id)]
       return sendJson(res, session)
     }
-    if (req.method === "GET" && url.pathname === "/session") return sendJson(res, [session])
-    if (req.method === "GET" && url.pathname === "/session/status") return sendJson(res, { [session.id]: session.status })
-    if (req.method === "GET" && url.pathname === `/session/${session.id}`) return sendJson(res, session)
-    if (req.method === "PATCH" && url.pathname === `/session/${session.id}`) {
+    if (req.method === "GET" && url.pathname === "/session") return sendJson(res, sessions)
+    if (req.method === "GET" && url.pathname === "/session/status") {
+      return sendJson(res, Object.fromEntries(sessions.map((item) => [item.id, { status: { type: item.status }, task_management: item.task_management, plan_summary: item.plan_summary, session_display_name: item.session_display_name }])))
+    }
+    const sessionMatch = url.pathname.match(/^\/session\/([^/]+)$/)
+    if (req.method === "GET" && sessionMatch) {
+      const id = decodeURIComponent(sessionMatch[1])
+      return sendJson(res, sessions.find((item) => item.id === id) ?? session)
+    }
+    if (req.method === "PATCH" && sessionMatch) {
+      const id = decodeURIComponent(sessionMatch[1])
       const payload = await readJson(req)
       records.sessionUpdates.push(payload)
-      session = { ...session, ...payload, updated_at: Date.now() }
-      return sendJson(res, session)
+      const existing = sessions.find((item) => item.id === id) ?? session
+      const taskState = payload.task_management ?? existing.task_management
+      const planName = taskState?.plan_summary ?? payload.plan_summary ?? existing.plan_summary
+      const updated = {
+        ...existing,
+        ...payload,
+        name: planName ?? existing.name,
+        plan_summary: planName,
+        session_display_name: planName,
+        task_management: { ...existing.task_management, ...taskState },
+        updated_at: Date.now(),
+      }
+      session = updated
+      sessions = sessions.map((item) => (item.id === id ? updated : item))
+      return sendJson(res, updated)
     }
-    if (req.method === "DELETE" && url.pathname === `/session/${session.id}`) return sendJson(res, true)
+    if (req.method === "DELETE" && sessionMatch) return sendJson(res, true)
     if (req.method === "GET" && url.pathname === `/session/${session.id}/message`) return sendJson(res, messages)
     if (req.method === "POST" && url.pathname === `/session/${session.id}/message`) {
       const payload = await readJson(req)
@@ -321,6 +410,148 @@ function spawnCli(args, options = {}) {
   })
 }
 
+function parseCommandLine(input) {
+  const args = []
+  let current = ""
+  let quote = null
+  let escaping = false
+  for (const char of input) {
+    if (escaping) {
+      current += char
+      escaping = false
+      continue
+    }
+    if (char === "\\") {
+      escaping = true
+      continue
+    }
+    if (quote) {
+      if (char === quote) quote = null
+      else current += char
+      continue
+    }
+    if (char === "\"" || char === "'") {
+      quote = char
+      continue
+    }
+    if (/\s/.test(char)) {
+      if (current) {
+        args.push(current)
+        current = ""
+      }
+      continue
+    }
+    current += char
+  }
+  if (escaping) current += "\\"
+  if (quote) throw new Error(`unterminated ${quote} quote`)
+  if (current) args.push(current)
+  return args
+}
+
+function terminalPageHtml() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TUI CLI bridge</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; background: #111417; color: #edf0f2; }
+    main { min-height: 100vh; display: grid; grid-template-rows: auto auto auto 1fr; gap: 12px; padding: 18px; }
+    header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; border-bottom: 1px solid #30363d; padding-bottom: 10px; }
+    h1 { margin: 0; font: 700 18px/1.2 system-ui, sans-serif; letter-spacing: 0; }
+    .meta { color: #9aa5ad; font: 12px/1.2 system-ui, sans-serif; }
+    form { display: grid; grid-template-columns: minmax(0, 1fr) 92px; gap: 8px; align-items: stretch; }
+    textarea { min-height: 78px; resize: vertical; border: 1px solid #48515a; border-radius: 6px; background: #171c21; color: inherit; padding: 10px; font: inherit; outline: none; }
+    textarea:focus { border-color: #73c2fb; box-shadow: 0 0 0 2px rgba(115, 194, 251, .18); }
+    button { border: 1px solid #73c2fb; border-radius: 6px; background: #73c2fb; color: #07111a; padding: 0 18px; font-weight: 700; }
+    button:disabled { opacity: .55; }
+    .status { min-height: 22px; color: #73c2fb; }
+    pre { margin: 0; white-space: pre-wrap; overflow: auto; border: 1px solid #30363d; border-radius: 6px; background: #080b0e; padding: 12px; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>TUI CLI bridge</h1>
+      <div class="meta">local command relay · playwright evidence</div>
+    </header>
+    <form id="terminal-form">
+      <textarea id="command" aria-label="Command" spellcheck="false"></textarea>
+      <button id="run" type="submit">Run</button>
+    </form>
+    <div id="status" class="status" role="status">ready</div>
+    <pre id="output" aria-label="Terminal output"></pre>
+  </main>
+  <script>
+    const form = document.querySelector("#terminal-form");
+    const command = document.querySelector("#command");
+    const output = document.querySelector("#output");
+    const status = document.querySelector("#status");
+    const run = document.querySelector("#run");
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      run.disabled = true;
+      status.textContent = "running";
+      output.textContent = "";
+      try {
+        const response = await fetch("/run", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ command: command.value }),
+        });
+        const result = await response.json();
+        output.textContent = [
+          "$ tura " + command.value,
+          "status=" + result.status + " durationMs=" + result.durationMs,
+          result.stdout ? "\\n[stdout]\\n" + result.stdout : "",
+          result.stderr ? "\\n[stderr]\\n" + result.stderr : "",
+          result.error ? "\\n[error]\\n" + result.error : "",
+        ].filter(Boolean).join("\\n");
+        status.textContent = result.status === 0 ? "completed" : "failed";
+      } catch (error) {
+        output.textContent = String(error && error.stack || error);
+        status.textContent = "failed";
+      } finally {
+        run.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>`
+}
+
+function startTerminalBridge(gateway) {
+  const server = http.createServer(async (req, res) => {
+    const url = new URL(req.url || "/", "http://127.0.0.1")
+    if (req.method === "GET" && url.pathname === "/") {
+      const body = terminalPageHtml()
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-length": Buffer.byteLength(body) })
+      res.end(body)
+      return
+    }
+    if (req.method === "POST" && url.pathname === "/run") {
+      try {
+        const payload = await readJson(req)
+        const args = parseCommandLine(String(payload.command || ""))
+        const result = await spawnCli([...baseArgs(gateway), ...args])
+        return sendJson(res, result)
+      } catch (error) {
+        return sendJson(res, { status: 1, stdout: "", stderr: "", durationMs: 0, error: error.stack || error.message || String(error) }, 400)
+      }
+    }
+    sendJson(res, { error: `unhandled ${req.method} ${url.pathname}` }, 404)
+  })
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address()
+      resolve({ server, url: `http://127.0.0.1:${address.port}` })
+    })
+  })
+}
+
 async function expectCliOk(args) {
   const result = await spawnCli(args)
   assert.equal(result.status, 0, result.stderr)
@@ -334,6 +565,79 @@ async function expectCliJson(args) {
 
 function baseArgs(gateway) {
   return ["--gateway-url", gateway.url, "--cwd", runRoot]
+}
+
+async function runWebTerminalE2e(gateway) {
+  const { chromium } = tuiRequire("playwright")
+  const bridge = await startTerminalBridge(gateway)
+  const browser = await chromium.launch({ headless: true })
+  const page = await browser.newPage({ viewport: { width: 1100, height: 780 } })
+  const screenshotDir = path.join(runRoot, "screenshots")
+  const screenshots = []
+  const capture = async (name) => {
+    const screenshotPath = path.join(screenshotDir, `${String(screenshots.length).padStart(2, "0")}-${name}.png`)
+    await page.screenshot({ path: screenshotPath, fullPage: true })
+    screenshots.push({ name, path: screenshotPath })
+  }
+  const runStep = async (name, command, assertOutput) => {
+    await page.getByLabel("Command").fill(command)
+    await page.getByRole("button", { name: "Run" }).click()
+    await page.waitForFunction(() => document.querySelector("#status")?.textContent !== "running", { timeout: 12_000 })
+    const output = await page.getByLabel("Terminal output").innerText()
+    assert.match(output, /status=0/, `${name} should exit successfully`)
+    await assertOutput(output)
+    await capture(name)
+    return output
+  }
+  try {
+    await fs.mkdir(screenshotDir, { recursive: true })
+    await page.goto(bridge.url, { waitUntil: "domcontentloaded" })
+    await capture("ready")
+
+    await runStep("settings-config-get", "--json config get", async (output) => {
+      assert.match(output, /coding_agent_fast|coding_agent/)
+    })
+    await runStep("settings-config-set", "config set agent=coding_agent model_reasoning_effort=low", async (output) => {
+      assert.match(output, /"active_agent":\s*"coding_agent"/)
+      assert.match(output, /"model_variant":\s*"low"/)
+    })
+    await runStep("login-provider-list", "--json provider list", async (output) => {
+      assert.match(output, /"id":\s*"openai"/)
+    })
+    await runStep("login-provider-status", "provider status openai", async (output) => {
+      assert.match(output, /authenticated/)
+    })
+    await runStep("task-plan", "--json session plan --all", async (output) => {
+      assert.match(output, /等待用户补充权限|需要审批后继续执行/)
+    })
+    await runStep("gateway-command", "command run hello web", async (output) => {
+      assert.match(output, /ran hello web/)
+    })
+    await runStep("permission-feedback", "--json permission list", async (output) => {
+      assert.match(output, /\[|\]/)
+    })
+    await runStep("run-feedback", 'run "hello from tui playwright bridge" --json --no-stream --timeout 5', async (text) => {
+      assert.match(text, /hello from tui playwright bridge/)
+      assert.match(text, /streaming-middle final/)
+      assert.match(text, /"status":\s*"completed"/)
+    })
+    await runStep("settings-restore", "config set agent=coding_agent_fast model_reasoning_effort=medium", async (output) => {
+      assert.match(output, /"active_agent":\s*"coding_agent_fast"/)
+      assert.match(output, /"model_variant":\s*"medium"/)
+    })
+    assert.ok(
+      gateway.records.prompts.some((payload) =>
+        payload.parts?.some((part) => part.text === "hello from tui playwright bridge"),
+      ),
+      "web terminal should send the prompt through the TUI CLI",
+    )
+
+    await fs.writeFile(path.join(screenshotDir, "manifest.json"), JSON.stringify(screenshots, null, 2))
+    console.log(`[tui-cli-e2e] playwright web terminal ok=true screenshots=${screenshotDir}`)
+  } finally {
+    await browser.close()
+    await new Promise((resolve) => bridge.server.close(resolve))
+  }
 }
 
 async function main() {
@@ -362,11 +666,46 @@ async function main() {
     const sessionShow = await expectCliJson([...baseArgs(gateway), "--json", "session", "show", "sess-e2e"])
     assert.equal(sessionShow.session.id, "sess-e2e")
     assert.equal(sessionShow.todos[0].id, "todo-1")
+    const plan = await expectCliJson([...baseArgs(gateway), "--json", "session", "plan", "--all"])
+    assert.ok(plan.tickets.some((ticket) => ticket.plan_summary === "等待用户补充权限" && ticket.status === "question"))
+    assert.ok(!plan.tickets.some((ticket) => ticket.plan_summary === "隐藏旧会话工单"))
+    const archivedPlan = await expectCliJson([...baseArgs(gateway), "--json", "session", "plan", "--all", "--archived", "--status", "archived"])
+    assert.equal(archivedPlan.tickets[0].status, "archived")
+    const statusUpdate = await expectCliJson([...baseArgs(gateway), "--json", "session", "set-status", "sess-e2e", "done"])
+    assert.equal(statusUpdate.session.task_management.status, "done")
+    const ticketUpdate = await expectCliJson([
+      ...baseArgs(gateway),
+      "--json",
+      "session",
+      "create-ticket",
+      "需要审批后继续执行",
+      "--session",
+      "sess-e2e",
+      "--status",
+      "question",
+      "--start-condition",
+      "scheduled_task",
+      "--start-at",
+      "2026-05-25T10:30",
+      "--poll",
+      "m=0,d=1,h=2,s=3",
+      "--step",
+      "2",
+    ])
+    assert.equal(ticketUpdate.session.task_management.status, "question")
+    assert.equal(ticketUpdate.session.task_management.start_at, "2026-05-25T08:30:00.000Z")
+    assert.equal(ticketUpdate.session.task_management.step, 2)
+    const humanPlan = await expectCliOk([...baseArgs(gateway), "session", "plan", "--all"])
+    assert.match(humanPlan.stdout, /command session plan/)
+    assert.match(humanPlan.stdout, /result ok/)
     const sessionDelete = await expectCliJson([...baseArgs(gateway), "--json", "session", "delete", "sess-e2e"])
     assert.equal(sessionDelete.deleted, true)
 
     const providerList = await expectCliJson([...baseArgs(gateway), "--json", "provider", "list"])
     assert.equal(providerList.all[0].id, "openai")
+    const gatewayClientModule = await import(pathToFileURL(path.join(repoRoot, "apps", "tui", "dist", "gateway", "client.js")).href)
+    const authMethods = await new gatewayClientModule.GatewayClient({ baseUrl: gateway.url, directory: runRoot }).listProviderAuthMethods()
+    assert.equal(authMethods.openai[0].login, "oauth")
     const providerStatus = await expectCliJson([...baseArgs(gateway), "provider", "status", "openai"])
     assert.equal(providerStatus.authenticated, true)
     const providerStatuses = await expectCliJson([...baseArgs(gateway), "provider", "status"])
@@ -424,6 +763,8 @@ async function main() {
     assert.equal(gateway.records.prompts[0].model_acceleration_enabled, false)
 
     const events = runResult.stdout.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line))
+    assert.equal(events[0].type, "cli.started")
+    assert.equal(events[0].prompt, "hello from tui cli")
     const deltaIndex = events.findIndex((event) => event.type === "message.part.delta" && event.text === "streaming-middle")
     const completedIndex = events.findIndex((event) => event.type === "cli.completed")
     assert.ok(deltaIndex >= 0, "streaming delta should be emitted")
@@ -446,6 +787,8 @@ async function main() {
     assert.equal(noStreamJson.finalText, "streaming-middle final")
     console.log(`[tui-cli-e2e] no-stream polling completed; duration=${noStreamResult.durationMs}ms`)
 
+    await runWebTerminalE2e(gateway)
+
     const { GatewayClient } = await import(pathToFileURL(path.join(repoRoot, "apps", "tui", "dist", "gateway", "client.js")).href)
     const client = new GatewayClient({ baseUrl: gateway.url, directory: runRoot, timeoutMs: 5000 })
     assert.equal((await client.health()).version, "e2e")
@@ -457,6 +800,7 @@ async function main() {
     assert.equal((await client.listSessions({ all: true, includeChildren: true, limit: 3 }))[0].id, "sess-e2e")
     assert.equal((await client.getSession("sess-e2e")).id, "sess-e2e")
     assert.equal((await client.updateSession("sess-e2e", { agent: "coding_agent" })).agent, "coding_agent")
+    assert.equal(await client.sessionStatus("sess-e2e"), "idle")
     assert.equal((await client.sendMessage("sess-e2e", "manual message")).role, "user")
     assert.equal((await client.todos("sess-e2e"))[0].id, "todo-1")
     assert.deepEqual(await client.listPermissions(), [])

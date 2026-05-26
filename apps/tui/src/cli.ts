@@ -284,8 +284,18 @@ Options:
 function printSessionHelp(): void {
   process.stdout.write(`Usage:
   tura [OPTIONS] session list [--all] [--json]
+  tura [OPTIONS] session plan [--all] [--archived] [--status STATUS] [--json]
   tura [OPTIONS] session show SESSION_ID [--json]
+  tura [OPTIONS] session set-status SESSION_ID todo|doing|question|done|archived
+  tura [OPTIONS] session update SESSION_ID [--status STATUS] [--plan-summary TEXT] [--task-summary TEXT]
+  tura [OPTIONS] session create-ticket SUMMARY [--session SESSION_ID] [--status STATUS]
   tura [OPTIONS] session delete SESSION_ID
+
+Plan options:
+  --start-condition session_idle|user_action|scheduled_task|polling_task
+  --start-at LOCAL_OR_ISO_TIME
+  --poll m=0,d=0,h=1,s=0
+  --step N
 `);
 }
 

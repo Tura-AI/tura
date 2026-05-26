@@ -37,6 +37,7 @@ import type {
   ServiceStatusResponse,
   ShellResponse,
   Session,
+  TaskManagement,
   Skill,
   TaskRun,
   TodoItem,
@@ -53,6 +54,10 @@ export type GatewayClientOptions = {
   baseUrl?: string;
   directory?: string;
   fetch?: typeof fetch;
+  timeoutMs?: number;
+};
+
+type GatewayRequestInit = RequestInit & {
   timeoutMs?: number;
 };
 
@@ -200,6 +205,16 @@ export class GatewayClient {
     return this.patch(`/session/${encodeURIComponent(sessionId)}`, payload);
   }
 
+  updateSessionTaskManagement(
+    sessionId: string,
+    task_management: TaskManagement | TaskManagement[],
+  ): Promise<Session> {
+    return this.patch(
+      `/session/${encodeURIComponent(sessionId)}/task-management`,
+      { task_management },
+    );
+  }
+
   deleteSession(sessionId: string): Promise<boolean> {
     return this.delete(`/session/${encodeURIComponent(sessionId)}`);
   }
@@ -235,6 +250,7 @@ export class GatewayClient {
       {
         method: "POST",
         body: JSON.stringify(payload),
+        timeoutMs: 120_000,
       },
     );
   }
@@ -474,7 +490,7 @@ export class GatewayClient {
 
   private async request<T>(
     path: string,
-    init: RequestInit,
+    init: GatewayRequestInit,
     query?: Record<string, unknown>,
     scoped = false,
   ): Promise<T> {
@@ -496,11 +512,15 @@ export class GatewayClient {
       headers.set("x-opencode-directory", encodeURIComponent(this.directory));
     }
 
-    const { signal, dispose } = timeoutSignal(init.signal, this.timeoutMs);
+    const { timeoutMs, ...fetchInit } = init;
+    const { signal, dispose } = timeoutSignal(
+      init.signal,
+      timeoutMs ?? this.timeoutMs,
+    );
     let response: Response;
     try {
       response = await this.fetchImpl(url, {
-        ...init,
+        ...fetchInit,
         headers,
         signal,
       });

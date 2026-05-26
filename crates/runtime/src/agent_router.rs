@@ -66,9 +66,9 @@ pub fn activate_agents_by_session_type(
 
 fn create_agent_by_name(
     agent_name: &str,
-    project_directory: &PathBuf,
-    capabilities_directory: &PathBuf,
-    prompts_directory: &PathBuf,
+    project_directory: &Path,
+    capabilities_directory: &Path,
+    prompts_directory: &Path,
 ) -> Result<AgentManagement, String> {
     if let Some(agent) = load_agent_from_registry(project_directory, agent_name)? {
         return Ok(agent);
@@ -85,9 +85,9 @@ fn create_agent_by_name(
 }
 
 fn create_coding_agent(
-    project_directory: &PathBuf,
-    capabilities_directory: &PathBuf,
-    prompts_directory: &PathBuf,
+    project_directory: &Path,
+    capabilities_directory: &Path,
+    prompts_directory: &Path,
 ) -> Result<AgentManagement, String> {
     if let Some(agent) = load_agent_from_registry(project_directory, "coding_agent")? {
         return Ok(agent);
@@ -107,7 +107,7 @@ fn create_coding_agent(
             Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ),
         CodingAgent::name().to_string(),
-        project_directory.clone(),
+        project_directory.to_path_buf(),
         None,
         true,
         provider,
@@ -118,7 +118,7 @@ fn create_coding_agent(
         agent.add_capability(
             AgentCapabilityItem {
                 capability_name,
-                capability_directory: capabilities_directory.clone(),
+                capability_directory: capabilities_directory.to_path_buf(),
             },
             now,
         );
@@ -128,7 +128,7 @@ fn create_coding_agent(
         agent.add_prompt(
             AgentPromptItem {
                 agent_prompt: prompt_name,
-                prompt_directory: prompts_directory.clone(),
+                prompt_directory: prompts_directory.to_path_buf(),
             },
             now,
         );
@@ -138,9 +138,9 @@ fn create_coding_agent(
 }
 
 fn create_general_agent(
-    project_directory: &PathBuf,
-    capabilities_directory: &PathBuf,
-    prompts_directory: &PathBuf,
+    project_directory: &Path,
+    capabilities_directory: &Path,
+    prompts_directory: &Path,
 ) -> Result<AgentManagement, String> {
     if let Some(agent) = load_agent_from_registry(project_directory, "general")? {
         return Ok(agent);
@@ -163,27 +163,25 @@ fn create_general_agent(
     let mut agent = AgentManagement::new(
         generate_agent_id("general"),
         "general".to_string(),
-        project_directory.clone(),
+        project_directory.to_path_buf(),
         None,
         true,
         provider,
         validator,
         now,
     );
-    for capability_name in ["command_run"] {
-        agent.add_capability(
-            AgentCapabilityItem {
-                capability_name: capability_name.to_string(),
-                capability_directory: capabilities_directory.clone(),
-            },
-            now,
-        );
-    }
+    agent.add_capability(
+        AgentCapabilityItem {
+            capability_name: "command_run".to_string(),
+            capability_directory: capabilities_directory.to_path_buf(),
+        },
+        now,
+    );
 
     agent.add_prompt(
         AgentPromptItem {
             agent_prompt: "general".to_string(),
-            prompt_directory: prompts_directory.clone(),
+            prompt_directory: prompts_directory.to_path_buf(),
         },
         now,
     );
@@ -225,7 +223,7 @@ struct AgentRegistryEntry {
 }
 
 fn load_agent_from_registry(
-    project_directory: &PathBuf,
+    project_directory: &Path,
     agent_name: &str,
 ) -> Result<Option<AgentManagement>, String> {
     let standard_registry_path = project_directory

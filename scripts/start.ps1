@@ -59,6 +59,11 @@ if ((-not $Tui) -and (-not $Gateway) -and ($PassThruArgs -contains "--help" -or 
 
 Set-Location $RepoRoot
 
+$RepoEnvPath = Join-Path $RepoRoot ".env"
+if ((-not $env:TURA_ENV_PATH) -and (Test-Path $RepoEnvPath)) {
+  $env:TURA_ENV_PATH = $RepoEnvPath
+}
+
 if (-not $SkipInstall) {
   $installArgs = @()
   if ($ReleaseServices) {

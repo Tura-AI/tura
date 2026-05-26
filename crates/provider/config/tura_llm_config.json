@@ -12,42 +12,17 @@
     },
     "openai": {
       "account_env": "OPENAI_ACCOUNT_ID",
-      "auth_url": "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&scope=openid+profile+email+offline_access&code_challenge=rtMrXDAvdH7MRIayLcVugHUHDNfTRVQxhxWRzN6d_hI&code_challenge_method=S256&id_token_add_organizations=true&codex_cli_simplified_flow=true&state=764502863a384574ad7a47f262323cf6&originator=opencode",
+      "auth_url": "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&scope=openid+profile+email+offline_access&code_challenge=J9wXZDQtr8gRLsztUPe9GK5GwfPihKf7nf75p4g-8OI&code_challenge_method=S256&id_token_add_organizations=true&codex_cli_simplified_flow=true&state=9faec7d23bf0488ea91e49815be61733&originator=opencode",
       "endpoint": "https://chatgpt.com/backend-api/codex/responses",
       "expires_env": "OPENAI_TOKEN_EXPIRES",
       "login": "oauth",
       "login_env": "OPENAI_LOGIN",
       "provider": "openai",
       "refresh_env": "OPENAI_REFRESH_TOKEN",
-      "status": "connected",
+      "status": "revoked",
       "token_env": "OPENAI_API_KEY",
       "type": "oauth",
-      "updated_at": "2026-05-08T16:06:48.367503300+00:00"
-    }
-  },
-  "provider_latency": {
-    "active": "low",
-    "levels": {
-      "low": {
-        "idle_output_timeout_ms": 20000,
-        "first_output_timeout_ms": 40000,
-        "total_timeout_ms": 240000
-      },
-      "medium": {
-        "idle_output_timeout_ms": 30000,
-        "first_output_timeout_ms": 60000,
-        "total_timeout_ms": 360000
-      },
-      "high": {
-        "idle_output_timeout_ms": 80000,
-        "first_output_timeout_ms": 160000,
-        "total_timeout_ms": 960000
-      },
-      "highest": {
-        "idle_output_timeout_ms": 100000,
-        "first_output_timeout_ms": 180000,
-        "total_timeout_ms": 1200000
-      }
+      "updated_at": "2026-05-26T12:01:34.692413500+00:00"
     }
   },
   "provider_base_url": {
@@ -63,6 +38,31 @@
     "openrouter": "https://openrouter.ai/api/v1",
     "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     "xai": "https://api.x.ai/v1"
+  },
+  "provider_latency": {
+    "active": "low",
+    "levels": {
+      "high": {
+        "first_output_timeout_ms": 160000,
+        "idle_output_timeout_ms": 80000,
+        "total_timeout_ms": 960000
+      },
+      "highest": {
+        "first_output_timeout_ms": 180000,
+        "idle_output_timeout_ms": 100000,
+        "total_timeout_ms": 1200000
+      },
+      "low": {
+        "first_output_timeout_ms": 40000,
+        "idle_output_timeout_ms": 20000,
+        "total_timeout_ms": 240000
+      },
+      "medium": {
+        "first_output_timeout_ms": 60000,
+        "idle_output_timeout_ms": 30000,
+        "total_timeout_ms": 360000
+      }
+    }
   },
   "routes": {
     "tura_academic": {

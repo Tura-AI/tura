@@ -10,7 +10,7 @@ use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::state_machine::session_management::SessionManagement;
 
 use super::agent_prompts::load_agent_prompt_messages;
-use super::constants::{COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL, TASK_DELIVERED_TOOL};
+use super::constants::{COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL};
 use super::tool_catalog::{
     filter_tools_for_turn, load_agent_capabilities, multiple_tasks_child_depth,
     multiple_tasks_env_enabled, multiple_tasks_tool_disabled, tool_schema_name,
@@ -30,9 +30,6 @@ pub(super) fn execute_turn(
         .ok_or_else(|| "no agent available".to_string())?;
 
     let mut tools = load_agent_capabilities(agent)?;
-    if multiple_tasks_env_enabled() && !multiple_tasks_tool_disabled() {
-        tools.push(super::tool_catalog::task_delivered_provider_schema()?);
-    }
     if multiple_tasks_tool_disabled() {
         tools.retain(|tool| tool_schema_name(tool) != Some(MULTIPLE_TASKS_TOOL));
     }
@@ -50,7 +47,6 @@ pub(super) fn execute_turn(
         .collect();
     if multiple_tasks_env_enabled() && !multiple_tasks_tool_disabled() {
         allowed_tool_names.insert(MULTIPLE_TASKS_TOOL.to_string());
-        allowed_tool_names.insert(TASK_DELIVERED_TOOL.to_string());
     }
     tools = move_command_run_to_end(tools);
     if debug_runtime_enabled() {

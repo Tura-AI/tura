@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::path::Path as FsPath;
+use std::path::{Path as FsPath, PathBuf};
 use tokio::time::{sleep, timeout, Duration, Instant};
 use tura_llm_rust::{AuthMethodKind, OAuthAuthorizeKind};
 use uuid::Uuid;
@@ -653,15 +653,164 @@ pub struct ProviderAuthActionResponse {
     pub status: Option<ProviderAuthStatusResponse>,
 }
 
+async fn refresh_provider_auth_if_needed(provider_id: &str, force: bool) -> Result<bool, String> {
+    let Some(entry) = tura_llm_rust::provider_auth_registry_entry(provider_id) else {
+        return Ok(false);
+    };
+    if !entry.capabilities.supports_oauth_refresh {
+        return Ok(false);
+    }
+    let status = build_provider_auth_status(provider_id);
+    if !matches!(status.login.as_deref(), Some("oauth")) {
+        return Ok(false);
+    }
+    if !force && !provider_auth_expires_soon(&status) {
+        return Ok(false);
+    }
+    match provider_id {
+        "openai" => refresh_openai_provider_auth(provider_id, &status)
+            .await
+            .map(|_| true),
+        "google" | "gemini" => refresh_google_provider_auth(provider_id, &status)
+            .await
+            .map(|_| true),
+        _ => Ok(false),
+    }
+}
+
+fn provider_auth_expires_soon(status: &ProviderAuthStatusResponse) -> bool {
+    if status.expired == Some(true) {
+        return true;
+    }
+    let Some(expires_at) = status
+        .expires_env
+        .as_deref()
+        .and_then(config_value)
+        .and_then(|value| value.parse::<i64>().ok())
+    else {
+        return false;
+    };
+    expires_at <= Utc::now().timestamp_millis() + 60_000
+}
+
+async fn refresh_openai_provider_auth(
+    provider_id: &str,
+    status: &ProviderAuthStatusResponse,
+) -> Result<(), String> {
+    refresh_oauth_provider_auth(
+        provider_id,
+        status,
+        openai_oauth_token_url(),
+        vec![("client_id".to_string(), openai_oauth_client_id())],
+        "OpenAI",
+    )
+    .await
+}
+
+async fn refresh_google_provider_auth(
+    provider_id: &str,
+    status: &ProviderAuthStatusResponse,
+) -> Result<(), String> {
+    let mut extra_params = Vec::new();
+    if let Some(client_id) = google_oauth_client_id(provider_id) {
+        extra_params.push(("client_id".to_string(), client_id));
+    }
+    if let Some(client_secret) = google_oauth_client_secret(provider_id) {
+        extra_params.push(("client_secret".to_string(), client_secret));
+    }
+    refresh_oauth_provider_auth(
+        provider_id,
+        status,
+        google_oauth_token_url(),
+        extra_params,
+        "Google",
+    )
+    .await
+}
+
+async fn refresh_oauth_provider_auth(
+    provider_id: &str,
+    status: &ProviderAuthStatusResponse,
+    token_url: String,
+    extra_params: Vec<(String, String)>,
+    display_name: &str,
+) -> Result<(), String> {
+    let refresh_env = status
+        .refresh_env
+        .as_deref()
+        .ok_or_else(|| format!("{display_name} refresh env is not configured"))?;
+    let refresh = config_value(refresh_env)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("{refresh_env} is not configured"))?;
+    let mut form = vec![
+        ("grant_type".to_string(), "refresh_token".to_string()),
+        ("refresh_token".to_string(), refresh.clone()),
+    ];
+    form.extend(extra_params);
+    let response = reqwest::Client::new()
+        .post(token_url)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .form(&form)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    let http_status = response.status();
+    let body: serde_json::Value = response.json().await.map_err(|error| error.to_string())?;
+    if !http_status.is_success() {
+        return Err(format!(
+            "{display_name} token endpoint returned {http_status}: {body}"
+        ));
+    }
+    let access = body
+        .get("access_token")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("{display_name} refresh response did not include access_token"))?
+        .to_string();
+    let refresh = body
+        .get("refresh_token")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(refresh.as_str())
+        .to_string();
+    let expires = Utc::now().timestamp_millis()
+        + body
+            .get("expires_in")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(3600)
+            * 1000;
+    let account_id = body
+        .get("id_token")
+        .and_then(serde_json::Value::as_str)
+        .and_then(extract_account_id_from_jwt)
+        .or_else(|| extract_account_id_from_jwt(&access))
+        .or_else(|| status.account_id.clone());
+    let auth = ProviderAuth {
+        auth_type: "oauth".to_string(),
+        key: Some(access.clone()),
+        access: Some(access),
+        refresh: Some(refresh),
+        expires: Some(expires),
+        account_id,
+        metadata: Some(HashMap::from([(
+            "login".to_string(),
+            serde_json::Value::String("oauth".to_string()),
+        )])),
+    };
+    persist_provider_auth(provider_id, &auth).map_err(|error| error.to_string())
+}
+
 pub async fn provider_auth_status(
     Path(provider_id): Path<String>,
 ) -> Json<ProviderAuthStatusResponse> {
+    let _ = refresh_provider_auth_if_needed(&provider_id, false).await;
     Json(build_provider_auth_status(&provider_id))
 }
 
 pub async fn provider_auth_validate(
     Path(provider_id): Path<String>,
 ) -> Json<ProviderAuthActionResponse> {
+    let refresh_result = refresh_provider_auth_if_needed(&provider_id, false).await;
     let status = build_provider_auth_status(&provider_id);
     let ok = status.authenticated;
     Json(ProviderAuthActionResponse {
@@ -669,6 +818,8 @@ pub async fn provider_auth_validate(
         provider_id,
         message: if ok {
             "provider auth is configured".to_string()
+        } else if let Err(error) = refresh_result {
+            format!("provider auth refresh failed: {error}")
         } else {
             "provider auth is not configured".to_string()
         },
@@ -679,17 +830,23 @@ pub async fn provider_auth_validate(
 pub async fn provider_auth_refresh(
     Path(provider_id): Path<String>,
 ) -> Json<ProviderAuthActionResponse> {
-    let status = build_provider_auth_status(&provider_id);
     let can_refresh = tura_llm_rust::provider_auth_registry_entry(&provider_id)
         .map(|entry| entry.capabilities.supports_oauth_refresh)
         .unwrap_or(false);
+    let refresh_result = refresh_provider_auth_if_needed(&provider_id, true).await;
+    let status = build_provider_auth_status(&provider_id);
+    let ok = can_refresh && status.authenticated && refresh_result.is_ok();
     Json(ProviderAuthActionResponse {
-        ok: can_refresh && status.authenticated,
+        ok,
         provider_id,
-        message: if can_refresh {
-            "refresh is handled by the provider runtime during requests".to_string()
-        } else {
+        message: if !can_refresh {
             "provider auth method does not support refresh".to_string()
+        } else if let Err(error) = refresh_result {
+            format!("provider auth refresh failed: {error}")
+        } else if ok {
+            "provider auth refreshed".to_string()
+        } else {
+            "provider auth is not configured".to_string()
         },
         status: Some(status),
     })
@@ -917,7 +1074,7 @@ pub async fn oauth_callback(
         return Json(false);
     }
 
-    let pending = has_pending.unwrap();
+    let pending = has_pending.expect("pending OAuth state should exist after is_none check");
     if matches!(pending.method.as_str(), "code" | "token" | "oauth_pkce")
         && payload
             .code
@@ -1148,6 +1305,40 @@ fn openai_oauth_redirect_uri() -> String {
         .unwrap_or_else(|| "http://localhost:1455/auth/callback".to_string())
 }
 
+fn openai_oauth_token_url() -> String {
+    std::env::var("OPENAI_OAUTH_TOKEN_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "https://auth.openai.com/oauth/token".to_string())
+}
+
+fn google_oauth_token_url() -> String {
+    std::env::var("GOOGLE_OAUTH_TOKEN_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "https://oauth2.googleapis.com/token".to_string())
+}
+
+fn google_oauth_client_id(provider_id: &str) -> Option<String> {
+    let provider_prefix = provider_id.to_ascii_uppercase().replace('-', "_");
+    [
+        format!("{provider_prefix}_OAUTH_CLIENT_ID"),
+        "GOOGLE_OAUTH_CLIENT_ID".to_string(),
+    ]
+    .into_iter()
+    .find_map(|key| config_value(&key))
+}
+
+fn google_oauth_client_secret(provider_id: &str) -> Option<String> {
+    let provider_prefix = provider_id.to_ascii_uppercase().replace('-', "_");
+    [
+        format!("{provider_prefix}_OAUTH_CLIENT_SECRET"),
+        "GOOGLE_OAUTH_CLIENT_SECRET".to_string(),
+    ]
+    .into_iter()
+    .find_map(|key| config_value(&key))
+}
+
 fn openai_oauth_authorize_url(state: &str, code_challenge: &str) -> String {
     let client_id = openai_oauth_client_id();
     let redirect_uri = openai_oauth_redirect_uri();
@@ -1181,7 +1372,7 @@ async fn exchange_openai_oauth_code(
     let client_id = openai_oauth_client_id();
     let redirect_uri = openai_oauth_redirect_uri();
     let response = reqwest::Client::new()
-        .post("https://auth.openai.com/oauth/token")
+        .post(openai_oauth_token_url())
         .form(&[
             ("grant_type", "authorization_code"),
             ("client_id", client_id.as_str()),
@@ -1331,28 +1522,27 @@ fn persist_provider_auth(provider_id: &str, auth: &ProviderAuth) -> io::Result<(
         upsert_env_value(&env_path, &login_key, login)?;
         std::env::set_var(&login_key, login);
 
-        if provider_id == "openai" {
-            if let Some(refresh) = auth
-                .refresh
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-            {
-                let refresh_key = "OPENAI_REFRESH_TOKEN";
+        if let Some(registry_entry) = tura_llm_rust::provider_auth_registry_entry(provider_id) {
+            if let (Some(refresh_key), Some(refresh)) = (
+                registry_entry.refresh_env,
+                auth.refresh
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty()),
+            ) {
                 upsert_env_value(&env_path, refresh_key, refresh)?;
                 std::env::set_var(refresh_key, refresh);
             }
-            if let Some(expires) = auth.expires {
-                let expires_key = "OPENAI_TOKEN_EXPIRES";
+            if let (Some(expires_key), Some(expires)) = (registry_entry.expires_env, auth.expires) {
                 let expires_value = expires.to_string();
                 upsert_env_value(&env_path, expires_key, &expires_value)?;
                 std::env::set_var(expires_key, expires_value);
             }
-            if let Some(account_id) = auth
-                .account_id
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-            {
-                let account_key = "OPENAI_ACCOUNT_ID";
+            if let (Some(account_key), Some(account_id)) = (
+                registry_entry.account_env,
+                auth.account_id
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty()),
+            ) {
                 upsert_env_value(&env_path, account_key, account_id)?;
                 std::env::set_var(account_key, account_id);
             }
@@ -1448,13 +1638,19 @@ fn build_provider_auth_status(provider_id: &str) -> ProviderAuthStatusResponse {
                 .map(ToString::to_string)
         });
 
-    let configured = provider_key_exists(provider_id) || bedrock_credentials_exist(provider_id);
+    let local_codex_auth = openai_codex_auth(provider_id);
+    let configured = provider_key_exists(provider_id)
+        || local_codex_auth.is_some()
+        || bedrock_credentials_exist(provider_id);
     let expires_at = expires_env
         .as_deref()
         .and_then(config_value)
         .and_then(|value| value.parse::<i64>().ok());
     let expired = expires_at.map(|expires_at| expires_at <= Utc::now().timestamp_millis());
-    let authenticated = configured && expired != Some(true);
+    let authenticated = (configured && expired != Some(true))
+        || local_codex_auth
+            .as_ref()
+            .is_some_and(|auth| !auth.access_token.trim().is_empty());
     let auth_state = if authenticated {
         if matches!(login.as_deref(), Some("api")) {
             tura_llm_rust::AuthState::ApiKeyConfigured
@@ -1486,7 +1682,8 @@ fn build_provider_auth_status(provider_id: &str) -> ProviderAuthStatusResponse {
         account_id: config_entry
             .as_ref()
             .and_then(|entry| entry.account_id.clone())
-            .or_else(|| account_env.as_deref().and_then(config_value)),
+            .or_else(|| account_env.as_deref().and_then(config_value))
+            .or_else(|| local_codex_auth.and_then(|auth| auth.account_id)),
         token_env,
         login_env: config_entry
             .as_ref()
@@ -1505,6 +1702,37 @@ fn build_provider_auth_status(provider_id: &str) -> ProviderAuthStatusResponse {
             .and_then(|entry| entry.disabled_reason)
             .map(ToString::to_string),
     }
+}
+
+#[derive(Debug, Clone)]
+struct OpenAiCodexAuth {
+    access_token: String,
+    account_id: Option<String>,
+}
+
+fn openai_codex_auth(provider_id: &str) -> Option<OpenAiCodexAuth> {
+    if provider_id != "openai" {
+        return None;
+    }
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
+    let path = PathBuf::from(home).join(".codex").join("auth.json");
+    let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?;
+    let tokens = value.get("tokens")?;
+    let access_token = tokens
+        .get("access_token")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())?
+        .to_string();
+    let account_id = tokens
+        .get("account_id")
+        .or_else(|| value.get("account_id"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToString::to_string);
+    Some(OpenAiCodexAuth {
+        access_token,
+        account_id,
+    })
 }
 
 fn read_provider_auth_config(provider_id: &str) -> Option<tura_llm_rust::ProviderAuthConfig> {
@@ -1790,6 +2018,11 @@ fn quote_env_value(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::extract::Path;
+    use std::io::{Read, Write};
+    use tokio::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
     #[test]
     fn provider_auth_methods_are_projected_from_registry() {
@@ -1840,5 +2073,334 @@ mod tests {
             ..auth
         };
         assert_eq!(login_value_for_auth("anthropic", &with_metadata), "oauth");
+    }
+
+    #[tokio::test]
+    async fn provider_auth_refresh_updates_expired_openai_oauth_env_and_config() {
+        let _guard = ENV_LOCK.lock().await;
+        let temp_dir = std::env::temp_dir().join(format!(
+            "tura-openai-oauth-refresh-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).expect("temp dir");
+        let env_path = temp_dir.join(".env");
+        let config_path = temp_dir.join("tura_llm_config.json");
+        std::fs::write(
+            &env_path,
+            "OPENAI_LOGIN=oauth\nOPENAI_API_KEY=old-access\nOPENAI_REFRESH_TOKEN=old-refresh\nOPENAI_TOKEN_EXPIRES=0\n",
+        )
+        .expect("env");
+        std::fs::write(&config_path, r#"{"provider_auth":{}}"#).expect("config");
+
+        let (addr, server) = spawn_openai_token_server(
+            "old-refresh",
+            r#"{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}"#,
+        );
+
+        set_env("TURA_ENV_PATH", env_path.to_string_lossy().as_ref());
+        set_env("TURALLM_CONFIG", config_path.to_string_lossy().as_ref());
+        set_env(
+            "OPENAI_OAUTH_TOKEN_URL",
+            &format!("http://{addr}/oauth/token"),
+        );
+        set_env("OPENAI_LOGIN", "oauth");
+        set_env("OPENAI_API_KEY", "old-access");
+        set_env("OPENAI_REFRESH_TOKEN", "old-refresh");
+        set_env("OPENAI_TOKEN_EXPIRES", "0");
+        assert_eq!(
+            std::env::var("OPENAI_REFRESH_TOKEN").as_deref(),
+            Ok("old-refresh")
+        );
+
+        let Json(response) = provider_auth_refresh(Path("openai".to_string())).await;
+
+        assert!(response.ok, "{}", response.message);
+        assert_eq!(
+            response.status.as_ref().map(|status| status.authenticated),
+            Some(true)
+        );
+        assert_eq!(std::env::var("OPENAI_API_KEY").as_deref(), Ok("new-access"));
+        assert_eq!(
+            std::env::var("OPENAI_REFRESH_TOKEN").as_deref(),
+            Ok("new-refresh")
+        );
+        assert!(std::env::var("OPENAI_TOKEN_EXPIRES")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .is_some_and(|expires| expires > Utc::now().timestamp_millis()));
+        let config = std::fs::read_to_string(&config_path).expect("read config");
+        assert!(
+            config.contains("\"status\": \"connected\"")
+                || config.contains("\"status\":\"connected\"")
+        );
+        assert!(config.contains("OPENAI_REFRESH_TOKEN"));
+        server.join().expect("token server should finish");
+
+        clear_openai_refresh_test_env();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn provider_auth_status_refreshes_expired_openai_oauth_before_reporting() {
+        let _guard = ENV_LOCK.lock().await;
+        let temp_dir = std::env::temp_dir().join(format!(
+            "tura-openai-oauth-status-refresh-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).expect("temp dir");
+        let env_path = temp_dir.join(".env");
+        let config_path = temp_dir.join("tura_llm_config.json");
+        std::fs::write(
+            &env_path,
+            "OPENAI_LOGIN=oauth\nOPENAI_API_KEY=expired-access\nOPENAI_REFRESH_TOKEN=status-refresh-token\nOPENAI_TOKEN_EXPIRES=0\n",
+        )
+        .expect("env");
+        std::fs::write(&config_path, r#"{"provider_auth":{}}"#).expect("config");
+
+        let (addr, server) = spawn_openai_token_server(
+            "status-refresh-token",
+            r#"{"access_token":"status-access","expires_in":3600}"#,
+        );
+
+        set_env("TURA_ENV_PATH", env_path.to_string_lossy().as_ref());
+        set_env("TURALLM_CONFIG", config_path.to_string_lossy().as_ref());
+        set_env(
+            "OPENAI_OAUTH_TOKEN_URL",
+            &format!("http://{addr}/oauth/token"),
+        );
+        set_env("OPENAI_LOGIN", "oauth");
+        set_env("OPENAI_API_KEY", "expired-access");
+        set_env("OPENAI_REFRESH_TOKEN", "status-refresh-token");
+        set_env("OPENAI_TOKEN_EXPIRES", "0");
+        assert_eq!(
+            std::env::var("OPENAI_REFRESH_TOKEN").as_deref(),
+            Ok("status-refresh-token")
+        );
+
+        let Json(status) = provider_auth_status(Path("openai".to_string())).await;
+
+        assert!(status.authenticated);
+        assert_eq!(status.expired, Some(false));
+        assert_eq!(status.auth_state, tura_llm_rust::AuthState::Authenticated);
+        assert_eq!(
+            status.runtime_state,
+            tura_llm_rust::ProviderRuntimeState::Ready
+        );
+        assert_eq!(
+            std::env::var("OPENAI_API_KEY").as_deref(),
+            Ok("status-access")
+        );
+        assert_eq!(
+            std::env::var("OPENAI_REFRESH_TOKEN").as_deref(),
+            Ok("status-refresh-token")
+        );
+        server.join().expect("token server should finish");
+
+        clear_openai_refresh_test_env();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn provider_auth_refresh_covers_google_and_gemini_oauth_methods() {
+        let _guard = ENV_LOCK.lock().await;
+
+        for case in [
+            OAuthRefreshCase {
+                provider_id: "google",
+                login_env: "GOOGLE_LOGIN",
+                token_env: "GOOGLE_API_KEY",
+                old_access: "google-expired-access",
+                new_access: "google-new-access",
+            },
+            OAuthRefreshCase {
+                provider_id: "gemini",
+                login_env: "GEMINI_LOGIN",
+                token_env: "GEMINI_API_KEY",
+                old_access: "gemini-expired-access",
+                new_access: "gemini-new-access",
+            },
+        ] {
+            clear_openai_refresh_test_env();
+            let temp_dir = std::env::temp_dir().join(format!(
+                "tura-{provider}-oauth-refresh-test-{}",
+                std::process::id(),
+                provider = case.provider_id
+            ));
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            std::fs::create_dir_all(&temp_dir).expect("temp dir");
+            let env_path = temp_dir.join(".env");
+            let config_path = temp_dir.join("tura_llm_config.json");
+            std::fs::write(
+                &env_path,
+                format!(
+                    "{login_env}=oauth\n{token_env}={old_access}\nGOOGLE_REFRESH_TOKEN={refresh}\nGOOGLE_TOKEN_EXPIRES=0\n",
+                    login_env = case.login_env,
+                    token_env = case.token_env,
+                    old_access = case.old_access,
+                    refresh = case.refresh_token()
+                ),
+            )
+            .expect("env");
+            std::fs::write(&config_path, r#"{"provider_auth":{}}"#).expect("config");
+
+            let (addr, server) = spawn_openai_token_server(
+                case.refresh_token(),
+                Box::leak(
+                    format!(
+                        r#"{{"access_token":"{}","refresh_token":"{}","expires_in":3600}}"#,
+                        case.new_access,
+                        case.refresh_token()
+                    )
+                    .into_boxed_str(),
+                ),
+            );
+
+            set_env("TURA_ENV_PATH", env_path.to_string_lossy().as_ref());
+            set_env("TURALLM_CONFIG", config_path.to_string_lossy().as_ref());
+            set_env(
+                "GOOGLE_OAUTH_TOKEN_URL",
+                &format!("http://{addr}/oauth/token"),
+            );
+            set_env(case.login_env, "oauth");
+            set_env(case.token_env, case.old_access);
+            set_env("GOOGLE_REFRESH_TOKEN", case.refresh_token());
+            set_env("GOOGLE_TOKEN_EXPIRES", "0");
+
+            let Json(response) = provider_auth_refresh(Path(case.provider_id.to_string())).await;
+
+            assert!(response.ok, "{}", response.message);
+            assert_eq!(
+                std::env::var(case.token_env).as_deref(),
+                Ok(case.new_access)
+            );
+            assert_eq!(
+                std::env::var("GOOGLE_REFRESH_TOKEN").as_deref(),
+                Ok(case.refresh_token())
+            );
+            assert!(std::env::var("GOOGLE_TOKEN_EXPIRES")
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .is_some_and(|expires| expires > Utc::now().timestamp_millis()));
+            let config = std::fs::read_to_string(&config_path).expect("read config");
+            assert!(config.contains(case.provider_id));
+            assert!(config.contains("GOOGLE_REFRESH_TOKEN"));
+            server.join().expect("token server should finish");
+
+            clear_openai_refresh_test_env();
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
+    }
+
+    struct OAuthRefreshCase {
+        provider_id: &'static str,
+        login_env: &'static str,
+        token_env: &'static str,
+        old_access: &'static str,
+        new_access: &'static str,
+    }
+
+    impl OAuthRefreshCase {
+        fn refresh_token(&self) -> &'static str {
+            match self.provider_id {
+                "google" => "google-refresh-token",
+                "gemini" => "gemini-refresh-token",
+                _ => "refresh-token",
+            }
+        }
+    }
+
+    fn spawn_openai_token_server(
+        expected_refresh_token: &'static str,
+        token_body: &'static str,
+    ) -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind token server");
+        let addr = listener.local_addr().expect("token server addr");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept refresh request");
+            let request = read_http_request(&mut stream);
+            let (_, body) = request
+                .split_once("\r\n\r\n")
+                .expect("refresh request should include body separator");
+            assert!(body.contains("grant_type=refresh_token"), "{body}");
+            assert!(
+                body.contains(&format!("refresh_token={expected_refresh_token}")),
+                "{body}"
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                token_body.len(),
+                token_body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write refresh response");
+        });
+        (addr, server)
+    }
+
+    fn read_http_request(stream: &mut std::net::TcpStream) -> String {
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .expect("set read timeout");
+        let mut data = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        loop {
+            let size = stream.read(&mut buffer).expect("read refresh request");
+            assert!(
+                size > 0,
+                "refresh request stream closed before body completed"
+            );
+            data.extend_from_slice(&buffer[..size]);
+            if http_request_complete(&data) {
+                return String::from_utf8_lossy(&data).into_owned();
+            }
+        }
+    }
+
+    fn http_request_complete(data: &[u8]) -> bool {
+        let request = String::from_utf8_lossy(data);
+        let Some((headers, body)) = request.split_once("\r\n\r\n") else {
+            return false;
+        };
+        let content_length = headers
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .or_else(|| {
+                headers
+                    .lines()
+                    .find_map(|line| line.strip_prefix("Content-Length:"))
+            })
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        body.len() >= content_length
+    }
+
+    fn clear_openai_refresh_test_env() {
+        for key in [
+            "TURA_ENV_PATH",
+            "TURALLM_CONFIG",
+            "OPENAI_OAUTH_TOKEN_URL",
+            "OPENAI_LOGIN",
+            "OPENAI_API_KEY",
+            "OPENAI_REFRESH_TOKEN",
+            "OPENAI_TOKEN_EXPIRES",
+            "GOOGLE_OAUTH_TOKEN_URL",
+            "GOOGLE_OAUTH_CLIENT_ID",
+            "GOOGLE_OAUTH_CLIENT_SECRET",
+            "GOOGLE_LOGIN",
+            "GOOGLE_API_KEY",
+            "GEMINI_LOGIN",
+            "GEMINI_API_KEY",
+            "GOOGLE_REFRESH_TOKEN",
+            "GOOGLE_TOKEN_EXPIRES",
+        ] {
+            std::env::remove_var(key);
+        }
+    }
+
+    fn set_env(key: &str, value: &str) {
+        std::env::set_var(key, value);
     }
 }

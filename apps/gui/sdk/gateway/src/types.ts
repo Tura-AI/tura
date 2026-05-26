@@ -14,35 +14,59 @@ export type GatewayConfig = {
 };
 
 export type SessionStatus = "idle" | "busy" | "error";
+export type PlanStatus =
+  | "todo"
+  | "doing"
+  | "question"
+  | "done"
+  | "archived";
+export type StartCondition =
+  | "session_idle"
+  | "user_action"
+  | "scheduled_task"
+  | "polling_task";
+
+export type PollInterval = {
+  m?: number;
+  d?: number;
+  h?: number;
+  s?: number;
+};
+
+export type TaskManagement = {
+  nonce_id?: string;
+  step?: number;
+  task_summary?: string;
+  delivery?: string;
+  sub_session_id?: string;
+  start_at?: string | number;
+  poll_interval?: PollInterval;
+  status?: PlanStatus;
+  plan_summary?: string;
+  tasks?: TaskManagement[];
+};
 
 export type Session = {
   id: string;
-  slug?: string;
-  title?: string;
   name?: string | null;
-  parentID?: string | null;
   parent_id?: string | null;
-  projectID?: string;
   directory?: string | null;
   model?: string | null;
   agent?: string | null;
   session_type?: string | null;
-  sessionType?: string | null;
   status: SessionStatus;
   message_count?: number;
-  messageCount?: number;
-  time?: {
-    created?: number;
-    updated?: number;
-  };
   created_at?: number;
   updated_at?: number;
-  killProcessesOnStart?: boolean;
-  validatorEnabled?: boolean;
-  forceMultipleTasks?: boolean;
-  modelVariant?: string | null;
-  modelAccelerationEnabled?: boolean;
-  disablePermissionRestrictions?: boolean;
+  kill_processes_on_start?: boolean;
+  validator_enabled?: boolean;
+  force_multiple_tasks?: boolean;
+  model_variant?: string | null;
+  model_acceleration_enabled?: boolean;
+  disable_permission_restrictions?: boolean;
+  task_management?: TaskManagement;
+  plan_summary?: string | null;
+  session_display_name?: string | null;
 };
 
 export type MessageRole = "user" | "assistant" | "system";
@@ -565,4 +589,5 @@ export type CreateSessionRequest = {
   model_variant?: string;
   model_acceleration_enabled?: boolean;
   disable_permission_restrictions?: boolean;
+  task_management?: TaskManagement;
 };

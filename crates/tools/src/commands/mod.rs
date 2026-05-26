@@ -90,9 +90,7 @@ pub fn display_command(
 }
 
 pub fn result_command_name(command: &str) -> String {
-    match canonical_command(command).as_str() {
-        other => other.to_string(),
-    }
+    canonical_command(command)
 }
 
 pub fn canonical_command(name: &str) -> String {
@@ -110,7 +108,7 @@ pub fn canonical_command(name: &str) -> String {
         "web_discover" | "web_search" | "web_fetch" | "discover_web" | "search_web" => {
             "web_discover".to_string()
         }
-        "task_delivered" => "task_delivered".to_string(),
+        "task_status" => "task_status".to_string(),
         other => other.to_string(),
     }
 }

@@ -14,12 +14,7 @@ impl GatewayMediaProcessor {
         Self {}
     }
 
-    pub fn default() -> Self {
-        Self::new()
-    }
-
     pub async fn process_message(&self, msg: InboundMessage) -> Result<ProcessedInboundMessage> {
-        // Simple mock processing - just pass through the message content
         let user_content = vec![Value::String(msg.text.clone())];
 
         let history_text_entry = msg.text.clone();

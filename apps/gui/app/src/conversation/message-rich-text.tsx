@@ -176,7 +176,7 @@ function MediaGallery(props: {
   );
 }
 
-function ImageLightbox(props: {
+export function ImageLightbox(props: {
   paths: string[];
   index: number;
   onIndex: (index: number) => void;
@@ -292,6 +292,17 @@ export function parseRichText(source: string): RichNode[] {
   return compactTextNodes(nodes);
 }
 
+export function reactionEmojiValues(source: string): string[] {
+  return Array.from(source.matchAll(TOKEN_PATTERN))
+    .filter((match) => match[3] === "react")
+    .map((match) => (match[4] ?? "").trim())
+    .filter(Boolean);
+}
+
+export function stripReactionEmoji(source: string): string {
+  return source.replace(/\[EMOJI:react:[\s\S]*?:EMOJI\]/gu, "");
+}
+
 function parseHtmlFragment(source: string): RichNode[] {
   if (typeof DOMParser === "undefined") {
     return [{ kind: "text", text: source }];
@@ -396,7 +407,9 @@ function mediaSource(path: string): string {
 }
 
 function isImagePath(path: string): boolean {
-  return /\.(png|jpe?g|gif|webp|svg)$/iu.test(path);
+  return (
+    /^data:image\//iu.test(path) || /\.(png|jpe?g|gif|webp|svg)$/iu.test(path)
+  );
 }
 
 function groupMediaNodes(nodes: RichNode[]): RichGroup[] {

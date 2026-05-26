@@ -27,9 +27,8 @@ impl TuraConfig {
             let candidate2 = current_dir.parent().unwrap_or(&current_dir).join(env_file);
             let candidate3 = current_dir
                 .parent()
+                .and_then(Path::parent)
                 .unwrap_or(&current_dir)
-                .parent()
-                .unwrap()
                 .join(env_file);
             if candidate1.exists() {
                 candidate1

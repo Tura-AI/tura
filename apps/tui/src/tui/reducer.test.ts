@@ -233,3 +233,38 @@ test("reducer updates permission and question requests from events", () => {
   assert.equal(state.permissions.length, 0);
   assert.equal(state.questions.length, 0);
 });
+
+test("reducer keeps session plan fields from gateway events", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [],
+    todos: [],
+    permissions: [],
+    sessions: [session],
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "session.updated",
+        properties: {
+          sessionID: "sess-1",
+          info: {
+            ...session,
+            plan_summary: "Plan Name",
+            task_management: {
+              plan_summary: "Plan Name",
+              task_summary: "Task Name",
+              status: "done",            },
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(state.session?.plan_summary, "Plan Name");
+  assert.equal(state.session?.task_management?.status, "done");
+});

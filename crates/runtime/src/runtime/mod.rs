@@ -1,10 +1,10 @@
 pub mod call_runtime;
 pub mod create_runtime;
-pub mod runtime_recieve;
+pub mod runtime_receive;
 
 pub use call_runtime::call_runtime;
 pub use create_runtime::create_runtime;
-pub use runtime_recieve::runtime_recieve;
+pub use runtime_receive::runtime_receive;
 
 pub mod types {
     pub use crate::state_machine::agent_management::AgentId;

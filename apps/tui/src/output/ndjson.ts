@@ -2,6 +2,10 @@ import type { NormalizedEvent } from "../types/event.js";
 import type { RunResult } from "../types/session.js";
 
 export class NdjsonOutput {
+  started(value: { sessionID: string; prompt: string }): void {
+    process.stdout.write(`${JSON.stringify({ type: "cli.started", ...value })}\n`);
+  }
+
   event(event: NormalizedEvent): void {
     process.stdout.write(`${JSON.stringify({ type: event.type, sessionID: event.sessionID, messageID: event.messageID, status: event.status, text: event.text, raw: event.raw })}\n`);
   }

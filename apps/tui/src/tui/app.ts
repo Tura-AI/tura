@@ -3,7 +3,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient } from "../gateway/client.js";
 import { CliUsageError, type CliContext } from "../types/common.js";
 import type { Session } from "../types/session.js";
-import { sessionUpdatedAt } from "../types/session.js";
+import type { ProviderAuthStatus } from "../types/provider.js";
+import { isPlanStatus, sessionUpdatedAt } from "../types/session.js";
 import { promptPayload } from "../commands/run.js";
 import { sessionConfigPatchFromAssignments } from "../commands/config-values.js";
 import { initialState, reducer, type AppState } from "./reducer.js";
@@ -45,18 +46,34 @@ async function pickInitialSession(client: GatewayClient): Promise<Session> {
 }
 
 async function hydrate(state: AppState, client: GatewayClient, session: Session): Promise<AppState> {
-  const [messages, todos, permissions, questions, providers] = await Promise.all([
+  const [messages, todos, permissions, questions, providers, sessionConfig] = await Promise.all([
     client.listMessages(session.id).catch(() => []),
     client.todos(session.id).catch(() => []),
     client.listPermissions().catch(() => []),
     client.listQuestions().catch(() => []),
     client.listProviders().catch(() => undefined),
+    client.getSessionConfig().catch(() => undefined),
   ]);
+  const auth = providers ? await fetchAuthSurface(client, providers.all.map((provider) => provider.id)) : {};
   const sessions = await client.listSessions({ includeChildren: true, limit: 50 }).catch(() => []);
-  return reducer(reducer(state, { type: "hydrate", session, messages, todos, permissions, providers, sessions }), {
-    type: "questions",
-    value: questions,
-  });
+  return reducer(
+    reducer(state, {
+      type: "hydrate",
+      session,
+      messages,
+      todos,
+      permissions,
+      providers,
+      sessions,
+      authMethods: auth.methods,
+      authStatuses: auth.statuses,
+      sessionConfig,
+    }),
+    {
+      type: "questions",
+      value: questions,
+    },
+  );
 }
 
 async function eventLoop(client: GatewayClient, signal: AbortSignal, dispatch: (action: Parameters<typeof reducer>[1]) => void): Promise<void> {
@@ -120,6 +137,9 @@ async function inputLoop(
         if (state.help) dispatch({ type: "toggle-help" });
         if (state.sessionsOpen) dispatch({ type: "toggle-sessions" });
         if (state.modelsOpen) dispatch({ type: "toggle-models" });
+        if (state.authOpen) dispatch({ type: "toggle-auth" });
+        if (state.settingsOpen) dispatch({ type: "toggle-settings" });
+        if (state.planOpen) dispatch({ type: "toggle-plan" });
         return;
       }
       if (key?.name === "up" || key?.name === "down") {
@@ -207,6 +227,7 @@ async function slashCommand(
 ): Promise<boolean> {
   const [name, ...args] = input.slice(1).trim().split(/\s+/).filter(Boolean);
   if (!name || name === "help") dispatch({ type: "toggle-help" });
+  else if (name === "chat") dispatch({ type: "close-panels" });
   else if (name === "quit" || name === "exit") return true;
   else if (name === "new") {
     const session = await client.createSession();
@@ -225,7 +246,76 @@ async function slashCommand(
   } else if (name === "sessions") {
     dispatch({ type: "sessions", value: await client.listSessions({ includeChildren: true, limit: 50 }), open: true });
   }
+  else if (name === "plan") {
+    dispatch({ type: "sessions", value: await client.listSessions({ includeChildren: true, limit: 100 }), open: false });
+    dispatch({ type: "toggle-plan" });
+  }
+  else if (name === "task") {
+    const status = args[0];
+    const sessionID = args[1] ?? getState().session?.id;
+    if (!status || !sessionID || !isPlanStatus(status)) dispatch({ type: "notice", value: "usage: /task todo|doing|question|done|archived [session-id]" });
+    else {
+      const session = await client.updateSession(sessionID, { task_management: { status: status } });
+      const sessions = getState().sessions.map((item) => (item.id === session.id ? session : item));
+      dispatch({ type: "sessions", value: sessions });
+      if (session.id === getState().session?.id) {
+        dispatch({ type: "hydrate", session, messages: getState().messages, todos: getState().todos, permissions: getState().permissions, providers: getState().providers, sessions });
+      }
+    }
+  }
+  else if (name === "ticket") {
+    const summary = args.join(" ").trim();
+    if (!summary) dispatch({ type: "notice", value: "usage: /ticket <summary>" });
+    else {
+      const current = getState().session ?? (await client.createSession());
+      const session = await client.updateSession(current.id, {
+        task_management: {
+          plan_summary: summary,
+          task_summary: `执行任务：${summary}`,
+        },
+      });
+      const next = await hydrate(getState(), client, session);
+      dispatch({ type: "hydrate", session: next.session!, messages: next.messages, todos: next.todos, permissions: next.permissions, providers: next.providers, sessions: next.sessions });
+      dispatch({ type: "questions", value: next.questions });
+    }
+  }
   else if (name === "models") dispatch({ type: "toggle-models" });
+  else if (name === "auth" || name === "login") {
+    const providerID = args[0];
+    if (!providerID || name === "auth") {
+      const providers = await client.listProviders().catch(() => getState().providers);
+      const ids = providers?.all.map((provider) => provider.id) ?? [];
+      const auth = await fetchAuthSurface(client, ids);
+      dispatch({ type: "auth", methods: auth.methods, statuses: auth.statuses, open: true });
+      if (name === "login" && !providerID) dispatch({ type: "notice", value: "usage: /login <provider> [method-index]" });
+    } else {
+      const method = Number(args[1] ?? "0");
+      const auth = await client.providerOauthAuthorize(providerID, Number.isFinite(method) ? method : 0);
+      const status = await client.providerAuthStatus(providerID).catch(() => undefined);
+      dispatch({
+        type: "auth",
+        statuses: status ? { ...getState().authStatuses, [providerID]: status } : getState().authStatuses,
+        open: true,
+      });
+      dispatch({
+        type: "notice",
+        value: [auth.instructions, auth.url ? `open: ${auth.url}` : undefined].filter(Boolean).join(" "),
+      });
+    }
+  }
+  else if (name === "logout") {
+    const providerID = args[0];
+    if (!providerID) dispatch({ type: "notice", value: "usage: /logout <provider>" });
+    else {
+      await client.providerLogout(providerID);
+      const status = await client.providerAuthStatus(providerID).catch(() => undefined);
+      dispatch({
+        type: "auth",
+        statuses: status ? { ...getState().authStatuses, [providerID]: status } : getState().authStatuses,
+        open: true,
+      });
+    }
+  }
   else if (name === "model") {
     const model = args[0];
     const sessionID = getState().session?.id;
@@ -273,14 +363,21 @@ async function slashCommand(
     dispatch({ type: "diff", open: true, text });
   } else if (name === "status") {
     dispatch({ type: "notice", value: JSON.stringify(await client.serviceStatus()) });
+  } else if (name === "settings") {
+    dispatch({ type: "session-config", value: await client.getSessionConfig(), open: true });
   } else if (name === "config") {
     const subcommand = args.shift() ?? "get";
     if (subcommand === "set") {
       if (args.length === 0) dispatch({ type: "notice", value: "usage: /config set KEY=VALUE..." });
-      else dispatch({ type: "notice", value: JSON.stringify(await client.patchSessionConfig(sessionConfigPatchFromAssignments(args))) });
+      else {
+        const config = await client.patchSessionConfig(sessionConfigPatchFromAssignments(args));
+        dispatch({ type: "session-config", value: config, open: true });
+        dispatch({ type: "notice", value: "settings updated" });
+      }
     } else if (subcommand === "get") {
       const config = await client.getSessionConfig();
       const key = args[0];
+      dispatch({ type: "session-config", value: config, open: true });
       dispatch({ type: "notice", value: JSON.stringify(key ? config[key] : config) });
     } else {
       dispatch({ type: "notice", value: "usage: /config get [KEY] or /config set KEY=VALUE..." });
@@ -313,14 +410,30 @@ async function submitPrompt(
       modelAccelerationEnabled: session.model_acceleration_enabled,
     }),
   );
+  dispatch({ type: "close-panels" });
   dispatch({ type: "status", value: "busy" });
 }
 
 function completeSlash(value: string): string {
-  const commands = ["/help", "/new", "/resume", "/sessions", "/models", "/model", "/agent", "/permissions", "/approve", "/deny", "/answer", "/reject", "/abort", "/diff", "/status", "/config", "/command", "/quit"];
+  const commands = ["/help", "/chat", "/new", "/resume", "/sessions", "/plan", "/task", "/ticket", "/auth", "/login", "/logout", "/models", "/model", "/agent", "/settings", "/permissions", "/approve", "/deny", "/answer", "/reject", "/abort", "/diff", "/status", "/config", "/command", "/quit"];
   if (!value.startsWith("/")) return value;
   const matches = commands.filter((command) => command.startsWith(value));
   return matches.length === 1 ? `${matches[0]} ` : value;
+}
+
+async function fetchAuthSurface(client: GatewayClient, providerIDs: string[]): Promise<{
+  methods?: Awaited<ReturnType<GatewayClient["listProviderAuthMethods"]>>;
+  statuses?: Record<string, ProviderAuthStatus>;
+}> {
+  const [methods, statuses] = await Promise.all([
+    client.listProviderAuthMethods().catch(() => undefined),
+    Promise.all(
+      providerIDs.map(async (providerID) => [providerID, await client.providerAuthStatus(providerID).catch(() => undefined)] as const),
+    ).then((items) =>
+      Object.fromEntries(items.filter((item): item is readonly [string, ProviderAuthStatus] => Boolean(item[1]))),
+    ),
+  ]);
+  return { methods, statuses };
 }
 
 function selectedModel(state: AppState): string | undefined {

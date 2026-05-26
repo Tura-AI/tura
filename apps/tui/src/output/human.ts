@@ -1,7 +1,7 @@
 import type { NormalizedEvent } from "../types/event.js";
 import type { ColorMode } from "../types/common.js";
 import type { Message, RunResult, Session, TodoItem } from "../types/session.js";
-import { messageText, sessionTitle } from "../types/session.js";
+import { messageText, sessionTaskStatus, sessionTitle } from "../types/session.js";
 
 const codes = {
   reset: "\x1b[0m",
@@ -93,7 +93,7 @@ export class HumanOutput {
     }
     for (const session of sessions) {
       const status = session.status ?? "idle";
-      this.out(`${session.id}\t${status}\t${sessionTitle(session)}`);
+      this.out(`${session.id}\t${status}\t${sessionTaskStatus(session)}\t${sessionTitle(session)}`);
     }
   }
 

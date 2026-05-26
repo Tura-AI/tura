@@ -81,6 +81,9 @@ impl Store {
             model_acceleration_enabled: true,
             status: SessionStatus::Idle,
             message_count: 0,
+            task_management: serde_json::json!({}),
+            plan_summary: None,
+            session_display_name: None,
         };
         self.sessions.write().insert(session_id.clone(), session);
 
@@ -196,6 +199,9 @@ impl Store {
             model_acceleration_enabled: true,
             status: SessionStatus::Idle,
             message_count: 0,
+            task_management: serde_json::json!({}),
+            plan_summary: None,
+            session_display_name: None,
         };
 
         self.sessions
@@ -261,9 +267,7 @@ impl Store {
         };
 
         let mut messages = self.messages.write();
-        let session_messages = messages
-            .entry(session_id.to_string())
-            .or_insert_with(Vec::new);
+        let session_messages = messages.entry(session_id.to_string()).or_default();
         session_messages.push(message.clone());
 
         // Update session
@@ -553,7 +557,6 @@ lazy_static::lazy_static! {
     pub static ref GLOBAL_STORE: Store = Store::new();
 }
 
-#[allow(dead_code)]
 pub fn global_store() -> &'static Store {
     &GLOBAL_STORE
 }

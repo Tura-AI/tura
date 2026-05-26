@@ -54,7 +54,7 @@ crates/runtime/
     runtime/
       create_runtime.rs
       call_runtime.rs
-      runtime_recieve.rs
+      runtime_receive.rs
 
     context/
       context_management.rs
@@ -72,7 +72,7 @@ The module names may keep `mano` and `manas` internally because they describe
 the orchestration layers, but the directory owner is `crates/runtime`.
 
 Keep file names aligned with the current Tura implementation. In particular,
-use `runtime_recieve.rs` consistently while the codebase keeps that spelling.
+Use `runtime_receive.rs` for provider stream receive/normalization helpers.
 If the spelling is ever corrected, rename the source file, module declaration,
 tests, and all architecture docs in one change.
 
@@ -184,6 +184,59 @@ States:
 
 Use transition methods instead of assigning states directly except in narrow
 initialization or test setup paths.
+
+### Task Management
+
+Session task-management state is stored inside
+`state_machine/session_management.rs` as `SessionManagement.task_plan`.
+Runtime task-management structs are product state and must not contain
+benchmark-specific fields or evaluator names. Benchmark contracts should live in
+e2e fixtures and hidden evaluators.
+
+The model-facing compact state is produced by:
+
+```text
+SessionManagement::task_management_json()
+```
+
+Single-task mode serializes `task_management` as one object with:
+
+```text
+nonce_id
+step
+plan_summary
+task_summary
+delivery
+sub_session_id
+start_at
+poll_interval
+start_condition
+task_status
+```
+
+Multi-task mode serializes `task_management.tasks[]`.
+
+`task_status` is not a standalone top-level model tool. It is an internal
+`command_run` command. Its model-visible JSON has only optional
+`task_summary` and optional `status`; `status` accepts `question` or `done`.
+The runtime may create the first single task from this state update. After a
+task summary already exists, rename attempts are rejected and reported back in
+the tool result unless the user clearly changed the task.
+
+`multiple_tasks` is also routed through `command_run` and only appears when
+multi-task mode is enabled. Its schema is an array of tasks with required
+`nonce_id` and optional `step`, `task_summary`, and `delivery`. It rejects
+single-goal input and runtime rejects planning updates after a plan state
+machine already exists.
+
+Compact context writes the current `task_management_json()` into the compaction
+log and rebuilds the next turn with a `TASK_MANAGEMENT_STATE` user-context
+tail. Keep this behavior in runtime; gateway should not assemble runtime
+prompts.
+
+The old standalone delivery-status tool surface is removed. Legacy wording such as
+"delivered" may still appear in existing multi-task completion logs while new
+task-status guidance should prefer `done` or `completed`.
 
 ## Agent Loading
 

@@ -70,7 +70,7 @@ pub struct ConfigPatch {
 // Session Types
 // ============================================================================
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
     pub name: Option<String>,
@@ -96,89 +96,10 @@ pub struct Session {
     pub disable_permission_restrictions: bool,
     pub status: SessionStatus,
     pub message_count: usize,
-}
-
-#[derive(Serialize)]
-struct SessionTime {
-    created: i64,
-    updated: i64,
-}
-
-impl Serialize for Session {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut state = serializer.serialize_struct("Session", 32)?;
-        let directory = self.directory.clone().unwrap_or_default();
-        let title = self
-            .name
-            .clone()
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "New Session".to_string());
-        let session_type = self
-            .session_type
-            .clone()
-            .or_else(|| self.agent.as_deref().map(session_type_from_agent))
-            .unwrap_or_else(|| "coding".to_string());
-
-        state.serialize_field("id", &self.id)?;
-        state.serialize_field("slug", &self.id)?;
-        state.serialize_field("parentID", &self.parent_id)?;
-        state.serialize_field("parent_id", &self.parent_id)?;
-        state.serialize_field("projectID", &directory)?;
-        state.serialize_field("directory", &directory)?;
-        state.serialize_field("title", &title)?;
-        state.serialize_field("version", &env!("CARGO_PKG_VERSION"))?;
-        state.serialize_field(
-            "time",
-            &SessionTime {
-                created: self.created_at,
-                updated: self.updated_at,
-            },
-        )?;
-
-        // Legacy mock fields kept for older local callers.
-        state.serialize_field("name", &self.name)?;
-        state.serialize_field("created_at", &self.created_at)?;
-        state.serialize_field("updated_at", &self.updated_at)?;
-        state.serialize_field("model", &self.model)?;
-        state.serialize_field("agent", &self.agent)?;
-        state.serialize_field("session_type", &session_type)?;
-        state.serialize_field("sessionType", &session_type)?;
-        state.serialize_field("lsp", &self.lsp)?;
-        state.serialize_field("kill_processes_on_start", &self.kill_processes_on_start)?;
-        state.serialize_field("killProcessesOnStart", &self.kill_processes_on_start)?;
-        state.serialize_field("validator_enabled", &self.validator_enabled)?;
-        state.serialize_field("validatorEnabled", &self.validator_enabled)?;
-        state.serialize_field("force_multiple_tasks", &self.force_multiple_tasks)?;
-        state.serialize_field("forceMultipleTasks", &self.force_multiple_tasks)?;
-        state.serialize_field("model_variant", &self.model_variant)?;
-        state.serialize_field("modelVariant", &self.model_variant)?;
-        state.serialize_field(
-            "model_acceleration_enabled",
-            &self.model_acceleration_enabled,
-        )?;
-        state.serialize_field("modelAccelerationEnabled", &self.model_acceleration_enabled)?;
-        state.serialize_field(
-            "disable_permission_restrictions",
-            &self.disable_permission_restrictions,
-        )?;
-        state.serialize_field(
-            "disablePermissionRestrictions",
-            &self.disable_permission_restrictions,
-        )?;
-        state.serialize_field("status", &self.status)?;
-        state.serialize_field("message_count", &self.message_count)?;
-        state.end()
-    }
-}
-
-fn session_type_from_agent(agent: &str) -> String {
-    match agent {
-        "coding_agent" | "coding_agent_fast" | "coding" => "coding".to_string(),
-        other => other.to_string(),
-    }
+    #[serde(default)]
+    pub task_management: serde_json::Value,
+    pub plan_summary: Option<String>,
+    pub session_display_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

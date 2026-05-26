@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -38,7 +38,7 @@ pub struct AgentCapabilitiesConfig {
 
 pub fn load_capability_interface(
     capability_name: &str,
-    base_dir: &PathBuf,
+    base_dir: &Path,
 ) -> Option<CapabilityDefinition> {
     let interface_path = base_dir
         .join(TOOLS_DIR)
@@ -52,10 +52,7 @@ pub fn load_capability_interface(
     }
 }
 
-pub fn load_capability_prompt(
-    capability_name: &str,
-    base_dir: &PathBuf,
-) -> Option<CapabilityPrompt> {
+pub fn load_capability_prompt(capability_name: &str, base_dir: &Path) -> Option<CapabilityPrompt> {
     let prompt_path = base_dir
         .join(TOOLS_DIR)
         .join(capability_name)
@@ -73,7 +70,7 @@ pub fn load_capability_prompt(
 
 pub fn load_agent_capabilities_config(
     agent_capabilities: &[AgentCapabilityItem],
-    base_dir: &PathBuf,
+    base_dir: &Path,
 ) -> AgentCapabilitiesConfig {
     let mut config = AgentCapabilitiesConfig::default();
 
@@ -118,7 +115,7 @@ fn build_agent(
     agent_name: &str,
     report_to_user: bool,
     capability_names: &[&str],
-    agent_directory: &PathBuf,
+    agent_directory: &Path,
     now: chrono::DateTime<Utc>,
 ) -> AgentManagement {
     let provider = super::provider_config_from_coding_agent(CodingAgent::provider());
@@ -131,7 +128,7 @@ fn build_agent(
     let mut agent = AgentManagement::new(
         generate_agent_id(agent_name),
         agent_name.to_string(),
-        agent_directory.clone(),
+        agent_directory.to_path_buf(),
         None,
         report_to_user,
         provider,
@@ -165,8 +162,8 @@ pub fn build_agent_with_capabilities(
     report_to_user: bool,
     capability_items: &[AgentCapabilityItem],
     prompt_items: &[AgentPromptItem],
-    agent_directory: &PathBuf,
-    _project_directory: &PathBuf,
+    agent_directory: &Path,
+    _project_directory: &Path,
     now: chrono::DateTime<Utc>,
 ) -> AgentManagement {
     let provider = super::provider_config_from_coding_agent(CodingAgent::provider());
@@ -179,7 +176,7 @@ pub fn build_agent_with_capabilities(
     let mut agent = AgentManagement::new(
         generate_agent_id(agent_name),
         agent_name.to_string(),
-        agent_directory.clone(),
+        agent_directory.to_path_buf(),
         None,
         report_to_user,
         provider,

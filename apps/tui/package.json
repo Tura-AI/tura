@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "web": "node ./scripts/web-terminal.mjs",
     "test": "npm run build && node --test \"dist/**/*.test.js\"",
     "test:e2e": "npm run build && node ../../tests/unit/tui/tui_cli_gateway_e2e.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -15,6 +16,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
+    "node-pty": "^1.1.0",
+    "playwright": "^1.60.0",
     "typescript": "^5.8.3"
   }
 }

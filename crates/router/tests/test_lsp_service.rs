@@ -79,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let resp = client
-        .post(&format!(
+        .post(format!(
             "http://127.0.0.1:8181/lsp/{}/check/symbols",
             worker_id
         ))

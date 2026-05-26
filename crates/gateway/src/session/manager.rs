@@ -125,6 +125,7 @@ pub struct SessionInfo {
     pub lsp: LspSessionConfig,
     pub kill_processes_on_start: bool,
     pub validator_enabled: bool,
+    #[serde(default)]
     pub force_multiple_tasks: bool,
     #[serde(default)]
     pub model_variant: Option<String>,

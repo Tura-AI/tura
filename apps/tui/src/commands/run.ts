@@ -68,6 +68,7 @@ export async function runPrompt(context: CliContext, options: RunOptions): Promi
   const human = options.output === "text" ? new HumanOutput(context.color) : undefined;
   const ndjson = options.output === "ndjson" ? new NdjsonOutput() : undefined;
   human?.header(session, context.cwd);
+  ndjson?.started({ sessionID: session.id, prompt: options.prompt });
   await client.sendPromptAsync(session.id, payload);
 
   let result: RunResult;

@@ -7,7 +7,8 @@ Test scripts are split by runtime cost and blast radius.
 `tests/unit/command-run/` contains focused command-run probes. These scripts are
 intended to validate one behavior at a time, such as compact-context prompt
 coverage, single-round command execution, streaming command dispatch, provider
-fallback parsing, and `read_media` handling.
+fallback parsing, `read_media` handling, and the `multiple_tasks` backend
+topology/ordering/session-derivation contract.
 
 ## Long E2E Scripts
 

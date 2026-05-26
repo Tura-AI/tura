@@ -3,11 +3,11 @@ use tracing::error;
 
 use crate::runtime::types::ToolCallData;
 use crate::state_machine::runtime_management::RuntimeManagement;
-use crate::state_machine::session_management::{SessionManagement, TaskStatus, TaskStep};
+use crate::state_machine::session_management::{PlanStatus, SessionManagement, TaskStep};
 use crate::tool_router::execute_tool::{execute_tool, ExecuteToolInput, ToolExecutionResult};
 
 use super::change_tracker::{append_successful_changes, capture_pending_changes};
-use super::constants::{COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL, TASK_DELIVERED_TOOL};
+use super::constants::{COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL, TASK_STATUS_COMMAND};
 use super::gateway_events::{
     publish_step_summary, publish_task_plan_todos, publish_tool_call_record,
     publish_tool_call_started,
@@ -70,6 +70,17 @@ pub(super) fn execute_tool_calls(
                     error: command_run_result_error(&streamed_result),
                     result: streamed_result,
                 };
+                let mut execution_result = execution_result;
+                if apply_tool_result_session_state_update(
+                    session,
+                    &tool_call.tool_name,
+                    &execution_result.arguments,
+                    &mut execution_result.result,
+                ) {
+                    publish_task_plan_todos(session);
+                    execution_result.success = command_run_result_success(&execution_result.result);
+                    execution_result.error = command_run_result_error(&execution_result.result);
+                }
                 append_successful_changes(
                     &session.session_directory,
                     &session.session_id,
@@ -156,14 +167,16 @@ pub(super) fn execute_tool_calls(
         }
 
         match result {
-            Ok(execution_result) => {
+            Ok(mut execution_result) => {
                 if apply_tool_result_session_state_update(
                     session,
                     &tool_call.tool_name,
                     &execution_result.arguments,
-                    &execution_result.result,
+                    &mut execution_result.result,
                 ) {
                     publish_task_plan_todos(session);
+                    execution_result.success = command_run_result_success(&execution_result.result);
+                    execution_result.error = command_run_result_error(&execution_result.result);
                 }
                 append_successful_changes(
                     &session.session_directory,
@@ -274,9 +287,10 @@ fn apply_tool_result_session_state_update(
     session: &mut SessionManagement,
     tool_name: &str,
     arguments: &serde_json::Value,
-    result: &serde_json::Value,
+    result: &mut serde_json::Value,
 ) -> bool {
     let mut changed = false;
+    let _ = arguments;
     if tool_name == COMMAND_RUN_TOOL || tool_name == MULTIPLE_TASKS_TOOL {
         let plan = if tool_name == MULTIPLE_TASKS_TOOL && result.get("steps").is_some() {
             Some(result.clone())
@@ -284,7 +298,11 @@ fn apply_tool_result_session_state_update(
             multiple_tasks_output_from_tool_result(result)
         };
         if let Some(plan) = plan {
-            session.task_plan.summary = plan
+            if !session.task_plan.detailed_tasks.is_empty() {
+                mark_multiple_tasks_update_rejected(result);
+                return true;
+            }
+            session.task_plan.plan_summary = plan
                 .get("user_task")
                 .and_then(|value| value.as_str())
                 .unwrap_or(&session.user_goal)
@@ -300,16 +318,13 @@ fn apply_tool_result_session_state_update(
                 .filter_map(|(index, step)| task_step_from_multiple_tasks_step(index, step))
                 .collect();
             if let Some(first) = session.task_plan.detailed_tasks.first_mut() {
-                first.status = TaskStatus::InProgress;
+                first.status = PlanStatus::Doing;
             }
             changed = true;
         }
     }
-    if tool_name == COMMAND_RUN_TOOL && command_run_contains_task_delivered(result) {
-        changed |= complete_active_task(session);
-    }
-    if tool_name == TASK_DELIVERED_TOOL && task_delivered_arguments_true(arguments) {
-        changed |= complete_active_task(session);
+    if tool_name == COMMAND_RUN_TOOL {
+        changed |= apply_status_result(session, result);
     }
     if changed {
         session.session_last_update_at = Utc::now();
@@ -317,49 +332,149 @@ fn apply_tool_result_session_state_update(
     changed
 }
 
-fn task_delivered_arguments_true(arguments: &serde_json::Value) -> bool {
-    arguments
-        .get("task_delivered")
-        .and_then(serde_json::Value::as_bool)
-        == Some(true)
-}
-
-fn command_run_contains_task_delivered(result: &serde_json::Value) -> bool {
-    result
-        .get("results")
-        .and_then(|value| value.as_array())
-        .map(|items| {
-            items.iter().any(|item| {
-                item.get("success").and_then(serde_json::Value::as_bool) == Some(true)
-                    && item
-                        .get("command_type")
-                        .or_else(|| item.get("command"))
-                        .and_then(serde_json::Value::as_str)
-                        == Some(TASK_DELIVERED_TOOL)
+fn mark_multiple_tasks_update_rejected(result: &mut serde_json::Value) {
+    if let Some(item) = result
+        .get_mut("results")
+        .and_then(serde_json::Value::as_array_mut)
+        .and_then(|items| {
+            items.iter_mut().find(|item| {
+                item.get("command_type")
+                    .or_else(|| item.get("command"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some(MULTIPLE_TASKS_TOOL)
             })
         })
-        .unwrap_or(false)
+    {
+        item["success"] = serde_json::Value::Bool(false);
+        item["error"] = serde_json::Value::String(
+            "planning state already exists; multiple_tasks update ignored unless the user clearly changes the task".to_string(),
+        );
+    }
+}
+
+fn apply_status_result(session: &mut SessionManagement, result: &mut serde_json::Value) -> bool {
+    let Some(items) = result
+        .get_mut("results")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return false;
+    };
+    let mut changed = false;
+    for item in items {
+        if item.get("success").and_then(serde_json::Value::as_bool) != Some(true)
+            || item
+                .get("command_type")
+                .or_else(|| item.get("command"))
+                .and_then(serde_json::Value::as_str)
+                != Some(TASK_STATUS_COMMAND)
+        {
+            continue;
+        }
+        let Some(status) = item.get_mut("output").and_then(|output| {
+            output
+                .get_mut("status")
+                .and_then(serde_json::Value::as_object_mut)
+        }) else {
+            continue;
+        };
+        let requested_summary = status
+            .get("task_summary")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+        if let Some(summary) = requested_summary {
+            changed |= apply_task_summary(session, status, summary);
+        }
+        match status.get("status").and_then(serde_json::Value::as_str) {
+            Some("done") => changed |= complete_active_task(session),
+            Some("question") => changed |= question_active_task(session),
+            _ => {}
+        }
+    }
+    changed
+}
+
+fn apply_task_summary(
+    session: &mut SessionManagement,
+    output: &mut serde_json::Map<String, serde_json::Value>,
+    summary: String,
+) -> bool {
+    if session.task_plan.plan_summary.trim().is_empty() {
+        session.task_plan.plan_summary = summary.clone();
+        ensure_single_task(session, Utc::now());
+        if let Some(task) = session.task_plan.detailed_tasks.first_mut() {
+            task.task_name = summary.clone();
+            task.task_summary = summary;
+        }
+        return true;
+    }
+    if session.task_plan.plan_summary.trim() != summary.trim() {
+        output.insert(
+            "warning".to_string(),
+            serde_json::Value::String(
+                "task_summary rename ignored because the task already has a name; no other task-management parameter needs updating for this rename".to_string(),
+            ),
+        );
+    }
+    false
 }
 
 fn complete_active_task(session: &mut SessionManagement) -> bool {
-    if let Some(current) = session
-        .task_plan
-        .detailed_tasks
-        .iter_mut()
-        .find(|task| matches!(task.status, TaskStatus::InProgress | TaskStatus::Pending))
-    {
-        current.status = TaskStatus::Completed;
+    ensure_single_task(session, Utc::now());
+    if let Some(current) = session.task_plan.detailed_tasks.iter_mut().find(|task| {
+        matches!(
+            task.status,
+            PlanStatus::Doing | PlanStatus::Todo | PlanStatus::Question
+        )
+    }) {
+        current.status = PlanStatus::Done;
         if let Some(next) = session
             .task_plan
             .detailed_tasks
             .iter_mut()
-            .find(|task| task.status == TaskStatus::Pending)
+            .find(|task| task.status == PlanStatus::Todo)
         {
-            next.status = TaskStatus::InProgress;
+            next.status = PlanStatus::Doing;
         }
         return true;
     }
     false
+}
+
+fn question_active_task(session: &mut SessionManagement) -> bool {
+    ensure_single_task(session, Utc::now());
+    if let Some(current) = session
+        .task_plan
+        .detailed_tasks
+        .iter_mut()
+        .find(|task| matches!(task.status, PlanStatus::Doing | PlanStatus::Todo))
+    {
+        current.status = PlanStatus::Question;
+        return true;
+    }
+    false
+}
+
+fn ensure_single_task(session: &mut SessionManagement, now: chrono::DateTime<Utc>) {
+    if !session.task_plan.detailed_tasks.is_empty() {
+        return;
+    }
+    let summary = if session.task_plan.plan_summary.trim().is_empty() {
+        session.user_goal.clone()
+    } else {
+        session.task_plan.plan_summary.clone()
+    };
+    session.task_plan.detailed_tasks.push(TaskStep {
+        nonce_id: format!("{}:0", session.session_id),
+        step: 0,
+        start_at: now,
+        task_name: summary.clone(),
+        task_summary: summary.clone(),
+        step_deliverable_description: summary,
+        status: PlanStatus::Doing,
+        ..TaskStep::default()
+    });
 }
 
 fn multiple_tasks_output_from_tool_result(result: &serde_json::Value) -> Option<serde_json::Value> {
@@ -384,7 +499,7 @@ fn task_step_from_multiple_tasks_step(index: usize, value: &serde_json::Value) -
     let object = value.as_object()?;
     let task_instruction = object
         .get("task_instruction")
-        .or_else(|| object.get("deliverble"))
+        .or_else(|| object.get("delivery"))
         .and_then(|value| value.as_str())
         .unwrap_or_default()
         .to_string();
@@ -402,13 +517,23 @@ fn task_step_from_multiple_tasks_step(index: usize, value: &serde_json::Value) -
         format!("Step {}", index + 1)
     };
     let status = if object.get("ok").and_then(|value| value.as_bool()) == Some(true) {
-        TaskStatus::Completed
+        PlanStatus::Done
     } else if object.get("ok").and_then(|value| value.as_bool()) == Some(false) {
-        TaskStatus::Cancelled
+        PlanStatus::Archived
     } else {
-        TaskStatus::Pending
+        PlanStatus::Todo
     };
     Some(TaskStep {
+        nonce_id: object
+            .get("nonce_id")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("task-{index}")),
+        step: object
+            .get("step")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(index as u64),
         task_name,
         status,
         task_summary: step_goal.clone(),
@@ -432,11 +557,246 @@ fn task_step_from_multiple_tasks_step(index: usize, value: &serde_json::Value) -
             .unwrap_or_default()
             .to_string(),
         step_deliverable_description: object
-            .get("deliverable")
-            .or_else(|| object.get("deliverble"))
+            .get("delivery")
             .and_then(|value| value.as_str())
             .unwrap_or_default()
             .to_string(),
         step_deliverable_path: std::path::PathBuf::new(),
+        ..TaskStep::default()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_tool_result_session_state_update, COMMAND_RUN_TOOL};
+    use crate::state_machine::session_management::{
+        PlanStatus, SessionInput, SessionManagement, TaskStep,
+    };
+    use chrono::Utc;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    fn session() -> SessionManagement {
+        let now = Utc::now();
+        SessionManagement::new(
+            "sess-task-status".to_string(),
+            "task status".to_string(),
+            PathBuf::from("C:/workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "fix the task".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+            },
+            "fix the task".to_string(),
+            now,
+        )
+    }
+
+    #[test]
+    fn status_done_creates_single_task_and_marks_done() {
+        let mut session = session();
+        let mut result = json!({
+            "results": [{
+                "command_type": "status",
+                "success": true,
+                "output": {
+                    "status": {
+                        "task_summary": "Fix startup crash",
+                        "status": "done"
+                    }
+                }
+            }]
+        });
+
+        let changed = apply_tool_result_session_state_update(
+            &mut session,
+            COMMAND_RUN_TOOL,
+            &json!({}),
+            &mut result,
+        );
+
+        assert!(changed);
+        assert_eq!(session.task_plan.plan_summary, "Fix startup crash");
+        assert_eq!(session.task_plan.detailed_tasks.len(), 1);
+        assert_eq!(session.task_plan.detailed_tasks[0].status, PlanStatus::Done);
+        assert_eq!(session.task_plan.detailed_tasks[0].step, 0);
+        assert!(!session.task_plan.detailed_tasks[0].nonce_id.is_empty());
+    }
+
+    #[test]
+    fn status_question_marks_current_task_question() {
+        let mut session = session();
+        session.task_plan.plan_summary = "Fix startup crash".to_string();
+        session.task_plan.detailed_tasks.push(TaskStep {
+            nonce_id: "nonce-1".to_string(),
+            step: 0,
+            task_summary: "Fix startup crash".to_string(),
+            status: PlanStatus::Doing,
+            ..TaskStep::default()
+        });
+        let mut result = json!({
+            "results": [{
+                "command_type": "status",
+                "success": true,
+                "output": {
+                    "status": {
+                        "status": "question"
+                    }
+                }
+            }]
+        });
+
+        let changed = apply_tool_result_session_state_update(
+            &mut session,
+            COMMAND_RUN_TOOL,
+            &json!({}),
+            &mut result,
+        );
+
+        assert!(changed);
+        assert_eq!(
+            session.task_plan.detailed_tasks[0].status,
+            PlanStatus::Question
+        );
+        assert_eq!(session.task_plan.plan_summary, "Fix startup crash");
+    }
+
+    #[test]
+    fn status_rename_is_rejected_after_summary_exists() {
+        let mut session = session();
+        session.task_plan.plan_summary = "Existing task".to_string();
+        session.task_plan.detailed_tasks.push(TaskStep {
+            nonce_id: "nonce-1".to_string(),
+            step: 0,
+            task_summary: "Existing task".to_string(),
+            status: PlanStatus::Doing,
+            ..TaskStep::default()
+        });
+        let mut result = json!({
+            "results": [{
+                "command_type": "status",
+                "success": true,
+                "output": {
+                    "status": {
+                        "task_summary": "New task name"
+                    }
+                }
+            }]
+        });
+
+        let changed = apply_tool_result_session_state_update(
+            &mut session,
+            COMMAND_RUN_TOOL,
+            &json!({}),
+            &mut result,
+        );
+
+        assert!(!changed);
+        assert_eq!(session.task_plan.plan_summary, "Existing task");
+        assert_eq!(
+            session.task_plan.detailed_tasks[0].task_summary,
+            "Existing task"
+        );
+        assert!(result["results"][0]["output"]["status"]["warning"]
+            .as_str()
+            .is_some_and(|text| text.contains("rename ignored")));
+    }
+
+    #[test]
+    fn multiple_tasks_plan_preserves_parallel_steps_and_delivery() {
+        let mut session = session();
+        let mut result = json!({
+            "results": [{
+                "command_type": "multiple_tasks",
+                "success": true,
+                "output": {
+                    "steps": [
+                        {
+                            "nonce_id": "server",
+                            "step": 1,
+                            "task_summary": "Server module",
+                            "delivery": "Read services/server/ACCEPTANCE.md and implement server requirements."
+                        },
+                        {
+                            "nonce_id": "frontend",
+                            "step": 1,
+                            "task_summary": "Frontend module",
+                            "delivery": "Read apps/frontend/ACCEPTANCE.md and implement frontend requirements."
+                        },
+                        {
+                            "nonce_id": "e2e",
+                            "step": 2,
+                            "task_summary": "E2E acceptance",
+                            "delivery": "Read docs/acceptance/E2E.md and validate the full flow."
+                        }
+                    ]
+                }
+            }]
+        });
+
+        let changed = apply_tool_result_session_state_update(
+            &mut session,
+            COMMAND_RUN_TOOL,
+            &json!({}),
+            &mut result,
+        );
+
+        assert!(changed);
+        assert_eq!(session.task_plan.detailed_tasks.len(), 3);
+        assert_eq!(
+            session.task_plan.detailed_tasks[0].status,
+            PlanStatus::Doing
+        );
+        assert_eq!(session.task_plan.detailed_tasks[1].status, PlanStatus::Todo);
+        assert_eq!(session.task_plan.detailed_tasks[0].step, 1);
+        assert_eq!(session.task_plan.detailed_tasks[1].step, 1);
+        assert_eq!(session.task_plan.detailed_tasks[2].step, 2);
+        assert_eq!(
+            session.task_plan.detailed_tasks[0].step_deliverable_description,
+            "Read services/server/ACCEPTANCE.md and implement server requirements."
+        );
+    }
+
+    #[test]
+    fn multiple_tasks_update_is_rejected_when_plan_exists() {
+        let mut session = session();
+        session.task_plan.plan_summary = "Existing task".to_string();
+        session.task_plan.detailed_tasks.push(TaskStep {
+            nonce_id: "nonce-1".to_string(),
+            step: 0,
+            task_summary: "Existing task".to_string(),
+            status: PlanStatus::Doing,
+            ..TaskStep::default()
+        });
+        let mut result = json!({
+            "results": [{
+                "command_type": "multiple_tasks",
+                "success": true,
+                "output": {
+                    "steps": [
+                        { "nonce_id": "new-1", "task_summary": "New one" },
+                        { "nonce_id": "new-2", "task_summary": "New two" }
+                    ]
+                }
+            }]
+        });
+
+        let changed = apply_tool_result_session_state_update(
+            &mut session,
+            COMMAND_RUN_TOOL,
+            &json!({}),
+            &mut result,
+        );
+
+        assert!(changed);
+        assert_eq!(session.task_plan.plan_summary, "Existing task");
+        assert_eq!(session.task_plan.detailed_tasks.len(), 1);
+        assert_eq!(result["results"][0]["success"], false);
+        assert!(result["results"][0]["error"]
+            .as_str()
+            .is_some_and(|text| text.contains("planning state already exists")));
+    }
 }

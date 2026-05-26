@@ -73,21 +73,6 @@ pub async fn execute_tool(input: ExecuteToolInput) -> Result<ToolExecutionResult
             result: output_value.output,
         });
     }
-    if execution_tool_name == "task_delivered" {
-        let delivered = input
-            .arguments
-            .get("task_delivered")
-            .and_then(serde_json::Value::as_bool)
-            == Some(true);
-        return Ok(ToolExecutionResult {
-            tool_name: input.tool_name.clone(),
-            arguments: input.arguments,
-            success: delivered,
-            error: (!delivered).then(|| "task_delivered must be true".to_string()),
-            result: serde_json::json!({ "task_delivered": delivered }),
-        });
-    }
-
     Err(format!(
         "unsupported tool `{}`: this runtime exposes only command_run",
         input.tool_name
@@ -148,54 +133,6 @@ fn canonical_tool_file_name(tool_name: &str) -> &str {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{tool_output_error, tool_output_success};
-
-    #[test]
-    fn tool_output_success_follows_top_level_ok_field() {
-        let failed = serde_json::json!({
-            "ok": false,
-            "errors": [{ "message": "command failed" }],
-        });
-        let succeeded = serde_json::json!({ "ok": true, "results": [] });
-        let legacy = serde_json::json!({ "raw_output": "done" });
-
-        assert!(!tool_output_success(&failed));
-        assert_eq!(
-            tool_output_error(&failed).as_deref(),
-            Some("command failed")
-        );
-        assert!(tool_output_success(&succeeded));
-        assert!(tool_output_error(&succeeded).is_none());
-        assert!(tool_output_success(&legacy));
-    }
-
-    #[test]
-    fn tool_output_success_follows_current_style_command_run_results() {
-        let failed = serde_json::json!({
-            "results": [
-                { "step": 1, "command": "shell_command", "success": true, "output": {} },
-                { "step": 2, "command": "apply_patch", "success": false, "error": "patch context not found" }
-            ]
-        });
-        let succeeded = serde_json::json!({
-            "results": [
-                { "step": 1, "command": "shell_command", "success": true, "output": {} },
-                { "step": 2, "command": "apply_patch", "success": true, "output": {} }
-            ]
-        });
-
-        assert!(!tool_output_success(&failed));
-        assert_eq!(
-            tool_output_error(&failed).as_deref(),
-            Some("patch context not found")
-        );
-        assert!(tool_output_success(&succeeded));
-        assert!(tool_output_error(&succeeded).is_none());
-    }
-}
-
 pub async fn dequeue_tool_call(
     session_id: &SessionId,
     redis_url: &str,
@@ -252,4 +189,52 @@ pub async fn enqueue_tool_result(
         .map_err(|e| format!("failed to enqueue tool result: {}", e))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{tool_output_error, tool_output_success};
+
+    #[test]
+    fn tool_output_success_follows_top_level_ok_field() {
+        let failed = serde_json::json!({
+            "ok": false,
+            "errors": [{ "message": "command failed" }],
+        });
+        let succeeded = serde_json::json!({ "ok": true, "results": [] });
+        let legacy = serde_json::json!({ "raw_output": "done" });
+
+        assert!(!tool_output_success(&failed));
+        assert_eq!(
+            tool_output_error(&failed).as_deref(),
+            Some("command failed")
+        );
+        assert!(tool_output_success(&succeeded));
+        assert!(tool_output_error(&succeeded).is_none());
+        assert!(tool_output_success(&legacy));
+    }
+
+    #[test]
+    fn tool_output_success_follows_current_style_command_run_results() {
+        let failed = serde_json::json!({
+            "results": [
+                { "step": 1, "command": "shell_command", "success": true, "output": {} },
+                { "step": 2, "command": "apply_patch", "success": false, "error": "patch context not found" }
+            ]
+        });
+        let succeeded = serde_json::json!({
+            "results": [
+                { "step": 1, "command": "shell_command", "success": true, "output": {} },
+                { "step": 2, "command": "apply_patch", "success": true, "output": {} }
+            ]
+        });
+
+        assert!(!tool_output_success(&failed));
+        assert_eq!(
+            tool_output_error(&failed).as_deref(),
+            Some("patch context not found")
+        );
+        assert!(tool_output_success(&succeeded));
+        assert!(tool_output_error(&succeeded).is_none());
+    }
 }

@@ -9,7 +9,6 @@ use crate::utils::cli;
 pub struct PreparedService {
     pub service_name: String,
     pub executable_path: PathBuf,
-    pub is_rust: bool,
 }
 
 pub async fn prepare_service(service_dir: &Path) -> Result<PreparedService> {
@@ -25,7 +24,6 @@ pub async fn prepare_service(service_dir: &Path) -> Result<PreparedService> {
         return Ok(PreparedService {
             service_name,
             executable_path: exe,
-            is_rust: true,
         });
     }
 
@@ -34,7 +32,6 @@ pub async fn prepare_service(service_dir: &Path) -> Result<PreparedService> {
         return Ok(PreparedService {
             service_name,
             executable_path: direct_bin,
-            is_rust: false,
         });
     }
 

@@ -325,8 +325,7 @@ fn codex_cli_user_agent() -> String {
 
 fn build_codex_oauth_payload(model: &str, messages: &[Value], options: &CallOptions) -> Value {
     let mut input = Vec::new();
-    let mut instructions =
-        "You are OpenAI Codex. Follow the user request and answer concisely.".to_string();
+    let mut instructions = "Follow the user request and answer concisely.".to_string();
     for (index, message) in messages.iter().enumerate() {
         if matches!(
             message.get("type").and_then(Value::as_str),
@@ -340,10 +339,7 @@ fn build_codex_oauth_payload(model: &str, messages: &[Value], options: &CallOpti
             .and_then(Value::as_str)
             .unwrap_or("user");
         let content = message_content_text(message.get("content")).unwrap_or_default();
-        if index == 0
-            && matches!(role, "system" | "developer")
-            && content.trim_start().starts_with("You are Codex")
-        {
+        if index == 0 && matches!(role, "system" | "developer") && !content.trim().is_empty() {
             instructions = content;
             continue;
         }
@@ -1242,11 +1238,7 @@ async fn stream_call(
 
     let mut full_content = String::new();
     let mut tool_calls = Vec::new();
-    let mut tool_call_buffers = BTreeMap::<String, StreamingToolCall>::new();
-    let mut finish_reason = None;
-    let mut completed_tool_call = false;
-    let mut stream_done = false;
-    let mut stream_usage = None;
+    let mut stream_state = OpenAiCompatibleStreamState::default();
     let mut pending = String::new();
     let mut saw_output = false;
     let mut last_output_at = Instant::now();
@@ -1266,34 +1258,26 @@ async fn stream_call(
                 &line,
                 &mut full_content,
                 &mut tool_calls,
-                &mut tool_call_buffers,
-                &mut finish_reason,
-                &mut completed_tool_call,
-                &mut stream_usage,
-                &mut stream_done,
+                &mut stream_state,
             ) {
                 saw_output = true;
                 last_output_at = Instant::now();
             }
-            if stream_done {
+            if stream_state.stream_done {
                 break;
             }
         }
-        if stream_done {
+        if stream_state.stream_done {
             break;
         }
     }
-    if !pending.trim().is_empty() && !stream_done {
+    if !pending.trim().is_empty() && !stream_state.stream_done {
         let line = pending.trim_end_matches('\r').to_string();
         let _ = process_openai_compatible_stream_line(
             &line,
             &mut full_content,
             &mut tool_calls,
-            &mut tool_call_buffers,
-            &mut finish_reason,
-            &mut completed_tool_call,
-            &mut stream_usage,
-            &mut stream_done,
+            &mut stream_state,
         );
     }
 
@@ -1310,10 +1294,10 @@ async fn stream_call(
         Value::Null
     };
 
-    let mut metrics = if let Some(usage) = stream_usage.clone() {
+    let mut metrics = if let Some(usage) = stream_state.stream_usage.clone() {
         let mut metrics = extract_metrics(&json!({ "usage": usage }), context_window);
         metrics.tool_call_count = tool_calls.len();
-        metrics.finish_reason = finish_reason.clone();
+        metrics.finish_reason = stream_state.finish_reason.clone();
         metrics
     } else {
         CallMetrics {
@@ -1328,40 +1312,44 @@ async fn stream_call(
             cache_hit: false,
             cache_triggered_at_input_tokens: None,
             tool_call_count: tool_calls.len(),
-            finish_reason: finish_reason.clone(),
+            finish_reason: stream_state.finish_reason.clone(),
             provider_request_id: None,
             raw_usage: None,
-            ..Default::default()
         }
     };
-    if stream_usage.is_none() {
+    if stream_state.stream_usage.is_none() {
         fill_missing_codex_oauth_usage(&mut metrics, &payload, &content);
     }
     estimate_context_utilization(&mut metrics);
 
     Ok(ProviderResponse {
         content,
-        raw: json!({ "tool_calls": tool_calls, "usage": stream_usage }),
+        raw: json!({ "tool_calls": tool_calls, "usage": stream_state.stream_usage }),
         metrics: Some(metrics),
     })
+}
+
+#[derive(Default)]
+struct OpenAiCompatibleStreamState {
+    tool_call_buffers: BTreeMap<String, StreamingToolCall>,
+    finish_reason: Option<String>,
+    completed_tool_call: bool,
+    stream_usage: Option<Value>,
+    stream_done: bool,
 }
 
 fn process_openai_compatible_stream_line(
     line: &str,
     full_content: &mut String,
     tool_calls: &mut Vec<Value>,
-    tool_call_buffers: &mut BTreeMap<String, StreamingToolCall>,
-    finish_reason: &mut Option<String>,
-    completed_tool_call: &mut bool,
-    stream_usage: &mut Option<Value>,
-    stream_done: &mut bool,
+    state: &mut OpenAiCompatibleStreamState,
 ) -> bool {
     let Some(line) = line.trim_start().strip_prefix("data:") else {
         return false;
     };
     let line = line.trim_start();
     if line == "[DONE]" {
-        *stream_done = true;
+        state.stream_done = true;
         return false;
     }
     let Ok(delta) = serde_json::from_str::<Value>(line) else {
@@ -1369,7 +1357,7 @@ fn process_openai_compatible_stream_line(
     };
     let mut output_event = false;
     if let Some(usage) = delta.get("usage").filter(|usage| !usage.is_null()) {
-        *stream_usage = Some(usage.clone());
+        state.stream_usage = Some(usage.clone());
     }
     if let Some(choice) = delta
         .get("choices")
@@ -1377,13 +1365,20 @@ fn process_openai_compatible_stream_line(
         .and_then(|a| a.first())
     {
         if let Some(delta_content) = choice.get("delta").and_then(|d| d.get("content")) {
-            if let Some(text) = delta_content.as_str().filter(|_| !*completed_tool_call) {
+            if let Some(text) = delta_content
+                .as_str()
+                .filter(|_| !state.completed_tool_call)
+            {
                 if !text.is_empty() {
                     output_event = true;
                 }
                 full_content.push_str(text);
-                if emit_minimax_streaming_tool_call(full_content, tool_call_buffers, tool_calls) {
-                    *completed_tool_call = true;
+                if emit_minimax_streaming_tool_call(
+                    full_content,
+                    &mut state.tool_call_buffers,
+                    tool_calls,
+                ) {
+                    state.completed_tool_call = true;
                 }
             }
         }
@@ -1403,7 +1398,7 @@ fn process_openai_compatible_stream_line(
                                 .map(ToString::to_string)
                         })
                         .unwrap_or_else(|| "0".to_string());
-                    let buffer = tool_call_buffers.entry(key).or_default();
+                    let buffer = state.tool_call_buffers.entry(key).or_default();
                     if let Some(id) = call
                         .get("id")
                         .and_then(Value::as_str)
@@ -1427,18 +1422,18 @@ fn process_openai_compatible_stream_line(
                         buffer.arguments.push_str(args);
                     }
                     if emit_completed_tool_call(buffer, tool_calls) {
-                        *completed_tool_call = true;
+                        state.completed_tool_call = true;
                     }
                 }
             }
         }
         if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
             if reason == "tool_calls" || reason == "stop" {
-                for buffer in tool_call_buffers.values_mut() {
+                for buffer in state.tool_call_buffers.values_mut() {
                     emit_completed_tool_call(buffer, tool_calls);
                 }
             }
-            *finish_reason = Some(reason.to_string());
+            state.finish_reason = Some(reason.to_string());
         }
     }
     output_event
@@ -1940,13 +1935,12 @@ mod tests {
     use serde_json::json;
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    use std::sync::{mpsc, Mutex, OnceLock};
+    use std::sync::{mpsc, OnceLock};
+    use tokio::sync::Mutex;
 
-    fn codex_endpoint_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    async fn codex_endpoint_env_lock() -> tokio::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("codex endpoint env lock poisoned")
+        LOCK.get_or_init(|| Mutex::new(())).lock().await
     }
 
     #[test]
@@ -1997,10 +1991,10 @@ mod tests {
         );
         assert_eq!(normalized[1]["role"], "tool");
         assert_eq!(normalized[1]["tool_call_id"], "call_abc");
-        assert!(normalized[1]["content"]
+        let content = normalized[1]["content"]
             .as_str()
-            .unwrap()
-            .contains("TURA_PROBE_OK"));
+            .expect("normalized tool content should be a string");
+        assert!(content.contains("TURA_PROBE_OK"));
     }
 
     #[test]
@@ -2408,7 +2402,7 @@ mod tests {
 
     #[tokio::test]
     async fn codex_oauth_call_sends_responses_reasoning_and_acceleration() {
-        let _env_guard = codex_endpoint_env_lock();
+        let _env_guard = codex_endpoint_env_lock().await;
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
         let addr = listener.local_addr().expect("local addr");
         let endpoint = format!("http://{addr}/backend-api/codex/responses");
@@ -2490,7 +2484,7 @@ mod tests {
 
     #[tokio::test]
     async fn codex_oauth_stream_reads_completed_usage_after_tool_call() {
-        let _env_guard = codex_endpoint_env_lock();
+        let _env_guard = codex_endpoint_env_lock().await;
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
         let addr = listener.local_addr().expect("local addr");
         let endpoint = format!("http://{addr}/backend-api/codex/responses");
@@ -2626,7 +2620,7 @@ mod tests {
     #[test]
     fn codex_oauth_payload_keeps_system_messages_in_input() {
         let messages = vec![
-            json!({"role": "system", "content": "stable instructions"}),
+            json!({"role": "system", "content": "You are Tura an agent based on gpt-5.5 from LLM provider: openai."}),
             json!({"role": "user", "content": "task"}),
             json!({"role": "system", "content": "dynamic runtime state"}),
             json!({"role": "assistant", "content": "progress"}),
@@ -2637,16 +2631,14 @@ mod tests {
 
         assert_eq!(
             payload["instructions"],
-            "You are OpenAI Codex. Follow the user request and answer concisely."
+            "You are Tura an agent based on gpt-5.5 from LLM provider: openai."
         );
-        assert_eq!(payload["input"][0]["role"], "system");
-        assert_eq!(payload["input"][0]["content"], "stable instructions");
-        assert_eq!(payload["input"][1]["role"], "user");
-        assert_eq!(payload["input"][1]["content"], "task");
-        assert_eq!(payload["input"][2]["role"], "system");
-        assert_eq!(payload["input"][2]["content"], "dynamic runtime state");
-        assert_eq!(payload["input"][3]["role"], "assistant");
-        assert_eq!(payload["input"][3]["content"], "progress");
+        assert_eq!(payload["input"][0]["role"], "user");
+        assert_eq!(payload["input"][0]["content"], "task");
+        assert_eq!(payload["input"][1]["role"], "system");
+        assert_eq!(payload["input"][1]["content"], "dynamic runtime state");
+        assert_eq!(payload["input"][2]["role"], "assistant");
+        assert_eq!(payload["input"][2]["content"], "progress");
         assert_eq!(payload["tool_choice"], "auto");
     }
 
@@ -2669,8 +2661,20 @@ mod tests {
 
         super::fill_missing_codex_oauth_usage(&mut metrics, &payload, &content);
 
-        assert!(metrics.usage.input_tokens.unwrap() > 0);
-        assert!(metrics.usage.output_tokens.unwrap() > 0);
+        assert!(
+            metrics
+                .usage
+                .input_tokens
+                .expect("estimated input tokens should be present")
+                > 0
+        );
+        assert!(
+            metrics
+                .usage
+                .output_tokens
+                .expect("estimated output tokens should be present")
+                > 0
+        );
         assert_eq!(
             metrics
                 .raw_usage
@@ -2791,7 +2795,7 @@ mod tests {
         assert_eq!(
             ready["function"]["arguments"]["commands"]
                 .as_array()
-                .unwrap()
+                .expect("ready command_run commands should be an array")
                 .len(),
             1
         );

@@ -127,6 +127,10 @@ pub fn accumulate_tool_result(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "runtime event ingestion keeps the persisted tool-result contract explicit"
+)]
 pub fn accumulate_tool_result_with_feedback(
     session: &mut SessionManagement,
     tool_name: &str,
@@ -212,6 +216,62 @@ pub fn accumulate_message(
     Ok(())
 }
 
+const USER_MEDIA_START: &str = "[MEDIA:";
+const USER_MEDIA_END: &str = ":MEDIA]";
+
+pub fn user_input_content_value(input: &str) -> serde_json::Value {
+    let mut parts = Vec::new();
+    let mut cursor = 0usize;
+    let mut saw_image = false;
+
+    while let Some(relative_start) = input[cursor..].find(USER_MEDIA_START) {
+        let start = cursor + relative_start;
+        let data_start = start + USER_MEDIA_START.len();
+        let Some(relative_end) = input[data_start..].find(USER_MEDIA_END) else {
+            break;
+        };
+        let end = data_start + relative_end;
+        let marker_end = end + USER_MEDIA_END.len();
+        let media_url = input[data_start..end].trim();
+
+        if media_url.starts_with("data:image/") {
+            push_input_text_part(&mut parts, &input[cursor..start]);
+            parts.push(serde_json::json!({
+                "type": "input_image",
+                "image_url": media_url,
+            }));
+            saw_image = true;
+        } else {
+            push_input_text_part(&mut parts, &input[cursor..marker_end]);
+        }
+
+        cursor = marker_end;
+    }
+
+    if !saw_image {
+        return serde_json::Value::String(input.to_string());
+    }
+
+    push_input_text_part(&mut parts, &input[cursor..]);
+    serde_json::Value::Array(parts)
+}
+
+pub fn user_input_content_matches(content: &serde_json::Value, input: &str) -> bool {
+    content
+        .as_str()
+        .is_some_and(|text| text.trim() == input.trim())
+        || *content == user_input_content_value(input)
+}
+
+fn push_input_text_part(parts: &mut Vec<serde_json::Value>, text: &str) {
+    if !text.is_empty() {
+        parts.push(serde_json::json!({
+            "type": "input_text",
+            "text": text,
+        }));
+    }
+}
+
 pub fn compact_session_context(
     session: &mut SessionManagement,
     compact_text: &str,
@@ -228,6 +288,7 @@ pub fn compact_session_context(
             "content": compact_text,
             "workspace_snapshot": workspace_snapshot,
             "environment_context": environment_context,
+            "task_management": session.task_management_json(),
             "timestamp": now.to_rfc3339(),
         })
         .to_string(),
@@ -257,22 +318,22 @@ fn build_messages_from_session_with_options(session: &SessionManagement) -> Vec<
         messages.extend(immutable_context_messages_from_log_entry(value));
     }
 
-    let initial_user_input = session.input.user_input.trim();
+    let raw_initial_user_input = &session.input.user_input;
+    let initial_user_input = raw_initial_user_input.trim();
     if !saw_context_compaction
         && !initial_user_input.is_empty()
         && !messages.iter().any(|message| {
             message.get("role").and_then(|role| role.as_str()) == Some("user")
-                && message
-                    .get("content")
-                    .and_then(|content| content.as_str())
-                    .is_some_and(|content| content.trim() == initial_user_input)
+                && message.get("content").is_some_and(|content| {
+                    user_input_content_matches(content, raw_initial_user_input)
+                })
         })
     {
         messages.insert(
             0,
             serde_json::json!({
                 "role": "user",
-                "content": initial_user_input,
+                "content": user_input_content_value(initial_user_input),
             }),
         );
     }
@@ -304,6 +365,15 @@ fn context_compaction_messages(value: &serde_json::Value) -> Vec<serde_json::Val
         messages.push(serde_json::json!({
             "role": "user",
             "content": environment,
+        }));
+    }
+    if let Some(task_management) = value.get("task_management") {
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": format!(
+                "TASK_MANAGEMENT_STATE:\n{}",
+                serde_json::to_string(task_management).unwrap_or_default()
+            ),
         }));
     }
     messages
@@ -2079,14 +2149,16 @@ fn byte_ceil_char_boundary(text: &str, target: usize) -> usize {
 mod tests {
     use super::{
         accumulate_message, accumulate_tool_result, accumulate_tool_result_with_feedback,
-        build_context, command_run_function_output_for_context,
+        build_context, build_messages_from_session, command_run_function_output_for_context,
         command_run_function_output_payload_for_context, command_run_summary_for_context,
         command_run_truncate_text, compact_session_context, messages_with_runtime_context,
         ContextInput,
     };
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
-    use crate::state_machine::session_management::{SessionInput, SessionManagement};
+    use crate::state_machine::session_management::{
+        PlanStatus, PollInterval, SessionInput, SessionManagement, StartCondition, TaskStep,
+    };
     use chrono::Utc;
     use serde_json::json;
     use std::path::PathBuf;
@@ -2202,6 +2274,107 @@ mod tests {
         assert!(joined.contains("src/lib.rs"));
         assert!(joined.contains("new-output"));
         assert!(!joined.contains("old-tool-secret"));
+    }
+
+    #[test]
+    fn compact_session_context_appends_task_management_state() {
+        let mut session = session();
+        session.task_plan.plan_summary = "Inspect workspace".to_string();
+        session.task_plan.detailed_tasks.push(TaskStep {
+            nonce_id: "nonce-compact".to_string(),
+            step: 0,
+            task_summary: "Inspect workspace".to_string(),
+            step_deliverable_description: "Find relevant files".to_string(),
+            status: PlanStatus::Doing,
+            ..TaskStep::default()
+        });
+
+        compact_session_context(&mut session, "handoff summary").expect("compact should succeed");
+        let messages = build_messages_from_session(&session);
+        let last = messages
+            .last()
+            .and_then(|message| message.get("content"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+
+        assert!(last.starts_with("TASK_MANAGEMENT_STATE:"));
+        assert!(last.contains("\"nonce_id\":\"nonce-compact\""));
+        assert!(last.contains("\"status\":\"doing\""));
+        assert!(!last.contains("\"tasks\""));
+    }
+
+    #[test]
+    fn compact_session_context_appends_multi_task_management_state() {
+        let mut session = session();
+        session.task_plan.plan_summary = "Release plan".to_string();
+        session.task_plan.detailed_tasks.push(TaskStep {
+            nonce_id: "inspect".to_string(),
+            step: 0,
+            task_summary: "Inspect release blockers".to_string(),
+            step_deliverable_description: "List blocking files".to_string(),
+            sub_session_id: "sub-inspect".to_string(),
+            poll_interval: PollInterval {
+                m: 15,
+                d: 0,
+                h: 1,
+                s: 5,
+            },
+            start_condition: StartCondition::ScheduledTask,
+            status: PlanStatus::Question,
+            ..TaskStep::default()
+        });
+        session.task_plan.detailed_tasks.push(TaskStep {
+            nonce_id: "verify".to_string(),
+            step: 1,
+            task_summary: "Verify release checklist".to_string(),
+            step_deliverable_description: "Passing regression output".to_string(),
+            sub_session_id: "sub-verify".to_string(),
+            poll_interval: PollInterval {
+                m: 0,
+                d: 1,
+                h: 2,
+                s: 30,
+            },
+            start_condition: StartCondition::PollingTask,
+            status: PlanStatus::Done,
+            ..TaskStep::default()
+        });
+
+        compact_session_context(&mut session, "multi task handoff")
+            .expect("compact should succeed");
+        let messages = build_messages_from_session(&session);
+        let last = messages
+            .last()
+            .and_then(|message| message.get("content"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let json_text = last
+            .strip_prefix("TASK_MANAGEMENT_STATE:\n")
+            .expect("task-management tail should be present");
+        let task_management: serde_json::Value =
+            serde_json::from_str(json_text).expect("task-management tail should be valid JSON");
+        let tasks = task_management["tasks"]
+            .as_array()
+            .expect("multi-task compact state should include tasks array");
+
+        assert_eq!(task_management["plan_summary"], "Release plan");
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0]["nonce_id"], "inspect");
+        assert_eq!(tasks[0]["step"], 0);
+        assert_eq!(tasks[0]["task_summary"], "Inspect release blockers");
+        assert_eq!(tasks[0]["delivery"], "List blocking files");
+        assert_eq!(tasks[0]["sub_session_id"], "sub-inspect");
+        assert_eq!(tasks[0]["poll_interval"]["m"], 15);
+        assert_eq!(tasks[0]["poll_interval"]["h"], 1);
+        assert_eq!(tasks[0]["poll_interval"]["s"], 5);
+        assert_eq!(tasks[0]["start_condition"], "scheduled_task");
+        assert_eq!(tasks[0]["status"], "question");
+        assert_eq!(tasks[1]["nonce_id"], "verify");
+        assert_eq!(tasks[1]["poll_interval"]["d"], 1);
+        assert_eq!(tasks[1]["poll_interval"]["h"], 2);
+        assert_eq!(tasks[1]["poll_interval"]["s"], 30);
+        assert_eq!(tasks[1]["start_condition"], "polling_task");
+        assert_eq!(tasks[1]["status"], "done");
     }
 
     #[test]
@@ -2540,10 +2713,7 @@ mod tests {
         let terms = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"];
         let mut output = String::from("Exit code: 0\nWall time: 0.2 seconds\nOutput:\n");
         for term in terms {
-            output.push_str(&format!(
-                "{}",
-                format!("src/{term}.py:1:{term} match\n").repeat(3_000)
-            ));
+            output.push_str(&format!("src/{term}.py:1:{term} match\n").repeat(3_000));
         }
         let value = json!({
             "tool_name": "command_run",
@@ -3795,7 +3965,8 @@ mod tests {
                                 "node": "SyntaxError: Invalid regular expression",
                                 "python": ""
                             }
-                        })).unwrap(),
+                        }))
+                            .expect("command-run fixture stdout JSON should serialize"),
                         "stderr": ""
                     }
                 }]

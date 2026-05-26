@@ -9,14 +9,18 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 
-static ENV_LOCK: Mutex<()> = Mutex::new(());
+static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
-fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner())
+async fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    ENV_LOCK.lock().await
+}
+
+fn env_lock_blocking() -> tokio::sync::MutexGuard<'static, ()> {
+    ENV_LOCK.blocking_lock()
 }
 
 fn temp_workspace(name: &str) -> PathBuf {
@@ -65,7 +69,7 @@ fn find_ffmpeg() -> Option<String> {
 
 #[test]
 fn pass_current_style_command_run_output_shape() {
-    let _guard = env_lock();
+    let _guard = env_lock_blocking();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("shape");
 
@@ -91,7 +95,7 @@ fn pass_current_style_command_run_output_shape() {
 
 #[tokio::test]
 async fn pass_internal_command_rebuilds_tool_call_and_dispatches_router_handler() {
-    let _guard = env_lock();
+    let _guard = env_lock().await;
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("router");
     let router = ToolRouter::new();
@@ -510,7 +514,7 @@ fn pass_read_media_inline_arguments_are_accepted() {
 
 #[test]
 fn pass_web_discover_image_download_writes_image() {
-    let _guard = env_lock();
+    let _guard = env_lock_blocking();
     let root = temp_workspace("web-discover-image");
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
     let addr = listener.local_addr().expect("local addr");
@@ -578,7 +582,7 @@ fn pass_web_discover_image_download_writes_image() {
 
 #[test]
 fn pass_web_discover_image_uses_brave_endpoint_when_key_is_set() {
-    let _guard = env_lock();
+    let _guard = env_lock_blocking();
     let root = temp_workspace("web-discover-brave-image");
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
     let addr = listener.local_addr().expect("local addr");
@@ -669,7 +673,7 @@ fn pass_web_discover_image_uses_brave_endpoint_when_key_is_set() {
 
 #[test]
 fn pass_web_discover_image_reads_brave_key_from_tura_config() {
-    let _guard = env_lock();
+    let _guard = env_lock_blocking();
     let root = temp_workspace("web-discover-brave-config");
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
     let addr = listener.local_addr().expect("local addr");
@@ -751,7 +755,7 @@ fn pass_web_discover_image_reads_brave_key_from_tura_config() {
 
 #[test]
 fn pass_web_discover_image_uses_duckduckgo_fallback_without_brave() {
-    let _guard = env_lock();
+    let _guard = env_lock_blocking();
     let root = temp_workspace("web-discover-ddg-image");
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
     let addr = listener.local_addr().expect("local addr");
@@ -838,7 +842,7 @@ fn pass_web_discover_image_uses_duckduckgo_fallback_without_brave() {
 
 #[test]
 fn pass_web_discover_image_min_size_filters_small_downloads() {
-    let _guard = env_lock();
+    let _guard = env_lock_blocking();
     let root = temp_workspace("web-discover-ddg-min-size");
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
     let addr = listener.local_addr().expect("local addr");
@@ -1043,7 +1047,7 @@ fn write_http_response_bytes(stream: &mut std::net::TcpStream, content_type: &st
 
 #[test]
 fn pass_missing_steps_default_to_original_order() {
-    let _guard = env_lock();
+    let _guard = env_lock_blocking();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("steps");
     let output = command_run::execute(
@@ -1161,7 +1165,7 @@ fn fail_apply_patch_rejects_path_outside_workspace() {
 
 #[test]
 fn pass_shell_embedded_apply_patch_is_intercepted_before_shell_execution() {
-    let _guard = env_lock();
+    let _guard = env_lock_blocking();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("embedded-patch");
     fs::write(root.join("app.txt"), "old\n").unwrap();
@@ -1182,7 +1186,7 @@ fn pass_shell_embedded_apply_patch_is_intercepted_before_shell_execution() {
 
 #[test]
 fn pass_mutating_commands_are_barriers_between_read_batches() {
-    let _guard = env_lock();
+    let _guard = env_lock_blocking();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("barrier");
     fs::write(root.join("state.txt"), "before\n").unwrap();
@@ -1217,7 +1221,7 @@ fn pass_mutating_commands_are_barriers_between_read_batches() {
 
 #[test]
 fn pass_read_only_commands_in_same_step_run_concurrently() {
-    let _guard = env_lock();
+    let _guard = env_lock_blocking();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("parallel-read-step");
     fs::write(root.join("state.txt"), "ready\n").unwrap();
@@ -1287,7 +1291,7 @@ fn pass_file_lock_allows_parallel_reads_and_blocks_write() {
 
 #[test]
 fn pass_timeout_returns_quick_failure() {
-    let _guard = env_lock();
+    let _guard = env_lock_blocking();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("timeout");
     let command = if cfg!(windows) {
@@ -1322,7 +1326,7 @@ fn pass_timeout_returns_quick_failure() {
 
 #[test]
 fn fail_timeout_kills_descendant_process_tree_quickly() {
-    let _guard = env_lock();
+    let _guard = env_lock_blocking();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash");
     let root = temp_workspace("descendant-timeout");
     let started = Instant::now();
@@ -1352,7 +1356,7 @@ fn fail_timeout_kills_descendant_process_tree_quickly() {
 
 #[tokio::test]
 async fn pass_async_command_run_entry_does_not_start_nested_runtime() {
-    let _guard = env_lock();
+    let _guard = env_lock().await;
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("async-entry");
     let output = command_run::execute_async_value(
@@ -1374,7 +1378,7 @@ async fn pass_async_command_run_entry_does_not_start_nested_runtime() {
 
 #[test]
 fn pass_bash_surface_runs_posix_script_without_exposing_shell_command() {
-    let _guard = env_lock();
+    let _guard = env_lock_blocking();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash");
     let root = temp_workspace("bash-script");
     let output = command_run::execute(
@@ -1401,7 +1405,7 @@ fn pass_bash_surface_runs_posix_script_without_exposing_shell_command() {
 
 #[test]
 fn pass_shell_surface_isolation_canonicalizes_to_one_active_shell() {
-    let _guard = env_lock();
+    let _guard = env_lock_blocking();
 
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash");
     assert_eq!(commands::canonical_command("shell_command"), "bash");
@@ -1418,7 +1422,7 @@ fn pass_shell_surface_isolation_canonicalizes_to_one_active_shell() {
 
 #[tokio::test]
 async fn fail_pre_tool_hook_blocks_tool_before_runtime() {
-    let _guard = env_lock();
+    let _guard = env_lock().await;
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("pre-hook");
     let ctx = ToolContext::new(root);
@@ -1451,7 +1455,7 @@ async fn fail_pre_tool_hook_blocks_tool_before_runtime() {
 
 #[tokio::test]
 async fn pass_post_tool_hook_can_replace_model_visible_response() {
-    let _guard = env_lock();
+    let _guard = env_lock().await;
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("post-hook");
     let ctx = ToolContext::new(root);
@@ -1490,7 +1494,7 @@ async fn pass_post_tool_hook_can_replace_model_visible_response() {
 
 #[tokio::test]
 async fn pass_shell_runtime_records_stdout_stderr_delta_events() {
-    let _guard = env_lock();
+    let _guard = env_lock().await;
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("stream-delta");
     let command = if cfg!(windows) {
@@ -1535,7 +1539,7 @@ async fn pass_shell_runtime_records_stdout_stderr_delta_events() {
 
 #[tokio::test]
 async fn fail_turn_cancellation_aborts_running_shell_command() {
-    let _guard = env_lock();
+    let _guard = env_lock().await;
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("cancel");
     let command = if cfg!(windows) {
@@ -1573,7 +1577,7 @@ async fn fail_turn_cancellation_aborts_running_shell_command() {
 
 #[tokio::test]
 async fn fail_timeout_aborts_reader_drain_for_pipe_holding_descendants() {
-    let _guard = env_lock();
+    let _guard = env_lock().await;
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash");
     let root = temp_workspace("reader-drain");
     let router = ToolRouter::new();

@@ -4,7 +4,8 @@ import { normalizeEvent } from "../gateway/events.js";
 import { sameDirectory } from "../gateway/directory.js";
 import { messageSortValue, partMessageID, sessionStatusText, sessionUpdatedAt } from "../types/session.js";
 import type { PermissionRequest, QuestionRequest } from "../types/permission.js";
-import type { ProviderListResponse } from "../types/provider.js";
+import type { ProviderAuthMethodsResponse, ProviderAuthStatus, ProviderListResponse } from "../types/provider.js";
+import type { SessionConfig } from "../types/config.js";
 
 export interface AppState {
   cwd: string;
@@ -15,12 +16,18 @@ export interface AppState {
   permissions: PermissionRequest[];
   questions: QuestionRequest[];
   providers?: ProviderListResponse;
+  authMethods?: ProviderAuthMethodsResponse;
+  authStatuses: Record<string, ProviderAuthStatus>;
+  sessionConfig?: SessionConfig;
   status: "idle" | "busy" | "error";
   composer: string;
   notice?: string;
   help: boolean;
   sessionsOpen: boolean;
   modelsOpen: boolean;
+  authOpen: boolean;
+  settingsOpen: boolean;
+  planOpen: boolean;
   diffOpen: boolean;
   diffText: string;
   selectedSessionIndex: number;
@@ -28,7 +35,18 @@ export interface AppState {
 }
 
 export type AppAction =
-  | { type: "hydrate"; session: Session; messages: Message[]; todos: TodoItem[]; permissions: PermissionRequest[]; providers?: ProviderListResponse; sessions?: Session[] }
+  | {
+      type: "hydrate";
+      session: Session;
+      messages: Message[];
+      todos: TodoItem[];
+      permissions: PermissionRequest[];
+      providers?: ProviderListResponse;
+      sessions?: Session[];
+      authMethods?: ProviderAuthMethodsResponse;
+      authStatuses?: Record<string, ProviderAuthStatus>;
+      sessionConfig?: SessionConfig;
+    }
   | { type: "event"; event: GatewayEventEnvelope }
   | { type: "composer"; value: string }
   | { type: "notice"; value?: string }
@@ -37,11 +55,17 @@ export type AppAction =
   | { type: "questions"; value: QuestionRequest[] }
   | { type: "todos"; value: TodoItem[] }
   | { type: "sessions"; value: Session[]; open?: boolean }
+  | { type: "auth"; methods?: ProviderAuthMethodsResponse; statuses?: Record<string, ProviderAuthStatus>; open?: boolean }
+  | { type: "session-config"; value: SessionConfig; open?: boolean }
   | { type: "select-session"; delta: number }
   | { type: "select-model"; delta: number }
   | { type: "toggle-help" }
   | { type: "toggle-sessions" }
   | { type: "toggle-models" }
+  | { type: "toggle-auth" }
+  | { type: "toggle-settings" }
+  | { type: "close-panels" }
+  | { type: "toggle-plan" }
   | { type: "diff"; open: boolean; text?: string };
 
 export function initialState(cwd: string): AppState {
@@ -52,11 +76,15 @@ export function initialState(cwd: string): AppState {
     todos: [],
     permissions: [],
     questions: [],
+    authStatuses: {},
     status: "idle",
     composer: "",
     help: false,
     sessionsOpen: false,
     modelsOpen: false,
+    authOpen: false,
+    settingsOpen: false,
+    planOpen: false,
     diffOpen: false,
     diffText: "",
     selectedSessionIndex: 0,
@@ -75,6 +103,9 @@ export function reducer(state: AppState, action: AppAction): AppState {
       permissions: action.permissions,
       questions: state.questions,
       providers: action.providers,
+      authMethods: action.authMethods ?? state.authMethods,
+      authStatuses: action.authStatuses ?? state.authStatuses,
+      sessionConfig: action.sessionConfig ?? state.sessionConfig,
       status: action.session.status ?? "idle",
       selectedSessionIndex: selectedSessionIndex(action.sessions ?? state.sessions, action.session.id),
     };
@@ -177,6 +208,29 @@ export function reducer(state: AppState, action: AppAction): AppState {
       selectedSessionIndex: selectedSessionIndex(action.value, state.session?.id),
     };
   }
+  if (action.type === "auth") {
+    return {
+      ...state,
+      authMethods: action.methods ?? state.authMethods,
+      authStatuses: action.statuses ?? state.authStatuses,
+      authOpen: action.open ?? state.authOpen,
+      sessionsOpen: false,
+      modelsOpen: false,
+      planOpen: false,
+      settingsOpen: false,
+    };
+  }
+  if (action.type === "session-config") {
+    return {
+      ...state,
+      sessionConfig: action.value,
+      settingsOpen: action.open ?? state.settingsOpen,
+      sessionsOpen: false,
+      modelsOpen: false,
+      planOpen: false,
+      authOpen: false,
+    };
+  }
   if (action.type === "select-session") {
     return { ...state, selectedSessionIndex: clampIndex(state.selectedSessionIndex + action.delta, state.sessions.length) };
   }
@@ -184,8 +238,12 @@ export function reducer(state: AppState, action: AppAction): AppState {
     return { ...state, selectedModelIndex: clampIndex(state.selectedModelIndex + action.delta, modelCount(state.providers)) };
   }
   if (action.type === "toggle-help") return { ...state, help: !state.help };
-  if (action.type === "toggle-sessions") return { ...state, sessionsOpen: !state.sessionsOpen, modelsOpen: false };
-  if (action.type === "toggle-models") return { ...state, modelsOpen: !state.modelsOpen, sessionsOpen: false };
+  if (action.type === "toggle-sessions") return { ...state, sessionsOpen: !state.sessionsOpen, modelsOpen: false, planOpen: false, authOpen: false, settingsOpen: false };
+  if (action.type === "toggle-models") return { ...state, modelsOpen: !state.modelsOpen, sessionsOpen: false, planOpen: false, authOpen: false, settingsOpen: false };
+  if (action.type === "toggle-auth") return { ...state, authOpen: !state.authOpen, sessionsOpen: false, modelsOpen: false, planOpen: false, settingsOpen: false };
+  if (action.type === "toggle-settings") return { ...state, settingsOpen: !state.settingsOpen, sessionsOpen: false, modelsOpen: false, planOpen: false, authOpen: false };
+  if (action.type === "close-panels") return { ...state, sessionsOpen: false, modelsOpen: false, planOpen: false, authOpen: false, settingsOpen: false, diffOpen: false, help: false };
+  if (action.type === "toggle-plan") return { ...state, planOpen: !state.planOpen, sessionsOpen: false, modelsOpen: false, authOpen: false, settingsOpen: false };
   if (action.type === "diff") return { ...state, diffOpen: action.open, diffText: action.text ?? state.diffText };
   return state;
 }

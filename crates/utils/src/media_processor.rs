@@ -268,7 +268,7 @@ impl MediaProcessor {
         #[cfg(not(feature = "opencv-video"))]
         {
             let _ = (video_path, max_frames, quality);
-            return Ok(Vec::new());
+            Ok(Vec::new())
         }
 
         #[cfg(feature = "opencv-video")]
@@ -379,16 +379,13 @@ impl MediaProcessor {
             }
         }
 
-        let ffmpeg_bin = resolve_ffmpeg();
-        if ffmpeg_bin.is_none() {
+        let Some(ffmpeg_bin) = resolve_ffmpeg() else {
             user_content.push(json!({
                 "type": "text",
                 "text": "\n[Video Audio Extract Skipped: ffmpeg not found. Set FFMPEG_PATH or add ffmpeg to PATH.]"
             }));
             return Ok(());
-        }
-
-        let ffmpeg_bin = ffmpeg_bin.unwrap();
+        };
         let audio_extract_path = file_path.with_extension(format!(
             "{}.wav",
             file_path

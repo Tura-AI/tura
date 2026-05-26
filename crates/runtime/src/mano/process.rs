@@ -3,7 +3,8 @@ use tracing::{error, info};
 
 use crate::agent_router::{activate_agents_by_session_type, initialize_agent_state_machine};
 use crate::context::{
-    accumulate_message, build_messages_from_session, ContextualUserFragment, WorkspaceSnapshot,
+    accumulate_message, build_messages_from_session, user_input_content_matches,
+    user_input_content_value, ContextualUserFragment, WorkspaceSnapshot,
 };
 use crate::manas::{process_manas_internal, ManasInput};
 use crate::mano::gateway_session::{load_persisted_gateway_session, persist_gateway_session};
@@ -152,7 +153,7 @@ fn initial_messages_for_session(
         });
         let user_message = serde_json::json!({
             "role": "user",
-            "content": session.input.user_input,
+            "content": user_input_content_value(&session.input.user_input),
         });
 
         for message in [
@@ -184,7 +185,7 @@ fn initial_messages_for_session(
         accumulate_message(
             session,
             "user",
-            serde_json::Value::String(session.input.user_input.clone()),
+            user_input_content_value(&session.input.user_input),
         )?;
     }
 
@@ -233,7 +234,7 @@ fn workspace_snapshot_message(cwd: &std::path::Path) -> String {
 }
 
 fn session_has_initial_user_message(session: &SessionManagement) -> bool {
-    let input = session.input.user_input.trim();
+    let raw_input = &session.input.user_input;
     session.session_log.iter().any(|entry| {
         serde_json::from_str::<serde_json::Value>(entry)
             .ok()
@@ -241,8 +242,7 @@ fn session_has_initial_user_message(session: &SessionManagement) -> bool {
                 value.get("role").and_then(serde_json::Value::as_str) == Some("user")
                     && value
                         .get("content")
-                        .and_then(serde_json::Value::as_str)
-                        .is_some_and(|content| content.trim() == input)
+                        .is_some_and(|content| user_input_content_matches(content, raw_input))
             })
     })
 }
@@ -448,6 +448,66 @@ mod tests {
         assert!(messages.iter().any(|message| {
             message.get("role").and_then(serde_json::Value::as_str) == Some("developer")
         }));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn initial_user_input_media_markers_become_input_images() {
+        let root = std::env::temp_dir().join(format!(
+            "tura-inline-input-image-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        fs::create_dir_all(&root).expect("test workspace should be created");
+        let input = SessionInput {
+            user_input: "先看第一处\n[Image 1: screen.png]\n[MEDIA:data:image/png;base64,AAA:MEDIA]\n再看第二处"
+                .to_string(),
+            file_input: Vec::new(),
+            agent: None,
+            runtime_context: None,
+        };
+        let mut session = SessionManagement::new(
+            "inline-image-session".to_string(),
+            "inline image".to_string(),
+            root.clone(),
+            false,
+            "coding".to_string(),
+            input,
+            "inline image".to_string(),
+            Utc::now(),
+        );
+
+        let messages =
+            initial_messages_for_session(&mut session).expect("initial messages should build");
+        let user_message = messages
+            .iter()
+            .rev()
+            .find(|message| message.get("role").and_then(serde_json::Value::as_str) == Some("user"))
+            .expect("initial user message should exist");
+        let content = user_message["content"]
+            .as_array()
+            .expect("media input should become content array");
+
+        assert!(content.iter().any(|part| {
+            part.get("type").and_then(serde_json::Value::as_str) == Some("input_image")
+                && part.get("image_url").and_then(serde_json::Value::as_str)
+                    == Some("data:image/png;base64,AAA")
+        }));
+        assert!(content.iter().any(|part| {
+            part.get("type").and_then(serde_json::Value::as_str) == Some("input_text")
+                && part
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|text| text.contains("screen.png"))
+        }));
+        assert!(content.iter().any(|part| {
+            part.get("type").and_then(serde_json::Value::as_str) == Some("input_text")
+                && part
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|text| text.contains("再看第二处"))
+        }));
+        assert!(session_has_initial_user_message(&session));
 
         let _ = fs::remove_dir_all(root);
     }

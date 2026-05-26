@@ -389,6 +389,91 @@ All handlers should return:
 for failures. Existing routes can keep legacy behavior until migration, but new
 Multica-compatible routes should use the shared envelope.
 
+## Session Plan And Task Management
+
+Gateway owns session scanning, hydration, persistence, and UI-facing
+task-management response shaping for the plan surface. GUI and TUI clients must
+not scan session directories directly.
+
+Benchmark-specific fixtures and evaluator contracts belong under e2e test
+directories only. Gateway session types, task-management patching, API
+responses, and persistence must stay benchmark-agnostic.
+
+Current routes:
+
+```text
+GET    /session?directory=<workspace>&includeChildren=true
+POST   /session
+GET    /session/{sessionID}
+PATCH  /session/{sessionID}
+PATCH  /session/{sessionID}/task-management
+GET    /session/status
+GET    /session/{sessionID}/todo
+GET    /session/{sessionID}/message
+POST   /session/{sessionID}/message
+POST   /session/{sessionID}/prompt_async
+```
+
+Every session response should use one session field set:
+
+```text
+task_management
+plan_summary
+session_display_name
+```
+
+Do not add duplicate names for the same session state. Clients that integrate
+an external protocol should translate at that protocol boundary.
+
+Display name resolution is:
+
+1. non-empty `plan_summary`
+2. first non-empty task `task_summary`
+3. session `name`
+4. `New Session`
+
+The runtime/session status remains `idle | busy | error`. Task status is
+separate and lives in `task_management`:
+
+```text
+todo
+doing
+question
+done
+archived
+```
+
+Start conditions are:
+
+```text
+session_idle
+user_action
+scheduled_task
+polling_task
+```
+
+Single-task `task_management` is an object. Object patches apply to the active
+single task and may set the task `nonce_id`. Multi-task updates that need
+nonce-specific matching use `task_management.tasks[]`; array entries match by
+`nonce_id` and create missing tasks using supplied fields plus defaults.
+
+Current patch validation behavior is intentionally compatibility-preserving:
+invalid task-management patches are logged and ignored, prior state is kept,
+and the session response is returned. GUI/TUI behavior must reconcile by
+refreshing gateway state.
+
+User messages appended through gateway message APIs are also appended to the
+session-management log so runtime context and hydration can keep follow-up
+constraints.
+
+Pending follow-up controls are currently projected from `task_management` and
+`/session/{sessionID}/todo`. The current source of truth is the enriched
+session response plus todo projection.
+
+The file-backed scheduler for `scheduled_task`, `polling_task`, and
+`session_idle` belongs in gateway when execution ownership is implemented. It
+must not start archived/done tasks and must not start an already busy session.
+
 ## Auth And Identity
 
 Gateway must support:

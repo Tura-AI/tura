@@ -75,30 +75,74 @@ pub struct SessionInput {
 }
 
 /// Completion status for one task-plan item.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum TaskStatus {
-    Pending,
-    InProgress,
-    Completed,
-    Cancelled,
+pub enum PlanStatus {
+    #[serde(alias = "pending")]
+    #[default]
+    Todo,
+    #[serde(alias = "in_progress")]
+    Doing,
+    Question,
+    #[serde(alias = "completed")]
+    Done,
+    #[serde(alias = "cancelled")]
+    Archived,
 }
 
-impl Default for TaskStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
+pub type TaskStatus = PlanStatus;
+
+/// Condition that starts or resumes a task-plan item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StartCondition {
+    SessionIdle,
+    #[default]
+    UserAction,
+    ScheduledTask,
+    PollingTask,
+}
+
+/// Polling interval split into calendar-like parts for model-visible state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PollInterval {
+    #[serde(default)]
+    pub m: u64,
+    #[serde(default)]
+    pub d: u64,
+    #[serde(default)]
+    pub h: u64,
+    #[serde(default)]
+    pub s: u64,
 }
 
 /// One executable subtask in the session plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct TaskStep {
+    /// Stable task nonce. This is the primary key for task-management updates.
+    #[serde(default)]
+    pub nonce_id: String,
+    /// Non-negative plan step number.
+    #[serde(default)]
+    pub step: u64,
+    /// Optional child/sub-session id for delegated work.
+    #[serde(default)]
+    pub sub_session_id: String,
+    /// Task start timestamp in UTC.
+    #[serde(default = "Utc::now")]
+    pub start_at: UtcDateTimeMs,
+    /// Polling interval parts.
+    #[serde(default)]
+    pub poll_interval: PollInterval,
+    /// Condition that started this task.
+    #[serde(default)]
+    pub start_condition: StartCondition,
     /// Short subtask name used by compact UI and status prompts.
     #[serde(default)]
     pub task_name: String,
     /// Current completion status.
     #[serde(default)]
-    pub status: TaskStatus,
+    pub status: PlanStatus,
     /// Compact state-machine summary visible to normal runtime turns.
     #[serde(default)]
     pub task_summary: String,
@@ -128,12 +172,12 @@ pub struct TaskStep {
     pub step_deliverable_path: DeliverablePath,
 }
 
-/// Session-level task plan split into compact summary and detailed task records.
+/// Session-level task plan split into plan display name and detailed task records.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct TaskPlan {
-    /// Compact task summary visible to normal turns.
+    /// Compact plan display name visible to normal turns.
     #[serde(default)]
-    pub summary: String,
+    pub plan_summary: String,
     /// Detailed multiple-task records. Only multiple-task/delegation paths should write these.
     #[serde(default)]
     pub detailed_tasks: Vec<TaskStep>,
@@ -221,6 +265,10 @@ fn default_use_last_tool_call_response() -> bool {
 
 impl SessionManagement {
     /// Creates a new session in `Created` state.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "session state construction mirrors the serialized state-machine fields"
+    )]
     pub fn new(
         session_id: SessionId,
         session_name: SessionName,
@@ -303,21 +351,82 @@ impl SessionManagement {
 
     pub fn task_plan_summary_json(&self) -> serde_json::Value {
         serde_json::json!({
-            "summary": self.task_plan.summary,
+            "plan_summary": self.task_plan.plan_summary,
             "tasks": self.task_plan.detailed_tasks.iter().enumerate().map(|(index, task)| {
-                serde_json::json!({
+                let mut value = serde_json::json!({
                     "index": index + 1,
-                    "status": task.status,
+                    "nonce_id": task.nonce_id,
+                    "step": task.step,
                     "task_summary": task.task_summary,
-                })
+                    "delivery": task.step_deliverable_description,
+                    "sub_session_id": task.sub_session_id,
+                    "start_at": task.start_at,
+                    "poll_interval": task.poll_interval,
+                });
+                if let Some(task_state) = task_state_value(task) {
+                    value["status"] = task_state;
+                }
+                value
             }).collect::<Vec<_>>(),
         })
     }
 
     pub fn task_plan_detail_json(&self) -> serde_json::Value {
         serde_json::to_value(&self.task_plan)
-            .unwrap_or_else(|_| serde_json::json!({ "summary": "", "detailed_tasks": [] }))
+            .unwrap_or_else(|_| serde_json::json!({ "plan_summary": "", "detailed_tasks": [] }))
     }
+
+    pub fn task_management_json(&self) -> serde_json::Value {
+        if self.task_plan.detailed_tasks.len() <= 1 {
+            let task = self.task_plan.detailed_tasks.first();
+            let task_summary = task
+                .map(|task| task.task_summary.as_str())
+                .filter(|summary| !summary.trim().is_empty())
+                .unwrap_or(self.task_plan.plan_summary.as_str());
+            let mut value = serde_json::json!({
+                "nonce_id": task.map(|task| task.nonce_id.as_str()).unwrap_or_default(),
+                "step": task.map(|task| task.step).unwrap_or_default(),
+                "plan_summary": self.task_plan.plan_summary,
+                "task_summary": task_summary,
+                "delivery": task.map(|task| task.step_deliverable_description.as_str()).unwrap_or_default(),
+                "sub_session_id": task.map(|task| task.sub_session_id.as_str()).unwrap_or_default(),
+                "start_at": task.map(|task| task.start_at).unwrap_or(self.session_started_at),
+                "poll_interval": task.map(|task| task.poll_interval).unwrap_or_default(),
+            });
+            if let Some(task) = task {
+                if let Some(task_state) = task_state_value(task) {
+                    value["status"] = task_state;
+                }
+            }
+            return value;
+        }
+
+        serde_json::json!({
+            "plan_summary": self.task_plan.plan_summary,
+            "tasks": self.task_plan.detailed_tasks.iter().map(|task| {
+                let mut value = serde_json::json!({
+                    "nonce_id": task.nonce_id,
+                    "step": task.step,
+                    "task_summary": task.task_summary,
+                    "delivery": task.step_deliverable_description,
+                    "sub_session_id": task.sub_session_id,
+                    "start_at": task.start_at,
+                    "poll_interval": task.poll_interval,
+                });
+                if let Some(task_state) = task_state_value(task) {
+                    value["status"] = task_state;
+                }
+                value
+            }).collect::<Vec<_>>(),
+        })
+    }
+}
+
+fn task_state_value(task: &TaskStep) -> Option<serde_json::Value> {
+    if task.status != PlanStatus::default() {
+        return Some(serde_json::json!(task.status));
+    }
+    None
 }
 
 fn deserialize_task_plan<'de, D>(deserializer: D) -> Result<TaskPlan, D::Error>
@@ -328,7 +437,7 @@ where
     if value.is_array() {
         let detailed_tasks = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
         return Ok(TaskPlan {
-            summary: String::new(),
+            plan_summary: String::new(),
             detailed_tasks,
         });
     }
@@ -337,7 +446,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{SessionInput, SessionManagement, SessionState};
+    use super::{PlanStatus, SessionInput, SessionManagement, SessionState, TaskStep};
     use chrono::Utc;
     use std::path::PathBuf;
 
@@ -380,5 +489,52 @@ mod tests {
         assert_eq!(session.state, SessionState::Created);
         assert_eq!(session.input.user_input, "second");
         assert!(session.transition(SessionState::Running, now).is_ok());
+    }
+
+    #[test]
+    fn task_management_json_single_task_is_object() {
+        let mut session = session_in_state(SessionState::Running);
+        session.task_plan.plan_summary = "Fix issue".to_string();
+        session.task_plan.detailed_tasks.push(TaskStep {
+            nonce_id: "nonce-1".to_string(),
+            step: 0,
+            task_summary: "Fix issue".to_string(),
+            step_deliverable_description: "Verified patch".to_string(),
+            status: PlanStatus::Doing,
+            ..TaskStep::default()
+        });
+
+        let value = session.task_management_json();
+
+        assert!(value.is_object());
+        assert_eq!(value["nonce_id"], "nonce-1");
+        assert_eq!(value["step"], 0);
+        assert_eq!(value["plan_summary"], "Fix issue");
+        assert_eq!(value["task_summary"], "Fix issue");
+        assert_eq!(value["status"], "doing");
+    }
+
+    #[test]
+    fn status_deserializes_legacy_names() {
+        assert_eq!(
+            serde_json::from_str::<PlanStatus>("\"pending\"")
+                .expect("pending alias should deserialize"),
+            PlanStatus::Todo
+        );
+        assert_eq!(
+            serde_json::from_str::<PlanStatus>("\"in_progress\"")
+                .expect("in_progress alias should deserialize"),
+            PlanStatus::Doing
+        );
+        assert_eq!(
+            serde_json::from_str::<PlanStatus>("\"completed\"")
+                .expect("completed alias should deserialize"),
+            PlanStatus::Done
+        );
+        assert_eq!(
+            serde_json::from_str::<PlanStatus>("\"cancelled\"")
+                .expect("cancelled alias should deserialize"),
+            PlanStatus::Archived
+        );
     }
 }

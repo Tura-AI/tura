@@ -28,7 +28,31 @@ export interface ProviderAuthStatus {
   configured?: boolean;
   authenticated?: boolean;
   expired?: boolean | null;
+  account_id?: string | null;
+  token_env?: string | null;
+  login_env?: string | null;
+  refresh_env?: string | null;
+  expires_env?: string | null;
+  updated_at?: string | null;
   auth_state?: string;
   runtime_state?: string;
   login?: string | null;
+  last_error_category?: string | null;
+}
+
+export interface ProviderAuthMethod {
+  type: string;
+  kind?: string;
+  login: string;
+  label: string;
+  token_env?: string | null;
+  login_env?: string | null;
+}
+
+export type ProviderAuthMethodsResponse = Record<string, ProviderAuthMethod[]>;
+
+export interface OAuthAuthorizeResponse {
+  url: string;
+  method: "auto" | "code" | string;
+  instructions: string;
 }

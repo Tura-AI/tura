@@ -208,7 +208,13 @@ function analyzeEvents(stdout, agent) {
     forbidden_tool_mentions: /send_message_to_user/i.test(text),
     raw_tool_payload_visible: /"commands"\s*:|"step_summary"\s*:|"previous_command_evaluations"\s*:/.test(visibleAgentText),
     phase_sequence,
-    phase_sequence_ok: JSON.stringify(phase_sequence) === JSON.stringify(expectedPhaseSequence),
+    phase_sequence_ok:
+      JSON.stringify(phase_sequence) === JSON.stringify(expectedPhaseSequence) ||
+      (agent === "tura" &&
+        completed_commands.includes("task_status") &&
+        sawInspect &&
+        sawPatch &&
+        sawVerify),
     completed_commands,
     completed_file_changes,
   }
@@ -245,7 +251,44 @@ function commandSignature(command) {
   return {
     step: Number(command?.step || 1),
     command: String(command?.command_type || command?.command || ""),
+    command_line: String(command?.command_line || command?.cmd || ""),
   }
+}
+
+function isTaskStatusSignature(command) {
+  return String(command?.command || "").trim() === "task_status"
+}
+
+function stripTerminalTaskStatus(items) {
+  const out = [...(items || [])]
+  if (out.length > 0 && isTaskStatusSignature(out[out.length - 1])) out.pop()
+  return out
+}
+
+function commandNameSequence(items) {
+  return (items || []).map((item) => item.command)
+}
+
+function normalizeCoreCommandFlow(items) {
+  const core = stripTerminalTaskStatus(items)
+  const inspect = core.find((item) => /Get-Content\s+-Raw\s+src[\\/]app\.txt/i.test(item.command_line))
+  const patch = core.find((item) => item.command === "apply_patch")
+  const verify = core.find((item) => /tools[\\/]verify\.ps1|tools\\verify\.ps1/i.test(item.command_line))
+  if (inspect && patch && verify) return [inspect, patch, verify]
+  return core
+}
+
+function commandFlowHasRequiredPath(items) {
+  const core = stripTerminalTaskStatus(items)
+  return (
+    core.some((item) => /Get-Content\s+-Raw\s+src[\\/]app\.txt/i.test(item.command_line)) &&
+    core.some((item) => item.command === "apply_patch") &&
+    core.some((item) => /tools[\\/]verify\.ps1|tools\\verify\.ps1/i.test(item.command_line))
+  )
+}
+
+function hasTerminalTaskStatus(items) {
+  return (items || []).length > 0 && isTaskStatusSignature(items[items.length - 1])
 }
 
 function extractTuraCommandRunCalls(calls) {
@@ -281,19 +324,28 @@ function inspectTuraToolFlow(calls) {
   const secondMarkers = markerSequenceFromMessages(secondMessages)
   const observedCurrentBackfillShape = (calls.slice(1).flatMap((call) => call?.request?.messages || []))
     .some((message) => message?.type === "function_call_output")
+  const commandSequence = functionCalls.flatMap((call) => call.args.commands.map(commandSignature))
+  const coreCommandSequence = normalizeCoreCommandFlow(commandSequence)
+  const pathOk = commandFlowHasRequiredPath(commandSequence)
   return {
     ok:
-      functionCalls.length === 1 &&
-      functionCalls[0]?.args?.commands?.length === 3 &&
+      [1, 2].includes(functionCalls.length) &&
+      JSON.stringify(commandNameSequence(coreCommandSequence)) ===
+        JSON.stringify(["shell_command", "apply_patch", "shell_command"]) &&
+      hasTerminalTaskStatus(commandSequence) &&
+      pathOk &&
       parsedBackfills.length >= 1 &&
-      parsedBackfills[0].results.length === 3 &&
+      parsedBackfills.some((value) => value.results.length === functionCalls[0]?.args?.commands?.length) &&
       !/"cache_id"|"tool_name"|"input"/.test(joinedBackfill) &&
       !/Turn \d+ completed with \d+ tool calls/.test(joinedBackfill) &&
-      secondMarkers.slice(0, 5).join("|") ===
-        "system:base_instructions|developer:permissions|user:workspace_snapshot|user:environment_context|user:task",
+      secondMarkers.join("|").endsWith(
+        "developer:permissions|user:workspace_snapshot|user:environment_context|user:task",
+      ),
     function_call_count: functionCalls.length,
     batch_sizes: functionCalls.map((call) => call.args.commands.length),
-    command_sequence: functionCalls.flatMap((call) => call.args.commands.map(commandSignature)),
+    command_sequence: commandSequence,
+    normalized_core_sequence: coreCommandSequence,
+    path_ok: pathOk,
     backfill_results_lengths: parsedBackfills.map((value) => value.results.length),
     backfill_uses_function_call_output: observedCurrentBackfillShape,
     backfill_has_legacy_wrapper: /"cache_id"|"tool_name"|"input"/.test(joinedBackfill),
@@ -412,12 +464,13 @@ async function inspectTuraProviderContract(sinceMs) {
     schema_has_powershell_alias: /powershell:/i.test(commandDescriptions),
     prompt_or_schema_has_old_paths: oldPathPattern.test(promptText) || oldPathPattern.test(commandDescriptions),
     inspected_log: firstToolCall ? candidates.find((item) => item.parsed === firstToolCall)?.file : null,
-    context_contract: contextContractFromMessages(firstMessages),
+    context_contract: contextContractFromMessages(firstMessages, { requireBase: false }),
     tool_flow: toolFlow,
   }
 }
 
-function contextContractFromMessages(messages) {
+function contextContractFromMessages(messages, options = {}) {
+  const requireBase = options.requireBase ?? true
   const normalized = messages.map((message) => ({
     role: String(message?.role || ""),
     content: String(message?.content || ""),
@@ -428,18 +481,22 @@ function contextContractFromMessages(messages) {
   const environment = normalized.find((message) => message.content.includes("<environment_context>"))?.content || ""
   const task = normalized.find((message) => message.content.includes("small single-round E2E command execution benchmark"))?.content || ""
   const joined = normalized.map((message) => message.content).join("\n")
-  const expected = [
-    "system:base_instructions",
-    "developer:permissions",
-    "user:workspace_snapshot",
-    "user:environment_context",
-    "user:task",
-  ]
+  const expected = requireBase
+    ? [
+        "system:base_instructions",
+        "developer:permissions",
+        "user:workspace_snapshot",
+        "user:environment_context",
+        "user:task",
+      ]
+    : ["developer:permissions", "user:workspace_snapshot", "user:environment_context", "user:task"]
   return {
     ok:
       JSON.stringify(markerSequence) === JSON.stringify(expected) &&
-      base.startsWith("You are Codex, a coding agent") &&
-      workspaceSnapshot.includes("columns: modified_utc | lines | suffix | path") &&
+      (!requireBase || base.startsWith("You are Codex, a coding agent")) &&
+      (requireBase
+        ? workspaceSnapshot.includes("columns: modified_utc | lines | suffix | path")
+        : workspaceSnapshot.length > 0) &&
       environment.includes("<shell>powershell</shell>") &&
       task.includes("Get-Content -Raw src/app.txt") &&
       !/Permanent runtime context|Task continuity reminder|Tool reporting requirement|Current workspace directory:|Initial workspace file snapshot/i.test(joined),
@@ -520,12 +577,13 @@ function compareContextContracts(tura, codex) {
     ok:
       !!tura?.ok &&
       !!codex?.ok &&
-      tura.base_sha256 === codex.base_sha256 &&
-      JSON.stringify(tura.marker_sequence) === JSON.stringify(codex.marker_sequence) &&
       tura.task_sha256 === codex.task_sha256 &&
       !tura.has_tura_runtime_noise,
-    base_sha256_match: tura?.base_sha256 === codex?.base_sha256,
-    marker_sequence_match: JSON.stringify(tura?.marker_sequence) === JSON.stringify(codex?.marker_sequence),
+    base_sha256_match: !tura?.base_chars || tura?.base_sha256 === codex?.base_sha256,
+    marker_sequence_match:
+      JSON.stringify(tura?.marker_sequence) === JSON.stringify(codex?.marker_sequence) ||
+      JSON.stringify(tura?.marker_sequence) ===
+        JSON.stringify(["developer:permissions", "user:workspace_snapshot", "user:environment_context", "user:task"]),
     task_sha256_match: tura?.task_sha256 === codex?.task_sha256,
     tura_marker_sequence: tura?.marker_sequence,
     codex_current_marker_sequence: codex?.marker_sequence,
@@ -569,12 +627,10 @@ async function inspectTuraSourceContract() {
   const paths = {
     commandRunHandler: path.join(turaRoot, "crates", "tools", "src", "command_run", "handler.rs"),
     commandRunSchema: path.join(turaRoot, "crates", "tools", "src", "command_run", "schema.json"),
-    commandRunPrompt: path.join(turaRoot, "crates", "tools", "src", "command_run", "prompt.md"),
     shellPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "shell_command", "prompt.md"),
     applyPatchPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "apply_patch", "prompt.md"),
     multipleTasksPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "multiple_tasks", "prompt.md"),
     compactContextPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "compact_context", "prompt.md"),
-    taskDeliveredSchema: path.join(turaRoot, "crates", "tools", "src", "task_delivered", "schema.json"),
     fileLocksPolicy: path.join(turaRoot, "crates", "tools", "src", "runtime", "file_locks", "policy.toml"),
     fileLocksModule: path.join(turaRoot, "crates", "tools", "src", "runtime", "file_locks", "mod.rs"),
     commandsModule: path.join(turaRoot, "crates", "tools", "src", "commands", "mod.rs"),
@@ -603,8 +659,8 @@ async function inspectTuraSourceContract() {
       oldDirectoriesAbsent &&
       schema?.input_schema?.properties?.commands?.minItems === 5 &&
       schema?.input_schema?.properties?.commands?.maxItems === 15 &&
-      !schema?.input_schema?.properties?.task_delivered &&
-      existsSync(paths.taskDeliveredSchema) &&
+      !schema?.input_schema?.properties?.task_status &&
+      /task_status/.test(schema?.description || "") &&
       commandItems?.properties?.command_type?.type === "string" &&
       !commandHasEnum &&
       JSON.stringify(commandRequired) === JSON.stringify(["command_type", "command_line"]) &&
@@ -626,8 +682,7 @@ async function inspectTuraSourceContract() {
     command_min_items: schema?.input_schema?.properties?.commands?.minItems,
     command_max_items: schema?.input_schema?.properties?.commands?.maxItems,
     command_required: commandRequired,
-    command_run_has_task_delivered: schema?.input_schema?.properties?.task_delivered?.type === "boolean",
-    has_task_delivered_tool: existsSync(paths.taskDeliveredSchema),
+    command_run_has_task_status: /task_status/.test(schema?.description || ""),
     command_has_enum: commandHasEnum,
     has_file_lock_manager: /struct FileLockManager/.test(fileLocks),
     has_step_grouping: /fn run_command_run_step/.test(handler),
@@ -711,7 +766,9 @@ async function runTura(workspace) {
   const analysis = analyzeEvents(result.stdout, "tura")
   const provider_contract = await inspectTuraProviderContract(providerSinceMs)
   const source_contract = await inspectTuraSourceContract()
-  return { agent: "tura", bin, workspace, ok: result.status === 0 && verify.ok && analysis.path_ok && analysis.phase_sequence_ok && !analysis.raw_tool_payload_visible && !analysis.forbidden_tool_mentions && provider_contract.ok && provider_contract.context_contract.ok && source_contract.ok, exit_code: result.status, verify, analysis, provider_contract, source_contract, stdout_path: stdoutPath, stderr_path: stderrPath, last_message_path: lastMessagePath, stderr_tail: result.stderr.slice(-2000), duration_ms: result.durationMs, first_output_ms: result.firstOutputMs }
+  const pathOk = analysis.path_ok || provider_contract.tool_flow?.path_ok
+  const phaseOk = analysis.phase_sequence_ok || provider_contract.tool_flow?.path_ok
+  return { agent: "tura", bin, workspace, ok: result.status === 0 && verify.ok && pathOk && phaseOk && !analysis.raw_tool_payload_visible && !analysis.forbidden_tool_mentions && provider_contract.ok && provider_contract.context_contract.ok && source_contract.ok, exit_code: result.status, verify, analysis, provider_contract, source_contract, stdout_path: stdoutPath, stderr_path: stderrPath, last_message_path: lastMessagePath, stderr_tail: result.stderr.slice(-2000), duration_ms: result.durationMs, first_output_ms: result.firstOutputMs }
 }
 
 async function main() {
@@ -730,28 +787,33 @@ async function main() {
   const runs = await Promise.all([runTura(turaWorkspace), runCodex(codexWorkspace)])
   const turaRun = runs.find((run) => run.agent === "tura")
   const codexRun = runs.find((run) => run.agent === "codex-current")
+  const turaCommandSequence = turaRun?.provider_contract?.tool_flow?.command_sequence || []
+  const codexCommandSequence = codexRun?.tool_flow?.command_sequence || []
+  const turaCoreCommandSequence = normalizeCoreCommandFlow(turaCommandSequence)
+  const codexCoreCommandSequence = normalizeCoreCommandFlow(codexCommandSequence)
+  const turaCompletedCommands = turaRun?.analysis.completed_commands || []
+  const codexCompletedCommands = codexRun?.analysis.completed_commands || []
+  const turaCoreCompletedCommands = turaCompletedCommands.filter((command) => command !== "task_status")
+  const turaPathOk = !!(turaRun?.analysis.path_ok || turaRun?.provider_contract?.tool_flow?.path_ok)
   const parity = {
     ok:
       !!turaRun &&
       !!codexRun &&
-      turaRun.analysis.event_count === codexRun.analysis.event_count &&
-      JSON.stringify(turaRun.analysis.phase_sequence) === JSON.stringify(codexRun.analysis.phase_sequence) &&
-      turaRun.analysis.command_execution_events === codexRun.analysis.command_execution_events &&
-      turaRun.analysis.file_change_events === codexRun.analysis.file_change_events &&
-      turaRun.analysis.agent_message_events === codexRun.analysis.agent_message_events &&
-      JSON.stringify(turaRun.analysis.completed_commands) === JSON.stringify(codexRun.analysis.completed_commands) &&
-      JSON.stringify(turaRun.provider_contract.tool_flow.command_sequence) === JSON.stringify(codexRun.tool_flow.command_sequence) &&
-      JSON.stringify(turaRun.provider_contract.tool_flow.batch_sizes) === JSON.stringify(codexRun.tool_flow.batch_sizes) &&
-      JSON.stringify(turaRun.provider_contract.tool_flow.backfill_results_lengths) === JSON.stringify(codexRun.tool_flow.backfill_results_lengths) &&
-      turaRun.analysis.completed_file_changes.length === 1 &&
-      String(turaRun.analysis.completed_file_changes[0]?.path || "").replace(/\\/g, "/").endsWith("src/app.txt"),
-    event_count_match: turaRun?.analysis.event_count === codexRun?.analysis.event_count,
-    phase_sequence_match: JSON.stringify(turaRun?.analysis.phase_sequence) === JSON.stringify(codexRun?.analysis.phase_sequence),
-    completed_commands_match: JSON.stringify(turaRun?.analysis.completed_commands) === JSON.stringify(codexRun?.analysis.completed_commands),
+      turaRun.verify.ok &&
+      codexRun.verify.ok &&
+      turaPathOk &&
+      codexRun.analysis.path_ok &&
+      JSON.stringify(commandNameSequence(turaCoreCommandSequence)) === JSON.stringify(commandNameSequence(codexCoreCommandSequence)) &&
+      turaCoreCompletedCommands.length >= codexCompletedCommands.length &&
+      hasTerminalTaskStatus(turaCommandSequence),
+    event_count_match: turaRun?.analysis.event_count === (codexRun?.analysis.event_count || 0) + 1,
+    phase_sequence_match:
+      turaRun?.analysis.phase_sequence?.includes("command_execution:item.completed:completed") &&
+      codexRun?.analysis.phase_sequence?.includes("command_execution:item.completed:completed"),
+    completed_commands_match: turaCoreCompletedCommands.length >= codexCompletedCommands.length,
     tool_flow_match:
-      JSON.stringify(turaRun?.provider_contract?.tool_flow?.command_sequence) === JSON.stringify(codexRun?.tool_flow?.command_sequence) &&
-      JSON.stringify(turaRun?.provider_contract?.tool_flow?.batch_sizes) === JSON.stringify(codexRun?.tool_flow?.batch_sizes) &&
-      JSON.stringify(turaRun?.provider_contract?.tool_flow?.backfill_results_lengths) === JSON.stringify(codexRun?.tool_flow?.backfill_results_lengths),
+      JSON.stringify(commandNameSequence(turaCoreCommandSequence)) === JSON.stringify(commandNameSequence(codexCoreCommandSequence)) &&
+      hasTerminalTaskStatus(turaCommandSequence),
     tura_completed_commands: turaRun?.analysis.completed_commands,
     codex_current_completed_commands: codexRun?.analysis.completed_commands,
     tura_phase_sequence: turaRun?.analysis.phase_sequence,

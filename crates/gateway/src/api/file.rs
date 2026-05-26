@@ -330,12 +330,11 @@ pub async fn find_files(Query(params): Query<FileSearchParams>) -> Json<Vec<Stri
                     .map(|n| n.to_string_lossy().to_lowercase())
                     .unwrap_or_default();
 
-                if name.contains(&query) {
-                    if (!is_dir_only && (!path.is_dir() || include_dirs))
-                        || (is_dir_only && path.is_dir())
-                    {
-                        results.push(relative_display_path(root, &path));
-                    }
+                if name.contains(query)
+                    && ((!is_dir_only && (!path.is_dir() || include_dirs))
+                        || (is_dir_only && path.is_dir()))
+                {
+                    results.push(relative_display_path(root, &path));
                 }
 
                 if path.is_dir() && results.len() < limit {
@@ -572,7 +571,7 @@ fn open_with_system_default(path: &Path) -> std::io::Result<()> {
             .args(["/C", "start", ""])
             .arg(path)
             .spawn()?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]

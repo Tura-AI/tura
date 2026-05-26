@@ -970,15 +970,16 @@ fn filter_issues(query: IssueQuery) -> Vec<Issue> {
             query
                 .status
                 .as_ref()
-                .map_or(true, |status| &issue.status == status)
+                .is_none_or(|status| &issue.status == status)
         })
         .filter(|issue| {
-            query.project_id.as_ref().map_or(true, |project_id| {
-                issue.project_id.as_ref() == Some(project_id)
-            })
+            query
+                .project_id
+                .as_ref()
+                .is_none_or(|project_id| issue.project_id.as_ref() == Some(project_id))
         })
         .filter(|issue| {
-            search.as_ref().map_or(true, |search| {
+            search.as_ref().is_none_or(|search| {
                 issue.title.to_ascii_lowercase().contains(search)
                     || issue.description.to_ascii_lowercase().contains(search)
             })

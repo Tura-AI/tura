@@ -167,6 +167,10 @@ pub fn build_router() -> Router {
         .route("/session/{sessionID}", patch(api::session::update_session))
         .route("/session/{sessionID}", delete(api::session::delete_session))
         .route(
+            "/session/{sessionID}/task-management",
+            patch(api::session::update_session_task_management),
+        )
+        .route(
             "/session/{sessionID}/abort",
             post(api::session::abort_session),
         )
@@ -429,6 +433,7 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let router = build_router();
+    api::session::start_task_scheduler();
 
     println!("🚀 Gateway server starting on http://{}", addr);
     println!("📡 Health check: http://{}/global/health", addr);

@@ -18,7 +18,7 @@ pub struct ProcessedStreamData {
     pub reasoning_chunks: Vec<String>,
 }
 
-pub async fn runtime_recieve(input: RuntimeReceiveInput) -> Result<ProcessedStreamData, String> {
+pub async fn runtime_receive(input: RuntimeReceiveInput) -> Result<ProcessedStreamData, String> {
     let mut processed = ProcessedStreamData {
         text_chunks: Vec::new(),
         tool_calls: Vec::new(),

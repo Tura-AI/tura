@@ -81,32 +81,68 @@ pub fn execute(patch_text: &str, session_dir: &Path) -> CommandResponse {
     match parse_patch(patch_text) {
         Ok(changes) => {
             let mut applied_changes = Vec::new();
+            let mut failed_changes = Vec::new();
             for change in &changes {
                 match apply_change(change, session_dir) {
                     Ok(applied_change) => applied_changes.push(applied_change),
                     Err(err) => {
-                        let partial = !applied_changes.is_empty();
-                        let mut output = json!({
+                        let mut failure = json!({
                             "error_type": err.kind,
                             "message": err.message,
-                            "guidance": apply_patch_failure_guidance(err.kind, partial),
+                            "guidance": apply_patch_failure_guidance(err.kind, !applied_changes.is_empty()),
                         });
                         if let Some(failed_change) = err.failed_change {
-                            output["failed_change"] = failed_change;
+                            failure["failed_change"] = failed_change;
                         }
-                        if partial {
-                            output["partial_changes"] = Value::Array(applied_changes.clone());
-                        }
-                        return CommandResponse {
-                            success: false,
-                            exit_code: 1,
-                            stdout: String::new(),
-                            stderr: output["message"].as_str().unwrap_or_default().to_string(),
-                            output,
-                            changes: applied_changes,
-                        };
+                        failed_changes.push(failure);
                     }
                 }
+            }
+            if !failed_changes.is_empty() {
+                let partial = !applied_changes.is_empty();
+                let first_failure = failed_changes.first().cloned().unwrap_or_else(
+                    || json!({ "error_type": "PatchFailed", "message": "apply_patch failed" }),
+                );
+                let first_kind = first_failure["error_type"]
+                    .as_str()
+                    .unwrap_or("PatchFailed");
+                let first_message = first_failure["message"]
+                    .as_str()
+                    .unwrap_or("apply_patch failed");
+                let message = if failed_changes.len() == 1 {
+                    first_message.to_string()
+                } else {
+                    format!(
+                        "apply_patch failed for {} of {} changes; first failure: {}",
+                        failed_changes.len(),
+                        changes.len(),
+                        first_message
+                    )
+                };
+                let mut output = json!({
+                    "error_type": if failed_changes.len() == 1 {
+                        first_kind
+                    } else {
+                        "MultiplePatchFailures"
+                    },
+                    "message": message,
+                    "guidance": apply_patch_failure_guidance(first_kind, partial),
+                    "failed_changes": failed_changes,
+                });
+                if let Some(failed_change) = first_failure.get("failed_change") {
+                    output["failed_change"] = failed_change.clone();
+                }
+                if partial {
+                    output["partial_changes"] = Value::Array(applied_changes.clone());
+                }
+                return CommandResponse {
+                    success: false,
+                    exit_code: 1,
+                    stdout: String::new(),
+                    stderr: output["message"].as_str().unwrap_or_default().to_string(),
+                    output,
+                    changes: applied_changes,
+                };
             }
             CommandResponse {
                 success: true,
@@ -769,13 +805,14 @@ mod tests {
     }
 
     #[test]
-    fn failed_later_file_reports_partial_changes_and_failed_change() {
+    fn failed_middle_file_continues_and_reports_partial_changes() {
         let root = temp_workspace("partial");
         fs::write(root.join("first.txt"), "old\n").expect("first");
         fs::write(root.join("second.txt"), "actual\n").expect("second");
+        fs::write(root.join("third.txt"), "old\n").expect("third");
 
         let result = execute(
-            "*** Begin Patch\n*** Update File: first.txt\n@@\n-old\n+new\n*** Update File: second.txt\n@@\n-missing\n+value\n*** End Patch\n",
+            "*** Begin Patch\n*** Update File: first.txt\n@@\n-old\n+new\n*** Update File: second.txt\n@@\n-missing\n+value\n*** Update File: third.txt\n@@\n-old\n+new\n*** End Patch\n",
             &root,
         );
 
@@ -785,7 +822,15 @@ mod tests {
             result.output["partial_changes"][0]["path"],
             json!("first.txt")
         );
+        assert_eq!(
+            result.output["partial_changes"][1]["path"],
+            json!("third.txt")
+        );
         assert_eq!(result.output["failed_change"]["path"], json!("second.txt"));
+        assert_eq!(
+            result.output["failed_changes"][0]["failed_change"]["path"],
+            json!("second.txt")
+        );
         assert_eq!(
             fs::read_to_string(root.join("first.txt")).expect("first"),
             "new\n"
@@ -793,6 +838,10 @@ mod tests {
         assert_eq!(
             fs::read_to_string(root.join("second.txt")).expect("second"),
             "actual\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("third.txt")).expect("third"),
+            "new\n"
         );
         let _ = fs::remove_dir_all(root);
     }

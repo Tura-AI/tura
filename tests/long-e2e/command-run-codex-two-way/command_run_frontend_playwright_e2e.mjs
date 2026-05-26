@@ -2,6 +2,8 @@
 import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
 import fs from "node:fs"
+import http from "node:http"
+import { createRequire } from "node:module"
 import path from "node:path"
 import process from "node:process"
 import { performance } from "node:perf_hooks"
@@ -20,11 +22,12 @@ const claudeModel = process.env.COMMAND_RUN_AGENT_CLAUDE_MODEL || "opus"
 const reasoning = process.env.COMMAND_RUN_AGENT_REASONING_EFFORT || "low"
 const serviceTier = process.env.COMMAND_RUN_AGENT_SERVICE_TIER || "priority"
 const timeoutMs = Number(process.env.COMMAND_RUN_AGENT_TIMEOUT_MS || 20 * 60_000)
-const agents = parseAgents(process.env.COMMAND_RUN_AGENT_AGENTS || "current-shll,codex-main,tura-fast-shll")
+const agents = parseAgents(process.env.COMMAND_RUN_AGENT_AGENTS || "tura-fast-shll")
 const prepOnly = (process.env.COMMAND_RUN_AGENT_PREP_ONLY || "0") === "1"
 const smokeOnly = (process.env.COMMAND_RUN_AGENT_SMOKE_ONLY || "0") === "1"
 const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm"
 const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx"
+const tuiRequire = createRequire(path.join(repoRoot, "apps", "tui", "package.json"))
 
 const turaExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura.exe" : "tura")
 const codexCurrentExe = path.join(
@@ -79,6 +82,11 @@ function parseAgents(value) {
     ["tura-coding-agent", "tura-shll"],
     ["tura-fast", "tura-fast-shll"],
     ["tura-fast-shll", "tura-fast-shll"],
+    ["tura-fast-bash", "tura-fast-bash"],
+    ["tui", "tui-fast-shll"],
+    ["tui-shll", "tui-shll"],
+    ["tui-fast", "tui-fast-shll"],
+    ["tui-fast-shll", "tui-fast-shll"],
     ["claude", "claude-code"],
     ["claude-code", "claude-code"],
     ["claude-opus", "claude-code"],
@@ -97,6 +105,14 @@ function parseAgents(value) {
 
 function agentKind(agentId) {
   return String(agentId).replace(/-\d+$/, "")
+}
+
+function requireCodexCurrentExe() {
+  return agents.some((agent) => ["current-shll", "current-bash"].includes(agentKind(agent)))
+}
+
+function requireCodexMainExe() {
+  return agents.some((agent) => ["codex-main", "codex-main-bash"].includes(agentKind(agent)))
 }
 
 function shellSurfaceForAgent(agentId) {
@@ -329,7 +345,8 @@ function createFixtureTemplate() {
       "probe:flow": "node tools/probe_flow.mjs",
       "verify:all": "node tools/with_vite.mjs -- npm run verify:all:inner",
       "verify:all:inner": "npm run screenshot:desktop && npm run screenshot:mobile && npm run screenshot:modal && npm run probe:flow && npm run check:a11y && npm run smoke:playwright",
-      "smoke:playwright": "node tools/playwright_smoke.mjs"
+      "smoke:playwright": "node tools/playwright_smoke.mjs",
+      "verify:programbench": "node tools/programbench_verify.mjs"
     },
     dependencies: {
       "@vitejs/plugin-react": "latest",
@@ -349,8 +366,67 @@ function createFixtureTemplate() {
   writeFile(path.join(template, "tools", "probe_flow.mjs"), probeScript())
   writeFile(path.join(template, "tools", "with_vite.mjs"), withViteScript())
   writeFile(path.join(template, "tools", "playwright_smoke.mjs"), playwrightSmokeScript())
+  writeFile(path.join(template, "tools", "programbench_verify.mjs"), programbenchVerifyScript())
   writeFile(path.join(template, "REFERENCE_NOTES.md"), referenceNotes())
+  createProgramBenchMini(template)
   return template
+}
+
+function createProgramBenchMini(template) {
+  const root = path.join(template, "programbench-mini")
+  writeFile(path.join(root, "Cargo.toml"), [
+    "[package]",
+    'name = "pb-rebuild"',
+    'version = "0.1.0"',
+    'edition = "2021"',
+    "",
+    "[profile.release]",
+    "lto = false",
+    "codegen-units = 1",
+    "",
+    "[workspace]",
+  ].join("\n"))
+  writeFile(path.join(root, "SPEC.md"), [
+    "# ProgramBench Mini Reconstruction Spec",
+    "",
+    "This fixture is based on the real ProgramBench sample instance `testorg__calculator.abc1234`: rebuild a small program from documentation, tests, and expected black-box behavior.",
+    "",
+    "## Required CLI",
+    "",
+    "- The executable name must be `pb-rebuild`.",
+    "- `pb-rebuild --self-check` must print `PB_REBUILD_SELF_CHECK ok`.",
+    "- `pb-rebuild 2 + 3` must print `5`; `pb-rebuild 10 - 3` must print `7`; `pb-rebuild 4 * 3` must print `12`.",
+    "- `pb-rebuild --manifest benches/programbench-mini.manifest --out artifacts/cli-report.md` must parse all `case:<id>=<description>` lines.",
+    "- It must fail if fewer than four cases are present.",
+    "- The generated report must contain `# ProgramBench Mini Report`, `facebookresearch/programbench`, `testorg__calculator.abc1234`, each case id, and the phrase `step-2 barrier`.",
+    "- Package reconstructed source as `programbench-run/testorg__calculator.abc1234/submission.tar.gz`.",
+    "- Write `programbench-run/testorg__calculator.abc1234/testorg__calculator.abc1234.eval.json` with passed addition/subtraction/multiplication test results for branch `33128f6b8600`.",
+    "",
+    "## Required Docs",
+    "",
+    "- Write `docs/REBUILD.md` with build/test/run instructions and the release executable path.",
+    "- Write `docs/ARCHITECTURE.md` describing derived tasks: fixture, cli, docs, verify.",
+    "- The docs must mention ordered barriers and command_run queue/file-lock reuse.",
+  ].join("\n"))
+  writeFile(path.join(root, "benches", "programbench-mini.manifest"), [
+    "instance=testorg__calculator.abc1234",
+    "repository=testorg/calculator",
+    "commit=abc1234567890abcdef1234567890abcdef123456",
+    "source=facebookresearch/programbench",
+    "branch=33128f6b8600",
+    "case:addition=./executable 2 + 3 prints 5",
+    "case:subtraction=./executable 10 - 3 prints 7",
+    "case:multiplication=./executable 4 * 3 prints 12",
+    "case:submission=Package reconstructed source as submission.tar.gz",
+  ].join("\n"))
+  writeFile(path.join(root, "src", "main.rs"), [
+    "fn main() {",
+    "    // TODO: rebuild the CLI described in SPEC.md.",
+    "    // Hidden tests expect --self-check, --manifest, --out, docs, and report generation.",
+    "    println!(\"PB_REBUILD_TODO\");",
+    "}",
+  ].join("\n"))
+  writeFile(path.join(root, "docs", ".gitkeep"), "")
 }
 
 function buggyApp() {
@@ -857,16 +933,91 @@ await browser.close();
 `
 }
 
-function hiddenEvaluator() {
-  return `import { createRequire } from "node:module";
+function programbenchVerifyScript() {
+  return `import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
+
+const root = path.resolve("programbench-mini");
+const exeName = process.platform === "win32" ? "pb-rebuild.exe" : "pb-rebuild";
+const exePath = path.join(root, "target", "release", exeName);
+
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: options.cwd || root,
+    encoding: "utf8",
+    text: true,
+    timeout: options.timeoutMs || 120_000,
+    maxBuffer: 64 * 1024 * 1024,
+    shell: process.platform === "win32",
+    windowsHide: true,
+  });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.status !== 0) {
+    throw new Error(command + " " + args.join(" ") + " failed with " + result.status);
+  }
+  return result;
+}
+
+run("cargo", ["test"], { timeoutMs: 180_000 });
+run("cargo", ["build", "--release"], { timeoutMs: 240_000 });
+const selfCheck = run(exePath, ["--self-check"], { cwd: root, timeoutMs: 30_000 });
+if (!selfCheck.stdout.includes("PB_REBUILD_SELF_CHECK ok")) {
+  throw new Error("--self-check did not print expected marker");
+}
+for (const [a, op, b, expected] of [["2", "+", "3", "5"], ["10", "-", "3", "7"], ["4", "*", "3", "12"]]) {
+  const calc = run(exePath, [a, op, b], { cwd: root, timeoutMs: 30_000 });
+  if (calc.stdout.trim() !== expected) throw new Error("calculator behavior mismatch for " + [a, op, b].join(" "));
+}
+const reportPath = path.join(root, "artifacts", "cli-report.md");
+const cli = run(exePath, ["--manifest", "benches/programbench-mini.manifest", "--out", "artifacts/cli-report.md"], { cwd: root, timeoutMs: 30_000 });
+if (!cli.stdout.includes("PB_REBUILD_OK")) throw new Error("CLI did not print PB_REBUILD_OK");
+const report = fs.readFileSync(reportPath, "utf8");
+for (const expected of ["ProgramBench Mini Report", "facebookresearch/programbench", "testorg__calculator.abc1234", "addition", "subtraction", "multiplication", "submission", "step-2 barrier"]) {
+  if (!report.includes(expected)) throw new Error("report missing " + expected);
+}
+const runDir = path.join(root, "programbench-run", "testorg__calculator.abc1234");
+if (!fs.existsSync(path.join(runDir, "submission.tar.gz"))) throw new Error("missing ProgramBench submission.tar.gz");
+const evalPath = path.join(runDir, "testorg__calculator.abc1234.eval.json");
+const evalJson = JSON.parse(fs.readFileSync(evalPath, "utf8"));
+if (evalJson.error_code !== null || !evalJson.test_results?.every((test) => test.status === "passed")) {
+  throw new Error("eval JSON does not show all calculator tests passed");
+}
+for (const file of ["docs/REBUILD.md", "docs/ARCHITECTURE.md"]) {
+  const content = fs.readFileSync(path.join(root, file), "utf8");
+  if (!/ProgramBench|benchmark/i.test(content) || !/command_run|file-lock|file lock|queue/i.test(content)) {
+    throw new Error(file + " missing ProgramBench/command_run architecture details");
+  }
+}
+console.log(JSON.stringify({ ok: true, exe: exePath, report: reportPath }, null, 2));
+`
+}
+
+function hiddenEvaluator() {
+  return `import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+import fs from "node:fs";
+import path from "node:path";
 const workspace = process.argv[2];
 const port = Number(process.argv[3]);
 const require = createRequire(workspace + "/package.json");
 const { chromium } = require("playwright");
 const browser = await chromium.launch({ headless: true });
 const failures = [];
-const score = { visual: 0, interaction: 0, phase2: 0 };
+const score = { visual: 0, interaction: 0, phase2: 0, programbench: 0 };
+
+function run(command, args, options = {}) {
+  return spawnSync(command, args, {
+    cwd: options.cwd || workspace,
+    encoding: "utf8",
+    text: true,
+    timeout: options.timeoutMs || 120_000,
+    maxBuffer: 64 * 1024 * 1024,
+    shell: process.platform === "win32",
+    windowsHide: true,
+  });
+}
 
 async function pageFor(viewport) {
   const page = await browser.newPage({ viewport });
@@ -935,10 +1086,46 @@ page = await pageFor({ width: 1280, height: 900 });
 const body = await page.textContent("body");
 if (/bulk|selected|export|csv/i.test(body || "")) score.phase2 += 1; else failures.push("phase2 UI text missing");
 await page.close();
+
+const pbRoot = path.join(workspace, "programbench-mini");
+const exeName = process.platform === "win32" ? "pb-rebuild.exe" : "pb-rebuild";
+const exePath = path.join(pbRoot, "target", "release", exeName);
+const cargoTest = run("cargo", ["test"], { cwd: pbRoot, timeoutMs: 180_000 });
+if (cargoTest.status === 0) score.programbench += 1; else failures.push("programbench cargo test failed: " + cargoTest.stderr.slice(-800));
+const cargoBuild = run("cargo", ["build", "--release"], { cwd: pbRoot, timeoutMs: 240_000 });
+if (cargoBuild.status === 0 && fs.existsSync(exePath) && fs.statSync(exePath).size > 1000) score.programbench += 1; else failures.push("programbench release exe missing");
+const selfCheck = run(exePath, ["--self-check"], { cwd: pbRoot, timeoutMs: 30_000 });
+if (selfCheck.status === 0 && /PB_REBUILD_SELF_CHECK ok/.test(selfCheck.stdout)) score.programbench += 1; else failures.push("programbench self-check failed");
+let calculatorOk = true;
+for (const [a, op, b, expected] of [["2", "+", "3", "5"], ["10", "-", "3", "7"], ["4", "*", "3", "12"]]) {
+  const calc = run(exePath, [a, op, b], { cwd: pbRoot, timeoutMs: 30_000 });
+  calculatorOk &&= calc.status === 0 && calc.stdout.trim() === expected;
+}
+if (calculatorOk) score.programbench += 1; else failures.push("programbench calculator behavior failed");
+const cliRun = run(exePath, ["--manifest", "benches/programbench-mini.manifest", "--out", "artifacts/cli-report.md"], { cwd: pbRoot, timeoutMs: 30_000 });
+const reportPath = path.join(pbRoot, "artifacts", "cli-report.md");
+const report = fs.existsSync(reportPath) ? fs.readFileSync(reportPath, "utf8") : "";
+if (cliRun.status === 0 && /PB_REBUILD_OK/.test(cliRun.stdout) && /ProgramBench Mini Report/.test(report) && /testorg__calculator\.abc1234/.test(report) && /step-2 barrier/.test(report)) score.programbench += 1; else failures.push("programbench report generation failed");
+const runDir = path.join(pbRoot, "programbench-run", "testorg__calculator.abc1234");
+if (fs.existsSync(path.join(runDir, "submission.tar.gz"))) score.programbench += 1; else failures.push("programbench submission.tar.gz missing");
+const evalPath = path.join(runDir, "testorg__calculator.abc1234.eval.json");
+try {
+  const evalJson = JSON.parse(fs.readFileSync(evalPath, "utf8"));
+  if (evalJson.error_code === null && evalJson.test_results?.every((test) => test.status === "passed")) score.programbench += 1;
+  else failures.push("programbench eval json not all passed");
+} catch {
+  failures.push("programbench eval json missing or invalid");
+}
+for (const file of ["docs/REBUILD.md", "docs/ARCHITECTURE.md"]) {
+  const docPath = path.join(pbRoot, file);
+  const content = fs.existsSync(docPath) ? fs.readFileSync(docPath, "utf8") : "";
+  if (/ProgramBench|benchmark/i.test(content) && /command_run|file-lock|file lock|queue/i.test(content)) score.programbench += 1;
+  else failures.push("programbench doc incomplete: " + file);
+}
 await browser.close();
 
 const total = score.visual + score.interaction + score.phase2;
-const result = { pass: failures.length === 0, total, max: 16, score, failures };
+const result = { pass: failures.length === 0, total: total + score.programbench, max: 25, score, failures };
 console.log(JSON.stringify(result, null, 2));
 if (!result.pass) process.exit(1);
 `
@@ -991,11 +1178,15 @@ function shellSurfaceNote(shellSurface) {
 function promptPhase1(port, shellSurface = "shell_command") {
   return `You are in a front-end repair benchmark. The workspace contains a half-finished React page and three reference screenshots in reference/desktop.png, reference/mobile.png, and reference/modal.png. The screenshots show the intended visual quality; the current app has many display and interaction bugs.
 
+The workspace also contains programbench-mini/, a compact reconstruction task based on the real facebookresearch/programbench sample instance testorg__calculator.abc1234. Treat it as a separate open-source rebuild target: you are given SPEC.md, a manifest, and a broken Rust CLI skeleton. Use multiple_tasks when it is available to split at least four derived tasks: frontend repair, ProgramBench calculator CLI implementation, ProgramBench docs/submission archive, and verification. Frontend repair and ProgramBench implementation/docs can proceed as same-step parallel work; final verification must be an ordered barrier. Reuse the existing command_run queue and file-lock behavior; do not invent any custom locking or scheduler.
+
 ${shellSurfaceNote(shellSurface)}
 
 Do not edit files under reference/. Do not ask for hidden tests. Run npm install if dependencies are missing. Prefer PORT=${port} npm run verify:all for Vite-backed verification; this helper starts Vite in the background, waits for readiness, fails immediately if the service exits before readiness with exit code and log tails, and cleans up the service. If you start Vite manually, you must use the same behavior: keep the process handle/PID, poll both http://127.0.0.1:${port} readiness and process exit, return failure immediately with stderr/stdout tails if Vite exits early, and kill only that process tree on readiness timeout. Do not leave a foreground or orphaned server command blocking the agent run. Use Playwright from the provided npm scripts to inspect, screenshot, interact with the page, and compare against the reference screenshots. Use your image-reading capability on generated screenshots and the reference screenshots when helpful.
 
-Fix the page so the desktop, mobile, and modal states match the references in layout intent and quality. Also fix obvious interaction problems around filtering, search, create, complete, details, accessibility names, overflow, and responsive behavior. Use the provided scripts and screenshots to verify. Finish with a concise summary and mention the screenshots or probes you ran.`
+Fix the page so the desktop, mobile, and modal states match the references in layout intent and quality. Also fix obvious interaction problems around filtering, search, create, complete, details, accessibility names, overflow, and responsive behavior. Keep the desktop hero visually substantial: its rendered height at a 1440px wide viewport should stay between 150px and 340px. The create modal must expose an accessible dialog name matching "Create task" or "Create work item". After creating a task, the role="status" toast must include the words "Task added".
+
+In programbench-mini/, rebuild the Rust CLI so cargo test passes, cargo build --release creates target/release/pb-rebuild(.exe), --self-check prints PB_REBUILD_SELF_CHECK ok, calculator commands like 2 + 3 / 10 - 3 / 4 * 3 match the ProgramBench calculator tests, and running with --manifest benches/programbench-mini.manifest --out artifacts/cli-report.md writes the required ProgramBench Mini report. Package programbench-run/testorg__calculator.abc1234/submission.tar.gz and write programbench-run/testorg__calculator.abc1234/testorg__calculator.abc1234.eval.json with passed test_results for branch 33128f6b8600. Write docs/REBUILD.md and docs/ARCHITECTURE.md and include command_run queue/file-lock reuse plus ordered barrier design. Verify with npm run verify:programbench and PORT=${port} npm run verify:all. Finish with a concise summary mentioning the ProgramBench exe/docs/submission/eval artifacts and the screenshots or probes you ran.`
 }
 
 function promptSmoke(port, shellSurface = "shell_command") {
@@ -1013,9 +1204,12 @@ ${shellSurfaceNote(shellSurface)}
 
 - Add row selection with individual checkboxes and a select-all control.
 - Add a bulk complete action that completes selected tasks and records the action in the audit log.
+- Preserve single-row Complete buttons too: when a Playwright probe clicks the first task card's Complete button, the visible .audit-log text must include "completed".
 - Add an export CSV action that produces a downloadable CSV or visible CSV preview containing the current filtered tasks.
-- Add a lightweight two-stage animation: cards should enter smoothly on load/filter changes, and the create-task success state should animate without breaking prefers-reduced-motion.
+- Add a lightweight two-stage animation: cards should enter smoothly on load/filter changes, and the create-task success state should animate without breaking prefers-reduced-motion. The source must literally include CSS animation rules and an @media (prefers-reduced-motion: reduce) block.
+- Keep the desktop hero between 150px and 340px tall at a 1440px wide viewport, and keep the create-task role="status" toast text containing "Task added".
 - Preserve keyboard-accessible labels and avoid horizontal overflow on mobile.
+- Preserve the ProgramBench-mini executable/docs/submission/eval artifacts from phase 1. Run npm run verify:programbench again after any edits and do not regress target/release/pb-rebuild(.exe), docs/REBUILD.md, docs/ARCHITECTURE.md, programbench-run/testorg__calculator.abc1234/submission.tar.gz, testorg__calculator.abc1234.eval.json, or artifacts/cli-report.md.
 
 You may read and use the visible tools/probe scripts. Prefer PORT=${port} npm run verify:all for Vite-backed checks. If you start Vite manually before Playwright probes, keep the process handle/PID, poll both readiness and process exit, fail immediately with exit code and stderr/stdout tail if Vite exits before readiness, and clean up only that process tree so the command does not block the run.`
 }
@@ -1189,6 +1383,8 @@ async function runTura(workspace, agentDir, agentPort, agentPrompt = "coding_age
     workspace,
   ]
   const env = {
+    OPENAI_LOGIN: process.env.OPENAI_LOGIN || "oauth",
+    TURA_ENV_PATH: process.env.TURA_ENV_PATH || path.join(repoRoot, ".env"),
     TURA_COMMAND_RUN_SHELL: shellSurface,
     TURA_COMMAND_RUN_STRICT_JSON: "0",
     COMMAND_RUN_AGENT_TIMEOUT_MS: String(timeoutMs),
@@ -1213,6 +1409,442 @@ async function runTura(workspace, agentDir, agentPort, agentPrompt = "coding_age
         statusPath: path.join(agentDir, "phase2.status.json"),
       })
   return { first, second, threadId: sessionId, error: first.error || second.error || null }
+}
+
+function realTuiBridgeHtml() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Real TUI bridge</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0b0d10; color: #f5f2e8; font: 14px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace; overflow: hidden; }
+    main { height: 100vh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px; padding: 14px; }
+    h1 { margin: 0; font: 700 18px/1.2 system-ui, sans-serif; letter-spacing: 0; }
+    .terminal { margin: 0; white-space: pre-wrap; overflow: hidden; border: 1px solid #303743; border-radius: 8px; background: #050608; padding: 14px; color: #f7f4ec; }
+    form { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+    textarea { min-height: 86px; resize: vertical; border: 1px solid #48515d; border-radius: 6px; background: #171b22; color: inherit; padding: 10px; font: inherit; }
+    button { min-height: 38px; border: 1px solid #d7cda9; border-radius: 6px; background: #d7cda9; color: #15120b; padding: 0 18px; font-weight: 700; }
+    button:disabled { opacity: .55; }
+    .status { color: #9bd4ff; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Real apps/tui terminal <span id="status" class="status" role="status">booting</span></h1>
+    <pre id="screen" class="terminal" aria-label="TUI screen"></pre>
+    <form id="form">
+      <textarea id="input" aria-label="TUI input" spellcheck="false"></textarea>
+      <button id="send" type="submit">Send to TUI</button>
+    </form>
+  </main>
+  <script>
+    const screen = document.querySelector("#screen");
+    const input = document.querySelector("#input");
+    const form = document.querySelector("#form");
+    const status = document.querySelector("#status");
+    const send = document.querySelector("#send");
+    async function refresh() {
+      try {
+        const response = await fetch("/screen");
+        const result = await response.json();
+        screen.textContent = result.screen || "";
+        status.textContent = result.alive ? "running" : "closed";
+        screen.scrollTop = 0;
+      } catch {}
+    }
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      send.disabled = true;
+      await fetch("/input", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: input.value, submit: true, slow: true }),
+      });
+      input.value = "";
+      await refresh();
+      send.disabled = false;
+    });
+    setInterval(refresh, 500);
+    refresh();
+  </script>
+</body>
+</html>`
+}
+
+function stripAnsi(text) {
+  return String(text)
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b[()][A-Za-z0-9]/g, "")
+}
+
+function latestTuiScreen(raw) {
+  const marker = "\x1b[2J\x1b[H"
+  const index = raw.lastIndexOf(marker)
+  const current = index >= 0 ? raw.slice(index + marker.length) : raw
+  const text = stripAnsi(current).replace(/\r/g, "")
+  const lines = text.split("\n")
+  return lines.slice(Math.max(0, lines.length - 38)).join("\n")
+}
+
+function startGatewayProcess(port, agentDir, env = {}) {
+  const stdoutPath = path.join(agentDir, "gateway.stdout.log")
+  const stderrPath = path.join(agentDir, "gateway.stderr.log")
+  const gatewayExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "gateway.exe" : "gateway")
+  mkdirp(agentDir)
+  const child = spawn(gatewayExe, [], isolatedProcessOptions({
+    cwd: repoRoot,
+    env: { ...process.env, PORT: String(port), ...env },
+    stdio: ["ignore", fs.openSync(stdoutPath, "w"), fs.openSync(stderrPath, "w")],
+    windowsHide: true,
+    shell: false,
+  }))
+  child.once("error", () => {})
+  return { child, stdoutPath, stderrPath }
+}
+
+async function waitForGateway(port, child) {
+  const deadline = Date.now() + 120_000
+  while (Date.now() < deadline) {
+    if (child?.exitCode !== null || child?.signalCode !== null) return false
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/global/health`)
+      if (response.ok) return true
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+  return false
+}
+
+function startRealTuiBridge(workspace, gatewayUrl, agentDir, env) {
+  const pty = tuiRequire("node-pty")
+  const tuiBin = path.join(repoRoot, "apps", "tui", "dist", "index.js")
+  let raw = ""
+  let alive = true
+  const term = pty.spawn(process.execPath, [tuiBin, "--gateway-url", gatewayUrl, "--cwd", workspace, "--color", "always"], {
+    name: "xterm-256color",
+    cols: 120,
+    rows: 38,
+    cwd: repoRoot,
+    env: { ...process.env, ...env },
+  })
+  term.onData((data) => {
+    raw += data
+    if (raw.length > 2_000_000) raw = raw.slice(-1_000_000)
+    writeFile(path.join(agentDir, "tui.raw.log"), raw)
+    writeFile(path.join(agentDir, "tui.screen.txt"), latestTuiScreen(raw))
+  })
+  term.onExit(() => {
+    alive = false
+  })
+  const writePty = async (text, slow = false) => {
+    if (!slow) {
+      term.write(text)
+      return
+    }
+    for (const char of text) {
+      term.write(char)
+      await new Promise((resolve) => setTimeout(resolve, 1))
+    }
+  }
+  const server = http.createServer(async (req, res) => {
+    const url = new URL(req.url || "/", "http://127.0.0.1")
+    if (req.method === "GET" && url.pathname === "/") {
+      const body = realTuiBridgeHtml()
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-length": Buffer.byteLength(body) })
+      res.end(body)
+      return
+    }
+    if (req.method === "GET" && url.pathname === "/screen") {
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({ screen: latestTuiScreen(raw), alive }))
+      return
+    }
+    if (req.method === "POST" && url.pathname === "/input") {
+      try {
+        const payload = await new Promise((resolve) => {
+          let body = ""
+          req.on("data", (chunk) => { body += chunk.toString() })
+          req.on("end", () => resolve(body.trim() ? JSON.parse(body) : {}))
+        })
+        await writePty(String(payload.text || ""), Boolean(payload.slow))
+        if (payload.submit) {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          term.write("\r")
+        }
+        res.writeHead(200, { "content-type": "application/json" })
+        res.end(JSON.stringify({ ok: true }))
+      } catch (error) {
+        res.writeHead(500, { "content-type": "application/json" })
+        res.end(JSON.stringify({ ok: false, error: String(error?.stack || error?.message || error) }))
+      }
+      return
+    }
+    res.writeHead(404, { "content-type": "application/json" })
+    res.end(JSON.stringify({ error: `unhandled ${req.method} ${url.pathname}` }))
+  })
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address()
+      resolve({ server, term, isAlive: () => alive, url: `http://127.0.0.1:${address.port}` })
+    })
+  })
+}
+
+async function sendRealTuiInput(page, text, screenshotPath) {
+  mkdirp(path.dirname(screenshotPath))
+  const ext = path.extname(screenshotPath)
+  const stem = screenshotPath.slice(0, -ext.length)
+  const typed = String(text).replace(/\r?\n/g, " ")
+  await page.screenshot({ path: `${stem}-01-before-input${ext}` })
+  await page.getByLabel("TUI input").fill(typed)
+  await page.screenshot({ path: `${stem}-02-after-fill${ext}` })
+  await page.evaluate(async (value) => {
+    const response = await fetch("/input", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: value, submit: true, slow: true }),
+    })
+    if (!response.ok) throw new Error(await response.text())
+    const input = document.querySelector("#input")
+    if (input) input.value = ""
+  }, typed)
+  await page.waitForTimeout(800)
+  await page.screenshot({ path: `${stem}-03-after-send${ext}` })
+}
+
+async function screenshotTui(page, screenshotPath) {
+  await page.getByLabel("TUI screen").screenshot({ path: screenshotPath }).catch(async () => {
+    await page.screenshot({ path: screenshotPath })
+  })
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`${url} returned ${response.status}`)
+  return response.json()
+}
+
+async function latestGatewaySession(gatewayUrl) {
+  const sessions = await fetchJson(`${gatewayUrl}/session`)
+  sessions.sort((left, right) => Number(right.updated_at || right.created_at || 0) - Number(left.updated_at || left.created_at || 0))
+  const session = sessions[0]
+  const messages = session ? await fetchJson(`${gatewayUrl}/session/${encodeURIComponent(session.id)}/message`).catch(() => []) : []
+  return { session, messages }
+}
+
+async function gatewaySessionStatus(gatewayUrl, sessionID) {
+  const statuses = await fetchJson(`${gatewayUrl}/session/status`).catch(() => ({}))
+  const value = statuses?.[sessionID]
+  if (typeof value === "string") return value
+  return value?.status?.type || value?.status || "idle"
+}
+
+async function waitForTuiGatewayCompletion(page, screenshotPath, gatewayUrl, sessionID, initialMessageCount) {
+  const started = performance.now()
+  await page.waitForTimeout(2500)
+  await screenshotTui(page, screenshotPath.replace(/\.png$/, "-04-running.png"))
+  const deadline = Date.now() + timeoutMs + 30_000
+  while (Date.now() < deadline) {
+    const [messages, status] = await Promise.all([
+      fetchJson(`${gatewayUrl}/session/${encodeURIComponent(sessionID)}/message`).catch(() => []),
+      gatewaySessionStatus(gatewayUrl, sessionID),
+    ])
+    const newMessages = messages.slice(initialMessageCount)
+    const hasUser = newMessages.some((message) => message.role === "user")
+    const hasAssistant = newMessages.some((message) => message.role === "assistant")
+    if (hasUser && hasAssistant && status !== "busy") {
+      await page.waitForTimeout(800)
+      await page.screenshot({ path: screenshotPath.replace(/\.png$/, "-05-completed.png") })
+      await page.screenshot({ path: screenshotPath })
+      return Math.round(performance.now() - started)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+  }
+  throw new Error(`timed out waiting for gateway session ${sessionID} to complete`)
+}
+
+async function waitForTuiScreenCompletion(page, screenshotPath, expectedText) {
+  const started = performance.now()
+  await page.waitForTimeout(2500)
+  await page.screenshot({ path: screenshotPath.replace(/\.png$/, "-04-running.png") })
+  const failurePatterns = [
+    "provider runtime failed",
+    "all providers failed",
+    "you didn't provide an api key",
+    "http status 401",
+    "模型调用失败",
+    "runtime failed",
+  ]
+  const deadline = Date.now() + timeoutMs + 30_000
+  const watchdogMs = Number(process.env.COMMAND_RUN_AGENT_TUI_WATCHDOG_MS || 180_000)
+  let lastText = ""
+  let lastChangeAt = Date.now()
+  let nextScreenshotAt = Date.now() + 60_000
+  let tick = 0
+  let result = null
+  while (Date.now() < deadline) {
+    const text = await page.getByLabel("TUI screen").innerText().catch(() => "")
+    const lower = text.toLowerCase()
+    if (text !== lastText) {
+      lastText = text
+      lastChangeAt = Date.now()
+    }
+    if (Date.now() >= nextScreenshotAt) {
+      tick += 1
+      await screenshotTui(page, screenshotPath.replace(/\.png$/, `-watchdog-${String(tick).padStart(2, "0")}.png`))
+      nextScreenshotAt = Date.now() + 60_000
+    }
+    if (failurePatterns.some((pattern) => lower.includes(pattern))) {
+      result = { ok: false, text }
+      break
+    }
+    if (expectedText.every((item) => lower.includes(String(item).toLowerCase()))) {
+      result = { ok: true, text }
+      break
+    }
+    if (lower.includes("assistant:") && text.includes("✓") && !lower.includes("busy")) {
+      result = { ok: true, text }
+      break
+    }
+    if (Date.now() - lastChangeAt > watchdogMs) {
+      await screenshotTui(page, screenshotPath.replace(/\.png$/, "-watchdog-stalled.png"))
+      throw new Error(`TUI screen stalled for ${watchdogMs}ms before completion:\n${String(text || "").slice(-3000)}`)
+    }
+    await page.waitForTimeout(2000)
+  }
+  if (!result) {
+    const text = await page.getByLabel("TUI screen").innerText().catch(() => "")
+    throw new Error(`timed out waiting for TUI completion:\n${String(text || "").slice(-3000)}`)
+  }
+  await page.waitForTimeout(800)
+  await screenshotTui(page, screenshotPath.replace(/\.png$/, "-05-completed.png"))
+  await screenshotTui(page, screenshotPath)
+  if (!result.ok) throw new Error(`TUI task failed before completion:\n${String(result.text || "").slice(-3000)}`)
+  return Math.round(performance.now() - started)
+}
+
+function startTuiWatchdog(page, bridge, gateway, agentDir) {
+  mkdirp(agentDir)
+  let tick = 0
+  let stopped = false
+  const interval = setInterval(async () => {
+    if (stopped) return
+    tick += 1
+    const stamp = String(tick).padStart(2, "0")
+    const screen = await page.getByLabel("TUI screen").innerText().catch((error) => `screen read failed: ${error?.message || error}`)
+    const status = {
+      tick,
+      at: new Date().toISOString(),
+      bridge_alive: bridge.isAlive(),
+      gateway_exit_code: gateway.child.exitCode,
+      gateway_signal: gateway.child.signalCode,
+      screen_tail: String(screen).slice(-2000),
+    }
+    writeFile(path.join(agentDir, `tui-watchdog-${stamp}.json`), JSON.stringify(status, null, 2))
+    await screenshotTui(page, path.join(agentDir, `tui-watchdog-${stamp}.png`)).catch(() => {})
+  }, 60_000)
+  return () => {
+    stopped = true
+    clearInterval(interval)
+  }
+}
+
+async function runTuraViaWebTerminal(workspace, agentDir, agentPort, agentPrompt = "coding_agent_fast", shellSurface = "shell_command") {
+  const gatewayExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "gateway.exe" : "gateway")
+  if (!fs.existsSync(gatewayExe)) {
+    runOk("cargo", ["build", "-p", "gateway", "--bin", "gateway"], { cwd: repoRoot, timeoutMs: 240_000 })
+  }
+  runOk(npmCmd, ["run", "build"], { cwd: path.join(repoRoot, "apps", "tui"), timeoutMs: 120_000, shell: process.platform === "win32" })
+  const sessionId = `frontend-tui-${Date.now()}`
+  const env = {
+    OPENAI_LOGIN: process.env.OPENAI_LOGIN || "oauth",
+    TURA_ENV_PATH: process.env.TURA_ENV_PATH || path.join(repoRoot, ".env"),
+    TURA_COMMAND_RUN_SHELL: shellSurface,
+    TURA_COMMAND_RUN_STRICT_JSON: "0",
+    COMMAND_RUN_AGENT_TIMEOUT_MS: String(timeoutMs),
+    ...envForShellSurface(shellSurface),
+  }
+  const gatewayPort = 45900 + Math.floor(Math.random() * 1000)
+  const gatewayUrl = `http://127.0.0.1:${gatewayPort}`
+  const gateway = startGatewayProcess(gatewayPort, agentDir, env)
+  const ready = await waitForGateway(gatewayPort, gateway.child)
+  if (!ready) {
+    stopServer(gateway.child)
+    throw new Error(`gateway did not become ready on ${gatewayPort}`)
+  }
+  const bridge = await startRealTuiBridge(workspace, gatewayUrl, agentDir, env)
+  const { chromium } = tuiRequire("playwright")
+  const browser = await chromium.launch({ headless: true })
+  const page = await browser.newPage({ viewport: { width: 1200, height: 860 } })
+  let stopWatchdog = () => {}
+  try {
+    await page.goto(bridge.url, { waitUntil: "domcontentloaded" })
+    stopWatchdog = startTuiWatchdog(page, bridge, gateway, agentDir)
+    await screenshotTui(page, path.join(agentDir, "tui-terminal-00-loaded.png"))
+    await page.waitForFunction(
+      () => {
+        const text = document.querySelector("#screen")?.textContent || ""
+        return text.includes("panel:") && text.includes("gateway:") && text.includes("Enter send")
+      },
+      undefined,
+      { timeout: 60_000 },
+    )
+    await sendRealTuiInput(page, "/new", path.join(agentDir, "tui-setup-new-session.png"))
+    await sendRealTuiInput(page, `/agent ${agentPrompt}`, path.join(agentDir, "tui-setup-agent.png"))
+    await sendRealTuiInput(page, `/model ${turaModel}`, path.join(agentDir, "tui-setup-model.png"))
+    await sendRealTuiInput(page, `/config set model_reasoning_effort=${reasoning} service_tier=${serviceTier}`, path.join(agentDir, "tui-setup-config.png"))
+
+    const firstStarted = performance.now()
+    await sendRealTuiInput(page, smokeOnly ? promptSmoke(agentPort, shellSurface) : promptPhase1(agentPort, shellSurface), path.join(agentDir, "tui-phase1-terminal.png"))
+    const firstExpected = smokeOnly ? ["Smoke passed", "desktop.png"] : ["artifacts/desktop.png", "artifacts/mobile.png", "artifacts/modal.png"]
+    const firstMs = await waitForTuiScreenCompletion(page, path.join(agentDir, "tui-phase1-terminal.png"), firstExpected)
+    const firstScreen = await page.getByLabel("TUI screen").innerText()
+    writeFile(path.join(agentDir, "phase1.stdout.jsonl"), JSON.stringify({ type: "tui.screen", phase: 1, text: firstScreen }) + "\n")
+    const first = {
+      command: "apps/tui",
+      args: ["interactive", "phase1"],
+      status: 0,
+      signal: null,
+      stdout: firstScreen,
+      stderr: "",
+      duration_ms: firstMs || Math.round(performance.now() - firstStarted),
+      error: null,
+    }
+    const second = smokeOnly
+      ? emptyRun("smoke mode skipped phase2")
+      : await (async () => {
+          const secondStarted = performance.now()
+          await sendRealTuiInput(page, promptPhase2(agentPort, shellSurface), path.join(agentDir, "tui-phase2-terminal.png"))
+          const secondMs = await waitForTuiScreenCompletion(page, path.join(agentDir, "tui-phase2-terminal.png"), ["Bulk complete", "CSV"])
+          const secondScreen = await page.getByLabel("TUI screen").innerText()
+          writeFile(path.join(agentDir, "phase2.stdout.jsonl"), JSON.stringify({ type: "tui.screen", phase: 2, text: secondScreen }) + "\n")
+          return {
+            command: "apps/tui",
+            args: ["interactive", "phase2"],
+            status: 0,
+            signal: null,
+            stdout: secondScreen,
+            stderr: "",
+            duration_ms: secondMs || Math.round(performance.now() - secondStarted),
+            error: null,
+          }
+        })()
+    await sendRealTuiInput(page, "/quit", path.join(agentDir, "tui-quit.png"))
+    await page.waitForTimeout(1500)
+    return { first, second, threadId: sessionId, error: first.error || second.error || null }
+  } finally {
+    stopWatchdog()
+    await browser.close()
+    try {
+      if (bridge.isAlive?.()) bridge.term.kill()
+    } catch {}
+    await new Promise((resolve) => bridge.server.close(resolve))
+    stopServer(gateway.child)
+  }
 }
 
 async function runClaudeCode(workspace, agentDir, agentPort) {
@@ -1317,12 +1949,16 @@ async function runAgent(agentId, template, evaluator, index) {
       result = await runCurrentLike(agentId, codexMainExe, workspace, agentDir, agentPort, shellSurface)
     } else if (kind === "codex-main-bash") {
       result = await runCurrentLike(agentId, codexMainExe, workspace, agentDir, agentPort, shellSurface)
-    } else if (kind === "tura-fast-shll") {
+    } else if (kind === "tura-fast-shll" || kind === "tura-fast-bash") {
       result = await runTura(workspace, agentDir, agentPort, "coding_agent_fast", shellSurface)
     } else if (kind === "tura-shll") {
       result = await runTura(workspace, agentDir, agentPort, "coding_agent", shellSurface)
     } else if (kind === "tura-bash") {
       result = await runTura(workspace, agentDir, agentPort, "coding_agent", shellSurface)
+    } else if (kind === "tui-fast-shll") {
+      result = await runTuraViaWebTerminal(workspace, agentDir, agentPort, "coding_agent_fast", shellSurface)
+    } else if (kind === "tui-shll") {
+      result = await runTuraViaWebTerminal(workspace, agentDir, agentPort, "coding_agent", shellSurface)
     } else if (kind === "claude-code") {
       result = await runClaudeCode(workspace, agentDir, agentPort)
     } else {
@@ -1373,8 +2009,12 @@ async function main() {
     console.log(JSON.stringify(summary, null, 2))
     return
   }
-  assert(fs.existsSync(codexCurrentExe), `missing current exe ${codexCurrentExe}`)
-  assert(fs.existsSync(codexMainExe), `missing main exe ${codexMainExe}`)
+  if (requireCodexCurrentExe()) {
+    assert(fs.existsSync(codexCurrentExe), `missing current exe ${codexCurrentExe}`)
+  }
+  if (requireCodexMainExe()) {
+    assert(fs.existsSync(codexMainExe), `missing main exe ${codexMainExe}`)
+  }
   const results = await Promise.all(agents.map((agent, index) => {
     console.log(`[frontend-playwright-e2e] running ${agent}`)
     return runAgent(agent, template, evaluator, index)

@@ -1,11 +1,11 @@
 use crate::prompt_style::{
-    compact_context, task_continuity, task_delivered, user_new_command, PromptBuilder,
+    compact_context, task_continuity, task_status, user_new_command, PromptBuilder,
 };
 use crate::state_machine::session_management::SessionManagement;
 
 use super::constants::DISABLE_GATEWAY_CALLBACKS_ENV;
 use super::gateway_events::gateway_callback_base_url;
-use super::tool_catalog::{env_flag, multiple_tasks_env_enabled};
+use super::tool_catalog::env_flag;
 
 pub(super) fn messages_for_turn(
     current_messages: &[serde_json::Value],
@@ -210,11 +210,7 @@ pub(super) fn push_task_continuity_message(
         compacted_continuity_task(session).unwrap_or_else(|| original_user_task.to_string());
     let builder = PromptBuilder::new()
         .part(task_continuity::TASK_CONTINUITY)
-        .part(if multiple_tasks_env_enabled() {
-            task_delivered::TASK_DELIVERED
-        } else {
-            ""
-        })
+        .part(task_status::TASK_STATUS)
         .section("original_user_task", continuity_task);
 
     messages.push(serde_json::json!({
@@ -285,9 +281,41 @@ mod tests {
 
         let mut messages = Vec::new();
         push_task_continuity_message(&mut messages, &session, &session.input.user_input);
-        let content = messages[0]["content"].as_str().unwrap();
+        let content = messages[0]["content"]
+            .as_str()
+            .expect("prompt message content should be a string");
         assert!(content.contains("compact handoff"));
         assert!(!content.contains("ORIGINAL HUGE PROMPTORIGINAL HUGE PROMPT"));
+    }
+
+    #[test]
+    fn task_continuity_injects_task_status_guidance_by_default() {
+        let now = Utc::now();
+        let session = SessionManagement::new(
+            "sess-task-status-guidance".to_string(),
+            "task status guidance".to_string(),
+            PathBuf::from("C:/workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "fix the task".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+            },
+            "fix the task".to_string(),
+            now,
+        );
+
+        let mut messages = Vec::new();
+        push_task_continuity_message(&mut messages, &session, &session.input.user_input);
+        let content = messages[0]["content"]
+            .as_str()
+            .expect("prompt message content should be a string");
+
+        assert!(content.contains("task_status"));
+        assert!(content.contains("status is done"));
+        assert!(content.contains("status is question"));
     }
 
     #[test]

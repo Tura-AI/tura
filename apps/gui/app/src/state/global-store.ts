@@ -18,9 +18,12 @@ import type {
   ProviderAuthMethod,
   ProviderAuthStatusResponse,
   ProviderListResponse,
+  PollInterval,
   QuestionRequest,
   ServiceStatusResponse,
   Session,
+  StartCondition,
+  PlanStatus,
   TodoItem,
   VcsInfo,
   Workspace,
@@ -39,6 +42,15 @@ export type SettingsSection =
   | "workspace"
   | "environment";
 export type ThemeMode = "light" | "dark";
+export type PlanMode = "todo" | "gantt" | "calendar";
+export type ComposerImage = {
+  id: string;
+  name: string;
+  dataUrl: string;
+  objectUrl?: string;
+  mimeType?: string;
+  kind?: "image" | "file";
+};
 
 export type AppState = {
   gatewayUrl: string;
@@ -52,6 +64,14 @@ export type AppState = {
   productProjects: ProductProject[];
   issueDraft: string;
   issueSearch: string;
+  planMode: PlanMode;
+  planDraftLane?: PlanStatus;
+  planDraftStartCondition: StartCondition;
+  planDraftStartAt: string;
+  planDraftPollInterval: PollInterval;
+  planDraftSessionId?: string;
+  planPreviewSessionId?: string;
+  editingTask?: { sessionId: string; nonce_id?: string };
   activeTab: MainTab;
   previousMainTab: Exclude<MainTab, "settings">;
   settingsSection: SettingsSection;
@@ -84,6 +104,7 @@ export type AppState = {
   selectedFile?: FileInfo;
   fileContent?: FileContentResponse;
   composerText: string;
+  composerImages: ComposerImage[];
   selectedModel?: string;
   selectedAgent?: string;
   selectedProviderId?: string;
@@ -111,6 +132,11 @@ export function initialAppState(gatewayUrl: string): AppState {
     productProjects: [],
     issueDraft: "",
     issueSearch: "",
+    planMode: "todo",
+    planDraftStartCondition: "user_action",
+    planDraftStartAt: "",
+    planDraftPollInterval: { m: 0, d: 0, h: 1, s: 0 },
+    editingTask: undefined,
     activeTab: "new",
     previousMainTab: "new",
     settingsSection: "general",
@@ -131,6 +157,7 @@ export function initialAppState(gatewayUrl: string): AppState {
     files: [],
     filePath: "",
     composerText: "",
+    composerImages: [],
     selectedProviderId: undefined,
     modelVariant: "low",
     accelerationEnabled: true,
@@ -142,15 +169,20 @@ export function initialAppState(gatewayUrl: string): AppState {
 }
 
 export function sessionTitle(session: Session): string {
-  return session.title || session.name || "New Session";
+  return (
+    session.session_display_name ||
+    session.plan_summary ||
+    session.name ||
+    "New Session"
+  );
 }
 
 export function sessionUpdatedAt(session: Session): number {
-  return session.time?.updated ?? session.updated_at ?? 0;
+  return session.updated_at ?? 0;
 }
 
 export function sessionDirectory(session: Session): string {
-  return session.directory || session.projectID || "";
+  return session.directory || "";
 }
 
 export function messageSessionId(message: Message): string {

@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use code_tools_suite::state_machine::session_management::SessionInput;
 use serde_json::{json, Value};
@@ -291,7 +291,7 @@ fn project_root_from_exe() -> String {
 fn write_jsonl(
     session_log: &[String],
     session_id: &str,
-    cwd: &PathBuf,
+    cwd: &Path,
     emit_thread_start: bool,
 ) -> Result<(), String> {
     if emit_thread_start {
@@ -422,7 +422,7 @@ fn json_u64(value: &Value, key: &str) -> u64 {
 fn emit_command_run_events(
     value: &Value,
     item_index: &mut usize,
-    cwd: &PathBuf,
+    cwd: &Path,
 ) -> Result<(), String> {
     for result in flatten_command_results(
         value.get("output").unwrap_or(&Value::Null),
@@ -467,7 +467,7 @@ fn emit_command_run_events(
 fn emit_file_change_event(
     result: &Value,
     item_index: &mut usize,
-    cwd: &PathBuf,
+    cwd: &Path,
 ) -> Result<(), String> {
     let changes = file_changes(result, cwd);
     emit_jsonl(&json!({
@@ -492,7 +492,7 @@ fn emit_file_change_event(
     Ok(())
 }
 
-fn file_changes(result: &Value, cwd: &PathBuf) -> Vec<Value> {
+fn file_changes(result: &Value, cwd: &Path) -> Vec<Value> {
     let mut changes = Vec::new();
     for change in result
         .get("response")

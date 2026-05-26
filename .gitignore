@@ -7,6 +7,8 @@ storage/
 sessions/
 scripts/packages/python/
 node_modules/
+**/dist/
+*.tsbuildinfo
 /package-lock.json
 
 crates/provider/log/

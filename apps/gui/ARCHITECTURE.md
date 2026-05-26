@@ -197,6 +197,77 @@ skills/plugins                 GET    /skill, GET /plugin
 formatter/log                  POST   /formatter, POST /log
 ```
 
+## Session Plan And Task Management
+
+The plan surface is a gateway-backed projection of session task-management
+state. GUI code must treat `crates/gateway` as the source of truth and must not
+scan session files directly.
+GUI product types and rendering paths must remain benchmark-agnostic. Long e2e
+fixtures may define benchmark prompts and evaluators, but those names must not
+enter SDK types or normal application state.
+
+Current session-plan data comes from:
+
+```text
+GET /session?directory=<workspace>&includeChildren=true
+GET /session/{sessionID}
+GET /session/status
+GET /session/{sessionID}/todo
+PATCH /session/{sessionID}
+PATCH /session/{sessionID}/task-management
+POST /session
+```
+
+The GUI SDK consumes the gateway session fields directly.
+Rendering should prefer:
+
+1. `session_display_name`
+2. `plan_summary`
+3. task `task_summary`
+4. session `name`
+5. `New Session`
+
+Plan tickets are workspace/directory scoped. The short session id is metadata;
+the visible name should come from the display-name chain above.
+
+Task status values are:
+
+```text
+todo
+doing
+question
+done
+archived
+```
+
+The plan board shows `todo`, `doing`, `question`, and `done` as normal lanes.
+`archived` is hidden from normal lanes and appears under the workspace-aware
+archived group in the left tree.
+
+Plan modes are implemented as icon controls in the upper-right page actions:
+
+```text
+board/todo-list
+gantt
+calendar
+split collaboration
+```
+
+The right split panel reuses the compact conversation view. It shows
+conversation history, schedule controls, and pending task controls derived from
+`task_management` and `/todo`. The command-run inspector is hidden in this
+compact panel; opening concrete command/tool text navigates to the full
+conversation page.
+
+Schedule controls display local system time. Before sending patches, the GUI
+converts `datetime-local` values to UTC ISO strings. Gateway/runtime store UTC.
+Polling intervals preserve the existing `{ m, d, h, s }` shape.
+
+Single-task patches are sent as an object. Multi-task updates that need precise
+task matching should send `task_management.tasks[]` entries with `nonce_id`.
+The GUI may optimistically update local state for responsiveness, but it must
+reconcile from the gateway response or a safe session refresh.
+
 ## Multica-Compatible Endpoint Map
 
 The GUI must also be designed around this product API surface. Route names are
@@ -985,8 +1056,8 @@ The GUI must survive gateway restarts and network drops:
 - contact-sales, feedback, config, and analytics helpers
 - realtime event source/WebSocket source
 
-The SDK should normalize snake_case and camelCase only at the boundary. UI
-components should use one canonical TypeScript shape per domain.
+The SDK should keep one TypeScript shape per domain and should not add duplicate
+session/task-management field names.
 
 ## Testing Strategy
 

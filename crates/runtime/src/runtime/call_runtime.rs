@@ -2,7 +2,10 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Arc, Mutex,
+};
 use std::time::{Duration, Instant};
 use tracing::error;
 
@@ -11,7 +14,7 @@ use crate::state_machine::runtime_management::{
 };
 use crate::state_machine::session_management::SessionId;
 
-use super::runtime_recieve::command_run_stream_event_command;
+use super::runtime_receive::command_run_stream_event_command;
 use super::types::{RuntimeQueueItem, ToolCallData};
 
 const COMMAND_RUN_TOOL_NAME: &str = "command_run";
@@ -654,6 +657,7 @@ async fn call_runtime_streaming(
     let streamed_command_results: Arc<Mutex<Vec<serde_json::Value>>> =
         Arc::new(Mutex::new(Vec::new()));
     let last_streamed_command_result_at: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+    let streamed_command_run_cancelled = Arc::new(AtomicBool::new(false));
     let first_stream_output_for_sink = Arc::clone(&first_stream_output_at);
     let sink: tura_llm_rust::ProviderStreamEventSink = Arc::new(move |event| {
         if matches!(
@@ -672,6 +676,7 @@ async fn call_runtime_streaming(
     let command_session_directory = session_directory.clone();
     let command_results_for_task = Arc::clone(&streamed_command_results);
     let last_command_result_for_task = Arc::clone(&last_streamed_command_result_at);
+    let command_cancelled_for_task = Arc::clone(&streamed_command_run_cancelled);
     let command_task = std::thread::spawn(move || {
         let mut executor =
             code_tools::command_run::StreamingCommandRunExecutor::new(command_session_directory);
@@ -699,7 +704,12 @@ async fn call_runtime_streaming(
                     .unwrap_or_else(|err| err.into_inner()) = Some(Instant::now());
             }
             results.extend(completed);
+            if executor.is_halted() {
+                command_cancelled_for_task.store(true, Ordering::SeqCst);
+                break;
+            }
         }
+        let halted_before_finish = executor.is_halted();
         let completed = runtime.block_on(executor.finish());
         emit_cli_live_command_run_results(&completed, &mut live_item_index);
         if !completed.is_empty() {
@@ -714,6 +724,9 @@ async fn call_runtime_streaming(
                 .unwrap_or_else(|err| err.into_inner()) = Some(Instant::now());
         }
         results.extend(completed);
+        if halted_before_finish {
+            command_cancelled_for_task.store(true, Ordering::SeqCst);
+        }
         results
     });
 
@@ -787,6 +800,58 @@ async fn call_runtime_streaming(
                 };
             }
             _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                let should_cancel_from_streamed_command_run =
+                    streamed_command_run_cancelled.load(Ordering::SeqCst)
+                        && !streamed_command_results
+                            .lock()
+                            .unwrap_or_else(|err| err.into_inner())
+                            .is_empty();
+                if should_cancel_from_streamed_command_run {
+                    let finished_at = Utc::now();
+                    let results = streamed_command_results
+                        .lock()
+                        .unwrap_or_else(|err| err.into_inner())
+                        .clone();
+                    runtime.set_output(serde_json::json!({
+                        "streamed_command_run_result": {
+                            "results": results,
+                            "early_finish_reason": "apply_patch_failed",
+                            "cancelled": true,
+                        }
+                    }));
+                    runtime.push_tool_call(ToolCallRecord {
+                        tool_called_name: COMMAND_RUN_TOOL_NAME.to_string(),
+                        tool_called_input: serde_json::json!({}),
+                        provider_metadata: None,
+                        tool_received_at: finished_at,
+                        tool_executed_at: finished_at,
+                        tool_calldata_received_at: finished_at,
+                        tool_reported_success: false,
+                        agent_reported_success: false,
+                        agent_reported_helpful: false,
+                        agent_reported_summary: String::new(),
+                        validator_reported_success: None,
+                    });
+                    runtime
+                        .mark_first_token(
+                            first_stream_output_at
+                                .lock()
+                                .unwrap_or_else(|err| err.into_inner())
+                                .unwrap_or(finished_at),
+                        )
+                        .map_err(|e| format!("failed to mark first token: {}", e))?;
+                    finish_runtime_failure(
+                        runtime,
+                        finished_at,
+                        "COMMAND_RUN_CANCELLED",
+                        "apply_patch failed; runtime stream cancelled after command_run result"
+                            .to_string(),
+                        RuntimeCallResultStatus::Cancelled,
+                    )?;
+                    provider_task.abort();
+                    let _ = command_task.join();
+                    return Ok(());
+                }
                 let should_finish_from_streamed_command_run = {
                     let has_results = !streamed_command_results
                         .lock()
@@ -976,7 +1041,7 @@ fn redact_media_payload_data(value: &mut serde_json::Value) {
             let preview_count = object
                 .get("visual_preview_count")
                 .cloned()
-                .unwrap_or_else(|| serde_json::json!(null));
+                .unwrap_or(serde_json::Value::Null);
             if object.contains_key("visual_previews") {
                 object.insert(
                     "visual_previews".to_string(),
@@ -990,7 +1055,7 @@ fn redact_media_payload_data(value: &mut serde_json::Value) {
             let audio_count = object
                 .get("audio_preview_count")
                 .cloned()
-                .unwrap_or_else(|| serde_json::json!(null));
+                .unwrap_or(serde_json::Value::Null);
             if object.contains_key("audio_previews") {
                 object.insert(
                     "audio_previews".to_string(),
@@ -1004,7 +1069,7 @@ fn redact_media_payload_data(value: &mut serde_json::Value) {
             let file_count = object
                 .get("file_attachment_count")
                 .cloned()
-                .unwrap_or_else(|| serde_json::json!(null));
+                .unwrap_or(serde_json::Value::Null);
             if object.contains_key("file_attachments") {
                 object.insert(
                     "file_attachments".to_string(),
@@ -1066,12 +1131,12 @@ fn usage_report_from_metrics(
         .num_milliseconds()
         .max(0) as u64;
     metrics.map(|m| crate::state_machine::runtime_management::UsageReport {
-        input_tokens: m.usage.input_tokens.unwrap_or(0) as u64,
-        output_tokens: m.usage.output_tokens.unwrap_or(0) as u64,
-        total_tokens: m.usage.total_tokens.unwrap_or(0) as u64,
-        cached_input_tokens: m.usage.cached_input_tokens.unwrap_or(0) as u64,
-        cache_write_tokens: m.usage.cache_write_tokens.unwrap_or(0) as u64,
-        reasoning_tokens: m.usage.reasoning_tokens.unwrap_or(0) as u64,
+        input_tokens: m.usage.input_tokens.unwrap_or(0),
+        output_tokens: m.usage.output_tokens.unwrap_or(0),
+        total_tokens: m.usage.total_tokens.unwrap_or(0),
+        cached_input_tokens: m.usage.cached_input_tokens.unwrap_or(0),
+        cache_write_tokens: m.usage.cache_write_tokens.unwrap_or(0),
+        reasoning_tokens: m.usage.reasoning_tokens.unwrap_or(0),
         attachment_input_tokens: 0,
         input_cost: m.cost.input_cost.unwrap_or(0.0),
         output_cost: m.cost.output_cost.unwrap_or(0.0),
@@ -1176,7 +1241,10 @@ mod tests {
 
     fn with_env<T>(name: &str, value: Option<&str>, run: impl FnOnce() -> T) -> T {
         static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let _guard = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("prompt cache env lock poisoned");
         let previous: Option<OsString> = std::env::var_os(name);
         match value {
             Some(value) => std::env::set_var(name, value),
@@ -1325,7 +1393,7 @@ mod tests {
             );
             assert!(
                 prompt_cache_key(&route, "tura_coder", &"sess-a".to_string(), &tools_a)
-                    .unwrap()
+                    .expect("prompt cache key should be generated")
                     .starts_with("turaosv2:tura-coder:sess-a:")
             );
             assert_ne!(
