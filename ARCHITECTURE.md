@@ -13,9 +13,8 @@ relative to the project root.
 ```text
 .
   apps/
-    ui/
-    ui-desktop/
-    telegram/
+    gui/
+    tui/
 
   config/
 
@@ -38,9 +37,10 @@ relative to the project root.
     start.sh
     installers/
     packages/
-    persistent/
 
+  sessions/
   storage/
+  target/
   tests/
 ```
 
@@ -57,7 +57,7 @@ crates/agents      -> package tura-agents, library tura_agents
 crates/provider    -> package tura-llm-rust, library tura_llm_rust
 crates/tools       -> package code-tools
 crates/router      -> package tura_router, default binary tura_router
-crates/memory      -> package alaya_memory unless renamed deliberately
+crates/memory      -> package alaya_memory when enabled
 ```
 
 Do not derive package names from directory names. Always check the local
@@ -128,6 +128,13 @@ monitoring, and logs.
 Runtime decides what to do with provider output. Provider only performs and
 normalizes model calls.
 
+OpenAI OAuth discovery and refresh are Provider responsibilities. OAuth mode is
+selected from `OPENAI_LOGIN=oauth`, `provider_auth.openai.login=oauth`, or local
+Codex auth discovery through `CODEX_HOME/auth.json` / `~/.codex/auth.json`.
+Provider must propagate access token, refresh token, and account id into the
+OpenAI Codex responses call path and must surface refresh failures instead of
+falling back to an empty API key.
+
 ### `crates/tools`
 
 Tools owns the model-visible tool layer and command execution.
@@ -145,10 +152,26 @@ Tools owns:
 - Output truncation and display-ready normalization.
 - `shell_command`, `apply_patch`, `read_media`, and future commands.
 - mode-gated commands such as `compact_context` and `multiple_tasks`.
+- `task_status` as an internal command inside `command_run`, not as a separate
+  top-level model-visible tool.
 
 `command_run` remains the compact model-visible request shape. It accepts
 command items, asks router-owned metadata how to route those command names, and
 then executes the selected `crates/tools/commands/<command>` handler.
+
+`command_run` executes commands in ascending `step` order. Independent
+read-only commands in the same step may run concurrently. Mutating commands,
+unknown commands, and commands that touch shared workspace files act as
+barriers and use the existing command queue and file-lock behavior; new
+schedulers or custom lock layers should not be introduced for session/task
+work.
+
+Long-running service commands must not be blocking foreground commands. The
+`shell_command` and `bash` command prompts are injected into the `command_run`
+description so agents see the same service rule: keep the process handle/PID,
+write stdout/stderr logs, poll readiness and process exit together, fail
+immediately with exit code and log tail if the service exits before readiness,
+and clean up only the started process tree on timeout.
 
 ### `crates/router`
 
@@ -195,7 +218,7 @@ manifests, and reusable script entrypoints used by router/tools commands.
 ## End-To-End Flow
 
 ```text
-apps/ui
+apps/gui or apps/tui
   -> crates/gateway API
   -> gateway session manager
   -> gateway translates request and loads UI/session config
@@ -210,7 +233,7 @@ apps/ui
   -> crates/memory handles memory-backed requests when needed
   -> crates/runtime stores compact tool results and usage
   -> crates/gateway streams events and replayable state
-  -> apps/ui renders rollout, tool state, usage, and final response
+  -> apps/gui or apps/tui renders rollout, tool state, usage, and final response
 ```
 
 ## Prompt System
@@ -230,6 +253,9 @@ Rules:
 - Fixed runtime prompt text belongs in Rust constants under `prompt_style/`.
 - Dynamic runtime values are inserted by named builder sections.
 - Tool-specific instructions belong near the command.
+- Command-specific prompts that affect model behavior through `command_run`
+  must be carried through `crates/runtime/src/manas/tool_catalog.rs`; do not
+  read prompt files and discard them.
 - Agent prompts describe behavior and priorities, not every tool schema detail.
 - `command_run` should remain last in the provider tool list for cache
   stability.
@@ -619,7 +645,8 @@ Direct package checks should use the same package names as the build targets.
 - `crates/memory/**`: `cargo fmt -p alaya_memory`,
   `cargo check -p alaya_memory` unless the memory package has been deliberately
   renamed.
-- `apps/ui/**`: UI typecheck and focused frontend tests.
+- `apps/gui/**`: GUI typecheck/build and focused frontend tests.
+- `apps/tui/**`: TUI build and focused CLI/TUI tests.
 - `scripts/**`: manifest validation and install dry run when possible.
 
 ## Documentation Ownership

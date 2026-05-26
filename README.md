@@ -19,6 +19,14 @@ and crate boundaries. This README expands that into an operational map for
 developers: where code lives, how requests move through the system, which crate
 owns each responsibility, and what should not cross module boundaries.
 
+Current verified integration coverage includes the Rust `tura` executable,
+provider OAuth discovery, `command_run` queue execution, multiple-task planning,
+ProgramBench-style reconstruction, and TUI/web-terminal flows. The most recent
+local evidence includes full `command_run` frontend/Playwright validation
+(`16/16`), ProgramBench validation (`25/25`), and backend topology validation
+(`16/16`). GUI/gateway full-chain regression should still be rerun after
+frontend-facing changes before claiming a release-quality pass.
+
 Tracked source is intentionally limited to code, configuration, docs, and test
 drivers. The following local artifacts are ignored:
 
@@ -127,6 +135,16 @@ crates/utils     package utils             library utils
 
 Package names do not always match directory names. Prefer package names from
 the local `Cargo.toml` when running `cargo check`, `cargo fmt`, or tests.
+
+The TypeScript workspaces live under `apps/`:
+
+```text
+apps/gui    Vite GUI and gateway SDK workspace
+apps/tui    TypeScript CLI/TUI workspace
+```
+
+Apps consume gateway APIs and SDK types. They must not call runtime, provider,
+tools, or router internals directly.
 
 ## System Flow
 
@@ -280,6 +298,14 @@ Runtime asks Provider for one model call and decides what to do with the
 result. Provider should not execute tools, compact context, manage user
 sessions, or own gateway event streaming.
 
+OpenAI OAuth is resolved in Provider, not Gateway or Runtime. For OAuth login
+mode, Provider accepts `OPENAI_LOGIN=oauth`, `provider_auth.openai.login=oauth`
+from `tura_llm_config.json`, or local Codex auth discovery from
+`CODEX_HOME/auth.json` / `~/.codex/auth.json`. When Codex auth is found, the
+OpenAI access token, refresh token, and account id are applied to the provider
+environment before the OpenAI Codex responses path is used. OAuth refresh
+errors must not silently fall back to an empty API key.
+
 Useful checks:
 
 ```powershell
@@ -309,6 +335,15 @@ field is named `command_type` so models do not confuse the command environment
 with the shell text in `command_line`. Missing steps are normalized to the
 command's original order. Same-step read-only commands may run concurrently;
 mutating commands acquire compatible locks.
+
+For background or long-running services, the `shell_command` and `bash`
+command prompts are injected into the `command_run` tool description. Service
+commands must keep the process handle or PID, write stdout/stderr logs, poll
+readiness and process exit in the same loop, fail immediately with exit code
+and log tails if the service exits before readiness, and clean up only the
+started process tree on timeout. This guidance intentionally avoids concrete
+platform command snippets because those tend to be copied into the wrong
+context.
 
 Only a compact tool surface should be shown to the model by default. Command
 schemas validate inputs, while command prompts provide concise model-facing
