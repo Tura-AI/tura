@@ -5,7 +5,7 @@ use crate::state_machine::agent_management::AgentManagement;
 use super::constants::{
     CODING_AGENT_CONTEXT_EXCLUDED_TOOLS, COMMAND_RUN_TOOL, DISABLE_EXECUTE_TOOLS_TOOL_ENV,
     DISABLE_MULTIPLE_TASKS_TOOL_ENV, FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS_ENV,
-    FORCE_MULTIPLE_TASKS_ENV, PROJECT_ROOT_ENV, TASK_DELIVERED_TOOL,
+    FORCE_MULTIPLE_TASKS_ENV, PROJECT_ROOT_ENV,
 };
 
 #[cfg(test)]
@@ -53,10 +53,7 @@ pub(super) fn filter_tools_for_turn(
         return Ok(Vec::new());
     }
 
-    let _ = is_multiple_tasks_child;
-    if multiple_tasks_mode_enabled {
-        return Ok(keep_command_run_and_task_delivered(tools));
-    }
+    let _ = (is_multiple_tasks_child, multiple_tasks_mode_enabled);
     Ok(keep_command_run_only(tools))
 }
 
@@ -90,38 +87,6 @@ pub(super) fn keep_command_run_only(tools: Vec<serde_json::Value>) -> Vec<serde_
         .into_iter()
         .filter(|tool| tool_schema_name(tool) == Some(COMMAND_RUN_TOOL))
         .collect()
-}
-
-pub(super) fn keep_command_run_and_task_delivered(
-    tools: Vec<serde_json::Value>,
-) -> Vec<serde_json::Value> {
-    tools
-        .into_iter()
-        .filter(|tool| {
-            matches!(
-                tool_schema_name(tool),
-                Some(COMMAND_RUN_TOOL) | Some(TASK_DELIVERED_TOOL)
-            )
-        })
-        .collect()
-}
-
-pub(super) fn task_delivered_provider_schema() -> Result<serde_json::Value, String> {
-    let path = project_directory_with_tools()?
-        .join("crates")
-        .join("tools")
-        .join("src")
-        .join(TASK_DELIVERED_TOOL)
-        .join("schema.json");
-    let content = std::fs::read_to_string(&path).map_err(|err| {
-        format!(
-            "failed to read task_delivered schema {}: {err}",
-            path.display()
-        )
-    })?;
-    let interface = serde_json::from_str::<serde_json::Value>(&content)
-        .map_err(|err| format!("failed to parse task_delivered schema: {err}"))?;
-    Ok(tool_interface_to_provider_schema(interface))
 }
 
 pub(super) fn tool_schema_name(tool: &serde_json::Value) -> Option<&str> {
@@ -331,7 +296,7 @@ fn command_run_description_for_active_shell(original: &str) -> String {
         code_tools::commands::bash::PROMPT
     };
     let mut description = format!(
-        "{prefix} Available commands: apply_patch, {active}, read_media, web_discover, compact_context.\nCommand run patterns:\n{}\nCommand line formats:\n- apply_patch: {}\n- {active}: {}\n- read_media: {} Schema: {}\n- web_discover: {} Schema: {}\n- compact_context: {} Schema: {}",
+        "{prefix} Available commands: apply_patch, {active}, read_media, web_discover, compact_context, task_status.\nCommand run patterns:\n{}\nCommand line formats:\n- apply_patch: {}\n- {active}: {}\n- read_media: {} Schema: {}\n- web_discover: {} Schema: {}\n- compact_context: {} Schema: {}\n- task_status: {} Schema: {}",
         command_run_usage_patterns(),
         current_apply_patch_command_format(),
         current_shell_command_format(active, shell_prompt),
@@ -341,6 +306,8 @@ fn command_run_description_for_active_shell(original: &str) -> String {
         compact_schema(code_tools::commands::web_discover::SCHEMA),
         compact_prompt(code_tools::commands::compact_context::PROMPT),
         compact_schema(code_tools::commands::compact_context::SCHEMA),
+        task_status_prompt(),
+        task_status_schema(),
     );
     if multiple_tasks_env_enabled() {
         description.push_str(&format!(
@@ -349,11 +316,19 @@ fn command_run_description_for_active_shell(original: &str) -> String {
             compact_schema(code_tools::commands::multiple_tasks::SCHEMA),
         ));
         description = description.replace(
-            &format!("Available commands: apply_patch, {active}, read_media, web_discover, compact_context."),
-            &format!("Available commands: apply_patch, {active}, read_media, web_discover, compact_context, multiple_tasks."),
+            &format!("Available commands: apply_patch, {active}, read_media, web_discover, compact_context, task_status."),
+            &format!("Available commands: apply_patch, {active}, read_media, web_discover, compact_context, task_status, multiple_tasks."),
         );
     }
     description
+}
+
+fn task_status_prompt() -> &'static str {
+    "Update the task-management state only when the current task is done or needs user input. The only visible fields are optional task_summary and optional status. Use status done only after completion and verification; use status question when user feedback or more information is needed. If neither question nor done applies, continue with command_run work. Once task_summary exists, do not rename it during execution unless the user clearly changed the task; a rejected rename will be reported back and other state does not need updating."
+}
+
+fn task_status_schema() -> &'static str {
+    "{\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"task_summary\":{\"type\":\"string\",\"description\":\"Optional task title/summary. Set near the start only, unless the user clearly changes the task.\"},\"status\":{\"type\":\"string\",\"enum\":[\"question\",\"done\"],\"description\":\"question when blocked on user feedback; done when the task is complete and verified.\"}}}"
 }
 
 fn command_run_usage_patterns() -> &'static str {
@@ -367,6 +342,7 @@ fn command_run_usage_patterns() -> &'static str {
 - Context compaction: after a meaningful phase completes, or when context is near 200,000 tokens and feels crowded, put `compact_context` as the final command in the highest step with a concise handoff summary for the next turn.
 - Example investigation batch: step 1 needed `rg --files`, targeted `rg -n`, and candidate file reads.
 - Example repair batch: step 1 `apply_patch` across related files, step 2 write or update a focused test script when needed, step 3 run the narrow test and focused validation searches.
+- Example frontend batch: step 1 modify frontend code, step 2 write or update frontend Playwright e2e scripts and capture screenshots at key steps, step 3 read the corresponding screenshots and analyze display quality and functionality.
 - Example media batch: step 1 use `web_discover` or generation to collect the needed media, docs, or repo artifacts, step 2 use `read_media` or focused reads to verify the resulting media or repo content."#
 }
 
@@ -379,11 +355,11 @@ fn current_apply_patch_command_format() -> String {
 
 fn current_shell_command_format(active: &str, shell_prompt: &str) -> String {
     let guidance = format!(
-        "Use for tests, builds, scripts, package tools, and host-shell behavior. Default timeout is 15 seconds; set timeout_ms explicitly for legitimate long-running one-shot commands. Put verification after edits in a later step. {}",
-        long_running_service_guidance(active)
+        "Use for tests, builds, scripts, package tools, and host-shell behavior. Default timeout is 15 seconds; set timeout_ms explicitly for legitimate long-running one-shot commands. Put verification after edits in a later step. {} {}",
+        compact_prompt(shell_prompt),
+        long_running_service_guidance(active),
     );
     let schema = "{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\",\"description\":\"The shell script to execute in the user's default shell\"},\"workdir\":{\"type\":\"string\",\"description\":\"The working directory to execute the command in\"},\"timeout_ms\":{\"type\":\"number\",\"description\":\"The timeout for the command in milliseconds\"}},\"required\":[\"command\"],\"additionalProperties\":false}";
-    let _ = shell_prompt;
     format!("{guidance} JSON object string matching this schema: {schema}")
 }
 
@@ -498,7 +474,6 @@ mod tests {
             vec![
                 tool(COMMAND_RUN_TOOL),
                 tool(MULTIPLE_TASKS_TOOL),
-                tool(TASK_DELIVERED_TOOL),
                 tool("apply_diff"),
             ],
             false,
@@ -508,7 +483,7 @@ mod tests {
         )
         .expect("filter should succeed");
 
-        assert_eq!(names(filtered), vec![COMMAND_RUN_TOOL, TASK_DELIVERED_TOOL]);
+        assert_eq!(names(filtered), vec![COMMAND_RUN_TOOL]);
     }
 
     #[test]
@@ -582,32 +557,9 @@ mod tests {
             parameters["properties"]["commands"]["items"]["required"],
             serde_json::json!(["command_type", "command_line", "step"])
         );
-        assert!(parameters["properties"].get("task_delivered").is_none());
+        assert!(parameters["properties"].get("task_status").is_none());
         assert!(command_required.contains(&serde_json::json!("command_type")));
         assert!(command_required.contains(&serde_json::json!("step")));
-        std::env::remove_var("TURA_COMMAND_RUN_STRICT_JSON");
-    }
-
-    #[test]
-    fn task_delivered_tool_is_optional_even_under_strict_json() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::set_var("TURA_COMMAND_RUN_STRICT_JSON", "1");
-
-        let interface = serde_json::from_str::<serde_json::Value>(include_str!(
-            "../../../tools/src/task_delivered/schema.json"
-        ))
-        .expect("task_delivered schema should parse");
-        let schema = tool_interface_to_provider_schema(interface);
-        let parameters = &schema["function"]["parameters"];
-
-        assert_eq!(schema["function"]["name"], TASK_DELIVERED_TOOL);
-        assert_eq!(schema["function"]["strict"], true);
-        assert_eq!(
-            parameters["required"],
-            serde_json::json!(["task_delivered"])
-        );
-        assert!(parameters["properties"].get("task_delivered").is_some());
-
         std::env::remove_var("TURA_COMMAND_RUN_STRICT_JSON");
     }
 
@@ -624,7 +576,7 @@ mod tests {
             .unwrap_or_default();
 
         assert!(description.contains(
-            "Available commands: apply_patch, shell_command, read_media, web_discover, compact_context."
+            "Available commands: apply_patch, shell_command, read_media, web_discover, compact_context, task_status."
         ));
         assert!(description.contains(
             "Use assistant content only for concise reasoning, progress, and conclusions."
@@ -633,6 +585,7 @@ mod tests {
         assert!(description.contains("- read_media:"));
         assert!(description.contains("- web_discover:"));
         assert!(description.contains("- compact_context:"));
+        assert!(description.contains("- task_status:"));
         assert!(!description.contains("- multiple_tasks:"));
         assert!(description.contains("\"command\":{\"type\":\"string\""));
         assert!(description.contains("\"workdir\":{\"type\":\"string\""));
@@ -640,6 +593,13 @@ mod tests {
         assert!(description.contains("Default timeout is 15 seconds"));
         assert!(description
             .contains("Persistent services must never be used as blocking foreground commands"));
+        assert!(description.contains(
+            "monitor early process exit while waiting for readiness and fail immediately"
+        ));
+        assert!(description.contains("check for process exit on every readiness poll"));
+        assert!(description.contains(
+            "If the service exits before readiness, immediately kill/clear only that process tree"
+        ));
         assert!(description.contains("otherwise the command is considered hung and incorrect"));
         assert!(!description.contains("Start-Process -WindowStyle Hidden -PassThru"));
         assert!(!description.contains("Stop-Process -Id $p1.Id,$p2.Id -Force"));
@@ -663,7 +623,7 @@ mod tests {
             .unwrap_or_default();
 
         assert!(description.contains(
-            "Available commands: apply_patch, bash, read_media, web_discover, compact_context."
+            "Available commands: apply_patch, bash, read_media, web_discover, compact_context, task_status."
         ));
         assert!(description.contains(
             "Use assistant content only for concise reasoning, progress, and conclusions."
@@ -672,6 +632,7 @@ mod tests {
         assert!(description.contains("- read_media:"));
         assert!(description.contains("- web_discover:"));
         assert!(description.contains("- compact_context:"));
+        assert!(description.contains("- task_status:"));
         assert!(!description.contains("- multiple_tasks:"));
         assert!(description.contains("\"command\":{\"type\":\"string\""));
         assert!(description.contains("\"workdir\":{\"type\":\"string\""));
@@ -679,6 +640,13 @@ mod tests {
         assert!(description.contains("Default timeout is 15 seconds"));
         assert!(description
             .contains("Persistent services must never be used as blocking foreground commands"));
+        assert!(description.contains(
+            "monitor early process exit while waiting for readiness and fail immediately"
+        ));
+        assert!(description.contains("check for process exit on every readiness poll"));
+        assert!(description.contains(
+            "If the service exits before readiness, immediately kill/clear only that process tree"
+        ));
         assert!(description.contains("otherwise the command is considered hung and incorrect"));
         assert!(!description.contains("Start-Process -WindowStyle Hidden -PassThru"));
         assert!(!description.contains("Stop-Process -Id $p1.Id,$p2.Id -Force"));
@@ -700,7 +668,7 @@ mod tests {
             .unwrap_or_default();
 
         assert!(description.contains(
-            "Available commands: apply_patch, shell_command, read_media, web_discover, compact_context, multiple_tasks."
+            "Available commands: apply_patch, shell_command, read_media, web_discover, compact_context, task_status, multiple_tasks."
         ));
         assert!(description.contains("- multiple_tasks:"));
 

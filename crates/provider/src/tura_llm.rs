@@ -154,9 +154,7 @@ impl ProviderConfig {
             && openai_login_is_oauth(conf)
             && openai_oauth_base_url_allowed(&self.base_url)
         {
-            refresh_openai_access_token_if_needed(conf)
-                .await
-                .unwrap_or_else(|_| self.get_api_key(conf).unwrap_or_default())
+            refresh_openai_access_token_if_needed(conf).await?
         } else {
             self.get_api_key(conf)?
         };
@@ -190,9 +188,7 @@ impl ProviderConfig {
             && openai_login_is_oauth(conf)
             && openai_oauth_base_url_allowed(&self.base_url)
         {
-            refresh_openai_access_token_if_needed(conf)
-                .await
-                .unwrap_or_else(|_| self.get_api_key(conf).unwrap_or_default())
+            refresh_openai_access_token_if_needed(conf).await?
         } else {
             self.get_api_key(conf)?
         };
@@ -281,9 +277,20 @@ impl ProviderConfig {
 }
 
 fn openai_login_is_oauth(conf: &TuraConfig) -> bool {
-    conf.get("OPENAI_LOGIN")
+    if conf
+        .get("OPENAI_LOGIN")
         .map(|value| value.eq_ignore_ascii_case("oauth"))
         .unwrap_or(false)
+    {
+        return true;
+    }
+    if openai_provider_auth_config_login_is_oauth() {
+        return true;
+    }
+    conf.get("OPENAI_API_KEY")
+        .filter(|value| !value.trim().is_empty())
+        .is_none()
+        && load_codex_auth_tokens().is_some()
 }
 
 fn openai_oauth_base_url_allowed(base_url: &str) -> bool {
@@ -295,9 +302,11 @@ fn openai_oauth_base_url_allowed(base_url: &str) -> bool {
 }
 
 async fn refresh_openai_access_token_if_needed(conf: &TuraConfig) -> Result<String, TuraError> {
+    std::env::set_var("OPENAI_LOGIN", "oauth");
     let codex_auth = load_codex_auth_tokens();
     let access = conf
         .get("OPENAI_API_KEY")
+        .filter(|value| !value.trim().is_empty())
         .or_else(|| {
             codex_auth
                 .as_ref()
@@ -312,18 +321,21 @@ async fn refresh_openai_access_token_if_needed(conf: &TuraConfig) -> Result<Stri
         .unwrap_or_default();
     let now = Utc::now().timestamp_millis();
     if expires > now + 60_000 {
+        if let Some(tokens) = codex_auth.as_ref() {
+            apply_codex_auth_env(tokens);
+        }
         return Ok(access);
     }
     if let Some(tokens) = codex_auth.as_ref() {
         if tokens.access_token != access {
-            std::env::set_var("OPENAI_API_KEY", &tokens.access_token);
-            std::env::set_var("OPENAI_REFRESH_TOKEN", &tokens.refresh_token);
+            apply_codex_auth_env(tokens);
             return Ok(tokens.access_token.clone());
         }
     }
 
     let refresh = conf
         .get("OPENAI_REFRESH_TOKEN")
+        .filter(|value| !value.trim().is_empty())
         .or_else(|| {
             codex_auth
                 .as_ref()
@@ -354,8 +366,12 @@ async fn refresh_openai_access_token_if_needed(conf: &TuraConfig) -> Result<Stri
             .as_ref()
             .map(|tokens| tokens.access_token.clone())
         {
-            std::env::set_var("OPENAI_API_KEY", &access);
-            std::env::set_var("OPENAI_REFRESH_TOKEN", &refresh);
+            if let Some(tokens) = codex_auth.as_ref() {
+                apply_codex_auth_env(tokens);
+            } else {
+                std::env::set_var("OPENAI_API_KEY", &access);
+                std::env::set_var("OPENAI_REFRESH_TOKEN", &refresh);
+            }
             return Ok(access);
         }
         return Err(TuraError::HttpStatus {
@@ -373,6 +389,11 @@ async fn refresh_openai_access_token_if_needed(conf: &TuraConfig) -> Result<Stri
         })?
         .to_string();
     std::env::set_var("OPENAI_API_KEY", &next_access);
+    if let Some(tokens) = codex_auth.as_ref() {
+        if let Some(account_id) = tokens.account_id.as_deref() {
+            std::env::set_var("OPENAI_ACCOUNT_ID", account_id);
+        }
+    }
     if let Some(refresh) = body.get("refresh_token").and_then(Value::as_str) {
         std::env::set_var("OPENAI_REFRESH_TOKEN", refresh);
     }
@@ -390,11 +411,11 @@ async fn refresh_openai_access_token_if_needed(conf: &TuraConfig) -> Result<Stri
 struct CodexAuthTokens {
     access_token: String,
     refresh_token: String,
+    account_id: Option<String>,
 }
 
 fn load_codex_auth_tokens() -> Option<CodexAuthTokens> {
-    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
-    let path = PathBuf::from(home).join(".codex").join("auth.json");
+    let path = codex_auth_json_path()?;
     let value: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
     let tokens = value.get("tokens")?;
     let access_token = tokens
@@ -407,10 +428,58 @@ fn load_codex_auth_tokens() -> Option<CodexAuthTokens> {
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())?
         .to_string();
+    let account_id = tokens
+        .get("account_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToString::to_string);
     Some(CodexAuthTokens {
         access_token,
         refresh_token,
+        account_id,
     })
+}
+
+fn codex_auth_json_path() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("CODEX_HOME").filter(|value| !value.is_empty()) {
+        return Some(PathBuf::from(home).join("auth.json"));
+    }
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
+    Some(PathBuf::from(home).join(".codex").join("auth.json"))
+}
+
+fn apply_codex_auth_env(tokens: &CodexAuthTokens) {
+    std::env::set_var("OPENAI_LOGIN", "oauth");
+    std::env::set_var("OPENAI_API_KEY", &tokens.access_token);
+    std::env::set_var("OPENAI_REFRESH_TOKEN", &tokens.refresh_token);
+    if let Some(account_id) = tokens.account_id.as_deref() {
+        std::env::set_var("OPENAI_ACCOUNT_ID", account_id);
+    }
+}
+
+fn openai_provider_auth_config_login_is_oauth() -> bool {
+    provider_config_json_path()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+        .and_then(|value| {
+            value
+                .pointer("/provider_auth/openai/login")
+                .and_then(Value::as_str)
+                .map(|login| login.eq_ignore_ascii_case("oauth"))
+        })
+        .unwrap_or(false)
+}
+
+fn provider_config_json_path() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("TURALLM_CONFIG").filter(|value| !value.is_empty()) {
+        return Some(PathBuf::from(path));
+    }
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let config_path = manifest_dir.join("config").join("tura_llm_config.json");
+    if config_path.exists() {
+        return Some(config_path);
+    }
+    Some(manifest_dir.join("src").join("tura_llm_config.json"))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -826,7 +895,16 @@ pub fn default_client(api_key: &str) -> Result<reqwest::Client, TuraError> {
                         },
                     )?,
             );
-            headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
+            headers.insert(
+                CONTENT_TYPE,
+                "application/json"
+                    .parse()
+                    .map_err(
+                        |e: reqwest::header::InvalidHeaderValue| TuraError::Network {
+                            message: e.to_string(),
+                        },
+                    )?,
+            );
             headers
         })
         .build()
@@ -978,10 +1056,54 @@ pub fn project_root() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_response_content, provider_latency_timeouts, set_provider_latency_timeouts,
+        apply_codex_auth_env, load_codex_auth_tokens, normalize_response_content,
+        openai_login_is_oauth, provider_latency_timeouts, set_provider_latency_timeouts,
         ProviderLatencyConfig, ProviderLatencyTimeouts,
     };
     use serde_json::json;
+    use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
+    use uuid::Uuid;
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock poisoned")
+    }
+
+    struct EnvRestore {
+        keys: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl EnvRestore {
+        fn capture(keys: &[&'static str]) -> Self {
+            Self {
+                keys: keys
+                    .iter()
+                    .map(|key| (*key, std::env::var(key).ok()))
+                    .collect(),
+            }
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            for (key, value) in &self.keys {
+                if let Some(value) = value {
+                    std::env::set_var(key, value);
+                } else {
+                    std::env::remove_var(key);
+                }
+            }
+        }
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("tura-provider-{name}-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&path).expect("temp dir");
+        path
+    }
 
     #[test]
     fn normalizes_openai_style_tool_calls() {
@@ -1096,5 +1218,83 @@ mod tests {
         assert_eq!(selected.idle_output_timeout_ms, 50_000);
         assert_eq!(selected.first_output_timeout_ms, 90_000);
         assert_eq!(selected.total_timeout_ms, 600_000);
+    }
+
+    #[test]
+    fn loads_codex_oauth_tokens_from_codex_home() {
+        let _lock = env_lock();
+        let _env = EnvRestore::capture(&[
+            "CODEX_HOME",
+            "OPENAI_LOGIN",
+            "OPENAI_API_KEY",
+            "OPENAI_REFRESH_TOKEN",
+            "OPENAI_ACCOUNT_ID",
+            "TURALLM_CONFIG",
+        ]);
+        std::env::remove_var("OPENAI_LOGIN");
+        std::env::remove_var("OPENAI_API_KEY");
+        std::env::remove_var("OPENAI_REFRESH_TOKEN");
+        std::env::remove_var("OPENAI_ACCOUNT_ID");
+        std::env::remove_var("TURALLM_CONFIG");
+
+        let codex_home = unique_temp_dir("codex-home");
+        std::fs::write(
+            codex_home.join("auth.json"),
+            r#"{
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": null,
+                "tokens": {
+                    "access_token": "local-access-token",
+                    "refresh_token": "local-refresh-token",
+                    "account_id": "acct-local"
+                }
+            }"#,
+        )
+        .expect("auth json");
+        std::env::set_var("CODEX_HOME", &codex_home);
+
+        let tokens = load_codex_auth_tokens().expect("codex auth tokens");
+        apply_codex_auth_env(&tokens);
+
+        assert_eq!(tokens.access_token, "local-access-token");
+        assert_eq!(tokens.refresh_token, "local-refresh-token");
+        assert_eq!(tokens.account_id.as_deref(), Some("acct-local"));
+        assert_eq!(std::env::var("OPENAI_LOGIN").as_deref(), Ok("oauth"));
+        assert_eq!(
+            std::env::var("OPENAI_API_KEY").as_deref(),
+            Ok("local-access-token")
+        );
+        assert_eq!(
+            std::env::var("OPENAI_REFRESH_TOKEN").as_deref(),
+            Ok("local-refresh-token")
+        );
+        assert_eq!(
+            std::env::var("OPENAI_ACCOUNT_ID").as_deref(),
+            Ok("acct-local")
+        );
+    }
+
+    #[test]
+    fn openai_oauth_login_uses_provider_auth_config() {
+        let _lock = env_lock();
+        let _env = EnvRestore::capture(&[
+            "CODEX_HOME",
+            "OPENAI_LOGIN",
+            "OPENAI_API_KEY",
+            "TURALLM_CONFIG",
+        ]);
+        std::env::remove_var("CODEX_HOME");
+        std::env::remove_var("OPENAI_LOGIN");
+        std::env::remove_var("OPENAI_API_KEY");
+
+        let dir = unique_temp_dir("provider-config");
+        let config = dir.join("tura_llm_config.json");
+        std::fs::write(&config, r#"{"provider_auth":{"openai":{"login":"oauth"}}}"#)
+            .expect("provider config");
+        std::env::set_var("TURALLM_CONFIG", &config);
+
+        assert!(openai_login_is_oauth(
+            &crate::tura_conf::TuraConfig::default()
+        ));
     }
 }
