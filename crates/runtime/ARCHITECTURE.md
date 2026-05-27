@@ -18,6 +18,9 @@ crates/runtime/
   src/
     lib.rs
     mod.rs
+    agent_router.rs
+    prompt_style.rs
+    session.rs
 
     mano/
       mod.rs
@@ -37,6 +40,8 @@ crates/runtime/
       tool_execution.rs
       gateway_events.rs
       final_response.rs
+      change_tracker.rs
+      permission_gate.rs
 
     session/
       activate_session.rs
@@ -58,14 +63,28 @@ crates/runtime/
 
     context/
       context_management.rs
+      docker_snapshot.rs
+      process_snapshot.rs
+      workspace_snapshot.rs
 
     prompt_style/
+      agent_identity.rs
+      compact_context.rs
+      runtime_fallback.rs
       task_continuity.rs
-      command_evaluation.rs
+      task_status.rs
+      tool_progress.rs
+      user_new_command.rs
 
     tool_router/
       execute_tool.rs
       send_calldata.rs
+
+  tests/
+    coding_agent_live_test.rs
+    override_manas_direct_test.rs
+    override_mano_and_manas_test.rs
+    process_from_user_default_test.rs
 ```
 
 The module names may keep `mano` and `manas` internally because they describe

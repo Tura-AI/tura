@@ -1,26 +1,19 @@
 # Memory Crate Architecture
 
-`crates/memory` owns memory and recall behavior as a crate-level implementation
-boundary. It is not an independent service directory.
+`crates/memory` documents the intended memory and recall boundary. In the
+current tree this directory is documentation-only: it has no `Cargo.toml`, no
+`src/`, and is not a workspace member.
 
 ## Layout
 
 ```text
 crates/memory/
-  src/
-    lib.rs
-    memory/
-    registry/
-    session/
-    vector_store.rs
-    embedding.rs
-  tests/
-  examples/
+  ARCHITECTURE.md
 ```
 
 ## Responsibilities
 
-Memory owns:
+When implemented, memory owns:
 
 - Long-lived memory store behavior.
 - Vector or registry-backed recall when enabled.
@@ -42,5 +35,5 @@ not move back into a separate service directory.
 
 ## Checks
 
-Use the local package name once implementation is added. Until then, keep checks
-aligned with the workspace package table in the root architecture document.
+There is no memory package check yet. Use documentation review until a Cargo
+package is added to the workspace.

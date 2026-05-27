@@ -852,6 +852,54 @@ async fn call_runtime_streaming(
                     let _ = command_task.join();
                     return Ok(());
                 }
+                let should_finish_from_task_status_done = {
+                    let results = streamed_command_results
+                        .lock()
+                        .unwrap_or_else(|err| err.into_inner());
+                    command_run_results_contain_task_status_done(&results)
+                };
+                if should_finish_from_task_status_done {
+                    let finished_at = Utc::now();
+                    let results = streamed_command_results
+                        .lock()
+                        .unwrap_or_else(|err| err.into_inner())
+                        .clone();
+                    runtime.set_output(serde_json::json!({
+                        "provider_content": {
+                            "text": "command_run reported task_status done; advancing with completed command_run results."
+                        },
+                        "streamed_command_run_result": {
+                            "results": results,
+                            "early_finish_reason": "task_status_done",
+                        }
+                    }));
+                    runtime.push_tool_call(ToolCallRecord {
+                        tool_called_name: COMMAND_RUN_TOOL_NAME.to_string(),
+                        tool_called_input: serde_json::json!({}),
+                        provider_metadata: None,
+                        tool_received_at: finished_at,
+                        tool_executed_at: finished_at,
+                        tool_calldata_received_at: finished_at,
+                        tool_reported_success: false,
+                        agent_reported_success: false,
+                        agent_reported_helpful: false,
+                        agent_reported_summary: String::new(),
+                        validator_reported_success: None,
+                    });
+                    runtime
+                        .mark_first_token(
+                            first_stream_output_at
+                                .lock()
+                                .unwrap_or_else(|err| err.into_inner())
+                                .unwrap_or(finished_at),
+                        )
+                        .map_err(|e| format!("failed to mark first token: {}", e))?;
+                    runtime
+                        .finish_success(finished_at, None)
+                        .map_err(|e| format!("failed to finish runtime success: {}", e))?;
+                    provider_task.abort();
+                    return Ok(());
+                }
                 let should_finish_from_streamed_command_run = {
                     let has_results = !streamed_command_results
                         .lock()
@@ -959,6 +1007,23 @@ fn streamed_command_run_post_result_timeout() -> Duration {
         .and_then(|value| value.trim().parse::<u64>().ok())
         .unwrap_or(DEFAULT_STREAMED_COMMAND_RUN_POST_RESULT_TIMEOUT_MS);
     Duration::from_millis(millis.max(1))
+}
+
+fn command_run_results_contain_task_status_done(results: &[serde_json::Value]) -> bool {
+    results.iter().any(|item| {
+        item.get("success").and_then(serde_json::Value::as_bool) == Some(true)
+            && item
+                .get("command_type")
+                .or_else(|| item.get("command"))
+                .and_then(serde_json::Value::as_str)
+                == Some("task_status")
+            && item
+                .get("output")
+                .and_then(|output| output.get("task_status"))
+                .and_then(|status| status.get("status"))
+                .and_then(serde_json::Value::as_str)
+                == Some("done")
+    })
 }
 
 fn emit_cli_live_command_run_results(results: &[serde_json::Value], item_index: &mut usize) {

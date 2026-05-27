@@ -19,14 +19,6 @@ and crate boundaries. This README expands that into an operational map for
 developers: where code lives, how requests move through the system, which crate
 owns each responsibility, and what should not cross module boundaries.
 
-Current verified integration coverage includes the Rust `tura` executable,
-provider OAuth discovery, `command_run` queue execution, multiple-task planning,
-ProgramBench-style reconstruction, and TUI/web-terminal flows. The most recent
-local evidence includes full `command_run` frontend/Playwright validation
-(`16/16`), ProgramBench validation (`25/25`), and backend topology validation
-(`16/16`). GUI/gateway full-chain regression should still be rerun after
-frontend-facing changes before claiming a release-quality pass.
-
 Tracked source is intentionally limited to code, configuration, docs, and test
 drivers. The following local artifacts are ignored:
 
@@ -91,12 +83,10 @@ troubleshooting.
     gui/
     tui/
 
-  config/
-
   crates/
     agents/
     gateway/
-    memory/
+    memory/        # documentation-only boundary placeholder
     provider/
     router/
     runtime/
@@ -114,7 +104,6 @@ troubleshooting.
     installers/
     packages/
 
-  storage/
   target/
   tests/
 ```
@@ -294,6 +283,10 @@ Architecture docs also define the target subdomains:
 - `state/`
 - `storage/`
 
+Those target subdomain directories are not present in the current provider
+source tree; current implementation remains in `tura_llm.rs`,
+`auth_registry.rs`, and `src/llm/_*_provider.rs`.
+
 Runtime asks Provider for one model call and decides what to do with the
 result. Provider should not execute tools, compact context, manage user
 sessions, or own gateway event streaming.
@@ -385,11 +378,11 @@ cargo check -p tura_router
 
 ### `crates/memory`
 
-Memory is the implementation boundary for long-lived memory and recall. It is
-documented as a crate-level boundary rather than a standalone service
-directory.
+Memory is the documented boundary for long-lived memory and recall. In the
+current tree `crates/memory` contains architecture documentation only; it is
+not a Cargo workspace member yet.
 
-Responsibilities include:
+Future responsibilities include:
 
 - long-lived memory store behavior
 - vector or registry-backed recall when enabled
@@ -616,8 +609,8 @@ See `docs/CLI_TUI.md` for the terminal command surface and examples.
 
 ## Testing
 
-Tests are split by crate, lightweight command-run probes, and long end-to-end
-command-run scripts.
+Tests are split by crate, crate-owned E2E/contract scripts, and business
+benchmark scripts.
 
 Crate-native tests:
 
@@ -628,29 +621,37 @@ cargo test -p tura_router
 cargo test -p tura-llm-rust
 ```
 
-Command-run unit/probe scripts:
+Crate-owned command-run E2E and contract scripts:
 
 ```text
-tests/unit/command-run/
-  command_run_single_round_e2e.mjs
-  command_run_compact_context_e2e.mjs
-  command_run_read_media_e2e.mjs
-  command_run_three_stream_probe_e2e.mjs
-  command_run_google_image_api_fallback_e2e.mjs
+crates/gateway/tests/e2e/command-run/
+  command_run_cli_single_round_e2e.mjs
+  command_run_cli_parallel_stream_probe_e2e.mjs
+  command_run_cli_read_media_e2e.mjs
+  command_run_cli_web_discover_fallback_e2e.mjs
+
+crates/tools/tests/contracts/
+  compact_context_contract.mjs
+  multiple_tasks_backend_contract.mjs
+
+apps/tui/e2e/
+  tui_gateway_cli_e2e.mjs
 ```
 
-Long command-run E2E drivers:
+Business command-run benchmark drivers:
 
 ```text
-tests/long-e2e/command-run-codex-two-way/
-  command_run_codex_two_way_e2e.mjs
-  command_run_original_e2e.mjs
-  command_run_context_compact_e2e.mjs
-  command_run_compact_stress_e2e.mjs
-  command_run_long_task_e2e.mjs
-  command_run_media_recall_e2e.mjs
-  command_run_newjeans_official_media_e2e.mjs
-  command_run_frontend_playwright_e2e.mjs
+tests/business/command-run-agent-benchmarks/
+  command_run_agent_benchmark.mjs
+  command_run_context_compaction_business_test.mjs
+  command_run_enterprise_task_business_test.mjs
+  command_run_background_services_business_test.mjs
+  command_run_media_recall_business_test.mjs
+  command_run_official_media_research_business_test.mjs
+  command_run_frontend_playwright_business_test.mjs
+  command_run_frontend_playwright_lite_business_test.mjs
+  command_run_tui_snake_playwright_business_test.mjs
+  agent_swebench_business_test.mjs
   ROBUSTNESS_TEST_MATRIX.md
 ```
 
@@ -704,5 +705,6 @@ are still in transition:
 - `crates/tools/ARCHITECTURE.md`: command-run, policies, and file locks.
 - `crates/router/ARCHITECTURE.md`: router command registry and lifecycle.
 - `crates/memory/ARCHITECTURE.md`: memory boundary.
+- `crates/utils/ARCHITECTURE.md`: shared helper boundary.
 - `scripts/ARCHITECTURE.md`: startup, installer, package, and persistent
   script design.

@@ -63,7 +63,7 @@ def real_tool_prompt() -> str:
         (
             "This is a real GUI to gateway to coding agent e2e test. "
             "Complete a ProgramBench-inspired multi-task reconstruction benchmark using command_run. "
-            "First read tests/long-e2e/command-run-codex-two-way/command_run_frontend_playwright_e2e.mjs "
+            "First read tests/business/command-run-agent-benchmarks/command_run_frontend_playwright_business_test.mjs "
             "and use its Vite + Playwright screenshot/probe style as the reference pattern; do not run the whole benchmark. "
             "Also treat https://github.com/facebookresearch/programbench as the benchmark inspiration: the task must be decomposed into "
             "parallel subtasks with ordered integration barriers, then produce a runnable artifact, submission archive, eval JSON, and documentation. "

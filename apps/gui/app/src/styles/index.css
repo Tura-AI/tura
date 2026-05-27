@@ -1,4 +1,6 @@
 @import "./parts/00-base.css";
 @import "./parts/01-layout.css";
 @import "./parts/02-surfaces.css";
-@import "./parts/03-conversation.css";
+@import "./parts/03-plan.css";
+@import "./parts/04-conversation.css";
+@import "./parts/05-settings.css";

@@ -148,6 +148,18 @@ pub fn build_router() -> Router {
         .route("/project/{projectID}", get(api::project::get_project))
         .route("/project/{projectID}", patch(api::project::update_project))
         .route("/project/git/init", post(api::project::git_init_project))
+        .route(
+            "/project/workspace/create",
+            post(api::project::create_named_workspace),
+        )
+        .route(
+            "/project/workspace/default",
+            post(api::project::use_default_workspace),
+        )
+        .route(
+            "/project/workspace/select-local",
+            post(api::project::select_local_workspace),
+        )
         // Experimental
         .route(
             "/experimental/worktree",
@@ -273,6 +285,7 @@ pub fn build_router() -> Router {
         .route("/file/content", get(api::file::get_file_content))
         .route("/file/content", post(api::file::write_file))
         .route("/file/open", post(api::file::open_file))
+        .route("/file/open-location", post(api::file::open_file_location))
         .route("/file/status", get(api::file::get_file_status))
         // Find
         .route("/find", get(api::file::find_files))

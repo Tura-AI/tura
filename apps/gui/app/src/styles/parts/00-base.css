@@ -52,6 +52,13 @@
   --font-body: 14px;
   --font-small: 11px;
   --font-title: clamp(22px, 1.9vw, 28px);
+  --rail-open-button-top: 12px;
+  --rail-open-button-size: 32px;
+  --rail-open-title-gap: 14px;
+  --rail-collapsed-page-top: calc(
+    var(--rail-open-button-top) + var(--rail-open-button-size) +
+      var(--rail-open-title-gap)
+  );
   color: var(--ink);
   background: var(--paper);
   font-family:
@@ -106,6 +113,7 @@ button:disabled {
 }
 
 .workbench {
+  position: relative;
   display: grid;
   grid-template-columns: var(--rail) minmax(0, 1fr);
   width: 100vw;
@@ -118,19 +126,61 @@ button:disabled {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-width: 0;
+  overflow: hidden;
   border-right: 1px solid var(--line);
   background: var(--paper);
+}
+
+.rail-collapsed .rail {
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.workbench.rail-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
 }
 
 .rail.settings-mode {
   grid-template-rows: minmax(0, 1fr);
 }
 
+.rail-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: max(0px, calc(var(--rail) - 3px));
+  z-index: 60;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.rail-resize-handle::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 1px;
+  background: transparent;
+  content: "";
+}
+
+.rail-resize-handle:hover::after,
+.rail-resizing .rail-resize-handle::after {
+  background: var(--line-strong);
+}
+
+.rail-collapsed .rail-resize-handle {
+  display: none;
+}
+
 .brand {
   display: flex;
   gap: var(--space-3);
   align-items: center;
+  min-width: 0;
   min-height: 64px;
+  overflow: hidden;
   padding: 14px 14px 10px;
 }
 
@@ -151,7 +201,15 @@ button:disabled {
 }
 
 .brand strong {
+  display: block;
+  overflow: hidden;
   font-size: var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brand > div:last-child {
+  min-width: 0;
 }
 
 .main-tabs,
@@ -164,11 +222,14 @@ button:disabled {
 
 .main-tabs {
   gap: 2px;
+  min-width: 0;
+  overflow: hidden;
   padding: 0 var(--space-2) var(--space-5);
 }
 
 .main-tabs button,
 .workspace-row,
+button.section-title,
 .child-row,
 .surface-list-row {
   width: 100%;
@@ -185,6 +246,7 @@ button:disabled {
 
 .main-tabs button,
 .workspace-row,
+button.section-title,
 .child-row {
   padding: 0 var(--space-3);
 }
@@ -193,22 +255,34 @@ button:disabled {
 .workspace-row span,
 .child-row .tree-row-label,
 .tree-folder > span {
-  display: inline-flex;
   min-width: 0;
   align-items: center;
   gap: 4px;
 }
 
 .main-tabs button {
-  justify-content: flex-start;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  justify-content: initial;
+}
+
+.main-tabs button.no-icon,
+.workspace-row.no-icon,
+button.section-title:not(:has(> svg)) {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.main-tabs button > svg,
+.workspace-row > svg,
+button.section-title > svg {
+  color: var(--muted);
 }
 
 .workspace-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-2);
-  font-weight: 620;
 }
 
 .workspace-row-label {
@@ -232,24 +306,18 @@ button:disabled {
 }
 
 .section-title {
-  margin: var(--space-1) var(--space-1) var(--space-3);
+  margin: 0;
   color: var(--muted);
-  font-size: 12px;
-  font-weight: 520;
 }
 
 button.section-title {
-  display: inline-flex;
-  width: auto;
-  max-width: calc(100% - var(--space-2));
-  min-height: 28px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  min-width: 0;
   align-items: center;
   gap: 4px;
-  padding: 0 var(--space-1);
-  border: 0;
-  border-radius: var(--radius-small);
-  background: transparent;
-  text-align: left;
+  overflow: hidden;
+  color: var(--muted);
 }
 
 button.section-title > span {
@@ -260,17 +328,12 @@ button.section-title > span {
 }
 
 button.section-title .rail-disclosure {
-  opacity: 0;
+  justify-self: end;
 }
 
 button.section-title:hover,
 button.section-title:focus-visible {
   background: var(--wash);
-}
-
-button.section-title:hover .rail-disclosure,
-button.section-title:focus-visible .rail-disclosure {
-  opacity: 1;
 }
 
 .workspace-row-wrap {
@@ -280,6 +343,7 @@ button.section-title:focus-visible .rail-disclosure {
   align-items: center;
 }
 
+.main-tabs button span,
 .workspace-row span,
 .workspace-pick-row span,
 .session-row span {
@@ -301,7 +365,11 @@ button.section-title:focus-visible .rail-disclosure {
   display: flex;
 }
 
-.workspace-actions button,
+.workspace-row-wrap:focus-within .workspace-actions {
+  display: flex;
+}
+
+.workspace-actions > button,
 .workspace-menu > button {
   display: grid;
   width: 24px;
@@ -313,7 +381,7 @@ button.section-title:focus-visible .rail-disclosure {
   color: var(--muted);
 }
 
-.workspace-actions button:hover,
+.workspace-actions > button:hover,
 .workspace-menu > button:hover {
   background: var(--wash);
   color: var(--ink);
@@ -327,14 +395,17 @@ button.section-title:focus-visible .rail-disclosure {
   position: absolute;
   top: 28px;
   right: 0;
-  z-index: 20;
+  z-index: 90;
   display: grid;
-  min-width: 164px;
-  padding: 6px;
+  gap: 2px;
+  width: max-content;
+  min-width: 188px;
+  max-width: min(240px, calc(100vw - var(--space-5)));
+  padding: var(--space-2);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  box-shadow: var(--shadow-control);
+  background: var(--paper);
+  box-shadow: var(--shadow-menu);
 }
 
 .rail-menu button {
@@ -342,16 +413,32 @@ button.section-title:focus-visible .rail-disclosure {
   grid-template-columns: 18px minmax(0, 1fr);
   gap: var(--space-2);
   align-items: center;
-  min-height: 30px;
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 var(--space-2);
   border: 0;
   border-radius: var(--radius-small);
   background: transparent;
   color: var(--ink);
+  font-size: var(--font-ui);
   text-align: left;
 }
 
 .rail-menu button:hover {
   background: var(--wash);
+}
+
+.rail-menu button > svg,
+.rail-menu .tiny-icon {
+  justify-self: center;
+}
+
+.rail-menu button > span:not(.tiny-icon) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tiny-icon {
@@ -397,21 +484,28 @@ button.section-title:focus-visible .rail-disclosure {
 }
 
 .workspace-tree {
-  display: block;
+  display: grid;
+  align-content: start;
+  gap: 2px;
   min-height: 0;
-  overflow: auto;
+  min-width: 0;
+  overflow: hidden;
   padding: var(--space-2);
 }
 
 .settings-entry {
+  min-width: 0;
   min-height: 38px;
   margin: var(--space-2);
+  overflow: hidden;
   border: 0;
   border-radius: var(--radius-small);
   background: transparent;
   color: var(--ink);
   font-size: var(--font-ui);
   text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-entry:hover,
@@ -423,19 +517,25 @@ button.section-title:focus-visible .rail-disclosure {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   padding: var(--space-2);
 }
 
 .settings-back,
 .settings-section-list button {
   width: 100%;
+  min-width: 0;
   min-height: 34px;
+  overflow: hidden;
   border: 0;
   border-radius: var(--radius-small);
   background: transparent;
   color: var(--ink);
   font-size: 14px;
   text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-back {
@@ -456,7 +556,8 @@ button.section-title:focus-visible .rail-disclosure {
   align-content: start;
   gap: 2px;
   min-height: 0;
-  overflow: auto;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .settings-section-list button {
@@ -471,12 +572,12 @@ button.section-title:focus-visible .rail-disclosure {
   color: var(--ink);
 }
 
-.workspace-node + .workspace-node,
 .tree-group + .tree-group {
   margin-top: 2px;
 }
 
 .workspace-children {
+  gap: 2px;
   margin: var(--space-1) 0 var(--space-3);
 }
 
@@ -485,9 +586,10 @@ button.section-title:focus-visible .rail-disclosure {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--space-2);
   align-items: center;
-  min-height: 28px;
+  min-height: 36px;
   padding-left: calc(var(--space-3) + (var(--depth, 0) * var(--tree-step)));
-  color: #333333;
+  color: var(--ink);
+  font-weight: 430;
 }
 
 .tree-row-label {
@@ -521,7 +623,10 @@ button.section-title:focus-visible .rail-disclosure {
   color: var(--muted);
 }
 
-.session-row:hover .session-row-time {
+.session-row:hover .session-row-time,
+.session-row:hover .session-row-status,
+.session-row:focus-within .session-row-time,
+.session-row:focus-within .session-row-status {
   display: none;
 }
 
@@ -532,7 +637,8 @@ button.section-title:focus-visible .rail-disclosure {
   place-items: center;
 }
 
-.session-row:hover .session-rename-icon {
+.session-row:hover .session-rename-icon,
+.session-row:focus-within .session-rename-icon {
   display: block;
   justify-self: end;
 }
@@ -541,7 +647,6 @@ button.section-title:focus-visible .rail-disclosure {
   text-align: left;
 }
 
-.tree-folder,
 .rail-empty,
 .center-state,
 .empty-type,
@@ -555,15 +660,67 @@ button.section-title:focus-visible .rail-disclosure {
 .empty-type,
 .surface-list-empty,
 .inspector-empty {
+  min-width: 0;
+  overflow: hidden;
   font-size: 14px;
   font-weight: 380;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.rail-empty {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  text-align: left;
+}
+
+button.rail-empty:hover,
+button.rail-empty:focus-visible {
+  background: var(--wash);
+  color: var(--ink);
 }
 
 .main-column {
+  position: relative;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   background: var(--paper);
+}
+
+.rail-open-button {
+  position: fixed;
+  top: var(--rail-open-button-top);
+  left: var(--rail-open-button-top);
+  z-index: 30;
+  display: grid;
+  width: var(--rail-open-button-size);
+  height: var(--rail-open-button-size);
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--paper);
+  color: var(--muted);
+  box-shadow: var(--shadow-control);
+}
+
+.rail-open-button:hover,
+.rail-open-button:focus-visible {
+  background: var(--wash);
+  color: var(--ink);
+}
+
+.rail-collapsed .product-workbench,
+.rail-collapsed .plan-detail,
+.rail-collapsed .conversation-view,
+.rail-collapsed .files-view,
+.rail-collapsed .settings-view {
+  padding-top: var(--rail-collapsed-page-top);
 }
 
 .product-workbench,
@@ -648,7 +805,6 @@ button.section-title:focus-visible .rail-disclosure {
 .board-column,
 .board-card,
 .file-canvas,
-.surface-preview-panel,
 .tool-inspector,
 .message-user-shell {
   border: 1px solid var(--line);

@@ -43,6 +43,10 @@ export type SettingsSection =
   | "environment";
 export type ThemeMode = "light" | "dark";
 export type PlanMode = "todo" | "gantt" | "calendar";
+export type ProviderAuthPanel = {
+  providerId: string;
+  reason?: string;
+};
 export type ComposerImage = {
   id: string;
   name: string;
@@ -108,6 +112,8 @@ export type AppState = {
   selectedModel?: string;
   selectedAgent?: string;
   selectedProviderId?: string;
+  providerSearch: string;
+  providerAuthPanel?: ProviderAuthPanel;
   modelVariant?: string;
   accelerationEnabled: boolean;
   authDrafts: Record<string, string>;
@@ -159,6 +165,8 @@ export function initialAppState(gatewayUrl: string): AppState {
     composerText: "",
     composerImages: [],
     selectedProviderId: undefined,
+    providerSearch: "",
+    providerAuthPanel: undefined,
     modelVariant: "low",
     accelerationEnabled: true,
     authDrafts: {},

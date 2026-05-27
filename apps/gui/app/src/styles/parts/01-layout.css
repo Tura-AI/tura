@@ -205,6 +205,10 @@
   grid-template-columns: 22px minmax(0, 1fr) auto;
 }
 
+.workspace-pick-row.no-icon {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .workspace-picker-actions {
   display: grid;
   padding-top: var(--space-2);

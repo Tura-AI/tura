@@ -35,92 +35,35 @@ It also adopts the cleaner separation seen in Codex current:
 
 ```text
 crates/provider/
+  Cargo.toml
   ARCHITECTURE.md
-
   config/
+    tura_llm_config.json
   log/
   tests/
+    live_model_smoke.rs
+    provider_route_manual_smoke.rs
 
   src/
-    auth/
-      oauth/
-      api_key/
-      token_store/
-      login_state/
-
-    config/
-      loader/
-      settings/
-      profiles/
-      path_compat/
-
-    models/
-      catalog/
-      presets/
-      capabilities/
-
-    routing/
-      routes/
-      fallback/
-      policy/
-
-    providers/
-      openai/
-      openai_compatible/
-      google/
-      bedrock/
-
-    request/
-      builder/
-      validation/
-      normalization/
-
-    response/
-      normalization/
-      tool_calls/
-      errors/
-
-    streaming/
-      events/
-      parser/
-      receiver/
-
-    usage/
-      tokens/
-      cost/
-      pricing/
-      reports/
-
-    logging/
-      call_log/
-      redaction/
-      retention/
-
-    monitoring/
-      health/
-      rate_limits/
-      latency/
-      alerts/
-
-    control/
-      lifecycle/
-      pause_resume/
-      kill_switch/
-      quotas/
-
-    state/
-      provider_state/
-      auth_state/
-      call_state/
-
-    storage/
-      config_store/
-      secret_store/
-      usage_store/
-      log_store/
-
-    utils/
+    lib.rs
+    mod.rs
+    auth_registry.rs
+    tura_conf.rs
+    tura_llm_conf.rs
+    tura_llm.rs
+    llm/
+      mod.rs
+      _openai_provider.rs
+      _google_provider.rs
+      _bedrock_provider.rs
+      _llm_log.rs
+      _utils.rs
 ```
+
+The auth/config/models/routing/request/response/streaming/usage/logging
+subdomains described below are the target separation. In the current source
+tree most behavior still lives in `tura_llm.rs`, `auth_registry.rs`, and the
+legacy `src/llm/_*_provider.rs` compatibility modules.
 
 ## Ownership
 

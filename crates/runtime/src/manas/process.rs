@@ -245,6 +245,15 @@ pub fn process_manas_internal(
             }
             persist_session_checkpoint(session, "tool_results");
 
+            if should_end_after_task_status_done(session, last_task_done) {
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    "task_status done returned from command_run; ending session"
+                );
+                break;
+            }
+
             if multiple_tasks_env_enabled() && planned_tasks_all_completed(session) {
                 info!(
                     session_id = %session.session_id,
@@ -415,6 +424,16 @@ fn command_run_result_contains_task_status_done(result: &serde_json::Value) -> b
             })
         })
         .unwrap_or(false)
+}
+
+fn should_end_after_task_status_done(session: &SessionManagement, last_task_done: bool) -> bool {
+    if !last_task_done {
+        return false;
+    }
+    if multiple_tasks_env_enabled() {
+        return planned_tasks_all_completed(session);
+    }
+    true
 }
 
 fn apply_compact_context_results(

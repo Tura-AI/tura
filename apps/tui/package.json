@@ -10,7 +10,7 @@
     "build": "tsc -p tsconfig.json",
     "web": "node ./scripts/web-terminal.mjs",
     "test": "npm run build && node --test \"dist/**/*.test.js\"",
-    "test:e2e": "npm run build && node ../../tests/unit/tui/tui_cli_gateway_e2e.mjs",
+    "test:e2e": "npm run build && node ./e2e/tui_gateway_cli_e2e.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node ./dist/index.js"
   },

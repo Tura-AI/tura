@@ -6,7 +6,7 @@ use axum::{extract::Query, http::StatusCode, Json};
 use base64::Engine;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::UNIX_EPOCH;
 
 // ============================================================================
@@ -40,7 +40,7 @@ pub async fn list_files(Query(params): Query<ListFilesQuery>) -> Json<Vec<FileIn
         return Json(Vec::new());
     };
 
-    let git_statuses = git_status_map(&root, params.path.as_deref().unwrap_or_default());
+    let git_statuses = git_status_snapshot(&root, params.path.as_deref().unwrap_or_default());
 
     let mut entries = std::fs::read_dir(&full_path)
         .map(|dir| {
@@ -65,7 +65,19 @@ pub async fn list_files(Query(params): Query<ListFilesQuery>) -> Json<Vec<FileIn
                     },
                     absolute: display_path(&path),
                     ignored: false,
-                    git_status: git_statuses.get(&normalized_relative_path).cloned(),
+                    git_status: Some(
+                        git_statuses
+                            .statuses
+                            .get(&normalized_relative_path)
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                if git_statuses.is_git_repository {
+                                    "clean".to_string()
+                                } else {
+                                    "not_git".to_string()
+                                }
+                            }),
+                    ),
                     size_bytes: if metadata.is_file() {
                         Some(metadata.len())
                     } else {
@@ -93,7 +105,29 @@ pub async fn list_files(Query(params): Query<ListFilesQuery>) -> Json<Vec<FileIn
     Json(entries)
 }
 
-fn git_status_map(root: &Path, relative_path: &str) -> HashMap<String, String> {
+struct GitStatusSnapshot {
+    is_git_repository: bool,
+    statuses: HashMap<String, String>,
+}
+
+fn git_status_snapshot(root: &Path, relative_path: &str) -> GitStatusSnapshot {
+    let is_git_repository = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("rev-parse")
+        .arg("--is-inside-work-tree")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    if !is_git_repository {
+        return GitStatusSnapshot {
+            is_git_repository,
+            statuses: HashMap::new(),
+        };
+    }
+
     let mut command = Command::new("git");
     command
         .arg("-C")
@@ -105,16 +139,25 @@ fn git_status_map(root: &Path, relative_path: &str) -> HashMap<String, String> {
         .arg(relative_path);
 
     let Ok(output) = command.output() else {
-        return HashMap::new();
+        return GitStatusSnapshot {
+            is_git_repository,
+            statuses: HashMap::new(),
+        };
     };
     if !output.status.success() {
-        return HashMap::new();
+        return GitStatusSnapshot {
+            is_git_repository,
+            statuses: HashMap::new(),
+        };
     }
 
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(parse_git_status_line)
-        .collect()
+    GitStatusSnapshot {
+        is_git_repository,
+        statuses: String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(parse_git_status_line)
+            .collect(),
+    }
 }
 
 fn parse_git_status_line(line: &str) -> Option<(String, String)> {
@@ -215,18 +258,7 @@ pub async fn get_file_content(
 pub async fn open_file(
     Query(params): Query<FileContentQuery>,
 ) -> Result<Json<FileOpenResponse>, (StatusCode, String)> {
-    let root = workspace_root(params.directory).ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            "No workspace directory was provided for file open".to_string(),
-        )
-    })?;
-    let path = safe_join(&root, &params.path).ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            "File path must stay inside the workspace".to_string(),
-        )
-    })?;
+    let (root, path) = resolve_workspace_file_path(params.directory, &params.path, "file open")?;
     if !path.exists() {
         return Err((StatusCode::NOT_FOUND, "File was not found".to_string()));
     }
@@ -242,6 +274,57 @@ pub async fn open_file(
         path: relative_display_path(&root, &path),
         opened: true,
     }))
+}
+
+pub async fn open_file_location(
+    Query(params): Query<FileContentQuery>,
+) -> Result<Json<FileOpenResponse>, (StatusCode, String)> {
+    let (root, path) =
+        resolve_workspace_file_path(params.directory, &params.path, "file location open")?;
+    if !path.exists() {
+        return Err((StatusCode::NOT_FOUND, "File was not found".to_string()));
+    }
+
+    open_with_system_file_manager(&path).map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to open file location: {error}"),
+        )
+    })?;
+
+    Ok(Json(FileOpenResponse {
+        path: relative_display_path(&root, &path),
+        opened: true,
+    }))
+}
+
+fn resolve_workspace_file_path(
+    directory: Option<String>,
+    relative_path: &str,
+    action: &str,
+) -> Result<(PathBuf, PathBuf), (StatusCode, String)> {
+    let requested = Path::new(relative_path);
+    if requested.is_absolute() {
+        let path = PathBuf::from(requested);
+        let root = path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| path.clone());
+        return Ok((root, path));
+    }
+    let root = workspace_root(directory).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("No workspace directory was provided for {action}"),
+        )
+    })?;
+    let path = safe_join(&root, relative_path).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "File path must stay inside the workspace".to_string(),
+        )
+    })?;
+    Ok((root, path))
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -567,24 +650,133 @@ fn media_mime_type(path: &Path) -> Option<&'static str> {
 fn open_with_system_default(path: &Path) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
     {
-        Command::new("cmd")
-            .args(["/C", "start", ""])
-            .arg(path)
-            .spawn()?;
-        Ok(())
+        // `start` asks Windows Shell to use the registered default app.
+        return spawn_command("cmd", ["/C", "start", ""], Some(path));
     }
 
     #[cfg(target_os = "macos")]
     {
-        Command::new("open").arg(path).spawn()?;
-        return Ok(());
+        return spawn_command("open", std::iter::empty::<&str>(), Some(path));
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        Command::new("xdg-open").arg(path).spawn()?;
-        return Ok(());
+        return spawn_first_open_command(
+            [
+                OpenAttempt::new("xdg-open", &[], Some(path)),
+                OpenAttempt::new("gio", &["open"], Some(path)),
+                OpenAttempt::new("kde-open", &[], Some(path)),
+                OpenAttempt::new("exo-open", &[], Some(path)),
+            ],
+            "system default app",
+        );
     }
+}
+
+fn open_with_system_file_manager(path: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        if path.is_file() {
+            return spawn_command(
+                "explorer.exe",
+                [format!("/select,{}", path.display())],
+                None,
+            );
+        } else {
+            return spawn_command("explorer.exe", std::iter::empty::<&str>(), Some(path));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if path.is_file() {
+            return spawn_command("open", ["-R"], Some(path));
+        } else {
+            return spawn_command("open", std::iter::empty::<&str>(), Some(path));
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let target = if path.is_file() {
+            path.parent().unwrap_or(path)
+        } else {
+            path
+        };
+        return spawn_first_open_command(
+            [
+                OpenAttempt::new("xdg-open", &[], Some(target)),
+                OpenAttempt::new("gio", &["open"], Some(target)),
+                OpenAttempt::new("kde-open", &[], Some(target)),
+                OpenAttempt::new("exo-open", &[], Some(target)),
+            ],
+            "system file manager",
+        );
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+struct OpenAttempt<'a> {
+    command: &'a str,
+    args: Vec<std::ffi::OsString>,
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+impl<'a> OpenAttempt<'a> {
+    fn new(command: &'a str, args: &[&str], path: Option<&Path>) -> Self {
+        let mut command_args = args
+            .iter()
+            .map(std::ffi::OsString::from)
+            .collect::<Vec<_>>();
+        if let Some(path) = path {
+            command_args.push(path.as_os_str().to_owned());
+        }
+        Self {
+            command,
+            args: command_args,
+        }
+    }
+}
+
+fn spawn_command<I, S>(command: &str, args: I, path: Option<&Path>) -> std::io::Result<()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let mut process = Command::new(command);
+    process
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(path) = path {
+        process.arg(path);
+    }
+    process.spawn()?;
+    Ok(())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn spawn_first_open_command<I>(attempts: I, action: &str) -> std::io::Result<()>
+where
+    I: IntoIterator<Item = OpenAttempt<'static>>,
+{
+    let mut last_error: Option<std::io::Error> = None;
+    for attempt in attempts {
+        match spawn_command(attempt.command, attempt.args, None) {
+            Ok(_) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                last_error = Some(error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("No command was found for {action}"),
+        )
+    }))
 }
 
 fn relative_display_path(root: &Path, path: &Path) -> String {

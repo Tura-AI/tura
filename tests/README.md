@@ -2,19 +2,19 @@
 
 Test scripts are split by runtime cost and blast radius.
 
-## Unit And Probe Scripts
+## Crate-Owned E2E And Contract Scripts
 
-`tests/unit/command-run/` contains focused command-run probes. These scripts are
-intended to validate one behavior at a time, such as compact-context prompt
-coverage, single-round command execution, streaming command dispatch, provider
-fallback parsing, `read_media` handling, and the `multiple_tasks` backend
-topology/ordering/session-derivation contract.
+Focused command-run CLI flows now live with the gateway crate under
+`crates/gateway/tests/e2e/command-run/`. Cross-crate command contracts that
+aggregate Cargo tests live under `crates/tools/tests/contracts/`. The TUI
+gateway CLI fixture lives under `apps/tui/e2e/`.
 
-## Long E2E Scripts
+## Business Tests
 
-`tests/long-e2e/command-run-codex-two-way/` contains long-running benchmarks that
-spawn real agents and compare Tura with Codex variants. These can take minutes,
-consume provider quota, and write large run outputs under `target/`.
+`tests/business/command-run-agent-benchmarks/` contains long-running business
+benchmarks that spawn real agents and compare Tura with Codex variants. These
+can take minutes, consume provider quota, and write large run outputs under
+`target/`.
 
 Historical generated command-run records from the old layout now live under
 `target/command-run-codex-two-way-records/`.

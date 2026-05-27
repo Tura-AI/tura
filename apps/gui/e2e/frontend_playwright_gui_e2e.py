@@ -259,7 +259,7 @@ class GuiE2EGatewayHandler(BaseHTTPRequestHandler):
                         "state": {
                             "status": "completed",
                             "title": "Read frontend Playwright reference",
-                            "command": "Get-Content tests/long-e2e/command-run-codex-two-way/command_run_frontend_playwright_e2e.mjs -TotalCount 80",
+                            "command": "Get-Content tests/business/command-run-agent-benchmarks/command_run_frontend_playwright_business_test.mjs -TotalCount 80",
                             "exit_code": 0,
                             "output": "Reference uses Vite, Playwright screenshots, probes, artifact summary checks, timeouts, and cleanup.",
                             "time": {"start": now - 31000, "end": now - 30000},

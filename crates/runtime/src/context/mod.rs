@@ -47,29 +47,8 @@ pub trait ContextualUserFragment {
 }
 
 pub mod types {
-    use crate::state_machine::agent_management::AgentId;
     use crate::state_machine::session_management::SessionId;
-    use chrono::{DateTime, Utc};
     use serde::{Deserialize, Serialize};
-
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct ContextItem {
-        pub session_id: SessionId,
-        pub agent_id: Option<AgentId>,
-        pub context_type: ContextType,
-        pub content: serde_json::Value,
-        pub created_at: DateTime<Utc>,
-    }
-
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    #[serde(tag = "type")]
-    pub enum ContextType {
-        UserInput,
-        AgentOutput,
-        ToolResult,
-        Reasoning,
-        System,
-    }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct ContextState {

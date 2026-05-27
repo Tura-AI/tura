@@ -15,47 +15,27 @@ default binary = tura_router
 
 ```text
 crates/router/
+  Cargo.toml
+  README.md
+  ARCHITECTURE.md
   src/
     main.rs
-    lib.rs
-
-    registry/
-      command_registry.rs
-      aliases.rs
-      health.rs
-
-    lifecycle/
-      manager.rs
+    services.rs
+    services/
       managed_process.rs
-      cleanup.rs
-      restart.rs
-
-    monitor/
-      status.rs
-      health_check.rs
-      heartbeat.rs
-
-    routes/
-      forward_cli.rs
-      resolve_command.rs
-      status.rs
-
-    clients/
-      runtime_client.rs
-      tools_client.rs
-      memory_client.rs
-
-    security/
-      permission_forwarder.rs
-      sandbox_profile.rs
-      network_policy.rs
-
-    events/
-      runtime_events.rs
-      command_events.rs
-
+      manager.rs
+      models.rs
+      rust_service.rs
+      worker_process.rs
     utils/
+      cli.rs
+      port.rs
+      process.rs
 ```
+
+Registry, lifecycle, monitor, route, client, security, and event modules are
+target architecture areas. The current implementation is concentrated in the
+Axum entrypoint plus service and utility modules above.
 
 ## Responsibilities
 

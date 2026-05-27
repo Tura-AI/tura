@@ -131,6 +131,20 @@ export class GatewayClient {
     return this.get("/api/projects");
   }
 
+  createWorkspace(input: { name: string }): Promise<Project> {
+    return this.post("/project/workspace/create", input);
+  }
+
+  defaultWorkspace(): Promise<Project> {
+    return this.post("/project/workspace/default", {});
+  }
+
+  selectLocalWorkspace(
+    input: { title?: string } = {},
+  ): Promise<Project | null> {
+    return this.post("/project/workspace/select-local", input);
+  }
+
   productAgents(): Promise<ProductAgent[]> {
     return this.get("/api/agents");
   }
@@ -408,6 +422,10 @@ export class GatewayClient {
 
   openFile(path: string): Promise<FileOpenResponse> {
     return this.post("/file/open", {}, { path }, true);
+  }
+
+  openFileLocation(path: string): Promise<FileOpenResponse> {
+    return this.post("/file/open-location", {}, { path }, true);
   }
 
   ptys(): Promise<PtyResponse[]> {

@@ -30,13 +30,10 @@ crates/tools/
 
     runtime/
       mod.rs
-      validator/
-      permission/
-      sandbox/
-      audit/
-      context/
-      error/
+      tool.rs
       file_locks/
+        mod.rs
+        policy.toml
 
     commands/
       mod.rs
@@ -45,13 +42,11 @@ crates/tools/
         schema.json
         prompt.md
         policy.toml
-        handler.rs  # optional when split out of command_run orchestration
       apply_patch/
         mod.rs
         schema.json
         prompt.md
         policy.toml
-        handler.rs  # optional when split out of command_run orchestration
       read_media/
         mod.rs
         schema.json
@@ -80,13 +75,12 @@ crates/tools/
         prompt.md
         policy.toml
 
-    utils/
-      path.rs
-      diff.rs
-      json.rs
-      output.rs
-      redaction.rs
-      process.rs
+  tests/
+    command_run_current_flow.rs
+    web_discover_live_provider_check.rs
+    contracts/
+      compact_context_contract.mjs
+      multiple_tasks_backend_contract.mjs
 ```
 
 The target command implementation layout is

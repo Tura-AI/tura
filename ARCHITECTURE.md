@@ -16,12 +16,10 @@ relative to the project root.
     gui/
     tui/
 
-  config/
-
   crates/
     agents/
     gateway/
-    memory/
+    memory/        # docs-only boundary placeholder; not a Cargo member yet
     provider/
     router/
     runtime/
@@ -39,7 +37,6 @@ relative to the project root.
     packages/
 
   sessions/
-  storage/
   target/
   tests/
 ```
@@ -57,7 +54,7 @@ crates/agents      -> package tura-agents, library tura_agents
 crates/provider    -> package tura-llm-rust, library tura_llm_rust
 crates/tools       -> package code-tools
 crates/router      -> package tura_router, default binary tura_router
-crates/memory      -> package alaya_memory when enabled
+crates/memory      -> documented boundary only; no Cargo package in this tree yet
 ```
 
 Do not derive package names from directory names. Always check the local
@@ -197,13 +194,14 @@ managed process needed to serve that request.
 
 ### `crates/memory`
 
-Memory behavior is a crate-level implementation boundary, not an independent
-service boundary.
+Memory behavior is documented as a crate-level implementation boundary, not an
+independent service boundary. In the current tree `crates/memory` contains only
+architecture documentation and is not a Cargo workspace member yet.
 
-Memory owns long-lived memory store behavior, vector or registry-backed recall
-when enabled, memory health/persistence, and memory-specific tests/examples.
-Runtime and tools call memory only through explicit memory-backed commands or
-clients.
+When implemented, memory owns long-lived memory store behavior, vector or
+registry-backed recall, memory health/persistence, and memory-specific
+tests/examples. Runtime and tools should call memory only through explicit
+memory-backed commands or clients.
 
 ### `scripts`
 
@@ -263,32 +261,25 @@ Rules:
 
 ## Agent Config
 
-Recommended `crates/agents` layout:
+Current `crates/agents` layout:
 
 ```text
 crates/agents/
+  Cargo.toml
+  ARCHITECTURE.md
   src/
     lib.rs
-    registry.rs
-    loader.rs
-    interface.rs
-
-  coding_agent/
-    src/
-      agent.rs
-      config.rs
-      prompts.rs
-      tools.rs
-    prompts/
-      system.md
-      developer.md
-      task.md
-    config/
-      agent.toml
-      provider.toml
-      commands.toml
-    interface/
-      Icoding_agent.json
+    coding_agent.rs
+    coding_agent/
+      agent_config.json
+      persona.md
+      communication_style.md
+      prompt.md
+    coding_agent_fast/
+      agent_config.json
+      persona.md
+      communication_style.md
+      prompt.md
 ```
 
 Agent config should define agent id/version, provider route/model defaults,
@@ -309,7 +300,7 @@ Default coding-agent behavior:
 
 ## Tools And Commands
 
-Recommended `crates/tools` layout:
+Current `crates/tools` layout:
 
 ```text
 crates/tools/
@@ -321,30 +312,44 @@ crates/tools/
       mod.rs
       handler.rs
       schema.json
-      prompt.md
       policy.toml
 
     runtime/
       mod.rs
-      validator/
-      permission/
-      sandbox/
-      audit/
-      context/
-      error/
+      tool.rs
       file_locks/
+        mod.rs
+        policy.toml
 
     commands/
       mod.rs
       shell_command/
         mod.rs
-        handler.rs
         schema.json
         prompt.md
         policy.toml
       apply_patch/
         mod.rs
-        handler.rs
+        schema.json
+        prompt.md
+        policy.toml
+      read_media/
+        mod.rs
+        schema.json
+        prompt.md
+        policy.toml
+      compact_context/
+        mod.rs
+        schema.json
+        prompt.md
+        policy.toml
+      multiple_tasks/
+        mod.rs
+        schema.json
+        prompt.md
+        policy.toml
+      web_discover/
+        mod.rs
         schema.json
         prompt.md
         policy.toml
@@ -360,13 +365,12 @@ crates/tools/
         prompt.md
         policy.toml
 
-    utils/
-      path.rs
-      diff.rs
-      json.rs
-      output.rs
-      redaction.rs
-      process.rs
+  tests/
+    command_run_current_flow.rs
+    web_discover_live_provider_check.rs
+    contracts/
+      compact_context_contract.mjs
+      multiple_tasks_backend_contract.mjs
 ```
 
 Command files:
@@ -478,48 +482,26 @@ Rules:
 
 ## Router CLI Forwarding
 
-Recommended `crates/router` layout:
+Current `crates/router` layout:
 
 ```text
 crates/router/
+  Cargo.toml
+  README.md
+  ARCHITECTURE.md
   src/
     main.rs
-    lib.rs
-
-    registry/
-      command_registry.rs
-      aliases.rs
-      health.rs
-
-    lifecycle/
-      manager.rs
+    services.rs
+    services/
       managed_process.rs
-      cleanup.rs
-      restart.rs
-
-    monitor/
-      status.rs
-      health_check.rs
-      heartbeat.rs
-
-    routes/
-      forward_cli.rs
-      resolve_command.rs
-      status.rs
-
-    clients/
-      runtime_client.rs
-      tools_client.rs
-      memory_client.rs
-
-    security/
-      permission_forwarder.rs
-      sandbox_profile.rs
-      network_policy.rs
-
-    events/
-      runtime_events.rs
-      command_events.rs
+      manager.rs
+      models.rs
+      rust_service.rs
+      worker_process.rs
+    utils/
+      cli.rs
+      port.rs
+      process.rs
 ```
 
 Command registration records should include command id, aliases, owning crate
@@ -532,25 +514,18 @@ behavior.
 
 ## Memory Crate
 
-`crates/memory` is the memory implementation boundary.
+`crates/memory` is the documented memory implementation boundary. It currently
+contains only `ARCHITECTURE.md`; no Cargo package has been added yet.
 
-Recommended layout:
+Current layout:
 
 ```text
 crates/memory/
-  src/
-    lib.rs
-    memory/
-    registry/
-    session/
-    vector_store.rs
-    embedding.rs
-  tests/
-  examples/
+  ARCHITECTURE.md
 ```
 
-Memory should expose stable request/response types and health checks. Runtime
-and tools should call it through explicit clients or commands.
+When implemented, memory should expose stable request/response types and health
+checks. Runtime and tools should call it through explicit clients or commands.
 
 ## Adding A Command
 
@@ -579,7 +554,6 @@ Workspace members should follow the current crate layout:
 members = [
   "crates/agents",
   "crates/gateway",
-  "crates/memory",
   "crates/provider",
   "crates/router",
   "crates/runtime",
@@ -642,9 +616,7 @@ Direct package checks should use the same package names as the build targets.
 - `crates/tools/**`: `cargo fmt -p code-tools`, `cargo check -p code-tools`.
 - `crates/router/**`: `cargo fmt -p tura_router`,
   `cargo check -p tura_router`.
-- `crates/memory/**`: `cargo fmt -p alaya_memory`,
-  `cargo check -p alaya_memory` unless the memory package has been deliberately
-  renamed.
+- `crates/memory/**`: documentation review only until a Cargo package is added.
 - `apps/gui/**`: GUI typecheck/build and focused frontend tests.
 - `apps/tui/**`: TUI build and focused CLI/TUI tests.
 - `scripts/**`: manifest validation and install dry run when possible.
@@ -665,4 +637,6 @@ Direct package checks should use the same package names as the build targets.
   forwarding.
 - `crates/memory/ARCHITECTURE.md`: memory and recall behavior as a crate
   boundary.
+- `crates/utils/ARCHITECTURE.md`: shared helper ownership and generic utility
+  boundaries.
 - `scripts/ARCHITECTURE.md`: install/start/package/persistent-script rules.

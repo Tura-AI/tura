@@ -377,7 +377,7 @@ cd apps/gui && bun run format:check
 cd apps/gui && bun run typecheck
 cd apps/gui && bun run build
 python apps/gui/e2e/session_plan_e2e.py
-node tests/unit/tui/tui_cli_gateway_e2e.mjs
+node apps/tui/e2e/tui_gateway_cli_e2e.mjs
 ```
 
 ## Refactor Rule

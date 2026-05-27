@@ -46,58 +46,24 @@ issue assignment / @agent comment / chat message / autopilot run
 
 ## High-Level Layout
 
-Target layout:
+Current layout:
 
 ```text
 crates/gateway/
+  Cargo.toml
+  ARCHITECTURE.md
   src/
     api/
       global.rs
-      auth.rs
-      user.rs
-      workspace.rs
-      invitation.rs
-      token.rs
-      issue.rs
-      comment.rs
-      label.rs
-      attachment.rs
       project.rs
-      squad.rs
-      agent.rs
-      agent_template.rs
-      runtime.rs
-      daemon.rs
-      skill.rs
-      autopilot.rs
-      chat.rs
-      inbox.rs
-      notification_preference.rs
-      dashboard.rs
-      github.rs
-      webhook.rs
       session.rs
       file.rs
       provider.rs
       pty.rs
       mcp.rs
+      product.rs
       misc.rs
       types.rs
-
-    domain/
-      auth/
-      workspace/
-      issue/
-      project/
-      squad/
-      agent/
-      runtime/
-      skill/
-      autopilot/
-      chat/
-      inbox/
-      usage/
-      github/
 
     session/
       manager.rs
@@ -106,53 +72,24 @@ crates/gateway/
       process_cleanup.rs
       process_snapshot.rs
       docker_snapshot.rs
-      startup_context.rs
-      event_replay.rs
-
-    task/
-      queue.rs
-      dispatcher.rs
-      lifecycle.rs
-      messages.rs
-      usage.rs
-      session_resumption.rs
-
-    transport/
-      sse.rs
-      websocket.rs
-      app_events.rs
-      event_buffer.rs
-      daemon_ws.rs
-
-    runtime_client/
-      start_session.rs
-      inject_turn.rs
-      cancel_turn.rs
-      read_session.rs
-
-    router_client/
-      commands.rs
-      process.rs
-      services.rs
-      pty.rs
-
-    storage/
-      local.rs
-      s3.rs
-      signed_url.rs
-
-    persistence/
-      mod.rs
-      sqlite.rs
-      postgres.rs
-      migrations/
 
     web/
     mock/
+    bin/
+      gateway.rs
+      tura.rs
+
+    channel.rs
+    handler.rs
+    media.rs
+    runtime.rs
+    simple_runtime.rs
+    types.rs
 ```
 
-The current source tree can evolve toward this gradually. The boundary matters
-more than the exact module names.
+Product domains such as collaboration issues, workspaces, daemon APIs, and
+separate transport/domain/client directories are architectural growth areas,
+not directories that currently exist in this crate.
 
 ## Owns
 
