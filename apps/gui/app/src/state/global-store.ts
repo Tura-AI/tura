@@ -31,7 +31,7 @@ import type {
 } from "@tura/gateway-sdk";
 
 export type ConnectionState = "connecting" | "connected" | "disconnected";
-export type MainTab = "new" | "conversation" | "plan" | "files" | "settings";
+export type MainTab = "conversation" | "plan" | "files" | "settings";
 export type SettingsSection =
   | "appearance"
   | "providers"
@@ -83,6 +83,7 @@ export type AppState = {
   codeFontSize: number;
   directory?: string;
   selectedSessionId?: string;
+  lastCessionOpenedId?: string;
   health?: HealthResponse;
   serviceStatus?: ServiceStatusResponse;
   config?: GatewayConfig;
@@ -144,9 +145,10 @@ export function initialAppState(gatewayUrl: string): AppState {
     planDraftStartAt: "",
     planDraftPollInterval: { m: 0, d: 0, h: 1, s: 0 },
     editingTask: undefined,
-    activeTab: "new",
-    previousMainTab: "new",
+    activeTab: "conversation",
+    previousMainTab: "conversation",
     settingsSection: "appearance",
+    lastCessionOpenedId: undefined,
     themeMode: systemThemeMode(),
     mainFont: "",
     codeFont: "",

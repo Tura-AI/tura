@@ -80,7 +80,7 @@ import { t, type TextKey } from "../i18n";
 
 import { samePath, shortWorkspaceLabel } from "../utils/app-format";
 import { PlanComposerControls } from "./plan/plan-composer";
-export function NewSessionView(props: {
+export function ConversationEmptyView(props: {
   state: AppState;
   slashCommands: Command[];
   onWorkspace: (directory: string) => void;

@@ -18,7 +18,7 @@ import { Composer, ConversationView } from "../conversation/conversation-view";
 import { classNames } from "../state/format";
 import { t } from "../i18n";
 import { WorkspaceTree } from "../components/sidebar";
-import { NewSessionView } from "../pages/new-session";
+import { ConversationEmptyView } from "../pages/new-session";
 import {
   MainTabs,
   SettingsRail,
@@ -646,13 +646,6 @@ export function AppShell(props: { view: AppShellViewModel }) {
                       collapseRailAfterCompactSelection();
                       return;
                     }
-                    if (state().activeTab === "new") {
-                      setState((previous) => ({
-                        ...previous,
-                        activeTab: "conversation",
-                        previousMainTab: "new",
-                      }));
-                    }
                     void openSession(sessionId);
                     collapseRailAfterCompactSelection();
                   }}
@@ -736,37 +729,6 @@ export function AppShell(props: { view: AppShellViewModel }) {
             }
           >
             <Switch>
-              <Match when={state().activeTab === "new"}>
-                <NewSessionView
-                  state={state()}
-                  slashCommands={slashCommands()}
-                  onWorkspace={useWorkspaceDirectory}
-                  onCreateWorkspace={createNamedWorkspace}
-                  onPickDirectory={pickExistingWorkspaceDirectory}
-                  onComposerText={(composerText) =>
-                    setState((previous) => ({ ...previous, composerText }))
-                  }
-                  onComposerImages={(composerImages) =>
-                    setState((previous) => ({ ...previous, composerImages }))
-                  }
-                  onDraftStartCondition={(planDraftStartCondition) =>
-                    setState((previous) => ({
-                      ...previous,
-                      planDraftStartCondition,
-                    }))
-                  }
-                  onDraftStartAt={(planDraftStartAt) =>
-                    setState((previous) => ({ ...previous, planDraftStartAt }))
-                  }
-                  onDraftPollInterval={(planDraftPollInterval) =>
-                    setState((previous) => ({
-                      ...previous,
-                      planDraftPollInterval,
-                    }))
-                  }
-                  onSubmit={() => void submitCurrentComposer()}
-                />
-              </Match>
               <Match when={state().activeTab === "plan"}>
                 <PlanView
                   state={state()}
@@ -872,9 +834,50 @@ export function AppShell(props: { view: AppShellViewModel }) {
                 />
               </Match>
               <Match when={state().activeTab === "conversation"}>
-                <ConversationView
-                  state={state()}
-                  session={selectedSession()}
+                <Show
+                  when={selectedSession()}
+                  fallback={
+                    <ConversationEmptyView
+                      state={state()}
+                      slashCommands={slashCommands()}
+                      onWorkspace={useWorkspaceDirectory}
+                      onCreateWorkspace={createNamedWorkspace}
+                      onPickDirectory={pickExistingWorkspaceDirectory}
+                      onComposerText={(composerText) =>
+                        setState((previous) => ({ ...previous, composerText }))
+                      }
+                      onComposerImages={(composerImages) =>
+                        setState((previous) => ({
+                          ...previous,
+                          composerImages,
+                        }))
+                      }
+                      onDraftStartCondition={(planDraftStartCondition) =>
+                        setState((previous) => ({
+                          ...previous,
+                          planDraftStartCondition,
+                        }))
+                      }
+                      onDraftStartAt={(planDraftStartAt) =>
+                        setState((previous) => ({
+                          ...previous,
+                          planDraftStartAt,
+                        }))
+                      }
+                      onDraftPollInterval={(planDraftPollInterval) =>
+                        setState((previous) => ({
+                          ...previous,
+                          planDraftPollInterval,
+                        }))
+                      }
+                      onSubmit={() => void submitCurrentComposer()}
+                    />
+                  }
+                >
+                  {(session) => (
+                    <ConversationView
+                      state={state()}
+                      session={session()}
                   messages={selectedMessages()}
                   slashCommands={slashCommands()}
                   onComposerText={(composerText) =>
@@ -1009,7 +1012,9 @@ export function AppShell(props: { view: AppShellViewModel }) {
                       />
                     ) : undefined
                   }
-                />
+                    />
+                  )}
+                </Show>
               </Match>
               <Match when={state().activeTab === "settings"}>
                 <SettingsView
@@ -1198,21 +1203,6 @@ function AppLoadingPlaceholder(props: {
     <Switch
       fallback={<ConversationLoadingPlaceholder title={t("conversation")} />}
     >
-      <Match when={props.activeTab === "new"}>
-        <section class="new-session-view" aria-label={t("loading")}>
-          <div class="new-session-center">
-            <div class="loading-bar loading-title" />
-            <div class="bottom-composer loading-composer">
-              <div class="loading-bar wide" />
-              <div class="loading-bar medium" />
-              <div class="loading-composer-actions">
-                <div class="loading-bar short" />
-                <div class="loading-bar short" />
-              </div>
-            </div>
-          </div>
-        </section>
-      </Match>
       <Match when={props.activeTab === "settings"}>
         <section class="settings-view" aria-label={t("loading")}>
           <header class="page-head">

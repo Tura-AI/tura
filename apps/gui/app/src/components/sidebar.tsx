@@ -459,7 +459,7 @@ export function WorkspaceChildren(props: {
           </For>
         </Match>
         <Match
-          when={props.activeTab === "conversation" || props.activeTab === "new"}
+          when={props.activeTab === "conversation"}
         >
           <For
             each={visibleSessions()}

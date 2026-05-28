@@ -412,11 +412,12 @@ export function readBooleanSearchParam(name: string): boolean {
 export function readMainTabSearchParam(): MainTab | undefined {
   const tab = readSearchParam("tab");
   return tab === "plan" ||
-    tab === "new" ||
     tab === "conversation" ||
     tab === "files" ||
     tab === "settings"
     ? tab
+    : tab === "new"
+      ? "conversation"
     : undefined;
 }
 
@@ -436,9 +437,7 @@ export function withInitialOverrides(
     previousMainTab:
       activeTab === "settings"
         ? state.previousMainTab
-        : activeTab === "conversation"
-          ? "new"
-          : activeTab,
+        : activeTab,
     selectedSessionId: overrides.selectedSessionId ?? state.selectedSessionId,
     selectedModel: overrides.selectedModel ?? state.selectedModel,
     selectedAgent: overrides.selectedAgent ?? state.selectedAgent,

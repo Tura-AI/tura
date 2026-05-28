@@ -395,7 +395,11 @@ export function MainTabs(props: {
     label: string;
     icon?: JSX.Element;
   }> = [
-    { id: "new", label: t("session"), icon: <MessageSquare size={15} /> },
+    {
+      id: "conversation",
+      label: t("session"),
+      icon: <MessageSquare size={15} />,
+    },
     { id: "plan", label: t("plan"), icon: <LayoutList size={15} /> },
     { id: "files", label: t("fileBrowser"), icon: <FolderSearch size={15} /> },
   ];

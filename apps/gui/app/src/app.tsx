@@ -41,7 +41,6 @@ import {
   type MainTab,
   sessionDirectory,
   sessionTitle,
-  sessionUpdatedAt,
   systemThemeMode,
   type AppState,
   type SettingsSection,
@@ -50,7 +49,6 @@ import {
 import { classNames } from "./state/format";
 import { t } from "./i18n";
 import { WorkspaceTree } from "./components/sidebar";
-import { NewSessionView } from "./pages/new-session";
 import {
   MainTabs,
   SettingsRail,
@@ -75,7 +73,6 @@ import {
   localDateTimeToUtcIso,
   materializeComposerContent,
   normalizePollInterval,
-  planSessionStatus,
   sessionAttentionKey,
   sessionTaskState,
   sessionTasks,
@@ -100,7 +97,6 @@ import {
 } from "./utils/settings";
 import {
   eventBelongsToState,
-  normalizeTimeMs,
   parentPath,
   readBooleanSearchParam,
   readConfigBoolean,
@@ -123,6 +119,48 @@ import { AppShell } from "./app/app-shell";
 const PROMPT_RESPONSE_TIMEOUT_MS = 30_000;
 const PROMPT_RESPONSE_TIMEOUT_CODE = "GATEWAY_NO_RESPONSE_30S";
 const GATEWAY_CONNECT_TIMEOUT_MS = 5_000;
+const LAST_CESSION_OPENED_STORAGE_KEY = "last cession oppend";
+let lastCessionOpenedMemory: string | undefined;
+
+function readLastCessionOpened(): string | undefined {
+  let stored: string | undefined;
+  if (typeof window === "undefined") {
+    return lastCessionOpenedMemory;
+  }
+  try {
+    stored =
+      window.localStorage
+        .getItem(LAST_CESSION_OPENED_STORAGE_KEY)
+        ?.trim() || undefined;
+  } catch {
+    stored = undefined;
+  }
+  return stored ?? lastCessionOpenedMemory;
+}
+
+function writeLastCessionOpened(sessionId: string) {
+  lastCessionOpenedMemory = sessionId;
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(LAST_CESSION_OPENED_STORAGE_KEY, sessionId);
+  } catch {
+    // Memory fallback keeps tab navigation deterministic when storage is blocked.
+  }
+}
+
+function clearLastCessionOpened() {
+  lastCessionOpenedMemory = undefined;
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(LAST_CESSION_OPENED_STORAGE_KEY);
+  } catch {
+    // Nothing else to clear when storage is blocked.
+  }
+}
 
 function providerIssueIdFromError(
   error: unknown,
@@ -435,9 +473,11 @@ export function App() {
   }
 
   async function openSession(sessionId: string) {
+    writeLastCessionOpened(sessionId);
     acknowledgeSessionAttention(sessionId);
     setState((previous) => ({
       ...previous,
+      lastCessionOpenedId: sessionId,
       selectedSessionId: sessionId,
       error: undefined,
     }));
@@ -480,10 +520,16 @@ export function App() {
   }
 
   function openBlankSession() {
+    const currentSessionId = state().selectedSessionId;
+    if (currentSessionId) {
+      writeLastCessionOpened(currentSessionId);
+    }
     setState((previous) => ({
       ...previous,
-      activeTab: "new",
-      previousMainTab: "new",
+      lastCessionOpenedId:
+        previous.selectedSessionId ?? previous.lastCessionOpenedId,
+      activeTab: "conversation",
+      previousMainTab: "conversation",
       selectedSessionId: undefined,
       composerText: "",
       error: undefined,
@@ -530,8 +576,8 @@ export function App() {
             },
             ...previous.projects,
           ],
-      activeTab: "new",
-      previousMainTab: "new",
+      activeTab: "conversation",
+      previousMainTab: "conversation",
       selectedSessionId: undefined,
       sessions: samePath(previous.directory, workspaceDirectory)
         ? previous.sessions
@@ -552,8 +598,8 @@ export function App() {
             samePath(item.worktree, project.worktree) ? project : item,
           )
         : [project, ...previous.projects],
-      activeTab: "new",
-      previousMainTab: "new",
+      activeTab: "conversation",
+      previousMainTab: "conversation",
       selectedSessionId: undefined,
       sessions: samePath(previous.directory, project.worktree)
         ? previous.sessions
@@ -602,7 +648,7 @@ export function App() {
     setState((previous) => ({
       ...previous,
       activeTab: "conversation",
-      previousMainTab: "new",
+      previousMainTab: "conversation",
       error: undefined,
     }));
     let sessionId = issue.session_id ?? issue.active_task?.session_id;
@@ -716,7 +762,7 @@ export function App() {
           ],
           selectedSessionId: session.id,
           activeTab: "conversation",
-          previousMainTab: "new",
+          previousMainTab: "conversation",
         }));
       }
       optimisticSessionId = sessionId;
@@ -771,7 +817,7 @@ export function App() {
         composerText: "",
         composerImages: [],
         activeTab: "conversation",
-        previousMainTab: "new",
+        previousMainTab: "conversation",
         planNotice: undefined,
       }));
       await refreshSessions();
@@ -886,10 +932,8 @@ export function App() {
           previous.activeTab === "plan"
             ? session.id
             : previous.planPreviewSessionId,
-        activeTab:
-          previous.activeTab === "new" ? "conversation" : previous.activeTab,
-        previousMainTab:
-          previous.activeTab === "new" ? "new" : previous.previousMainTab,
+        activeTab: previous.activeTab,
+        previousMainTab: previous.previousMainTab,
         composerText: "",
         composerImages: [],
         planDraftStartCondition: "user_action",
@@ -919,10 +963,8 @@ export function App() {
         previous.activeTab === "plan"
           ? session.id
           : previous.planPreviewSessionId,
-      activeTab:
-        previous.activeTab === "new" ? "conversation" : previous.activeTab,
-      previousMainTab:
-        previous.activeTab === "new" ? "new" : previous.previousMainTab,
+      activeTab: previous.activeTab,
+      previousMainTab: previous.previousMainTab,
       composerText: "",
       composerImages: [],
       planDraftStartCondition: "user_action",
@@ -1305,32 +1347,69 @@ export function App() {
     }));
   }
 
-  function latestConversationSessionId(): string | undefined {
-    return [...state().sessions]
-      .filter((session) => planSessionStatus(session) !== "archived")
-      .sort(
-        (left, right) =>
-          normalizeTimeMs(sessionUpdatedAt(right) ?? 0) -
-          normalizeTimeMs(sessionUpdatedAt(left) ?? 0),
-      )[0]?.id;
-  }
-
   async function changeMainTab(activeTab: Exclude<MainTab, "settings">) {
-    const selectedSessionId =
-      activeTab === "new"
-        ? undefined
-        : activeTab === "conversation"
-          ? (state().selectedSessionId ?? latestConversationSessionId())
-          : state().selectedSessionId;
+    const lastCessionId =
+      state().lastCessionOpenedId ?? readLastCessionOpened();
+    const lastCession = lastCessionId
+      ? state().sessions.find((session) => session.id === lastCessionId)
+      : undefined;
+
+    if (activeTab === "conversation") {
+      if (state().activeTab === "conversation") {
+        openBlankSession();
+        return;
+      }
+      if (!lastCessionId || !lastCession) {
+        if (lastCessionId) {
+          clearLastCessionOpened();
+        }
+        setState((previous) => ({
+          ...previous,
+          lastCessionOpenedId: undefined,
+        }));
+        openBlankSession();
+        return;
+      }
+      setState((previous) => ({
+        ...previous,
+        activeTab: "conversation",
+        previousMainTab: "conversation",
+        selectedSessionId: lastCessionId,
+        error: undefined,
+      }));
+      await openSession(lastCessionId);
+      return;
+    }
+
+    if (activeTab === "plan") {
+      if (lastCessionId && !lastCession) {
+        clearLastCessionOpened();
+        setState((previous) => ({
+          ...previous,
+          lastCessionOpenedId: undefined,
+        }));
+      }
+      setState((previous) => ({
+        ...previous,
+        activeTab: "plan",
+        previousMainTab: "plan",
+        selectedSessionId: lastCession?.id ?? previous.selectedSessionId,
+        planPreviewSessionId: lastCession?.id ?? previous.planPreviewSessionId,
+        error: undefined,
+      }));
+      if (lastCession) {
+        await openSession(lastCession.id);
+      }
+      return;
+    }
+
+    const selectedSessionId = state().selectedSessionId;
     setState((previous) => ({
       ...previous,
       activeTab,
-      previousMainTab: activeTab === "conversation" ? "new" : activeTab,
+      previousMainTab: activeTab,
       selectedSessionId,
     }));
-    if (activeTab === "conversation" && selectedSessionId) {
-      await openSession(selectedSessionId);
-    }
     if (activeTab === "files" && state().files.length === 0) {
       void loadFiles("");
     }
