@@ -554,7 +554,7 @@
 
 .composer-task-menu {
   position: fixed;
-  z-index: 80;
+  z-index: 1300;
   display: grid;
   gap: 2px;
   width: 146px;
@@ -600,6 +600,38 @@
 
 .composer-task-row .task-text-pulse {
   animation: task-text-nudge 260ms ease-out both;
+}
+
+.composer-task-row .task-media-token {
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 92px;
+  height: 22px;
+  margin: 0 2px;
+  vertical-align: -5px;
+  box-shadow: none;
+}
+
+.composer-task-row .task-media-token-main {
+  display: inline-grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  height: 20px;
+  padding: 0 8px;
+  color: var(--ink);
+}
+
+.composer-task-row .task-media-token-main svg {
+  color: var(--muted);
+}
+
+.composer-task-row .task-media-token-main span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @keyframes task-text-nudge {

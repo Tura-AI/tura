@@ -161,7 +161,7 @@ export function taskStartCondition(task: TaskManagement): StartCondition {
   if (hasPollInterval(task.poll_interval)) {
     return "polling_task";
   }
-  return task.start_at ? "scheduled_task" : "user_action";
+  return task.start_at ? "scheduled_task" : "session_idle";
 }
 
 function isStartConditionStatus(

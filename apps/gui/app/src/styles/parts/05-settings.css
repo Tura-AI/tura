@@ -547,29 +547,6 @@
 }
 
 @media (max-width: 1280px) {
-  .plan-workbench {
-    display: grid;
-    grid-template-rows: minmax(0, 1fr);
-  }
-
-  .plan-main {
-    width: 100%;
-    height: 100%;
-  }
-
-  .plan-conversation-panel {
-    position: absolute;
-    inset: 0 0 0 auto;
-    z-index: 2;
-    width: min(
-      92vw,
-      var(--inspector-max-width, 680px),
-      max(var(--inspector-min-width, 320px), var(--plan-panel-width, 430px))
-    ) !important;
-    max-width: calc(100vw - 96px);
-    box-shadow: none;
-  }
-
   .page-head {
     grid-template-columns: 1fr;
   }
@@ -601,12 +578,6 @@
 
   .provider-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 900px) {
-  .plan-conversation-panel {
-    inset: 0 0 0 auto;
   }
 }
 
@@ -866,14 +837,6 @@
   .rail-collapsed .files-view,
   .rail-collapsed .settings-view {
     padding-top: var(--rail-collapsed-page-top);
-  }
-
-  .plan-conversation-panel {
-    inset: 0 0 0 auto;
-  }
-
-  .main-column:has(.plan-conversation-panel) > .rail-open-button {
-    display: none;
   }
 
   .plan-trigger-control {

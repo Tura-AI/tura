@@ -239,8 +239,8 @@
 
 .plan-workbench {
   position: relative;
-  display: flex;
-  gap: var(--space-3);
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
 }
 
@@ -248,9 +248,11 @@
   position: relative;
   z-index: 0;
   display: grid;
-  flex: 1 1 auto;
   grid-template-rows: auto minmax(0, 1fr);
   gap: var(--space-5);
+  container-type: inline-size;
+  width: 100%;
+  height: 100%;
   min-width: min(360px, 100%);
 }
 
@@ -264,17 +266,55 @@
   overflow: hidden;
 }
 
-.plan-conversation-panel {
-  min-height: 0;
-  overflow: visible;
+.plan-split-workbench .plan-main {
+  width: max(0px, calc(100% - var(--plan-panel-width, 430px) + var(--space-5)));
+}
+
+.plan-split-workbench .plan-head {
+  padding-right: var(--space-5);
+}
+
+.plan-panel-fullscreen .plan-main {
+  width: 100%;
+}
+
+.plan-panel-fullscreen .plan-conversation-panel {
+  inset: 0;
+  width: 100% !important;
+  min-width: 0;
+  max-width: none;
+}
+
+.plan-panel-fullscreen .plan-panel-resize {
+  display: none;
+}
+
+@container (max-width: 780px) {
+  .plan-head {
+    grid-template-columns: 1fr;
+  }
+
+  .plan-head .page-actions {
+    justify-content: flex-start;
+  }
+
+  .plan-head .search-box {
+    width: 100%;
+  }
 }
 
 .plan-conversation-panel {
-  position: relative;
+  position: absolute;
+  inset: 0 0 0 auto;
   z-index: 100;
-  flex: 0 0 auto;
+  width: min(
+    92vw,
+    var(--inspector-max-width, 680px),
+    max(var(--inspector-min-width, 320px), var(--plan-panel-width, 430px))
+  );
   min-width: var(--inspector-min-width, 320px);
   max-width: min(var(--inspector-max-width, 680px), calc(100vw - 96px));
+  min-height: 0;
   border-left: 1px solid var(--line);
   border-top: 0;
   border-right: 0;
@@ -345,6 +385,32 @@
 .compact-conversation .conversation-main {
   max-width: none;
   padding: var(--space-3);
+}
+
+.plan-conversation-panel .compact-conversation {
+  position: relative;
+}
+
+.plan-conversation-panel .compact-conversation.inspector-open {
+  padding-right: 0;
+}
+
+.plan-conversation-panel .tool-inspector {
+  position: absolute;
+  inset: 0;
+  z-index: 120;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  max-width: none;
+}
+
+.plan-conversation-panel .tool-inspector.mobile {
+  width: 100%;
+}
+
+.plan-conversation-panel .tool-inspector .inspector-resize {
+  display: none;
 }
 
 .icon-action.small {

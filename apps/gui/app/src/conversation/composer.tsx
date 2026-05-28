@@ -61,6 +61,7 @@ export function Composer(props: {
   let textarea: HTMLTextAreaElement | undefined;
   let editor: HTMLDivElement | undefined;
   let attachmentPressTimer: number | undefined;
+  let lastSubmitAt = 0;
   const [previewImageId, setPreviewImageId] = createSignal<string>();
   const [attachmentMenu, setAttachmentMenu] = createSignal<{
     id: string;
@@ -83,6 +84,24 @@ export function Composer(props: {
     const image = previewImage();
     return image ? Math.max(0, imagePaths().indexOf(image.dataUrl)) : 0;
   });
+  const submitBlocked = createMemo(
+    () =>
+      props.submitting ||
+      props.submitDisabled ||
+      (!props.text.trim() && props.images.length === 0),
+  );
+
+  function submitFromControl() {
+    if (submitBlocked()) {
+      return;
+    }
+    const now = Date.now();
+    if (now - lastSubmitAt < 350) {
+      return;
+    }
+    lastSubmitAt = now;
+    void props.onSubmit();
+  }
 
   createEffect(() => {
     if (!attachmentMenu()) {
@@ -408,12 +427,18 @@ export function Composer(props: {
           class="composer-send"
           type="button"
           title={t("send")}
-          disabled={
-            props.submitting ||
-            props.submitDisabled ||
-            (!props.text.trim() && props.images.length === 0)
-          }
-          onClick={props.onSubmit}
+          disabled={submitBlocked()}
+          onPointerDown={(event) => {
+            if (event.button !== 0) {
+              return;
+            }
+            event.preventDefault();
+            submitFromControl();
+          }}
+          onClick={(event) => {
+            event.preventDefault();
+            submitFromControl();
+          }}
         >
           <ArrowUp size={16} strokeWidth={1.8} />
         </button>

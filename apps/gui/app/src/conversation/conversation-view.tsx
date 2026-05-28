@@ -68,8 +68,8 @@ export function ConversationView(props: {
   composerTaskList?: JSX.Element;
   conversationNotice?: JSX.Element;
   submitDisabled?: boolean;
-  onToolOpen?: () => void;
-  onComposerOutside?: () => void;
+  onToolOpen?: (part: MessagePart, parts: MessagePart[]) => void;
+  compactInspector?: boolean;
   leftRailOpen?: boolean;
   leftRailWidth?: number;
   minMainWidth?: number;
@@ -316,24 +316,6 @@ export function ConversationView(props: {
           style={{
             "--scroll-follow-bottom": `${scrollFollowBottom()}px`,
           }}
-          onPointerDown={(event) => {
-            const target = event.target as HTMLElement;
-            if (
-              target.closest(
-                [
-                  ".bottom-composer",
-                  ".composer-task-dock",
-                  ".composer-task-menu",
-                  ".plan-session-menu",
-                  ".plan-trigger-menu",
-                  ".plan-schedule-dialog",
-                ].join(", "),
-              )
-            ) {
-              return;
-            }
-            props.onComposerOutside?.();
-          }}
         >
           <Transcript
             session={props.session}
@@ -348,8 +330,8 @@ export function ConversationView(props: {
             }}
             onScroll={handleTranscriptScroll}
             onTool={(part, parts) => {
-              if (props.compact && props.onToolOpen) {
-                props.onToolOpen();
+              if (props.compact && props.onToolOpen && !props.compactInspector) {
+                props.onToolOpen(part, parts);
                 return;
               }
               openInspectorFor(part, parts);
@@ -381,7 +363,7 @@ export function ConversationView(props: {
           />
         </div>
       </div>
-      <Show when={!props.compact}>
+      <Show when={!props.compact || props.compactInspector}>
         <ToolInspector
           parts={inspectorParts()}
           serviceStatus={props.state.serviceStatus}

@@ -227,11 +227,11 @@ export function usePlanActions(options: PlanActionsOptions) {
       planNotice: undefined,
       error: undefined,
     }));
-    await updatePlanTicketTask(session, {
-      nonce_id: nonce,
-      status: "doing",
-    });
     if (e2eFixture) {
+      await updatePlanTicketTask(session, {
+        nonce_id: nonce,
+        status: "archived",
+      });
       const responseTime = Date.now();
       setState((previous) => ({
         ...previous,
@@ -295,6 +295,10 @@ export function usePlanActions(options: PlanActionsOptions) {
           ),
         ),
       ]);
+      await updatePlanTicketTask(session, {
+        nonce_id: nonce,
+        status: "archived",
+      });
     } catch (error) {
       const timeout =
         error instanceof Error && error.message === PLAN_RUN_TIMEOUT_CODE;

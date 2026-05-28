@@ -12,6 +12,7 @@ import {
   type Setter,
 } from "solid-js";
 import { Portal } from "solid-js/web";
+import type { Session, TaskManagement } from "@tura/gateway-sdk";
 import PanelLeftOpen from "lucide-solid/icons/panel-left-open";
 import { Composer, ConversationView } from "../conversation/conversation-view";
 import { classNames } from "../state/format";
@@ -381,6 +382,56 @@ export function AppShell(props: { view: AppShellViewModel }) {
     );
   }
 
+  function taskWithComposerText(
+    task: TaskManagement,
+    textValue: string,
+  ): TaskManagement {
+    const text = textValue.trim();
+    if (!text) {
+      return task;
+    }
+    const [summaryLine = "", ...deliveryLines] = text.split(/\r?\n/u);
+    return {
+      ...task,
+      task_summary: summaryLine.trim(),
+      delivery: deliveryLines.join("\n").trim(),
+    };
+  }
+
+  async function runEditingTaskNow(session: Session, task: TaskManagement) {
+    const editing = state().editingTask;
+    const editingThisTask =
+      editing?.sessionId === session.id &&
+      editing.nonce_id === taskNonceId(task);
+    if (!editingThisTask) {
+      await runPlanTaskNow(session, task);
+      return;
+    }
+    const nextTask = taskWithComposerText(task, state().composerText);
+    if (taskDisplayText(nextTask).trim() !== taskDisplayText(task).trim()) {
+      await updatePlanTicketTask(session, {
+        nonce_id: taskNonceId(task),
+        task_summary: nextTask.task_summary,
+        delivery: nextTask.delivery,
+      });
+    }
+    await runPlanTaskNow(session, nextTask);
+    setState((previous) => ({
+      ...previous,
+      composerText: "",
+      editingTask: undefined,
+      planDraftStartCondition: "user_action",
+    }));
+  }
+
+  async function submitCurrentComposer() {
+    if (state().editingTask) {
+      await updateEditingTaskFromComposer();
+      return;
+    }
+    await submitPrompt();
+  }
+
   function openRail() {
     const preferredWidth = Math.min(
       RAIL_MAX_WIDTH,
@@ -713,11 +764,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
                       planDraftPollInterval,
                     }))
                   }
-                  onSubmit={() =>
-                    void (state().editingTask
-                      ? updateEditingTaskFromComposer()
-                      : submitPrompt())
-                  }
+                  onSubmit={() => void submitCurrentComposer()}
                 />
               </Match>
               <Match when={state().activeTab === "plan"}>
@@ -788,7 +835,9 @@ export function AppShell(props: { view: AppShellViewModel }) {
                     )
                   }
                   onDeleteTask={deletePlanTask}
-                  onRunTask={runPlanTaskNow}
+                  onRunTask={(session, task) =>
+                    void runEditingTaskNow(session, task)
+                  }
                   onCreateSessionFromTask={createSessionFromPlanTask}
                   onOpenSession={openPlanSession}
                   onComposerText={(composerText) =>
@@ -797,19 +846,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
                   onComposerImages={(composerImages) =>
                     setState((previous) => ({ ...previous, composerImages }))
                   }
-                  onSubmit={() =>
-                    void (state().editingTask
-                      ? updateEditingTaskFromComposer()
-                      : submitPrompt())
-                  }
-                  onComposerOutside={() => void updateEditingTaskFromComposer()}
-                  onOpenFullConversation={() =>
-                    setState((previous) => ({
-                      ...previous,
-                      activeTab: "conversation",
-                      previousMainTab: "new",
-                    }))
-                  }
+                  onSubmit={() => void submitCurrentComposer()}
                   onOpenProviderSettings={openProviderSettings}
                 />
               </Match>
@@ -846,12 +883,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
                   onComposerImages={(composerImages) =>
                     setState((previous) => ({ ...previous, composerImages }))
                   }
-                  onSubmit={() =>
-                    void (state().editingTask
-                      ? updateEditingTaskFromComposer()
-                      : submitPrompt())
-                  }
-                  onComposerOutside={() => void updateEditingTaskFromComposer()}
+                  onSubmit={() => void submitCurrentComposer()}
                   leftRailOpen={!railCollapsed()}
                   leftRailWidth={railFullscreen() ? 0 : railWidth()}
                   onRequestCollapseLeftRail={collapseRailForMainWidth}
@@ -881,6 +913,10 @@ export function AppShell(props: { view: AppShellViewModel }) {
                         }
                         onStartCondition={(start_condition) => {
                           const task = selectedEditingTask()!;
+                          if (start_condition === "user_action") {
+                            void runEditingTaskNow(selectedSession()!, task);
+                            return;
+                          }
                           const startAt =
                             localDateTimeToUtcIso(
                               utcIsoToLocalDateTime(task.start_at) ||
@@ -965,7 +1001,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
                           deletePlanTask(selectedSession()!, task)
                         }
                         onRun={(task) =>
-                          runPlanTaskNow(selectedSession()!, task)
+                          void runEditingTaskNow(selectedSession()!, task)
                         }
                         onCreateSession={(task) =>
                           createSessionFromPlanTask(selectedSession()!, task)

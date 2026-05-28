@@ -29,6 +29,8 @@ import Edit3 from "lucide-solid/icons/pencil";
 import FolderOpen from "lucide-solid/icons/folder-open";
 import KeyRound from "lucide-solid/icons/key-round";
 import MoreHorizontal from "lucide-solid/icons/ellipsis";
+import FileIcon from "lucide-solid/icons/file";
+import ImageIcon from "lucide-solid/icons/image";
 import Pin from "lucide-solid/icons/pin";
 import Play from "lucide-solid/icons/play";
 import Plus from "lucide-solid/icons/plus";
@@ -191,69 +193,106 @@ export function PlanComposerTaskList(props: {
   const timedTasks = createMemo(() =>
     tasks().filter((task) => isTimedStartCondition(taskStartCondition(task))),
   );
+  createEffect(() => {
+    if (!menuNonce()) {
+      return;
+    }
+    const closeMenu = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.closest(".composer-task-menu") ||
+        target?.closest(".composer-task-more")
+      ) {
+        return;
+      }
+      setMenuNonce(undefined);
+    };
+    document.addEventListener("pointerdown", closeMenu);
+    onCleanup(() => document.removeEventListener("pointerdown", closeMenu));
+  });
   return (
     <Show when={tasks().length > 0}>
       <section class="composer-task-list" aria-label={t("taskManagement")}>
         <For each={queuedTasks()}>
-          {(task, index) => (
-            <PlanTaskRow
-              pulseId={taskNonceId(task) ?? `queued:${index()}`}
-              task={task}
-              pulseToken={
-                props.pulseNonceId === taskNonceId(task)
-                  ? props.pulseToken
-                  : undefined
-              }
-              selected={Boolean(
-                props.selected_nonce_id &&
-                props.selected_nonce_id === taskNonceId(task),
-              )}
-              menuOpen={menuNonce() === taskNonceId(task)}
-              onMenu={() =>
-                setMenuNonce(
-                  menuNonce() === taskNonceId(task)
-                    ? undefined
-                    : taskNonceId(task),
-                )
-              }
-              onEdit={() => props.onEdit(task, taskDisplayText(task))}
-              onDelete={() => props.onDelete(task)}
-              onRun={() => props.onRun(task)}
-              onCreateSession={() => props.onCreateSession(task)}
-            />
-          )}
+          {(task, index) => {
+            const rowKey = createMemo(
+              () => taskNonceId(task) ?? `queued:${index()}`,
+            );
+            return (
+              <PlanTaskRow
+                pulseId={rowKey()}
+                task={task}
+                pulseToken={
+                  props.pulseNonceId === taskNonceId(task)
+                    ? props.pulseToken
+                    : undefined
+                }
+                selected={Boolean(
+                  props.selected_nonce_id &&
+                    props.selected_nonce_id === taskNonceId(task),
+                )}
+                menuOpen={menuNonce() === rowKey()}
+                onMenu={() =>
+                  setMenuNonce(menuNonce() === rowKey() ? undefined : rowKey())
+                }
+                onEdit={() => props.onEdit(task, taskDisplayText(task))}
+              onDelete={() => {
+                setMenuNonce(undefined);
+                props.onDelete(task);
+              }}
+              onRun={() => {
+                setMenuNonce(undefined);
+                props.onRun(task);
+              }}
+              onCreateSession={() => {
+                setMenuNonce(undefined);
+                props.onCreateSession(task);
+              }}
+              />
+            );
+          }}
         </For>
         <Show when={queuedTasks().length > 0 && timedTasks().length > 0}>
           <div class="composer-task-divider" aria-hidden="true" />
         </Show>
         <For each={timedTasks()}>
-          {(task, index) => (
-            <PlanTaskRow
-              pulseId={taskNonceId(task) ?? `timed:${index()}`}
-              task={task}
-              pulseToken={
-                props.pulseNonceId === taskNonceId(task)
-                  ? props.pulseToken
-                  : undefined
-              }
-              selected={Boolean(
-                props.selected_nonce_id &&
-                props.selected_nonce_id === taskNonceId(task),
-              )}
-              menuOpen={menuNonce() === taskNonceId(task)}
-              onMenu={() =>
-                setMenuNonce(
-                  menuNonce() === taskNonceId(task)
-                    ? undefined
-                    : taskNonceId(task),
-                )
-              }
-              onEdit={() => props.onEdit(task, taskDisplayText(task))}
-              onDelete={() => props.onDelete(task)}
-              onRun={() => props.onRun(task)}
-              onCreateSession={() => props.onCreateSession(task)}
-            />
-          )}
+          {(task, index) => {
+            const rowKey = createMemo(
+              () => taskNonceId(task) ?? `timed:${index()}`,
+            );
+            return (
+              <PlanTaskRow
+                pulseId={rowKey()}
+                task={task}
+                pulseToken={
+                  props.pulseNonceId === taskNonceId(task)
+                    ? props.pulseToken
+                    : undefined
+                }
+                selected={Boolean(
+                  props.selected_nonce_id &&
+                    props.selected_nonce_id === taskNonceId(task),
+                )}
+                menuOpen={menuNonce() === rowKey()}
+                onMenu={() =>
+                  setMenuNonce(menuNonce() === rowKey() ? undefined : rowKey())
+                }
+                onEdit={() => props.onEdit(task, taskDisplayText(task))}
+                onDelete={() => {
+                  setMenuNonce(undefined);
+                  props.onDelete(task);
+                }}
+                onRun={() => {
+                  setMenuNonce(undefined);
+                  props.onRun(task);
+                }}
+                onCreateSession={() => {
+                  setMenuNonce(undefined);
+                  props.onCreateSession(task);
+                }}
+              />
+            );
+          }}
         </For>
       </section>
     </Show>
@@ -306,6 +345,75 @@ export function shouldShowPlanFeedbackPrompt(
 }
 
 const taskRowPulseSignatureCache = new Map<string, string>();
+const TASK_MEDIA_TOKEN_PATTERN =
+  /\[\[(image|file):([a-zA-Z0-9_-]+)\]\]|\[(image|file):([a-zA-Z0-9_-]+)\]/gu;
+
+type TaskTextSegment =
+  | { type: "text"; value: string }
+  | { type: "image" | "file"; value: string };
+
+function taskTextSegments(text: string): TaskTextSegment[] {
+  const segments: TaskTextSegment[] = [];
+  let cursor = 0;
+  for (const match of text.matchAll(TASK_MEDIA_TOKEN_PATTERN)) {
+    if (match.index > cursor) {
+      segments.push({ type: "text", value: text.slice(cursor, match.index) });
+    }
+    segments.push({
+      type: (match[1] ?? match[3]) === "file" ? "file" : "image",
+      value: match[2] ?? match[4] ?? "",
+    });
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < text.length) {
+    segments.push({ type: "text", value: text.slice(cursor) });
+  }
+  return segments.length > 0 ? segments : [{ type: "text", value: text }];
+}
+
+function TaskRowText(props: { text: string }) {
+  const segments = createMemo(() => taskTextSegments(props.text));
+  return (
+    <>
+      <For each={segments()}>
+        {(segment) => (
+          <Show
+            when={segment.type !== "text"}
+            fallback={<>{segment.value}</>}
+          >
+            <TaskMediaToken
+              type={segment.type as "image" | "file"}
+              id={segment.value}
+            />
+          </Show>
+        )}
+      </For>
+    </>
+  );
+}
+
+function TaskMediaToken(props: { type: "image" | "file"; id: string }) {
+  const Icon = props.type === "file" ? FileIcon : ImageIcon;
+  const label = createMemo(() =>
+    props.type === "file" ? t("attachmentFile") : t("attachmentImage"),
+  );
+  return (
+    <span
+      class={classNames(
+        "composer-attachment-token",
+        "task-media-token",
+        props.type === "image" && "composer-image-token",
+        props.type === "file" && "composer-file-token",
+      )}
+      title={`${label()} ${props.id}`}
+    >
+      <span class="task-media-token-main">
+        <Icon size={13} strokeWidth={1.7} />
+        <span>{label()}</span>
+      </span>
+    </span>
+  );
+}
 
 export function PlanTaskRow(props: {
   pulseId: string;
@@ -393,7 +501,7 @@ export function PlanTaskRow(props: {
         onClick={props.onEdit}
       >
         <span class={classNames(textPulse() && "task-text-pulse")}>
-          {summaryText()}
+          <TaskRowText text={summaryText()} />
         </span>
         <small
           class={classNames(

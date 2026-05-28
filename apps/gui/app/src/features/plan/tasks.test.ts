@@ -22,6 +22,15 @@ describe("plan task contract", () => {
     expect(taskStartCondition(task)).toBe("session_idle");
   });
 
+  test("treats untimed task-list entries as queued by default", () => {
+    const task: TaskManagement = {
+      status: "todo",
+      task_summary: "Queued task",
+    };
+
+    expect(taskStartCondition(task)).toBe("session_idle");
+  });
+
   test("emits explicit start_condition for queued and timed tasks", () => {
     expect(timedTaskPatch("session_idle", undefined, undefined)).toEqual({
       start_condition: "session_idle",

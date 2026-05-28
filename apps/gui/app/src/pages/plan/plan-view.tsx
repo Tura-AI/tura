@@ -123,7 +123,7 @@ import {
 const PLAN_PANEL_MIN_WIDTH = 320;
 const PLAN_PANEL_MAX_WIDTH = 680;
 const PLAN_PANEL_COLLAPSE_WIDTH = 260;
-const PLAN_MAIN_MIN_WIDTH = 260;
+const PLAN_MAIN_MIN_WIDTH = 430;
 
 export function PlanView(props: {
   state: AppState;
@@ -162,8 +162,6 @@ export function PlanView(props: {
   onComposerText: (text: string) => void;
   onComposerImages: (images: ComposerImage[]) => void;
   onSubmit: () => void;
-  onComposerOutside: () => void;
-  onOpenFullConversation: () => void;
   onOpenProviderSettings?: (providerId?: string) => void;
   onClosePanel: () => void;
 }) {
@@ -222,7 +220,42 @@ export function PlanView(props: {
     const title = props.state.composerText.split(/\r?\n/u)[0]?.trim();
     return title || t("newTask");
   });
+  function taskWithComposerText(task: TaskManagement): TaskManagement {
+    const text = props.state.composerText.trim();
+    if (!text) {
+      return task;
+    }
+    const [summaryLine = "", ...deliveryLines] = text.split(/\r?\n/u);
+    return {
+      ...task,
+      task_summary: summaryLine.trim(),
+      delivery: deliveryLines.join("\n").trim(),
+    };
+  }
   const [panelWidth, setPanelWidth] = createSignal(430);
+  const [workbenchWidth, setWorkbenchWidth] = createSignal(0);
+  let workbenchEl: HTMLElement | undefined;
+  let workbenchResizeObserver: ResizeObserver | undefined;
+  const planPanelFullscreen = createMemo(
+    () => panelOpen() && workbenchWidth() - panelWidth() < PLAN_MAIN_MIN_WIDTH,
+  );
+
+  onMount(() => {
+    const updateWorkbenchWidth = () =>
+      setWorkbenchWidth(
+        workbenchEl?.getBoundingClientRect().width ?? window.innerWidth,
+      );
+    updateWorkbenchWidth();
+    workbenchResizeObserver = new ResizeObserver(updateWorkbenchWidth);
+    if (workbenchEl) {
+      workbenchResizeObserver.observe(workbenchEl);
+    }
+    window.addEventListener("resize", updateWorkbenchWidth);
+    onCleanup(() => {
+      window.removeEventListener("resize", updateWorkbenchWidth);
+      workbenchResizeObserver?.disconnect();
+    });
+  });
 
   function beginPanelResize(event: PointerEvent) {
     event.preventDefault();
@@ -296,12 +329,12 @@ export function PlanView(props: {
     }
   }
   function submitComposer() {
-    if (props.state.planDraftLane) {
-      props.onCreateTicket();
+    if (props.state.editingTask) {
+      props.onSubmit();
       return;
     }
-    if (props.state.editingTask) {
-      props.onComposerOutside();
+    if (props.state.planDraftLane) {
+      props.onCreateTicket();
       return;
     }
     if (props.previewSession && props.state.composerText.trim()) {
@@ -315,7 +348,12 @@ export function PlanView(props: {
       class={classNames(
         "product-workbench plan-workbench",
         panelOpen() && "plan-split-workbench",
+        planPanelFullscreen() && "plan-panel-fullscreen",
       )}
+      ref={workbenchEl}
+      style={{
+        "--plan-panel-width": `${panelWidth()}px`,
+      }}
     >
       <div class="plan-main">
         <header class="page-head plan-head">
@@ -398,7 +436,6 @@ export function PlanView(props: {
           class="plan-conversation-panel"
           style={{
             width: `${panelWidth()}px`,
-            "--plan-panel-width": `${panelWidth()}px`,
           }}
         >
           <div
@@ -434,7 +471,6 @@ export function PlanView(props: {
             onComposerText={props.onComposerText}
             onComposerImages={props.onComposerImages}
             onSubmit={submitComposer}
-            onComposerOutside={props.onComposerOutside}
             submitDisabled={
               Boolean(props.state.planDraftLane) &&
               props.state.composerText.trim().length === 0
@@ -472,6 +508,13 @@ export function PlanView(props: {
                   pollInterval={taskPollInterval(composerTask()!)}
                   onStartCondition={(startCondition) => {
                     const currentTask = composerTask()!;
+                    if (startCondition === "user_action") {
+                      props.onRunTask(
+                        props.previewSession!,
+                        taskWithComposerText(currentTask),
+                      );
+                      return;
+                    }
                     const startAt = localDateTimeToUtcIso(
                       utcIsoToLocalDateTime(taskStartAt(currentTask)),
                     );
@@ -552,7 +595,7 @@ export function PlanView(props: {
               ) : undefined
             }
             compact
-            onToolOpen={props.onOpenFullConversation}
+            compactInspector
           />
         </aside>
       </Show>
