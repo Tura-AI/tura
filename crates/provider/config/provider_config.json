@@ -1,0 +1,5093 @@
+{
+  "model_catalog": {
+    "providers": {
+      "airtable": {
+        "api_docs": "https://airtable.com/developers/web/api/introduction",
+        "api_style": "rest",
+        "auth_methods": [
+          "pat",
+          "oauth"
+        ],
+        "base_url": "https://api.airtable.com/v0",
+        "capabilities": [
+          "database.records",
+          "database.schema"
+        ],
+        "display_name": "Airtable Web API",
+        "domains": [
+          "infrastructure",
+          "productivity"
+        ],
+        "env": [
+          "AIRTABLE_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "airtable",
+        "status": "configured",
+        "token_env": "AIRTABLE_API_KEY"
+      },
+      "alibaba_cloud": {
+        "api_docs": "https://api.aliyun.com/",
+        "api_style": "aliyun_openapi",
+        "auth_methods": [
+          "access_key",
+          "api_key"
+        ],
+        "base_url": "https://openapi.aliyun.com",
+        "capabilities": [
+          "cloud.compute",
+          "storage.object",
+          "llm.dashscope",
+          "sms.send"
+        ],
+        "display_name": "Alibaba Cloud OpenAPI",
+        "domains": [
+          "infrastructure",
+          "llm",
+          "communication"
+        ],
+        "env": [
+          "ALIBABA_CLOUD_ACCESS_KEY_ID",
+          "ALIBABA_CLOUD_ACCESS_KEY_SECRET",
+          "ALIBABA_CLOUD_REGION",
+          "DASHSCOPE_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "alibaba_cloud",
+        "status": "configured",
+        "token_env": null
+      },
+      "alipay_open": {
+        "api_docs": "https://opendocs.alipay.com/open/",
+        "api_style": "alipay_openapi",
+        "auth_methods": [
+          "app_private_key"
+        ],
+        "base_url": "https://openapi.alipay.com/gateway.do",
+        "capabilities": [
+          "payment.charge",
+          "payment.refund",
+          "oauth.login"
+        ],
+        "display_name": "Alipay Open Platform",
+        "domains": [
+          "infrastructure"
+        ],
+        "env": [
+          "ALIPAY_APP_ID",
+          "ALIPAY_PRIVATE_KEY",
+          "ALIPAY_PUBLIC_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "alipay_open",
+        "status": "configured",
+        "token_env": null
+      },
+      "aliyun_oss": {
+        "api_docs": "https://www.alibabacloud.com/help/en/oss/developer-reference/api-overview",
+        "api_style": "aliyun_oss",
+        "auth_methods": [
+          "access_key",
+          "sts"
+        ],
+        "base_url": "https://oss-{region}.aliyuncs.com",
+        "capabilities": [
+          "storage.object"
+        ],
+        "display_name": "Alibaba Cloud Object Storage Service (OSS)",
+        "domains": [
+          "infrastructure"
+        ],
+        "env": [
+          "ALIBABA_CLOUD_ACCESS_KEY_ID",
+          "ALIBABA_CLOUD_ACCESS_KEY_SECRET",
+          "ALIYUN_OSS_BUCKET",
+          "ALIYUN_OSS_REGION"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "aliyun_oss",
+        "status": "configured",
+        "token_env": null
+      },
+      "amap": {
+        "api_docs": "https://lbs.amap.com/api/webservice/summary",
+        "api_style": "rest",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://restapi.amap.com/v3",
+        "capabilities": [
+          "maps.geocoding",
+          "maps.place_search",
+          "maps.route",
+          "maps.weather"
+        ],
+        "display_name": "AMap Open Platform Web Service API",
+        "domains": [
+          "search"
+        ],
+        "env": [
+          "AMAP_API_KEY",
+          "GAODE_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "amap",
+        "status": "configured",
+        "token_env": "AMAP_API_KEY"
+      },
+      "anthropic": {
+        "api_docs": null,
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.anthropic.com/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "Claude",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "ANTHROPIC_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [
+            {
+              "attachment": true,
+              "family": "claude",
+              "id": "claude-opus-4-1-20250805",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 32000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "claude-opus-4-1-20250805",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-08-05",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "instant": [],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "claude",
+              "id": "claude-sonnet-4-20250514",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 64000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "claude-sonnet-4-20250514",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-05-14",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "anthropic",
+        "status": "configured",
+        "token_env": "ANTHROPIC_API_KEY"
+      },
+      "antigravity": {
+        "api_docs": null,
+        "api_style": "antigravity",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://antigravity.google.com/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "Antigravity",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "ANTIGRAVITY_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [
+            {
+              "attachment": true,
+              "family": "gemini",
+              "id": "gemini-2.5-flash",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gemini-2.5-flash",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "flagship_thinking": [
+            {
+              "attachment": true,
+              "family": "gemini",
+              "id": "gemini-2.5-pro",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gemini-2.5-pro",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "instant": [
+            {
+              "attachment": true,
+              "family": "gemini",
+              "id": "gemini-2.5-flash-lite",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gemini-2.5-flash-lite",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "gemini",
+              "id": "gemini-2.5-flash",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gemini-2.5-flash",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "antigravity",
+        "status": "configured",
+        "token_env": "ANTIGRAVITY_API_KEY"
+      },
+      "atlassian": {
+        "api_docs": "https://developer.atlassian.com/cloud/",
+        "api_style": "rest",
+        "auth_methods": [
+          "api_token",
+          "oauth"
+        ],
+        "base_url": "https://api.atlassian.com",
+        "capabilities": [
+          "jira.issues",
+          "confluence.pages",
+          "identity.oauth"
+        ],
+        "display_name": "Atlassian Cloud",
+        "domains": [
+          "productivity"
+        ],
+        "env": [
+          "ATLASSIAN_DOMAIN",
+          "ATLASSIAN_EMAIL",
+          "ATLASSIAN_API_TOKEN",
+          "JIRA_API_TOKEN",
+          "CONFLUENCE_API_TOKEN"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "atlassian",
+        "status": "configured",
+        "token_env": "ATLASSIAN_API_TOKEN"
+      },
+      "aws": {
+        "api_docs": "https://docs.aws.amazon.com/",
+        "api_style": "aws",
+        "auth_methods": [
+          "aws_credentials"
+        ],
+        "base_url": "https://sts.amazonaws.com",
+        "capabilities": [
+          "cloud.compute",
+          "storage.object",
+          "database.nosql",
+          "llm.bedrock",
+          "speech",
+          "queue"
+        ],
+        "display_name": "AWS",
+        "domains": [
+          "infrastructure",
+          "llm"
+        ],
+        "env": [
+          "AWS_ACCESS_KEY_ID",
+          "AWS_SECRET_ACCESS_KEY",
+          "AWS_SESSION_TOKEN",
+          "AWS_REGION",
+          "AWS_PROFILE"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "aws",
+        "status": "configured",
+        "token_env": null
+      },
+      "azure": {
+        "api_docs": null,
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://{resource}.openai.azure.com/openai/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "Azure AI Foundry",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "AZURE_OPENAI_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [
+            {
+              "attachment": false,
+              "family": "azure",
+              "id": "text-embedding-3-large",
+              "limit": {
+                "context": 8191,
+                "input": 8191,
+                "output": 0
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "embedding"
+                ]
+              },
+              "name": "text-embedding-3-large",
+              "options": {},
+              "reasoning": false,
+              "release_date": "2024-01-25",
+              "status": null,
+              "temperature": false,
+              "tool_call": false
+            }
+          ],
+          "embedding_low": [
+            {
+              "attachment": false,
+              "family": "azure",
+              "id": "text-embedding-3-small",
+              "limit": {
+                "context": 8191,
+                "input": 8191,
+                "output": 0
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "embedding"
+                ]
+              },
+              "name": "text-embedding-3-small",
+              "options": {},
+              "reasoning": false,
+              "release_date": "2024-01-25",
+              "status": null,
+              "temperature": false,
+              "tool_call": false
+            }
+          ],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "azure",
+        "status": "configured",
+        "token_env": "AZURE_OPENAI_API_KEY"
+      },
+      "azure_cloud": {
+        "api_docs": "https://learn.microsoft.com/azure/api/",
+        "api_style": "azure",
+        "auth_methods": [
+          "oauth",
+          "service_principal"
+        ],
+        "base_url": "https://management.azure.com",
+        "capabilities": [
+          "cloud.compute",
+          "storage.object",
+          "speech.tts",
+          "speech.stt",
+          "llm.chat"
+        ],
+        "display_name": "Microsoft Azure",
+        "domains": [
+          "infrastructure",
+          "communication",
+          "llm"
+        ],
+        "env": [
+          "AZURE_CLIENT_ID",
+          "AZURE_CLIENT_SECRET",
+          "AZURE_TENANT_ID",
+          "AZURE_SUBSCRIPTION_ID"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "azure_cloud",
+        "status": "configured",
+        "token_env": null
+      },
+      "azure_speech": {
+        "api_docs": "https://learn.microsoft.com/azure/ai-services/speech-service/rest-speech-to-text",
+        "api_style": "azure_cognitive_services",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://{region}.api.cognitive.microsoft.com",
+        "capabilities": [
+          "speech.tts",
+          "speech.stt",
+          "speech.translation"
+        ],
+        "display_name": "Azure AI Speech",
+        "domains": [
+          "communication",
+          "infrastructure"
+        ],
+        "env": [
+          "AZURE_SPEECH_KEY",
+          "AZURE_SPEECH_REGION"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "azure_speech",
+        "status": "configured",
+        "token_env": "AZURE_SPEECH_KEY"
+      },
+      "azure_storage": {
+        "api_docs": "https://learn.microsoft.com/rest/api/storageservices/",
+        "api_style": "azure_storage",
+        "auth_methods": [
+          "connection_string",
+          "shared_key",
+          "sas",
+          "oauth"
+        ],
+        "base_url": "https://{account}.blob.core.windows.net",
+        "capabilities": [
+          "storage.object"
+        ],
+        "display_name": "Azure Blob Storage",
+        "domains": [
+          "infrastructure"
+        ],
+        "env": [
+          "AZURE_STORAGE_ACCOUNT",
+          "AZURE_STORAGE_KEY",
+          "AZURE_STORAGE_CONNECTION_STRING"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "azure_storage",
+        "status": "configured",
+        "token_env": null
+      },
+      "baidu_maps": {
+        "api_docs": "https://lbsyun.baidu.com/index.php?title=webapi",
+        "api_style": "rest",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.map.baidu.com",
+        "capabilities": [
+          "maps.geocoding",
+          "maps.place_search",
+          "maps.route"
+        ],
+        "display_name": "Baidu Maps Open Platform API",
+        "domains": [
+          "search"
+        ],
+        "env": [
+          "BAIDU_MAPS_API_KEY",
+          "BAIDU_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "baidu_maps",
+        "status": "configured",
+        "token_env": "BAIDU_MAPS_API_KEY"
+      },
+      "baidu_qianfan": {
+        "api_docs": "https://intl.cloud.baidu.com/doc/qianfan/index.html",
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.baiduqianfan.ai/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.vision"
+        ],
+        "display_name": "Baidu AI Cloud Qianfan ModelBuilder API",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "BAIDU_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "baidu_qianfan",
+        "status": "configured",
+        "token_env": "BAIDU_API_KEY"
+      },
+      "bedrock": {
+        "api_docs": null,
+        "api_style": "bedrock",
+        "auth_methods": [],
+        "base_url": "us-east-1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "AWS Bedrock",
+        "domains": [
+          "llm"
+        ],
+        "env": [],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [
+            {
+              "attachment": true,
+              "family": "bedrock",
+              "id": "meta.llama4-scout-17b-instruct-v1:0",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "meta.llama4-scout-17b-instruct-v1:0",
+              "options": {},
+              "reasoning": false,
+              "release_date": "2025-04-05",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "flagship_thinking": [
+            {
+              "attachment": true,
+              "family": "bedrock",
+              "id": "anthropic.claude-opus-4-1-20250805-v1:0",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 32000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "anthropic.claude-opus-4-1-20250805-v1:0",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-08-05",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "instant": [],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "bedrock",
+              "id": "anthropic.claude-sonnet-4-20250514-v1:0",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 64000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "anthropic.claude-sonnet-4-20250514-v1:0",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-05-14",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "bedrock",
+              "id": "deepseek.v4-pro-v1:0",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "deepseek.v4-pro-v1:0",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "bedrock",
+              "id": "mistral.mistral-large-3-v1:0",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "mistral.mistral-large-3-v1:0",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "bedrock",
+              "id": "meta.llama4-maverick-17b-instruct-v1:0",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "meta.llama4-maverick-17b-instruct-v1:0",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-04-05",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "bedrock",
+        "status": "configured",
+        "token_env": null
+      },
+      "bitbucket": {
+        "api_docs": "https://developer.atlassian.com/cloud/bitbucket/rest/",
+        "api_style": "rest",
+        "auth_methods": [
+          "app_password",
+          "oauth"
+        ],
+        "base_url": "https://api.bitbucket.org/2.0",
+        "capabilities": [
+          "vcs.repository",
+          "pull_requests",
+          "issues"
+        ],
+        "display_name": "Bitbucket Cloud",
+        "domains": [
+          "productivity"
+        ],
+        "env": [
+          "BITBUCKET_USERNAME",
+          "BITBUCKET_APP_PASSWORD"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "bitbucket",
+        "status": "configured",
+        "token_env": "BITBUCKET_APP_PASSWORD"
+      },
+      "brave_search": {
+        "api_docs": "https://api-dashboard.search.brave.com/app/documentation",
+        "api_style": "rest",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.search.brave.com/res/v1",
+        "capabilities": [
+          "search.web",
+          "search.news",
+          "search.images"
+        ],
+        "display_name": "Brave Search API",
+        "domains": [
+          "search"
+        ],
+        "env": [
+          "BRAVE_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "brave_search",
+        "status": "configured",
+        "token_env": "BRAVE_API_KEY"
+      },
+      "claude-code": {
+        "api_docs": null,
+        "api_style": "claude_code",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.anthropic.com/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "Claude Code",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "CLAUDE_CODE_OAUTH_TOKEN"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [
+            {
+              "attachment": true,
+              "family": "claude",
+              "id": "claude-opus-4-1-20250805",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 32000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "claude-opus-4-1-20250805",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-08-05",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "instant": [],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "claude",
+              "id": "claude-sonnet-4-20250514",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 64000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "claude-sonnet-4-20250514",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-05-14",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "anthropic",
+        "status": "configured",
+        "token_env": "CLAUDE_CODE_OAUTH_TOKEN"
+      },
+      "codex": {
+        "api_docs": null,
+        "api_style": "codex",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://chatgpt.com/backend-api/codex/responses",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "Codex Subscription",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "OPENAI_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [
+            {
+              "attachment": false,
+              "family": "gpt",
+              "id": "text-embedding-3-large",
+              "limit": {
+                "context": 8191,
+                "input": 8191,
+                "output": 0
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "embedding"
+                ]
+              },
+              "name": "text-embedding-3-large",
+              "options": {},
+              "reasoning": false,
+              "release_date": "2024-01-25",
+              "status": null,
+              "temperature": false,
+              "tool_call": false
+            }
+          ],
+          "embedding_low": [
+            {
+              "attachment": false,
+              "family": "gpt",
+              "id": "text-embedding-3-small",
+              "limit": {
+                "context": 8191,
+                "input": 8191,
+                "output": 0
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "embedding"
+                ]
+              },
+              "name": "text-embedding-3-small",
+              "options": {},
+              "reasoning": false,
+              "release_date": "2024-01-25",
+              "status": null,
+              "temperature": false,
+              "tool_call": false
+            }
+          ],
+          "fast": [
+            {
+              "attachment": true,
+              "family": "gpt",
+              "id": "gpt-5.1-codex-mini",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5.1-codex-mini",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "flagship_thinking": [
+            {
+              "attachment": true,
+              "family": "gpt",
+              "id": "gpt-5.1-codex",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5.1-codex",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "instant": [
+            {
+              "attachment": true,
+              "family": "gpt",
+              "id": "gpt-5.1-codex-mini",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5.1-codex-mini",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "gpt",
+              "id": "gpt-5.1-codex",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5.1-codex",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "codex",
+        "status": "configured",
+        "token_env": "OPENAI_API_KEY"
+      },
+      "cohere": {
+        "api_docs": "https://docs.cohere.com/reference/about",
+        "api_style": "rest",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.cohere.com/v2",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "rerank"
+        ],
+        "display_name": "Cohere API",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "COHERE_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "cohere",
+        "status": "configured",
+        "token_env": "COHERE_API_KEY"
+      },
+      "deepseek": {
+        "api_docs": null,
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.deepseek.com",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "DeepSeek",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "DEEPSEEK_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [
+            {
+              "attachment": true,
+              "family": "deepseek",
+              "id": "deepseek-v4-flash",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 384000
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "deepseek-v4-flash",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-04-24",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "deepseek",
+              "id": "deepseek-v4-pro",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 384000
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "deepseek-v4-pro",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-04-24",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "deepseek",
+        "status": "configured",
+        "token_env": "DEEPSEEK_API_KEY"
+      },
+      "dingtalk": {
+        "api_docs": "https://open.dingtalk.com/",
+        "api_style": "rest",
+        "auth_methods": [
+          "app_key_secret",
+          "webhook"
+        ],
+        "base_url": "https://api.dingtalk.com",
+        "capabilities": [
+          "messaging.bot",
+          "workflow.approval",
+          "calendar.events",
+          "docs"
+        ],
+        "display_name": "DingTalk Open Platform",
+        "domains": [
+          "productivity",
+          "communication"
+        ],
+        "env": [
+          "DINGTALK_APP_KEY",
+          "DINGTALK_APP_SECRET",
+          "DINGTALK_ACCESS_TOKEN",
+          "DINGTALK_ROBOT_WEBHOOK",
+          "DINGTALK_ROBOT_SECRET"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "dingtalk",
+        "status": "configured",
+        "token_env": null
+      },
+      "discord": {
+        "api_docs": "https://discord.com/developers/docs/reference",
+        "api_style": "rest",
+        "auth_methods": [
+          "bot_token",
+          "oauth"
+        ],
+        "base_url": "https://discord.com/api/v10",
+        "capabilities": [
+          "messaging.bot",
+          "webhook",
+          "guilds"
+        ],
+        "display_name": "Discord API",
+        "domains": [
+          "communication"
+        ],
+        "env": [
+          "DISCORD_BOT_TOKEN"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "discord",
+        "status": "configured",
+        "token_env": "DISCORD_BOT_TOKEN"
+      },
+      "duckduckgo_search": {
+        "api_docs": "https://duckduckgo.com/duckduckgo-help-pages/results/syntax/",
+        "api_style": "duckduckgo_html",
+        "auth_methods": [
+          "none"
+        ],
+        "base_url": "https://html.duckduckgo.com/html/",
+        "capabilities": [
+          "search.web",
+          "search.images"
+        ],
+        "display_name": "DuckDuckGo HTML Search",
+        "domains": [
+          "search"
+        ],
+        "env": [
+          "TURA_DUCKDUCKGO_SEARCH_ENDPOINT",
+          "TURA_DUCKDUCKGO_HTML_ENDPOINT",
+          "TURA_DUCKDUCKGO_IMAGE_PAGE_ENDPOINT",
+          "TURA_DUCKDUCKGO_IMAGE_SEARCH_ENDPOINT",
+          "TURA_DUCKDUCKGO_IMAGES_ENDPOINT",
+          "TURA_DUCKDUCKGO_IMAGE_BACKEND",
+          "TURA_DUCKDUCKGO_SEARCH_TIMEOUT"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "duckduckgo_search",
+        "status": "fallback",
+        "token_env": null
+      },
+      "exa_search": {
+        "api_docs": "https://exa.ai/docs/reference/exa-mcp",
+        "api_style": "mcp",
+        "auth_methods": [
+          "mcp"
+        ],
+        "base_url": "https://mcp.exa.ai/mcp",
+        "capabilities": [
+          "search.web",
+          "search.context",
+          "search.crawl"
+        ],
+        "display_name": "Exa Web Search MCP",
+        "domains": [
+          "search"
+        ],
+        "env": [
+          "TURA_EXA_MCP_ENDPOINT",
+          "TURA_EXA_SEARCH_DISABLED",
+          "TURA_EXA_CONTEXT_MAX_CHARACTERS",
+          "TURA_EXA_SEARCH_TYPE",
+          "TURA_EXA_LIVECRAWL"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "exa_search",
+        "status": "configured",
+        "token_env": null
+      },
+      "feishu": {
+        "api_docs": "https://open.feishu.cn/document/home/index",
+        "api_style": "rest",
+        "auth_methods": [
+          "app_id_secret",
+          "oauth"
+        ],
+        "base_url": "https://open.feishu.cn/open-apis",
+        "capabilities": [
+          "messaging.bot",
+          "docs.drive",
+          "calendar.events",
+          "base.records"
+        ],
+        "display_name": "Feishu Open Platform",
+        "domains": [
+          "productivity",
+          "communication"
+        ],
+        "env": [
+          "FEISHU_APP_ID",
+          "FEISHU_APP_SECRET",
+          "FEISHU_TENANT_ACCESS_TOKEN"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "feishu",
+        "status": "configured",
+        "token_env": null
+      },
+      "fireworks": {
+        "api_docs": "https://docs.fireworks.ai/api-reference/introduction",
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.fireworks.ai/inference/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding"
+        ],
+        "display_name": "Fireworks AI API",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "FIREWORKS_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "fireworks",
+        "status": "configured",
+        "token_env": "FIREWORKS_API_KEY"
+      },
+      "gcp": {
+        "api_docs": "https://cloud.google.com/apis/docs/overview",
+        "api_style": "google_cloud",
+        "auth_methods": [
+          "service_account",
+          "oauth"
+        ],
+        "base_url": "https://cloud.google.com/apis",
+        "capabilities": [
+          "cloud.compute",
+          "storage.object",
+          "database.sql",
+          "search.web",
+          "maps.places",
+          "calendar.events"
+        ],
+        "display_name": "Google Cloud",
+        "domains": [
+          "infrastructure",
+          "search",
+          "productivity"
+        ],
+        "env": [
+          "GOOGLE_APPLICATION_CREDENTIALS",
+          "GOOGLE_CLOUD_PROJECT",
+          "GCP_SERVICE_ACCOUNT_JSON",
+          "GCP_REGION"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "gcp",
+        "status": "configured",
+        "token_env": null
+      },
+      "github": {
+        "api_docs": "https://docs.github.com/rest",
+        "api_style": "rest",
+        "auth_methods": [
+          "pat",
+          "oauth",
+          "github_app"
+        ],
+        "base_url": "https://api.github.com",
+        "capabilities": [
+          "vcs.repository",
+          "issues",
+          "pull_requests",
+          "actions"
+        ],
+        "display_name": "GitHub",
+        "domains": [
+          "productivity"
+        ],
+        "env": [
+          "GITHUB_TOKEN"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "github",
+        "status": "configured",
+        "token_env": "GITHUB_TOKEN"
+      },
+      "gitlab": {
+        "api_docs": "https://docs.gitlab.com/api/",
+        "api_style": "rest",
+        "auth_methods": [
+          "pat",
+          "oauth"
+        ],
+        "base_url": "https://gitlab.com/api/v4",
+        "capabilities": [
+          "vcs.repository",
+          "issues",
+          "merge_requests",
+          "ci"
+        ],
+        "display_name": "GitLab",
+        "domains": [
+          "productivity"
+        ],
+        "env": [
+          "GITLAB_TOKEN"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "gitlab",
+        "status": "configured",
+        "token_env": "GITLAB_TOKEN"
+      },
+      "google": {
+        "api_docs": null,
+        "api_style": "google",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://generativelanguage.googleapis.com/v1beta",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "Gemini",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "GOOGLE_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [
+            {
+              "attachment": false,
+              "family": "models",
+              "id": "models/gemini-embedding-001",
+              "limit": {
+                "context": 8191,
+                "input": 8191,
+                "output": 0
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "embedding"
+                ]
+              },
+              "name": "models/gemini-embedding-001",
+              "options": {},
+              "reasoning": false,
+              "release_date": "2024-01-25",
+              "status": null,
+              "temperature": false,
+              "tool_call": false
+            }
+          ],
+          "embedding_low": [],
+          "fast": [
+            {
+              "attachment": true,
+              "family": "gemini",
+              "id": "gemini-2.5-flash",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gemini-2.5-flash",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "flagship_thinking": [
+            {
+              "attachment": true,
+              "family": "gemini",
+              "id": "gemini-2.5-pro",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gemini-2.5-pro",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "instant": [
+            {
+              "attachment": true,
+              "family": "gemini",
+              "id": "gemini-2.5-flash-lite",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gemini-2.5-flash-lite",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "gemini",
+              "id": "gemini-2.5-flash",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gemini-2.5-flash",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "google",
+        "status": "configured",
+        "token_env": "GOOGLE_API_KEY"
+      },
+      "google_calendar": {
+        "api_docs": "https://developers.google.com/calendar/api/v3/reference",
+        "api_style": "rest",
+        "auth_methods": [
+          "oauth",
+          "service_account"
+        ],
+        "base_url": "https://www.googleapis.com/calendar/v3",
+        "capabilities": [
+          "calendar.events"
+        ],
+        "display_name": "Google Calendar API",
+        "domains": [
+          "productivity"
+        ],
+        "env": [
+          "GOOGLE_CALENDAR_ID",
+          "GOOGLE_OAUTH_CLIENT_ID",
+          "GOOGLE_OAUTH_CLIENT_SECRET",
+          "GOOGLE_OAUTH_REDIRECT_URI"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "google_calendar",
+        "status": "configured",
+        "token_env": null
+      },
+      "google_maps": {
+        "api_docs": "https://developers.google.com/maps/documentation",
+        "api_style": "rest",
+        "auth_methods": [
+          "api_key",
+          "oauth"
+        ],
+        "base_url": "https://maps.googleapis.com/maps/api",
+        "capabilities": [
+          "maps.geocoding",
+          "maps.places",
+          "maps.directions"
+        ],
+        "display_name": "Google Maps Platform",
+        "domains": [
+          "search"
+        ],
+        "env": [
+          "GOOGLE_MAPS_API_KEY",
+          "GOOGLE_PLACES_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "google_maps",
+        "status": "configured",
+        "token_env": "GOOGLE_MAPS_API_KEY"
+      },
+      "google_search": {
+        "api_docs": "https://developers.google.com/custom-search/v1/overview",
+        "api_style": "rest",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://customsearch.googleapis.com/customsearch/v1",
+        "capabilities": [
+          "search.web"
+        ],
+        "display_name": "Google Custom Search JSON API",
+        "domains": [
+          "search"
+        ],
+        "env": [
+          "GOOGLE_SEARCH_API_KEY",
+          "GOOGLE_CUSTOM_SEARCH_ENGINE_ID"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "google_search",
+        "status": "configured",
+        "token_env": "GOOGLE_SEARCH_API_KEY"
+      },
+      "groq": {
+        "api_docs": "https://console.groq.com/docs/overview",
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.groq.com/openai/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.tool_call"
+        ],
+        "display_name": "Groq API",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "GROQ_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "groq",
+        "status": "configured",
+        "token_env": "GROQ_API_KEY"
+      },
+      "huawei_cloud": {
+        "api_docs": "https://support.huaweicloud.com/api-reference/",
+        "api_style": "huaweicloud",
+        "auth_methods": [
+          "access_key",
+          "token"
+        ],
+        "base_url": "https://iam.{region}.myhuaweicloud.com",
+        "capabilities": [
+          "cloud.compute",
+          "storage.object",
+          "ai.modelarts",
+          "sms.send"
+        ],
+        "display_name": "Huawei Cloud API",
+        "domains": [
+          "infrastructure",
+          "llm"
+        ],
+        "env": [
+          "HUAWEICLOUD_ACCESS_KEY_ID",
+          "HUAWEICLOUD_SECRET_ACCESS_KEY",
+          "HUAWEICLOUD_REGION",
+          "HUAWEICLOUD_PROJECT_ID"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "huawei_cloud",
+        "status": "configured",
+        "token_env": null
+      },
+      "huggingface": {
+        "api_docs": "https://huggingface.co/docs/api-inference",
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://router.huggingface.co/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "image.generation",
+          "audio"
+        ],
+        "display_name": "Hugging Face Inference Providers",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "HUGGINGFACE_API_TOKEN",
+          "HUGGINGFACE_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "huggingface",
+        "status": "configured",
+        "token_env": "HUGGINGFACE_API_TOKEN"
+      },
+      "kingsoft_cloud": {
+        "api_docs": "https://docs.ksyun.com/documents/6367",
+        "api_style": "kingsoft_cloud",
+        "auth_methods": [
+          "access_key"
+        ],
+        "base_url": "https://api.ksyun.com",
+        "capabilities": [
+          "cloud.compute",
+          "storage.object",
+          "cdn"
+        ],
+        "display_name": "Kingsoft Cloud API",
+        "domains": [
+          "infrastructure"
+        ],
+        "env": [
+          "KINGSOFTCLOUD_ACCESS_KEY_ID",
+          "KINGSOFTCLOUD_SECRET_ACCESS_KEY",
+          "KINGSOFTCLOUD_REGION"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "kingsoft_cloud",
+        "status": "configured",
+        "token_env": null
+      },
+      "lark": {
+        "api_docs": "https://open.larksuite.com/document/home/index",
+        "api_style": "rest",
+        "auth_methods": [
+          "app_id_secret",
+          "oauth"
+        ],
+        "base_url": "https://open.larksuite.com/open-apis",
+        "capabilities": [
+          "messaging.bot",
+          "docs.drive",
+          "calendar.events",
+          "base.records"
+        ],
+        "display_name": "Lark Open Platform",
+        "domains": [
+          "productivity",
+          "communication"
+        ],
+        "env": [
+          "LARK_APP_ID",
+          "LARK_APP_SECRET",
+          "LARK_TENANT_ACCESS_TOKEN"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "lark",
+        "status": "configured",
+        "token_env": null
+      },
+      "line": {
+        "api_docs": "https://developers.line.biz/en/reference/messaging-api/",
+        "api_style": "rest",
+        "auth_methods": [
+          "channel_access_token"
+        ],
+        "base_url": "https://api.line.me/v2/bot",
+        "capabilities": [
+          "messaging.bot",
+          "messaging.push",
+          "messaging.reply",
+          "webhook",
+          "content.read"
+        ],
+        "display_name": "LINE Messaging API",
+        "domains": [
+          "communication"
+        ],
+        "env": [
+          "LINE_CHANNEL_ACCESS_TOKEN",
+          "LINE_CHANNEL_SECRET",
+          "LINE_USER_ID",
+          "LINE_GROUP_ID",
+          "LINE_ROOM_ID"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "line",
+        "status": "configured",
+        "token_env": "LINE_CHANNEL_ACCESS_TOKEN"
+      },
+      "lmstudio": {
+        "api_docs": "https://lmstudio.ai/docs/app/api",
+        "api_style": "openapi",
+        "auth_methods": [
+          "none"
+        ],
+        "base_url": "http://localhost:1234/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding"
+        ],
+        "display_name": "LM Studio Local Server",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "LMSTUDIO_BASE_URL"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "lmstudio",
+        "status": "configured",
+        "token_env": null
+      },
+      "mailgun": {
+        "api_docs": "https://documentation.mailgun.com/docs/mailgun/api-reference/",
+        "api_style": "rest",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.mailgun.net/v3",
+        "capabilities": [
+          "email.send",
+          "email.validate"
+        ],
+        "display_name": "Mailgun API",
+        "domains": [
+          "communication"
+        ],
+        "env": [
+          "MAILGUN_API_KEY",
+          "MAILGUN_DOMAIN"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "mailgun",
+        "status": "configured",
+        "token_env": "MAILGUN_API_KEY"
+      },
+      "microsoft_graph": {
+        "api_docs": "https://learn.microsoft.com/graph/api/overview",
+        "api_style": "microsoft_graph",
+        "auth_methods": [
+          "oauth"
+        ],
+        "base_url": "https://graph.microsoft.com/v1.0",
+        "capabilities": [
+          "calendar.events",
+          "drive.files",
+          "mail.send",
+          "contacts",
+          "identity.oauth"
+        ],
+        "display_name": "Microsoft Graph",
+        "domains": [
+          "productivity",
+          "infrastructure"
+        ],
+        "env": [
+          "MS_CLIENT_ID",
+          "MS_CLIENT_SECRET",
+          "MS_TENANT_ID",
+          "MS_REDIRECT_URI",
+          "MS_GRAPH_SCOPES"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "microsoft_graph",
+        "status": "configured",
+        "token_env": null
+      },
+      "minimax": {
+        "api_docs": null,
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.minimax.io/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "MiniMax",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "MINIMAX_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [
+            {
+              "attachment": false,
+              "family": "minimax",
+              "id": "embo-01",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "embo-01",
+              "options": {},
+              "reasoning": false,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": false,
+              "tool_call": false
+            }
+          ],
+          "fast": [
+            {
+              "attachment": true,
+              "family": "minimax",
+              "id": "minimax-m2.5",
+              "limit": {
+                "context": 204800,
+                "input": 204800,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "minimax-m2.5",
+              "options": {},
+              "reasoning": false,
+              "release_date": "2026-02-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "flagship_thinking": [],
+          "instant": [
+            {
+              "attachment": true,
+              "family": "minimax",
+              "id": "minimax-m2.1",
+              "limit": {
+                "context": 204800,
+                "input": 204800,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "minimax-m2.1",
+              "options": {},
+              "reasoning": false,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "minimax",
+              "id": "minimax-m2.7",
+              "limit": {
+                "context": 204800,
+                "input": 204800,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "minimax-m2.7",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-03-18",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "minimax",
+        "status": "configured",
+        "token_env": "MINIMAX_API_KEY"
+      },
+      "mistral": {
+        "api_docs": null,
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.mistral.ai/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "Mistral AI",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "MISTRAL_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [
+            {
+              "attachment": true,
+              "family": "mistral",
+              "id": "mistral-small-latest",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "mistral-small-latest",
+              "options": {},
+              "reasoning": false,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "flagship_thinking": [],
+          "instant": [
+            {
+              "attachment": true,
+              "family": "mistral",
+              "id": "ministral-3b-latest",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "ministral-3b-latest",
+              "options": {},
+              "reasoning": false,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "mistral",
+              "id": "magistral-medium-latest",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "magistral-medium-latest",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "mistral",
+              "id": "mistral-medium-latest",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "mistral-medium-latest",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "mistral",
+        "status": "configured",
+        "token_env": "MISTRAL_API_KEY"
+      },
+      "moonshotai": {
+        "api_docs": null,
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.moonshot.ai/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "Kimi",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "MOONSHOTAI_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "kimi",
+              "id": "kimi-k2.5",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "kimi-k2.5",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-05-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "moonshotai",
+        "status": "configured",
+        "token_env": "MOONSHOTAI_API_KEY"
+      },
+      "notion": {
+        "api_docs": "https://developers.notion.com/reference/intro",
+        "api_style": "rest",
+        "auth_methods": [
+          "integration_token",
+          "oauth"
+        ],
+        "base_url": "https://api.notion.com/v1",
+        "capabilities": [
+          "docs.pages",
+          "database.records",
+          "search.workspace"
+        ],
+        "display_name": "Notion API",
+        "domains": [
+          "productivity",
+          "infrastructure"
+        ],
+        "env": [
+          "NOTION_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "notion",
+        "status": "configured",
+        "token_env": "NOTION_API_KEY"
+      },
+      "ollama": {
+        "api_docs": "https://github.com/ollama/ollama/blob/main/docs/api.md",
+        "api_style": "ollama",
+        "auth_methods": [
+          "none"
+        ],
+        "base_url": "http://localhost:11434",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding"
+        ],
+        "display_name": "Ollama Local API",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "OLLAMA_BASE_URL"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "ollama",
+        "status": "configured",
+        "token_env": null
+      },
+      "openai": {
+        "api_docs": null,
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.openai.com/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "GPT API",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "OPENAI_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [
+            {
+              "attachment": false,
+              "family": "gpt",
+              "id": "text-embedding-3-large",
+              "limit": {
+                "context": 8191,
+                "input": 8191,
+                "output": 0
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "embedding"
+                ]
+              },
+              "name": "text-embedding-3-large",
+              "options": {},
+              "reasoning": false,
+              "release_date": "2024-01-25",
+              "status": null,
+              "temperature": false,
+              "tool_call": false
+            }
+          ],
+          "embedding_low": [
+            {
+              "attachment": false,
+              "family": "gpt",
+              "id": "text-embedding-3-small",
+              "limit": {
+                "context": 8191,
+                "input": 8191,
+                "output": 0
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "embedding"
+                ]
+              },
+              "name": "text-embedding-3-small",
+              "options": {},
+              "reasoning": false,
+              "release_date": "2024-01-25",
+              "status": null,
+              "temperature": false,
+              "tool_call": false
+            }
+          ],
+          "fast": [
+            {
+              "attachment": true,
+              "family": "gpt",
+              "id": "gpt-5-mini",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5-mini",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "flagship_thinking": [
+            {
+              "attachment": true,
+              "family": "gpt",
+              "id": "gpt-5-pro",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5-pro",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "instant": [
+            {
+              "attachment": true,
+              "family": "gpt",
+              "id": "gpt-5-nano",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5-nano",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "gpt",
+              "id": "gpt-5.1",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5.1",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "openai",
+        "status": "configured",
+        "token_env": "OPENAI_API_KEY"
+      },
+      "opencode": {
+        "api_docs": null,
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://opencode.ai/zen/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "OpenCode OAuth Gateway",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "OPENCODE_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [
+            {
+              "attachment": true,
+              "family": "google",
+              "id": "google/gemini-2.5-flash",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "google/gemini-2.5-flash",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "x-ai",
+              "id": "x-ai/grok-4-latest",
+              "limit": {
+                "context": 256000,
+                "input": 256000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "x-ai/grok-4-latest",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-07-09",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "flagship_thinking": [
+            {
+              "attachment": true,
+              "family": "openai",
+              "id": "openai/gpt-5.1",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "openai/gpt-5.1",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "anthropic",
+              "id": "anthropic/claude-opus-4-1-20250805",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 32000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "anthropic/claude-opus-4-1-20250805",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-08-05",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "google",
+              "id": "google/gemini-2.5-pro",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "google/gemini-2.5-pro",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "instant": [
+            {
+              "attachment": true,
+              "family": "openai",
+              "id": "openai/gpt-5-nano",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "openai/gpt-5-nano",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "google",
+              "id": "google/gemini-2.5-flash-lite",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "google/gemini-2.5-flash-lite",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "openai",
+              "id": "openai/gpt-5-mini",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "openai/gpt-5-mini",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "anthropic",
+              "id": "anthropic/claude-sonnet-4-20250514",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 64000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "anthropic/claude-sonnet-4-20250514",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-05-14",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "deepseek",
+              "id": "deepseek/deepseek-v4-pro",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 384000
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "deepseek/deepseek-v4-pro",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-04-24",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "x-ai",
+              "id": "x-ai/grok-4-0709",
+              "limit": {
+                "context": 256000,
+                "input": 256000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "x-ai/grok-4-0709",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-07-09",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "opencode",
+        "status": "configured",
+        "token_env": "OPENCODE_API_KEY"
+      },
+      "openrouter": {
+        "api_docs": null,
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://openrouter.ai/api/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "OpenRouter",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "OPENROUTER_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [
+            {
+              "attachment": false,
+              "family": "openai",
+              "id": "openai/text-embedding-3-large",
+              "limit": {
+                "context": 8191,
+                "input": 8191,
+                "output": 0
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "embedding"
+                ]
+              },
+              "name": "openai/text-embedding-3-large",
+              "options": {},
+              "reasoning": false,
+              "release_date": "2024-01-25",
+              "status": null,
+              "temperature": false,
+              "tool_call": false
+            }
+          ],
+          "embedding_low": [
+            {
+              "attachment": false,
+              "family": "openai",
+              "id": "openai/text-embedding-3-small",
+              "limit": {
+                "context": 8191,
+                "input": 8191,
+                "output": 0
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "embedding"
+                ]
+              },
+              "name": "openai/text-embedding-3-small",
+              "options": {},
+              "reasoning": false,
+              "release_date": "2024-01-25",
+              "status": null,
+              "temperature": false,
+              "tool_call": false
+            }
+          ],
+          "fast": [
+            {
+              "attachment": true,
+              "family": "google",
+              "id": "google/gemini-2.5-flash",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "google/gemini-2.5-flash",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "minimax",
+              "id": "minimax/minimax-m2.5",
+              "limit": {
+                "context": 204800,
+                "input": 204800,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "minimax/minimax-m2.5",
+              "options": {},
+              "reasoning": false,
+              "release_date": "2026-02-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "x-ai",
+              "id": "x-ai/grok-4-latest",
+              "limit": {
+                "context": 256000,
+                "input": 256000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "x-ai/grok-4-latest",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-07-09",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "flagship_thinking": [
+            {
+              "attachment": true,
+              "family": "openai",
+              "id": "openai/gpt-5.1",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "openai/gpt-5.1",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "anthropic",
+              "id": "anthropic/claude-opus-4-1-20250805",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 32000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "anthropic/claude-opus-4-1-20250805",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-08-05",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "google",
+              "id": "google/gemini-2.5-pro",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "google/gemini-2.5-pro",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "qwen",
+              "id": "qwen/qwen3.6-max-preview",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "qwen/qwen3.6-max-preview",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "instant": [
+            {
+              "attachment": true,
+              "family": "openai",
+              "id": "openai/gpt-5-nano",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "openai/gpt-5-nano",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "google",
+              "id": "google/gemini-2.5-flash-lite",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 65536
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "google/gemini-2.5-flash-lite",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "minimax",
+              "id": "minimax/minimax-m2.1",
+              "limit": {
+                "context": 204800,
+                "input": 204800,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "minimax/minimax-m2.1",
+              "options": {},
+              "reasoning": false,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "openai",
+              "id": "openai/gpt-5-mini",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "openai/gpt-5-mini",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "anthropic",
+              "id": "anthropic/claude-sonnet-4-20250514",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 64000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "anthropic/claude-sonnet-4-20250514",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-05-14",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "deepseek",
+              "id": "deepseek/deepseek-v4-pro",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 384000
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "deepseek/deepseek-v4-pro",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-04-24",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "minimax",
+              "id": "minimax/minimax-m2.7",
+              "limit": {
+                "context": 204800,
+                "input": 204800,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "minimax/minimax-m2.7",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-03-18",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "moonshotai",
+              "id": "moonshotai/kimi-k2.5",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "moonshotai/kimi-k2.5",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-05-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "z-ai",
+              "id": "z-ai/glm-4.6",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "z-ai/glm-4.6",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "mistralai",
+              "id": "mistralai/magistral-medium-latest",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "mistralai/magistral-medium-latest",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "x-ai",
+              "id": "x-ai/grok-4-0709",
+              "limit": {
+                "context": 256000,
+                "input": 256000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "x-ai/grok-4-0709",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-07-09",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "qwen",
+              "id": "qwen/qwen3.6-plus",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "qwen/qwen3.6-plus",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "openrouter",
+        "status": "configured",
+        "token_env": "OPENROUTER_API_KEY"
+      },
+      "perplexity": {
+        "api_docs": "https://docs.perplexity.ai/",
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.perplexity.ai",
+        "capabilities": [
+          "search.answer",
+          "llm.chat"
+        ],
+        "display_name": "Perplexity API",
+        "domains": [
+          "search",
+          "llm"
+        ],
+        "env": [
+          "PERPLEXITY_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "perplexity",
+        "status": "configured",
+        "token_env": "PERPLEXITY_API_KEY"
+      },
+      "qiniu": {
+        "api_docs": "https://developer.qiniu.com/kodo",
+        "api_style": "qiniu",
+        "auth_methods": [
+          "access_key"
+        ],
+        "base_url": "https://rs.qiniu.com",
+        "capabilities": [
+          "storage.object",
+          "media.processing",
+          "cdn"
+        ],
+        "display_name": "Qiniu Kodo Object Storage",
+        "domains": [
+          "infrastructure"
+        ],
+        "env": [
+          "QINIU_ACCESS_KEY",
+          "QINIU_SECRET_KEY",
+          "QINIU_BUCKET",
+          "QINIU_DOMAIN"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "qiniu",
+        "status": "configured",
+        "token_env": null
+      },
+      "qwen": {
+        "api_docs": "https://www.alibabacloud.com/help/en/model-studio/developer-reference/what-is-qwen-llm",
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "Qwen Overseas",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "QWEN_API_KEY",
+          "DASHSCOPE_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [
+            {
+              "attachment": true,
+              "family": "qwen",
+              "id": "qwen3.6-max-preview",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "qwen3.6-max-preview",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "instant": [],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "qwen",
+              "id": "qwen3.6-plus",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "qwen3.6-plus",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "qwen",
+        "status": "configured",
+        "token_env": "QWEN_API_KEY"
+      },
+      "qwen_cn": {
+        "api_docs": "https://www.alibabacloud.com/help/en/model-studio/developer-reference/what-is-qwen-llm",
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "Qwen China",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "QWEN_CN_API_KEY",
+          "DASHSCOPE_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [
+            {
+              "attachment": true,
+              "family": "qwen_cn",
+              "id": "qwen3.6-max-preview",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "qwen3.6-max-preview",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "instant": [],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "qwen_cn",
+              "id": "qwen3.6-plus",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "qwen3.6-plus",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "qwen_cn",
+        "status": "configured",
+        "token_env": "QWEN_CN_API_KEY"
+      },
+      "replicate": {
+        "api_docs": null,
+        "api_style": "replicate",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.replicate.com/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "Replicate",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "REPLICATE_API_TOKEN"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "replicate",
+        "status": "configured",
+        "token_env": "REPLICATE_API_TOKEN"
+      },
+      "sendgrid": {
+        "api_docs": "https://www.twilio.com/docs/sendgrid/api-reference/mail-send/mail-send",
+        "api_style": "rest",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.sendgrid.com/v3",
+        "capabilities": [
+          "email.send",
+          "email.templates"
+        ],
+        "display_name": "Twilio SendGrid Mail Send API",
+        "domains": [
+          "communication"
+        ],
+        "env": [
+          "SENDGRID_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "sendgrid",
+        "status": "configured",
+        "token_env": "SENDGRID_API_KEY"
+      },
+      "slack": {
+        "api_docs": "https://api.slack.com/web",
+        "api_style": "rest",
+        "auth_methods": [
+          "bot_token",
+          "oauth"
+        ],
+        "base_url": "https://slack.com/api",
+        "capabilities": [
+          "messaging.bot",
+          "chat.post_message",
+          "events",
+          "workflow"
+        ],
+        "display_name": "Slack Web API",
+        "domains": [
+          "communication",
+          "productivity"
+        ],
+        "env": [
+          "SLACK_BOT_TOKEN",
+          "SLACK_APP_TOKEN",
+          "SLACK_CLIENT_ID",
+          "SLACK_CLIENT_SECRET",
+          "SLACK_SIGNING_SECRET"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "slack",
+        "status": "configured",
+        "token_env": "SLACK_BOT_TOKEN"
+      },
+      "smtp": {
+        "api_docs": "https://datatracker.ietf.org/doc/html/rfc5321",
+        "api_style": "smtp",
+        "auth_methods": [
+          "username_password"
+        ],
+        "base_url": "smtp://{host}",
+        "capabilities": [
+          "email.send"
+        ],
+        "display_name": "SMTP",
+        "domains": [
+          "communication"
+        ],
+        "env": [
+          "SMTP_HOST",
+          "SMTP_PORT",
+          "SMTP_USER",
+          "SMTP_PASS"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "smtp",
+        "status": "configured",
+        "token_env": "SMTP_PASS"
+      },
+      "telegram": {
+        "api_docs": "https://core.telegram.org/bots/api",
+        "api_style": "rest",
+        "auth_methods": [
+          "bot_token"
+        ],
+        "base_url": "https://api.telegram.org",
+        "capabilities": [
+          "messaging.bot",
+          "webhook"
+        ],
+        "display_name": "Telegram Bot API",
+        "domains": [
+          "communication"
+        ],
+        "env": [
+          "TELEGRAM_BOT_TOKEN",
+          "TELEGRAM_CHAT_ID"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "telegram",
+        "status": "configured",
+        "token_env": "TELEGRAM_BOT_TOKEN"
+      },
+      "tencent_cloud": {
+        "api_docs": "https://cloud.tencent.com/document/api",
+        "api_style": "tencent_cloud_api_3_0",
+        "auth_methods": [
+          "secret_key"
+        ],
+        "base_url": "https://{service}.tencentcloudapi.com",
+        "capabilities": [
+          "cloud.compute",
+          "storage.object",
+          "llm.hunyuan",
+          "sms.send"
+        ],
+        "display_name": "Tencent Cloud API 3.0",
+        "domains": [
+          "infrastructure",
+          "llm",
+          "communication"
+        ],
+        "env": [
+          "TENCENTCLOUD_SECRET_ID",
+          "TENCENTCLOUD_SECRET_KEY",
+          "TENCENTCLOUD_REGION"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "tencent_cloud",
+        "status": "configured",
+        "token_env": null
+      },
+      "tencent_cos": {
+        "api_docs": "https://cloud.tencent.com/document/product/436",
+        "api_style": "tencent_cos",
+        "auth_methods": [
+          "secret_key",
+          "sts"
+        ],
+        "base_url": "https://cos.{region}.myqcloud.com",
+        "capabilities": [
+          "storage.object"
+        ],
+        "display_name": "Tencent Cloud Object Storage (COS)",
+        "domains": [
+          "infrastructure"
+        ],
+        "env": [
+          "TENCENTCLOUD_SECRET_ID",
+          "TENCENTCLOUD_SECRET_KEY",
+          "TENCENT_COS_BUCKET",
+          "TENCENTCLOUD_REGION"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "tencent_cos",
+        "status": "configured",
+        "token_env": null
+      },
+      "together": {
+        "api_docs": "https://docs.together.ai/docs/introduction",
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.together.xyz/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "image.generation"
+        ],
+        "display_name": "Together AI API",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "TOGETHER_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "together",
+        "status": "configured",
+        "token_env": "TOGETHER_API_KEY"
+      },
+      "twilio": {
+        "api_docs": "https://www.twilio.com/docs/usage/api",
+        "api_style": "rest",
+        "auth_methods": [
+          "basic_auth"
+        ],
+        "base_url": "https://api.twilio.com/2010-04-01",
+        "capabilities": [
+          "sms.send",
+          "voice.call",
+          "whatsapp.message"
+        ],
+        "display_name": "Twilio API",
+        "domains": [
+          "communication"
+        ],
+        "env": [
+          "TWILIO_ACCOUNT_SID",
+          "TWILIO_AUTH_TOKEN",
+          "TWILIO_FROM_NUMBER"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "twilio",
+        "status": "configured",
+        "token_env": "TWILIO_AUTH_TOKEN"
+      },
+      "ucloud": {
+        "api_docs": "https://docs.ucloud.cn/api/summary/README",
+        "api_style": "ucloud",
+        "auth_methods": [
+          "public_private_key"
+        ],
+        "base_url": "https://api.ucloud.cn",
+        "capabilities": [
+          "cloud.compute",
+          "storage.object"
+        ],
+        "display_name": "UCloud API",
+        "domains": [
+          "infrastructure"
+        ],
+        "env": [
+          "UCLOUD_PUBLIC_KEY",
+          "UCLOUD_PRIVATE_KEY",
+          "UCLOUD_PROJECT_ID",
+          "UCLOUD_REGION"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "ucloud",
+        "status": "configured",
+        "token_env": null
+      },
+      "volcengine": {
+        "api_docs": "https://www.volcengine.com/docs",
+        "api_style": "volcengine_openapi",
+        "auth_methods": [
+          "access_key",
+          "api_key"
+        ],
+        "base_url": "https://open.volcengineapi.com",
+        "capabilities": [
+          "cloud.compute",
+          "llm.ark",
+          "media.image",
+          "speech"
+        ],
+        "display_name": "Volcengine OpenAPI",
+        "domains": [
+          "infrastructure",
+          "llm"
+        ],
+        "env": [
+          "VOLCENGINE_ACCESS_KEY_ID",
+          "VOLCENGINE_SECRET_ACCESS_KEY",
+          "VOLCENGINE_REGION",
+          "VOLCENGINE_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "volcengine",
+        "status": "configured",
+        "token_env": null
+      },
+      "volcengine_ark": {
+        "api_docs": "https://www.volcengine.com/docs/82379",
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "Volcengine Ark API",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "VOLCENGINE_API_KEY",
+          "VOLCENGINE_ACCESS_KEY_ID",
+          "VOLCENGINE_SECRET_ACCESS_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "volcengine_ark",
+        "status": "configured",
+        "token_env": "VOLCENGINE_API_KEY"
+      },
+      "wechat_open_platform": {
+        "api_docs": "https://developers.weixin.qq.com/doc/oplatform/en/",
+        "api_style": "rest",
+        "auth_methods": [
+          "app_id_secret",
+          "oauth"
+        ],
+        "base_url": "https://api.weixin.qq.com",
+        "capabilities": [
+          "oauth.login",
+          "messaging.official_account",
+          "mini_program"
+        ],
+        "display_name": "WeChat Open Platform",
+        "domains": [
+          "communication",
+          "infrastructure"
+        ],
+        "env": [
+          "WECHAT_APP_ID",
+          "WECHAT_APP_SECRET",
+          "WECHAT_ACCESS_TOKEN"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "wechat_open_platform",
+        "status": "configured",
+        "token_env": null
+      },
+      "wechat_pay": {
+        "api_docs": "https://pay.weixin.qq.com/docs/merchant/apis/index.html",
+        "api_style": "rest",
+        "auth_methods": [
+          "merchant_certificate"
+        ],
+        "base_url": "https://api.mch.weixin.qq.com/v3",
+        "capabilities": [
+          "payment.charge",
+          "payment.refund",
+          "payment.transfer"
+        ],
+        "display_name": "WeChat Pay API v3",
+        "domains": [
+          "infrastructure"
+        ],
+        "env": [
+          "WECHAT_PAY_MCH_ID",
+          "WECHAT_PAY_API_V3_KEY",
+          "WECHAT_PAY_PRIVATE_KEY",
+          "WECHAT_PAY_CERT_SERIAL_NO"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "wechat_pay",
+        "status": "configured",
+        "token_env": null
+      },
+      "wecom": {
+        "api_docs": "https://developer.work.weixin.qq.com/document/path/90664",
+        "api_style": "rest",
+        "auth_methods": [
+          "corp_secret",
+          "webhook"
+        ],
+        "base_url": "https://qyapi.weixin.qq.com/cgi-bin",
+        "capabilities": [
+          "messaging.bot",
+          "contacts",
+          "approval"
+        ],
+        "display_name": "WeCom API",
+        "domains": [
+          "productivity",
+          "communication"
+        ],
+        "env": [
+          "WECOM_CORP_ID",
+          "WECOM_CORP_SECRET",
+          "WECOM_AGENT_ID",
+          "WECOM_BOT_WEBHOOK"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "wecom",
+        "status": "configured",
+        "token_env": null
+      },
+      "xai": {
+        "api_docs": null,
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://api.x.ai/v1",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "Grok",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "XAI_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [
+            {
+              "attachment": true,
+              "family": "grok",
+              "id": "grok-4-latest",
+              "limit": {
+                "context": 256000,
+                "input": 256000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "grok-4-latest",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-07-09",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "grok",
+              "id": "grok-4-0709",
+              "limit": {
+                "context": 256000,
+                "input": 256000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "grok-4-0709",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-07-09",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "xai",
+        "status": "configured",
+        "token_env": "XAI_API_KEY"
+      },
+      "zhipu": {
+        "api_docs": null,
+        "api_style": "openapi",
+        "auth_methods": [
+          "api_key"
+        ],
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "capabilities": [
+          "llm.chat",
+          "llm.embedding",
+          "llm.tool_call"
+        ],
+        "display_name": "GLM",
+        "domains": [
+          "llm"
+        ],
+        "env": [
+          "ZHIPU_API_KEY"
+        ],
+        "models": {
+          "embedding_high": [
+            {
+              "attachment": false,
+              "family": "glm",
+              "id": "embedding-3",
+              "limit": {
+                "context": 8191,
+                "input": 8191,
+                "output": 0
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "embedding"
+                ]
+              },
+              "name": "embedding-3",
+              "options": {},
+              "reasoning": false,
+              "release_date": "2024-01-25",
+              "status": null,
+              "temperature": false,
+              "tool_call": false
+            }
+          ],
+          "embedding_low": [],
+          "fast": [
+            {
+              "attachment": true,
+              "family": "glm",
+              "id": "glm-4.5-air",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "glm-4.5-air",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2025-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "glm",
+              "id": "glm-4.6",
+              "limit": {
+                "context": 200000,
+                "input": 200000,
+                "output": 16384
+              },
+              "modalities": {
+                "input": [
+                  "text"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "glm-4.6",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-01-01",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
+        },
+        "runtime_provider": "zhipu",
+        "status": "configured",
+        "token_env": "ZHIPU_API_KEY"
+      },
+      "zoom": {
+        "api_docs": "https://developers.zoom.us/docs/api/rest/",
+        "api_style": "rest",
+        "auth_methods": [
+          "server_to_server_oauth"
+        ],
+        "base_url": "https://api.zoom.us/v2",
+        "capabilities": [
+          "meeting.create",
+          "recording.list",
+          "webinar"
+        ],
+        "display_name": "Zoom Server-to-Server OAuth API",
+        "domains": [
+          "communication"
+        ],
+        "env": [
+          "ZOOM_ACCOUNT_ID",
+          "ZOOM_CLIENT_ID",
+          "ZOOM_CLIENT_SECRET"
+        ],
+        "models": {
+          "embedding_high": [],
+          "embedding_low": [],
+          "fast": [],
+          "flagship_thinking": [],
+          "instant": [],
+          "thinking": []
+        },
+        "runtime_provider": "zoom",
+        "status": "configured",
+        "token_env": null
+      }
+    },
+    "tiers": [
+      "flagship_thinking",
+      "thinking",
+      "fast",
+      "instant",
+      "embedding_high",
+      "embedding_low"
+    ]
+  },
+  "provider_auth": {
+    "anthropic": {
+      "auth_url": "https://claude.ai/login",
+      "login": "browser",
+      "login_env": "ANTHROPIC_LOGIN",
+      "provider": "anthropic",
+      "status": "connected",
+      "token_env": "ANTHROPIC_API_KEY",
+      "type": "oauth",
+      "updated_at": "2026-05-08T15:02:45.185671200+00:00"
+    },
+    "codex": {
+      "account_env": "OPENAI_ACCOUNT_ID",
+      "auth_url": "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&scope=openid+profile+email+offline_access&code_challenge=PN1jtLK36m91EwkSCNaeS0nom-Il9ori1NEq9kJn8k0&code_challenge_method=S256&id_token_add_organizations=true&codex_cli_simplified_flow=true&state=e2fb8463426148348fedaa47a4992e3b&originator=opencode",
+      "endpoint": "https://chatgpt.com/backend-api/codex/responses",
+      "expires_env": "OPENAI_TOKEN_EXPIRES",
+      "login": "oauth",
+      "login_env": "OPENAI_LOGIN",
+      "provider": "codex",
+      "refresh_env": "OPENAI_REFRESH_TOKEN",
+      "status": "connected",
+      "token_env": "OPENAI_API_KEY",
+      "type": "oauth",
+      "updated_at": "2026-05-27T20:58:00.254104400+00:00"
+    },
+    "openai": {
+      "account_env": "OPENAI_ACCOUNT_ID",
+      "auth_url": "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&scope=openid+profile+email+offline_access&code_challenge=J9wXZDQtr8gRLsztUPe9GK5GwfPihKf7nf75p4g-8OI&code_challenge_method=S256&id_token_add_organizations=true&codex_cli_simplified_flow=true&state=9faec7d23bf0488ea91e49815be61733&originator=opencode",
+      "endpoint": "https://chatgpt.com/backend-api/codex/responses",
+      "expires_env": "OPENAI_TOKEN_EXPIRES",
+      "login": "oauth",
+      "login_env": "OPENAI_LOGIN",
+      "provider": "openai",
+      "refresh_env": "OPENAI_REFRESH_TOKEN",
+      "status": "revoked",
+      "token_env": "OPENAI_API_KEY",
+      "type": "oauth",
+      "updated_at": "2026-05-26T12:01:34.692413500+00:00"
+    }
+  },
+  "provider_base_url": {
+    "airtable": "https://api.airtable.com/v0",
+    "alibaba_cloud": "https://openapi.aliyun.com",
+    "alipay_open": "https://openapi.alipay.com/gateway.do",
+    "aliyun_oss": "https://oss-{region}.aliyuncs.com",
+    "amap": "https://restapi.amap.com/v3",
+    "anthropic": "https://api.anthropic.com/v1",
+    "antigravity": "https://antigravity.google.com/v1",
+    "atlassian": "https://api.atlassian.com",
+    "aws": "https://sts.amazonaws.com",
+    "azure": "https://{resource}.openai.azure.com/openai/v1",
+    "azure_cloud": "https://management.azure.com",
+    "azure_speech": "https://{region}.api.cognitive.microsoft.com",
+    "azure_storage": "https://{account}.blob.core.windows.net",
+    "baidu_maps": "https://api.map.baidu.com",
+    "baidu_qianfan": "https://api.baiduqianfan.ai/v1",
+    "bedrock": "us-east-1",
+    "bitbucket": "https://api.bitbucket.org/2.0",
+    "brave_search": "https://api.search.brave.com/res/v1",
+    "claude-code": "https://api.anthropic.com/v1",
+    "codex": "https://chatgpt.com/backend-api/codex/responses",
+    "cohere": "https://api.cohere.com/v2",
+    "deepseek": "https://api.deepseek.com",
+    "dingtalk": "https://api.dingtalk.com",
+    "discord": "https://discord.com/api/v10",
+    "duckduckgo_search": "https://html.duckduckgo.com/html/",
+    "exa_search": "https://mcp.exa.ai/mcp",
+    "feishu": "https://open.feishu.cn/open-apis",
+    "fireworks": "https://api.fireworks.ai/inference/v1",
+    "gcp": "https://cloud.google.com/apis",
+    "github": "https://api.github.com",
+    "gitlab": "https://gitlab.com/api/v4",
+    "google": "https://generativelanguage.googleapis.com/v1beta",
+    "google_calendar": "https://www.googleapis.com/calendar/v3",
+    "google_maps": "https://maps.googleapis.com/maps/api",
+    "google_search": "https://customsearch.googleapis.com/customsearch/v1",
+    "groq": "https://api.groq.com/openai/v1",
+    "huawei_cloud": "https://iam.{region}.myhuaweicloud.com",
+    "huggingface": "https://router.huggingface.co/v1",
+    "kingsoft_cloud": "https://api.ksyun.com",
+    "lark": "https://open.larksuite.com/open-apis",
+    "line": "https://api.line.me/v2/bot",
+    "lmstudio": "http://localhost:1234/v1",
+    "mailgun": "https://api.mailgun.net/v3",
+    "microsoft_graph": "https://graph.microsoft.com/v1.0",
+    "minimax": "https://api.minimax.io/v1",
+    "mistral": "https://api.mistral.ai/v1",
+    "moonshotai": "https://api.moonshot.ai/v1",
+    "notion": "https://api.notion.com/v1",
+    "ollama": "http://localhost:11434",
+    "openai": "https://api.openai.com/v1",
+    "opencode": "https://opencode.ai/zen/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "perplexity": "https://api.perplexity.ai",
+    "qiniu": "https://rs.qiniu.com",
+    "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    "qwen_cn": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "replicate": "https://api.replicate.com/v1",
+    "sendgrid": "https://api.sendgrid.com/v3",
+    "slack": "https://slack.com/api",
+    "smtp": "smtp://{host}",
+    "telegram": "https://api.telegram.org",
+    "tencent_cloud": "https://{service}.tencentcloudapi.com",
+    "tencent_cos": "https://cos.{region}.myqcloud.com",
+    "together": "https://api.together.xyz/v1",
+    "twilio": "https://api.twilio.com/2010-04-01",
+    "ucloud": "https://api.ucloud.cn",
+    "volcengine": "https://open.volcengineapi.com",
+    "volcengine_ark": "https://ark.cn-beijing.volces.com/api/v3",
+    "wechat_open_platform": "https://api.weixin.qq.com",
+    "wechat_pay": "https://api.mch.weixin.qq.com/v3",
+    "wecom": "https://qyapi.weixin.qq.com/cgi-bin",
+    "xai": "https://api.x.ai/v1",
+    "zhipu": "https://open.bigmodel.cn/api/paas/v4",
+    "zoom": "https://api.zoom.us/v2"
+  },
+  "provider_enums": {
+    "api_styles": [
+      "alipay_openapi",
+      "aliyun_openapi",
+      "aliyun_oss",
+      "antigravity",
+      "aws",
+      "azure",
+      "azure_cognitive_services",
+      "azure_storage",
+      "bedrock",
+      "claude_code",
+      "codex",
+      "duckduckgo_html",
+      "google",
+      "google_cloud",
+      "huaweicloud",
+      "kingsoft_cloud",
+      "mcp",
+      "microsoft_graph",
+      "ollama",
+      "openapi",
+      "qiniu",
+      "replicate",
+      "rest",
+      "smtp",
+      "tencent_cloud_api_3_0",
+      "tencent_cos",
+      "ucloud",
+      "volcengine_openapi"
+    ],
+    "auth_methods": [
+      "access_key",
+      "api_key",
+      "api_token",
+      "app_id_secret",
+      "app_key_secret",
+      "app_password",
+      "app_private_key",
+      "aws_credentials",
+      "basic_auth",
+      "bot_token",
+      "channel_access_token",
+      "connection_string",
+      "corp_secret",
+      "github_app",
+      "integration_token",
+      "mcp",
+      "merchant_certificate",
+      "none",
+      "oauth",
+      "pat",
+      "public_private_key",
+      "sas",
+      "secret_key",
+      "server_to_server_oauth",
+      "service_account",
+      "service_principal",
+      "shared_key",
+      "sts",
+      "token",
+      "username_password",
+      "webhook"
+    ],
+    "capabilities": [
+      "actions",
+      "ai.modelarts",
+      "approval",
+      "audio",
+      "base.records",
+      "calendar.events",
+      "cdn",
+      "chat.post_message",
+      "ci",
+      "cloud.compute",
+      "confluence.pages",
+      "contacts",
+      "content.read",
+      "database.nosql",
+      "database.records",
+      "database.schema",
+      "database.sql",
+      "docs",
+      "docs.drive",
+      "docs.pages",
+      "drive.files",
+      "email.send",
+      "email.templates",
+      "email.validate",
+      "events",
+      "guilds",
+      "identity.oauth",
+      "image.generation",
+      "issues",
+      "jira.issues",
+      "llm.ark",
+      "llm.bedrock",
+      "llm.chat",
+      "llm.dashscope",
+      "llm.embedding",
+      "llm.hunyuan",
+      "llm.tool_call",
+      "llm.vision",
+      "mail.send",
+      "maps.directions",
+      "maps.geocoding",
+      "maps.place_search",
+      "maps.places",
+      "maps.route",
+      "maps.weather",
+      "media.image",
+      "media.processing",
+      "meeting.create",
+      "merge_requests",
+      "messaging.bot",
+      "messaging.official_account",
+      "messaging.push",
+      "messaging.reply",
+      "mini_program",
+      "oauth.login",
+      "payment.charge",
+      "payment.refund",
+      "payment.transfer",
+      "pull_requests",
+      "queue",
+      "recording.list",
+      "rerank",
+      "search.answer",
+      "search.context",
+      "search.crawl",
+      "search.images",
+      "search.news",
+      "search.web",
+      "search.workspace",
+      "sms.send",
+      "speech",
+      "speech.stt",
+      "speech.translation",
+      "speech.tts",
+      "storage.object",
+      "vcs.repository",
+      "voice.call",
+      "webhook",
+      "webinar",
+      "whatsapp.message",
+      "workflow",
+      "workflow.approval"
+    ],
+    "domains": [
+      "llm",
+      "search",
+      "communication",
+      "productivity",
+      "infrastructure",
+      "other"
+    ],
+    "statuses": [
+      "configured",
+      "fallback"
+    ]
+  },
+  "provider_latency": {
+    "active": "low",
+    "levels": {
+      "high": {
+        "first_output_timeout_ms": 160000,
+        "idle_output_timeout_ms": 80000,
+        "total_timeout_ms": 960000
+      },
+      "highest": {
+        "first_output_timeout_ms": 180000,
+        "idle_output_timeout_ms": 100000,
+        "total_timeout_ms": 1200000
+      },
+      "low": {
+        "first_output_timeout_ms": 40000,
+        "idle_output_timeout_ms": 20000,
+        "total_timeout_ms": 240000
+      },
+      "medium": {
+        "first_output_timeout_ms": 60000,
+        "idle_output_timeout_ms": 30000,
+        "total_timeout_ms": 360000
+      }
+    }
+  },
+  "routes": {
+    "embedding_high": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "text-embedding-3-large",
+          "provider": "openai"
+        }
+      ]
+    },
+    "embedding_low": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "text-embedding-3-small",
+          "provider": "openai"
+        }
+      ]
+    },
+    "fast": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "gpt-5.1-codex-mini",
+          "provider": "codex"
+        },
+        {
+          "model": "gemini-2.5-flash",
+          "provider": "google"
+        },
+        {
+          "model": "minimax-m2.5",
+          "provider": "minimax"
+        }
+      ]
+    },
+    "flagship_thinking": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "gpt-5.1-codex",
+          "provider": "codex"
+        },
+        {
+          "model": "gpt-5-pro",
+          "provider": "openai"
+        },
+        {
+          "model": "claude-opus-4-1-20250805",
+          "provider": "anthropic"
+        },
+        {
+          "model": "gemini-2.5-pro",
+          "provider": "google"
+        },
+        {
+          "model": "qwen3.6-max-preview",
+          "provider": "qwen"
+        }
+      ]
+    },
+    "instant": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "gpt-5.1-codex-mini",
+          "provider": "codex"
+        },
+        {
+          "model": "gemini-2.5-flash-lite",
+          "provider": "google"
+        },
+        {
+          "model": "minimax-m2.1",
+          "provider": "minimax"
+        }
+      ]
+    },
+    "thinking": {
+      "default_temperature": 0.2,
+      "providers": [
+        {
+          "model": "gpt-5.1-codex",
+          "provider": "codex"
+        },
+        {
+          "model": "claude-sonnet-4-20250514",
+          "provider": "anthropic"
+        },
+        {
+          "model": "deepseek-v4-pro",
+          "provider": "deepseek"
+        },
+        {
+          "model": "minimax-m2.7",
+          "provider": "minimax"
+        },
+        {
+          "model": "kimi-k2.5",
+          "provider": "moonshotai"
+        }
+      ]
+    }
+  }
+}

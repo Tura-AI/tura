@@ -24,10 +24,10 @@ import ChevronLeft from "lucide-solid/icons/chevron-left";
 import ChevronRight from "lucide-solid/icons/chevron-right";
 import Columns3 from "lucide-solid/icons/columns-3";
 import Copy from "lucide-solid/icons/copy";
-import Edit3 from "lucide-solid/icons/edit-3";
+import Edit3 from "lucide-solid/icons/pencil";
 import FolderOpen from "lucide-solid/icons/folder-open";
 import KeyRound from "lucide-solid/icons/key-round";
-import MoreHorizontal from "lucide-solid/icons/more-horizontal";
+import MoreHorizontal from "lucide-solid/icons/ellipsis";
 import Pin from "lucide-solid/icons/pin";
 import Plus from "lucide-solid/icons/plus";
 import Search from "lucide-solid/icons/search";
@@ -55,16 +55,10 @@ import {
   type TaskManagement,
   type PlanStatus,
 } from "@tura/gateway-sdk";
-import {
-  Composer,
-  ConversationView,
-  composerFileToken,
-  composerImageToken,
-} from "../../conversation/conversation-view";
+import type { ComposerImage } from "../../state/global-store";
 import { applyGatewayEvent } from "../../state/event-reducer";
 import {
   activeSession,
-  type ComposerImage,
   initialAppState,
   type MainTab,
   type PlanMode,
@@ -157,10 +151,28 @@ export function taskPlanStatus(task: TaskManagement): PlanStatus | undefined {
 }
 
 export function taskStartCondition(task: TaskManagement): StartCondition {
+  if (task.start_condition) {
+    return task.start_condition;
+  }
+  const status = task.status as string | undefined;
+  if (isStartConditionStatus(status)) {
+    return status;
+  }
   if (hasPollInterval(task.poll_interval)) {
     return "polling_task";
   }
   return task.start_at ? "scheduled_task" : "user_action";
+}
+
+function isStartConditionStatus(
+  value: string | undefined,
+): value is StartCondition {
+  return (
+    value === "session_idle" ||
+    value === "scheduled_task" ||
+    value === "polling_task" ||
+    value === "user_action"
+  );
 }
 
 export function hasPollInterval(value: PollInterval | undefined): boolean {
@@ -227,17 +239,49 @@ export function formatTaskRemaining(task: TaskManagement): string {
   return `${seconds}${t("intervalSecond")}`;
 }
 
+export function formatPollIntervalCompact(interval: PollInterval): string {
+  const normalized = normalizePollInterval(interval);
+  const minutes =
+    (normalized.d ?? 0) * 1440 +
+    (normalized.h ?? 0) * 60 +
+    (normalized.m ?? 0) +
+    Math.ceil((normalized.s ?? 0) / 60);
+  if (minutes >= 1440) {
+    return `${Math.ceil(minutes / 1440)}${t("intervalDay")}`;
+  }
+  if (minutes >= 60) {
+    return `${Math.ceil(minutes / 60)}${t("intervalHour")}`;
+  }
+  return `${Math.max(1, minutes)}${t("intervalMinute")}`;
+}
+
+export function formatPollIntervalEveryCompact(interval: PollInterval): string {
+  return `(${t("intervalEvery", {
+    interval: formatPollIntervalCompact(interval),
+  })})`;
+}
+
+export function formatPollingTaskTiming(task: TaskManagement): string {
+  const remaining = formatTaskRemaining(task);
+  if (!remaining) {
+    return "";
+  }
+  return `${remaining}/${formatPollIntervalEveryCompact(taskPollInterval(task))}`;
+}
+
 export function applyTaskPatchToSession(
   session: Session,
   patch: Partial<TaskManagement>,
 ): Session {
   const current = sessionTaskState(session);
   const nonce = patch.nonce_id;
-  if (Array.isArray(current.tasks) || nonce) {
+  if (Array.isArray(current.tasks)) {
     const tasks = sessionTasks(session);
     const index = nonce
       ? tasks.findIndex((task) => taskNonceId(task) === nonce)
-      : -1;
+      : tasks.length > 0
+        ? 0
+        : -1;
     const nextTasks =
       index >= 0
         ? tasks.map((task, itemIndex) =>
@@ -253,10 +297,49 @@ export function applyTaskPatchToSession(
       task_management: nextManagement,
     };
   }
+  if (nonce) {
+    const nextManagement = { ...current, ...patch };
+    return {
+      ...session,
+      task_management: nextManagement,
+    };
+  }
   const nextManagement = { ...current, ...patch };
   return {
     ...session,
     task_management: nextManagement,
+  };
+}
+
+export function appendTaskToSession(
+  session: Session,
+  task: Partial<TaskManagement>,
+): Session {
+  const current = sessionTaskState(session);
+  const existingTasks = Array.isArray(current.tasks)
+    ? sessionTasks(session)
+    : taskHasVisibleContent(current)
+      ? [current]
+      : [];
+  const nonce = task.nonce_id ?? `${session.id}:${existingTasks.length}`;
+  const nextTask = {
+    ...task,
+    nonce_id: nonce,
+    step: typeof task.step === "number" ? task.step : existingTasks.length,
+  };
+  const index = existingTasks.findIndex((item) => taskNonceId(item) === nonce);
+  const nextTasks =
+    index >= 0
+      ? existingTasks.map((item, itemIndex) =>
+          itemIndex === index ? { ...item, ...nextTask } : item,
+        )
+      : [...existingTasks, nextTask];
+  return {
+    ...session,
+    task_management: {
+      ...current,
+      tasks: nextTasks,
+    },
   };
 }
 
@@ -390,6 +473,10 @@ export function defaultPollInterval(): PollInterval {
   return { m: 0, d: 0, h: 1, s: 0 };
 }
 
+export function emptyPollInterval(): PollInterval {
+  return { m: 0, d: 0, h: 0, s: 0 };
+}
+
 export function normalizeIntervalPart(
   value: string | number | undefined,
 ): number {
@@ -417,10 +504,14 @@ export function timedTaskPatch(
   startAt: string | undefined,
   pollInterval: PollInterval | undefined,
 ): {
+  start_condition?: StartCondition;
   start_at?: string;
   poll_interval?: PollInterval;
 } {
   return {
+    ...(startCondition !== "user_action"
+      ? { start_condition: startCondition }
+      : {}),
     ...(startCondition === "scheduled_task" || startCondition === "polling_task"
       ? startAt
         ? { start_at: startAt }
@@ -428,7 +519,9 @@ export function timedTaskPatch(
       : {}),
     ...(startCondition === "polling_task"
       ? { poll_interval: normalizePollInterval(pollInterval) }
-      : {}),
+      : startCondition === "scheduled_task"
+        ? { poll_interval: emptyPollInterval() }
+        : {}),
   };
 }
 
@@ -471,7 +564,7 @@ export function formatStartCondition(
       return t("pollingTask");
     case "user_action":
     default:
-      return t("userAction");
+      return t("runNow");
   }
 }
 
@@ -519,4 +612,12 @@ export function materializeComposerContent(
     content = `${content.trim()}\n\n${appendix}`;
   }
   return content.trim();
+}
+
+function composerImageToken(id: string): string {
+  return `[[image:${id}]]`;
+}
+
+function composerFileToken(id: string): string {
+  return `[[file:${id}]]`;
 }

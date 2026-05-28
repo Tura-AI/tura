@@ -163,7 +163,7 @@ function Ensure-Rust {
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
   }
-  cargo check -p code-tools-suite -p code-tools -p tura-llm-rust -p tura-agents -p utils
+  cargo check -p code-tools-suite -p code-tools -p tura-llm-rust -p tura-agents
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
   }

@@ -8,7 +8,7 @@
   border: 0;
   border-radius: var(--radius-small);
   background: rgba(255, 255, 255, 0.14);
-  color: #ffffff;
+  color: #f8f7f2;
 }
 
 .media-edge {
@@ -67,7 +67,7 @@
   border-radius: var(--radius-small);
   background: transparent;
   color: var(--muted);
-  font-size: 14px;
+  font-size: var(--font-small);
   font-weight: 430;
   letter-spacing: 0;
 }
@@ -78,7 +78,7 @@
 
 .run-summary-time {
   color: var(--faint);
-  font-size: 12px;
+  font-size: inherit;
 }
 
 .run-summary-chevron {
@@ -92,12 +92,13 @@
   z-index: 10;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  width: max(
-    320px,
-    min(var(--inspector-width, 430px), calc(100vw - var(--rail) - 360px))
+  width: min(
+    var(--inspector-max-width, 680px),
+    max(var(--inspector-min-width, 320px), var(--inspector-width, 430px))
   );
   height: 100vh;
-  min-width: 320px;
+  min-width: var(--inspector-min-width, 320px);
+  max-width: calc(100vw - 96px);
   min-height: 0;
   overflow: hidden;
   border-top: 0;
@@ -111,6 +112,17 @@
 
 .tool-inspector.open {
   transform: translateX(0);
+}
+
+.tool-inspector.mobile {
+  z-index: 95;
+  width: 100vw;
+  max-width: none;
+  min-width: 0;
+}
+
+.tool-inspector.mobile .inspector-resize {
+  display: none;
 }
 
 .tool-inspector[aria-hidden="true"] {
@@ -160,7 +172,7 @@ body.resizing-inspector * {
 .tool-inspector header span {
   min-width: 0;
   overflow: hidden;
-  font-size: 14px;
+  font-size: var(--font-ui);
   font-weight: 560;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -175,7 +187,7 @@ body.resizing-inspector * {
   border-radius: var(--radius-small);
   background: transparent;
   color: var(--muted);
-  font-size: 18px;
+  font-size: var(--font-body);
 }
 
 .inspector-scroll {
@@ -210,6 +222,10 @@ body.resizing-inspector * {
   background: var(--wash);
 }
 
+.inspector-record.running .inspector-record-toggle {
+  animation: assistant-thinking-drift 5s ease-in-out infinite;
+}
+
 .inspector-steps button,
 .inspector-record-toggle {
   display: grid;
@@ -240,7 +256,7 @@ body.resizing-inspector * {
 
 .inspector-steps small {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 
 .inspector-record-body {
@@ -259,8 +275,8 @@ body.resizing-inspector * {
 .inspector-code,
 .diff-view code {
   color: var(--ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--code-font-family);
+  font-size: var(--code-font-size);
   line-height: 1.65;
 }
 
@@ -311,11 +327,11 @@ body.resizing-inspector * {
   min-width: max-content;
   min-height: 30px;
   padding: 0 10px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  border-bottom: 1px solid rgba(28, 28, 24, 0.06);
   background: transparent;
   color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--code-font-family);
+  font-size: var(--code-font-size);
 }
 
 .diff-head small {
@@ -349,7 +365,7 @@ body.resizing-inspector * {
   align-items: center;
   min-height: 22px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 
 .diff-add {
@@ -588,8 +604,8 @@ body.resizing-inspector * {
 }
 
 .composer-send {
-  background: var(--ink);
-  color: var(--ink-invert);
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .composer-attach:hover,

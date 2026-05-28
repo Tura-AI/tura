@@ -28,7 +28,7 @@ fn default_agent_registry_loads_general_agent() {
     assert_eq!(agents.len(), 1);
     assert_eq!(agents[0].agent_name, "general");
     assert!(agents[0].report_to_user);
-    assert_eq!(agents[0].provider.tura_llm_name, "tura_general");
+    assert_eq!(agents[0].provider.tura_llm_name, "fast");
     assert!(agents[0].validator.need_validator);
     assert!(!agents[0]
         .agent_capabilities

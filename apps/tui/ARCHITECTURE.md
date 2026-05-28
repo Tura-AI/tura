@@ -451,7 +451,7 @@ Use the current Tura architecture:
 - Global UI settings live behind `GET/PATCH /config`.
 - Provider/model catalog and auth state live behind `/provider` and
   `/provider/{providerID}/auth/*`.
-- Provider credentials and `tura_llm_config.json` updates are owned by
+- Provider credentials and `provider_config.json` updates are owned by
   gateway/provider code.
 - Commands are discovered by gateway from `.tura/commands`, `.opencode/*`,
   `command`, and `commands`.

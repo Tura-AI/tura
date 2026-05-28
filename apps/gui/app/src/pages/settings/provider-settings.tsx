@@ -14,8 +14,8 @@ import {
 } from "solid-js";
 import { Portal } from "solid-js/web";
 import ExternalLink from "lucide-solid/icons/external-link";
+import LinkIcon from "lucide-solid/icons/link";
 import LayoutList from "lucide-solid/icons/layout-list";
-import ArrowLeft from "lucide-solid/icons/arrow-left";
 import CalendarDays from "lucide-solid/icons/calendar-days";
 import ChartGantt from "lucide-solid/icons/chart-gantt";
 import Check from "lucide-solid/icons/check";
@@ -24,10 +24,11 @@ import ChevronLeft from "lucide-solid/icons/chevron-left";
 import ChevronRight from "lucide-solid/icons/chevron-right";
 import Columns3 from "lucide-solid/icons/columns-3";
 import Copy from "lucide-solid/icons/copy";
-import Edit3 from "lucide-solid/icons/edit-3";
+import Edit3 from "lucide-solid/icons/pencil";
 import FolderOpen from "lucide-solid/icons/folder-open";
 import KeyRound from "lucide-solid/icons/key-round";
-import MoreHorizontal from "lucide-solid/icons/more-horizontal";
+import LogOut from "lucide-solid/icons/log-out";
+import MoreHorizontal from "lucide-solid/icons/ellipsis";
 import Pin from "lucide-solid/icons/pin";
 import Plus from "lucide-solid/icons/plus";
 import Search from "lucide-solid/icons/search";
@@ -91,7 +92,6 @@ export function ProviderConfigGroup(props: {
   label: string;
   providers: SdkProvider[];
   state: AppState;
-  selectedProviderId?: string;
   onProvider: (provider: SdkProvider) => void;
 }) {
   return (
@@ -106,13 +106,15 @@ export function ProviderConfigGroup(props: {
       >
         {(provider) => (
           <button
-            class={classNames(
-              "settings-provider-row",
-              props.selectedProviderId === provider.id && "selected",
-            )}
+            class="settings-provider-row"
             onClick={() => props.onProvider(provider)}
           >
-            <span>{provider.name}</span>
+            <span class="provider-row-name">
+              <span>{provider.name}</span>
+              <Show when={providerHasOauthLogin(props.state, provider.id)}>
+                <small>{t("oauthLogin")}</small>
+              </Show>
+            </span>
             <small>
               {providerStateLabel(props.state, provider.id, provider.source)}
             </small>
@@ -123,95 +125,10 @@ export function ProviderConfigGroup(props: {
   );
 }
 
-export function ProviderSelectMenu(props: {
-  providers: SdkProvider[];
-  selectedProviderId?: string;
-  state: AppState;
-  onProvider: (provider: SdkProvider) => void;
-}) {
-  const [open, setOpen] = createSignal(false);
-  const [query, setQuery] = createSignal("");
-  let root: HTMLElement | undefined;
-  const selectedProvider = createMemo(() =>
-    props.providers.find(
-      (provider) => provider.id === props.selectedProviderId,
-    ),
-  );
-  const filteredProviders = createMemo(() => {
-    const text = query().trim().toLowerCase();
-    if (!text) {
-      return props.providers;
-    }
-    return props.providers.filter((provider) =>
-      [provider.name, provider.id, provider.source, ...provider.env]
-        .join(" ")
-        .toLowerCase()
-        .includes(text),
-    );
-  });
-
-  onMount(() => {
-    const closeOutside = (event: PointerEvent) => {
-      if (!root?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", closeOutside);
-    onCleanup(() => document.removeEventListener("pointerdown", closeOutside));
-  });
-
-  return (
-    <section class="plan-session-picker provider-select-menu" ref={root}>
-      <button
-        type="button"
-        class="plan-session-button provider-select-button"
-        onClick={() => setOpen(!open())}
-        title={selectedProvider()?.name ?? t("provider")}
-      >
-        <KeyRound size={15} strokeWidth={1.7} />
-        <span>{selectedProvider()?.name ?? t("provider")}</span>
-        <ChevronDown size={13} strokeWidth={1.8} />
-      </button>
-      <Show when={open()}>
-        <div class="plan-session-menu provider-picker-menu">
-          <label class="workspace-search-row">
-            <Search size={14} strokeWidth={1.7} />
-            <input
-              class="workspace-search"
-              value={query()}
-              placeholder={`${t("search")}...`}
-              onInput={(event) => setQuery(event.currentTarget.value)}
-            />
-          </label>
-          <div class="workspace-picker-list plan-session-list">
-            <For
-              each={filteredProviders()}
-              fallback={<div class="surface-list-empty">{t("empty")}</div>}
-            >
-              {(provider) => (
-                <button
-                  type="button"
-                  class={classNames(
-                    "workspace-pick-row",
-                    props.selectedProviderId === provider.id && "selected",
-                  )}
-                  onClick={() => {
-                    props.onProvider(provider);
-                    setOpen(false);
-                  }}
-                >
-                  <KeyRound size={15} strokeWidth={1.6} />
-                  <span>{provider.name}</span>
-                  <Show when={props.selectedProviderId === provider.id}>
-                    <Check size={14} strokeWidth={1.8} />
-                  </Show>
-                </button>
-              )}
-            </For>
-          </div>
-        </div>
-      </Show>
-    </section>
+function providerHasOauthLogin(state: AppState, providerId: string): boolean {
+  return (state.providerAuthMethods[providerId] ?? []).some(
+    (method) =>
+      method.type === "oauth" || method.kind.toLowerCase().includes("oauth"),
   );
 }
 
@@ -271,6 +188,28 @@ export function ProviderAuthDialog(props: {
         <Show when={props.panel.reason}>
           <div class="provider-auth-reason">{props.panel.reason}</div>
         </Show>
+        <Show when={provider()}>
+          {(item) => (
+            <div class="settings-fields provider-auth-info">
+              <ReadonlyRow
+                label={t("state")}
+                value={authStatusText(status())}
+              />
+              <ReadonlyRow
+                label={t("source")}
+                value={providerSourceLabel(item().source)}
+              />
+              <ReadonlyRow
+                label={t("env")}
+                value={item().env.join(", ") || "--"}
+              />
+              <ReadonlyRow
+                label={t("capabilities")}
+                value={providerCapabilityText(item())}
+              />
+            </div>
+          )}
+        </Show>
         <ProviderAuthMethods
           provider={provider()}
           methods={methods()}
@@ -281,27 +220,14 @@ export function ProviderAuthDialog(props: {
           onSaveKey={props.onSaveKey}
           onStartLogin={props.onStartLogin}
           onCompleteLogin={props.onCompleteLogin}
+          onLogout={props.onLogout}
         />
-        <footer>
-          <button type="button" class="secondary" onClick={props.onCancel}>
-            <ArrowLeft size={14} strokeWidth={1.7} />
-            {t("backToApp")}
-          </button>
-          <button
-            type="button"
-            class="text-button"
-            disabled={props.state.settingsSaving || !status()?.configured}
-            onClick={() => props.onLogout(props.panel.providerId)}
-          >
-            {t("logout")}
-          </button>
-        </footer>
       </div>
     </div>
   );
 }
 
-export function ProviderAuthMethods(props: {
+function ProviderAuthMethods(props: {
   provider?: SdkProvider;
   methods: ProviderAuthMethod[];
   status?: AppState["providerAuthStatus"][string];
@@ -315,6 +241,7 @@ export function ProviderAuthMethods(props: {
     code?: string,
     methodIndex?: number,
   ) => void;
+  onLogout?: (providerId: string) => void;
 }) {
   return (
     <Show
@@ -323,10 +250,6 @@ export function ProviderAuthMethods(props: {
     >
       {(provider) => (
         <div class="settings-fields login-fields provider-auth-methods">
-          <ReadonlyRow
-            label={t("state")}
-            value={authStatusText(props.status)}
-          />
           <For
             each={props.methods}
             fallback={<div class="surface-list-empty">{t("empty")}</div>}
@@ -344,34 +267,17 @@ export function ProviderAuthMethods(props: {
                     {method.token_env ?? method.login_env ?? method.kind}
                   </small>
                 </div>
-                <Show when={method.type === "api"}>
+                <Show when={methodUsesTokenInput(method)}>
                   <div class="login-method-controls">
-                    <div class="masked-token-field">
-                      <input
-                        type="password"
-                        value={
-                          props.state.authDrafts[provider().id] ??
-                          (props.status?.configured ? "configured-token" : "")
-                        }
-                        placeholder={method.token_env ?? t("apiKey")}
-                        onFocus={(event) => event.currentTarget.select()}
-                        onInput={(event) =>
-                          props.onAuthDraft(
-                            provider().id,
-                            event.currentTarget.value,
-                          )
-                        }
-                      />
-                      <button
-                        type="button"
-                        title={method.token_env ?? t("secureTokenPlaceholder")}
-                        onClick={() =>
-                          copyText(method.token_env ?? provider().name)
-                        }
-                      >
-                        <Copy size={14} strokeWidth={1.7} />
-                      </button>
-                    </div>
+                    <ProtectedTokenInput
+                      providerId={provider().id}
+                      providerName={provider().name}
+                      providerKey={provider().key}
+                      method={method}
+                      status={props.status}
+                      state={props.state}
+                      onAuthDraft={props.onAuthDraft}
+                    />
                     <button
                       class="secondary"
                       disabled={
@@ -384,46 +290,244 @@ export function ProviderAuthMethods(props: {
                     </button>
                   </div>
                 </Show>
+                <Show when={methodUsesTokenInput(method) && method.api_key_url}>
+                  {(url) => (
+                    <a
+                      class="provider-api-page-link"
+                      href={url()}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <LinkIcon size={14} strokeWidth={1.7} />
+                      {t("providerApiPage")}
+                    </a>
+                  )}
+                </Show>
                 <Show when={method.type === "oauth"}>
                   <div class="login-method-controls oauth-controls">
                     <button
-                      class="secondary"
-                      disabled={props.state.settingsSaving}
+                      class="secondary oauth-login-button"
+                      disabled={
+                        props.state.settingsSaving || method.available === false
+                      }
                       onClick={() => props.onStartLogin(provider().id, index())}
                     >
                       <ExternalLink size={14} strokeWidth={1.7} />
-                      {t("openLogin")}
-                    </button>
-                    <input
-                      value={props.state.authCodeDrafts[provider().id] ?? ""}
-                      placeholder={t("codeOrToken")}
-                      onInput={(event) =>
-                        props.onAuthCode(
-                          provider().id,
-                          event.currentTarget.value,
-                        )
-                      }
-                    />
-                    <button
-                      class="secondary"
-                      disabled={props.state.settingsSaving}
-                      onClick={() =>
-                        props.onCompleteLogin(
-                          provider().id,
-                          props.state.authCodeDrafts[provider().id],
-                          index(),
-                        )
-                      }
-                    >
-                      {t("complete")}
+                      {t("oauthLogin")}
                     </button>
                   </div>
+                  <Show
+                    when={
+                      method.available === false && method.unavailable_reason
+                    }
+                  >
+                    {(reason) => (
+                      <small class="login-method-help">{reason()}</small>
+                    )}
+                  </Show>
                 </Show>
               </div>
             )}
           </For>
+          <Show when={props.onLogout && props.status?.configured}>
+            <div class="provider-auth-logout-row">
+              <button
+                type="button"
+                class="text-button provider-auth-logout"
+                disabled={props.state.settingsSaving}
+                onClick={() => props.onLogout?.(provider().id)}
+              >
+                <LogOut size={14} strokeWidth={1.7} />
+                {t("logout")}
+              </button>
+            </div>
+          </Show>
         </div>
       )}
     </Show>
   );
+}
+
+function methodUsesTokenInput(method: ProviderAuthMethod): boolean {
+  return (
+    method.type === "api" ||
+    method.type === "token" ||
+    method.type === "browser"
+  );
+}
+
+function ProtectedTokenInput(props: {
+  providerId: string;
+  providerName: string;
+  providerKey?: string | null;
+  method: ProviderAuthMethod;
+  status?: AppState["providerAuthStatus"][string];
+  state: AppState;
+  onAuthDraft: (providerId: string, value: string) => void;
+}) {
+  const [revealed, setRevealed] = createSignal(false);
+  const value = createMemo(() =>
+    tokenInputValue(
+      props.providerId,
+      props.providerKey,
+      props.method,
+      props.status,
+      props.state,
+    ),
+  );
+  return (
+    <div
+      class="masked-token-field"
+      onMouseEnter={() => setRevealed(true)}
+      onMouseLeave={() => setRevealed(false)}
+      onFocusIn={() => setRevealed(true)}
+      onFocusOut={() => setRevealed(false)}
+    >
+      <input
+        type={revealed() ? "text" : "password"}
+        value={value()}
+        placeholder={props.method.token_env ?? t("apiKey")}
+        onFocus={(event) => event.currentTarget.select()}
+        onInput={(event) =>
+          props.onAuthDraft(props.providerId, event.currentTarget.value)
+        }
+      />
+      <button
+        type="button"
+        title={t("copy")}
+        disabled={!value().trim()}
+        onClick={() => copyText(value() || props.providerName)}
+      >
+        <Copy size={14} strokeWidth={1.7} />
+      </button>
+    </div>
+  );
+}
+
+function tokenInputValue(
+  providerId: string,
+  providerKey: string | null | undefined,
+  method: ProviderAuthMethod,
+  status: AppState["providerAuthStatus"][string] | undefined,
+  state: AppState,
+): string {
+  const draft = state.authDrafts[providerId];
+  if (draft !== undefined) {
+    return draft;
+  }
+  if (providerKey) {
+    return providerKey;
+  }
+  const methodRecord = method as unknown as Record<string, unknown>;
+  const configuredValue =
+    stringValue(methodRecord.configured_value) ||
+    stringValue(methodRecord.configuredValue) ||
+    stringValue(methodRecord.preview_value) ||
+    stringValue(methodRecord.previewValue);
+  if (configuredValue) {
+    return configuredValue;
+  }
+  return status?.configured ? "••••••••••••••••" : "";
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+const CAPABILITY_LABELS: Record<string, TextKey> = {
+  actions: "capabilityActions",
+  audio: "capabilityAudio",
+  ci: "capabilityCi",
+  cdn: "capabilityCdn",
+  contacts: "capabilityContacts",
+  docs: "capabilityDocs",
+  events: "capabilityEvents",
+  issues: "capabilityIssues",
+  queue: "capabilityQueue",
+  rerank: "capabilityRerank",
+  speech: "capabilitySpeech",
+  voice: "capabilityVoice",
+  webhook: "capabilityWebhook",
+  webinar: "capabilityWebinar",
+  workflow: "capabilityWorkflow",
+  "ai.modelarts": "capabilityAiModelarts",
+  approval: "capabilityApproval",
+  "base.records": "capabilityBaseRecords",
+  "calendar.events": "capabilityCalendarEvents",
+  "chat.post_message": "capabilityChatPostMessage",
+  "cloud.compute": "capabilityCloudCompute",
+  "confluence.pages": "capabilityConfluencePages",
+  "content.read": "capabilityContentRead",
+  "database.nosql": "capabilityDatabaseNosql",
+  "database.records": "capabilityDatabaseRecords",
+  "database.schema": "capabilityDatabaseSchema",
+  "database.sql": "capabilityDatabaseSql",
+  "docs.drive": "capabilityDocsDrive",
+  "docs.pages": "capabilityDocsPages",
+  "drive.files": "capabilityDriveFiles",
+  "email.send": "capabilityEmailSend",
+  "email.templates": "capabilityEmailTemplates",
+  "email.validate": "capabilityEmailValidate",
+  guilds: "capabilityGuilds",
+  "identity.oauth": "capabilityIdentityOauth",
+  "image.generation": "capabilityImageGeneration",
+  "jira.issues": "capabilityJiraIssues",
+  "llm.ark": "capabilityLlmArk",
+  "llm.bedrock": "capabilityLlmBedrock",
+  "llm.chat": "capabilityLlmChat",
+  "llm.dashscope": "capabilityLlmDashscope",
+  "llm.embedding": "capabilityLlmEmbedding",
+  "llm.hunyuan": "capabilityLlmHunyuan",
+  "llm.tool_call": "capabilityLlmToolCall",
+  "llm.vision": "capabilityLlmVision",
+  "mail.send": "capabilityMailSend",
+  "maps.directions": "capabilityMapsDirections",
+  "maps.geocoding": "capabilityMapsGeocoding",
+  "maps.place_search": "capabilityMapsPlaceSearch",
+  "maps.places": "capabilityMapsPlaces",
+  "maps.route": "capabilityMapsRoute",
+  "maps.weather": "capabilityMapsWeather",
+  "media.image": "capabilityMediaImage",
+  "media.processing": "capabilityMediaProcessing",
+  "meeting.create": "capabilityMeetingCreate",
+  merge_requests: "capabilityMergeRequests",
+  "messaging.bot": "capabilityMessagingBot",
+  "messaging.official_account": "capabilityMessagingOfficialAccount",
+  "messaging.push": "capabilityMessagingPush",
+  "messaging.reply": "capabilityMessagingReply",
+  mini_program: "capabilityMiniProgram",
+  "oauth.login": "capabilityOauthLogin",
+  "payment.charge": "capabilityPaymentCharge",
+  "payment.refund": "capabilityPaymentRefund",
+  "payment.transfer": "capabilityPaymentTransfer",
+  pull_requests: "capabilityPullRequests",
+  "recording.list": "capabilityRecordingList",
+  "search.answer": "capabilitySearchAnswer",
+  "search.context": "capabilitySearchContext",
+  "search.crawl": "capabilitySearchCrawl",
+  "search.images": "capabilitySearchImages",
+  "search.news": "capabilitySearchNews",
+  "search.web": "capabilitySearchWeb",
+  "search.workspace": "capabilitySearchWorkspace",
+  "sms.send": "capabilitySmsSend",
+  "speech.stt": "capabilitySpeechStt",
+  "speech.translation": "capabilitySpeechTranslation",
+  "speech.tts": "capabilitySpeechTts",
+  "storage.object": "capabilityStorageObject",
+  "vcs.repository": "capabilityVcsRepository",
+  "whatsapp.message": "capabilityWhatsappMessage",
+  "workflow.approval": "capabilityWorkflowApproval",
+};
+
+function providerCapabilityText(provider: SdkProvider): string {
+  const value = provider.options.capabilities;
+  const capabilities = Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+  if (!capabilities.length) {
+    return "--";
+  }
+  return capabilities
+    .map((capability) => t(CAPABILITY_LABELS[capability] ?? "unknown"))
+    .join(", ");
 }

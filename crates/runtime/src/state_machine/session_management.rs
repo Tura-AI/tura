@@ -360,6 +360,7 @@ impl SessionManagement {
                     "task_summary": task.task_summary,
                     "delivery": task.step_deliverable_description,
                     "sub_session_id": task.sub_session_id,
+                    "start_condition": task.start_condition,
                     "start_at": task.start_at,
                     "poll_interval": task.poll_interval,
                 });
@@ -390,6 +391,7 @@ impl SessionManagement {
                 "task_summary": task_summary,
                 "delivery": task.map(|task| task.step_deliverable_description.as_str()).unwrap_or_default(),
                 "sub_session_id": task.map(|task| task.sub_session_id.as_str()).unwrap_or_default(),
+                "start_condition": task.map(|task| task.start_condition).unwrap_or_default(),
                 "start_at": task.map(|task| task.start_at).unwrap_or(self.session_started_at),
                 "poll_interval": task.map(|task| task.poll_interval).unwrap_or_default(),
             });
@@ -410,6 +412,7 @@ impl SessionManagement {
                     "task_summary": task.task_summary,
                     "delivery": task.step_deliverable_description,
                     "sub_session_id": task.sub_session_id,
+                    "start_condition": task.start_condition,
                     "start_at": task.start_at,
                     "poll_interval": task.poll_interval,
                 });
@@ -498,6 +501,7 @@ mod tests {
         session.task_plan.detailed_tasks.push(TaskStep {
             nonce_id: "nonce-1".to_string(),
             step: 0,
+            start_condition: super::StartCondition::SessionIdle,
             task_summary: "Fix issue".to_string(),
             step_deliverable_description: "Verified patch".to_string(),
             status: PlanStatus::Doing,
@@ -511,7 +515,36 @@ mod tests {
         assert_eq!(value["step"], 0);
         assert_eq!(value["plan_summary"], "Fix issue");
         assert_eq!(value["task_summary"], "Fix issue");
+        assert_eq!(value["start_condition"], "session_idle");
         assert_eq!(value["status"], "doing");
+    }
+
+    #[test]
+    fn task_management_json_multi_task_includes_start_conditions() {
+        let mut session = session_in_state(SessionState::Running);
+        session.task_plan.plan_summary = "Release plan".to_string();
+        session.task_plan.detailed_tasks.push(TaskStep {
+            nonce_id: "idle".to_string(),
+            step: 0,
+            start_condition: super::StartCondition::SessionIdle,
+            task_summary: "Wait for idle".to_string(),
+            ..TaskStep::default()
+        });
+        session.task_plan.detailed_tasks.push(TaskStep {
+            nonce_id: "timer".to_string(),
+            step: 1,
+            start_condition: super::StartCondition::ScheduledTask,
+            task_summary: "Run later".to_string(),
+            ..TaskStep::default()
+        });
+
+        let value = session.task_management_json();
+        let tasks = value["tasks"]
+            .as_array()
+            .expect("multi task management should serialize a task list");
+
+        assert_eq!(tasks[0]["start_condition"], "session_idle");
+        assert_eq!(tasks[1]["start_condition"], "scheduled_task");
     }
 
     #[test]

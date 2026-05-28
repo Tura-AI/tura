@@ -102,7 +102,7 @@ function main() {
     "--agent",
     "coding_agent_fast",
     "-m",
-    process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "gpt-5.5",
+    process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "gpt-5.1-codex",
     "-c",
     `model_reasoning_effort=${process.env.COMMAND_RUN_AGENT_REASONING_EFFORT || "low"}`,
     "-c",

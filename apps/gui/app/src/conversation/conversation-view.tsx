@@ -6,6 +6,8 @@ import {
   createSignal,
   type JSX,
   onCleanup,
+  onMount,
+  untrack,
 } from "solid-js";
 import ArrowDown from "lucide-solid/icons/arrow-down";
 import ArrowUp from "lucide-solid/icons/arrow-up";
@@ -48,6 +50,11 @@ import {
 } from "./message-rich-text";
 import { Composer } from "./composer";
 
+const INSPECTOR_MIN_WIDTH = 320;
+const INSPECTOR_MAX_WIDTH = 680;
+const INSPECTOR_COLLAPSE_WIDTH = 260;
+const CONVERSATION_MAIN_MIN_WIDTH = 430;
+
 export function ConversationView(props: {
   state: AppState;
   session?: Session;
@@ -62,12 +69,22 @@ export function ConversationView(props: {
   conversationNotice?: JSX.Element;
   submitDisabled?: boolean;
   onToolOpen?: () => void;
+  onComposerOutside?: () => void;
+  leftRailOpen?: boolean;
+  leftRailWidth?: number;
+  minMainWidth?: number;
+  onRequestCollapseLeftRail?: () => void;
+  onInspectorLayout?: (layout: { open: boolean; width: number }) => void;
 }) {
   const [selectedToolId, setSelectedToolId] = createSignal<string>();
   const [inspectorParts, setInspectorParts] = createSignal<MessagePart[]>([]);
   const [inspectorOpen, setInspectorOpen] = createSignal(false);
+  const [inspectorOverlay, setInspectorOverlay] = createSignal(false);
   const [inspectorWidth, setInspectorWidth] = createSignal(430);
   const [transcriptPinned, setTranscriptPinned] = createSignal(true);
+  const [viewportWidth, setViewportWidth] = createSignal(
+    typeof window === "undefined" ? 0 : window.innerWidth,
+  );
   const groupedMessages = createMemo(() =>
     groupConversationTurns(props.messages),
   );
@@ -81,6 +98,120 @@ export function ConversationView(props: {
       .join("|"),
   );
   let transcriptEl: HTMLElement | undefined;
+  let conversationMainEl: HTMLDivElement | undefined;
+  let scrollFollowFrame: number | undefined;
+  let scrollFollowObserver: ResizeObserver | undefined;
+  let inspectorSessionId = props.session?.id;
+  const [scrollFollowBottom, setScrollFollowBottom] = createSignal(166);
+  const minMainWidth = createMemo(
+    () => props.minMainWidth ?? CONVERSATION_MAIN_MIN_WIDTH,
+  );
+
+  function leftRailWidth() {
+    return props.leftRailOpen ? (props.leftRailWidth ?? 0) : 0;
+  }
+
+  function mainWidthWith(leftWidth: number, rightWidth: number) {
+    return viewportWidth() - leftWidth - rightWidth;
+  }
+
+  function canFitInspector(width: number, leftWidth = leftRailWidth()) {
+    return mainWidthWith(leftWidth, width) >= minMainWidth();
+  }
+
+  function collapseLeftIfInspectorNeedsRoom(width = inspectorWidth()) {
+    if (props.leftRailOpen && !canFitInspector(width)) {
+      props.onRequestCollapseLeftRail?.();
+      return true;
+    }
+    return false;
+  }
+
+  function inspectorMaxWidth(leftAlreadyCollapsed = false) {
+    const left = leftAlreadyCollapsed ? 0 : leftRailWidth();
+    return Math.min(
+      INSPECTOR_MAX_WIDTH,
+      Math.max(0, viewportWidth() - left - minMainWidth()),
+    );
+  }
+
+  function requestInspectorWidth(width: number) {
+    const collapsedLeft = collapseLeftIfInspectorNeedsRoom(width);
+    const max = inspectorMaxWidth(collapsedLeft);
+    if (max < INSPECTOR_MIN_WIDTH) {
+      setInspectorOverlay(true);
+      setInspectorWidth(INSPECTOR_MIN_WIDTH);
+      return true;
+    }
+    setInspectorOverlay(false);
+    setInspectorWidth(Math.min(max, Math.max(INSPECTOR_MIN_WIDTH, width)));
+    return true;
+  }
+
+  function openInspectorFor(part: MessagePart, parts: MessagePart[]) {
+    if (inspectorOpen() && selectedToolId() === part.id) {
+      setInspectorOpen(false);
+      setInspectorOverlay(false);
+      return;
+    }
+    const needsLeftCollapsed =
+      collapseLeftIfInspectorNeedsRoom(INSPECTOR_MIN_WIDTH);
+    setSelectedToolId(part.id);
+    setInspectorParts(parts);
+    const max = inspectorMaxWidth(needsLeftCollapsed);
+    if (max < INSPECTOR_MIN_WIDTH) {
+      setInspectorOverlay(true);
+      setInspectorWidth(INSPECTOR_MIN_WIDTH);
+      setInspectorOpen(true);
+      return;
+    }
+    setInspectorOverlay(false);
+    if (requestInspectorWidth(inspectorWidth())) {
+      setInspectorOpen(true);
+    }
+  }
+
+  onMount(() => {
+    const resize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", resize);
+    onCleanup(() => window.removeEventListener("resize", resize));
+  });
+
+  createEffect(() => {
+    const sessionId = props.session?.id;
+    if (sessionId === inspectorSessionId) {
+      return;
+    }
+    inspectorSessionId = sessionId;
+    setInspectorOpen(false);
+    setInspectorOverlay(false);
+    setSelectedToolId(undefined);
+    setInspectorParts([]);
+  });
+
+  createEffect(() => {
+    if (
+      !inspectorOpen() ||
+      inspectorOverlay() ||
+      canFitInspector(inspectorWidth())
+    ) {
+      return;
+    }
+    if (props.leftRailOpen && canFitInspector(INSPECTOR_MIN_WIDTH, 0)) {
+      props.onRequestCollapseLeftRail?.();
+      return;
+    }
+    if (!props.leftRailOpen || !canFitInspector(INSPECTOR_MIN_WIDTH, 0)) {
+      setInspectorOpen(false);
+    }
+  });
+
+  createEffect(() => {
+    props.onInspectorLayout?.({
+      open: inspectorOpen() && !inspectorOverlay(),
+      width: inspectorOpen() && !inspectorOverlay() ? inspectorWidth() : 0,
+    });
+  });
 
   function transcriptAtBottom() {
     if (!transcriptEl) {
@@ -111,6 +242,46 @@ export function ConversationView(props: {
     setTranscriptPinned(transcriptAtBottom());
   }
 
+  function updateScrollFollowBottom() {
+    if (!conversationMainEl || !transcriptEl) {
+      return;
+    }
+    const mainRect = conversationMainEl.getBoundingClientRect();
+    const transcriptRect = transcriptEl.getBoundingClientRect();
+    setScrollFollowBottom(
+      Math.max(14, Math.round(mainRect.bottom - transcriptRect.bottom + 10)),
+    );
+  }
+
+  function queueScrollFollowBottomUpdate() {
+    if (scrollFollowFrame) {
+      cancelAnimationFrame(scrollFollowFrame);
+    }
+    scrollFollowFrame = requestAnimationFrame(() => {
+      scrollFollowFrame = undefined;
+      updateScrollFollowBottom();
+    });
+  }
+
+  onMount(() => {
+    scrollFollowObserver = new ResizeObserver(queueScrollFollowBottomUpdate);
+    if (conversationMainEl) {
+      scrollFollowObserver.observe(conversationMainEl);
+    }
+    if (transcriptEl) {
+      scrollFollowObserver.observe(transcriptEl);
+    }
+    window.addEventListener("resize", queueScrollFollowBottomUpdate);
+    queueScrollFollowBottomUpdate();
+    onCleanup(() => {
+      window.removeEventListener("resize", queueScrollFollowBottomUpdate);
+      scrollFollowObserver?.disconnect();
+      if (scrollFollowFrame) {
+        cancelAnimationFrame(scrollFollowFrame);
+      }
+    });
+  });
+
   createEffect(() => {
     streamSignature();
     if (transcriptPinned()) {
@@ -123,9 +294,12 @@ export function ConversationView(props: {
       class={classNames(
         "conversation-view",
         props.compact && "compact-conversation",
-        inspectorOpen() && "inspector-open",
+        inspectorOpen() && !inspectorOverlay() && "inspector-open",
       )}
-      style={{ "--inspector-width": `${inspectorWidth()}px` }}
+      style={{
+        "--inspector-width": `${inspectorWidth()}px`,
+        "--inspector-max-width": `${inspectorMaxWidth()}px`,
+      }}
     >
       <header class="page-head">
         <div class="page-title">
@@ -136,7 +310,31 @@ export function ConversationView(props: {
         </div>
       </header>
       <div class="conversation-grid">
-        <div class="conversation-main">
+        <div
+          ref={conversationMainEl}
+          class="conversation-main"
+          style={{
+            "--scroll-follow-bottom": `${scrollFollowBottom()}px`,
+          }}
+          onPointerDown={(event) => {
+            const target = event.target as HTMLElement;
+            if (
+              target.closest(
+                [
+                  ".bottom-composer",
+                  ".composer-task-dock",
+                  ".composer-task-menu",
+                  ".plan-session-menu",
+                  ".plan-trigger-menu",
+                  ".plan-schedule-dialog",
+                ].join(", "),
+              )
+            ) {
+              return;
+            }
+            props.onComposerOutside?.();
+          }}
+        >
           <Transcript
             session={props.session}
             messages={groupedMessages()}
@@ -145,6 +343,8 @@ export function ConversationView(props: {
             conversationNotice={props.conversationNotice}
             onTranscript={(element) => {
               transcriptEl = element;
+              scrollFollowObserver?.observe(element);
+              queueScrollFollowBottomUpdate();
             }}
             onScroll={handleTranscriptScroll}
             onTool={(part, parts) => {
@@ -152,9 +352,7 @@ export function ConversationView(props: {
                 props.onToolOpen();
                 return;
               }
-              setSelectedToolId(part.id);
-              setInspectorParts(parts);
-              setInspectorOpen(true);
+              openInspectorFor(part, parts);
             }}
           />
           <Show when={!transcriptPinned()}>
@@ -189,10 +387,19 @@ export function ConversationView(props: {
           serviceStatus={props.state.serviceStatus}
           selectedId={selectedToolId()}
           open={inspectorOpen()}
+          overlay={inspectorOverlay()}
           width={inspectorWidth()}
-          onWidth={setInspectorWidth}
+          maxWidth={inspectorOverlay() ? viewportWidth() : inspectorMaxWidth()}
+          leftRailOpen={props.leftRailOpen}
+          leftRailWidth={props.leftRailWidth}
+          minMainWidth={minMainWidth()}
+          onRequestCollapseLeftRail={props.onRequestCollapseLeftRail}
+          onWidth={requestInspectorWidth}
           onSelect={setSelectedToolId}
-          onClose={() => setInspectorOpen(false)}
+          onClose={() => {
+            setInspectorOpen(false);
+            setInspectorOverlay(false);
+          }}
         />
       </Show>
     </section>
@@ -255,7 +462,13 @@ function ToolInspector(props: {
   serviceStatus?: ServiceStatusResponse;
   selectedId?: string;
   open: boolean;
+  overlay: boolean;
   width: number;
+  maxWidth: number;
+  leftRailOpen?: boolean;
+  leftRailWidth?: number;
+  minMainWidth: number;
+  onRequestCollapseLeftRail?: () => void;
   onWidth: (width: number) => void;
   onSelect: (partId: string) => void;
   onClose: () => void;
@@ -305,13 +518,33 @@ function ToolInspector(props: {
   }
 
   function updateWidth(clientX: number) {
+    if (props.overlay) {
+      return;
+    }
     const next = widthStart + dragStart - clientX;
-    const rail =
-      Number.parseFloat(
-        getComputedStyle(document.documentElement).getPropertyValue("--rail"),
-      ) || 0;
-    const max = Math.min(760, Math.max(320, window.innerWidth - rail - 360));
-    props.onWidth(Math.min(max, Math.max(320, next)));
+    if (next <= INSPECTOR_COLLAPSE_WIDTH) {
+      props.onWidth(INSPECTOR_MIN_WIDTH);
+      props.onClose();
+      stopResize();
+      return;
+    }
+    if (
+      props.leftRailOpen &&
+      window.innerWidth -
+        (props.leftRailWidth ?? 0) -
+        Math.max(INSPECTOR_MIN_WIDTH, next) <
+        props.minMainWidth
+    ) {
+      props.onRequestCollapseLeftRail?.();
+    }
+    if (props.maxWidth < INSPECTOR_MIN_WIDTH) {
+      props.onClose();
+      stopResize();
+      return;
+    }
+    props.onWidth(
+      Math.min(props.maxWidth, Math.max(INSPECTOR_MIN_WIDTH, next)),
+    );
   }
 
   function resizeMouse(event: MouseEvent) {
@@ -341,10 +574,17 @@ function ToolInspector(props: {
 
   return (
     <aside
-      class={classNames("tool-inspector", props.open && "open")}
+      class={classNames(
+        "tool-inspector",
+        props.open && "open",
+        props.overlay && "mobile",
+      )}
       data-empty={records().length === 0}
       aria-hidden={!props.open}
-      style={{ "--inspector-width": `${props.width}px` }}
+      style={{
+        "--inspector-width": `${props.width}px`,
+        "--inspector-max-width": `${props.maxWidth}px`,
+      }}
     >
       <div
         class="inspector-resize"
@@ -401,6 +641,7 @@ function ToolInspector(props: {
                         "inspector-record",
                         expanded() && "expanded",
                         groupStart() && "group-start",
+                        record.status === "running" && "running",
                         isPatchRecord(record) && "patch-record",
                       )}
                     >
@@ -530,7 +771,13 @@ function Transcript(props: {
     >
       <Show
         when={!props.loading}
-        fallback={<div class="center-state">{t("loading")}</div>}
+        fallback={
+          <div class="transcript-loading-placeholder">
+            <div class="loading-bar wide" />
+            <div class="loading-bar medium" />
+            <div class="loading-bar" />
+          </div>
+        }
       >
         <Show
           when={props.session}
@@ -574,6 +821,16 @@ function MessageCell(props: {
     props.message.parts.filter((part) => !isToolPart(part)),
   );
   const toolParts = createMemo(() => props.message.parts.filter(isToolPart));
+  const planRunPending = createMemo(() =>
+    props.message.parts.some((part) =>
+      Boolean(asRecord(part.metadata).planRunPending),
+    ),
+  );
+  const planRunError = createMemo(() =>
+    props.message.parts.some((part) =>
+      Boolean(asRecord(part.metadata).planRunError),
+    ),
+  );
   const isPending = createMemo(
     () =>
       props.message.role === "assistant" &&
@@ -600,8 +857,13 @@ function MessageCell(props: {
       .join("|"),
   );
   createEffect(() => {
-    messagePulseSignature();
+    const signature = messagePulseSignature();
+    const previousSignature = messagePulseSignatureCache.get(props.message.id);
+    messagePulseSignatureCache.set(props.message.id, signature);
     if (props.message.role !== "assistant" || !props.isLatest) {
+      return;
+    }
+    if (previousSignature === signature) {
       return;
     }
     setPulse(false);
@@ -651,6 +913,8 @@ function MessageCell(props: {
       class={classNames(
         "message",
         props.message.role,
+        planRunPending() && props.isLatest && "plan-run-pending",
+        planRunError() && "plan-run-error",
         pulse() && "message-arrival-pulse",
       )}
     >
@@ -757,7 +1021,10 @@ function assistantPartBlocks(
     blocks.push({ type: "text", parts: [part] });
   }
   flushTools();
-  return blocks;
+  return [
+    ...blocks.filter((block) => block.type === "tools"),
+    ...blocks.filter((block) => block.type === "text"),
+  ];
 }
 
 function blockDurationMs(parts: MessagePart[]): number | undefined {
@@ -845,7 +1112,13 @@ function TextPartCell(props: { part: MessagePart; streaming: boolean }) {
           <pre>{jsonPreview(props.part.state || props.part.metadata)}</pre>
         }
       >
-        {(value) => <TypingText text={value()} active={props.streaming} />}
+        {(value) => (
+          <TypingText
+            id={props.part.id}
+            text={value()}
+            active={props.streaming}
+          />
+        )}
       </Show>
     </div>
   );
@@ -905,23 +1178,51 @@ function isReactionOnlyMessage(message: Message): boolean {
   );
 }
 
-function TypingText(props: { text: string; active: boolean }) {
-  const [visible, setVisible] = createSignal(props.active ? "" : props.text);
+const typingTextCache = new Map<string, string>();
+const completedTypingTextCache = new Set<string>();
+const messagePulseSignatureCache = new Map<string, string>();
+
+function TypingText(props: { id: string; text: string; active: boolean }) {
+  const [visible, setVisible] = createSignal(
+    props.active && !completedTypingTextCache.has(props.text)
+      ? (typingTextCache.get(props.id) ?? "")
+      : props.text,
+  );
   let timer: number | undefined;
+
+  const setCachedVisible = (id: string, text: string, value: string) => {
+    setVisible(value);
+    typingTextCache.set(id, value);
+    if (value === text) {
+      completedTypingTextCache.add(text);
+    }
+  };
 
   createEffect(() => {
     const text = props.text;
-    if (!props.active) {
-      setVisible(text);
-      return;
-    }
+    const active = props.active;
+    const id = props.id;
     if (timer) {
       window.clearInterval(timer);
+      timer = undefined;
     }
-    const current = visible();
-    const start = text.startsWith(current) ? current.length : 0;
+    if (!active || completedTypingTextCache.has(text)) {
+      setCachedVisible(id, text, text);
+      return;
+    }
+    const cached = typingTextCache.get(id);
+    const current = untrack(visible);
+    const seed =
+      cached && text.startsWith(cached) && cached.length > current.length
+        ? cached
+        : current;
+    if (seed === text) {
+      setCachedVisible(id, text, text);
+      return;
+    }
+    const start = text.startsWith(seed) ? seed.length : 0;
     if (start === 0) {
-      setVisible("");
+      setCachedVisible(id, text, "");
     }
     let index = start;
     timer = window.setInterval(() => {
@@ -929,7 +1230,8 @@ function TypingText(props: { text: string; active: boolean }) {
         text.length,
         index + Math.max(1, Math.ceil((text.length - index) / 24)),
       );
-      setVisible(text.slice(0, index));
+      const next = text.slice(0, index);
+      setCachedVisible(id, text, next);
       if (index >= text.length && timer) {
         window.clearInterval(timer);
         timer = undefined;

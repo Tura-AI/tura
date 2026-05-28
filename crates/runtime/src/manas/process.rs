@@ -1116,7 +1116,7 @@ mod tests {
         runtime.error = Some(RuntimeError {
             error_code: Some("CALL_FAILED".to_string()),
             error_text: Some(
-                "all providers failed: openai:gpt-5.5 => network error: error decoding response body"
+                "all providers failed: openai:gpt-5.1 => network error: error decoding response body"
                     .to_string(),
             ),
             retry_allowed: true,
@@ -1128,7 +1128,7 @@ mod tests {
         assert_eq!(
             runtime_failure_text(&runtime).as_deref(),
             Some(
-                "all providers failed: openai:gpt-5.5 => network error: error decoding response body"
+                "all providers failed: openai:gpt-5.1 => network error: error decoding response body"
             )
         );
     }
@@ -1170,7 +1170,7 @@ mod tests {
                 },
                 thinking: false,
                 provider_name: provider.clone(),
-                model_name: "gpt-5.5".to_string(),
+                model_name: "gpt-5.1".to_string(),
                 provider_url_name: provider.clone(),
                 llm_provider_name: provider,
             },

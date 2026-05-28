@@ -3,6 +3,7 @@ import {
   GatewayClient,
   errorMessage,
   type ProviderAuthMethod,
+  type TuraConfigModelPair,
 } from "@tura/gateway-sdk";
 import { t } from "../i18n";
 import type { AppState } from "../state/global-store";
@@ -10,7 +11,6 @@ import {
   configDraftToPatch,
   configToDraft,
   draftToRecord,
-  parseModelRef,
   providerIdFromAuthError,
   recordToDraft,
 } from "../utils/settings";
@@ -34,6 +34,7 @@ export function useProviderSettingsActions(
       safe(() => directoryClient().providers(), state().providers),
       safe(() => client.providerAuthMethods(), state().providerAuthMethods),
     ]);
+    const modelConfig = await safe(() => client.modelConfig(), state().modelConfig);
     const ids = providerId
       ? [providerId]
       : (providers?.all ?? state().providers?.all ?? []).map(
@@ -57,6 +58,7 @@ export function useProviderSettingsActions(
     setState((previous) => ({
       ...previous,
       providers,
+      modelConfig,
       providerAuthMethods,
       providerAuthStatus,
     }));
@@ -85,7 +87,6 @@ export function useProviderSettingsActions(
       ...previous,
       settingsSaving: true,
       settingsNotice: undefined,
-      modelValidation: undefined,
       error: undefined,
     }));
     try {
@@ -126,26 +127,26 @@ export function useProviderSettingsActions(
     }
   }
 
-  async function validateSelectedModel() {
-    const parsed = parseModelRef(state().selectedModel);
-    if (!parsed) {
-      return;
-    }
+  async function updateModelTier(tier: string, option: TuraConfigModelPair) {
     setState((previous) => ({
       ...previous,
       settingsSaving: true,
-      modelValidation: undefined,
+      settingsNotice: undefined,
       error: undefined,
     }));
     try {
-      const result = await rootClient().validateProviderModel({
-        providerID: parsed.providerId,
-        modelID: parsed.modelId,
+      const modelConfig = await rootClient().putModelConfig({
+        tier,
+        provider: option.provider,
+        model: option.model,
       });
       setState((previous) => ({
         ...previous,
         settingsSaving: false,
-        modelValidation: result.message,
+        modelConfig,
+        selectedModel: `${option.provider}/${option.model}`,
+        selectedProviderId: option.provider,
+        settingsNotice: modelConfig.error ?? t("saved"),
       }));
     } catch (error) {
       setState((previous) => ({
@@ -174,6 +175,7 @@ export function useProviderSettingsActions(
       const ok = await rootClient().setProviderAuth(providerId, {
         type: method.type,
         key,
+        access: key,
         metadata: { login: method.login },
       });
       await refreshProviderSurface(providerId);
@@ -210,6 +212,7 @@ export function useProviderSettingsActions(
       if (result.url) {
         window.open(result.url, "_blank", "noopener,noreferrer");
       }
+      await refreshProviderSurface(providerId);
       setState((previous) => ({
         ...previous,
         settingsSaving: false,
@@ -290,7 +293,7 @@ export function useProviderSettingsActions(
     refreshProviderSurface,
     handleProviderAuthError,
     saveRuntimeSettings,
-    validateSelectedModel,
+    updateModelTier,
     saveProviderKey,
     startProviderLogin,
     completeProviderLogin,

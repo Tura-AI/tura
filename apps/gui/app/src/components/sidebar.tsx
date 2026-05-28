@@ -24,10 +24,10 @@ import ChevronLeft from "lucide-solid/icons/chevron-left";
 import ChevronRight from "lucide-solid/icons/chevron-right";
 import Columns3 from "lucide-solid/icons/columns-3";
 import Copy from "lucide-solid/icons/copy";
-import Edit3 from "lucide-solid/icons/edit-3";
+import Edit3 from "lucide-solid/icons/pencil";
 import FolderOpen from "lucide-solid/icons/folder-open";
 import KeyRound from "lucide-solid/icons/key-round";
-import MoreHorizontal from "lucide-solid/icons/more-horizontal";
+import MoreHorizontal from "lucide-solid/icons/ellipsis";
 import Pin from "lucide-solid/icons/pin";
 import Plus from "lucide-solid/icons/plus";
 import Search from "lucide-solid/icons/search";
@@ -298,13 +298,15 @@ export function WorkspaceTree(props: {
           </For>
         </Show>
       </Show>
-      <Show when={archivedWorkspaces().length > 0}>
+      <Show
+        when={props.activeTab !== "files" && archivedWorkspaces().length > 0}
+      >
         <RailSectionTitle
           className="archived-section-title"
           expanded={archivedSectionOpen()}
           onToggle={() => setArchivedSectionOpen((open) => !open)}
         >
-          {t("archived")}会话
+          {t("archived")}
         </RailSectionTitle>
         <Show when={archivedSectionOpen()}>
           <For each={archivedWorkspaces()}>
@@ -579,7 +581,7 @@ export function FileTreeRows(props: {
             >
               <FileTreeLabel file={file} expanded={expanded()} />
               <Show when={props.loadingPath === file.path}>
-                <span class="file-tree-loading" />
+                <span class="file-tree-loading loading-bar" />
               </Show>
             </button>
             <Show when={expanded()}>

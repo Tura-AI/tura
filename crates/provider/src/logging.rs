@@ -8,10 +8,21 @@ use uuid::Uuid;
 
 use crate::tura_llm::{CallMetrics, TuraError};
 
+const DEFAULT_LOG_CRATE_DIR: &str = "provider";
+
 fn get_log_root() -> PathBuf {
     std::env::var("LOG_PATH")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("log"))
+        .unwrap_or_else(|_| project_root().join("log").join(DEFAULT_LOG_CRATE_DIR))
+}
+
+fn project_root() -> PathBuf {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir
+        .ancestors()
+        .find(|candidate| candidate.join("Cargo.lock").exists())
+        .map(Path::to_path_buf)
+        .unwrap_or(manifest_dir)
 }
 
 fn log_day_dir(now: DateTime<Local>) -> PathBuf {
@@ -105,4 +116,26 @@ pub async fn write_llm_log(
 
 pub fn display_path(path: &Path) -> String {
     path.display().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn default_log_root_is_project_level_provider_log_dir() {
+        let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
+        unsafe {
+            std::env::remove_var("LOG_PATH");
+        }
+
+        let root = get_log_root();
+        assert!(root.ends_with(Path::new("log").join("provider")));
+        assert!(root.parent().and_then(Path::parent).is_some_and(|project| {
+            project.join("Cargo.toml").exists() && project.join("Cargo.lock").exists()
+        }));
+    }
 }

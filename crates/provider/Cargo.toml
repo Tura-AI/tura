@@ -10,8 +10,8 @@ name = "tura_llm_rust"
 path = "src/lib.rs"
 
 [[test]]
-name = "provider_route_manual_smoke"
-path = "tests/provider_route_manual_smoke.rs"
+name = "provider_tool_call_live_smoke"
+path = "tests/provider_tool_call_live_smoke.rs"
  harness = false
 
 [dependencies]

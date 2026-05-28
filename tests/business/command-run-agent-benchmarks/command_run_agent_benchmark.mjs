@@ -4194,7 +4194,7 @@ async function collectJsonlFiles(root) {
 }
 
 async function collectTuraProviderDiagnostics({ workspace, sinceMs }) {
-  const providerLogRoot = path.join(turaRoot, "crates", "provider", "log")
+  const providerLogRoot = path.join(turaRoot, "log", "provider")
   const diagnostics = {
     source: "tura-provider-json",
     provider_log_root: providerLogRoot,

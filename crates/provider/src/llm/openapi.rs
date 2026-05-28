@@ -1,20 +1,18 @@
-use futures_util::StreamExt;
 use regex::Regex;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use crate::llm::_utils::{
-    deep_merge_json, provider_first_output_timeout, provider_idle_output_timeout,
-    provider_timeout_error, send_provider_request_first_response, strip_json_fence,
-};
+use crate::metrics::{extract_openapi_metrics, fill_missing_estimated_usage};
+use crate::streaming::{next_provider_stream_chunk, send_provider_request_first_response};
 use crate::tura_llm::{
     default_client, estimate_context_utilization, normalize_response_content, CallMetrics,
     CallOptions, CostDetails, ProviderResponse, ProviderStreamEvent, ProviderStreamEventSink,
     TuraError, UsageDetails,
 };
+use crate::utils::{deep_merge_json, strip_json_fence};
 
-pub async fn openai_embed(
+pub async fn embed(
     base_url: &str,
     model: &str,
     api_key: &str,
@@ -69,21 +67,8 @@ pub async fn call_with_stream_events(
     api_key: &str,
     messages: &[Value],
     options: &CallOptions,
-    stream_events: Option<ProviderStreamEventSink>,
+    _stream_events: Option<ProviderStreamEventSink>,
 ) -> Result<ProviderResponse, TuraError> {
-    if provider.eq_ignore_ascii_case("openai")
-        && openai_codex_oauth_base_url_allowed(base_url)
-        && std::env::var("OPENAI_LOGIN")
-            .map(|value| value.eq_ignore_ascii_case("oauth"))
-            .unwrap_or(false)
-    {
-        return openai_codex_oauth_call(model, api_key, messages, options, stream_events).await;
-    }
-
-    if options.force_search && provider.eq_ignore_ascii_case("openai") {
-        return openai_force_search(base_url, model, api_key, messages, options).await;
-    }
-
     let client = default_client(api_key)?;
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
 
@@ -115,7 +100,7 @@ pub async fn call_with_stream_events(
         content = Value::String(strip_json_fence(text));
     }
 
-    let mut metrics = extract_metrics(&data, options.context_window);
+    let mut metrics = extract_openapi_metrics(&data, options.context_window);
     metrics.provider_request_id = req_id;
 
     Ok(ProviderResponse {
@@ -254,7 +239,7 @@ fn build_chat_payload(
     payload
 }
 
-async fn openai_codex_oauth_call(
+pub(crate) async fn codex_oauth_call(
     model: &str,
     access_token: &str,
     messages: &[Value],
@@ -303,8 +288,13 @@ async fn openai_codex_oauth_call(
     if let Some(text) = content.as_str() {
         content = Value::String(strip_json_fence(text));
     }
-    let mut metrics = extract_metrics(&data, options.context_window);
-    fill_missing_codex_oauth_usage(&mut metrics, &payload, &content);
+    let mut metrics = extract_openapi_metrics(&data, options.context_window);
+    fill_missing_estimated_usage(
+        &mut metrics,
+        &payload,
+        &content,
+        "codex_oauth_stream_returned_before_provider_usage",
+    );
     metrics.cost = CostDetails::default();
     metrics.provider_request_id = req_id;
     Ok(ProviderResponse {
@@ -368,7 +358,8 @@ fn build_codex_oauth_payload(model: &str, messages: &[Value], options: &CallOpti
     }
     payload["tool_choice"] = options
         .tool_choice
-        .clone()
+        .as_ref()
+        .map(normalize_codex_tool_choice)
         .unwrap_or_else(|| Value::String("auto".to_string()));
     insert_opt(
         &mut payload,
@@ -395,53 +386,6 @@ fn build_codex_oauth_payload(model: &str, messages: &[Value], options: &CallOpti
     }
 
     payload
-}
-
-fn fill_missing_codex_oauth_usage(metrics: &mut CallMetrics, payload: &Value, content: &Value) {
-    if metrics.usage.total_tokens.unwrap_or(0) > 0 {
-        return;
-    }
-
-    let input_tokens = estimate_token_count(&payload.to_string()).max(1);
-    let output_tokens = estimate_token_count(&content.to_string()).max(1);
-    metrics.usage.input_tokens = Some(input_tokens);
-    metrics.usage.output_tokens = Some(output_tokens);
-    metrics.usage.total_tokens = Some(input_tokens + output_tokens);
-    metrics.raw_usage = Some(json!({
-        "estimated": true,
-        "reason": "codex_oauth_stream_returned_before_provider_usage",
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "total_tokens": input_tokens + output_tokens
-    }));
-}
-
-fn estimate_token_count(text: &str) -> u64 {
-    let chars = text.chars().count() as u64;
-    chars.div_ceil(4)
-}
-
-async fn next_provider_stream_chunk<S>(
-    stream: &mut S,
-    saw_output: bool,
-    last_output_at: Instant,
-) -> Result<Option<S::Item>, TuraError>
-where
-    S: futures_util::Stream + Unpin,
-{
-    let limit = if saw_output {
-        provider_idle_output_timeout()
-    } else {
-        provider_first_output_timeout()
-    };
-    let elapsed = last_output_at.elapsed();
-    if elapsed >= limit {
-        return Err(provider_timeout_error(saw_output, limit));
-    }
-    match tokio::time::timeout(limit - elapsed, stream.next()).await {
-        Ok(next) => Ok(next),
-        Err(_) => Err(provider_timeout_error(saw_output, limit)),
-    }
 }
 
 async fn parse_codex_response_stream(
@@ -596,14 +540,6 @@ fn openai_codex_endpoint() -> String {
         .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex/responses".to_string())
 }
 
-fn openai_codex_oauth_base_url_allowed(base_url: &str) -> bool {
-    let normalized = base_url.trim().trim_end_matches('/');
-    matches!(
-        normalized,
-        "" | "https://api.openai.com" | "https://api.openai.com/v1"
-    )
-}
-
 fn codex_input_role(role: &str) -> &str {
     match role {
         "assistant" => "assistant",
@@ -673,6 +609,23 @@ fn codex_tool_schema(tool: &Value) -> Value {
         }
     }
     Value::Object(converted)
+}
+
+fn normalize_codex_tool_choice(tool_choice: &Value) -> Value {
+    if tool_choice.get("type").and_then(Value::as_str) == Some("function") {
+        if let Some(name) = tool_choice
+            .get("function")
+            .and_then(|function| function.get("name"))
+            .and_then(Value::as_str)
+            .filter(|name| !name.trim().is_empty())
+        {
+            return json!({
+                "type": "function",
+                "name": name,
+            });
+        }
+    }
+    tool_choice.clone()
 }
 
 fn extract_codex_tool_calls(data: &Value) -> Vec<Value> {
@@ -1295,7 +1248,7 @@ async fn stream_call(
     };
 
     let mut metrics = if let Some(usage) = stream_state.stream_usage.clone() {
-        let mut metrics = extract_metrics(&json!({ "usage": usage }), context_window);
+        let mut metrics = extract_openapi_metrics(&json!({ "usage": usage }), context_window);
         metrics.tool_call_count = tool_calls.len();
         metrics.finish_reason = stream_state.finish_reason.clone();
         metrics
@@ -1318,7 +1271,12 @@ async fn stream_call(
         }
     };
     if stream_state.stream_usage.is_none() {
-        fill_missing_codex_oauth_usage(&mut metrics, &payload, &content);
+        fill_missing_estimated_usage(
+            &mut metrics,
+            &payload,
+            &content,
+            "codex_oauth_stream_returned_before_provider_usage",
+        );
     }
     estimate_context_utilization(&mut metrics);
 
@@ -1561,7 +1519,7 @@ fn xml_unescape(value: &str) -> String {
         .replace("&amp;", "&")
 }
 
-async fn openai_force_search(
+pub(crate) async fn force_search(
     base_url: &str,
     model: &str,
     api_key: &str,
@@ -1628,7 +1586,7 @@ async fn openai_force_search(
     }
 
     let content = data.get("output").cloned().unwrap_or_else(|| data.clone());
-    let mut metrics = extract_metrics(&data, options.context_window);
+    let mut metrics = extract_openapi_metrics(&data, options.context_window);
     metrics.provider_request_id = req_id;
     Ok(ProviderResponse {
         content,
@@ -1793,136 +1751,6 @@ fn normalize_responses_tool_item_for_chat(message: &Value) -> Option<Value> {
         }
         _ => None,
     }
-}
-
-fn extract_metrics(data: &Value, context_window: Option<u64>) -> CallMetrics {
-    let usage = data.get("usage").cloned().unwrap_or(Value::Null);
-    let input_tokens =
-        pointer_u64(&usage, "/prompt_tokens").or_else(|| pointer_u64(&usage, "/input_tokens"));
-    let output_tokens =
-        pointer_u64(&usage, "/completion_tokens").or_else(|| pointer_u64(&usage, "/output_tokens"));
-    let cached_input_tokens = pointer_u64(&usage, "/prompt_tokens_details/cached_tokens")
-        .or_else(|| pointer_u64(&usage, "/input_tokens_details/cached_tokens"))
-        .or_else(|| pointer_u64(&usage, "/cache_read_input_tokens"))
-        .or_else(|| pointer_u64(&usage, "/cache_read_tokens"));
-    let cache_write_tokens = pointer_u64(&usage, "/prompt_tokens_details/cache_creation_tokens")
-        .or_else(|| pointer_u64(&usage, "/input_tokens_details/cache_write_tokens"))
-        .or_else(|| pointer_u64(&usage, "/cache_creation_input_tokens"))
-        .or_else(|| pointer_u64(&usage, "/cache_write_tokens"));
-    let reasoning_tokens = pointer_u64(&usage, "/completion_tokens_details/reasoning_tokens")
-        .or_else(|| pointer_u64(&usage, "/output_tokens_details/reasoning_tokens"));
-
-    let mut metrics = CallMetrics {
-        usage: UsageDetails {
-            input_tokens,
-            output_tokens,
-            total_tokens: pointer_u64(&usage, "/total_tokens").or_else(|| {
-                input_tokens.zip(output_tokens).map(|(input, output)| {
-                    input
-                        + output
-                        + cached_input_tokens.unwrap_or(0)
-                        + cache_write_tokens.unwrap_or(0)
-                })
-            }),
-            cached_input_tokens,
-            cache_write_tokens,
-            reasoning_tokens,
-            audio_input_tokens: pointer_u64(&usage, "/prompt_tokens_details/audio_tokens"),
-            audio_output_tokens: pointer_u64(&usage, "/completion_tokens_details/audio_tokens"),
-            context_window,
-            ..Default::default()
-        },
-        cost: extract_costs(
-            data,
-            input_tokens,
-            output_tokens,
-            cached_input_tokens,
-            cache_write_tokens,
-            reasoning_tokens,
-        ),
-        cache_hit: cached_input_tokens.unwrap_or(0) > 0,
-        cache_triggered_at_input_tokens: cached_input_tokens,
-        tool_call_count: data
-            .pointer("/choices/0/message/tool_calls")
-            .and_then(Value::as_array)
-            .map(|v| v.len())
-            .unwrap_or(0),
-        finish_reason: data
-            .pointer("/choices/0/finish_reason")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        provider_request_id: None,
-        raw_usage: if usage.is_null() { None } else { Some(usage) },
-    };
-    estimate_context_utilization(&mut metrics);
-    metrics
-}
-
-fn extract_costs(
-    data: &Value,
-    input_tokens: Option<u64>,
-    output_tokens: Option<u64>,
-    cached_input_tokens: Option<u64>,
-    cache_write_tokens: Option<u64>,
-    reasoning_tokens: Option<u64>,
-) -> CostDetails {
-    let direct = data.get("cost");
-    CostDetails {
-        input_cost: direct.and_then(|v| v.get("input")).and_then(Value::as_f64),
-        output_cost: direct.and_then(|v| v.get("output")).and_then(Value::as_f64),
-        cache_read_cost: direct
-            .and_then(|v| v.get("cache_read"))
-            .and_then(Value::as_f64),
-        cache_write_cost: direct
-            .and_then(|v| v.get("cache_write"))
-            .and_then(Value::as_f64),
-        reasoning_cost: direct
-            .and_then(|v| v.get("reasoning"))
-            .and_then(Value::as_f64),
-        total_cost: direct
-            .and_then(|v| v.get("total"))
-            .and_then(Value::as_f64)
-            .or_else(|| {
-                approx_total_cost(
-                    input_tokens,
-                    output_tokens,
-                    cached_input_tokens,
-                    cache_write_tokens,
-                    reasoning_tokens,
-                )
-            }),
-        currency: direct
-            .and_then(|v| v.get("currency"))
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .or_else(|| Some("USD".to_string())),
-    }
-}
-
-fn approx_total_cost(
-    input_tokens: Option<u64>,
-    output_tokens: Option<u64>,
-    cached_input_tokens: Option<u64>,
-    cache_write_tokens: Option<u64>,
-    reasoning_tokens: Option<u64>,
-) -> Option<f64> {
-    let input = input_tokens.unwrap_or(0) as f64 / 1_000_000.0 * 0.15;
-    let output = output_tokens.unwrap_or(0) as f64 / 1_000_000.0 * 0.60;
-    let cache_read = cached_input_tokens.unwrap_or(0) as f64 / 1_000_000.0 * 0.03;
-    let cache_write = cache_write_tokens.unwrap_or(0) as f64 / 1_000_000.0 * 0.15;
-    let reasoning = reasoning_tokens.unwrap_or(0) as f64 / 1_000_000.0 * 0.10;
-    let total = input + output + cache_read + cache_write + reasoning;
-    if total > 0.0 {
-        Some(total)
-    } else {
-        None
-    }
-}
-
-fn pointer_u64(value: &Value, ptr: &str) -> Option<u64> {
-    value
-        .pointer(ptr)
-        .and_then(|v| v.as_u64().or_else(|| v.as_i64().map(|i| i.max(0) as u64)))
 }
 
 #[cfg(test)]
@@ -2380,7 +2208,7 @@ mod tests {
 
     #[test]
     fn metrics_read_minimax_anthropic_cache_usage_fields() {
-        let metrics = super::extract_metrics(
+        let metrics = crate::metrics::extract_openapi_metrics(
             &json!({
                 "usage": {
                     "input_tokens": 108,
@@ -2466,8 +2294,7 @@ mod tests {
         };
 
         let result =
-            super::openai_codex_oauth_call("gpt-5.4", "test-token", &messages, &options, None)
-                .await;
+            super::codex_oauth_call("gpt-5.1-codex", "test-token", &messages, &options, None).await;
 
         match previous_endpoint {
             Some(value) => std::env::set_var("OPENAI_CODEX_ENDPOINT", value),
@@ -2568,8 +2395,8 @@ mod tests {
             ..CallOptions::default()
         };
 
-        let result = super::openai_codex_oauth_call(
-            "gpt-5.3-codex-spark",
+        let result = super::codex_oauth_call(
+            "gpt-5.1-codex-mini",
             "test-token",
             &messages,
             &options,
@@ -2596,7 +2423,7 @@ mod tests {
             ..CallOptions::default()
         };
 
-        let payload = build_codex_oauth_payload("gpt-5.4", &messages, &options);
+        let payload = build_codex_oauth_payload("gpt-5.1-codex", &messages, &options);
 
         assert!(payload.get("reasoning").is_none());
         assert!(payload.get("reasoning_effort").is_none());
@@ -2611,7 +2438,7 @@ mod tests {
             ..CallOptions::default()
         };
 
-        let payload = build_codex_oauth_payload("gpt-5.3-codex-spark", &messages, &options);
+        let payload = build_codex_oauth_payload("gpt-5.1-codex-mini", &messages, &options);
 
         assert_eq!(payload["prompt_cache_key"], "turaosv2:test:abc");
         assert!(payload.get("prompt_cache_retention").is_none());
@@ -2620,18 +2447,18 @@ mod tests {
     #[test]
     fn codex_oauth_payload_keeps_system_messages_in_input() {
         let messages = vec![
-            json!({"role": "system", "content": "You are Tura an agent based on gpt-5.5 from LLM provider: openai."}),
+            json!({"role": "system", "content": "You are Tura an agent based on gpt-5.1-codex from LLM provider: openai."}),
             json!({"role": "user", "content": "task"}),
             json!({"role": "system", "content": "dynamic runtime state"}),
             json!({"role": "assistant", "content": "progress"}),
         ];
 
         let payload =
-            build_codex_oauth_payload("gpt-5.3-codex-spark", &messages, &CallOptions::default());
+            build_codex_oauth_payload("gpt-5.1-codex-mini", &messages, &CallOptions::default());
 
         assert_eq!(
             payload["instructions"],
-            "You are Tura an agent based on gpt-5.5 from LLM provider: openai."
+            "You are Tura an agent based on gpt-5.1-codex from LLM provider: openai."
         );
         assert_eq!(payload["input"][0]["role"], "user");
         assert_eq!(payload["input"][0]["content"], "task");
@@ -2645,7 +2472,7 @@ mod tests {
     #[test]
     fn codex_oauth_usage_falls_back_to_estimate_when_stream_stops_before_usage() {
         let payload = json!({
-            "model": "gpt-5.5",
+            "model": "gpt-5.1-codex",
             "input": [{"role": "user", "content": "Run tests"}],
             "tools": [{"type": "function", "name": "command_run"}]
         });
@@ -2657,9 +2484,14 @@ mod tests {
                 }
             }]
         });
-        let mut metrics = super::extract_metrics(&json!({}), None);
+        let mut metrics = crate::metrics::extract_openapi_metrics(&json!({}), None);
 
-        super::fill_missing_codex_oauth_usage(&mut metrics, &payload, &content);
+        crate::metrics::fill_missing_estimated_usage(
+            &mut metrics,
+            &payload,
+            &content,
+            "codex_oauth_stream_returned_before_provider_usage",
+        );
 
         assert!(
             metrics

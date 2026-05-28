@@ -19,6 +19,15 @@ export interface ProviderListResponse {
   all: Provider[];
   default: Record<string, string>;
   connected: string[];
+  enums: ProviderEnumCatalog;
+}
+
+export interface ProviderEnumCatalog {
+  domains: string[];
+  capabilities: string[];
+  api_styles: string[];
+  auth_methods: string[];
+  statuses: string[];
 }
 
 export interface ProviderAuthStatus {
@@ -47,6 +56,13 @@ export interface ProviderAuthMethod {
   label: string;
   token_env?: string | null;
   login_env?: string | null;
+  authorize_url?: string | null;
+  token_url?: string | null;
+  api_key_url?: string | null;
+  docs_url?: string | null;
+  available: boolean;
+  unavailable_reason?: string | null;
+  supports_refresh: boolean;
 }
 
 export type ProviderAuthMethodsResponse = Record<string, ProviderAuthMethod[]>;

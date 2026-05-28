@@ -25,6 +25,7 @@ import type {
   StartCondition,
   PlanStatus,
   TodoItem,
+  TuraConfigResponse,
   VcsInfo,
   Workspace,
 } from "@tura/gateway-sdk";
@@ -32,16 +33,10 @@ import type {
 export type ConnectionState = "connecting" | "connected" | "disconnected";
 export type MainTab = "new" | "conversation" | "plan" | "files" | "settings";
 export type SettingsSection =
-  | "general"
   | "appearance"
   | "providers"
-  | "models"
-  | "auth"
-  | "runtime"
-  | "config"
-  | "workspace"
-  | "environment";
-export type ThemeMode = "light" | "dark";
+  | "models";
+export type ThemeMode = "light" | "dark" | "caral" | "uruk" | "liangzhu";
 export type PlanMode = "todo" | "gantt" | "calendar";
 export type ProviderAuthPanel = {
   providerId: string;
@@ -76,10 +71,16 @@ export type AppState = {
   planDraftSessionId?: string;
   planPreviewSessionId?: string;
   editingTask?: { sessionId: string; nonce_id?: string };
+  taskPulse?: { sessionId: string; nonce_id?: string; token: number };
+  planNotice?: { message: string; code?: string; providerId?: string };
   activeTab: MainTab;
   previousMainTab: Exclude<MainTab, "settings">;
   settingsSection: SettingsSection;
   themeMode: ThemeMode;
+  mainFont: string;
+  codeFont: string;
+  mainFontSize: number;
+  codeFontSize: number;
   directory?: string;
   selectedSessionId?: string;
   health?: HealthResponse;
@@ -97,6 +98,7 @@ export type AppState = {
   permissions: PermissionRequest[];
   questions: QuestionRequest[];
   providers?: ProviderListResponse;
+  modelConfig?: TuraConfigResponse;
   providerAuthMethods: Record<string, ProviderAuthMethod[]>;
   providerAuthStatus: Record<string, ProviderAuthStatusResponse>;
   agents: Agent[];
@@ -120,7 +122,6 @@ export type AppState = {
   authCodeDrafts: Record<string, string>;
   settingsSaving: boolean;
   settingsNotice?: string;
-  modelValidation?: string;
   submitting: boolean;
   error?: string;
   lastEvent?: string;
@@ -145,8 +146,12 @@ export function initialAppState(gatewayUrl: string): AppState {
     editingTask: undefined,
     activeTab: "new",
     previousMainTab: "new",
-    settingsSection: "general",
-    themeMode: "light",
+    settingsSection: "appearance",
+    themeMode: systemThemeMode(),
+    mainFont: "",
+    codeFont: "",
+    mainFontSize: 13,
+    codeFontSize: 12,
     messagesBySession: {},
     todosBySession: {},
     permissions: [],
@@ -174,6 +179,13 @@ export function initialAppState(gatewayUrl: string): AppState {
     settingsSaving: false,
     submitting: false,
   };
+}
+
+export function systemThemeMode(): Extract<ThemeMode, "light" | "dark"> {
+  return typeof window !== "undefined" &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
 }
 
 export function sessionTitle(session: Session): string {

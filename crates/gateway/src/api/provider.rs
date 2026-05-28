@@ -6,15 +6,29 @@ use axum::extract::{Json, Path, Query};
 use axum::response::{Html, IntoResponse};
 use base64::Engine;
 use chrono::Utc;
-use reqwest::Url;
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::path::{Path as FsPath, PathBuf};
+use std::path::PathBuf;
 use tokio::time::{sleep, timeout, Duration, Instant};
 use tura_llm_rust::{AuthMethodKind, OAuthAuthorizeKind};
-use uuid::Uuid;
+
+pub(crate) mod config;
+mod metadata;
+mod oauth_support;
+
+use config::{config_value, upsert_env_value};
+use metadata::{
+    legacy_auth_method_type, oauth_authorize_endpoint, oauth_token_endpoint, provider_api_key_url,
+    provider_auth_docs_url,
+};
+use oauth_support::{
+    anthropic_oauth_client_id, anthropic_oauth_redirect_uri, anthropic_oauth_token_url,
+    browser_login_token, browser_login_url, google_oauth_client_id, google_oauth_client_secret,
+    google_oauth_token_url, oauth_authorize_url, oauth_callback_html, oauth_code_challenge,
+    oauth_code_verifier, oauth_state, openai_oauth_client_id, openai_oauth_redirect_uri,
+    openai_oauth_token_url, provider_google_oauth_redirect_uri, random_confirmation_code,
+};
 
 // ============================================================================
 // Provider List
@@ -48,14 +62,15 @@ pub async fn list_providers() -> Json<ProviderListResponse> {
         }
 
         all.push(SdkProvider {
-            id: provider.id,
-            name: provider.name,
+            id: provider.id.clone(),
+            name: provider_display_name_from_settings(settings.as_deref(), &provider.id)
+                .unwrap_or(provider.name),
             source: "config".to_string(),
-            env: Vec::new(),
+            env: provider_env_from_settings(settings.as_deref(), &provider.id),
             key: None,
-            options: HashMap::new(),
+            options: provider_options_from_settings(settings.as_deref(), &provider.id),
             models,
-            api: None,
+            api: provider_api_from_settings(settings.as_deref(), &provider.id),
             npm: None,
         });
     }
@@ -66,6 +81,10 @@ pub async fn list_providers() -> Json<ProviderListResponse> {
         all,
         default: defaults,
         connected,
+        enums: settings
+            .as_deref()
+            .map(|settings| settings.provider_enums.clone())
+            .unwrap_or_default(),
     })
 }
 
@@ -99,13 +118,14 @@ fn provider_list_for_route(
                 connected.push(provider.provider.clone());
                 all.push(SdkProvider {
                     id: provider.provider.clone(),
-                    name: provider_display_name(&provider.provider),
+                    name: provider_display_name_from_settings(Some(settings), &provider.provider)
+                        .unwrap_or_else(|| provider_display_name(&provider.provider)),
                     source: "config".to_string(),
-                    env: Vec::new(),
+                    env: provider_env_from_settings(Some(settings), &provider.provider),
                     key: None,
-                    options: HashMap::new(),
+                    options: provider_options_from_settings(Some(settings), &provider.provider),
                     models: HashMap::new(),
-                    api: None,
+                    api: provider_api_from_settings(Some(settings), &provider.provider),
                     npm: None,
                 });
                 index
@@ -114,12 +134,12 @@ fn provider_list_for_route(
 
         all[index].models.insert(
             model_id.clone(),
-            sdk_model_from_config(&provider.provider, &model_id),
+            sdk_model_from_settings(Some(settings), &provider.provider, &model_id),
         );
     }
 
     for (provider_id, models) in provider_model_catalog() {
-        let index = match indexes.get(provider_id).copied() {
+        let index = match indexes.get(&provider_id).copied() {
             Some(index) => index,
             None => {
                 let index = all.len();
@@ -127,13 +147,14 @@ fn provider_list_for_route(
                 defaults.insert(provider_id.to_string(), models[0].to_string());
                 all.push(SdkProvider {
                     id: provider_id.to_string(),
-                    name: provider_display_name(provider_id),
+                    name: provider_display_name_from_settings(Some(settings), &provider_id)
+                        .unwrap_or_else(|| provider_display_name(&provider_id)),
                     source: "config".to_string(),
-                    env: Vec::new(),
+                    env: provider_env_from_settings(Some(settings), &provider_id),
                     key: None,
-                    options: HashMap::new(),
+                    options: provider_options_from_settings(Some(settings), &provider_id),
                     models: HashMap::new(),
-                    api: None,
+                    api: provider_api_from_settings(Some(settings), &provider_id),
                     npm: None,
                 });
                 index
@@ -144,7 +165,9 @@ fn provider_list_for_route(
             all[index]
                 .models
                 .entry(model_id.to_string())
-                .or_insert_with(|| sdk_model_from_config(provider_id, model_id));
+                .or_insert_with(|| {
+                    sdk_model_from_settings(Some(settings), &provider_id, &model_id)
+                });
         }
     }
 
@@ -159,13 +182,14 @@ fn provider_list_for_route(
                 }
                 all.push(SdkProvider {
                     id: provider_id.clone(),
-                    name: provider_display_name(&provider_id),
+                    name: provider_display_name_from_settings(Some(settings), &provider_id)
+                        .unwrap_or_else(|| provider_display_name(&provider_id)),
                     source: "config".to_string(),
-                    env: Vec::new(),
+                    env: provider_env_from_settings(Some(settings), &provider_id),
                     key: None,
-                    options: HashMap::new(),
+                    options: provider_options_from_settings(Some(settings), &provider_id),
                     models: HashMap::new(),
-                    api: None,
+                    api: provider_api_from_settings(Some(settings), &provider_id),
                     npm: None,
                 });
                 index
@@ -176,8 +200,30 @@ fn provider_list_for_route(
             all[index]
                 .models
                 .entry(model_id.clone())
-                .or_insert_with(|| sdk_model_from_config(&provider_id, &model_id));
+                .or_insert_with(|| {
+                    sdk_model_from_settings(Some(settings), &provider_id, &model_id)
+                });
         }
+    }
+
+    for provider_id in settings.model_catalog.providers.keys() {
+        if indexes.contains_key(provider_id) {
+            continue;
+        }
+        let index = all.len();
+        indexes.insert(provider_id.clone(), index);
+        all.push(SdkProvider {
+            id: provider_id.clone(),
+            name: provider_display_name_from_settings(Some(settings), provider_id)
+                .unwrap_or_else(|| provider_display_name(provider_id)),
+            source: "config".to_string(),
+            env: provider_env_from_settings(Some(settings), provider_id),
+            key: None,
+            options: provider_options_from_settings(Some(settings), provider_id),
+            models: HashMap::new(),
+            api: provider_api_from_settings(Some(settings), provider_id),
+            npm: None,
+        });
     }
 
     let store_connected = global_store()
@@ -202,16 +248,17 @@ fn provider_list_for_route(
         }
         all.push(SdkProvider {
             id: provider_id.to_string(),
-            name: provider_display_name(provider_id),
+            name: provider_display_name_from_settings(Some(settings), provider_id)
+                .unwrap_or_else(|| provider_display_name(provider_id)),
             source: "config".to_string(),
-            env: Vec::new(),
+            env: provider_env_from_settings(Some(settings), provider_id),
             key: None,
-            options: HashMap::new(),
+            options: provider_options_from_settings(Some(settings), provider_id),
             models: HashMap::from([(
                 model_id.to_string(),
-                sdk_model_from_config(provider_id, model_id),
+                sdk_model_from_settings(Some(settings), provider_id, model_id),
             )]),
-            api: None,
+            api: provider_api_from_settings(Some(settings), provider_id),
             npm: None,
         });
     }
@@ -222,6 +269,7 @@ fn provider_list_for_route(
         all,
         default: defaults,
         connected,
+        enums: settings.provider_enums.clone(),
     }
 }
 
@@ -258,25 +306,7 @@ fn route_by_name<'a>(
     settings: &'a tura_llm_rust::Settings,
     name: &str,
 ) -> Option<&'a tura_llm_rust::RouteConfig> {
-    match name {
-        "tura_general" => Some(&settings.tura_general),
-        "tura_office" => Some(&settings.tura_office),
-        "tura_creative" => Some(&settings.tura_creative),
-        "tura_translator" => Some(&settings.tura_translator),
-        "tura_validator" => Some(&settings.tura_validator),
-        "tura_validator_advanced" => Some(&settings.tura_validator_advanced),
-        "tura_classifier" => Some(&settings.tura_classifier),
-        "tura_embedding" => Some(&settings.tura_embedding),
-        "tura_coder" => Some(&settings.tura_coder),
-        "tura_coder_advanced" => Some(&settings.tura_coder_advanced),
-        "tura_planner" => Some(&settings.tura_planner),
-        "tura_planner_advanced" => Some(&settings.tura_planner_advanced),
-        "tura_roleplay" => Some(&settings.tura_roleplay),
-        "tura_professional" => Some(&settings.tura_professional),
-        "tura_math" => Some(&settings.tura_math),
-        "tura_academic" => Some(&settings.tura_academic),
-        _ => None,
-    }
+    settings.route_by_name(name)
 }
 
 fn provider_display_name(provider_id: &str) -> String {
@@ -291,29 +321,13 @@ fn configured_model_for_provider(
     provider_id: &str,
 ) -> Option<SdkProviderModel> {
     let settings = settings?;
-    let route = [
-        &settings.tura_general,
-        &settings.tura_office,
-        &settings.tura_creative,
-        &settings.tura_translator,
-        &settings.tura_validator,
-        &settings.tura_validator_advanced,
-        &settings.tura_classifier,
-        &settings.tura_embedding,
-        &settings.tura_coder,
-        &settings.tura_coder_advanced,
-        &settings.tura_planner,
-        &settings.tura_planner_advanced,
-        &settings.tura_roleplay,
-        &settings.tura_professional,
-        &settings.tura_math,
-        &settings.tura_academic,
-    ]
-    .into_iter()
-    .flat_map(|route| route.providers.iter())
-    .find(|provider| provider.provider == provider_id)?;
+    let route = settings
+        .routes()
+        .flat_map(|route| route.providers.iter())
+        .find(|provider| provider.provider == provider_id)?;
 
-    Some(sdk_model_from_config(
+    Some(sdk_model_from_settings(
+        Some(settings),
         provider_id,
         &normalize_model_id(provider_id, &route.model),
     ))
@@ -330,46 +344,106 @@ fn configured_models_for_provider(
         .remove(provider_id)
         .unwrap_or_default()
         .into_iter()
-        .map(|model_id| sdk_model_from_config(provider_id, &model_id))
+        .map(|model_id| sdk_model_from_settings(Some(settings), provider_id, &model_id))
         .collect()
 }
 
 fn configured_model_catalog(settings: &tura_llm_rust::Settings) -> HashMap<String, Vec<String>> {
-    let mut catalog = HashMap::<String, Vec<String>>::new();
-    for route in all_routes(settings) {
-        for provider in &route.providers {
-            let model_id = normalize_model_id(&provider.provider, &provider.model);
-            let models = catalog.entry(provider.provider.clone()).or_default();
-            if !models.iter().any(|existing| existing == &model_id) {
-                models.push(model_id);
-            }
-        }
-    }
-    for models in catalog.values_mut() {
-        models.sort();
-    }
-    catalog
+    settings.configured_model_catalog()
 }
 
-fn all_routes(settings: &tura_llm_rust::Settings) -> [&tura_llm_rust::RouteConfig; 16] {
-    [
-        &settings.tura_general,
-        &settings.tura_office,
-        &settings.tura_creative,
-        &settings.tura_translator,
-        &settings.tura_validator,
-        &settings.tura_validator_advanced,
-        &settings.tura_classifier,
-        &settings.tura_embedding,
-        &settings.tura_coder,
-        &settings.tura_coder_advanced,
-        &settings.tura_planner,
-        &settings.tura_planner_advanced,
-        &settings.tura_roleplay,
-        &settings.tura_professional,
-        &settings.tura_math,
-        &settings.tura_academic,
-    ]
+fn provider_display_name_from_settings(
+    settings: Option<&tura_llm_rust::Settings>,
+    provider_id: &str,
+) -> Option<String> {
+    settings?
+        .model_catalog
+        .providers
+        .get(provider_id)
+        .map(|provider| provider.display_name.trim())
+        .filter(|name| !name.is_empty())
+        .map(ToString::to_string)
+}
+
+fn provider_env_from_settings(
+    settings: Option<&tura_llm_rust::Settings>,
+    provider_id: &str,
+) -> Vec<String> {
+    let Some(provider) =
+        settings.and_then(|settings| settings.model_catalog.providers.get(provider_id))
+    else {
+        return Vec::new();
+    };
+    let mut env = provider.env.clone();
+    if let Some(token_env) = provider
+        .token_env
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        if !env.iter().any(|item| item == token_env) {
+            env.insert(0, token_env.to_string());
+        }
+    }
+    env
+}
+
+fn provider_api_from_settings(
+    settings: Option<&tura_llm_rust::Settings>,
+    provider_id: &str,
+) -> Option<String> {
+    settings
+        .and_then(|settings| settings.model_catalog.providers.get(provider_id))
+        .and_then(|provider| {
+            (!provider.base_url.trim().is_empty()).then(|| provider.base_url.clone())
+        })
+}
+
+fn provider_options_from_settings(
+    settings: Option<&tura_llm_rust::Settings>,
+    provider_id: &str,
+) -> HashMap<String, serde_json::Value> {
+    let Some(provider) =
+        settings.and_then(|settings| settings.model_catalog.providers.get(provider_id))
+    else {
+        return HashMap::new();
+    };
+    let mut options = HashMap::new();
+    insert_option(&mut options, "api_style", &provider.api_style);
+    insert_option(&mut options, "runtime_provider", &provider.runtime_provider);
+    if let Some(token_env) = &provider.token_env {
+        insert_option(&mut options, "token_env", token_env);
+    }
+    if !provider.domains.is_empty() {
+        options.insert("domains".to_string(), serde_json::json!(provider.domains));
+    }
+    if !provider.capabilities.is_empty() {
+        options.insert(
+            "capabilities".to_string(),
+            serde_json::json!(provider.capabilities),
+        );
+    }
+    if !provider.auth_methods.is_empty() {
+        options.insert(
+            "auth_methods".to_string(),
+            serde_json::json!(provider.auth_methods),
+        );
+    }
+    if let Some(api_docs) = &provider.api_docs {
+        insert_option(&mut options, "api_docs", api_docs);
+    }
+    if let Some(status) = &provider.status {
+        insert_option(&mut options, "status", status);
+    }
+    options
+}
+
+fn insert_option(options: &mut HashMap<String, serde_json::Value>, key: &str, value: &str) {
+    if !value.trim().is_empty() {
+        options.insert(
+            key.to_string(),
+            serde_json::Value::String(value.to_string()),
+        );
+    }
 }
 
 fn normalize_model_id(provider_id: &str, model_id: &str) -> String {
@@ -408,27 +482,100 @@ fn sdk_model_from_config(provider_id: &str, model_id: &str) -> SdkProviderModel 
     }
 }
 
+fn sdk_model_from_settings(
+    settings: Option<&tura_llm_rust::Settings>,
+    provider_id: &str,
+    model_id: &str,
+) -> SdkProviderModel {
+    let mut model = sdk_model_from_config(provider_id, model_id);
+    if let Some(detail) =
+        settings.and_then(|settings| catalog_model_detail(settings, provider_id, model_id))
+    {
+        apply_catalog_model_detail(&mut model, provider_id, detail);
+    }
+    model
+}
+
+fn catalog_model_detail<'a>(
+    settings: &'a tura_llm_rust::Settings,
+    provider_id: &str,
+    model_id: &str,
+) -> Option<&'a tura_llm_rust::CatalogModelDetail> {
+    let provider = settings.model_catalog.providers.get(provider_id)?;
+    provider
+        .models
+        .values()
+        .flatten()
+        .find(|entry| {
+            tura_llm_rust::Settings::normalize_model_name(provider_id, entry.id()) == model_id
+                || entry.id() == model_id
+        })?
+        .detail()
+}
+
+fn apply_catalog_model_detail(
+    model: &mut SdkProviderModel,
+    provider_id: &str,
+    detail: &tura_llm_rust::CatalogModelDetail,
+) {
+    if !detail.name.trim().is_empty() {
+        model.name = detail.name.clone();
+    }
+    if !detail.family.trim().is_empty() {
+        model.family = detail.family.clone();
+    } else {
+        model.family = provider_id.to_string();
+    }
+    if !detail.release_date.trim().is_empty() {
+        model.release_date = detail.release_date.clone();
+    }
+    model.attachment = detail.attachment;
+    model.reasoning = detail.reasoning;
+    model.temperature = detail.temperature;
+    model.tool_call = detail.tool_call;
+    model.limit = SdkProviderModelLimit {
+        context: detail.limit.context,
+        input: detail.limit.input,
+        output: detail.limit.output,
+    };
+    model.modalities = SdkProviderModelModalities {
+        input: detail.modalities.input.clone(),
+        output: detail.modalities.output.clone(),
+    };
+    model.options = detail.options.clone().into_iter().collect();
+    model.status = detail.status.clone();
+}
+
 fn browser_login_provider_defaults() -> [(&'static str, &'static str); 3] {
     [
-        ("openai", "gpt-5.5"),
-        ("anthropic", "claude-sonnet-4.5"),
+        ("codex", "gpt-5.1-codex"),
+        ("anthropic", "claude-sonnet-4-20250514"),
         ("antigravity", "antigravity-browser"),
     ]
 }
 
-fn provider_model_catalog() -> Vec<(&'static str, &'static [&'static str])> {
+fn provider_model_catalog() -> Vec<(String, Vec<String>)> {
     tura_llm_rust::provider_auth_registry()
         .iter()
         .filter(|entry| !entry.supported_models.is_empty())
-        .map(|entry| (entry.provider_id, entry.supported_models))
+        .map(|entry| {
+            (
+                entry.provider_id.to_string(),
+                entry
+                    .supported_models
+                    .iter()
+                    .map(|model| model.to_string())
+                    .collect(),
+            )
+        })
         .collect()
 }
 
 fn model_supported_by_provider(provider_id: &str, model_id: &str) -> bool {
     provider_model_catalog()
         .into_iter()
-        .find(|(id, _)| *id == provider_id)
-        .map(|(_, models)| models.iter().any(|candidate| candidate == &model_id))
+        .find(|(id, _)| id == provider_id)
+        .map(|(_, models)| models.iter().any(|candidate| candidate == model_id))
         .unwrap_or(false)
 }
 
@@ -451,10 +598,16 @@ fn enrich_provider_list(
     store_connected: &std::collections::HashSet<String>,
 ) {
     for provider in providers {
-        let env_key = provider_env_key(&provider.id);
-        let has_key = provider_key_exists(&provider.id);
-        provider.env = vec![env_key.clone()];
-        provider.key = has_key.then_some(env_key);
+        let fallback_env_key = provider_env_key(&provider.id);
+        if provider.env.is_empty() {
+            provider.env.push(fallback_env_key.clone());
+        }
+        let key = provider
+            .env
+            .iter()
+            .find_map(|env_key| provider_key_value_for_env(&provider.id, env_key));
+        let has_key = key.is_some();
+        provider.key = key;
         provider.source = if has_key {
             "env".to_string()
         } else if store_connected.contains(&provider.id) {
@@ -470,14 +623,7 @@ fn enrich_provider_list(
 
 fn provider_base_url(settings: &tura_llm_rust::Settings, provider_id: &str) -> Option<String> {
     let provider_id = provider_runtime_id(provider_id);
-    for route in all_routes(settings) {
-        for provider in &route.providers {
-            if provider.provider == provider_id {
-                return Some(provider.base_url.clone());
-            }
-        }
-    }
-    None
+    settings.provider_base_url(provider_id)
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -618,7 +764,8 @@ pub async fn set_auth(
         return Json(false);
     }
     let saved = persist_provider_auth(&provider_id, &payload).is_ok();
-    Json(saved && global_store().set_auth(&provider_id, payload))
+    let _ = global_store().set_auth(&provider_id, payload);
+    Json(saved)
 }
 
 pub async fn remove_auth(Path(provider_id): Path<String>) -> Json<bool> {
@@ -668,10 +815,13 @@ async fn refresh_provider_auth_if_needed(provider_id: &str, force: bool) -> Resu
         return Ok(false);
     }
     match provider_id {
-        "openai" => refresh_openai_provider_auth(provider_id, &status)
+        "codex" => refresh_openai_provider_auth(provider_id, &status)
             .await
             .map(|_| true),
-        "google" | "gemini" => refresh_google_provider_auth(provider_id, &status)
+        "claude-code" => refresh_anthropic_provider_auth(provider_id, &status)
+            .await
+            .map(|_| true),
+        "google" | "gemini" | "antigravity" => refresh_google_provider_auth(provider_id, &status)
             .await
             .map(|_| true),
         _ => Ok(false),
@@ -724,6 +874,20 @@ async fn refresh_google_provider_auth(
         google_oauth_token_url(),
         extra_params,
         "Google",
+    )
+    .await
+}
+
+async fn refresh_anthropic_provider_auth(
+    provider_id: &str,
+    status: &ProviderAuthStatusResponse,
+) -> Result<(), String> {
+    refresh_oauth_provider_auth(
+        provider_id,
+        status,
+        anthropic_oauth_token_url(),
+        vec![("client_id".to_string(), anthropic_oauth_client_id())],
+        "Anthropic",
     )
     .await
 }
@@ -890,6 +1054,18 @@ pub struct ProviderAuthMethod {
     pub token_env: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub login_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authorize_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docs_url: Option<String>,
+    pub available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<String>,
+    pub supports_refresh: bool,
 }
 
 pub async fn provider_auth(
@@ -912,27 +1088,52 @@ fn provider_auth_methods(provider_id: &str) -> Vec<ProviderAuthMethod> {
     entry
         .auth_methods
         .iter()
-        .map(|method| ProviderAuthMethod {
-            method_type: legacy_auth_method_type(method.kind).to_string(),
-            kind: method.kind,
-            login: method.login.to_string(),
-            label: method.label.to_string(),
-            prompts: None,
-            token_env: entry.token_env.map(ToString::to_string),
-            login_env: entry.login_env.map(ToString::to_string),
+        .map(|method| {
+            let unavailable_reason = auth_method_unavailable_reason(
+                provider_id,
+                method.kind,
+                entry.oauth_authorize_kind,
+            );
+            ProviderAuthMethod {
+                method_type: legacy_auth_method_type(method.kind).to_string(),
+                kind: method.kind,
+                login: method.login.to_string(),
+                label: method.label.to_string(),
+                prompts: None,
+                token_env: entry.token_env.map(ToString::to_string),
+                login_env: entry.login_env.map(ToString::to_string),
+                authorize_url: oauth_authorize_endpoint(entry.oauth_authorize_kind),
+                token_url: oauth_token_endpoint(entry.oauth_authorize_kind),
+                api_key_url: provider_api_key_url(provider_id),
+                docs_url: provider_auth_docs_url(provider_id),
+                available: unavailable_reason.is_none(),
+                unavailable_reason,
+                supports_refresh: entry.capabilities.supports_oauth_refresh,
+            }
         })
         .collect()
 }
 
-fn legacy_auth_method_type(kind: AuthMethodKind) -> &'static str {
-    match kind {
-        AuthMethodKind::ApiKey => "api",
-        AuthMethodKind::OAuthPkce | AuthMethodKind::BrowserToken | AuthMethodKind::DeviceCode => {
-            "oauth"
+fn auth_method_unavailable_reason(
+    provider_id: &str,
+    kind: AuthMethodKind,
+    authorize_kind: Option<OAuthAuthorizeKind>,
+) -> Option<String> {
+    if kind != AuthMethodKind::OAuthPkce {
+        return None;
+    }
+    match authorize_kind.unwrap_or(OAuthAuthorizeKind::Unsupported) {
+        OAuthAuthorizeKind::OpenAiPkce => None,
+        OAuthAuthorizeKind::AnthropicPkce => None,
+        OAuthAuthorizeKind::GooglePkce => {
+            google_oauth_client_id(provider_id).is_none().then(|| {
+                "GOOGLE_OAUTH_CLIENT_ID is required before Google OAuth can start".to_string()
+            })
         }
-        AuthMethodKind::LocalCliToken => "local",
-        AuthMethodKind::AwsCredentials => "aws",
-        AuthMethodKind::None => "none",
+        OAuthAuthorizeKind::BrowserTokenPaste | OAuthAuthorizeKind::Unsupported => Some(format!(
+            "{} OAuth is listed but is not implemented yet",
+            provider_display_name(provider_id)
+        )),
     }
 }
 
@@ -949,7 +1150,7 @@ pub async fn oauth_authorize(
     let selected_method = methods.get(payload.method).filter(|method| {
         matches!(
             method.kind,
-            AuthMethodKind::OAuthPkce | AuthMethodKind::BrowserToken
+            AuthMethodKind::OAuthPkce | AuthMethodKind::LocalCliToken
         )
     });
 
@@ -961,16 +1162,39 @@ pub async fn oauth_authorize(
         });
     };
 
+    if let Some(reason) = selected_method.unavailable_reason.as_deref() {
+        return Json(OAuthAuthorizeResponse {
+            url: String::new(),
+            method: OAuthMethod::Code,
+            instructions: reason.to_string(),
+        });
+    }
+
     let entry = tura_llm_rust::provider_auth_registry_entry(&provider_id);
     let authorize_kind = entry
         .and_then(|entry| entry.oauth_authorize_kind)
         .unwrap_or(OAuthAuthorizeKind::Unsupported);
 
-    let (url, method, instructions) = if authorize_kind == OAuthAuthorizeKind::OpenAiPkce {
+    let (url, method, instructions) = if matches!(
+        authorize_kind,
+        OAuthAuthorizeKind::OpenAiPkce
+            | OAuthAuthorizeKind::AnthropicPkce
+            | OAuthAuthorizeKind::GooglePkce
+    ) {
         let state = oauth_state();
         let code_verifier = oauth_code_verifier();
         let code_challenge = oauth_code_challenge(&code_verifier);
-        let url = openai_oauth_authorize_url(&state, &code_challenge);
+        let Some(url) = oauth_authorize_url(&provider_id, authorize_kind, &state, &code_challenge)
+        else {
+            return Json(OAuthAuthorizeResponse {
+                url: String::new(),
+                method: OAuthMethod::Code,
+                instructions: format!(
+                    "{} OAuth cannot start because its OAuth client configuration is incomplete.",
+                    provider_display_name(&provider_id)
+                ),
+            });
+        };
         global_store().set_oauth_state(
             &provider_id,
             "oauth_pkce".to_string(),
@@ -979,12 +1203,22 @@ pub async fn oauth_authorize(
             Some(state),
             Some(code_verifier),
         );
-        (
-            url,
-            OAuthMethod::Auto,
-            "Complete authorization in your browser. This window will close automatically."
-                .to_string(),
-        )
+        if authorize_kind == OAuthAuthorizeKind::AnthropicPkce {
+            (
+                url,
+                OAuthMethod::Code,
+                "Complete Claude authorization in your browser, then paste the authorization code here.".to_string(),
+            )
+        } else {
+            (
+                url,
+                OAuthMethod::Auto,
+                format!(
+                    "Complete {} authorization in your browser. This window will close automatically.",
+                    provider_display_name(&provider_id)
+                ),
+            )
+        }
     } else if authorize_kind == OAuthAuthorizeKind::BrowserTokenPaste {
         let code = random_confirmation_code(&provider_id, payload.method);
         let url = browser_login_url(&provider_id);
@@ -1058,15 +1292,20 @@ pub async fn oauth_callback(
     Query(_params): Query<OAuthCallbackParams>,
     Json(payload): Json<OAuthCallbackPayload>,
 ) -> Json<bool> {
-    if provider_id == "openai"
-        && payload
-            .code
-            .as_deref()
-            .unwrap_or_default()
-            .trim()
-            .is_empty()
+    if payload
+        .code
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
     {
-        return Json(wait_for_oauth_completed(&provider_id).await);
+        let waits_for_browser_callback =
+            global_store().pending_oauth_method(&provider_id).as_deref() == Some("oauth_pkce");
+        return Json(if waits_for_browser_callback {
+            wait_for_oauth_completed(&provider_id).await
+        } else {
+            false
+        });
     }
 
     let has_pending = global_store().consume_oauth_state(&provider_id);
@@ -1101,8 +1340,12 @@ pub async fn oauth_callback(
     }
 
     let tokens = if pending.method == "oauth_pkce" {
-        match exchange_openai_oauth_code(payload.code.as_deref().unwrap_or_default(), &pending)
-            .await
+        match exchange_oauth_code(
+            &provider_id,
+            payload.code.as_deref().unwrap_or_default(),
+            &pending,
+        )
+        .await
         {
             Ok(tokens) => Some(tokens),
             Err(_) => return Json(false),
@@ -1131,7 +1374,9 @@ pub async fn oauth_callback(
         auth_type: "oauth".to_string(),
         key: Some(key),
         access: tokens.as_ref().map(|tokens| tokens.access_token.clone()),
-        refresh: tokens.as_ref().map(|tokens| tokens.refresh_token.clone()),
+        refresh: tokens
+            .as_ref()
+            .and_then(|tokens| tokens.refresh_token.clone()),
         expires: tokens
             .as_ref()
             .map(|tokens| Utc::now().timestamp_millis() + tokens.expires_in.unwrap_or(3600) * 1000),
@@ -1193,7 +1438,7 @@ pub async fn oauth_redirect_callback(
             "OAuth callback did not match a PKCE login",
         ));
     }
-    let tokens = match exchange_openai_oauth_code(code, &pending).await {
+    let tokens = match exchange_oauth_code(&provider_id, code, &pending).await {
         Ok(tokens) => tokens,
         Err(error) => {
             return Html(oauth_callback_html(
@@ -1206,7 +1451,7 @@ pub async fn oauth_redirect_callback(
         auth_type: "oauth".to_string(),
         key: Some(tokens.access_token.clone()),
         access: Some(tokens.access_token.clone()),
-        refresh: Some(tokens.refresh_token.clone()),
+        refresh: tokens.refresh_token.clone(),
         expires: Some(Utc::now().timestamp_millis() + tokens.expires_in.unwrap_or(3600) * 1000),
         account_id: extract_account_id(&tokens),
         metadata: Some(HashMap::from([
@@ -1255,10 +1500,10 @@ pub struct OAuthRedirectCallbackParams {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
-struct OpenAiTokenResponse {
+struct OAuthTokenResponse {
     id_token: Option<String>,
     access_token: String,
-    refresh_token: String,
+    refresh_token: Option<String>,
     expires_in: Option<i64>,
 }
 
@@ -1274,97 +1519,30 @@ async fn wait_for_oauth_completed(provider_id: &str) -> bool {
     false
 }
 
-fn random_confirmation_code(provider: &str, method: usize) -> String {
-    format!("{}-{}", provider, method)
-}
-
-fn oauth_state() -> String {
-    Uuid::new_v4().simple().to_string()
-}
-
-fn oauth_code_verifier() -> String {
-    format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
-}
-
-fn oauth_code_challenge(verifier: &str) -> String {
-    let digest = Sha256::digest(verifier.as_bytes());
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
-}
-
-fn openai_oauth_client_id() -> String {
-    std::env::var("OPENAI_OAUTH_CLIENT_ID")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "app_EMoamEEZ73f0CkXaXp7hrann".to_string())
-}
-
-fn openai_oauth_redirect_uri() -> String {
-    std::env::var("OPENAI_OAUTH_REDIRECT_URI")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "http://localhost:1455/auth/callback".to_string())
-}
-
-fn openai_oauth_token_url() -> String {
-    std::env::var("OPENAI_OAUTH_TOKEN_URL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "https://auth.openai.com/oauth/token".to_string())
-}
-
-fn google_oauth_token_url() -> String {
-    std::env::var("GOOGLE_OAUTH_TOKEN_URL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "https://oauth2.googleapis.com/token".to_string())
-}
-
-fn google_oauth_client_id(provider_id: &str) -> Option<String> {
-    let provider_prefix = provider_id.to_ascii_uppercase().replace('-', "_");
-    [
-        format!("{provider_prefix}_OAUTH_CLIENT_ID"),
-        "GOOGLE_OAUTH_CLIENT_ID".to_string(),
-    ]
-    .into_iter()
-    .find_map(|key| config_value(&key))
-}
-
-fn google_oauth_client_secret(provider_id: &str) -> Option<String> {
-    let provider_prefix = provider_id.to_ascii_uppercase().replace('-', "_");
-    [
-        format!("{provider_prefix}_OAUTH_CLIENT_SECRET"),
-        "GOOGLE_OAUTH_CLIENT_SECRET".to_string(),
-    ]
-    .into_iter()
-    .find_map(|key| config_value(&key))
-}
-
-fn openai_oauth_authorize_url(state: &str, code_challenge: &str) -> String {
-    let client_id = openai_oauth_client_id();
-    let redirect_uri = openai_oauth_redirect_uri();
-    Url::parse_with_params(
-        "https://auth.openai.com/oauth/authorize",
-        &[
-            ("response_type", "code"),
-            ("client_id", client_id.as_str()),
-            ("redirect_uri", redirect_uri.as_str()),
-            ("scope", "openid profile email offline_access"),
-            ("code_challenge", code_challenge),
-            ("code_challenge_method", "S256"),
-            ("id_token_add_organizations", "true"),
-            ("codex_cli_simplified_flow", "true"),
-            ("state", state),
-            ("originator", "opencode"),
-        ],
-    )
-    .expect("static OpenAI OAuth authorize URL is valid")
-    .to_string()
+async fn exchange_oauth_code(
+    provider_id: &str,
+    code: &str,
+    pending: &crate::mock::store::PendingOAuth,
+) -> anyhow::Result<OAuthTokenResponse> {
+    let kind = tura_llm_rust::provider_auth_registry_entry(provider_id)
+        .and_then(|entry| entry.oauth_callback_kind)
+        .unwrap_or(OAuthAuthorizeKind::Unsupported);
+    match kind {
+        OAuthAuthorizeKind::OpenAiPkce => exchange_openai_oauth_code(code, pending).await,
+        OAuthAuthorizeKind::AnthropicPkce => exchange_anthropic_oauth_code(code, pending).await,
+        OAuthAuthorizeKind::GooglePkce => {
+            exchange_google_oauth_code(provider_id, code, pending).await
+        }
+        OAuthAuthorizeKind::BrowserTokenPaste | OAuthAuthorizeKind::Unsupported => Err(
+            anyhow::anyhow!("unsupported OAuth callback provider: {provider_id}"),
+        ),
+    }
 }
 
 async fn exchange_openai_oauth_code(
     code: &str,
     pending: &crate::mock::store::PendingOAuth,
-) -> anyhow::Result<OpenAiTokenResponse> {
+) -> anyhow::Result<OAuthTokenResponse> {
     let code_verifier = pending
         .code_verifier
         .as_deref()
@@ -1389,13 +1567,19 @@ async fn exchange_openai_oauth_code(
             "OpenAI token endpoint returned {status}: {body}"
         ));
     }
-    let tokens: OpenAiTokenResponse = serde_json::from_value(body)?;
+    let tokens: OAuthTokenResponse = serde_json::from_value(body)?;
     if tokens.access_token.trim().is_empty() {
         return Err(anyhow::anyhow!(
             "OpenAI token response did not include access_token"
         ));
     }
-    if tokens.refresh_token.trim().is_empty() {
+    if tokens
+        .refresh_token
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
         return Err(anyhow::anyhow!(
             "OpenAI token response did not include refresh_token"
         ));
@@ -1403,7 +1587,98 @@ async fn exchange_openai_oauth_code(
     Ok(tokens)
 }
 
-fn extract_account_id(tokens: &OpenAiTokenResponse) -> Option<String> {
+async fn exchange_anthropic_oauth_code(
+    code: &str,
+    pending: &crate::mock::store::PendingOAuth,
+) -> anyhow::Result<OAuthTokenResponse> {
+    let code_verifier = pending
+        .code_verifier
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("missing PKCE code verifier"))?;
+    let client_id = anthropic_oauth_client_id();
+    let redirect_uri = anthropic_oauth_redirect_uri();
+    let response = reqwest::Client::new()
+        .post(anthropic_oauth_token_url())
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("client_id", client_id.as_str()),
+            ("redirect_uri", redirect_uri.as_str()),
+            ("code", code),
+            ("code_verifier", code_verifier),
+        ])
+        .send()
+        .await?;
+    let status = response.status();
+    let body: serde_json::Value = response.json().await?;
+    if !status.is_success() {
+        return Err(anyhow::anyhow!(
+            "Anthropic token endpoint returned {status}: {body}"
+        ));
+    }
+    let tokens: OAuthTokenResponse = serde_json::from_value(body)?;
+    if tokens.access_token.trim().is_empty() {
+        return Err(anyhow::anyhow!(
+            "Anthropic token response did not include access_token"
+        ));
+    }
+    if tokens
+        .refresh_token
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
+        return Err(anyhow::anyhow!(
+            "Anthropic token response did not include refresh_token"
+        ));
+    }
+    Ok(tokens)
+}
+
+async fn exchange_google_oauth_code(
+    provider_id: &str,
+    code: &str,
+    pending: &crate::mock::store::PendingOAuth,
+) -> anyhow::Result<OAuthTokenResponse> {
+    let code_verifier = pending
+        .code_verifier
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("missing PKCE code verifier"))?;
+    let client_id = google_oauth_client_id(provider_id)
+        .ok_or_else(|| anyhow::anyhow!("missing Google OAuth client id"))?;
+    let redirect_uri = provider_google_oauth_redirect_uri(provider_id);
+    let mut form = vec![
+        ("grant_type".to_string(), "authorization_code".to_string()),
+        ("client_id".to_string(), client_id),
+        ("redirect_uri".to_string(), redirect_uri),
+        ("code".to_string(), code.to_string()),
+        ("code_verifier".to_string(), code_verifier.to_string()),
+    ];
+    if let Some(client_secret) = google_oauth_client_secret(provider_id) {
+        form.push(("client_secret".to_string(), client_secret));
+    }
+    let response = reqwest::Client::new()
+        .post(google_oauth_token_url())
+        .form(&form)
+        .send()
+        .await?;
+    let status = response.status();
+    let body: serde_json::Value = response.json().await?;
+    if !status.is_success() {
+        return Err(anyhow::anyhow!(
+            "Google token endpoint returned {status}: {body}"
+        ));
+    }
+    let tokens: OAuthTokenResponse = serde_json::from_value(body)?;
+    if tokens.access_token.trim().is_empty() {
+        return Err(anyhow::anyhow!(
+            "Google token response did not include access_token"
+        ));
+    }
+    Ok(tokens)
+}
+
+fn extract_account_id(tokens: &OAuthTokenResponse) -> Option<String> {
     tokens
         .id_token
         .as_deref()
@@ -1435,50 +1710,6 @@ fn extract_account_id_from_jwt(token: &str) -> Option<String> {
                 .and_then(|value| value.as_str())
         })
         .map(ToString::to_string)
-}
-
-fn oauth_callback_html(success: bool, message: &str) -> String {
-    let title = if success {
-        "OAuth connected"
-    } else {
-        "OAuth failed"
-    };
-    format!(
-        r#"<!doctype html>
-<html>
-  <head><meta charset="utf-8"><title>{title}</title></head>
-  <body style="font-family: system-ui, sans-serif; padding: 32px;">
-    <h1>{title}</h1>
-    <p>{}</p>
-  </body>
-</html>"#,
-        html_escape(message)
-    )
-}
-
-fn html_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
-fn browser_login_url(provider_id: &str) -> String {
-    match provider_id {
-        "openai" => "https://chatgpt.com/auth/login".to_string(),
-        "anthropic" => "https://claude.ai/login".to_string(),
-        "antigravity" => "https://antigravity.google.com/auth".to_string(),
-        other => format!("https://auth.example.com/oauth/{other}"),
-    }
-}
-
-fn browser_login_token(provider_id: &str, code: Option<&str>) -> String {
-    format!(
-        "browser-login:{}:{}",
-        provider_id,
-        code.unwrap_or("confirmed")
-    )
 }
 
 fn persist_provider_auth(provider_id: &str, auth: &ProviderAuth) -> io::Result<()> {
@@ -1592,6 +1823,7 @@ fn login_value_for_auth(provider_id: &str, auth: &ProviderAuth) -> String {
 fn build_provider_auth_status(provider_id: &str) -> ProviderAuthStatusResponse {
     let entry = tura_llm_rust::provider_auth_registry_entry(provider_id);
     let config_entry = read_provider_auth_config(provider_id);
+    let local_claude_code_auth = claude_code_local_auth(provider_id);
     let login = config_entry
         .as_ref()
         .and_then(|entry| entry.login.clone())
@@ -1604,7 +1836,8 @@ fn build_provider_auth_status(provider_id: &str) -> ProviderAuthStatusResponse {
             entry
                 .and_then(|entry| entry.login_env)
                 .and_then(|key| tura_llm_rust::TuraConfig::default().get(key))
-        });
+        })
+        .or_else(|| local_claude_code_auth.as_ref().map(|_| "oauth".to_string()));
     let token_env = config_entry
         .as_ref()
         .and_then(|entry| entry.token_env.clone())
@@ -1641,6 +1874,7 @@ fn build_provider_auth_status(provider_id: &str) -> ProviderAuthStatusResponse {
     let local_codex_auth = openai_codex_auth(provider_id);
     let configured = provider_key_exists(provider_id)
         || local_codex_auth.is_some()
+        || local_claude_code_auth.is_some()
         || bedrock_credentials_exist(provider_id);
     let expires_at = expires_env
         .as_deref()
@@ -1649,6 +1883,9 @@ fn build_provider_auth_status(provider_id: &str) -> ProviderAuthStatusResponse {
     let expired = expires_at.map(|expires_at| expires_at <= Utc::now().timestamp_millis());
     let authenticated = (configured && expired != Some(true))
         || local_codex_auth
+            .as_ref()
+            .is_some_and(|auth| !auth.access_token.trim().is_empty())
+        || local_claude_code_auth
             .as_ref()
             .is_some_and(|auth| !auth.access_token.trim().is_empty());
     let auth_state = if authenticated {
@@ -1683,7 +1920,8 @@ fn build_provider_auth_status(provider_id: &str) -> ProviderAuthStatusResponse {
             .as_ref()
             .and_then(|entry| entry.account_id.clone())
             .or_else(|| account_env.as_deref().and_then(config_value))
-            .or_else(|| local_codex_auth.and_then(|auth| auth.account_id)),
+            .or_else(|| local_codex_auth.and_then(|auth| auth.account_id))
+            .or_else(|| local_claude_code_auth.and_then(|auth| auth.account_id)),
         token_env,
         login_env: config_entry
             .as_ref()
@@ -1735,19 +1973,60 @@ fn openai_codex_auth(provider_id: &str) -> Option<OpenAiCodexAuth> {
     })
 }
 
+#[derive(Debug, Clone)]
+struct ClaudeCodeAuth {
+    access_token: String,
+    account_id: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeCodeCredentials {
+    claude_ai_oauth: Option<ClaudeCodeOauthCredentials>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeCodeOauthCredentials {
+    access_token: Option<String>,
+    #[serde(default)]
+    account_id: Option<String>,
+}
+
+fn claude_code_local_auth(provider_id: &str) -> Option<ClaudeCodeAuth> {
+    if provider_id != "claude-code" {
+        return None;
+    }
+    let path = claude_code_credentials_path()?;
+    let credentials: ClaudeCodeCredentials =
+        serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?;
+    let oauth = credentials.claude_ai_oauth?;
+    let access_token = oauth
+        .access_token
+        .filter(|value| !value.trim().is_empty())?;
+    Some(ClaudeCodeAuth {
+        access_token,
+        account_id: oauth.account_id.filter(|value| !value.trim().is_empty()),
+    })
+}
+
+fn claude_code_credentials_path() -> Option<PathBuf> {
+    if let Some(config_dir) = std::env::var_os("CLAUDE_CONFIG_DIR") {
+        return Some(PathBuf::from(config_dir).join(".credentials.json"));
+    }
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
+    Some(
+        PathBuf::from(home)
+            .join(".claude")
+            .join(".credentials.json"),
+    )
+}
+
 fn read_provider_auth_config(provider_id: &str) -> Option<tura_llm_rust::ProviderAuthConfig> {
-    let path = tura_llm_config_path();
+    let path = config::provider_config_path();
     let content = fs::read_to_string(path).ok()?;
     let root: tura_llm_rust::RootConfig = serde_json::from_str(&content).ok()?;
     root.provider_auth.get(provider_id).cloned()
-}
-
-fn config_value(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| tura_llm_rust::TuraConfig::default().get(key))
-        .filter(|value| !value.trim().is_empty())
 }
 
 fn bedrock_credentials_exist(provider_id: &str) -> bool {
@@ -1778,7 +2057,9 @@ fn logout_provider_auth(provider_id: &str) -> io::Result<()> {
     let should_clear_shared_token = match provider_id {
         "openai" => current_login == Some("oauth"),
         "openai-api" => current_login != Some("oauth"),
-        "anthropic" | "antigravity" => current_login == Some("browser"),
+        "claude-code" => current_login == Some("oauth"),
+        "anthropic" => current_login == Some("browser"),
+        "antigravity" => current_login == Some("oauth"),
         "anthropic-api" | "antigravity-api" => current_login != Some("browser"),
         _ => true,
     };
@@ -1810,7 +2091,7 @@ fn logout_provider_auth(provider_id: &str) -> io::Result<()> {
 }
 
 fn update_provider_auth_config_status(provider_id: &str, status: &str) -> io::Result<()> {
-    let path = tura_llm_config_path();
+    let path = config::provider_config_path();
     let content = fs::read_to_string(&path)?;
     let mut root: serde_json::Value = serde_json::from_str(&content)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
@@ -1834,21 +2115,6 @@ fn update_provider_auth_config_status(provider_id: &str, status: &str) -> io::Re
     fs::write(path, format!("{formatted}\n"))
 }
 
-fn tura_llm_config_path() -> std::path::PathBuf {
-    std::env::var("TURALLM_CONFIG")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::current_dir()
-                .unwrap_or_default()
-                .join("crates")
-                .join("provider")
-                .join("config")
-                .join("tura_llm_config.json")
-        })
-}
-
 fn upsert_provider_auth_config(
     provider_id: &str,
     login: &str,
@@ -1856,7 +2122,7 @@ fn upsert_provider_auth_config(
     auth: &ProviderAuth,
     auth_url: Option<String>,
 ) -> io::Result<()> {
-    let path = tura_llm_config_path();
+    let path = config::provider_config_path();
     let content = fs::read_to_string(&path)?;
     let mut root: serde_json::Value = serde_json::from_str(&content)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
@@ -1915,7 +2181,7 @@ fn upsert_provider_auth_config(
             entry["unsupported_reason"] = serde_json::Value::String(reason.to_string());
         }
     }
-    if provider_id == "openai" && login == "oauth" {
+    if provider_id == "codex" && login == "oauth" {
         entry["endpoint"] = serde_json::Value::String(
             "https://chatgpt.com/backend-api/codex/responses".to_string(),
         );
@@ -1950,69 +2216,46 @@ fn provider_login_key(provider_id: &str) -> String {
 
 fn provider_key_exists(provider_id: &str) -> bool {
     let key = provider_env_key(provider_id);
-    let has_key = std::env::var(&key)
+    provider_key_value_for_env(provider_id, &key).is_some()
+}
+
+fn provider_key_value_for_env(provider_id: &str, key: &str) -> Option<String> {
+    let value = std::env::var(key)
         .ok()
+        .or_else(|| tura_llm_rust::TuraConfig::default().get(key))
         .filter(|value| !value.trim().is_empty())
-        .is_some()
-        || tura_llm_rust::TuraConfig::default()
-            .get(&key)
-            .filter(|value| !value.trim().is_empty())
-            .is_some();
-    if !has_key {
-        return false;
-    }
+        .map(|value| value.trim().to_string())?;
     if matches!(
         provider_id,
-        "openai" | "openai-api" | "anthropic" | "anthropic-api" | "antigravity" | "antigravity-api"
+        "codex"
+            | "openai"
+            | "openai-api"
+            | "claude-code"
+            | "anthropic"
+            | "anthropic-api"
+            | "antigravity"
+            | "antigravity-api"
     ) {
         let login_key = provider_login_key(provider_id);
         let login = std::env::var(&login_key)
             .ok()
             .or_else(|| tura_llm_rust::TuraConfig::default().get(&login_key));
-        return match provider_id {
-            "openai" => login.as_deref() == Some("oauth"),
-            "anthropic" | "antigravity" => login.as_deref() == Some("browser"),
+        let login_matches = match provider_id {
+            "codex" => login.as_deref() == Some("oauth"),
+            "openai" => !matches!(login.as_deref(), Some("oauth" | "browser")),
+            "claude-code" => login.as_deref() == Some("oauth"),
+            "anthropic" => login.as_deref() == Some("browser"),
+            "antigravity" => login.as_deref() == Some("oauth"),
             "openai-api" | "anthropic-api" | "antigravity-api" => {
                 !matches!(login.as_deref(), Some("oauth" | "browser"))
             }
             _ => true,
         };
-    }
-    true
-}
-
-fn upsert_env_value(path: &FsPath, key: &str, value: &str) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let mut lines = fs::read_to_string(path)
-        .map(|content| content.lines().map(ToString::to_string).collect::<Vec<_>>())
-        .unwrap_or_default();
-    let prefix = format!("{key}=");
-    let next = format!("{key}={}", quote_env_value(value));
-    let mut replaced = false;
-
-    for line in &mut lines {
-        if line.trim_start().starts_with(&prefix) {
-            *line = next.clone();
-            replaced = true;
-            break;
+        if !login_matches {
+            return None;
         }
     }
-
-    if !replaced {
-        lines.push(next);
-    }
-
-    let mut content = lines.join("\n");
-    content.push('\n');
-    fs::write(path, content)
-}
-
-fn quote_env_value(value: &str) -> String {
-    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{escaped}\"")
+    Some(value)
 }
 
 #[cfg(test)]
@@ -2026,15 +2269,28 @@ mod tests {
 
     #[test]
     fn provider_auth_methods_are_projected_from_registry() {
+        let codex = provider_auth_methods("codex");
+        assert_eq!(codex.len(), 1);
+        assert_eq!(codex[0].kind, AuthMethodKind::OAuthPkce);
+        assert_eq!(codex[0].method_type, "oauth");
+        assert_eq!(codex[0].token_env.as_deref(), Some("OPENAI_API_KEY"));
+
         let openai = provider_auth_methods("openai");
-        assert_eq!(openai.len(), 1);
-        assert_eq!(openai[0].kind, AuthMethodKind::OAuthPkce);
-        assert_eq!(openai[0].method_type, "oauth");
-        assert_eq!(openai[0].token_env.as_deref(), Some("OPENAI_API_KEY"));
+        assert_eq!(openai[0].kind, AuthMethodKind::ApiKey);
+        assert_eq!(openai[0].method_type, "api");
 
         let anthropic = provider_auth_methods("anthropic");
         assert_eq!(anthropic[0].kind, AuthMethodKind::BrowserToken);
+        assert_eq!(anthropic[0].method_type, "token");
         assert_eq!(anthropic[0].login, "browser");
+
+        let claude_code = provider_auth_methods("claude-code");
+        assert_eq!(claude_code[0].kind, AuthMethodKind::LocalCliToken);
+        assert_eq!(claude_code[0].method_type, "oauth");
+        assert_eq!(
+            claude_code[0].token_env.as_deref(),
+            Some("CLAUDE_CODE_OAUTH_TOKEN")
+        );
 
         let openrouter = provider_auth_methods("openrouter");
         assert_eq!(openrouter[0].kind, AuthMethodKind::ApiKey);
@@ -2050,6 +2306,122 @@ mod tests {
         assert_eq!(provider_env_key("openai-api"), "OPENAI_API_KEY");
         assert_eq!(provider_login_key("anthropic-api"), "ANTHROPIC_LOGIN");
         assert_eq!(provider_env_key("gemini-api"), "GEMINI_API_KEY");
+    }
+
+    #[tokio::test]
+    async fn provider_list_projects_non_llm_catalog_entries() {
+        let _guard = ENV_LOCK.lock().await;
+        let settings = tura_llm_rust::Settings::default()
+            .await
+            .expect("load settings");
+        let route = settings
+            .route_by_name("fast")
+            .expect("fast route should be configured");
+        let response = provider_list_for_route(settings.as_ref(), route);
+        let feishu = response
+            .all
+            .iter()
+            .find(|provider| provider.id == "feishu")
+            .expect("Feishu service provider should be listed");
+        assert!(response
+            .enums
+            .domains
+            .iter()
+            .any(|domain| domain == "communication"));
+        assert!(response.enums.api_styles.iter().any(|style| style == "mcp"));
+        assert!(feishu.models.is_empty());
+        assert_eq!(
+            feishu.api.as_deref(),
+            Some("https://open.feishu.cn/open-apis")
+        );
+        assert_eq!(
+            feishu
+                .options
+                .get("domains")
+                .and_then(|value| value.as_array())
+                .and_then(|items| items.first())
+                .and_then(|value| value.as_str()),
+            Some("productivity")
+        );
+
+        let line = response
+            .all
+            .iter()
+            .find(|provider| provider.id == "line")
+            .expect("LINE service provider should be listed");
+        assert!(line.models.is_empty());
+        assert_eq!(line.api.as_deref(), Some("https://api.line.me/v2/bot"));
+        assert!(line
+            .env
+            .iter()
+            .any(|env| env == "LINE_CHANNEL_ACCESS_TOKEN"));
+        assert_eq!(
+            line.options
+                .get("auth_methods")
+                .and_then(|value| value.as_array())
+                .and_then(|items| items.first())
+                .and_then(|value| value.as_str()),
+            Some("channel_access_token")
+        );
+
+        let duckduckgo = response
+            .all
+            .iter()
+            .find(|provider| provider.id == "duckduckgo_search")
+            .expect("DuckDuckGo search provider should be listed");
+        assert!(duckduckgo.models.is_empty());
+        assert_eq!(
+            duckduckgo.api.as_deref(),
+            Some("https://html.duckduckgo.com/html/")
+        );
+        assert!(duckduckgo
+            .env
+            .iter()
+            .any(|env| env == "TURA_DUCKDUCKGO_SEARCH_ENDPOINT"));
+        assert_eq!(
+            duckduckgo
+                .options
+                .get("api_style")
+                .and_then(|value| value.as_str()),
+            Some("duckduckgo_html")
+        );
+
+        let exa = response
+            .all
+            .iter()
+            .find(|provider| provider.id == "exa_search")
+            .expect("Exa search provider should be listed");
+        assert!(exa.models.is_empty());
+        assert_eq!(exa.api.as_deref(), Some("https://mcp.exa.ai/mcp"));
+        assert!(exa.env.iter().any(|env| env == "TURA_EXA_MCP_ENDPOINT"));
+        assert_eq!(
+            exa.options
+                .get("api_style")
+                .and_then(|value| value.as_str()),
+            Some("mcp")
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_list_returns_configured_key_value() {
+        let _guard = ENV_LOCK.lock().await;
+        std::env::set_var("LINE_CHANNEL_ACCESS_TOKEN", "line-test-token");
+
+        let settings = tura_llm_rust::Settings::default()
+            .await
+            .expect("load settings");
+        let route = settings
+            .route_by_name("fast")
+            .expect("fast route should be configured");
+        let response = provider_list_for_route(settings.as_ref(), route);
+        let line = response
+            .all
+            .iter()
+            .find(|provider| provider.id == "line")
+            .expect("LINE service provider should be listed");
+        assert_eq!(line.key.as_deref(), Some("line-test-token"));
+
+        std::env::remove_var("LINE_CHANNEL_ACCESS_TOKEN");
     }
 
     #[test]
@@ -2085,7 +2457,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).expect("temp dir");
         let env_path = temp_dir.join(".env");
-        let config_path = temp_dir.join("tura_llm_config.json");
+        let config_path = temp_dir.join("provider_config.json");
         std::fs::write(
             &env_path,
             "OPENAI_LOGIN=oauth\nOPENAI_API_KEY=old-access\nOPENAI_REFRESH_TOKEN=old-refresh\nOPENAI_TOKEN_EXPIRES=0\n",
@@ -2113,7 +2485,7 @@ mod tests {
             Ok("old-refresh")
         );
 
-        let Json(response) = provider_auth_refresh(Path("openai".to_string())).await;
+        let Json(response) = provider_auth_refresh(Path("codex".to_string())).await;
 
         assert!(response.ok, "{}", response.message);
         assert_eq!(
@@ -2151,7 +2523,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).expect("temp dir");
         let env_path = temp_dir.join(".env");
-        let config_path = temp_dir.join("tura_llm_config.json");
+        let config_path = temp_dir.join("provider_config.json");
         std::fs::write(
             &env_path,
             "OPENAI_LOGIN=oauth\nOPENAI_API_KEY=expired-access\nOPENAI_REFRESH_TOKEN=status-refresh-token\nOPENAI_TOKEN_EXPIRES=0\n",
@@ -2179,7 +2551,7 @@ mod tests {
             Ok("status-refresh-token")
         );
 
-        let Json(status) = provider_auth_status(Path("openai".to_string())).await;
+        let Json(status) = provider_auth_status(Path("codex".to_string())).await;
 
         assert!(status.authenticated);
         assert_eq!(status.expired, Some(false));
@@ -2211,6 +2583,8 @@ mod tests {
                 provider_id: "google",
                 login_env: "GOOGLE_LOGIN",
                 token_env: "GOOGLE_API_KEY",
+                refresh_env: "GOOGLE_REFRESH_TOKEN",
+                expires_env: "GOOGLE_TOKEN_EXPIRES",
                 old_access: "google-expired-access",
                 new_access: "google-new-access",
             },
@@ -2218,8 +2592,19 @@ mod tests {
                 provider_id: "gemini",
                 login_env: "GEMINI_LOGIN",
                 token_env: "GEMINI_API_KEY",
+                refresh_env: "GOOGLE_REFRESH_TOKEN",
+                expires_env: "GOOGLE_TOKEN_EXPIRES",
                 old_access: "gemini-expired-access",
                 new_access: "gemini-new-access",
+            },
+            OAuthRefreshCase {
+                provider_id: "antigravity",
+                login_env: "ANTIGRAVITY_LOGIN",
+                token_env: "ANTIGRAVITY_API_KEY",
+                refresh_env: "ANTIGRAVITY_REFRESH_TOKEN",
+                expires_env: "ANTIGRAVITY_TOKEN_EXPIRES",
+                old_access: "antigravity-expired-access",
+                new_access: "antigravity-new-access",
             },
         ] {
             clear_openai_refresh_test_env();
@@ -2231,13 +2616,15 @@ mod tests {
             let _ = std::fs::remove_dir_all(&temp_dir);
             std::fs::create_dir_all(&temp_dir).expect("temp dir");
             let env_path = temp_dir.join(".env");
-            let config_path = temp_dir.join("tura_llm_config.json");
+            let config_path = temp_dir.join("provider_config.json");
             std::fs::write(
                 &env_path,
                 format!(
-                    "{login_env}=oauth\n{token_env}={old_access}\nGOOGLE_REFRESH_TOKEN={refresh}\nGOOGLE_TOKEN_EXPIRES=0\n",
+                    "{login_env}=oauth\n{token_env}={old_access}\n{refresh_env}={refresh}\n{expires_env}=0\n",
                     login_env = case.login_env,
                     token_env = case.token_env,
+                    refresh_env = case.refresh_env,
+                    expires_env = case.expires_env,
                     old_access = case.old_access,
                     refresh = case.refresh_token()
                 ),
@@ -2265,8 +2652,8 @@ mod tests {
             );
             set_env(case.login_env, "oauth");
             set_env(case.token_env, case.old_access);
-            set_env("GOOGLE_REFRESH_TOKEN", case.refresh_token());
-            set_env("GOOGLE_TOKEN_EXPIRES", "0");
+            set_env(case.refresh_env, case.refresh_token());
+            set_env(case.expires_env, "0");
 
             let Json(response) = provider_auth_refresh(Path(case.provider_id.to_string())).await;
 
@@ -2276,16 +2663,16 @@ mod tests {
                 Ok(case.new_access)
             );
             assert_eq!(
-                std::env::var("GOOGLE_REFRESH_TOKEN").as_deref(),
+                std::env::var(case.refresh_env).as_deref(),
                 Ok(case.refresh_token())
             );
-            assert!(std::env::var("GOOGLE_TOKEN_EXPIRES")
+            assert!(std::env::var(case.expires_env)
                 .ok()
                 .and_then(|value| value.parse::<i64>().ok())
                 .is_some_and(|expires| expires > Utc::now().timestamp_millis()));
             let config = std::fs::read_to_string(&config_path).expect("read config");
             assert!(config.contains(case.provider_id));
-            assert!(config.contains("GOOGLE_REFRESH_TOKEN"));
+            assert!(config.contains(case.refresh_env));
             server.join().expect("token server should finish");
 
             clear_openai_refresh_test_env();
@@ -2293,10 +2680,71 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn provider_auth_refresh_covers_claude_code_oauth_method() {
+        let _guard = ENV_LOCK.lock().await;
+        clear_openai_refresh_test_env();
+        let temp_dir = std::env::temp_dir().join(format!(
+            "tura-claude-code-oauth-refresh-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).expect("temp dir");
+        let env_path = temp_dir.join(".env");
+        let config_path = temp_dir.join("provider_config.json");
+        std::fs::write(
+            &env_path,
+            "ANTHROPIC_LOGIN=oauth\nCLAUDE_CODE_OAUTH_TOKEN=claude-old-access\nCLAUDE_CODE_REFRESH_TOKEN=claude-refresh-token\nCLAUDE_CODE_TOKEN_EXPIRES=0\n",
+        )
+        .expect("env");
+        std::fs::write(&config_path, r#"{"provider_auth":{}}"#).expect("config");
+
+        let (addr, server) = spawn_openai_token_server(
+            "claude-refresh-token",
+            r#"{"access_token":"claude-new-access","refresh_token":"claude-new-refresh","expires_in":3600}"#,
+        );
+
+        set_env("TURA_ENV_PATH", env_path.to_string_lossy().as_ref());
+        set_env("TURALLM_CONFIG", config_path.to_string_lossy().as_ref());
+        set_env(
+            "ANTHROPIC_OAUTH_TOKEN_URL",
+            &format!("http://{addr}/oauth/token"),
+        );
+        set_env("ANTHROPIC_LOGIN", "oauth");
+        set_env("CLAUDE_CODE_OAUTH_TOKEN", "claude-old-access");
+        set_env("CLAUDE_CODE_REFRESH_TOKEN", "claude-refresh-token");
+        set_env("CLAUDE_CODE_TOKEN_EXPIRES", "0");
+
+        let Json(response) = provider_auth_refresh(Path("claude-code".to_string())).await;
+
+        assert!(response.ok, "{}", response.message);
+        assert_eq!(
+            std::env::var("CLAUDE_CODE_OAUTH_TOKEN").as_deref(),
+            Ok("claude-new-access")
+        );
+        assert_eq!(
+            std::env::var("CLAUDE_CODE_REFRESH_TOKEN").as_deref(),
+            Ok("claude-new-refresh")
+        );
+        assert!(std::env::var("CLAUDE_CODE_TOKEN_EXPIRES")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .is_some_and(|expires| expires > Utc::now().timestamp_millis()));
+        let config = std::fs::read_to_string(&config_path).expect("read config");
+        assert!(config.contains("claude-code"));
+        assert!(config.contains("CLAUDE_CODE_REFRESH_TOKEN"));
+        server.join().expect("token server should finish");
+
+        clear_openai_refresh_test_env();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
     struct OAuthRefreshCase {
         provider_id: &'static str,
         login_env: &'static str,
         token_env: &'static str,
+        refresh_env: &'static str,
+        expires_env: &'static str,
         old_access: &'static str,
         new_access: &'static str,
     }
@@ -2306,6 +2754,7 @@ mod tests {
             match self.provider_id {
                 "google" => "google-refresh-token",
                 "gemini" => "gemini-refresh-token",
+                "antigravity" => "antigravity-refresh-token",
                 _ => "refresh-token",
             }
         }
@@ -2380,6 +2829,7 @@ mod tests {
     fn clear_openai_refresh_test_env() {
         for key in [
             "TURA_ENV_PATH",
+            "TURA_PROVIDER_CONFIG",
             "TURALLM_CONFIG",
             "OPENAI_OAUTH_TOKEN_URL",
             "OPENAI_LOGIN",
@@ -2395,6 +2845,19 @@ mod tests {
             "GEMINI_API_KEY",
             "GOOGLE_REFRESH_TOKEN",
             "GOOGLE_TOKEN_EXPIRES",
+            "ANTIGRAVITY_LOGIN",
+            "ANTIGRAVITY_API_KEY",
+            "ANTIGRAVITY_REFRESH_TOKEN",
+            "ANTIGRAVITY_TOKEN_EXPIRES",
+            "ANTIGRAVITY_OAUTH_CLIENT_ID",
+            "ANTIGRAVITY_OAUTH_CLIENT_SECRET",
+            "ANTIGRAVITY_OAUTH_REDIRECT_URI",
+            "ANTIGRAVITY_OAUTH_SCOPE",
+            "ANTHROPIC_OAUTH_TOKEN_URL",
+            "ANTHROPIC_LOGIN",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "CLAUDE_CODE_REFRESH_TOKEN",
+            "CLAUDE_CODE_TOKEN_EXPIRES",
         ] {
             std::env::remove_var(key);
         }

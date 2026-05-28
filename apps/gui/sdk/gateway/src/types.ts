@@ -8,18 +8,43 @@ export type HealthResponse = {
 export type GatewayConfig = {
   language?: string | null;
   theme?: string | null;
+  main_font?: string | null;
+  code_font?: string | null;
+  main_font_size?: number | null;
+  code_font_size?: number | null;
   model?: string | null;
   agent?: string | null;
   skill_folders?: string[];
 };
 
+export type TuraConfigModelPair = {
+  provider: string;
+  provider_name?: string;
+  model: string;
+  model_name?: string;
+};
+
+export type TuraConfigResponse = {
+  path: string;
+  tiers: Array<{
+    tier: string;
+    current?: {
+      provider: string;
+      model: string;
+    } | null;
+    options: TuraConfigModelPair[];
+  }>;
+  error?: string | null;
+};
+
+export type TuraConfigUpdate = {
+  tier: string;
+  provider: string;
+  model: string;
+};
+
 export type SessionStatus = "idle" | "busy" | "error";
-export type PlanStatus =
-  | "todo"
-  | "doing"
-  | "question"
-  | "done"
-  | "archived";
+export type PlanStatus = "todo" | "doing" | "question" | "done" | "archived";
 export type StartCondition =
   | "session_idle"
   | "user_action"
@@ -39,6 +64,7 @@ export type TaskManagement = {
   task_summary?: string;
   delivery?: string;
   sub_session_id?: string;
+  start_condition?: StartCondition;
   start_at?: string | number;
   poll_interval?: PollInterval;
   status?: PlanStatus;
@@ -139,12 +165,23 @@ export type ProviderListResponse = {
   all: SdkProvider[];
   default: Record<string, string>;
   connected: string[];
+  enums: ProviderEnumCatalog;
+};
+
+export type ProviderEnumCatalog = {
+  domains: string[];
+  capabilities: string[];
+  api_styles: string[];
+  auth_methods: string[];
+  statuses: string[];
 };
 
 export type SdkProvider = {
   id: string;
   name: string;
   source: string;
+  domain?: string | string[] | null;
+  domains?: string[] | null;
   env: string[];
   key?: string | null;
   options: Record<string, unknown>;
@@ -183,6 +220,13 @@ export type ProviderAuthMethod = {
   prompts?: unknown[] | null;
   token_env?: string | null;
   login_env?: string | null;
+  authorize_url?: string | null;
+  token_url?: string | null;
+  api_key_url?: string | null;
+  docs_url?: string | null;
+  available: boolean;
+  unavailable_reason?: string | null;
+  supports_refresh: boolean;
 };
 
 export type ProviderAuthStatusResponse = {

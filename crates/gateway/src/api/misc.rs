@@ -83,7 +83,7 @@ pub async fn list_agents() -> Json<Vec<Agent>> {
         },
         Agent {
             name: "coding_agent_fast".to_string(),
-            description: "Coding session agent using the gpt-5.3-codex-spark prompt".to_string(),
+            description: "Coding session agent using the gpt-5.1-codex-mini prompt".to_string(),
             mode: "primary".to_string(),
             native: true,
             hidden: false,
@@ -1118,19 +1118,4 @@ pub async fn write_log(Json(payload): Json<LogRequest>) -> Json<bool> {
         payload.message
     );
     Json(true)
-}
-
-// ============================================================================
-// Config Providers
-// ============================================================================
-
-pub async fn get_config_providers() -> Json<Vec<ProviderConfig>> {
-    Json(vec![])
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ProviderConfig {
-    pub id: String,
-    pub name: String,
-    pub requires_auth: bool,
 }

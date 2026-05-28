@@ -4,7 +4,7 @@
   "parent_agent_id": null,
   "report_to_user": true,
   "provider": {
-    "tura_llm_name": "tura_coder",
+    "tura_llm_name": "flagship_thinking",
     "stream": true,
     "temperature": 0.2,
     "max_tokens": 0,

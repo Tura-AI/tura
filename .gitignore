@@ -11,6 +11,7 @@ node_modules/
 *.tsbuildinfo
 /package-lock.json
 
+log/
 crates/provider/log/
 tests/command-run-codex-two-way/records/runs/
 tests/command-run-codex-two-way/records/summaries/

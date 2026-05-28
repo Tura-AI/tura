@@ -1,82 +1,6 @@
-import {
-  For,
-  Match,
-  Show,
-  Switch,
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-  onMount,
-  type Accessor,
-  type JSX,
-  type Setter,
-} from "solid-js";
-import { Portal } from "solid-js/web";
-import ExternalLink from "lucide-solid/icons/external-link";
-import LayoutList from "lucide-solid/icons/layout-list";
-import ArrowLeft from "lucide-solid/icons/arrow-left";
-import CalendarDays from "lucide-solid/icons/calendar-days";
-import ChartGantt from "lucide-solid/icons/chart-gantt";
-import Check from "lucide-solid/icons/check";
-import ChevronDown from "lucide-solid/icons/chevron-down";
-import ChevronLeft from "lucide-solid/icons/chevron-left";
-import ChevronRight from "lucide-solid/icons/chevron-right";
-import Columns3 from "lucide-solid/icons/columns-3";
-import Copy from "lucide-solid/icons/copy";
-import Edit3 from "lucide-solid/icons/edit-3";
-import FolderOpen from "lucide-solid/icons/folder-open";
-import KeyRound from "lucide-solid/icons/key-round";
-import MoreHorizontal from "lucide-solid/icons/more-horizontal";
-import Pin from "lucide-solid/icons/pin";
-import Plus from "lucide-solid/icons/plus";
-import Search from "lucide-solid/icons/search";
-import Settings from "lucide-solid/icons/settings";
-import Trash2 from "lucide-solid/icons/trash-2";
-import {
-  GatewayClient,
-  GatewayError,
-  connectGatewayEvents,
-  defaultGatewayUrl,
-  errorMessage,
-  type Agent,
-  type Command,
-  type FileContentResponse,
-  type FileInfo,
-  type GatewayConfig,
-  type Message,
-  type ProviderAuthMethod,
-  type ProductIssue,
-  type Project,
-  type PollInterval,
-  type SdkProvider,
-  type Session,
-  type StartCondition,
-  type TaskManagement,
-  type PlanStatus,
-} from "@tura/gateway-sdk";
-import {
-  Composer,
-  ConversationView,
-  composerFileToken,
-  composerImageToken,
-} from "../conversation/conversation-view";
-import { applyGatewayEvent } from "../state/event-reducer";
-import {
-  activeSession,
-  type ComposerImage,
-  initialAppState,
-  type MainTab,
-  type PlanMode,
-  sessionDirectory,
-  sessionUpdatedAt,
-  sessionTitle,
-  type AppState,
-  type SettingsSection,
-  type ThemeMode,
-} from "../state/global-store";
-import { classNames, truncate } from "../state/format";
-import { t, type TextKey } from "../i18n";
+import { GatewayError } from "@tura/gateway-sdk";
+import { type AppState, type ThemeMode } from "../state/global-store";
+import { t } from "../i18n";
 import { providerSourceLabel } from "./app-format";
 export { authStatusText, copyText, providerSourceLabel } from "./app-format";
 
@@ -106,51 +30,6 @@ export function defaultModel(
     : undefined;
 }
 
-export function settingsSections(): Array<{
-  id: SettingsSection;
-  label: string;
-}> {
-  return [
-    { id: "general", label: t("general") },
-    { id: "appearance", label: t("appearance") },
-    { id: "providers", label: t("providers") },
-    { id: "models", label: t("models") },
-    { id: "auth", label: t("login") },
-    { id: "runtime", label: t("runtime") },
-    { id: "config", label: t("turaConfig") },
-    { id: "workspace", label: t("workspaceConfig") },
-    { id: "environment", label: t("environment") },
-  ];
-}
-
-export function configFieldRows(
-  state: AppState,
-): Array<{ key: string; label: string }> {
-  const keys = new Set([
-    "language",
-    "theme",
-    "model",
-    "agent",
-    "skill_folders",
-    ...Object.keys(state.configDraft),
-  ]);
-  return [...keys].map((key) => ({
-    key,
-    label: configFieldLabel(key),
-  }));
-}
-
-export function configFieldLabel(key: string): string {
-  const labels: Record<string, TextKey> = {
-    agent: "agent",
-    language: "language",
-    model: "model",
-    skill_folders: "skillFolders",
-    theme: "theme",
-  };
-  return labels[key] ? t(labels[key]) : key.replaceAll("_", " ");
-}
-
 export function configToDraft(
   config: AppState["config"],
 ): Record<string, string> {
@@ -160,6 +39,14 @@ export function configToDraft(
   return {
     language: config.language ?? "",
     theme: config.theme ?? "",
+    main_font: config.main_font ?? "",
+    code_font: config.code_font ?? "",
+    main_font_size: config.main_font_size
+      ? String(config.main_font_size)
+      : "",
+    code_font_size: config.code_font_size
+      ? String(config.code_font_size)
+      : "",
     model: config.model ?? "",
     agent: config.agent ?? "",
     skill_folders: (config.skill_folders ?? []).join(", "),
@@ -173,6 +60,14 @@ export function configDraftToPatch(
   return {
     language: draft.language || null,
     theme: themeMode,
+    main_font: draft.main_font || null,
+    code_font: draft.code_font || null,
+    main_font_size: draft.main_font_size
+      ? Number(draft.main_font_size)
+      : null,
+    code_font_size: draft.code_font_size
+      ? Number(draft.code_font_size)
+      : null,
     model: draft.model || null,
     agent: draft.agent || null,
     skill_folders: draft.skill_folders
@@ -200,7 +95,7 @@ export function draftToRecord(
   );
 }
 
-export function draftValue(value: unknown): string {
+function draftValue(value: unknown): string {
   if (value === undefined || value === null) {
     return "";
   }
@@ -213,7 +108,7 @@ export function draftValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export function parseDraftValue(value: string): unknown {
+function parseDraftValue(value: string): unknown {
   const trimmed = value.trim();
   if (!trimmed) {
     return null;
@@ -258,10 +153,6 @@ export function parseModelRef(
 
 export function providerIdFromModel(value?: string | null): string | undefined {
   return parseModelRef(value)?.providerId;
-}
-
-export function modelRef(providerId?: string, modelId?: string): string {
-  return providerId && modelId ? `${providerId}/${modelId}` : "";
 }
 
 export function providerStateLabel(
@@ -330,7 +221,7 @@ export function providerIdFromAuthError(
   return fromText ?? providerIdFromModel(state.selectedModel);
 }
 
-export function normalizeErrorBody(body: unknown): Record<string, unknown> {
+function normalizeErrorBody(body: unknown): Record<string, unknown> {
   if (body && typeof body === "object" && !Array.isArray(body)) {
     return body as Record<string, unknown>;
   }

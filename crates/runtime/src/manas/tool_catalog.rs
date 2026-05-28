@@ -342,7 +342,7 @@ fn command_run_usage_patterns() -> &'static str {
 - Context compaction: after a meaningful phase completes, or when context is near 200,000 tokens and feels crowded, put `compact_context` as the final command in the highest step with a concise handoff summary for the next turn.
 - Example investigation batch: step 1 needed `rg --files`, targeted `rg -n`, and candidate file reads.
 - Example repair batch: step 1 `apply_patch` across related files, step 2 write or update a focused test script when needed, step 3 run the narrow test and focused validation searches.
-- Example frontend batch: step 1 modify frontend code, step 2 write or update frontend Playwright e2e scripts and capture screenshots at key steps, step 3 read the corresponding screenshots and analyze display quality and functionality.
+- Example frontend batch: step 1 write or reuse the focused frontend test script, step 2 run that script and capture outputs/screenshots, step 3 read the resulting artifacts and analyze display quality and functionality.
 - Example media batch: step 1 use `web_discover` or generation to collect the needed media, docs, or repo artifacts, step 2 use `read_media` or focused reads to verify the resulting media or repo content."#
 }
 

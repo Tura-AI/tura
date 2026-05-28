@@ -168,7 +168,8 @@ function authLines(state: AppState, cols: number, maxLines: number): string[] {
     if (statusText) lines.push(`  ${dim}${truncate(statusText, cols - 4)}${reset}`);
     if (methods.length) {
       for (const [index, method] of methods.slice(0, 4).entries()) {
-        lines.push(`  ${cyan}${index}${reset} ${pad(method.label || method.login, 24)} ${dim}${method.type}${method.kind ? `/${method.kind}` : ""}${reset}`);
+        const availability = method.available === false ? ` ${yellow}unavailable${reset}` : "";
+        lines.push(`  ${cyan}${index}${reset} ${pad(method.label || method.login, 24)} ${dim}${method.type}${method.kind ? `/${method.kind}` : ""}${reset}${availability}`);
       }
     }
   }

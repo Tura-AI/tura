@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum AuthMethodKind {
     ApiKey,
+    #[serde(rename = "oauth_pkce")]
     OAuthPkce,
     BrowserToken,
     LocalCliToken,
@@ -63,6 +64,8 @@ pub enum ProviderRuntimeState {
 #[serde(rename_all = "snake_case")]
 pub enum OAuthAuthorizeKind {
     OpenAiPkce,
+    AnthropicPkce,
+    GooglePkce,
     BrowserTokenPaste,
     Unsupported,
 }
@@ -130,7 +133,7 @@ const BROWSER_TOKEN_METHODS: &[AuthMethodDescriptor] = &[AuthMethodDescriptor::n
 )];
 const CLAUDE_CODE_METHODS: &[AuthMethodDescriptor] = &[AuthMethodDescriptor::new(
     AuthMethodKind::LocalCliToken,
-    "Claude Code local login",
+    "Claude Code OAuth",
 )];
 const GOOGLE_METHODS: &[AuthMethodDescriptor] = &[
     AuthMethodDescriptor::new(AuthMethodKind::OAuthPkce, "Google OAuth"),
@@ -142,37 +145,40 @@ const AWS_METHODS: &[AuthMethodDescriptor] = &[AuthMethodDescriptor::new(
 )];
 
 const OPENAI_MODELS: &[&str] = &[
-    "gpt-5.5",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-5.3-codex",
-    "gpt-5.3-codex-spark",
-    "gpt-5.2",
+    "gpt-5.1-codex-max",
+    "gpt-5.1-codex",
+    "gpt-5.1-codex-mini",
+    "text-embedding-3-small",
+    "text-embedding-3-large",
 ];
 const OPENAI_API_MODELS: &[&str] = &[
-    "gpt-5.5",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-5.2",
-    "gpt-4.1",
-    "gpt-4.1-mini",
-    "o4-mini",
+    "gpt-5-pro",
+    "gpt-5.1",
+    "gpt-5-mini",
+    "gpt-5-nano",
+    "text-embedding-3-small",
+    "text-embedding-3-large",
 ];
-const ANTHROPIC_MODELS: &[&str] = &["claude-sonnet-4.5", "claude-opus-4.6"];
-const ANTHROPIC_API_MODELS: &[&str] = &["claude-sonnet-4.5", "claude-opus-4.6", "claude-haiku-4.5"];
-const GOOGLE_MODELS: &[&str] = &["gemini-3-pro", "gemini-3-flash", "gemini-2.5-pro"];
+const ANTHROPIC_MODELS: &[&str] = &["claude-opus-4-1-20250805", "claude-sonnet-4-20250514"];
+const ANTHROPIC_API_MODELS: &[&str] = ANTHROPIC_MODELS;
+const GOOGLE_MODELS: &[&str] = &[
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "models/gemini-embedding-001",
+];
 const ANTIGRAVITY_MODELS: &[&str] = &["antigravity-browser"];
-const ANTIGRAVITY_API_MODELS: &[&str] = &["gemini-3-pro", "gemini-3-flash"];
+const ANTIGRAVITY_API_MODELS: &[&str] = &["gemini-2.5-pro", "gemini-2.5-flash"];
 const MINIMAX_MODELS: &[&str] = &["minimax-m2.7", "minimax-m2.5", "minimax-m2.1"];
 const OPENROUTER_MODELS: &[&str] = &[
     "minimax/minimax-m2.7",
     "minimax/minimax-m2.5",
-    "anthropic/claude-opus-4.6",
-    "anthropic/claude-sonnet-4.5",
-    "openai/gpt-5.4",
-    "openai/gpt-5.3-codex",
-    "google/gemini-3-pro",
-    "google/gemini-3-flash",
+    "anthropic/claude-opus-4-1-20250805",
+    "anthropic/claude-sonnet-4-20250514",
+    "openai/gpt-5.1",
+    "openai/gpt-5-mini",
+    "google/gemini-2.5-pro",
+    "google/gemini-2.5-flash",
 ];
 const EMPTY_MODELS: &[&str] = &[];
 
@@ -243,11 +249,11 @@ const fn aws_capabilities() -> ProviderCapabilityFlags {
 
 pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
     ProviderAuthRegistryEntry {
-        provider_id: "openai",
-        runtime_provider_id: "openai",
-        display_name: "OpenAI Codex",
-        base_url_config_key: "openai",
-        default_base_url: "https://api.openai.com/v1",
+        provider_id: "codex",
+        runtime_provider_id: "codex",
+        display_name: "Codex Subscription",
+        base_url_config_key: "codex",
+        default_base_url: "https://chatgpt.com/backend-api/codex/responses",
         supported_models: OPENAI_MODELS,
         auth_methods: OPENAI_OAUTH_METHODS,
         token_env: Some("OPENAI_API_KEY"),
@@ -260,6 +266,26 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
         oauth_authorize_kind: Some(OAuthAuthorizeKind::OpenAiPkce),
         oauth_callback_kind: Some(OAuthAuthorizeKind::OpenAiPkce),
         capabilities: openai_subscription_capabilities(),
+        disabled_reason: None,
+    },
+    ProviderAuthRegistryEntry {
+        provider_id: "openai",
+        runtime_provider_id: "openai",
+        display_name: "OpenAI API",
+        base_url_config_key: "openai",
+        default_base_url: "https://api.openai.com/v1",
+        supported_models: OPENAI_API_MODELS,
+        auth_methods: API_KEY_METHODS,
+        token_env: Some("OPENAI_API_KEY"),
+        login_env: Some("OPENAI_LOGIN"),
+        refresh_env: None,
+        expires_env: None,
+        account_env: None,
+        endpoint_env: None,
+        local_auth_discovery: None,
+        oauth_authorize_kind: None,
+        oauth_callback_kind: None,
+        capabilities: openai_compatible_api_capabilities(),
         disabled_reason: None,
     },
     ProviderAuthRegistryEntry {
@@ -332,17 +358,20 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
         default_base_url: "https://api.anthropic.com/v1",
         supported_models: ANTHROPIC_MODELS,
         auth_methods: CLAUDE_CODE_METHODS,
-        token_env: Some("CLAUDE_CODE_ACCESS_TOKEN"),
+        token_env: Some("CLAUDE_CODE_OAUTH_TOKEN"),
         login_env: Some("ANTHROPIC_LOGIN"),
-        refresh_env: None,
+        refresh_env: Some("CLAUDE_CODE_REFRESH_TOKEN"),
         expires_env: Some("CLAUDE_CODE_TOKEN_EXPIRES"),
         account_env: None,
         endpoint_env: None,
         local_auth_discovery: Some("claude_code_local_auth"),
-        oauth_authorize_kind: None,
-        oauth_callback_kind: None,
-        capabilities: disabled_subscription_capabilities(),
-        disabled_reason: Some("No stable Claude Code local token source is implemented yet"),
+        oauth_authorize_kind: Some(OAuthAuthorizeKind::AnthropicPkce),
+        oauth_callback_kind: Some(OAuthAuthorizeKind::AnthropicPkce),
+        capabilities: ProviderCapabilityFlags {
+            supports_oauth_refresh: true,
+            ..disabled_subscription_capabilities()
+        },
+        disabled_reason: None,
     },
     ProviderAuthRegistryEntry {
         provider_id: "google",
@@ -359,8 +388,8 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
         account_env: Some("GOOGLE_ACCOUNT_ID"),
         endpoint_env: None,
         local_auth_discovery: None,
-        oauth_authorize_kind: Some(OAuthAuthorizeKind::Unsupported),
-        oauth_callback_kind: Some(OAuthAuthorizeKind::Unsupported),
+        oauth_authorize_kind: Some(OAuthAuthorizeKind::GooglePkce),
+        oauth_callback_kind: Some(OAuthAuthorizeKind::GooglePkce),
         capabilities: google_capabilities(),
         disabled_reason: None,
     },
@@ -399,8 +428,8 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
         account_env: Some("GOOGLE_ACCOUNT_ID"),
         endpoint_env: None,
         local_auth_discovery: None,
-        oauth_authorize_kind: Some(OAuthAuthorizeKind::Unsupported),
-        oauth_callback_kind: Some(OAuthAuthorizeKind::Unsupported),
+        oauth_authorize_kind: Some(OAuthAuthorizeKind::GooglePkce),
+        oauth_callback_kind: Some(OAuthAuthorizeKind::GooglePkce),
         capabilities: google_capabilities(),
         disabled_reason: None,
     },
@@ -431,18 +460,18 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
         base_url_config_key: "antigravity",
         default_base_url: "https://antigravity.google.com/v1",
         supported_models: ANTIGRAVITY_MODELS,
-        auth_methods: BROWSER_TOKEN_METHODS,
+        auth_methods: GOOGLE_METHODS,
         token_env: Some("ANTIGRAVITY_API_KEY"),
         login_env: Some("ANTIGRAVITY_LOGIN"),
-        refresh_env: None,
-        expires_env: None,
-        account_env: None,
+        refresh_env: Some("ANTIGRAVITY_REFRESH_TOKEN"),
+        expires_env: Some("ANTIGRAVITY_TOKEN_EXPIRES"),
+        account_env: Some("ANTIGRAVITY_ACCOUNT_ID"),
         endpoint_env: None,
         local_auth_discovery: None,
-        oauth_authorize_kind: Some(OAuthAuthorizeKind::BrowserTokenPaste),
-        oauth_callback_kind: Some(OAuthAuthorizeKind::BrowserTokenPaste),
-        capabilities: disabled_subscription_capabilities(),
-        disabled_reason: Some("No verified Antigravity provider endpoint is implemented"),
+        oauth_authorize_kind: Some(OAuthAuthorizeKind::GooglePkce),
+        oauth_callback_kind: Some(OAuthAuthorizeKind::GooglePkce),
+        capabilities: google_capabilities(),
+        disabled_reason: None,
     },
     ProviderAuthRegistryEntry {
         provider_id: "antigravity",
@@ -480,7 +509,7 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
         "DeepSeek",
         "DEEPSEEK_API_KEY",
         EMPTY_MODELS,
-        "https://api.deepseek.com/v1",
+        "https://api.deepseek.com",
     ),
     simple_openai_compatible(
         "minimax",
@@ -504,11 +533,53 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
         "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     ),
     simple_openai_compatible(
+        "qwen_cn",
+        "Qwen China",
+        "QWEN_CN_API_KEY",
+        EMPTY_MODELS,
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    ),
+    simple_openai_compatible(
         "xai",
         "xAI",
         "XAI_API_KEY",
         EMPTY_MODELS,
         "https://api.x.ai/v1",
+    ),
+    simple_openai_compatible(
+        "zhipu",
+        "GLM",
+        "ZHIPU_API_KEY",
+        EMPTY_MODELS,
+        "https://open.bigmodel.cn/api/paas/v4",
+    ),
+    simple_openai_compatible(
+        "mistral",
+        "Mistral AI",
+        "MISTRAL_API_KEY",
+        EMPTY_MODELS,
+        "https://api.mistral.ai/v1",
+    ),
+    simple_openai_compatible(
+        "huggingface",
+        "Hugging Face Inference Providers",
+        "HUGGINGFACE_API_KEY",
+        EMPTY_MODELS,
+        "https://router.huggingface.co/v1",
+    ),
+    simple_openai_compatible(
+        "azure",
+        "Azure AI Foundry",
+        "AZURE_OPENAI_API_KEY",
+        EMPTY_MODELS,
+        "https://{resource}.openai.azure.com/openai/v1",
+    ),
+    simple_openai_compatible(
+        "replicate",
+        "Replicate",
+        "REPLICATE_API_TOKEN",
+        EMPTY_MODELS,
+        "https://api.replicate.com/v1",
     ),
     simple_openai_compatible(
         "opencode",
@@ -543,22 +614,22 @@ const PROVIDER_AUTH_REGISTRY_ANTIGRAVITY_BROWSER: ProviderAuthRegistryEntry =
     ProviderAuthRegistryEntry {
         provider_id: "antigravity",
         runtime_provider_id: "antigravity",
-        display_name: "Antigravity Browser Token",
+        display_name: "Antigravity OAuth",
         base_url_config_key: "antigravity",
         default_base_url: "https://antigravity.google.com/v1",
         supported_models: ANTIGRAVITY_MODELS,
-        auth_methods: BROWSER_TOKEN_METHODS,
+        auth_methods: GOOGLE_METHODS,
         token_env: Some("ANTIGRAVITY_API_KEY"),
         login_env: Some("ANTIGRAVITY_LOGIN"),
-        refresh_env: None,
-        expires_env: None,
-        account_env: None,
+        refresh_env: Some("ANTIGRAVITY_REFRESH_TOKEN"),
+        expires_env: Some("ANTIGRAVITY_TOKEN_EXPIRES"),
+        account_env: Some("ANTIGRAVITY_ACCOUNT_ID"),
         endpoint_env: None,
         local_auth_discovery: None,
-        oauth_authorize_kind: Some(OAuthAuthorizeKind::BrowserTokenPaste),
-        oauth_callback_kind: Some(OAuthAuthorizeKind::BrowserTokenPaste),
-        capabilities: disabled_subscription_capabilities(),
-        disabled_reason: Some("No verified Antigravity provider endpoint is implemented"),
+        oauth_authorize_kind: Some(OAuthAuthorizeKind::GooglePkce),
+        oauth_callback_kind: Some(OAuthAuthorizeKind::GooglePkce),
+        capabilities: google_capabilities(),
+        disabled_reason: None,
     };
 
 const fn simple_openai_compatible(
@@ -628,6 +699,7 @@ mod tests {
     fn registry_contains_required_provider_ids() {
         for provider_id in [
             "openai",
+            "codex",
             "openai-api",
             "anthropic",
             "anthropic-api",
@@ -643,7 +715,13 @@ mod tests {
             "minimax",
             "moonshotai",
             "qwen",
+            "qwen_cn",
             "xai",
+            "zhipu",
+            "mistral",
+            "huggingface",
+            "azure",
+            "replicate",
             "opencode",
             "bedrock",
         ] {

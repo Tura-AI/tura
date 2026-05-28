@@ -1,6 +1,6 @@
 {
   "name": "command_run",
-  "description": "Run tools as a pure batch+step command runner. Always use commands[]. command_run results must be returned through the tool/runtime result channel only; do not copy, summarize as JSON, or replay command_run results in assistant content. Use assistant content only for concise reasoning, progress, and conclusions. Prefer one complete batch for predictable work: discover/read/search/download the needed context, edit, test, and validate in ordered steps when dependencies are clear. Keep related path listing, targeted search, downloaded artifact discovery, and candidate file reads in the same batch and same read-only step when they are independent. Use early steps for needed discovery/read/search/download commands and later steps for apply_patch, generated writes, tests, builds, and verification that should wait for earlier results. Example frontend batch: step 1 modifies frontend code, step 2 writes or updates frontend Playwright e2e scripts and captures screenshots at key steps, and step 3 reads the corresponding screenshots to analyze display quality and functionality. Use task_status only when the current task is done or needs user input; its command_line JSON has optional task_summary and optional status question/done. Mutating or unknown commands act as barriers and run one at a time. Different steps run in ascending order.",
+  "description": "Run tools as a pure batch+step command runner.",
   "input_schema": {
     "type": "object",
     "required": ["commands"],
@@ -10,7 +10,7 @@
         "type": "array",
         "minItems": 5,
         "maxItems": 15,
-        "description": "Executable command-line instructions. Do not put progress announcements or summaries here. Include the needed discovery, read, edit, test, and verification commands for the current batch.",
+        "description": "Executable command-line instructions.",
         "items": {
           "type": "object",
           "required": ["command_type", "command_line"],
@@ -28,7 +28,7 @@
               "type": "integer",
               "minimum": 1,
               "x-tura-optional": true,
-              "description": "Execution stage. Use the same step for independent discovery/read commands and later steps for edits, tests, and validation that depend on earlier output. Commands with the same step may run concurrently when they are safe read-only work; later steps wait for earlier steps. If using compact_context, it must be the final command in the highest step."
+              "description": "Execution stage. Lower-numbered steps complete before higher-numbered steps."
             }
           }
         }

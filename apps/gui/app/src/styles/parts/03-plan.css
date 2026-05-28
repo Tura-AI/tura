@@ -53,11 +53,11 @@
 
 .board-column header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--space-2);
   align-items: center;
   min-height: 38px;
-  padding: 0 var(--space-3);
+  padding: 0 5px 0 var(--space-3);
   border-bottom: 1px solid var(--line);
 }
 
@@ -153,8 +153,13 @@
   gap: 10px;
   min-height: 110px;
   padding: var(--space-4) 14px;
-  box-shadow: 0 2px 6px rgb(0 0 0 / 8%);
+  box-shadow: 0 2px 6px rgb(28 28 24 / 8%);
   cursor: pointer;
+}
+
+.board-card.selected {
+  background: color-mix(in srgb, var(--wash) 66%, var(--paper));
+  box-shadow: 0 6px 16px rgb(28 28 24 / 10%);
 }
 
 .board-card[draggable="true"] {
@@ -190,7 +195,7 @@
 .ticket-meta {
   flex-wrap: wrap;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 
 .board-cards.draft-target {
@@ -242,16 +247,21 @@
   justify-content: center;
   min-height: 34px;
   max-width: 180px;
-  min-width: 34px;
+  min-width: 54px;
   padding: 0 var(--space-2);
   border: 0;
   border-radius: var(--radius-small);
   background: transparent;
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--font-ui);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.plan-trigger-button > svg,
+.plan-session-button > svg {
+  flex: 0 0 auto;
 }
 
 .plan-session-button {
@@ -269,6 +279,8 @@
 
 .plan-trigger-button span,
 .plan-session-button span {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -286,16 +298,23 @@
 }
 
 .plan-trigger-option {
+  grid-template-columns: 22px minmax(0, 1fr) auto auto;
   min-height: 34px;
   padding: 0 var(--space-2);
   border-radius: var(--radius-small);
-  font-size: 13px;
+  font-size: var(--font-ui);
 }
 
 .plan-trigger-option span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.plan-trigger-option small {
+  color: var(--muted);
+  font-size: var(--font-small);
+  white-space: pre;
 }
 
 .plan-session-menu {
@@ -310,7 +329,7 @@
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--paper);
-  box-shadow: 0 18px 44px rgb(0 0 0 / 14%);
+  box-shadow: 0 18px 44px rgb(28 28 24 / 14%);
 }
 
 .plan-session-list {
@@ -354,17 +373,15 @@
 
   .plan-trigger-button,
   .plan-session-button {
-    width: 34px;
-    min-width: 34px;
-    max-width: 34px;
-    flex: 0 0 34px;
+    width: 54px;
+    min-width: 54px;
+    max-width: 54px;
+    flex: 0 0 54px;
     padding: 0;
   }
 
   .plan-trigger-button span,
-  .plan-session-button span,
-  .plan-trigger-button > svg:last-child,
-  .plan-session-button > svg:last-child {
+  .plan-session-button span {
     display: none;
   }
 }
@@ -376,7 +393,7 @@
   justify-self: center;
   width: 100%;
   max-width: var(--page-max);
-  margin-bottom: -20px;
+  margin-bottom: 0;
   padding: 0;
   isolation: isolate;
 }
@@ -389,7 +406,7 @@
 .composer-task-dock::before {
   content: "";
   position: absolute;
-  inset: 0 0 -134px;
+  inset: 0 0 -122px;
   z-index: -1;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -403,7 +420,7 @@
 .composer-task-dock::after {
   content: "";
   position: absolute;
-  inset: 0 0 -134px;
+  inset: 0 0 -122px;
   z-index: 3;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -449,8 +466,39 @@
 }
 
 .plan-feedback-prompt p {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
   margin: 0;
   font-size: var(--font-small);
+}
+
+.plan-feedback-prompt.error {
+  color: var(--danger);
+}
+
+.plan-feedback-prompt.error span {
+  background: color-mix(in srgb, var(--danger) 42%, var(--line));
+}
+
+.plan-feedback-prompt small {
+  color: inherit;
+  opacity: 0.72;
+}
+
+.plan-feedback-provider-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.plan-feedback-provider-link:hover {
+  color: var(--ink);
 }
 
 .composer-task-row-wrap {
@@ -469,7 +517,7 @@
   border-radius: var(--radius-small);
   background: transparent;
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--font-ui);
   text-align: left;
   container-type: inline-size;
 }
@@ -538,12 +586,38 @@
   background: var(--wash);
 }
 
+.composer-task-row.selected {
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
 .composer-task-row span,
 .composer-task-option span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.composer-task-row .task-text-pulse {
+  animation: task-text-nudge 260ms ease-out both;
+}
+
+@keyframes task-text-nudge {
+  0% {
+    transform: translateX(0);
+  }
+
+  35% {
+    transform: translateX(2px);
+  }
+
+  70% {
+    transform: translateX(-1px);
+  }
+
+  100% {
+    transform: translateX(0);
+  }
 }
 
 .composer-task-meta {

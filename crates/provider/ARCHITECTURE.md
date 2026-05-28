@@ -15,10 +15,10 @@ library = tura_llm_rust
 This crate keeps compatibility with the current Tura provider behavior:
 
 - route-based provider configuration
-- `tura_llm_config.json`
+- `provider_config.json`
 - `.env` / `TURA_ENV_PATH`
-- `TURALLM_CONFIG`
-- provider call logs under `log/`
+- `TURA_PROVIDER_CONFIG` (preferred), `TURALLM_CONFIG` (legacy)
+- provider call logs under project-root `log/provider/`
 - OpenAI-compatible, Google, and Bedrock providers
 - usage/cost extraction already present in provider responses
 - OpenAI OAuth refresh behavior already present in `tura_llm.rs`
@@ -38,11 +38,9 @@ crates/provider/
   Cargo.toml
   ARCHITECTURE.md
   config/
-    tura_llm_config.json
-  log/
+    provider_config.json
   tests/
-    live_model_smoke.rs
-    provider_route_manual_smoke.rs
+    provider_tool_call_live_smoke.rs
 
   src/
     lib.rs
@@ -51,19 +49,30 @@ crates/provider/
     tura_conf.rs
     tura_llm_conf.rs
     tura_llm.rs
+    streaming.rs
+    metrics.rs
+    logging.rs
+    utils/
+      mod.rs
     llm/
       mod.rs
-      _openai_provider.rs
-      _google_provider.rs
-      _bedrock_provider.rs
-      _llm_log.rs
-      _utils.rs
+      openapi.rs
+      google.rs
+      bedrock.rs
+      providers/
+        mod.rs
+        bedrock.rs
+        codex.rs
+        google.rs
+        minimax.rs
+        openai.rs
 ```
 
 The auth/config/models/routing/request/response/streaming/usage/logging
-subdomains described below are the target separation. In the current source
-tree most behavior still lives in `tura_llm.rs`, `auth_registry.rs`, and the
-legacy `src/llm/_*_provider.rs` compatibility modules.
+subdomains described below are the target separation. The current source tree
+keeps API styles under `src/llm/`, provider-specific branches under
+`src/llm/providers/`, and cross-API streaming/metrics/utils/logging at provider
+crate root.
 
 ## Ownership
 
@@ -117,22 +126,43 @@ tura_llm.rs
   -> usage/*
   -> logging/*
 
-llm/_openai_provider.rs
-  -> providers/openai
-  -> providers/openai_compatible
-  -> streaming/*
-  -> response/normalization
+streaming.rs
+  -> cross-API provider request and stream timeout helpers
 
-llm/_google_provider.rs
-  -> providers/google
+metrics.rs
+  -> cross-API usage, cost, and context-utilization extraction
 
-llm/_bedrock_provider.rs
-  -> providers/bedrock
-
-llm/_llm_log.rs
+logging.rs
   -> logging/call_log
   -> logging/redaction
   -> logging/retention
+
+utils/
+  -> common JSON/schema helpers
+
+llm/openapi.rs
+  -> OpenAI-compatible API request and response normalization
+
+llm/google.rs
+  -> Google Gemini API request and response normalization
+
+llm/bedrock.rs
+  -> Bedrock API request and response normalization
+
+llm/providers/openai.rs
+  -> OpenAI API provider entrypoint
+
+llm/providers/codex.rs
+  -> Codex / ChatGPT Responses OAuth provider entrypoint
+
+llm/providers/minimax.rs
+  -> Minimax provider entrypoint backed by OpenAI-compatible transport
+
+llm/providers/google.rs
+  -> Google provider-specific entrypoint backed by llm/google.rs
+
+llm/providers/bedrock.rs
+  -> Bedrock provider-specific entrypoint backed by llm/bedrock.rs
 ```
 
 ## Compatibility With `tura_path`
@@ -143,10 +173,10 @@ from `tura_path` for project-root-aware paths.
 Supported compatibility inputs:
 
 - `TURA_ENV_PATH`
-- `TURALLM_CONFIG`
+- `TURA_PROVIDER_CONFIG` (preferred), `TURALLM_CONFIG` (legacy)
 - project config from `tura_path`
-- provider `config/tura_llm_config.json`
-- provider `log/YYYY-MM-DD/...json`
+- provider `config/provider_config.json`
+- project-root `log/provider/YYYY-MM-DD/...json`
 
 Path ownership:
 
@@ -185,14 +215,14 @@ service_tier = "auto"
 reasoning_effort = "low"
 stream = true
 
-[[provider.routes.tura_coder.providers]]
+[[provider.routes.flagship_thinking.providers]]
 provider = "openai"
 base_url = "https://api.openai.com/v1"
-model = "gpt-5.5"
+model = "gpt-5.1-codex"
 temperature = 0.2
 priority = 100
 
-[[provider.routes.tura_coder.providers]]
+[[provider.routes.flagship_thinking.providers]]
 provider = "google"
 base_url = "https://generativelanguage.googleapis.com"
 model = "gemini-..."
@@ -203,7 +233,7 @@ priority = 50
 Existing JSON route config remains supported:
 
 ```text
-config/tura_llm_config.json
+config/provider_config.json
 ```
 
 ## Auth Architecture
@@ -341,7 +371,7 @@ call-level state vocabulary and normalization.
 
 ### `routing/routes/`
 
-Resolves a named route such as `tura_coder` to ordered provider candidates.
+Resolves a named route such as `flagship_thinking` to ordered provider candidates.
 
 Route behavior:
 
@@ -388,10 +418,14 @@ Provider adapters must:
 
 Initial adapters:
 
-- `providers/openai/`
-- `providers/openai_compatible/`
-- `providers/google/`
-- `providers/bedrock/`
+- `llm/openapi.rs`
+- `llm/google.rs`
+- `llm/bedrock.rs`
+- `llm/providers/openai.rs`
+- `llm/providers/codex.rs`
+- `llm/providers/minimax.rs`
+- `llm/providers/google.rs`
+- `llm/providers/bedrock.rs`
 
 ## Request Pipeline
 
@@ -536,7 +570,8 @@ Rules:
 - Redact auth and secrets.
 - Bound raw payload size.
 - Store large raw payloads by reference.
-- Keep legacy `log/YYYY-MM-DD` compatibility.
+- Keep `LOG_PATH` override compatibility; the default provider log location is
+  project-root `log/provider/YYYY-MM-DD`.
 - Prefer structured JSON logs.
 
 ## Monitoring
@@ -631,8 +666,8 @@ Sources:
 
 - environment
 - `TURA_ENV_PATH`
-- `TURALLM_CONFIG`
-- provider `config/tura_llm_config.json`
+- `TURA_PROVIDER_CONFIG` (preferred), `TURALLM_CONFIG` (legacy)
+- provider `config/provider_config.json`
 - future global Tura config from `tura_path`
 
 ### `storage/secret_store/`
@@ -685,7 +720,7 @@ Gateway should not inspect raw provider secrets.
 
 Minimum tests when implementation begins:
 
-- config path resolution including `TURA_ENV_PATH` and `TURALLM_CONFIG`
+- config path resolution including `TURA_ENV_PATH` and `TURA_PROVIDER_CONFIG` (preferred), `TURALLM_CONFIG` (legacy)
 - route loading from legacy JSON
 - API key resolution and masking
 - OAuth state transitions

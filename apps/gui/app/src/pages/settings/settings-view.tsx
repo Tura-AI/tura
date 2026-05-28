@@ -8,93 +8,384 @@ import {
   createSignal,
   onCleanup,
   onMount,
-  type Accessor,
   type JSX,
-  type Setter,
 } from "solid-js";
 import { Portal } from "solid-js/web";
-import ExternalLink from "lucide-solid/icons/external-link";
 import LayoutList from "lucide-solid/icons/layout-list";
 import ArrowLeft from "lucide-solid/icons/arrow-left";
-import CalendarDays from "lucide-solid/icons/calendar-days";
-import ChartGantt from "lucide-solid/icons/chart-gantt";
 import Check from "lucide-solid/icons/check";
 import ChevronDown from "lucide-solid/icons/chevron-down";
-import ChevronLeft from "lucide-solid/icons/chevron-left";
-import ChevronRight from "lucide-solid/icons/chevron-right";
-import Columns3 from "lucide-solid/icons/columns-3";
-import Copy from "lucide-solid/icons/copy";
-import FolderOpen from "lucide-solid/icons/folder-open";
 import FolderSearch from "lucide-solid/icons/folder-search";
-import KeyRound from "lucide-solid/icons/key-round";
 import MessageSquare from "lucide-solid/icons/message-square";
-import MoreHorizontal from "lucide-solid/icons/more-horizontal";
-import Pin from "lucide-solid/icons/pin";
-import Plus from "lucide-solid/icons/plus";
 import Search from "lucide-solid/icons/search";
-import Settings from "lucide-solid/icons/settings";
-import Trash2 from "lucide-solid/icons/trash-2";
 import {
-  GatewayClient,
-  GatewayError,
-  connectGatewayEvents,
-  defaultGatewayUrl,
-  errorMessage,
-  type Agent,
-  type Command,
-  type FileContentResponse,
-  type FileInfo,
-  type GatewayConfig,
-  type Message,
-  type ProviderAuthMethod,
-  type ProductIssue,
-  type Project,
-  type PollInterval,
   type SdkProvider,
-  type Session,
-  type StartCondition,
-  type TaskManagement,
-  type PlanStatus,
+  type TuraConfigModelPair,
+  type TuraConfigResponse,
 } from "@tura/gateway-sdk";
 import {
-  Composer,
-  ConversationView,
-  composerFileToken,
-  composerImageToken,
-} from "../../conversation/conversation-view";
-import { applyGatewayEvent } from "../../state/event-reducer";
-import {
-  activeSession,
-  type ComposerImage,
-  initialAppState,
-  type MainTab,
-  type PlanMode,
-  sessionDirectory,
-  sessionUpdatedAt,
-  sessionTitle,
+  systemThemeMode,
   type AppState,
+  type MainTab,
   type SettingsSection,
   type ThemeMode,
 } from "../../state/global-store";
-import { classNames, truncate } from "../../state/format";
-import { t, type TextKey } from "../../i18n";
+import { classNames } from "../../state/format";
+import { activeLanguage, t, type TextKey } from "../../i18n";
 
+import { ProviderConfigGroup } from "./provider-settings";
 import {
-  ProviderConfigGroup,
-  ProviderSelectMenu,
-  ProviderAuthDialog,
-} from "./provider-settings";
-import {
-  authStatusText,
-  configFieldRows,
-  modelRef,
   providerConfigured,
-  providerIdFromModel,
-  providerSourceLabel,
-  providerStateLabel,
-  settingsSections,
 } from "../../utils/settings";
-import { formatModelLimit, shortWorkspaceLabel } from "../../utils/app-format";
+import { settingsRoutes, settingsRouteTitle } from "./settings-router";
+const DEFAULT_MAIN_FONT =
+  'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const DEFAULT_CODE_FONT =
+  'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
+const THEME_OPTIONS: Array<{ id: ThemeMode; label: string }> = [
+  { id: "light", label: t("light") },
+  { id: "dark", label: t("dark") },
+  { id: "caral", label: "Caral" },
+  { id: "uruk", label: "Uruk" },
+  { id: "liangzhu", label: "Liangzhu" },
+];
+const DEFAULT_PROVIDER_DOMAIN = "llm";
+const PROVIDER_DOMAIN_LABELS: Record<string, TextKey> = {
+  communication: "domainCommunication",
+  infrastructure: "domainInfrastructure",
+  llm: "domainLlm",
+  other: "domainOther",
+  productivity: "domainProductivity",
+  search: "domainSearch",
+};
+
+type FontLocale =
+  | "en"
+  | "zhHans"
+  | "zhHant"
+  | "es"
+  | "hi"
+  | "ar"
+  | "pt"
+  | "bn"
+  | "ru"
+  | "ja";
+type AppearanceOption = {
+  id: string;
+  label: string;
+  value: string;
+  preview: string;
+  size?: number;
+};
+
+type AppearanceSelectFooter = {
+  label: string;
+  onSelect: () => void;
+};
+
+const CONFIGURE_PROVIDER_OPTION = "__configure_provider__";
+
+const FONT_LOCALE_ORDER: FontLocale[] = [
+  "zhHans",
+  "zhHant",
+  "en",
+  "es",
+  "hi",
+  "ar",
+  "pt",
+  "bn",
+  "ru",
+  "ja",
+];
+
+const MAIN_FONT_MAP = [
+  {
+    id: "system",
+    names: {
+      en: "Segoe UI",
+      zhHans: "微软雅黑",
+      zhHant: "蘋方-繁",
+      es: "Segoe UI",
+      hi: "Nirmala UI",
+      ar: "Segoe UI Arabic",
+      pt: "Segoe UI",
+      bn: "Nirmala UI",
+      ru: "Segoe UI",
+      ja: "Yu Gothic UI",
+    },
+    families: {
+      en: '"Segoe UI"',
+      zhHans: '"Microsoft YaHei"',
+      zhHant: '"PingFang TC", "Microsoft JhengHei"',
+      es: '"Segoe UI"',
+      hi: '"Nirmala UI"',
+      ar: '"Segoe UI Arabic"',
+      pt: '"Segoe UI"',
+      bn: '"Nirmala UI"',
+      ru: '"Segoe UI"',
+      ja: '"Yu Gothic UI", "Yu Gothic"',
+    },
+  },
+  {
+    id: "arial",
+    names: {
+      en: "Arial",
+      zhHans: "黑体",
+      zhHant: "微軟正黑體",
+      es: "Arial",
+      hi: "Nirmala UI",
+      ar: "Arial",
+      pt: "Arial",
+      bn: "Nirmala UI",
+      ru: "Arial",
+      ja: "Meiryo",
+    },
+    families: {
+      en: "Arial",
+      zhHans: "SimHei",
+      zhHant: '"Microsoft JhengHei"',
+      es: "Arial",
+      hi: '"Nirmala UI"',
+      ar: "Arial",
+      pt: "Arial",
+      bn: '"Nirmala UI"',
+      ru: "Arial",
+      ja: "Meiryo",
+    },
+  },
+  {
+    id: "noto-sans",
+    names: {
+      en: "Noto Sans",
+      zhHans: "思源黑体",
+      zhHant: "思源黑體",
+      es: "Noto Sans",
+      hi: "Noto Sans Devanagari",
+      ar: "Noto Sans Arabic",
+      pt: "Noto Sans",
+      bn: "Noto Sans Bengali",
+      ru: "Noto Sans",
+      ja: "Noto Sans JP",
+    },
+    families: {
+      en: '"Noto Sans"',
+      zhHans: '"Noto Sans SC", "Source Han Sans SC"',
+      zhHant: '"Noto Sans TC", "Source Han Sans TC"',
+      es: '"Noto Sans"',
+      hi: '"Noto Sans Devanagari"',
+      ar: '"Noto Sans Arabic"',
+      pt: '"Noto Sans"',
+      bn: '"Noto Sans Bengali"',
+      ru: '"Noto Sans"',
+      ja: '"Noto Sans JP"',
+    },
+  },
+  {
+    id: "humanist",
+    names: {
+      en: "Aptos",
+      zhHans: "等线",
+      zhHant: "蘋方-繁",
+      es: "Aptos",
+      hi: "Nirmala UI",
+      ar: "Dubai",
+      pt: "Aptos",
+      bn: "Nirmala UI",
+      ru: "Aptos",
+      ja: "Yu Gothic",
+    },
+    families: {
+      en: "Aptos",
+      zhHans: "DengXian",
+      zhHant: '"PingFang TC"',
+      es: "Aptos",
+      hi: '"Nirmala UI"',
+      ar: "Dubai",
+      pt: "Aptos",
+      bn: '"Nirmala UI"',
+      ru: "Aptos",
+      ja: '"Yu Gothic"',
+    },
+  },
+  {
+    id: "serif",
+    names: {
+      en: "Georgia",
+      zhHans: "宋体",
+      zhHant: "新細明體",
+      es: "Georgia",
+      hi: "Noto Serif Devanagari",
+      ar: "Noto Naskh Arabic",
+      pt: "Georgia",
+      bn: "Noto Serif Bengali",
+      ru: "Georgia",
+      ja: "Yu Mincho",
+    },
+    families: {
+      en: "Georgia",
+      zhHans: "SimSun",
+      zhHant: "PMingLiU",
+      es: "Georgia",
+      hi: '"Noto Serif Devanagari"',
+      ar: '"Noto Naskh Arabic"',
+      pt: "Georgia",
+      bn: '"Noto Serif Bengali"',
+      ru: "Georgia",
+      ja: '"Yu Mincho"',
+    },
+  },
+] as const;
+
+const CODE_FONT_OPTIONS = [
+  { label: "System Mono (Default)", value: DEFAULT_CODE_FONT },
+  { label: "Cascadia Code", value: '"Cascadia Code", Consolas, monospace' },
+  { label: "JetBrains Mono", value: '"JetBrains Mono", Consolas, monospace' },
+  { label: "Fira Code", value: '"Fira Code", Consolas, monospace' },
+  { label: "Consolas", value: "Consolas, monospace" },
+] as const;
+
+function displayFontLocale(): FontLocale {
+  return activeLanguage === "zh-CN" ? "zhHans" : "en";
+}
+
+function fontFamilyValue(
+  fonts: Record<FontLocale, string>,
+  preferred: FontLocale,
+): string {
+  const ordered = [
+    preferred,
+    ...FONT_LOCALE_ORDER.filter((locale) => locale !== preferred),
+  ];
+  return [
+    ...new Set(ordered.map((locale) => fonts[locale])),
+    "ui-sans-serif",
+    "system-ui",
+    "sans-serif",
+  ].join(", ");
+}
+
+function mainFontOptions(): AppearanceOption[] {
+  const locale = displayFontLocale();
+  return MAIN_FONT_MAP.map((font) => {
+    const value = fontFamilyValue(font.families, locale);
+    const localizedName = font.names[locale];
+    const englishName = font.names.en;
+    return {
+      id: font.id,
+      label:
+        font.id === "system"
+          ? locale === "en" || localizedName === englishName
+            ? `${localizedName} (${t("default")})`
+            : `${localizedName} / ${englishName} (${t("default")})`
+          : locale === "en" || localizedName === englishName
+            ? localizedName
+            : `${localizedName} / ${englishName}`,
+      value,
+      preview: font.families[locale],
+    };
+  });
+}
+
+function codeFontOptions(): AppearanceOption[] {
+  return CODE_FONT_OPTIONS.map((font) => ({
+    id: font.label,
+    label: font.label,
+    value: font.value,
+    preview: font.value,
+  }));
+}
+
+function providerDomainLabel(domain: string): string {
+  return t(PROVIDER_DOMAIN_LABELS[domain] ?? "unknown");
+}
+
+function providerDomains(provider: SdkProvider): string[] {
+  const directDomains = [
+    ...(Array.isArray(provider.domains) ? provider.domains : []),
+    ...(Array.isArray(provider.domain) ? provider.domain : []),
+    ...(typeof provider.domain === "string" ? [provider.domain] : []),
+  ];
+  const optionDomains = provider.options.domains;
+  const domains = [
+    ...directDomains,
+    ...(Array.isArray(optionDomains)
+      ? optionDomains.filter(
+          (domain): domain is string => typeof domain === "string",
+        )
+      : []),
+  ];
+  return [...new Set(domains.filter(Boolean))];
+}
+
+function sizeOptions(
+  min: number,
+  max: number,
+  defaultSize: number,
+): AppearanceOption[] {
+  return Array.from({ length: max - min + 1 }, (_, index) => {
+    const size = min + index;
+    return {
+      id: String(size),
+      label: size === defaultSize ? `${size} (${t("default")})` : String(size),
+      value: String(size),
+      preview: "inherit",
+      size,
+    };
+  });
+}
+
+function modelOptionValue(
+  option?: Pick<TuraConfigModelPair, "provider" | "model"> | null,
+): string {
+  return option ? `${option.provider}/${option.model}` : "";
+}
+
+function modelConfigOption(option: TuraConfigModelPair): AppearanceOption {
+  const provider = option.provider_name || option.provider;
+  const model = option.model_name || option.model;
+  return {
+    id: modelOptionValue(option),
+    label: `${provider}/${model}`,
+    value: modelOptionValue(option),
+    preview: "inherit",
+  };
+}
+
+function modelTierOptions(
+  tier: TuraConfigResponse["tiers"][number],
+): AppearanceOption[] {
+  const options = tier.options.map(modelConfigOption);
+  const currentValue = modelOptionValue(tier.current);
+  if (
+    currentValue &&
+    !options.some((option) => option.value === currentValue) &&
+    tier.current
+  ) {
+    return [
+      {
+        id: currentValue,
+        label: currentValue,
+        value: currentValue,
+        preview: "inherit",
+      },
+      ...options,
+    ];
+  }
+  return options;
+}
+
+function modelTierLabel(tier: string): string {
+  const labels: Record<string, TextKey> = {
+    embedding_high: "modelTierEmbeddingHigh",
+    embedding_low: "modelTierEmbeddingLow",
+    fast: "modelTierFast",
+    flagship_thinking: "modelTierFlagshipThinking",
+    instant: "modelTierInstant",
+    thinking: "modelTierThinking",
+  };
+  return labels[tier] ? t(labels[tier]) : tier;
+}
+
 export function MainTabs(props: {
   active: Exclude<MainTab, "settings">;
   onChange: (tab: Exclude<MainTab, "settings">) => void;
@@ -138,7 +429,7 @@ export function SettingsRail(props: {
       </button>
       <div class="section-title">{t("settings")}</div>
       <div class="settings-section-list">
-        <For each={settingsSections()}>
+        <For each={settingsRoutes()}>
           {(item) => (
             <button
               class={classNames(props.active === item.id && "selected")}
@@ -158,65 +449,63 @@ export function SettingsView(props: {
   state: AppState;
   section: SettingsSection;
   onProvider: (providerId: string) => void;
-  onModel: (model: string) => void;
-  onAgent: (agent?: string) => void;
-  onVariant: (variant: string) => void;
-  onAcceleration: (enabled: boolean) => void;
+  onModelTier: (tier: string, option: TuraConfigModelPair) => void;
+  onConfigureProviders: () => void;
   onTheme: (theme: ThemeMode) => void;
-  onConfigDraft: (key: string, value: string) => void;
-  onWorkspaceConfigDraft: (key: string, value: string) => void;
+  onMainFont: (font: string) => void;
+  onCodeFont: (font: string) => void;
+  onMainFontSize: (size: number) => void;
+  onCodeFontSize: (size: number) => void;
   onProviderSearch: (value: string) => void;
   onOpenProviderAuth: (providerId: string) => void;
-  onAuthDraft: (providerId: string, value: string) => void;
-  onAuthCode: (providerId: string, value: string) => void;
-  onSaveSettings: () => void;
-  onValidateModel: () => void;
-  onSaveKey: (providerId: string, method: ProviderAuthMethod) => void;
-  onStartLogin: (providerId: string, methodIndex: number) => void;
-  onCompleteLogin: (
-    providerId: string,
-    code?: string,
-    methodIndex?: number,
-  ) => void;
-  onLogout: (providerId: string) => void;
 }) {
   const providers = createMemo(() => props.state.providers?.all ?? []);
+  const [providerDomainFilter, setProviderDomainFilter] = createSignal(
+    DEFAULT_PROVIDER_DOMAIN,
+  );
   const selectedProvider = createMemo(
     () =>
       providers().find(
         (provider) => provider.id === props.state.selectedProviderId,
       ) ?? providers()[0],
   );
-  const selectedProviderStatus = createMemo(() => {
-    const provider = selectedProvider();
-    return provider ? props.state.providerAuthStatus[provider.id] : undefined;
-  });
-  const selectedMethods = createMemo(() => {
-    const provider = selectedProvider();
-    return provider ? (props.state.providerAuthMethods[provider.id] ?? []) : [];
-  });
-  const selectedModels = createMemo(() =>
-    Object.values(selectedProvider()?.models ?? {}).sort((left, right) =>
-      left.name.localeCompare(right.name),
-    ),
-  );
   const title = createMemo(
-    () =>
-      settingsSections().find((item) => item.id === props.section)?.label ??
-      t("settings"),
+    () => settingsRouteTitle(props.section),
   );
-  const configRows = createMemo(() => configFieldRows(props.state));
-  const workspaceRows = createMemo(() =>
-    Object.entries(props.state.workspaceConfigDraft).sort(([left], [right]) =>
-      left.localeCompare(right),
-    ),
-  );
+  const providerDomainOptions = createMemo(() => {
+    const domains = new Set<string>([
+      ...(props.state.providers?.enums.domains ?? []),
+      ...providers().flatMap(providerDomains),
+      DEFAULT_PROVIDER_DOMAIN,
+    ]);
+    return [...domains].sort((left, right) => {
+      if (left === DEFAULT_PROVIDER_DOMAIN) {
+        return -1;
+      }
+      if (right === DEFAULT_PROVIDER_DOMAIN) {
+        return 1;
+      }
+      if (left === "other") {
+        return 1;
+      }
+      if (right === "other") {
+        return -1;
+      }
+      return providerDomainLabel(left).localeCompare(
+        providerDomainLabel(right),
+      );
+    });
+  });
   const filteredProviders = createMemo(() => {
     const query = props.state.providerSearch.trim().toLowerCase();
+    const domain = providerDomainFilter();
+    const domainProviders = providers().filter((provider) =>
+      providerDomains(provider).includes(domain),
+    );
     if (!query) {
-      return providers();
+      return domainProviders;
     }
-    return providers().filter((provider) =>
+    return domainProviders.filter((provider) =>
       [provider.name, provider.id, provider.source, ...provider.env]
         .join(" ")
         .toLowerCase()
@@ -238,18 +527,6 @@ export function SettingsView(props: {
     props.onProvider(provider.id);
   }
 
-  function chooseModelProvider(provider: SdkProvider) {
-    props.onProvider(provider.id);
-    if (providerIdFromModel(props.state.selectedModel) !== provider.id) {
-      const modelId =
-        props.state.providers?.default[provider.id] ??
-        Object.keys(provider.models)[0];
-      if (modelId) {
-        props.onModel(modelRef(provider.id, modelId));
-      }
-    }
-  }
-
   return (
     <section class="settings-view">
       <header class="page-head">
@@ -257,113 +534,86 @@ export function SettingsView(props: {
           <span>{t("settings")}</span>
           <h1>{title()}</h1>
         </div>
-        <div class="page-actions">
-          <Show when={props.section === "models"}>
-            <button
-              class="secondary"
-              disabled={
-                props.state.settingsSaving || !props.state.selectedModel
-              }
-              onClick={props.onValidateModel}
-            >
-              {t("validate")}
-            </button>
-          </Show>
-          <Show
-            when={props.section !== "providers" && props.section !== "auth"}
-          >
-            <button
-              class="primary"
-              disabled={props.state.settingsSaving}
-              onClick={props.onSaveSettings}
-            >
-              {t("save")}
-            </button>
-          </Show>
-        </div>
+        <div class="page-actions" />
       </header>
 
       <main class="settings-canvas">
         <section class="settings-stack">
           <Switch>
-            <Match when={props.section === "general"}>
-              <section class="settings-panel">
-                <header>
-                  <span>{t("overview")}</span>
-                  <small>{props.state.connection}</small>
-                </header>
-                <div class="provider-detail">
-                  <div class="provider-metrics">
-                    <MetricCell
-                      label={t("workspace")}
-                      value={shortWorkspaceLabel(props.state.directory)}
-                    />
-                    <MetricCell
-                      label={t("gateway")}
-                      value={props.state.gatewayUrl}
-                    />
-                    <MetricCell
-                      label={t("version")}
-                      value={props.state.health?.version ?? "--"}
-                    />
-                    <MetricCell
-                      label={t("user")}
-                      value={props.state.me?.email ?? "--"}
-                    />
-                  </div>
-                </div>
-              </section>
-              <section class="settings-panel">
-                <header>
-                  <span>{t("currentRuntime")}</span>
-                  <small>{props.state.selectedModel ?? "--"}</small>
-                </header>
-                <div class="settings-fields">
-                  <ReadonlyRow
-                    label={t("provider")}
-                    value={selectedProvider()?.name ?? "--"}
-                  />
-                  <ReadonlyRow
-                    label={t("model")}
-                    value={props.state.selectedModel ?? "--"}
-                  />
-                  <ReadonlyRow
-                    label={t("agent")}
-                    value={props.state.selectedAgent ?? "--"}
-                  />
-                </div>
-              </section>
-            </Match>
-
             <Match when={props.section === "appearance"}>
-              <section class="settings-panel">
+              <section class="settings-panel appearance-panel">
                 <header>
-                  <span>{t("theme")}</span>
+                  <span>{t("themeSettings")}</span>
                   <small>{props.state.themeMode}</small>
                 </header>
                 <div class="settings-fields">
                   <div class="field-row">
-                    <span>{t("mode")}</span>
-                    <div class="segmented two">
-                      <For each={["light", "dark"] as ThemeMode[]}>
-                        {(mode) => (
+                    <span>{t("themeColor")}</span>
+                    <div class="segmented settings-filter-segmented">
+                      <For each={THEME_OPTIONS}>
+                        {(option) => (
                           <button
                             class={classNames(
-                              props.state.themeMode === mode && "selected",
+                              props.state.themeMode === option.id && "selected",
                             )}
-                            onClick={() => props.onTheme(mode)}
+                            onClick={() => props.onTheme(option.id)}
                           >
-                            {mode === "dark" ? t("dark") : t("light")}
+                            {option.label}
+                            <Show when={option.id === systemThemeMode()}>
+                              {" "}
+                              ({t("default")})
+                            </Show>
                           </button>
                         )}
                       </For>
                     </div>
                   </div>
-                  <ReadonlyRow
-                    label={t("surface")}
-                    value="paper / line / ink"
-                  />
-                  <ReadonlyRow label={t("radius")} value="8 / 6" />
+                  <div class="field-row">
+                    <span>{t("mainFont")}</span>
+                    <AppearanceSelect
+                      value={props.state.mainFont || mainFontOptions()[0].value}
+                      options={mainFontOptions()}
+                      onSelect={(option) =>
+                        props.onMainFont(
+                          option.id === "system" ? "" : option.value,
+                        )
+                      }
+                    />
+                  </div>
+                  <div class="field-row">
+                    <span>{t("codeFont")}</span>
+                    <AppearanceSelect
+                      value={props.state.codeFont || DEFAULT_CODE_FONT}
+                      options={codeFontOptions()}
+                      onSelect={(option) =>
+                        props.onCodeFont(
+                          option.value === DEFAULT_CODE_FONT
+                            ? ""
+                            : option.value,
+                        )
+                      }
+                    />
+                  </div>
+                  <div class="field-row">
+                    <span>{t("mainFontSize")}</span>
+                    <AppearanceSelect
+                      value={String(props.state.mainFontSize)}
+                      options={sizeOptions(12, 15, 13)}
+                      onSelect={(option) =>
+                        props.onMainFontSize(Number(option.value))
+                      }
+                    />
+                  </div>
+                  <div class="field-row">
+                    <span>{t("codeFontSize")}</span>
+                    <AppearanceSelect
+                      value={String(props.state.codeFontSize)}
+                      options={sizeOptions(10, 15, 12)}
+                      onSelect={(option) =>
+                        props.onCodeFontSize(Number(option.value))
+                      }
+                    />
+                  </div>
                 </div>
               </section>
             </Match>
@@ -371,9 +621,26 @@ export function SettingsView(props: {
             <Match when={props.section === "providers"}>
               <section class="settings-panel">
                 <header>
-                  <span>{t("providers")}</span>
+                  <span>{t("providerSettings")}</span>
                   <small>{providers().length}</small>
                 </header>
+                <div class="provider-domain-filter-row">
+                  <span>{t("providerType")}</span>
+                  <div class="segmented settings-filter-segmented">
+                    <For each={providerDomainOptions()}>
+                      {(domain) => (
+                        <button
+                          class={classNames(
+                            providerDomainFilter() === domain && "selected",
+                          )}
+                          onClick={() => setProviderDomainFilter(domain)}
+                        >
+                          {providerDomainLabel(domain)}
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </div>
                 <label class="workspace-search-row provider-search-row">
                   <Search size={14} strokeWidth={1.7} />
                   <input
@@ -390,7 +657,6 @@ export function SettingsView(props: {
                     label={t("configuredProviders")}
                     providers={configuredProviders()}
                     state={props.state}
-                    selectedProviderId={selectedProvider()?.id}
                     onProvider={(provider) => {
                       chooseProvider(provider);
                       props.onOpenProviderAuth(provider.id);
@@ -400,7 +666,6 @@ export function SettingsView(props: {
                     label={t("unconfiguredProviders")}
                     providers={unconfiguredProviders()}
                     state={props.state}
-                    selectedProviderId={selectedProvider()?.id}
                     onProvider={(provider) => {
                       chooseProvider(provider);
                       props.onOpenProviderAuth(provider.id);
@@ -408,408 +673,71 @@ export function SettingsView(props: {
                   />
                 </div>
               </section>
-              <section class="settings-panel">
-                <header>
-                  <span>{selectedProvider()?.name ?? t("provider")}</span>
-                  <small>{authStatusText(selectedProviderStatus())}</small>
-                </header>
-                <Show when={selectedProvider()}>
-                  {(provider) => (
-                    <div class="provider-detail">
-                      <div class="provider-metrics">
-                        <MetricCell
-                          label={t("state")}
-                          value={authStatusText(selectedProviderStatus())}
-                        />
-                        <MetricCell
-                          label={t("source")}
-                          value={providerSourceLabel(provider().source)}
-                        />
-                        <MetricCell
-                          label={t("env")}
-                          value={provider().env.join(", ") || "--"}
-                        />
-                        <MetricCell
-                          label={t("models")}
-                          value={String(Object.keys(provider().models).length)}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </Show>
-              </section>
             </Match>
 
             <Match when={props.section === "models"}>
-              <section class="settings-panel">
+              <section class="settings-panel model-config-panel">
                 <header>
                   <span>{t("modelRuntime")}</span>
-                  <small>{props.state.selectedModel ?? "--"}</small>
-                </header>
-                <div class="settings-fields">
-                  <label class="field-row">
-                    <span>{t("provider")}</span>
-                    <ProviderSelectMenu
-                      providers={providers()}
-                      selectedProviderId={selectedProvider()?.id}
-                      state={props.state}
-                      onProvider={chooseModelProvider}
-                    />
-                  </label>
-                  <label class="field-row">
-                    <span>{t("model")}</span>
-                    <select
-                      value={props.state.selectedModel ?? ""}
-                      onChange={(event) =>
-                        props.onModel(event.currentTarget.value)
-                      }
-                    >
-                      <For each={selectedModels()}>
-                        {(model) => (
-                          <option
-                            value={modelRef(selectedProvider()?.id, model.id)}
-                          >
-                            {model.name}
-                          </option>
-                        )}
-                      </For>
-                    </select>
-                  </label>
-                </div>
-              </section>
-
-              <section class="settings-panel">
-                <header>
-                  <span>{t("models")}</span>
-                  <small>{selectedProvider()?.name ?? "--"}</small>
+                  <small>{props.state.modelConfig?.path ?? "--"}</small>
                 </header>
                 <Show
-                  when={selectedProvider()}
+                  when={(props.state.modelConfig?.tiers ?? []).length > 0}
                   fallback={<div class="surface-list-empty">{t("empty")}</div>}
                 >
-                  {(provider) => (
-                    <div class="provider-detail">
-                      <div class="model-list">
-                        <For each={selectedModels()}>
-                          {(model) => (
-                            <button
-                              class={classNames(
-                                props.state.selectedModel ===
-                                  modelRef(provider().id, model.id) &&
-                                  "selected",
-                              )}
-                              onClick={() =>
-                                props.onModel(modelRef(provider().id, model.id))
-                              }
-                            >
-                              <span>{model.name}</span>
-                              <small>
-                                {formatModelLimit(model.limit.context)}
-                              </small>
-                            </button>
-                          )}
-                        </For>
-                      </div>
-                    </div>
-                  )}
-                </Show>
-              </section>
-            </Match>
-
-            <Match when={props.section === "auth"}>
-              <section class="settings-panel">
-                <header>
-                  <span>{t("login")}</span>
-                  <small>{authStatusText(selectedProviderStatus())}</small>
-                </header>
-                <Show
-                  when={selectedProvider()}
-                  fallback={<div class="surface-list-empty">{t("empty")}</div>}
-                >
-                  {(provider) => (
-                    <div class="settings-fields login-fields">
-                      <For
-                        each={selectedMethods()}
-                        fallback={
-                          <div class="surface-list-empty">{t("empty")}</div>
-                        }
-                      >
-                        {(method, index) => (
-                          <div
-                            class={classNames(
-                              "login-method",
-                              method.type === "oauth" && "oauth",
-                            )}
+                  <div class="settings-fields">
+                    <For each={props.state.modelConfig?.tiers ?? []}>
+                      {(tier) => (
+                        <div class="field-row">
+                          <span>{modelTierLabel(tier.tier)}</span>
+                          <Show
+                            when={modelTierOptions(tier).length > 0}
+                            fallback={
+                              <button
+                                type="button"
+                                class="appearance-select-button model-configure-button"
+                                onClick={props.onConfigureProviders}
+                              >
+                                <span>{t("configureProvider")}</span>
+                              </button>
+                            }
                           >
-                            <div class="login-method-copy">
-                              <span>{method.label}</span>
-                              <small>
-                                {method.token_env ??
-                                  method.login_env ??
-                                  method.kind}
-                              </small>
-                            </div>
-                            <Show when={method.type === "api"}>
-                              <div class="login-method-controls">
-                                <input
-                                  type="password"
-                                  value={
-                                    props.state.authDrafts[provider().id] ?? ""
-                                  }
-                                  placeholder={method.token_env ?? t("apiKey")}
-                                  onInput={(event) =>
-                                    props.onAuthDraft(
-                                      provider().id,
-                                      event.currentTarget.value,
-                                    )
-                                  }
-                                />
-                                <button
-                                  class="secondary"
-                                  disabled={
-                                    props.state.settingsSaving ||
-                                    !props.state.authDrafts[
-                                      provider().id
-                                    ]?.trim()
-                                  }
-                                  onClick={() =>
-                                    props.onSaveKey(provider().id, method)
-                                  }
-                                >
-                                  {t("save")}
-                                </button>
-                              </div>
-                            </Show>
-                            <Show when={method.type === "oauth"}>
-                              <div class="login-method-controls oauth-controls">
-                                <button
-                                  class="secondary"
-                                  disabled={props.state.settingsSaving}
-                                  onClick={() =>
-                                    props.onStartLogin(provider().id, index())
-                                  }
-                                >
-                                  {t("openLogin")}
-                                </button>
-                                <input
-                                  value={
-                                    props.state.authCodeDrafts[provider().id] ??
-                                    ""
-                                  }
-                                  placeholder={t("codeOrToken")}
-                                  onInput={(event) =>
-                                    props.onAuthCode(
-                                      provider().id,
-                                      event.currentTarget.value,
-                                    )
-                                  }
-                                />
-                                <button
-                                  class="secondary"
-                                  disabled={props.state.settingsSaving}
-                                  onClick={() =>
-                                    props.onCompleteLogin(
-                                      provider().id,
-                                      props.state.authCodeDrafts[provider().id],
-                                      index(),
-                                    )
-                                  }
-                                >
-                                  {t("complete")}
-                                </button>
-                              </div>
-                            </Show>
-                          </div>
-                        )}
-                      </For>
-                      <div class="settings-actions-row">
-                        <button
-                          class="text-button"
-                          disabled={
-                            props.state.settingsSaving ||
-                            !selectedProviderStatus()?.configured
-                          }
-                          onClick={() => props.onLogout(provider().id)}
-                        >
-                          {t("logout")}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </Show>
-              </section>
-            </Match>
-
-            <Match when={props.section === "runtime"}>
-              <section class="settings-panel">
-                <header>
-                  <span>{t("runtime")}</span>
-                  <small>{props.state.selectedAgent ?? "--"}</small>
-                </header>
-                <div class="settings-fields">
-                  <label class="field-row">
-                    <span>{t("agent")}</span>
-                    <select
-                      value={props.state.selectedAgent ?? ""}
-                      onChange={(event) =>
-                        props.onAgent(event.currentTarget.value || undefined)
-                      }
-                    >
-                      <For
-                        each={props.state.agents.filter(
-                          (agent) => !agent.hidden,
-                        )}
-                      >
-                        {(agent) => (
-                          <option value={agent.name}>{agent.name}</option>
-                        )}
-                      </For>
-                    </select>
-                  </label>
-                  <div class="field-row">
-                    <span>{t("variant")}</span>
-                    <div class="segmented">
-                      <For each={["low", "medium", "high"]}>
-                        {(variant) => (
-                          <button
-                            class={classNames(
-                              props.state.modelVariant === variant &&
-                                "selected",
-                            )}
-                            onClick={() => props.onVariant(variant)}
-                          >
-                            {variant}
-                          </button>
-                        )}
-                      </For>
-                    </div>
+                            <AppearanceSelect
+                              value={modelOptionValue(tier.current)}
+                              options={modelTierOptions(tier)}
+                              footer={{
+                                label: t("configureProvider"),
+                                onSelect: props.onConfigureProviders,
+                              }}
+                              onSelect={(option) => {
+                                if (
+                                  option.value === CONFIGURE_PROVIDER_OPTION
+                                ) {
+                                  props.onConfigureProviders();
+                                  return;
+                                }
+                                const modelOption = tier.options.find(
+                                  (item) =>
+                                    modelOptionValue(item) === option.value,
+                                );
+                                if (modelOption) {
+                                  props.onModelTier(tier.tier, modelOption);
+                                }
+                              }}
+                            />
+                          </Show>
+                        </div>
+                      )}
+                    </For>
                   </div>
-                  <label class="field-row compact-field">
-                    <span>{t("acceleration")}</span>
-                    <input
-                      type="checkbox"
-                      checked={props.state.accelerationEnabled}
-                      onChange={(event) =>
-                        props.onAcceleration(event.currentTarget.checked)
-                      }
-                    />
-                  </label>
-                  <ReadonlyRow
-                    label={t("model")}
-                    value={props.state.selectedModel ?? "--"}
-                  />
-                </div>
-              </section>
-            </Match>
-
-            <Match when={props.section === "config"}>
-              <section class="settings-panel">
-                <header>
-                  <span>{t("turaConfig")}</span>
-                  <small>{t("global")}</small>
-                </header>
-                <div class="settings-fields">
-                  <For each={configRows()}>
-                    {(row) => (
-                      <label class="field-row">
-                        <span>{row.label}</span>
-                        <input
-                          value={props.state.configDraft[row.key] ?? ""}
-                          onInput={(event) =>
-                            props.onConfigDraft(
-                              row.key,
-                              event.currentTarget.value,
-                            )
-                          }
-                        />
-                      </label>
-                    )}
-                  </For>
-                </div>
-              </section>
-            </Match>
-
-            <Match when={props.section === "workspace"}>
-              <section class="settings-panel">
-                <header>
-                  <span>{t("workspaceConfig")}</span>
-                  <small>{workspaceRows().length}</small>
-                </header>
-                <div class="settings-fields">
-                  <For
-                    each={workspaceRows()}
-                    fallback={
-                      <div class="surface-list-empty">{t("empty")}</div>
-                    }
-                  >
-                    {([key, value]) => (
-                      <label class="field-row">
-                        <span>{key}</span>
-                        <input
-                          value={value}
-                          onInput={(event) =>
-                            props.onWorkspaceConfigDraft(
-                              key,
-                              event.currentTarget.value,
-                            )
-                          }
-                        />
-                      </label>
-                    )}
-                  </For>
-                </div>
-              </section>
-            </Match>
-
-            <Match when={props.section === "environment"}>
-              <section class="settings-panel">
-                <header>
-                  <span>{t("paths")}</span>
-                  <small>{props.state.connection}</small>
-                </header>
-                <div class="settings-fields">
-                  <ReadonlyRow
-                    label={t("home")}
-                    value={props.state.paths?.home ?? "--"}
-                  />
-                  <ReadonlyRow
-                    label={t("state")}
-                    value={props.state.paths?.state ?? "--"}
-                  />
-                  <ReadonlyRow
-                    label={t("config")}
-                    value={props.state.paths?.config ?? "--"}
-                  />
-                  <ReadonlyRow
-                    label={t("worktree")}
-                    value={props.state.paths?.worktree ?? "--"}
-                  />
-                </div>
-              </section>
-              <section class="settings-panel">
-                <header>
-                  <span>{t("env")}</span>
-                  <small>{selectedProvider()?.name ?? "--"}</small>
-                </header>
-                <div class="settings-fields">
-                  <For each={providers().slice(0, 10)}>
-                    {(provider) => (
-                      <ReadonlyRow
-                        label={provider.name}
-                        value={provider.env.join(", ") || "--"}
-                      />
-                    )}
-                  </For>
-                </div>
+                </Show>
               </section>
             </Match>
           </Switch>
 
-          <Show
-            when={props.state.settingsNotice || props.state.modelValidation}
-          >
+          <Show when={props.state.settingsNotice}>
             <div class="settings-note">
-              {props.state.settingsNotice ?? props.state.modelValidation}
+              {props.state.settingsNotice}
             </div>
           </Show>
         </section>
@@ -827,11 +755,175 @@ export function ReadonlyRow(props: { label: string; value: string }) {
   );
 }
 
-export function MetricCell(props: { label: string; value: string }) {
+function AppearanceSelect(props: {
+  value: string;
+  options: AppearanceOption[];
+  placeholder?: string;
+  footer?: AppearanceSelectFooter;
+  onSelect: (option: AppearanceOption) => void;
+}) {
+  const [open, setOpen] = createSignal(false);
+  const [menuPosition, setMenuPosition] = createSignal({
+    left: 0,
+    top: 0,
+    width: 340,
+    maxHeight: 320,
+  });
+  let root: HTMLElement | undefined;
+  let menu: HTMLDivElement | undefined;
+  const selected = createMemo(
+    () =>
+      props.options.find((option) => option.value === props.value) ??
+      props.options[0],
+  );
+  const visibleOptions = createMemo(() =>
+    props.options.length > 0
+      ? props.options
+      : props.footer
+        ? [
+            {
+              id: CONFIGURE_PROVIDER_OPTION,
+              label: props.footer.label,
+              value: CONFIGURE_PROVIDER_OPTION,
+              preview: "inherit",
+            },
+          ]
+        : [],
+  );
+  const buttonLabel = createMemo(
+    () => selected()?.label ?? props.placeholder ?? t("selectStep"),
+  );
+
+  function updateMenuPosition() {
+    if (!root) {
+      return;
+    }
+    const rect = root.getBoundingClientRect();
+    const gap = 6;
+    const viewportPadding = 16;
+    const preferredWidth = Math.max(260, rect.width);
+    const width = Math.min(preferredWidth, window.innerWidth - viewportPadding * 2);
+    const left = Math.min(
+      Math.max(viewportPadding, rect.left),
+      Math.max(viewportPadding, window.innerWidth - width - viewportPadding),
+    );
+    const top = Math.min(
+      rect.bottom + gap,
+      Math.max(viewportPadding, window.innerHeight - viewportPadding - 120),
+    );
+    setMenuPosition({
+      left,
+      top,
+      width,
+      maxHeight: Math.max(120, window.innerHeight - top - viewportPadding),
+    });
+  }
+
+  onMount(() => {
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!root?.contains(target) && !menu?.contains(target)) {
+        setOpen(false);
+      }
+    };
+    const reposition = () => {
+      if (open()) {
+        updateMenuPosition();
+      }
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", closeOutside);
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    });
+  });
+
+  createEffect(() => {
+    if (open()) {
+      updateMenuPosition();
+    }
+  });
+
   return (
-    <div class="metric-cell">
-      <span>{props.value}</span>
-      <small>{props.label}</small>
-    </div>
+    <section class="appearance-select" ref={root}>
+      <button
+        type="button"
+        class="appearance-select-button"
+        style={{
+          "font-family": selected()?.preview,
+          "font-size": selected()?.size ? `${selected()!.size}px` : undefined,
+        }}
+        onClick={(event) => {
+          event.preventDefault();
+          const nextOpen = !open();
+          setOpen(nextOpen);
+          if (nextOpen) {
+            updateMenuPosition();
+          }
+        }}
+      >
+        <span>{buttonLabel()}</span>
+        <ChevronDown size={13} strokeWidth={1.8} />
+      </button>
+      <Show when={open()}>
+        <Portal>
+          <div
+            ref={menu}
+            class="plan-session-menu appearance-select-menu"
+            style={{
+              left: `${menuPosition().left}px`,
+              top: `${menuPosition().top}px`,
+              width: `${menuPosition().width}px`,
+              "max-height": `${menuPosition().maxHeight}px`,
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <For each={visibleOptions()}>
+              {(option) => (
+                <button
+                  type="button"
+                  class={classNames(
+                    "plan-trigger-option",
+                    props.value === option.value && "selected",
+                  )}
+                  style={{
+                    "font-family": option.preview,
+                    "font-size": option.size ? `${option.size}px` : undefined,
+                  }}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    props.onSelect(option);
+                    setOpen(false);
+                  }}
+                >
+                  <span>{option.label}</span>
+                  <Show when={props.value === option.value}>
+                    <Check size={14} strokeWidth={1.8} />
+                  </Show>
+                </button>
+              )}
+            </For>
+            <Show when={props.options.length > 0 ? props.footer : undefined}>
+              {(footer) => (
+                <button
+                  type="button"
+                  class="plan-trigger-option appearance-select-footer"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    footer().onSelect();
+                    setOpen(false);
+                  }}
+                >
+                  <span>{footer().label}</span>
+                </button>
+              )}
+            </Show>
+          </div>
+        </Portal>
+      </Show>
+    </section>
   );
 }

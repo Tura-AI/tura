@@ -12,7 +12,7 @@ const workspace = path.join(runRoot, "workspace")
 const logs = path.join(runRoot, "logs")
 const turaExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura.exe" : "tura")
 const timeoutMs = Number(process.env.COMMAND_RUN_AGENT_TIMEOUT_MS || 120_000)
-const model = process.env.COMMAND_RUN_AGENT_TURA_MODEL || "openai/gpt-5.3-codex-spark"
+const model = process.env.COMMAND_RUN_AGENT_TURA_MODEL || "codex/gpt-5.1-codex-mini"
 const reasoning = process.env.COMMAND_RUN_AGENT_REASONING_EFFORT || "low"
 
 function run(command, args, options = {}) {

@@ -10,22 +10,12 @@ use code_tools_suite::state_machine::session_management::{SessionInput, SessionS
 use serde_json::{json, Value};
 
 const ROUTES: &[&str] = &[
-    "tura_general",
-    "tura_office",
-    "tura_creative",
-    "tura_translator",
-    "tura_validator",
-    "tura_validator_advanced",
-    "tura_classifier",
-    "tura_embedding",
-    "tura_coder",
-    "tura_coder_advanced",
-    "tura_planner",
-    "tura_planner_advanced",
-    "tura_roleplay",
-    "tura_professional",
-    "tura_math",
-    "tura_academic",
+    "flagship_thinking",
+    "thinking",
+    "fast",
+    "instant",
+    "embedding_high",
+    "embedding_low",
 ];
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -691,7 +681,7 @@ fn write_llm_config(workspace: &Path, addr: SocketAddr) -> PathBuf {
         },
         "routes": routes
     });
-    let path = workspace.join("tura_llm_config.json");
+    let path = workspace.join("provider_config.json");
     write_file(
         &path,
         &serde_json::to_string_pretty(&config).expect("config should serialize"),

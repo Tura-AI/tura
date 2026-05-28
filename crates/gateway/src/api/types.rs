@@ -417,6 +417,7 @@ pub struct ProviderListResponse {
     pub all: Vec<SdkProvider>,
     pub default: HashMap<String, String>,
     pub connected: Vec<String>,
+    pub enums: tura_llm_rust::ProviderEnumCatalog,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

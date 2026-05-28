@@ -3,6 +3,8 @@ import {
   type FileContentResponse,
   type FileInfo,
   type Message,
+  type MessagePart,
+  type ProviderAuthMethod,
   type PollInterval,
   type Session,
   type StartCondition,
@@ -26,6 +28,289 @@ import {
 } from "../features/plan/tasks";
 
 const FIXTURE_FILE_ROOT = "C:\\Users\\liuliu\\Documents\\tura";
+const FIXTURE_MODEL = "openai/gpt-5.5";
+const FIXTURE_PROVIDER_STATE: Pick<
+  AppState,
+  "providers" | "modelConfig" | "providerAuthMethods" | "providerAuthStatus"
+> = {
+  providers: {
+    all: [
+      {
+        id: "openai",
+        name: "OpenAI",
+        source: "mock",
+        env: ["OPENAI_API_KEY"],
+        options: {},
+        models: {
+          "gpt-5.5": {
+            id: "gpt-5.5",
+            name: "GPT-5.5",
+            family: "gpt-5.5",
+            release_date: "2026-05-01",
+            attachment: true,
+            reasoning: true,
+            temperature: true,
+            tool_call: true,
+            limit: {
+              context: 256_000,
+              input: 240_000,
+              output: 16_000,
+            },
+            modalities: {
+              input: ["text", "image"],
+              output: ["text"],
+            },
+            options: {},
+            status: "mock",
+          },
+          "gpt-5.5-mini": {
+            id: "gpt-5.5-mini",
+            name: "GPT-5.5 Mini",
+            family: "gpt-5.5",
+            release_date: "2026-05-01",
+            attachment: true,
+            reasoning: true,
+            temperature: true,
+            tool_call: true,
+            limit: {
+              context: 128_000,
+              input: 120_000,
+              output: 8_000,
+            },
+            modalities: {
+              input: ["text", "image"],
+              output: ["text"],
+            },
+            options: {},
+            status: "mock",
+          },
+        },
+      },
+      {
+        id: "anthropic",
+        name: "Anthropic",
+        source: "mock",
+        env: ["ANTHROPIC_API_KEY"],
+        options: {},
+        models: {
+          "claude-sonnet-4.5": {
+            id: "claude-sonnet-4.5",
+            name: "Claude Sonnet 4.5",
+            family: "claude-sonnet",
+            release_date: "2026-04-15",
+            attachment: true,
+            reasoning: true,
+            temperature: true,
+            tool_call: true,
+            limit: {
+              context: 200_000,
+              input: 190_000,
+              output: 10_000,
+            },
+            modalities: {
+              input: ["text", "image"],
+              output: ["text"],
+            },
+            options: {},
+            status: "mock",
+          },
+        },
+      },
+      {
+        id: "github-copilot",
+        name: "GitHub Copilot",
+        source: "mock",
+        env: ["GITHUB_COPILOT_TOKEN"],
+        options: {},
+        models: {
+          "copilot-gpt-5.5": {
+            id: "copilot-gpt-5.5",
+            name: "Copilot GPT-5.5",
+            family: "gpt-5.5",
+            release_date: "2026-05-01",
+            attachment: true,
+            reasoning: true,
+            temperature: true,
+            tool_call: true,
+            limit: {
+              context: 128_000,
+              input: 120_000,
+              output: 8_000,
+            },
+            modalities: {
+              input: ["text"],
+              output: ["text"],
+            },
+            options: {},
+            status: "mock",
+          },
+        },
+      },
+    ],
+    connected: ["openai", "github-copilot"],
+    default: {
+      openai: "gpt-5.5",
+      anthropic: "claude-sonnet-4.5",
+      "github-copilot": "copilot-gpt-5.5",
+    },
+    enums: {
+      domains: ["llm"],
+      capabilities: ["text", "image", "tool_call"],
+      api_styles: ["openai", "anthropic"],
+      auth_methods: ["api_key", "oauth"],
+      statuses: ["connected", "mock"],
+    },
+  },
+  providerAuthMethods: {
+    openai: [
+      {
+        type: "api",
+        kind: "token",
+        login: "mock",
+        label: "Mock OpenAI API key",
+        token_env: "OPENAI_API_KEY",
+        configured_value: "sk-mock-openai-live-9f2a7c1d3b",
+        available: true,
+        supports_refresh: false,
+      } as ProviderAuthMethod,
+    ],
+    anthropic: [
+      {
+        type: "api",
+        kind: "token",
+        login: "mock",
+        label: "Mock Anthropic API key",
+        token_env: "ANTHROPIC_API_KEY",
+        configured_value: "sk-ant-mock-unconfigured-preview",
+        available: true,
+        supports_refresh: false,
+      } as ProviderAuthMethod,
+    ],
+    "github-copilot": [
+      {
+        type: "oauth",
+        kind: "oauth",
+        login: "browser",
+        label: "GitHub OAuth",
+        login_env: "GITHUB_COPILOT_LOGIN",
+        available: true,
+        supports_refresh: true,
+      },
+    ],
+  },
+  providerAuthStatus: {
+    openai: {
+      provider_id: "openai",
+      display_name: "OpenAI",
+      login: "mock-user",
+      configured: true,
+      authenticated: true,
+      expired: false,
+      token_env: "OPENAI_API_KEY",
+      updated_at: new Date(0).toISOString(),
+      auth_state: "authenticated",
+      runtime_state: "connected",
+    },
+    anthropic: {
+      provider_id: "anthropic",
+      display_name: "Anthropic",
+      login: null,
+      configured: false,
+      authenticated: false,
+      expired: false,
+      token_env: "ANTHROPIC_API_KEY",
+      updated_at: new Date(0).toISOString(),
+      auth_state: "missing",
+      runtime_state: "not_configured",
+    },
+    "github-copilot": {
+      provider_id: "github-copilot",
+      display_name: "GitHub Copilot",
+      login: "mock-oauth-user",
+      configured: true,
+      authenticated: true,
+      expired: false,
+      login_env: "GITHUB_COPILOT_LOGIN",
+      updated_at: new Date(0).toISOString(),
+      auth_state: "authenticated",
+      runtime_state: "connected",
+    },
+  },
+  modelConfig: {
+    path: "mock/provider_config.json",
+    tiers: [
+      {
+        tier: "flagship_thinking",
+        current: null,
+        options: [],
+      },
+      {
+        tier: "thinking",
+        current: { provider: "openai", model: "gpt-5.5" },
+        options: [
+          {
+            provider: "openai",
+            provider_name: "OpenAI",
+            model: "gpt-5.5",
+            model_name: "GPT-5.5",
+          },
+          {
+            provider: "github-copilot",
+            provider_name: "GitHub Copilot",
+            model: "copilot-gpt-5.5",
+            model_name: "Copilot GPT-5.5",
+          },
+        ],
+      },
+      {
+        tier: "fast",
+        current: { provider: "openai", model: "gpt-5.5-mini" },
+        options: [
+          {
+            provider: "openai",
+            provider_name: "OpenAI",
+            model: "gpt-5.5-mini",
+            model_name: "GPT-5.5 Mini",
+          },
+          {
+            provider: "github-copilot",
+            provider_name: "GitHub Copilot",
+            model: "copilot-gpt-5.5",
+            model_name: "Copilot GPT-5.5",
+          },
+        ],
+      },
+      {
+        tier: "instant",
+        current: { provider: "openai", model: "gpt-5.5-mini" },
+        options: [
+          {
+            provider: "openai",
+            provider_name: "OpenAI",
+            model: "gpt-5.5-mini",
+            model_name: "GPT-5.5 Mini",
+          },
+          {
+            provider: "github-copilot",
+            provider_name: "GitHub Copilot",
+            model: "copilot-gpt-5.5",
+            model_name: "Copilot GPT-5.5",
+          },
+        ],
+      },
+      {
+        tier: "embedding_high",
+        current: null,
+        options: [],
+      },
+      {
+        tier: "embedding_low",
+        current: null,
+        options: [],
+      },
+    ],
+  },
+};
 
 export function fixtureAbsolutePath(
   fixture: string | undefined,
@@ -341,6 +626,8 @@ export function readMainTabSearchParam(): MainTab | undefined {
 }
 
 function fixtureGatewaySessions(now: number, directory: string): Session[] {
+  const longScrollTestTitle =
+    "这是一个用于测试全屏侧边栏滚动条位置的超长会话标题，包含很多很多很多连续的描述文字，确保在文件浏览器和会话侧边栏里都能看到省略、换行和滚动条是否保持在屏幕最右侧";
   const makeSessionRecord = (
     id: string,
     title: string,
@@ -352,7 +639,7 @@ function fixtureGatewaySessions(now: number, directory: string): Session[] {
     id,
     name: title,
     directory: sessionDirectory,
-    model: "openai/gpt-5.5",
+    model: FIXTURE_MODEL,
     agent: "coding_agent",
     session_type: "coding",
     status: status === "doing" ? "busy" : "idle",
@@ -378,7 +665,7 @@ function fixtureGatewaySessions(now: number, directory: string): Session[] {
         : {}),
     },
   });
-  return [
+  const sessions = [
     makeSessionRecord(
       "session-todo-001",
       "整理发布检查清单",
@@ -428,7 +715,97 @@ function fixtureGatewaySessions(now: number, directory: string): Session[] {
       13_200_000,
       "polling_task",
     ),
+    makeSessionRecord(
+      "session-long-scroll-009",
+      longScrollTestTitle,
+      "todo",
+      17_200_000,
+      "scheduled_task",
+    ),
   ];
+  const longSession = sessions.find(
+    (session) => session.id === "session-long-scroll-009",
+  );
+  if (longSession?.task_management) {
+    longSession.task_management.delivery =
+      "这条 mock 数据专门用来测试全屏侧边栏滚动条。它的标题很长，正文也很长，用户可以切到文件浏览器或会话页，在移动端宽度打开侧边栏，确认滚动条是否贴在画面的最右侧，而不是贴近内容列。".repeat(
+        8,
+      );
+  }
+  const multiTaskSession = sessions.find(
+    (session) => session.id === "session-doing-002",
+  );
+  if (multiTaskSession?.task_management) {
+    multiTaskSession.task_management.tasks = [
+      {
+        ...multiTaskSession.task_management,
+        nonce_id: "session-doing-002:0",
+        step: 0,
+        status: "todo",
+        task_summary: "实现拖拽状态切换",
+        start_at: new Date(now + 3_700_000).toISOString(),
+        poll_interval: { m: 0, d: 0, h: 1, s: 0 },
+      },
+      {
+        nonce_id: "session-doing-002:1",
+        step: 1,
+        status: "todo",
+        task_summary: "同步拖拽后的计划时间",
+        delivery: "仅更新当前 task，不影响同一 cession 下的其他计划",
+        sub_session_id: "",
+        start_at: new Date(now + 5_400_000).toISOString(),
+      },
+    ];
+  }
+  return sessions;
+}
+
+function commandRunPart(
+  id: string,
+  now: number,
+  status: "completed" | "running" | "failed",
+  command: string,
+  output: string,
+  timing: { startOffset: number; endOffset?: number },
+  exitCode?: number,
+): MessagePart {
+  const started = now - timing.startOffset;
+  const ended =
+    timing.endOffset === undefined ? undefined : now - timing.endOffset;
+  const result = {
+    command_type: "shell",
+    command_line: command,
+    status,
+    output,
+    ...(exitCode === undefined ? {} : { exit_code: exitCode }),
+    ...(ended === undefined ? {} : { duration_ms: ended - started }),
+  };
+  return {
+    id,
+    type: "tool",
+    tool: "command_run",
+    callID: `${id}-call`,
+    state: {
+      status,
+      title: command,
+      command: "command_run",
+      time: {
+        start: started,
+        ...(ended === undefined ? {} : { end: ended }),
+      },
+      input: {
+        commands: [
+          {
+            command_type: "shell",
+            command_line: command,
+          },
+        ],
+      },
+      streamed_command_run_result: {
+        results: [result],
+      },
+    },
+  };
 }
 
 export function withInitialOverrides(
@@ -461,42 +838,135 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
   if (fixture === "plan-sessions") {
     const directory = "C:\\Users\\liuliu\\Documents\\tura workspace";
     const sessions = fixtureGatewaySessions(now, directory);
+    const messagesForSession = (session: Session, index: number): Message[] => {
+      const title = sessionTitle(session);
+      if (session.id === "session-long-scroll-009") {
+        return Array.from({ length: 10 }).flatMap((_, turnIndex) => {
+          const createdAt = now - 240_000 + turnIndex * 18_000;
+          const user: Message = {
+            id: `${session.id}-long-user-${turnIndex}`,
+            session_id: session.id,
+            role: "user",
+            created_at: createdAt,
+            updated_at: createdAt,
+            parts: [
+              {
+                id: `${session.id}-long-user-${turnIndex}-part`,
+                type: "text",
+                text: `第 ${turnIndex + 1} 轮用户反馈：请继续检查全屏侧边栏滚动条是否贴在屏幕最右侧，同时保留这段很长的测试文本用于撑开历史记录区域。这里还有额外说明，确保消息高度足够长，能测试会话窗口、文件浏览器侧边栏和移动端全屏菜单的滚动表现。`,
+              },
+            ],
+          };
+          const assistant: Message = {
+            id: `${session.id}-long-agent-${turnIndex}`,
+            session_id: session.id,
+            role: "assistant",
+            providerID: "openai",
+            modelID: turnIndex % 2 === 0 ? "gpt-5.5" : "gpt-5.5-mini",
+            cost: 0.001 + turnIndex * 0.0003,
+            created_at: createdAt + 6_000,
+            updated_at: createdAt + 8_000,
+            parts: [
+              {
+                id: `${session.id}-long-agent-${turnIndex}-part`,
+                type: "text",
+                text: `第 ${turnIndex + 1} 轮助手回复：已记录滚动条测试状态。当前这条回复故意写得比较长，用来模拟真实会话里多轮来回沟通后的内容密度。测试时可以打开左侧全屏侧栏、切换文件浏览器页面、滚动会话历史，并确认滚动条始终贴近画面边缘而不是贴近中间内容列。`,
+              },
+            ],
+          };
+          return [user, assistant];
+        });
+      }
+      const user: Message = {
+        id: `${session.id}-message-user`,
+        session_id: session.id,
+        role: "user",
+        created_at: now - 20_000 - index * 1_000,
+        updated_at: now - 20_000 - index * 1_000,
+        parts: [
+          {
+            id: `${session.id}-message-user-part`,
+            type: "text",
+            text: `用户创建工单：${title}`,
+          },
+        ],
+      };
+      const isRunningCommand = session.id === "session-doing-002";
+      const isCompletedCommand =
+        session.id === "session-todo-001" || session.id === "session-done-004";
+      const commandPart = isRunningCommand
+        ? commandRunPart(
+            `${session.id}-command-run-running`,
+            now,
+            "running",
+            "bun run --cwd apps/gui typecheck",
+            "Scope: @tura/gui\nChecking sidebar tree state...\nChecking command run renderer...\n",
+            { startOffset: 42_000 },
+          )
+        : isCompletedCommand
+          ? commandRunPart(
+              `${session.id}-command-run-completed`,
+              now,
+              "completed",
+              session.id === "session-done-004"
+                ? "cargo check -p gateway"
+                : "bun run --cwd apps/gui test -- command-run.fixture",
+              session.id === "session-done-004"
+                ? "Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.41s\n"
+                : "vitest command-run.fixture\n2 tests passed in 1.23s\n",
+              { startOffset: 15_000, endOffset: 9_000 },
+              0,
+            )
+          : undefined;
+      const assistantParts: MessagePart[] = [
+        {
+          id: `${session.id}-message-agent-part`,
+          type: "text",
+          text: isRunningCommand
+            ? `正在为 ${title} 执行命令并持续接收 command run 输出。`
+            : `已载入 ${title} 的历史上下文。`,
+        },
+      ];
+      if (commandPart) {
+        assistantParts.push(commandPart);
+      }
+      if (!isRunningCommand && commandPart) {
+        assistantParts.push({
+          id: `${session.id}-message-agent-summary`,
+          type: "text",
+          text: "命令已经完成，模型、provider 和费用统计已写入这条回复。",
+        });
+      }
+      const assistant: Message = {
+        id: `${session.id}-message-agent`,
+        session_id: session.id,
+        role: "assistant",
+        providerID: "openai",
+        modelID: session.id === "session-todo-001" ? "gpt-5.5-mini" : "gpt-5.5",
+        cost:
+          session.id === "session-doing-002"
+            ? 0.0038
+            : session.id === "session-done-004"
+              ? 0.0062
+              : session.id === "session-todo-001"
+                ? 0.0014
+                : undefined,
+        created_at: now - 16_000 - index * 1_000,
+        updated_at: isRunningCommand ? now - 250 : now - 8_000 - index * 1_000,
+        parts: assistantParts,
+      };
+      return [user, assistant];
+    };
     const fixtureMessagesBySession: Record<string, Message[]> =
       Object.fromEntries(
         sessions.map((session, index) => [
           session.id,
-          [
-            {
-              id: `${session.id}-message-user`,
-              session_id: session.id,
-              role: "user" as const,
-              created_at: now - 20_000 - index * 1_000,
-              updated_at: now - 20_000 - index * 1_000,
-              parts: [
-                {
-                  id: `${session.id}-message-user-part`,
-                  type: "text",
-                  text: `用户创建工单：${sessionTitle(session)}`,
-                },
-              ],
-            },
-            {
-              id: `${session.id}-message-agent`,
-              session_id: session.id,
-              role: "assistant" as const,
-              created_at: now - 16_000 - index * 1_000,
-              updated_at: now - 16_000 - index * 1_000,
-              parts: [
-                {
-                  id: `${session.id}-message-agent-part`,
-                  type: "text",
-                  text: `已载入 ${sessionTitle(session)} 的历史上下文。`,
-                },
-              ],
-            },
-          ],
+          messagesForSession(session, index),
         ]),
       );
+    const selectedFixtureSession =
+      sessions.find((session) => session.id === "session-doing-002") ??
+      sessions[0];
     return {
       ...base,
       loading: false,
@@ -506,10 +976,14 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       previousMainTab: "plan",
       directory,
       sessions,
-      selectedSessionId: sessions[0]?.id,
+      selectedSessionId: selectedFixtureSession?.id,
       planPreviewSessionId: undefined,
       messagesBySession: fixtureMessagesBySession,
-      selectedModel: "openai/gpt-5.5",
+      selectedModel: FIXTURE_MODEL,
+      selectedProviderId: "openai",
+      modelVariant: "low",
+      accelerationEnabled: true,
+      ...FIXTURE_PROVIDER_STATE,
       projects: [
         {
           id: "fixture-project-default",

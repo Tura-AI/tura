@@ -223,7 +223,7 @@ pub fn runtime_provider_for_session(session_type: &str, agent: Option<&str>) -> 
         ("coding", _) | (_, Some(CODING_AGENT_NAME)) | (_, Some(CODING_AGENT_FAST_NAME)) => {
             Some(coding_agent_provider())
         }
-        ("general", _) | (_, Some("general")) => Some("tura_general".to_string()),
+        ("general", _) | (_, Some("general")) => Some("fast".to_string()),
         _ => None,
     }
 }

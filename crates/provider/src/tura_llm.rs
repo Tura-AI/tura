@@ -11,10 +11,8 @@ use thiserror::Error;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use crate::llm::_bedrock_provider;
-use crate::llm::_google_provider;
-use crate::llm::_llm_log::{build_call_log, write_llm_log};
-use crate::llm::_openai_provider;
+use crate::llm::providers;
+use crate::logging::{build_call_log, write_llm_log};
 use crate::tura_conf::TuraConfig;
 
 pub static SETTINGS: OnceLock<Arc<Settings>> = OnceLock::new();
@@ -150,19 +148,18 @@ impl ProviderConfig {
 
     pub async fn embed(&self, text: &str, conf: &TuraConfig) -> Result<Vec<f32>, TuraError> {
         self.validate()?;
-        let api_key = if self.provider.eq_ignore_ascii_case("openai")
-            && openai_login_is_oauth(conf)
-            && openai_oauth_base_url_allowed(&self.base_url)
-        {
+        let _parameter_policy = providers::parameter_policy(&self.provider);
+        let api_key = if should_use_openai_oauth(&self.provider, &self.base_url, conf) {
             refresh_openai_access_token_if_needed(conf).await?
         } else {
             self.get_api_key(conf)?
         };
         match self.provider.to_lowercase().as_str() {
-            "google" => {
-                _google_provider::google_embed(&self.base_url, &self.model, &api_key, text).await
+            "google" => providers::google::embed(&self.base_url, &self.model, &api_key, text).await,
+            "minimax" => {
+                providers::minimax::embed(&self.base_url, &self.model, &api_key, text).await
             }
-            _ => _openai_provider::openai_embed(&self.base_url, &self.model, &api_key, text).await,
+            _ => providers::openai::embed(&self.base_url, &self.model, &api_key, text).await,
         }
     }
 
@@ -184,10 +181,8 @@ impl ProviderConfig {
         stream_events: Option<ProviderStreamEventSink>,
     ) -> Result<ProviderResponse, TuraError> {
         self.validate()?;
-        let api_key = if self.provider.eq_ignore_ascii_case("openai")
-            && openai_login_is_oauth(conf)
-            && openai_oauth_base_url_allowed(&self.base_url)
-        {
+        let _parameter_policy = providers::parameter_policy(&self.provider);
+        let api_key = if should_use_openai_oauth(&self.provider, &self.base_url, conf) {
             refresh_openai_access_token_if_needed(conf).await?
         } else {
             self.get_api_key(conf)?
@@ -198,15 +193,59 @@ impl ProviderConfig {
 
         let result = match self.provider.to_lowercase().as_str() {
             "google" => {
-                _google_provider::call(&self.base_url, &self.model, &api_key, &messages, &options)
+                providers::google::call(&self.base_url, &self.model, &api_key, &messages, &options)
                     .await
             }
             "bedrock" => {
-                _bedrock_provider::call(&self.base_url, &self.model, &api_key, &messages, &options)
+                providers::bedrock::call(&self.base_url, &self.model, &api_key, &messages, &options)
                     .await
             }
+            "codex" => {
+                providers::codex::call_with_stream_events(
+                    &self.base_url,
+                    &self.model,
+                    &api_key,
+                    &messages,
+                    &options,
+                    stream_events.clone(),
+                )
+                .await
+            }
+            "minimax" => {
+                providers::minimax::call_with_stream_events(
+                    &self.base_url,
+                    &self.model,
+                    &api_key,
+                    &messages,
+                    &options,
+                    stream_events.clone(),
+                )
+                .await
+            }
+            "openai" if should_use_openai_oauth(&self.provider, &self.base_url, conf) => {
+                providers::codex::call_with_stream_events(
+                    &self.base_url,
+                    &self.model,
+                    &api_key,
+                    &messages,
+                    &options,
+                    stream_events.clone(),
+                )
+                .await
+            }
+            "openai" => {
+                providers::openai::call_with_stream_events(
+                    &self.base_url,
+                    &self.model,
+                    &api_key,
+                    &messages,
+                    &options,
+                    stream_events.clone(),
+                )
+                .await
+            }
             other => {
-                _openai_provider::call_with_stream_events(
+                crate::llm::openapi::call_with_stream_events(
                     &self.base_url,
                     &self.model,
                     other,
@@ -291,6 +330,15 @@ fn openai_login_is_oauth(conf: &TuraConfig) -> bool {
         .filter(|value| !value.trim().is_empty())
         .is_none()
         && load_codex_auth_tokens().is_some()
+}
+
+fn should_use_openai_oauth(provider: &str, base_url: &str, conf: &TuraConfig) -> bool {
+    if provider.eq_ignore_ascii_case("codex") {
+        return true;
+    }
+    provider.eq_ignore_ascii_case("openai")
+        && openai_login_is_oauth(conf)
+        && openai_oauth_base_url_allowed(base_url)
 }
 
 fn openai_oauth_base_url_allowed(base_url: &str) -> bool {
@@ -471,15 +519,22 @@ fn openai_provider_auth_config_login_is_oauth() -> bool {
 }
 
 fn provider_config_json_path() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("TURA_PROVIDER_CONFIG").filter(|value| !value.is_empty()) {
+        return Some(PathBuf::from(path));
+    }
     if let Some(path) = std::env::var_os("TURALLM_CONFIG").filter(|value| !value.is_empty()) {
         return Some(PathBuf::from(path));
     }
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let config_path = manifest_dir.join("config").join("tura_llm_config.json");
+    let config_path = manifest_dir.join("config").join("provider_config.json");
     if config_path.exists() {
         return Some(config_path);
     }
-    Some(manifest_dir.join("src").join("tura_llm_config.json"))
+    let legacy_config_path = manifest_dir.join("config").join("tura_llm_config.json");
+    if legacy_config_path.exists() {
+        return Some(legacy_config_path);
+    }
+    Some(manifest_dir.join("src").join("provider_config.json"))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -607,22 +662,12 @@ impl RouteConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
-    pub tura_general: RouteConfig,
-    pub tura_office: RouteConfig,
-    pub tura_creative: RouteConfig,
-    pub tura_translator: RouteConfig,
-    pub tura_validator: RouteConfig,
-    pub tura_validator_advanced: RouteConfig,
-    pub tura_classifier: RouteConfig,
-    pub tura_embedding: RouteConfig,
-    pub tura_coder: RouteConfig,
-    pub tura_coder_advanced: RouteConfig,
-    pub tura_planner: RouteConfig,
-    pub tura_planner_advanced: RouteConfig,
-    pub tura_roleplay: RouteConfig,
-    pub tura_professional: RouteConfig,
-    pub tura_math: RouteConfig,
-    pub tura_academic: RouteConfig,
+    pub provider_base_url: HashMap<String, String>,
+    pub routes: HashMap<String, RouteConfig>,
+    #[serde(default)]
+    pub model_catalog: ModelCatalog,
+    #[serde(default)]
+    pub provider_enums: ProviderEnumCatalog,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -630,9 +675,145 @@ pub struct RootConfig {
     pub provider_base_url: HashMap<String, String>,
     pub routes: HashMap<String, RawRouteConfig>,
     #[serde(default)]
+    pub model_catalog: ModelCatalog,
+    #[serde(default)]
+    pub provider_enums: ProviderEnumCatalog,
+    #[serde(default)]
     pub provider_auth: HashMap<String, ProviderAuthConfig>,
     #[serde(default)]
     pub provider_latency: ProviderLatencyConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModelCatalog {
+    #[serde(default)]
+    pub tiers: Vec<String>,
+    #[serde(default)]
+    pub providers: HashMap<String, ProviderCatalogConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProviderEnumCatalog {
+    #[serde(default)]
+    pub domains: Vec<String>,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub api_styles: Vec<String>,
+    #[serde(default)]
+    pub auth_methods: Vec<String>,
+    #[serde(default)]
+    pub statuses: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProviderCatalogConfig {
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(default)]
+    pub runtime_provider: String,
+    #[serde(default)]
+    pub api_style: String,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub token_env: Option<String>,
+    #[serde(default)]
+    pub env: Vec<String>,
+    #[serde(default)]
+    pub domains: Vec<String>,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub auth_methods: Vec<String>,
+    #[serde(default)]
+    pub api_docs: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub models: HashMap<String, Vec<CatalogModelConfig>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CatalogModelConfig {
+    Id(String),
+    Detailed(CatalogModelDetail),
+}
+
+impl CatalogModelConfig {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Id(id) => id,
+            Self::Detailed(detail) => &detail.id,
+        }
+    }
+
+    pub fn detail(&self) -> Option<&CatalogModelDetail> {
+        match self {
+            Self::Id(_) => None,
+            Self::Detailed(detail) => Some(detail),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CatalogModelDetail {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub family: String,
+    #[serde(default)]
+    pub release_date: String,
+    #[serde(default)]
+    pub attachment: bool,
+    #[serde(default)]
+    pub reasoning: bool,
+    #[serde(default)]
+    pub temperature: bool,
+    #[serde(default)]
+    pub tool_call: bool,
+    #[serde(default)]
+    pub limit: CatalogModelLimit,
+    #[serde(default)]
+    pub modalities: CatalogModelModalities,
+    #[serde(default)]
+    pub options: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct CatalogModelLimit {
+    pub context: u32,
+    pub input: u32,
+    pub output: u32,
+}
+
+impl Default for CatalogModelLimit {
+    fn default() -> Self {
+        Self {
+            context: 200_000,
+            input: 200_000,
+            output: 16_384,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CatalogModelModalities {
+    pub input: Vec<String>,
+    pub output: Vec<String>,
+}
+
+impl Default for CatalogModelModalities {
+    fn default() -> Self {
+        Self {
+            input: vec!["text".to_string()],
+            output: vec!["text".to_string()],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -807,7 +988,8 @@ pub struct RawProviderConfig {
 
 impl Settings {
     pub async fn default() -> Result<Arc<Self>, TuraError> {
-        let explicit_config = std::env::var_os("TURALLM_CONFIG").is_some();
+        let explicit_config = std::env::var_os("TURA_PROVIDER_CONFIG").is_some()
+            || std::env::var_os("TURALLM_CONFIG").is_some();
         if !explicit_config {
             if let Some(settings) = SETTINGS.get() {
                 return Ok(settings.clone());
@@ -829,7 +1011,53 @@ impl Settings {
         if provider == "openai" && model.starts_with("openai/") {
             return model["openai/".len()..].to_string();
         }
+        if provider == "codex" && model.starts_with("codex/") {
+            return model["codex/".len()..].to_string();
+        }
         model.to_string()
+    }
+
+    pub fn route_by_name(&self, name: &str) -> Option<&RouteConfig> {
+        self.routes.get(name)
+    }
+
+    pub fn routes(&self) -> impl Iterator<Item = &RouteConfig> {
+        self.routes.values()
+    }
+
+    pub fn provider_base_url(&self, provider: &str) -> Option<String> {
+        self.provider_base_url.get(provider).cloned().or_else(|| {
+            self.routes()
+                .flat_map(|route| route.providers.iter())
+                .find(|item| item.provider == provider)
+                .map(|item| item.base_url.clone())
+        })
+    }
+
+    pub fn configured_model_catalog(&self) -> HashMap<String, Vec<String>> {
+        let mut catalog = HashMap::<String, Vec<String>>::new();
+        for (provider, config) in &self.model_catalog.providers {
+            let models = catalog.entry(provider.clone()).or_default();
+            for model in config.models.values().flatten() {
+                let normalized = Self::normalize_model_name(provider, model.id());
+                if !models.iter().any(|existing| existing == &normalized) {
+                    models.push(normalized);
+                }
+            }
+        }
+        for route in self.routes() {
+            for provider in &route.providers {
+                let model = Self::normalize_model_name(&provider.provider, &provider.model);
+                let models = catalog.entry(provider.provider.clone()).or_default();
+                if !models.iter().any(|existing| existing == &model) {
+                    models.push(model);
+                }
+            }
+        }
+        for models in catalog.values_mut() {
+            models.sort();
+        }
+        catalog
     }
 
     pub fn make_provider(
@@ -1229,12 +1457,14 @@ mod tests {
             "OPENAI_API_KEY",
             "OPENAI_REFRESH_TOKEN",
             "OPENAI_ACCOUNT_ID",
+            "TURA_PROVIDER_CONFIG",
             "TURALLM_CONFIG",
         ]);
         std::env::remove_var("OPENAI_LOGIN");
         std::env::remove_var("OPENAI_API_KEY");
         std::env::remove_var("OPENAI_REFRESH_TOKEN");
         std::env::remove_var("OPENAI_ACCOUNT_ID");
+        std::env::remove_var("TURA_PROVIDER_CONFIG");
         std::env::remove_var("TURALLM_CONFIG");
 
         let codex_home = unique_temp_dir("codex-home");
@@ -1281,14 +1511,16 @@ mod tests {
             "CODEX_HOME",
             "OPENAI_LOGIN",
             "OPENAI_API_KEY",
+            "TURA_PROVIDER_CONFIG",
             "TURALLM_CONFIG",
         ]);
         std::env::remove_var("CODEX_HOME");
         std::env::remove_var("OPENAI_LOGIN");
         std::env::remove_var("OPENAI_API_KEY");
+        std::env::remove_var("TURA_PROVIDER_CONFIG");
 
         let dir = unique_temp_dir("provider-config");
-        let config = dir.join("tura_llm_config.json");
+        let config = dir.join("provider_config.json");
         std::fs::write(&config, r#"{"provider_auth":{"openai":{"login":"oauth"}}}"#)
             .expect("provider config");
         std::env::set_var("TURALLM_CONFIG", &config);

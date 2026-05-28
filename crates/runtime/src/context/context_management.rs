@@ -2481,7 +2481,7 @@ mod tests {
                 "role": "user",
                 "content": "temporary user text",
             })],
-            Some("tura_coder"),
+            Some("flagship_thinking"),
             Some("openai/gpt-test"),
             true,
         );
@@ -3616,15 +3616,15 @@ mod tests {
     #[test]
     fn runtime_context_messages_do_not_inject_reporting_prompt_from_evaluation_flag() {
         let session = session();
-        let enabled = messages_with_runtime_context(
+        let enabled =
+            messages_with_runtime_context(&session, &[], Some("fast"), Some("model"), false);
+        let disabled = messages_with_runtime_context(
             &session,
             &[],
-            Some("tura_general"),
+            Some("flagship_thinking"),
             Some("model"),
             false,
         );
-        let disabled =
-            messages_with_runtime_context(&session, &[], Some("tura_coder"), Some("model"), false);
 
         assert!(enabled.is_empty());
         assert!(disabled.is_empty());

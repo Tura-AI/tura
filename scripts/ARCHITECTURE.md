@@ -54,7 +54,7 @@ Install scripts should:
 - Run `cargo fetch`.
 - Build `gateway` binaries `tura` and `gateway`.
 - Build `tura_router`.
-- Check runtime, tools, provider, agents, and utils packages by Cargo package
+- Check runtime, tools, provider, and agents packages by Cargo package
   name.
 - Install Python fallback packages into `scripts/packages/python`, never the
   repository root or a tracked package directory.

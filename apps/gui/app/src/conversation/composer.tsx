@@ -9,7 +9,6 @@ import {
 } from "solid-js";
 import ArrowDown from "lucide-solid/icons/arrow-down";
 import ArrowUp from "lucide-solid/icons/arrow-up";
-import FileText from "lucide-solid/icons/file-text";
 import FolderOpen from "lucide-solid/icons/folder-open";
 import Plus from "lucide-solid/icons/plus";
 import SquareTerminal from "lucide-solid/icons/square-terminal";
@@ -165,6 +164,98 @@ export function Composer(props: {
     props.onText(editorText());
   }
 
+  function renderEditorFromText(text: string) {
+    if (!editor) {
+      return;
+    }
+    editor.replaceChildren(
+      ...composerPreviewSegments(text).map((segment) => {
+        if (segment.type === "text") {
+          return document.createTextNode(segment.value);
+        }
+        const attachment = attachmentsById().get(segment.value);
+        if (!attachment) {
+          return document.createTextNode(
+            composerToken(segment.type, segment.value),
+          );
+        }
+        return createAttachmentTokenElement(attachment);
+      }),
+    );
+  }
+
+  function createAttachmentTokenElement(
+    attachment: ComposerImage,
+  ): HTMLElement {
+    const kind = attachmentKind(attachment);
+    const wrapper = document.createElement("span");
+    wrapper.className = classNames(
+      "composer-attachment-token",
+      kind === "image" && "composer-image-token",
+      kind === "file" && "composer-file-token",
+    );
+    wrapper.contentEditable = "false";
+    wrapper.dataset.attachmentId = attachment.id;
+    wrapper.dataset.attachmentKind = kind;
+    if (kind === "image") {
+      wrapper.dataset.imageId = attachment.id;
+    }
+    wrapper.title = composerAttachmentToken(attachment);
+    wrapper.addEventListener("contextmenu", (event) =>
+      openAttachmentMenu(event, attachment),
+    );
+    wrapper.addEventListener("pointerdown", (event) =>
+      beginAttachmentPress(event, attachment),
+    );
+    wrapper.addEventListener("pointerup", cancelAttachmentPress);
+    wrapper.addEventListener("pointerleave", cancelAttachmentPress);
+
+    const viewButton = document.createElement("button");
+    viewButton.type = "button";
+    viewButton.addEventListener("click", () => viewAttachment(attachment));
+    if (kind === "image") {
+      const image = document.createElement("img");
+      image.src = attachment.dataUrl;
+      image.alt = "";
+      viewButton.append(image);
+    } else {
+      const icon = document.createElement("span");
+      icon.className = "composer-file-glyph";
+      icon.textContent = "file";
+      viewButton.append(icon);
+    }
+    const label = document.createElement("span");
+    label.textContent = attachment.name;
+    viewButton.append(label);
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.title = t("remove");
+    removeButton.textContent = "×";
+    removeButton.addEventListener("click", () =>
+      removeAttachment(attachment.id),
+    );
+
+    wrapper.append(viewButton, removeButton);
+    return wrapper;
+  }
+
+  createEffect(() => {
+    const text = props.text;
+    props.images;
+    if (!editor) {
+      return;
+    }
+    if (editorText() === text) {
+      return;
+    }
+    const active = document.activeElement === editor;
+    renderEditorFromText(text);
+    if (active) {
+      placeCaretAtEnd(editor);
+    }
+  });
+
   function copyEditorText(event: ClipboardEvent) {
     if (!editor || !document.getSelection()?.containsNode(editor, true)) {
       return;
@@ -278,66 +369,7 @@ export function Composer(props: {
             document.execCommand("insertText", false, text);
             syncEditor();
           }}
-        >
-          <For each={composerPreviewSegments(props.text)}>
-            {(segment) => (
-              <Show when={segment.type !== "text"} fallback={segment.value}>
-                {(() => {
-                  const attachment = attachmentsById().get(segment.value);
-                  const kind = attachment
-                    ? attachmentKind(attachment)
-                    : segment.type;
-                  return attachment ? (
-                    <span
-                      class={classNames(
-                        "composer-attachment-token",
-                        kind === "image" && "composer-image-token",
-                        kind === "file" && "composer-file-token",
-                      )}
-                      contentEditable={false}
-                      data-attachment-id={attachment.id}
-                      data-attachment-kind={kind}
-                      data-image-id={
-                        kind === "image" ? attachment.id : undefined
-                      }
-                      title={composerAttachmentToken(attachment)}
-                      onContextMenu={(event) =>
-                        openAttachmentMenu(event, attachment)
-                      }
-                      onPointerDown={(event) =>
-                        beginAttachmentPress(event, attachment)
-                      }
-                      onPointerUp={cancelAttachmentPress}
-                      onPointerLeave={cancelAttachmentPress}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => viewAttachment(attachment)}
-                      >
-                        <Show
-                          when={kind === "image"}
-                          fallback={<FileText size={14} strokeWidth={1.7} />}
-                        >
-                          <img src={attachment.dataUrl} alt="" />
-                        </Show>
-                        <span>{attachment.name}</span>
-                      </button>
-                      <button
-                        type="button"
-                        title={t("remove")}
-                        onClick={() => removeAttachment(attachment.id)}
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ) : (
-                    <span>{composerToken(segment.type, segment.value)}</span>
-                  );
-                })()}
-              </Show>
-            )}
-          </For>
-        </div>
+        />
         <textarea
           ref={textarea}
           class="composer-raw-textarea"
@@ -539,6 +571,18 @@ export function readImageDataUrl(file: File): Promise<string> {
 
 export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+export function placeCaretAtEnd(element: HTMLElement) {
+  const selection = window.getSelection();
+  if (!selection) {
+    return;
+  }
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
 }
 
 export function composerInputHeight(value: string): string {

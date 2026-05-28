@@ -324,25 +324,7 @@ pub fn route_by_name<'a>(
     settings: &'a tura_llm_rust::Settings,
     provider_name: &str,
 ) -> Option<&'a tura_llm_rust::RouteConfig> {
-    match provider_name {
-        "tura_general" => Some(&settings.tura_general),
-        "tura_office" => Some(&settings.tura_office),
-        "tura_creative" => Some(&settings.tura_creative),
-        "tura_translator" => Some(&settings.tura_translator),
-        "tura_validator" => Some(&settings.tura_validator),
-        "tura_validator_advanced" => Some(&settings.tura_validator_advanced),
-        "tura_classifier" => Some(&settings.tura_classifier),
-        "tura_embedding" => Some(&settings.tura_embedding),
-        "tura_coder" => Some(&settings.tura_coder),
-        "tura_coder_advanced" => Some(&settings.tura_coder_advanced),
-        "tura_planner" => Some(&settings.tura_planner),
-        "tura_planner_advanced" => Some(&settings.tura_planner_advanced),
-        "tura_roleplay" => Some(&settings.tura_roleplay),
-        "tura_professional" => Some(&settings.tura_professional),
-        "tura_math" => Some(&settings.tura_math),
-        "tura_academic" => Some(&settings.tura_academic),
-        _ => None,
-    }
+    settings.route_by_name(provider_name)
 }
 
 fn session_model_override_route(
@@ -374,45 +356,7 @@ fn session_model_override_route(
 }
 
 fn provider_base_url(settings: &tura_llm_rust::Settings, provider: &str) -> Option<String> {
-    for route in [
-        &settings.tura_general,
-        &settings.tura_office,
-        &settings.tura_creative,
-        &settings.tura_translator,
-        &settings.tura_validator,
-        &settings.tura_validator_advanced,
-        &settings.tura_classifier,
-        &settings.tura_embedding,
-        &settings.tura_coder,
-        &settings.tura_coder_advanced,
-        &settings.tura_planner,
-        &settings.tura_planner_advanced,
-        &settings.tura_roleplay,
-        &settings.tura_professional,
-        &settings.tura_math,
-        &settings.tura_academic,
-    ] {
-        if let Some(config) = route
-            .providers
-            .iter()
-            .find(|item| item.provider == provider)
-        {
-            return Some(config.base_url.clone());
-        }
-    }
-    match provider {
-        "antigravity" => Some("https://antigravity.google.com/v1".to_string()),
-        "anthropic" => Some("https://api.anthropic.com/v1".to_string()),
-        "minimax" => Some("https://api.minimax.io/v1".to_string()),
-        "openrouter" => Some("https://openrouter.ai/api/v1".to_string()),
-        "openai" => Some("https://api.openai.com/v1".to_string()),
-        "qwen" => Some("https://dashscope-intl.aliyuncs.com/compatible-mode/v1".to_string()),
-        "deepseek" => Some("https://api.deepseek.com/v1".to_string()),
-        "google" => Some("https://generativelanguage.googleapis.com/v1beta".to_string()),
-        "moonshotai" => Some("https://api.moonshot.ai/v1".to_string()),
-        "xai" => Some("https://api.x.ai/v1".to_string()),
-        _ => None,
-    }
+    settings.provider_base_url(provider)
 }
 
 async fn call_runtime_non_streaming(
@@ -1436,7 +1380,7 @@ mod tests {
             providers: vec![tura_llm_rust::ProviderConfig {
                 provider: "openai".to_string(),
                 base_url: "https://api.openai.com/v1".to_string(),
-                model: "gpt-5.3-codex-spark".to_string(),
+                model: "gpt-5.1-codex-mini".to_string(),
                 temperature: 0.2,
             }],
         };
@@ -1449,21 +1393,21 @@ mod tests {
 
         with_env(DISABLE_CACHE_ENV, None, || {
             assert_eq!(
-                prompt_cache_key(&route, "tura_coder", &"sess-a".to_string(), &tools_a),
-                prompt_cache_key(&route, "tura_coder", &"sess-a".to_string(), &tools_b)
+                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &tools_a),
+                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &tools_b)
             );
             assert_eq!(
-                prompt_cache_key(&route, "tura_coder", &"sess-a".to_string(), &tools_a),
-                prompt_cache_key(&route, "tura_coder", &"sess-a".to_string(), &tools_b)
+                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &tools_a),
+                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &tools_b)
             );
             assert!(
-                prompt_cache_key(&route, "tura_coder", &"sess-a".to_string(), &tools_a)
+                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &tools_a)
                     .expect("prompt cache key should be generated")
                     .starts_with("turaosv2:tura-coder:sess-a:")
             );
             assert_ne!(
-                prompt_cache_key(&route, "tura_coder", &"sess-a".to_string(), &tools_a),
-                prompt_cache_key(&route, "tura_coder", &"sess-b".to_string(), &tools_a)
+                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &tools_a),
+                prompt_cache_key(&route, "flagship_thinking", &"sess-b".to_string(), &tools_a)
             );
         });
     }
@@ -1481,7 +1425,7 @@ mod tests {
         };
         with_env(DISABLE_CACHE_ENV, None, || {
             assert_eq!(
-                prompt_cache_key(&route, "tura_coder", &"sess-a".to_string(), &[]),
+                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &[]),
                 None
             );
         });
@@ -1494,13 +1438,13 @@ mod tests {
             providers: vec![tura_llm_rust::ProviderConfig {
                 provider: "openai".to_string(),
                 base_url: "https://api.openai.com/v1".to_string(),
-                model: "gpt-5.3-codex-spark".to_string(),
+                model: "gpt-5.1-codex-mini".to_string(),
                 temperature: 0.2,
             }],
         };
         with_env(DISABLE_CACHE_ENV, Some("true"), || {
             assert_eq!(
-                prompt_cache_key(&route, "tura_coder", &"sess-a".to_string(), &[]),
+                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &[]),
                 None
             );
         });
@@ -1513,7 +1457,7 @@ mod tests {
             providers: vec![tura_llm_rust::ProviderConfig {
                 provider: "openai".to_string(),
                 base_url: "https://api.openai.com/v1".to_string(),
-                model: "gpt-5.3-codex-spark".to_string(),
+                model: "gpt-5.1-codex-mini".to_string(),
                 temperature: 0.2,
             }],
         };

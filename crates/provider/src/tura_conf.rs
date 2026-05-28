@@ -117,3 +117,32 @@ impl Default for TuraConfig {
         Self::new(".env")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::TuraConfig;
+
+    #[test]
+    fn get_reads_uppercase_environment_keys() {
+        std::env::set_var("TURA_CONF_TEST_KEY", "configured");
+        let conf = TuraConfig::new(".env.missing-for-test");
+
+        assert_eq!(
+            conf.get("tura_conf_test_key").as_deref(),
+            Some("configured")
+        );
+
+        std::env::remove_var("TURA_CONF_TEST_KEY");
+    }
+
+    #[test]
+    fn require_reports_checked_env_path_when_missing() {
+        let conf = TuraConfig::new(".env.missing-for-test");
+        let err = conf
+            .require("definitely_missing_tura_key")
+            .expect_err("missing key should error");
+
+        assert!(err.to_string().contains("DEFINITELY_MISSING_TURA_KEY"));
+        assert!(err.to_string().contains(".env.missing-for-test"));
+    }
+}

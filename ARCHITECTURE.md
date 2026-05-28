@@ -24,7 +24,6 @@ relative to the project root.
     router/
     runtime/
     tools/
-    utils/
 
   db/
 
@@ -62,6 +61,42 @@ Do not derive package names from directory names. Always check the local
 commands.
 
 ## Architectural Boundaries
+
+### `apps/gui`
+
+The GUI is the browser/desktop client. It talks to backend behavior only through
+`apps/gui/sdk/gateway`; it must not call runtime, provider, router, tools, or
+shell functionality directly. The current GUI app is organized around one app
+shell, page folders, feature modules, hooks, state, and style parts:
+
+```text
+apps/gui/app/src/
+  app/
+  components/
+  conversation/
+  features/
+  hooks/
+  mock/
+  pages/
+    files/
+    plan/
+    settings/
+  state/
+  styles/
+    parts/
+  utils/
+```
+
+Settings are intentionally limited to appearance, providers, and models. Other
+settings categories must not remain as hidden frontend pages or sidebar entries.
+All settings text goes through `src/i18n.ts`. Model settings are driven by the
+gateway model config API and display tier options as provider/model pairs.
+
+Frontend refactors must keep `bun --cwd apps/gui/app typecheck` and
+`bun --cwd apps/gui/app unused:check` passing before merging. New page-level
+code belongs in a page folder; shared state, formatting, and gateway behavior
+belong in their existing shared folders instead of being embedded into a single
+large component.
 
 ### `crates/gateway`
 
@@ -557,8 +592,7 @@ members = [
   "crates/provider",
   "crates/router",
   "crates/runtime",
-  "crates/tools",
-  "crates/utils"
+  "crates/tools"
 ]
 ```
 
@@ -637,6 +671,4 @@ Direct package checks should use the same package names as the build targets.
   forwarding.
 - `crates/memory/ARCHITECTURE.md`: memory and recall behavior as a crate
   boundary.
-- `crates/utils/ARCHITECTURE.md`: shared helper ownership and generic utility
-  boundaries.
 - `scripts/ARCHITECTURE.md`: install/start/package/persistent-script rules.

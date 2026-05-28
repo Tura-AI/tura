@@ -9,6 +9,25 @@
   animation: assistant-arrival-nudge 420ms ease-out both;
 }
 
+.message.plan-run-pending .message-user-shell {
+  animation: plan-run-pending-flash 5.6s ease-in-out infinite;
+}
+
+.message.plan-run-error .message-user-shell {
+  color: var(--danger);
+}
+
+@keyframes plan-run-pending-flash {
+  0%,
+  100% {
+    opacity: 0.95;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
 @keyframes assistant-thinking-drift {
   0%,
   92%,
@@ -47,8 +66,9 @@
 }
 
 .plan-schedule-dialog {
-  gap: var(--space-5);
-  width: min(444px, calc(100vw - 32px));
+  gap: var(--space-4);
+  width: min(420px, calc(100vw - 32px));
+  border-radius: var(--radius);
 }
 
 .plan-schedule-dialog header {
@@ -77,18 +97,98 @@
   background: var(--wash);
 }
 
+.plan-schedule-picker {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.plan-schedule-picker > span {
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+
+.plan-schedule-datetime {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(112px, 0.54fr);
+  gap: var(--space-2);
+}
+
+.plan-schedule-datetime label {
+  position: relative;
+  display: block;
+  align-items: center;
+  min-height: 38px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--muted);
+}
+
+.plan-schedule-datetime label > svg {
+  position: absolute;
+  top: 50%;
+  right: var(--space-3);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.plan-schedule-datetime label:focus-within {
+  border-color: var(--line-strong);
+}
+
+.plan-schedule-datetime input {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 42px 0 var(--space-3);
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--font-ui);
+}
+
+.plan-schedule-datetime input::-webkit-calendar-picker-indicator {
+  position: absolute;
+  right: 0;
+  width: 38px;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.plan-schedule-presets {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-1);
+}
+
+.plan-schedule-presets button {
+  min-height: 30px;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--font-small);
+}
+
+.plan-schedule-presets button:hover,
+.plan-schedule-presets button:focus-visible {
+  background: var(--wash);
+}
+
 .plan-schedule-interval-grid {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: var(--space-2);
   min-width: 0;
-  overflow: hidden;
 }
 
 .field-row.plan-schedule-interval {
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-  gap: var(--space-2);
+  grid-template-columns: 120px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-4);
 }
 
 .plan-schedule-interval-grid label {
@@ -173,12 +273,17 @@
   position: relative;
   z-index: 100;
   flex: 0 0 auto;
-  min-width: 0;
-  max-width: 72vw;
+  min-width: var(--inspector-min-width, 320px);
+  max-width: min(var(--inspector-max-width, 680px), calc(100vw - 96px));
   border-left: 1px solid var(--line);
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: 0;
   background: var(--paper);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .plan-panel-topbar {
@@ -199,7 +304,7 @@
 
 .plan-panel-title span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-small);
   letter-spacing: 0;
   text-transform: uppercase;
 }
@@ -207,7 +312,7 @@
 .plan-panel-title strong {
   overflow: hidden;
   color: var(--ink);
-  font-size: 14px;
+  font-size: var(--font-ui);
   font-weight: 520;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -253,18 +358,9 @@
 
 .file-tree-loading {
   justify-self: end;
-  width: 10px;
-  height: 10px;
-  border: 1px solid var(--line);
-  border-top-color: var(--ink);
+  width: 42px;
+  height: 8px;
   border-radius: 999px;
-  animation: spin 800ms linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .plan-gantt,
@@ -296,6 +392,14 @@
 }
 
 @media (max-width: 560px) {
+  .plan-schedule-datetime {
+    grid-template-columns: 1fr;
+  }
+
+  .plan-schedule-presets {
+    grid-template-columns: 1fr;
+  }
+
   .plan-timeline-grid {
     --plan-left-width: 76px;
     --plan-scale-height: 78px;
@@ -391,15 +495,15 @@
   }
 
   .plan-timeline-scale strong {
-    font-size: 11px;
+    font-size: var(--font-small);
   }
 
   .plan-timeline-scale small {
-    font-size: 10px;
+    font-size: var(--font-caption);
     line-height: 1.1;
   }
 
-  .plan-timeline-row > span {
+  .plan-timeline-session {
     padding: 0 var(--space-1);
   }
 }
@@ -410,46 +514,73 @@
   border-bottom: 1px solid var(--line);
 }
 
-.plan-timeline-row > span {
+.plan-timeline-session {
   position: sticky;
   left: 0;
   z-index: 1;
   display: grid;
   align-content: center;
   gap: 2px;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
   padding: 0 var(--space-4);
-  color: var(--muted);
-  font-size: 12px;
+  appearance: none;
+  border: 0;
   background: var(--paper);
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--font-small);
+  text-align: left;
+  cursor: pointer;
+}
+
+.plan-timeline-session:hover,
+.plan-timeline-session:focus-visible,
+.plan-timeline-session.selected {
+  background: color-mix(in srgb, var(--wash) 42%, var(--paper));
+  box-shadow: inset 2px 0 0 var(--line-strong);
+  color: var(--ink);
+}
+
+.plan-timeline-session:hover strong,
+.plan-timeline-session:focus-visible strong,
+.plan-timeline-session.selected strong {
+  color: var(--ink);
+}
+
+.plan-timeline-session.selected {
+  background: color-mix(in srgb, var(--wash) 66%, var(--paper));
+  box-shadow: inset 2px 0 0 var(--line-strong);
 }
 
 @container (max-width: 520px) {
-  .plan-timeline-row > span {
+  .plan-timeline-session {
     padding: 0 var(--space-2);
   }
 
-  .plan-timeline-row > span strong,
-  .plan-timeline-row > span small {
+  .plan-timeline-session strong,
+  .plan-timeline-session small {
     max-width: 64px;
   }
 }
 
-.plan-timeline-row > span strong,
-.plan-timeline-row > span small {
+.plan-timeline-session strong,
+.plan-timeline-session small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.plan-timeline-row > span strong {
+.plan-timeline-session strong {
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--font-small);
   font-weight: 520;
 }
 
-.plan-timeline-row > span small {
+.plan-timeline-session small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-small);
 }
 
 .plan-timeline-track {
@@ -473,17 +604,17 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-small);
   background: var(--paper);
-  box-shadow: 0 2px 6px rgb(0 0 0 / 8%);
+  box-shadow: 0 2px 6px rgb(28 28 24 / 8%);
   color: var(--ink);
-  cursor: default;
+  cursor: pointer;
   touch-action: none;
-  font-size: 11px;
+  font-size: var(--font-small);
   text-align: left;
 }
 
 .plan-timeline-bar {
   position: absolute;
-  z-index: 3;
+  z-index: var(--plan-ticket-z, 3);
   top: 50%;
   width: min(
     var(--plan-bar-width, 156px),
@@ -492,29 +623,28 @@
   transform: translateY(-50%);
 }
 
-.plan-timeline-stack-card {
-  position: absolute;
-  top: calc(50% + var(--plan-stack-offset, 4px));
-  z-index: 2;
-  width: min(
-    var(--plan-bar-width, 156px),
-    calc(var(--plan-day-width) * 3 - 8px)
-  );
-  height: 26px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-small);
-  background: var(--paper);
-  box-shadow: 0 2px 6px rgb(0 0 0 / 8%);
-  transform: translateY(-50%) translateX(var(--plan-stack-offset, 4px));
-  pointer-events: none;
-}
-
 .plan-drag-ghost.plan-timeline-bar {
-  transform: none;
+  transform: translateY(-50%);
 }
 
 .plan-calendar-event {
   grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.plan-timeline-bar:hover,
+.plan-timeline-bar:focus-visible,
+.plan-calendar-event:hover,
+.plan-calendar-event:focus-visible {
+  border-color: var(--line-strong);
+  background: var(--wash);
+  box-shadow: 0 5px 14px rgb(28 28 24 / 10%);
+}
+
+.plan-timeline-bar.selected,
+.plan-calendar-event.selected {
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--wash) 72%, var(--paper));
+  box-shadow: 0 6px 16px rgb(28 28 24 / 12%);
 }
 
 .plan-source-dragging {
@@ -528,7 +658,7 @@
 }
 
 .plan-timeline-bar strong {
-  font-size: 11px;
+  font-size: var(--font-small);
   font-weight: 520;
 }
 
@@ -584,7 +714,7 @@
 
 .plan-calendar-title strong {
   min-width: 104px;
-  font-size: 14px;
+  font-size: var(--font-ui);
   font-weight: 540;
   text-align: center;
 }
@@ -608,7 +738,7 @@
   border-radius: var(--radius-small);
   background: transparent;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 
 .plan-calendar-view-toggle button:hover,
@@ -622,6 +752,7 @@
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   min-width: 0;
+  scrollbar-gutter: stable;
 }
 
 .plan-calendar-weekdays {
@@ -640,7 +771,7 @@
 .plan-calendar-weekdays span {
   padding: var(--space-2);
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-small);
   text-align: center;
 }
 
@@ -664,12 +795,22 @@
   background: color-mix(in srgb, var(--wash) 36%, transparent);
 }
 
+.plan-calendar-cell.past,
+.plan-calendar-hour-cell.past {
+  background: color-mix(in srgb, var(--wash) 26%, transparent);
+}
+
+.plan-calendar-cell.past:not(.today) header,
+.plan-calendar-hour-cell.past {
+  color: color-mix(in srgb, var(--muted) 58%, var(--paper));
+}
+
 .plan-calendar-cell header {
   display: flex;
   align-items: center;
   min-height: 22px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 
 .plan-calendar-cell header span {
@@ -681,8 +822,8 @@
 
 .plan-calendar-cell.today header span {
   border-radius: 999px;
-  background: var(--ink);
-  color: var(--ink-invert);
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .plan-calendar-event span,
@@ -699,7 +840,7 @@
 .plan-drag-ghost {
   position: fixed;
   z-index: 60;
-  box-shadow: 0 10px 28px rgb(0 0 0 / 12%);
+  box-shadow: 0 10px 28px rgb(28 28 24 / 12%);
   pointer-events: none;
   opacity: 0.96;
 }
@@ -732,6 +873,7 @@
       minmax(118px, 1fr)
     );
   min-width: calc(64px + var(--calendar-days, 7) * 118px);
+  scrollbar-gutter: stable;
 }
 
 .plan-calendar-week.day-mode .plan-calendar-week-head,
@@ -758,14 +900,13 @@
   place-items: center;
   gap: 2px;
   border: 0;
-  border-left: 1px solid var(--line);
   background: transparent;
   color: var(--ink);
 }
 
 .plan-calendar-week-day small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-small);
 }
 
 .plan-calendar-week-day strong {
@@ -774,17 +915,25 @@
   width: 24px;
   height: 24px;
   border-radius: 999px;
-  font-size: 13px;
+  font-size: var(--font-ui);
   font-weight: 560;
 }
 
 .plan-calendar-week-day.today strong {
-  background: var(--ink);
-  color: var(--ink-invert);
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .plan-calendar-week-day.selected {
   background: var(--wash);
+}
+
+.plan-calendar-week-day.past:not(.today) {
+  color: color-mix(in srgb, var(--muted) 58%, var(--paper));
+}
+
+.plan-calendar-week-day.past:not(.today) small {
+  color: color-mix(in srgb, var(--muted) 58%, var(--paper));
 }
 
 .plan-calendar-hour-label {
@@ -796,7 +945,7 @@
   border-right: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--font-small);
 }
 
 .plan-calendar-hour-cell {
@@ -813,7 +962,7 @@
   display: -webkit-box;
   overflow: hidden;
   color: var(--ink);
-  font-size: 15px;
+  font-size: var(--font-body);
   font-weight: 520;
   line-height: 1.45;
   -webkit-line-clamp: 2;
@@ -867,11 +1016,18 @@
   padding: 18px var(--space-4);
 }
 
+.file-preview-loading-placeholder {
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+  padding: var(--space-4);
+}
+
 .file-canvas pre,
 .binary-note {
   color: var(--ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px;
+  font-family: var(--code-font-family);
+  font-size: var(--code-font-size);
   line-height: 1.65;
 }
 

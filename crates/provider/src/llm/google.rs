@@ -1,12 +1,11 @@
 use serde_json::{json, Value};
 
-use crate::llm::_utils::{deep_merge_json, send_provider_request_first_response};
-use crate::tura_llm::{
-    default_client, estimate_context_utilization, CallMetrics, CallOptions, CostDetails,
-    ProviderResponse, TuraError, UsageDetails,
-};
+use crate::metrics::extract_google_metrics;
+use crate::streaming::send_provider_request_first_response;
+use crate::tura_llm::{default_client, CallOptions, ProviderResponse, TuraError};
+use crate::utils::deep_merge_json;
 
-pub async fn google_embed(
+pub async fn embed(
     base_url: &str,
     model: &str,
     api_key: &str,
@@ -135,43 +134,7 @@ pub async fn call(
         .pointer("/candidates/0/content")
         .cloned()
         .unwrap_or_else(|| data.clone());
-    let mut metrics = CallMetrics {
-        usage: UsageDetails {
-            input_tokens: pointer_u64(&data, "/usageMetadata/promptTokenCount"),
-            output_tokens: pointer_u64(&data, "/usageMetadata/candidatesTokenCount"),
-            total_tokens: pointer_u64(&data, "/usageMetadata/totalTokenCount"),
-            cached_input_tokens: pointer_u64(&data, "/usageMetadata/cachedContentTokenCount"),
-            context_window: options.context_window,
-            ..Default::default()
-        },
-        cost: CostDetails {
-            total_cost: None,
-            currency: Some("USD".into()),
-            ..Default::default()
-        },
-        cache_hit: pointer_u64(&data, "/usageMetadata/cachedContentTokenCount").unwrap_or(0) > 0,
-        cache_triggered_at_input_tokens: pointer_u64(
-            &data,
-            "/usageMetadata/cachedContentTokenCount",
-        ),
-        tool_call_count: data
-            .pointer("/candidates/0/content/parts")
-            .and_then(Value::as_array)
-            .map(|parts| {
-                parts
-                    .iter()
-                    .filter(|p| p.get("functionCall").is_some())
-                    .count()
-            })
-            .unwrap_or(0),
-        finish_reason: data
-            .pointer("/candidates/0/finishReason")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        provider_request_id: req_id,
-        raw_usage: data.get("usageMetadata").cloned(),
-    };
-    estimate_context_utilization(&mut metrics);
+    let metrics = extract_google_metrics(&data, options.context_window, req_id);
 
     Ok(ProviderResponse {
         content,
@@ -289,8 +252,88 @@ fn parse_json_string_value(value: Value) -> Value {
     }
 }
 
-fn pointer_u64(value: &Value, ptr: &str) -> Option<u64> {
-    value
-        .pointer(ptr)
-        .and_then(|v| v.as_u64().or_else(|| v.as_i64().map(|i| i.max(0) as u64)))
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{build_contents, parse_json_string_value, sanitize_google_schema};
+
+    #[test]
+    fn google_schema_sanitization_drops_unsupported_additional_properties() {
+        let mut schema = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "nested": {
+                    "type": "object",
+                    "additionalProperties": false
+                }
+            }
+        });
+
+        sanitize_google_schema(&mut schema);
+
+        assert!(schema.get("additionalProperties").is_none());
+        assert!(schema["properties"]["nested"]
+            .get("additionalProperties")
+            .is_none());
+    }
+
+    #[test]
+    fn google_contents_map_roles_and_text_parts() {
+        let contents = build_contents(&[
+            json!({"role": "system", "content": "rules"}),
+            json!({"role": "assistant", "content": "ok"}),
+            json!({"role": "user", "content": [{"text": "hi"}]}),
+        ]);
+
+        assert_eq!(contents[0]["role"], "user");
+        assert_eq!(contents[0]["parts"][0]["text"], "rules");
+        assert_eq!(contents[1]["role"], "model");
+        assert_eq!(contents[2]["parts"][0]["text"], "hi");
+    }
+
+    #[test]
+    fn google_contents_map_function_call_and_output() {
+        let contents = build_contents(&[
+            json!({
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "echo",
+                "arguments": "{\"answer\":\"pong\"}",
+                "provider_metadata": {"thoughtSignature": "sig"}
+            }),
+            json!({
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": "{\"ok\":true}"
+            }),
+        ]);
+
+        assert_eq!(contents[0]["role"], "model");
+        assert_eq!(contents[0]["parts"][0]["functionCall"]["name"], "echo");
+        assert_eq!(
+            contents[0]["parts"][0]["functionCall"]["args"]["answer"],
+            "pong"
+        );
+        assert_eq!(contents[0]["parts"][0]["thoughtSignature"], "sig");
+        assert_eq!(contents[1]["role"], "function");
+        assert_eq!(contents[1]["parts"][0]["functionResponse"]["name"], "echo");
+        assert_eq!(
+            contents[1]["parts"][0]["functionResponse"]["response"]["ok"],
+            true
+        );
+    }
+
+    #[test]
+    fn parse_json_string_value_wraps_plain_text_outputs() {
+        assert_eq!(
+            parse_json_string_value(json!("not-json")),
+            json!({"output": "not-json"})
+        );
+        assert_eq!(
+            parse_json_string_value(json!("{\"ok\":true}")),
+            json!({"ok": true})
+        );
+    }
 }

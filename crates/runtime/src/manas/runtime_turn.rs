@@ -159,8 +159,16 @@ fn tool_choice_for_turn(
     allowed_tool_names: &std::collections::HashSet<String>,
     is_final_turn: bool,
 ) -> Option<serde_json::Value> {
-    let _ = (allowed_tool_names, is_final_turn);
-    None
+    if is_final_turn || !allowed_tool_names.contains(COMMAND_RUN_TOOL) {
+        return None;
+    }
+
+    Some(serde_json::json!({
+        "type": "function",
+        "function": {
+            "name": COMMAND_RUN_TOOL,
+        }
+    }))
 }
 
 fn move_command_run_to_end(tools: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
@@ -180,7 +188,20 @@ mod tests {
         let names =
             std::collections::HashSet::from([COMMAND_RUN_TOOL.to_string(), "grep".to_string()]);
 
-        assert!(tool_choice_for_turn(&names, false).is_none());
+        assert_eq!(
+            tool_choice_for_turn(&names, false),
+            Some(serde_json::json!({
+                "type": "function",
+                "function": { "name": COMMAND_RUN_TOOL }
+            }))
+        );
+    }
+
+    #[test]
+    fn final_turn_leaves_tool_choice_auto() {
+        let names = std::collections::HashSet::from([COMMAND_RUN_TOOL.to_string()]);
+
+        assert!(tool_choice_for_turn(&names, true).is_none());
     }
 
     #[test]

@@ -44,6 +44,57 @@ describe("GatewayClient", () => {
     expect(observedUrl).toContain("path=src");
     expect(observedHeader).toBe("C%3A%5Crepo");
   });
+
+  test("updates model config with a tier provider model selection", async () => {
+    let observedBody = "";
+    const client = new GatewayClient({
+      baseUrl: "http://gateway.test",
+      fetch: async (_input, init) => {
+        observedBody = String(init?.body ?? "");
+        return jsonResponse({ path: "config/provider_config.json", tiers: [] });
+      },
+    });
+
+    await client.putModelConfig({
+      tier: "fast",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+    });
+
+    expect(JSON.parse(observedBody)).toEqual({
+      tier: "fast",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+    });
+  });
+
+  test("aborts unanswered requests after the configured timeout", async () => {
+    let aborted = false;
+    const client = new GatewayClient({
+      baseUrl: "http://gateway.test",
+      timeoutMs: 5,
+      fetch: ((_input, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => {
+              aborted = true;
+              reject(
+                init.signal?.reason ??
+                  new DOMException(
+                    "Gateway request timed out.",
+                    "TimeoutError",
+                  ),
+              );
+            },
+            { once: true },
+          );
+        })) as typeof fetch,
+    });
+
+    await expect(client.health()).rejects.toThrow("Gateway request timed out.");
+    expect(aborted).toBe(true);
+  });
 });
 
 function mockFetch(payload: unknown): typeof fetch {

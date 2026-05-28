@@ -7,8 +7,8 @@ async fn live_openai_model_smoke() {
         return;
     }
 
-    let model = std::env::var("TURA_LIVE_MODEL")
-        .unwrap_or_else(|_| "openai/gpt-5.3-codex-spark".to_string());
+    let model =
+        std::env::var("TURA_LIVE_MODEL").unwrap_or_else(|_| "codex/gpt-5.1-codex-mini".to_string());
     let (provider, model_name) = model
         .split_once('/')
         .unwrap_or_else(|| panic!("TURA_LIVE_MODEL must be provider/model, got {model}"));

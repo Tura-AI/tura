@@ -40,6 +40,8 @@ import type {
   TaskManagement,
   Skill,
   TaskRun,
+  TuraConfigResponse,
+  TuraConfigUpdate,
   TodoItem,
   UsageByAgent,
   UsagePoint,
@@ -93,6 +95,29 @@ export class GatewayClient {
 
   patchConfig(payload: Partial<GatewayConfig>): Promise<GatewayConfig> {
     return this.patch("/config", payload);
+  }
+
+  modelConfig(): Promise<TuraConfigResponse> {
+    return this.get("/model_config");
+  }
+
+  putModelConfig(payload: TuraConfigUpdate): Promise<TuraConfigResponse> {
+    return this.request<TuraConfigResponse>("/model_config", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  guiConfig(): Promise<string> {
+    return this.text("/gui_config");
+  }
+
+  putGuiConfig(content: string): Promise<string> {
+    return this.text("/gui_config", {
+      method: "PUT",
+      body: content,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
   }
 
   productConfig(): Promise<ProductConfig> {
@@ -372,13 +397,6 @@ export class GatewayClient {
     );
   }
 
-  validateProviderModel(payload: {
-    providerID: string;
-    modelID: string;
-  }): Promise<{ ok: boolean; message: string; output?: unknown }> {
-    return this.post("/provider/model/validate", payload);
-  }
-
   agents(): Promise<Agent[]> {
     return this.get("/agent");
   }
@@ -504,6 +522,54 @@ export class GatewayClient {
     scoped = false,
   ): Promise<T> {
     return this.request<T>(path, { method: "DELETE" }, query, scoped);
+  }
+
+  private async text(
+    path: string,
+    init: GatewayRequestInit = {},
+    query?: Record<string, unknown>,
+    scoped = false,
+  ): Promise<string> {
+    const url = new URL(path, this.baseUrl);
+    for (const [key, value] of Object.entries(query ?? {})) {
+      if (value !== undefined && value !== null && value !== "") {
+        url.searchParams.set(key, String(value));
+      }
+    }
+    if (scoped && this.directory && !url.searchParams.has("directory")) {
+      url.searchParams.set("directory", this.directory);
+    }
+
+    const headers = new Headers(init.headers);
+    if (this.directory) {
+      headers.set("x-opencode-directory", encodeURIComponent(this.directory));
+    }
+
+    const { timeoutMs, ...fetchInit } = init;
+    const { signal, dispose } = timeoutSignal(
+      init.signal,
+      timeoutMs ?? this.timeoutMs,
+    );
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        ...fetchInit,
+        headers,
+        signal,
+      });
+    } finally {
+      dispose();
+    }
+
+    if (!response.ok) {
+      throw new GatewayError(
+        `Gateway request failed: ${response.status} ${response.statusText}`,
+        response.status,
+        url.toString(),
+        await readResponseBody(response),
+      );
+    }
+    return response.text();
   }
 
   private async request<T>(
@@ -711,7 +777,13 @@ function timeoutSignal(
   if (!scheduler?.setTimeout || !scheduler.clearTimeout) {
     return { signal: existing ?? undefined, dispose: () => undefined };
   }
-  const timer = scheduler.setTimeout(() => controller.abort(), timeoutMs);
+  const timer = scheduler.setTimeout(
+    () =>
+      controller.abort(
+        new DOMException("Gateway request timed out.", "TimeoutError"),
+      ),
+    timeoutMs,
+  );
   return {
     signal: controller.signal,
     dispose: () => scheduler.clearTimeout(timer),

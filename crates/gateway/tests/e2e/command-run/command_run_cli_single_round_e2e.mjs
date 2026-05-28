@@ -20,7 +20,7 @@ const summaryPath =
   path.join(repoRoot, "target", "codex-logs", `command-run-codex-two-way-small-${runId}.json`)
 const turaRoot = process.env.COMMAND_RUN_AGENT_TURA_ROOT || repoRoot
 const codexCurrentRoot = process.env.COMMAND_RUN_AGENT_CODEX_CURRENT_ROOT || path.join(homeDir, "Documents", "Codex")
-const codexModel = process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "gpt-5.5"
+const codexModel = process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "gpt-5.1-codex"
 const turaModel = process.env.COMMAND_RUN_AGENT_TURA_MODEL || `openai/${codexModel}`
 const reasoningEffort = process.env.COMMAND_RUN_AGENT_REASONING_EFFORT || "low"
 const codexServiceTier = process.env.COMMAND_RUN_AGENT_CODEX_SERVICE_TIER || "priority"
@@ -413,7 +413,7 @@ async function collectJsonFiles(root, out = []) {
 }
 
 async function inspectTuraProviderContract(sinceMs) {
-  const logRoot = path.join(turaRoot, "crates", "provider", "log")
+  const logRoot = path.join(turaRoot, "log", "provider")
   const files = await collectJsonFiles(logRoot)
   const candidates = []
   for (const file of files) {

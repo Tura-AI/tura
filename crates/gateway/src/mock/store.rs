@@ -402,6 +402,14 @@ impl Store {
             .filter(|pending| pending.expires_at > Utc::now().timestamp_millis())
     }
 
+    pub fn pending_oauth_method(&self, provider_id: &str) -> Option<String> {
+        self.pending_oauth
+            .read()
+            .get(provider_id)
+            .filter(|pending| pending.expires_at > Utc::now().timestamp_millis())
+            .map(|pending| pending.method.clone())
+    }
+
     pub fn consume_oauth_state_by_state(&self, state: &str) -> Option<(String, PendingOAuth)> {
         let mut pending = self.pending_oauth.write();
         let provider_id = pending

@@ -108,38 +108,7 @@ fn session_model_override() -> Option<(String, String)> {
 }
 
 fn provider_base_url(settings: &tura_llm_rust::Settings, provider: &str) -> Option<String> {
-    for route in [
-        &settings.tura_general,
-        &settings.tura_office,
-        &settings.tura_creative,
-        &settings.tura_translator,
-        &settings.tura_validator,
-        &settings.tura_validator_advanced,
-        &settings.tura_classifier,
-        &settings.tura_embedding,
-        &settings.tura_coder,
-        &settings.tura_coder_advanced,
-        &settings.tura_planner,
-        &settings.tura_planner_advanced,
-        &settings.tura_roleplay,
-        &settings.tura_professional,
-        &settings.tura_math,
-        &settings.tura_academic,
-    ] {
-        if let Some(config) = route
-            .providers
-            .iter()
-            .find(|item| item.provider == provider)
-        {
-            return Some(config.base_url.clone());
-        }
-    }
-    match provider {
-        "antigravity" => Some("https://antigravity.google.com/v1".to_string()),
-        "anthropic" => Some("https://api.anthropic.com/v1".to_string()),
-        "openai" => Some("https://api.openai.com/v1".to_string()),
-        _ => None,
-    }
+    settings.provider_base_url(provider)
 }
 
 pub async fn enqueue_runtime(queue_item: RuntimeQueueItem, redis_url: &str) -> Result<(), String> {

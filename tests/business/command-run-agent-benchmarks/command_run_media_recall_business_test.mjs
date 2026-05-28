@@ -109,7 +109,7 @@ function toolCount(text, pattern) {
 }
 
 function latestProviderLogs(sinceMs) {
-  const logDir = path.join(repoRoot, "crates", "provider", "log")
+  const logDir = path.join(repoRoot, "log", "provider")
   if (!fs.existsSync(logDir)) return []
   const files = []
   for (const day of fs.readdirSync(logDir)) {

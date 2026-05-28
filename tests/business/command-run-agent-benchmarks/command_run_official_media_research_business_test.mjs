@@ -343,7 +343,7 @@ function mergeUsage(...items) {
 }
 
 function latestProviderLogs(sinceMs) {
-  const logRoot = path.join(repoRoot, "crates", "provider", "log")
+  const logRoot = path.join(repoRoot, "log", "provider")
   if (!fs.existsSync(logRoot)) return []
   const files = []
   for (const day of fs.readdirSync(logRoot)) {

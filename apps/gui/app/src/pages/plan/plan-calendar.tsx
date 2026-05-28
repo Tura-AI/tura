@@ -24,10 +24,10 @@ import ChevronLeft from "lucide-solid/icons/chevron-left";
 import ChevronRight from "lucide-solid/icons/chevron-right";
 import Columns3 from "lucide-solid/icons/columns-3";
 import Copy from "lucide-solid/icons/copy";
-import Edit3 from "lucide-solid/icons/edit-3";
+import Edit3 from "lucide-solid/icons/pencil";
 import FolderOpen from "lucide-solid/icons/folder-open";
 import KeyRound from "lucide-solid/icons/key-round";
-import MoreHorizontal from "lucide-solid/icons/more-horizontal";
+import MoreHorizontal from "lucide-solid/icons/ellipsis";
 import Pin from "lucide-solid/icons/pin";
 import Plus from "lucide-solid/icons/plus";
 import Search from "lucide-solid/icons/search";
@@ -109,6 +109,7 @@ import {
 } from "../../features/plan/tasks";
 export function PlanCalendarView(props: {
   sessions: Session[];
+  selectedSessionId?: string;
   onOpenSession: (session: Session) => void;
   onCreateAt: (startAt: string) => void;
   onSchedule: (session: Session, startAt: string) => void;
@@ -130,6 +131,14 @@ export function PlanCalendarView(props: {
     calendarView() === "day" ? [startOfDay(calendarCursor())] : weekDays(),
   );
   const weekHours = Array.from({ length: 24 }, (_, index) => index);
+  function isPastCalendarDay(day: Date): boolean {
+    return startOfDay(day).getTime() < startOfDay(new Date()).getTime();
+  }
+  function isPastCalendarHour(day: Date, hour: number): boolean {
+    const hourEnd = new Date(day);
+    hourEnd.setHours(hour + 1, 0, 0, 0);
+    return hourEnd.getTime() <= Date.now();
+  }
   const calendarTitle = createMemo(() =>
     calendarView() === "day"
       ? calendarCursor().toLocaleDateString(undefined, {
@@ -217,12 +226,12 @@ export function PlanCalendarView(props: {
       hourGridEl.scrollTop += Math.max(1, edge - bottomDistance) * 0.38;
     }
   }
-  function openWeekFromBlank(event: MouseEvent, day: Date) {
+  function openDayFromBlank(event: MouseEvent, day: Date) {
     if ((event.target as HTMLElement).closest(".plan-calendar-event")) {
       return;
     }
     setCalendarCursor(day);
-    setCalendarView("week");
+    setCalendarView("day");
   }
   function createDraftFromWeek(event: MouseEvent, day: Date, hour: number) {
     if ((event.target as HTMLElement).closest(".plan-calendar-event")) {
@@ -254,6 +263,10 @@ export function PlanCalendarView(props: {
       new Date(cursor.getFullYear(), cursor.getMonth() + amount, 1),
     );
   }
+  function switchCalendarView(view: PlanCalendarMode) {
+    setCalendarCursor(startOfDay(new Date()));
+    setCalendarView(view);
+  }
   return (
     <section class="plan-calendar">
       <PlanDragGhost state={dragState()} />
@@ -281,21 +294,21 @@ export function PlanCalendarView(props: {
           <button
             type="button"
             class={classNames(calendarView() === "month" && "selected")}
-            onClick={() => setCalendarView("month")}
+            onClick={() => switchCalendarView("month")}
           >
             月
           </button>
           <button
             type="button"
             class={classNames(calendarView() === "week" && "selected")}
-            onClick={() => setCalendarView("week")}
+            onClick={() => switchCalendarView("week")}
           >
             周
           </button>
           <button
             type="button"
             class={classNames(calendarView() === "day" && "selected")}
-            onClick={() => setCalendarView("day")}
+            onClick={() => switchCalendarView("day")}
           >
             日
           </button>
@@ -317,9 +330,10 @@ export function PlanCalendarView(props: {
                     class={classNames(
                       "plan-calendar-cell",
                       day.getMonth() !== monthStart().getMonth() && "muted",
+                      isPastCalendarDay(day) && "past",
                       sameCalendarDay(day, new Date()) && "today",
                     )}
-                    onClick={(event) => openWeekFromBlank(event, day)}
+                    onClick={(event) => openDayFromBlank(event, day)}
                     onDragOver={(event) => event.preventDefault()}
                     onDrop={(event) => dropOnDay(event, day)}
                     data-plan-day={day.toISOString()}
@@ -331,6 +345,7 @@ export function PlanCalendarView(props: {
                       {(session) => (
                         <PlanCalendarEvent
                           session={session}
+                          selected={props.selectedSessionId === session.id}
                           onOpenSession={props.onOpenSession}
                           onPointerDragStart={beginCalendarDrag}
                         />
@@ -358,6 +373,7 @@ export function PlanCalendarView(props: {
                   type="button"
                   class={classNames(
                     "plan-calendar-week-day",
+                    isPastCalendarDay(day) && "past",
                     sameCalendarDay(day, new Date()) && "today",
                     sameCalendarDay(day, calendarCursor()) && "selected",
                   )}
@@ -382,7 +398,10 @@ export function PlanCalendarView(props: {
                   <For each={activeHourDays()}>
                     {(day) => (
                       <section
-                        class="plan-calendar-hour-cell"
+                        class={classNames(
+                          "plan-calendar-hour-cell",
+                          isPastCalendarHour(day, hour) && "past",
+                        )}
                         onClick={(event) =>
                           createDraftFromWeek(event, day, hour)
                         }
@@ -394,6 +413,7 @@ export function PlanCalendarView(props: {
                           {(session) => (
                             <PlanCalendarEvent
                               session={session}
+                              selected={props.selectedSessionId === session.id}
                               onOpenSession={props.onOpenSession}
                               onPointerDragStart={beginCalendarDrag}
                             />
@@ -414,6 +434,7 @@ export function PlanCalendarView(props: {
 
 export function PlanCalendarEvent(props: {
   session: Session;
+  selected?: boolean;
   onOpenSession: (session: Session) => void;
   onPointerDragStart: (
     event: PointerEvent | MouseEvent,
@@ -426,6 +447,7 @@ export function PlanCalendarEvent(props: {
         "plan-calendar-event",
         `status-${planSessionStatus(props.session)}`,
         planTriggerClass(props.session),
+        props.selected && "selected",
       )}
       type="button"
       onPointerDown={(event) => props.onPointerDragStart(event, props.session)}

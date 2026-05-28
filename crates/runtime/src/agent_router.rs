@@ -148,7 +148,7 @@ fn create_general_agent(
 
     let now = Utc::now();
     let provider = ProviderConfig {
-        tura_llm_name: "tura_general".to_string(),
+        tura_llm_name: "fast".to_string(),
         stream: false,
         temperature: 0.7,
         max_tokens: 0,
@@ -157,7 +157,7 @@ fn create_general_agent(
     };
     let validator = ValidatorConfig {
         need_validator: true,
-        validator_name: Some("tura_validator".to_string()),
+        validator_name: Some("thinking".to_string()),
     };
 
     let mut agent = AgentManagement::new(

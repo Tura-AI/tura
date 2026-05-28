@@ -11,9 +11,11 @@ import {
 import { Portal } from "solid-js/web";
 import {
   GatewayClient,
+  GatewayError,
   connectGatewayEvents,
   defaultGatewayUrl,
   errorMessage,
+  type Message,
   type FileContentResponse,
   type FileInfo,
   type ProductIssue,
@@ -40,8 +42,10 @@ import {
   sessionDirectory,
   sessionTitle,
   sessionUpdatedAt,
+  systemThemeMode,
   type AppState,
   type SettingsSection,
+  type ThemeMode,
 } from "./state/global-store";
 import { classNames } from "./state/format";
 import { t } from "./i18n";
@@ -62,6 +66,7 @@ import {
 } from "./mock/fixtures";
 import {
   applyTaskPatchToSession,
+  appendTaskToSession,
   defaultLocalStartAt,
   defaultPollInterval,
   firstRunnableTask,
@@ -73,6 +78,7 @@ import {
   planSessionStatus,
   sessionAttentionKey,
   sessionTaskState,
+  sessionTasks,
   taskDisplayText,
   taskNonceId,
   taskPollInterval,
@@ -86,7 +92,6 @@ import {
   configToDraft,
   defaultModel,
   draftToRecord,
-  modelRef,
   parseModelRef,
   providerConfigured,
   providerIdFromAuthError,
@@ -114,6 +119,45 @@ import {
 import { useProviderSettingsActions } from "./hooks/use-provider-settings-actions";
 import { usePlanActions } from "./hooks/use-plan-actions";
 import { AppShell } from "./app/app-shell";
+
+const PROMPT_RESPONSE_TIMEOUT_MS = 30_000;
+const PROMPT_RESPONSE_TIMEOUT_CODE = "GATEWAY_NO_RESPONSE_30S";
+const GATEWAY_CONNECT_TIMEOUT_MS = 5_000;
+
+function providerIssueIdFromError(
+  error: unknown,
+  state: AppState,
+): string | undefined {
+  const authProvider = providerIdFromAuthError(error, state);
+  if (authProvider) {
+    return authProvider;
+  }
+  if (!(error instanceof GatewayError)) {
+    return undefined;
+  }
+  const bodyText = JSON.stringify(error.body ?? {}).toLowerCase();
+  const messageText = error.message.toLowerCase();
+  const billingLike =
+    error.status === 402 ||
+    /\b(billing|payment|quota|credit|balance|insufficient|subscription|rate_limit|rate limit|limit exceeded)\b/u.test(
+      `${bodyText} ${messageText}`,
+    );
+  return billingLike ? providerIdFromModel(state.selectedModel) : undefined;
+}
+
+function isGatewayTimeoutError(error: unknown): boolean {
+  if (
+    error instanceof DOMException &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  ) {
+    return true;
+  }
+  return (
+    error instanceof TypeError &&
+    error.message.toLowerCase() === "failed to fetch"
+  );
+}
+
 export function App() {
   const e2eFixture = readSearchParam("e2eFixture");
   const initialTab = readMainTabSearchParam();
@@ -183,6 +227,26 @@ export function App() {
   });
 
   createEffect(() => {
+    if (e2eFixture || state().connection === "connected" || state().error) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setState((previous) =>
+        previous.connection === "connected" || previous.error
+          ? previous
+          : {
+              ...previous,
+              loading: false,
+              bootstrapped: true,
+              connection: "disconnected",
+              error: t("gatewayResponseTimeout"),
+            },
+      );
+    }, GATEWAY_CONNECT_TIMEOUT_MS);
+    onCleanup(() => window.clearTimeout(timer));
+  });
+
+  createEffect(() => {
     document.documentElement.dataset.theme = state().themeMode;
   });
 
@@ -220,15 +284,23 @@ export function App() {
     }));
     const client = rootClient();
     try {
-      const [health, serviceStatus, paths, config, currentProject, projects] =
-        await Promise.all([
-          client.health(),
-          safe(() => client.serviceStatus(), undefined),
-          client.paths(),
-          client.config(),
-          client.currentProject(),
-          safe(() => client.projects(), []),
-        ]);
+      const [
+        health,
+        serviceStatus,
+        paths,
+        config,
+        modelConfig,
+        currentProject,
+        projects,
+      ] = await Promise.all([
+        client.health(),
+        safe(() => client.serviceStatus(), undefined),
+        client.paths(),
+        client.config(),
+        safe(() => client.modelConfig(), undefined),
+        client.currentProject(),
+        safe(() => client.projects(), []),
+      ]);
       const [productConfig, me, workspaces, productIssues, productProjects] =
         await Promise.all([
           safe(() => client.productConfig(), undefined),
@@ -291,6 +363,7 @@ export function App() {
         productProjects,
         paths,
         config,
+        modelConfig,
         configDraft: configToDraft(config),
         workspaceConfig,
         workspaceConfigDraft: recordToDraft(workspaceConfig),
@@ -320,12 +393,21 @@ export function App() {
           providerIdFromModel(previous.selectedModel) ??
           providers?.connected[0] ??
           providers?.all[0]?.id,
-        themeMode:
-          previous.bootstrapped || previous.themeMode !== "light"
-            ? previous.themeMode
-            : config.theme === "dark"
-              ? "dark"
-              : "light",
+        themeMode: previous.bootstrapped
+          ? previous.themeMode
+          : normalizeThemeMode(config.theme),
+        mainFont: previous.bootstrapped
+          ? previous.mainFont
+          : (config.main_font ?? previous.mainFont),
+        codeFont: previous.bootstrapped
+          ? previous.codeFont
+          : (config.code_font ?? previous.codeFont),
+        mainFontSize: previous.bootstrapped
+          ? previous.mainFontSize
+          : clampNumber(config.main_font_size, 12, 15, 13),
+        codeFontSize: previous.bootstrapped
+          ? previous.codeFontSize
+          : clampNumber(config.code_font_size, 10, 15, 12),
         modelVariant: previous.bootstrapped
           ? previous.modelVariant
           : (configuredVariant ?? previous.modelVariant ?? "low"),
@@ -345,7 +427,9 @@ export function App() {
         loading: false,
         bootstrapped: true,
         connection: "disconnected",
-        error: errorMessage(error),
+        error: isGatewayTimeoutError(error)
+          ? t("gatewayResponseTimeout")
+          : errorMessage(error),
       }));
     }
   }
@@ -558,7 +642,7 @@ export function App() {
     refreshProviderSurface,
     handleProviderAuthError,
     saveRuntimeSettings,
-    validateSelectedModel,
+    updateModelTier,
     saveProviderKey,
     startProviderLogin,
     completeProviderLogin,
@@ -577,6 +661,7 @@ export function App() {
     updatePlanTicketStatus,
     updatePlanTicketTask,
     deletePlanTask,
+    runPlanTaskNow,
     createSessionFromPlanTask,
     acknowledgeSessionAttention,
     updateEditingTaskFromComposer,
@@ -593,19 +678,30 @@ export function App() {
   });
 
   async function submitPrompt() {
-    const raw = state().composerText.trim();
-    if ((!raw && state().composerImages.length === 0) || state().submitting) {
+    if (await updateEditingTaskFromComposer()) {
       return;
     }
-    if (await updateEditingTaskFromComposer()) {
+    const raw = state().composerText.trim();
+    if ((!raw && state().composerImages.length === 0) || state().submitting) {
       return;
     }
     setState((previous) => ({
       ...previous,
       submitting: true,
       error: undefined,
+      planNotice: undefined,
     }));
+    let optimisticSessionId: string | undefined;
+    let optimisticId: string | undefined;
     try {
+      const content =
+        state().composerImages.length === 0
+          ? await expandCommand(raw)
+          : materializeComposerContent(raw, state().composerImages);
+      if (state().planDraftStartCondition !== "user_action") {
+        await submitQueuedPrompt(content);
+        return;
+      }
       let sessionId = state().selectedSessionId;
       if (!sessionId) {
         const session = await directoryClient().createSession(
@@ -623,32 +719,219 @@ export function App() {
           previousMainTab: "new",
         }));
       }
-      const content =
-        state().composerImages.length === 0
-          ? await expandCommand(raw)
-          : materializeComposerContent(raw, state().composerImages);
-      await directoryClient().promptAsync(sessionId, {
-        parts: [{ type: "text", text: content }],
-        model: state().selectedModel,
-        variant: state().modelVariant,
-        model_acceleration_enabled: state().accelerationEnabled,
-      });
+      optimisticSessionId = sessionId;
+      optimisticId = `prompt:${sessionId}:${Date.now()}`;
+      const now = Date.now();
+      const optimisticMessage: Message = {
+        id: optimisticId,
+        sessionID: sessionId,
+        session_id: sessionId,
+        role: "user",
+        created_at: now,
+        updated_at: now,
+        time: { created: now, updated: now },
+        parts: [
+          {
+            id: `${optimisticId}:text`,
+            type: "text",
+            text: content,
+            metadata: { planRunPending: true },
+          },
+        ],
+      };
+      setState((previous) => ({
+        ...previous,
+        selectedSessionId: sessionId,
+        messagesBySession: {
+          ...previous.messagesBySession,
+          [sessionId]: [
+            ...(previous.messagesBySession[sessionId] ?? []).filter(
+              (message) => message.id !== optimisticId,
+            ),
+            optimisticMessage,
+          ],
+        },
+      }));
+      await Promise.race([
+        directoryClient().promptAsync(sessionId, {
+          parts: [{ type: "text", text: content }],
+          model: state().selectedModel,
+          variant: state().modelVariant,
+          model_acceleration_enabled: state().accelerationEnabled,
+        }),
+        new Promise<never>((_, reject) =>
+          window.setTimeout(
+            () => reject(new Error(PROMPT_RESPONSE_TIMEOUT_CODE)),
+            PROMPT_RESPONSE_TIMEOUT_MS,
+          ),
+        ),
+      ]);
       setState((previous) => ({
         ...previous,
         composerText: "",
         composerImages: [],
         activeTab: "conversation",
         previousMainTab: "new",
+        planNotice: undefined,
       }));
-      await openSession(sessionId);
       await refreshSessions();
     } catch (error) {
-      if (!handleProviderAuthError(error)) {
-        setState((previous) => ({ ...previous, error: errorMessage(error) }));
-      }
+      const timeout =
+        error instanceof Error &&
+        error.message === PROMPT_RESPONSE_TIMEOUT_CODE;
+      setState((previous) => ({
+        ...previous,
+        messagesBySession:
+          optimisticSessionId && optimisticId
+            ? {
+                ...previous.messagesBySession,
+                [optimisticSessionId]: (
+                  previous.messagesBySession[optimisticSessionId] ?? []
+                ).map((message) =>
+                  message.id === optimisticId
+                    ? {
+                        ...message,
+                        updated_at: Date.now(),
+                        time: { ...message.time, updated: Date.now() },
+                        parts: message.parts.map((part) => ({
+                          ...part,
+                          metadata: {
+                            ...(typeof part.metadata === "object" &&
+                            part.metadata !== null
+                              ? part.metadata
+                              : {}),
+                            planRunPending: false,
+                            planRunError: true,
+                          },
+                        })),
+                      }
+                    : message,
+                ),
+              }
+            : previous.messagesBySession,
+        planNotice: timeout
+          ? {
+              message: "Gateway 30 秒内没有响应请求。",
+              code: PROMPT_RESPONSE_TIMEOUT_CODE,
+            }
+          : {
+              message: errorMessage(error),
+              code: "GATEWAY_PROMPT_FAILED",
+              providerId: providerIssueIdFromError(error, previous),
+            },
+        error: undefined,
+      }));
     } finally {
       setState((previous) => ({ ...previous, submitting: false }));
     }
+  }
+
+  async function submitQueuedPrompt(content: string) {
+    const startCondition = state().planDraftStartCondition;
+    const startAt =
+      startCondition === "scheduled_task" || startCondition === "polling_task"
+        ? (localDateTimeToUtcIso(
+            state().planDraftStartAt || defaultLocalStartAt(),
+          ) ?? localDateTimeToUtcIso(defaultLocalStartAt()))
+        : undefined;
+    const [summaryLine = "", ...deliveryLines] = content.split(/\r?\n/u);
+    const title = summaryLine.trim() || t("newTask");
+    const timingPatch = timedTaskPatch(
+      startCondition,
+      startAt,
+      state().planDraftPollInterval,
+    );
+    const currentSession = state().selectedSessionId
+      ? state().sessions.find(
+          (session) => session.id === state().selectedSessionId,
+        )
+      : undefined;
+    const nonceId = currentSession
+      ? `${currentSession.id}:${Date.now()}`
+      : `queued-task:${Date.now()}`;
+    const taskState = {
+      nonce_id: nonceId,
+      step: currentSession ? sessionTasks(currentSession).length : 0,
+      status: "todo" as PlanStatus,
+      plan_summary: title,
+      task_summary: title,
+      delivery: deliveryLines.join("\n").trim(),
+      ...timingPatch,
+    };
+    if (e2eFixture) {
+      const session: Session = currentSession
+        ? {
+            ...appendTaskToSession(currentSession, taskState),
+            updated_at: Date.now(),
+          }
+        : {
+            id: `queued-local-${Date.now()}`,
+            name: title,
+            directory: state().directory,
+            status: "idle",
+            created_at: Date.now(),
+            updated_at: Date.now(),
+            plan_summary: title,
+            session_display_name: title,
+            task_management: taskState,
+          };
+      setState((previous) => ({
+        ...previous,
+        sessions: [
+          session,
+          ...previous.sessions.filter((item) => item.id !== session.id),
+        ],
+        selectedSessionId: session.id,
+        planPreviewSessionId:
+          previous.activeTab === "plan"
+            ? session.id
+            : previous.planPreviewSessionId,
+        activeTab:
+          previous.activeTab === "new" ? "conversation" : previous.activeTab,
+        previousMainTab:
+          previous.activeTab === "new" ? "new" : previous.previousMainTab,
+        composerText: "",
+        composerImages: [],
+        planDraftStartCondition: "user_action",
+        planDraftStartAt: "",
+        planDraftPollInterval: defaultPollInterval(),
+        planNotice: undefined,
+        error: undefined,
+      }));
+      return;
+    }
+    const session = currentSession
+      ? await directoryClient().updateSessionTaskManagement(currentSession.id, {
+          tasks: [taskState],
+        })
+      : await directoryClient().createSession({
+          ...createSessionPayload(),
+          task_management: taskState,
+        });
+    setState((previous) => ({
+      ...previous,
+      sessions: [
+        session,
+        ...previous.sessions.filter((item) => item.id !== session.id),
+      ],
+      selectedSessionId: session.id,
+      planPreviewSessionId:
+        previous.activeTab === "plan"
+          ? session.id
+          : previous.planPreviewSessionId,
+      activeTab:
+        previous.activeTab === "new" ? "conversation" : previous.activeTab,
+      previousMainTab:
+        previous.activeTab === "new" ? "new" : previous.previousMainTab,
+      composerText: "",
+      composerImages: [],
+      planDraftStartCondition: "user_action",
+      planDraftStartAt: "",
+      planDraftPollInterval: defaultPollInterval(),
+      planNotice: undefined,
+      error: undefined,
+    }));
+    await refreshSessions();
   }
 
   async function expandCommand(input: string): Promise<string> {
@@ -1010,7 +1293,6 @@ export function App() {
       activeTab: "settings",
       settingsSection: section,
       settingsNotice: undefined,
-      modelValidation: undefined,
     }));
     void refreshProviderSurface();
   }
@@ -1020,7 +1302,6 @@ export function App() {
       ...previous,
       activeTab: previous.previousMainTab,
       settingsNotice: undefined,
-      modelValidation: undefined,
     }));
   }
 
@@ -1078,11 +1359,13 @@ export function App() {
         updatePlanTicketStatus,
         sessionAttentionAcknowledged,
         deletePlanTask,
+        runPlanTaskNow,
         openPlanSession,
         selectDraftSession,
         createPlanTicket,
         createSessionFromPlanTask,
         updatePlanTicketTask,
+        updateEditingTaskFromComposer,
         fileTree,
         fileLoadingPath,
         fileContentLoadingPath,
@@ -1103,7 +1386,7 @@ export function App() {
         openCurrentDirectory,
         openSelectedFile,
         saveRuntimeSettings,
-        validateSelectedModel,
+        updateModelTier,
         saveProviderKey,
         startProviderLogin,
         completeProviderLogin,
@@ -1112,5 +1395,27 @@ export function App() {
         providerAuthPanel: state().providerAuthPanel,
       }}
     />
+  );
+}
+
+function normalizeThemeMode(value: string | null | undefined): ThemeMode {
+  return value === "light" ||
+    value === "dark" ||
+    value === "caral" ||
+    value === "uruk" ||
+    value === "liangzhu"
+    ? value
+    : systemThemeMode();
+}
+
+function clampNumber(
+  value: number | null | undefined,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  return Math.min(
+    max,
+    Math.max(min, Number.isFinite(value) ? value! : fallback),
   );
 }

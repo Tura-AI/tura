@@ -1255,6 +1255,7 @@ const TASK_MANAGEMENT_TASK_PATCH_FIELDS: &[&str] = &[
     "task_summary",
     "delivery",
     "sub_session_id",
+    "start_condition",
     "start_at",
     "poll_interval",
     "status",
@@ -1332,7 +1333,7 @@ fn apply_single_task_patch(
         task.sub_session_id = sub_session_id;
     }
     if let Some(value) = first_field(object, &["status"]) {
-        apply_unified_status(task, value)?;
+        apply_status_patch(task, value)?;
     }
     if let Some(value) = first_field(object, &["poll_interval"]) {
         task.poll_interval = serde_json::from_value(value.clone())
@@ -1343,6 +1344,8 @@ fn apply_single_task_patch(
             || task.poll_interval.s != 0
         {
             task.start_condition = StartCondition::PollingTask;
+        } else if matches!(task.start_condition, StartCondition::PollingTask) {
+            task.start_condition = StartCondition::UserAction;
         }
     }
     if let Some(value) = first_field(object, &["start_at"]) {
@@ -1351,10 +1354,13 @@ fn apply_single_task_patch(
             task.start_condition = StartCondition::ScheduledTask;
         }
     }
+    if let Some(value) = first_field(object, &["start_condition"]) {
+        apply_start_condition_patch(task, value)?;
+    }
     Ok(())
 }
 
-fn apply_unified_status(task: &mut TaskStep, value: &serde_json::Value) -> Result<(), String> {
+fn apply_status_patch(task: &mut TaskStep, value: &serde_json::Value) -> Result<(), String> {
     match value.as_str() {
         Some("session_idle") => {
             task.status = PlanStatus::Todo;
@@ -1382,6 +1388,15 @@ fn apply_unified_status(task: &mut TaskStep, value: &serde_json::Value) -> Resul
             Ok(())
         }
     }
+}
+
+fn apply_start_condition_patch(
+    task: &mut TaskStep,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    task.start_condition = serde_json::from_value(value.clone())
+        .map_err(|err| format!("invalid start_condition: {err}"))?;
+    Ok(())
 }
 
 fn first_field<'a>(
@@ -2038,7 +2053,7 @@ mod tests {
             updated.task_management["status"],
             serde_json::json!("question")
         );
-        assert!(updated.task_management.get("start_condition").is_none());
+        assert_eq!(updated.task_management["start_condition"], "polling_task");
         assert_eq!(updated.task_management["step"], serde_json::json!(2));
 
         let listed = store
@@ -2048,6 +2063,72 @@ mod tests {
             .expect("session should be listed");
         assert_eq!(listed.session_display_name.as_deref(), Some("计划入口名称"));
         assert_eq!(listed.task_management["sub_session_id"], "sub-1");
+    }
+
+    #[test]
+    fn scheduled_task_patch_clears_previous_polling_interval() {
+        let store = SessionStore::new();
+        let session = store.create_session(
+            Some("C:/workspace".to_string()),
+            None,
+            None,
+            Some("coding".to_string()),
+            None,
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+
+        store
+            .update_session(
+                &session.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(serde_json::json!({
+                    "task_summary": "轮询待办工单",
+                    "start_at": "2026-05-25T08:30:00Z",
+                    "poll_interval": { "m": 0, "d": 0, "h": 1, "s": 0 }
+                })),
+            )
+            .expect("polling task should update");
+
+        let updated = store
+            .update_session(
+                &session.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(serde_json::json!({
+                    "start_at": "2026-05-26T09:45:00Z",
+                    "poll_interval": { "m": 0, "d": 0, "h": 0, "s": 0 }
+                })),
+            )
+            .expect("scheduled task should update");
+
+        assert_eq!(
+            updated.task_management["poll_interval"],
+            serde_json::json!({ "m": 0, "d": 0, "h": 0, "s": 0 })
+        );
+        assert_eq!(
+            updated.task_management["start_at"],
+            serde_json::json!("2026-05-26T09:45:00Z")
+        );
     }
 
     #[test]
@@ -2190,7 +2271,7 @@ mod tests {
         assert_eq!(tasks[2]["step"], 2);
         assert_eq!(tasks[2]["task_summary"], "Generated follow-up");
         assert!(tasks[2].get("status").is_none());
-        assert!(tasks[2].get("start_condition").is_none());
+        assert_eq!(tasks[2]["start_condition"], "user_action");
     }
 
     #[test]
@@ -2254,7 +2335,32 @@ mod tests {
                     Some(serde_json::json!({ "status": start_condition })),
                 )
                 .expect("session should update");
-            assert!(updated.task_management.get("start_condition").is_none());
+            assert_eq!(updated.task_management["start_condition"], start_condition);
+            assert!(updated.task_management.get("status").is_none());
+        }
+
+        for start_condition in [
+            "session_idle",
+            "user_action",
+            "scheduled_task",
+            "polling_task",
+        ] {
+            let updated = store
+                .update_session(
+                    &session.id,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(serde_json::json!({ "start_condition": start_condition })),
+                )
+                .expect("session should update");
+            assert_eq!(updated.task_management["start_condition"], start_condition);
             assert!(updated.task_management.get("status").is_none());
         }
     }

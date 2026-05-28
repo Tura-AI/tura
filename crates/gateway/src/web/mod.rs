@@ -2,4 +2,4 @@
 
 pub mod server;
 
-pub use server::{build_router, run_server};
+pub use server::{build_router, local_bind_addr, run_server};

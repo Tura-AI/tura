@@ -24,10 +24,10 @@ import ChevronLeft from "lucide-solid/icons/chevron-left";
 import ChevronRight from "lucide-solid/icons/chevron-right";
 import Columns3 from "lucide-solid/icons/columns-3";
 import Copy from "lucide-solid/icons/copy";
-import Edit3 from "lucide-solid/icons/edit-3";
+import Edit3 from "lucide-solid/icons/pencil";
 import FolderOpen from "lucide-solid/icons/folder-open";
 import KeyRound from "lucide-solid/icons/key-round";
-import MoreHorizontal from "lucide-solid/icons/more-horizontal";
+import MoreHorizontal from "lucide-solid/icons/ellipsis";
 import Pin from "lucide-solid/icons/pin";
 import Plus from "lucide-solid/icons/plus";
 import Search from "lucide-solid/icons/search";
@@ -160,7 +160,13 @@ export function formatGanttDayTitle(days: Date[]): string {
 
 export function formatGanttMarkTop(date: Date, mode: PlanGanttMode): string {
   if (mode === "day") {
-    return date.toLocaleDateString(undefined, { weekday: "short" });
+    if (date.getHours() !== 0) {
+      return "";
+    }
+    return date.toLocaleDateString(undefined, {
+      month: "numeric",
+      day: "numeric",
+    });
   }
   return date.toLocaleDateString(undefined, { weekday: "short" });
 }

@@ -2818,13 +2818,13 @@ mod tests {
         let _guard = env_test_lock().lock().expect("env test lock");
         const ENV_NAME: &str = "TURA_SESSION_MODEL_OVERRIDE";
         let previous = std::env::var_os(ENV_NAME);
-        std::env::set_var(ENV_NAME, "openai/gpt-5.5");
+        std::env::set_var(ENV_NAME, "openai/gpt-5.1");
 
         with_model_override_env(None, || {
-            assert_eq!(std::env::var(ENV_NAME).as_deref(), Ok("openai/gpt-5.5"));
+            assert_eq!(std::env::var(ENV_NAME).as_deref(), Ok("openai/gpt-5.1"));
         });
 
-        assert_eq!(std::env::var(ENV_NAME).as_deref(), Ok("openai/gpt-5.5"));
+        assert_eq!(std::env::var(ENV_NAME).as_deref(), Ok("openai/gpt-5.1"));
         match previous {
             Some(value) => std::env::set_var(ENV_NAME, value),
             None => std::env::remove_var(ENV_NAME),
@@ -3022,7 +3022,7 @@ mod tests {
         let value = serde_json::to_value(&session).expect("session should serialize");
         assert!(value["name"].as_str().is_some_and(|name| !name.is_empty()));
         assert!(value["task_management"].get("status").is_none());
-        assert!(value["task_management"].get("start_condition").is_none());
+        assert_eq!(value["task_management"]["start_condition"], "user_action");
         assert_eq!(value["plan_summary"], "Create Route Plan");
         assert_eq!(value["session_display_name"], "Create Route Plan");
         let object = value.as_object().expect("session JSON should be an object");
@@ -3039,7 +3039,7 @@ mod tests {
         .await;
         assert!(listed.iter().any(|item| item.id == session.id
             && item.task_management.get("status").is_none()
-            && item.task_management.get("start_condition").is_none()));
+            && item.task_management["start_condition"] == "user_action"));
 
         let _ = fs::remove_dir_all(directory);
     }
@@ -3089,10 +3089,14 @@ mod tests {
             Some("Dedicated Patch Route")
         );
         assert_eq!(updated.task_management["status"], "question");
-        assert!(updated.task_management.get("start_condition").is_none());
+        assert_eq!(updated.task_management["start_condition"], "scheduled_task");
 
         let value = serde_json::to_value(&updated).expect("session should serialize");
         assert_eq!(value["task_management"]["status"], "question");
+        assert_eq!(
+            value["task_management"]["start_condition"],
+            "scheduled_task"
+        );
         assert_eq!(value["plan_summary"], "Dedicated Patch Route");
         assert_eq!(value["session_display_name"], "Dedicated Patch Route");
         let object = value.as_object().expect("session JSON should be an object");
@@ -3100,6 +3104,7 @@ mod tests {
 
         let Json(fetched) = super::get_session(Path(session.id)).await;
         assert_eq!(fetched.task_management["status"], "question");
+        assert_eq!(fetched.task_management["start_condition"], "scheduled_task");
 
         let _ = fs::remove_dir_all(directory);
     }

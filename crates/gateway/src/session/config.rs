@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 const TURA_DIR: &str = ".tura";
 const CONFIG_FILE: &str = "config.conf";
 
-pub const DEFAULT_SESSION_MODEL: &str = "openai/gpt-5.5";
-pub const DEFAULT_SESSION_PROVIDER: &str = "openai";
-pub const DEFAULT_SESSION_MODEL_ID: &str = "gpt-5.5";
+pub const DEFAULT_SESSION_MODEL: &str = "codex/gpt-5.1-codex";
+pub const DEFAULT_SESSION_PROVIDER: &str = "codex";
+pub const DEFAULT_SESSION_MODEL_ID: &str = "gpt-5.1-codex";
 pub const DEFAULT_SESSION_AGENT: &str = "coding_agent";
 pub const DEFAULT_SESSION_TYPE: &str = "coding";
 pub const DEFAULT_SESSION_REASONING_EFFORT: &str = "low";

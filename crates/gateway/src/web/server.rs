@@ -5,7 +5,7 @@ use axum::{
     routing::{delete, get, patch, post, put},
     Router,
 };
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber;
 
@@ -36,6 +36,10 @@ pub fn build_router() -> Router {
         .route("/global/sync-event", get(api::global::sync_event))
         .route("/global/config", get(api::global::get_config))
         .route("/global/config", patch(api::global::patch_config))
+        .route("/model_config", get(api::global::get_tura_config))
+        .route("/model_config", put(api::global::put_tura_config))
+        .route("/gui_config", get(api::global::get_gui_config))
+        .route("/gui_config", put(api::global::put_gui_config))
         .route("/global/dispose", post(api::global::dispose))
         .route("/global/upgrade", post(api::global::upgrade))
         // Multica-compatible product surface
@@ -141,7 +145,6 @@ pub fn build_router() -> Router {
         // Config
         .route("/config", get(api::global::get_config))
         .route("/config", patch(api::global::patch_config))
-        .route("/config/providers", get(api::misc::get_config_providers))
         // Project
         .route("/project", get(api::project::list_projects))
         .route("/project/current", get(api::project::get_current_project))
@@ -444,7 +447,7 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter("gateway=debug,tower_http=debug")
         .init();
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let addr = local_bind_addr(port);
     let router = build_router();
     api::session::start_task_scheduler();
 
@@ -469,7 +472,7 @@ async fn start_openai_oauth_callback_server(main_port: u16) {
         return;
     }
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], OAUTH_CALLBACK_PORT));
+    let addr = local_bind_addr(OAUTH_CALLBACK_PORT);
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(listener) => listener,
         Err(error) => {
@@ -484,6 +487,10 @@ async fn start_openai_oauth_callback_server(main_port: u16) {
             eprintln!("OpenAI OAuth callback server stopped: {error}");
         }
     });
+}
+
+pub fn local_bind_addr(port: u16) -> SocketAddr {
+    SocketAddr::from((Ipv4Addr::LOCALHOST, port))
 }
 
 // ============================================================================

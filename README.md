@@ -26,7 +26,7 @@ drivers. The following local artifacts are ignored:
 - `target/`
 - `storage/`
 - `sessions/`
-- provider call logs under `crates/provider/log/`
+- provider call logs under `log/provider/`
 - generated command-run records under `target/command-run-codex-two-way-records`
 - local Qdrant binary `db/qdrant/qdrant.exe`
 
@@ -91,7 +91,6 @@ troubleshooting.
     router/
     runtime/
     tools/
-    utils/
 
   db/
     qdrant/
@@ -119,7 +118,6 @@ crates/provider  package tura-llm-rust     library tura_llm_rust
 crates/router    package tura_router       binary tura_router
 crates/runtime   package code-tools-suite  library code_tools_suite
 crates/tools     package code-tools        library code_tools
-crates/utils     package utils             library utils
 ```
 
 Package names do not always match directory names. Prefer package names from
@@ -134,6 +132,24 @@ apps/tui    TypeScript CLI/TUI workspace
 
 Apps consume gateway APIs and SDK types. They must not call runtime, provider,
 tools, or router internals directly.
+
+### GUI Frontend Checks
+
+The GUI app keeps user-facing text behind `apps/gui/app/src/i18n.ts`, renders
+settings through the gateway-backed app state, and exposes only three settings
+pages: appearance, providers, and models. Provider and model choices are read
+from gateway APIs; model tier choices use the gateway model config contract.
+
+Run the focused frontend checks from the repository root:
+
+```powershell
+bun --cwd apps/gui/app typecheck
+bun --cwd apps/gui/app unused:check
+```
+
+`unused:check` uses Knip to catch unused frontend files and dependencies during
+refactors. Keep page code under its page folder and shared behavior under
+`src/components`, `src/hooks`, `src/features`, `src/state`, or `src/utils`.
 
 ## System Flow
 
@@ -260,11 +276,19 @@ Current implementation keeps compatibility with legacy files:
 - `src/tura_conf.rs`
 - `src/tura_llm_conf.rs`
 - `src/tura_llm.rs`
-- `src/llm/_openai_provider.rs`
-- `src/llm/_google_provider.rs`
-- `src/llm/_bedrock_provider.rs`
-- `src/llm/_llm_log.rs`
-- `config/tura_llm_config.json`
+- `src/streaming.rs`
+- `src/metrics.rs`
+- `src/logging.rs`
+- `src/utils/mod.rs`
+- `src/llm/openapi.rs`
+- `src/llm/google.rs`
+- `src/llm/bedrock.rs`
+- `src/llm/providers/openai.rs`
+- `src/llm/providers/codex.rs`
+- `src/llm/providers/minimax.rs`
+- `src/llm/providers/google.rs`
+- `src/llm/providers/bedrock.rs`
+- `config/provider_config.json`
 
 Architecture docs also define the target subdomains:
 
@@ -285,7 +309,8 @@ Architecture docs also define the target subdomains:
 
 Those target subdomain directories are not present in the current provider
 source tree; current implementation remains in `tura_llm.rs`,
-`auth_registry.rs`, and `src/llm/_*_provider.rs`.
+`auth_registry.rs`, `src/llm/{openapi,google,bedrock}.rs`, and
+`src/llm/providers/*.rs`.
 
 Runtime asks Provider for one model call and decides what to do with the
 result. Provider should not execute tools, compact context, manage user
@@ -293,7 +318,7 @@ sessions, or own gateway event streaming.
 
 OpenAI OAuth is resolved in Provider, not Gateway or Runtime. For OAuth login
 mode, Provider accepts `OPENAI_LOGIN=oauth`, `provider_auth.openai.login=oauth`
-from `tura_llm_config.json`, or local Codex auth discovery from
+from `provider_config.json`, or local Codex auth discovery from
 `CODEX_HOME/auth.json` / `~/.codex/auth.json`. When Codex auth is found, the
 OpenAI access token, refresh token, and account id are applied to the provider
 environment before the OpenAI Codex responses path is used. OAuth refresh
@@ -393,20 +418,6 @@ Runtime and tools should call memory only through explicit clients or
 memory-backed commands. Router may start or monitor a memory-backed process,
 but memory behavior remains owned by this crate.
 
-### `crates/utils`
-
-Utils contains shared helper code for media processing, Markdown management,
-and streaming text processing.
-
-Current important modules:
-
-- `src/media_processor.rs`
-- `src/md_manager.rs`
-- `src/stream_text_processor.rs`
-
-Utilities should remain generic. Domain behavior that belongs to gateway,
-runtime, provider, router, or tools should stay in the owning crate.
-
 ## Apps
 
 The `apps/` directory is reserved for user-facing surfaces:
@@ -467,8 +478,8 @@ Provider configuration can come from:
 
 - `.env`
 - `TURA_ENV_PATH`
-- `TURALLM_CONFIG`
-- `crates/provider/config/tura_llm_config.json`
+- `TURA_PROVIDER_CONFIG` (preferred), `TURALLM_CONFIG` (legacy)
+- `crates/provider/config/provider_config.json`
 - project-root-aware path configuration
 
 Rules:
@@ -705,6 +716,5 @@ are still in transition:
 - `crates/tools/ARCHITECTURE.md`: command-run, policies, and file locks.
 - `crates/router/ARCHITECTURE.md`: router command registry and lifecycle.
 - `crates/memory/ARCHITECTURE.md`: memory boundary.
-- `crates/utils/ARCHITECTURE.md`: shared helper boundary.
 - `scripts/ARCHITECTURE.md`: startup, installer, package, and persistent
   script design.

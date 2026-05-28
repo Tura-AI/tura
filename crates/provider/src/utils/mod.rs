@@ -1,8 +1,4 @@
 use serde_json::{Map, Value};
-use std::time::Duration;
-
-use crate::tura_llm::TuraError;
-
 pub fn strip_json_fence(input: &str) -> String {
     let s = input.trim();
     if let Some(rest) = s.strip_prefix("```json") {
@@ -92,52 +88,73 @@ pub fn as_object_mut(value: &mut Value) -> &mut Map<String, Value> {
     value.as_object_mut().expect("object just initialized")
 }
 
-pub fn provider_first_output_timeout() -> Duration {
-    provider_timeout_from_env(
-        "TURA_PROVIDER_FIRST_OUTPUT_TIMEOUT_MS",
-        crate::tura_llm::provider_latency_timeouts().first_output_timeout_ms,
-    )
-}
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
 
-pub fn provider_idle_output_timeout() -> Duration {
-    provider_timeout_from_env(
-        "TURA_PROVIDER_IDLE_OUTPUT_TIMEOUT_MS",
-        crate::tura_llm::provider_latency_timeouts().idle_output_timeout_ms,
-    )
-}
-
-pub async fn send_provider_request_first_response(
-    request: reqwest::RequestBuilder,
-) -> Result<reqwest::Response, TuraError> {
-    let limit = provider_first_output_timeout();
-    match tokio::time::timeout(limit, request.send()).await {
-        Ok(Ok(response)) => Ok(response),
-        Ok(Err(err)) => Err(TuraError::Network {
-            message: err.to_string(),
-        }),
-        Err(_) => Err(provider_timeout_error(false, limit)),
-    }
-}
-
-pub fn provider_timeout_error(saw_output: bool, limit: Duration) -> TuraError {
-    let phase = if saw_output {
-        "new provider output"
-    } else {
-        "first provider output"
+    use super::{
+        as_object_mut, deep_merge_json, force_strict_schema, strip_json_fence, to_bedrock_tools,
     };
-    TuraError::Network {
-        message: format!(
-            "provider stream timed out waiting for {phase} after {} ms",
-            limit.as_millis()
-        ),
-    }
-}
 
-fn provider_timeout_from_env(name: &str, default_ms: u64) -> Duration {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .map(Duration::from_millis)
-        .unwrap_or_else(|| Duration::from_millis(default_ms))
+    #[test]
+    fn strip_json_fence_removes_markdown_wrappers() {
+        assert_eq!(
+            strip_json_fence("```json\n{\"ok\":true}\n```"),
+            "{\"ok\":true}"
+        );
+        assert_eq!(strip_json_fence(" plain "), "plain");
+    }
+
+    #[test]
+    fn strict_schema_recurses_and_requires_all_properties() {
+        let mut schema = json!({
+            "type": "object",
+            "properties": {
+                "outer": {
+                    "type": "object",
+                    "properties": {"inner": {"type": "string"}}
+                }
+            }
+        });
+
+        force_strict_schema(&mut schema);
+
+        assert_eq!(schema["additionalProperties"], false);
+        assert_eq!(schema["required"], json!(["outer"]));
+        assert_eq!(schema["properties"]["outer"]["additionalProperties"], false);
+        assert_eq!(schema["properties"]["outer"]["required"], json!(["inner"]));
+    }
+
+    #[test]
+    fn bedrock_tools_convert_openapi_function_tools() {
+        let tools = to_bedrock_tools(&[json!({
+            "type": "function",
+            "function": {
+                "name": "echo",
+                "description": "Echo",
+                "parameters": {"type": "object"}
+            }
+        })]);
+
+        assert_eq!(tools[0]["toolSpec"]["name"], "echo");
+        assert_eq!(
+            tools[0]["toolSpec"]["inputSchema"]["json"]["type"],
+            "object"
+        );
+    }
+
+    #[test]
+    fn deep_merge_json_merges_objects_and_replaces_scalars() {
+        let mut value = json!({"a": {"b": 1}, "x": 1});
+        deep_merge_json(&mut value, json!({"a": {"c": 2}, "x": 3}));
+
+        assert_eq!(value, json!({"a": {"b": 1, "c": 2}, "x": 3}));
+    }
+
+    #[test]
+    fn as_object_mut_initializes_null_to_object() {
+        let mut value = json!(null);
+        as_object_mut(&mut value).insert("ok".to_string(), json!(true));
+        assert_eq!(value, json!({"ok": true}));
+    }
 }
