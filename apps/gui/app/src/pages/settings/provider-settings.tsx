@@ -46,6 +46,7 @@ import {
   type FileInfo,
   type GatewayConfig,
   type Message,
+  type ProviderAuthActionResponse,
   type ProviderAuthMethod,
   type ProductIssue,
   type Project,
@@ -80,11 +81,9 @@ import { classNames, truncate } from "../../state/format";
 import { t, type TextKey } from "../../i18n";
 
 import {
-  authStatusText,
   copyText,
-  providerConfigured,
-  providerSourceLabel,
-  providerStateLabel,
+  providerAuthDisplayState,
+  type ProviderAuthDisplayState,
 } from "../../utils/settings";
 import { formatModelLimit } from "../../utils/app-format";
 import { ReadonlyRow } from "./settings-view";
@@ -105,20 +104,25 @@ export function ProviderConfigGroup(props: {
         fallback={<div class="surface-list-empty">{t("empty")}</div>}
       >
         {(provider) => (
-          <button
-            class="settings-provider-row"
-            onClick={() => props.onProvider(provider)}
-          >
-            <span class="provider-row-name">
-              <span>{provider.name}</span>
-              <Show when={providerHasOauthLogin(props.state, provider.id)}>
-                <small>{t("oauthLogin")}</small>
-              </Show>
-            </span>
-            <small>
-              {providerStateLabel(props.state, provider.id, provider.source)}
-            </small>
-          </button>
+          (() => {
+            const display = createMemo(() =>
+              providerAuthDisplayState(props.state, provider.id),
+            );
+            return (
+              <button
+                class="settings-provider-row"
+                onClick={() => props.onProvider(provider)}
+              >
+                <span class="provider-row-name">
+                  <span>{provider.name}</span>
+                  <Show when={providerHasOauthLogin(props.state, provider.id)}>
+                    <small>{t("oauthLogin")}</small>
+                  </Show>
+                </span>
+                <small>{display().label}</small>
+              </button>
+            );
+          })()
         )}
       </For>
     </section>
@@ -132,6 +136,103 @@ function providerHasOauthLogin(state: AppState, providerId: string): boolean {
   );
 }
 
+function ProviderAuthStatusRow(props: {
+  display: ProviderAuthDisplayState;
+  receipt?: ProviderAuthActionResponse;
+  saving: boolean;
+  onValidate: () => void;
+}) {
+  return (
+    <div class="provider-auth-status-block">
+      <div class="field-row readonly-row provider-auth-state-row">
+        <span>{t("state")}</span>
+        <code class="provider-auth-state-value">
+          <span
+            class={classNames(
+              "provider-auth-state-dot",
+              props.display.level,
+            )}
+          />
+          {props.display.label}
+        </code>
+        <button
+          type="button"
+          class="secondary provider-auth-validate"
+          disabled={props.saving}
+          onClick={props.onValidate}
+        >
+          {t("validate")}
+        </button>
+      </div>
+      <Show when={props.receipt}>
+        {(receipt) => (
+          <div
+            class={classNames(
+              "provider-auth-receipt",
+              props.display.level,
+            )}
+          >
+            <span>{t("receipt")}:</span>
+            <code>
+              <span>{validationReceiptText(receipt())}</span>
+            </code>
+          </div>
+        )}
+      </Show>
+    </div>
+  );
+}
+
+function validationReceiptText(receipt: ProviderAuthActionResponse): string {
+  const details = receipt.details ?? [];
+  if (details.length === 0) {
+    return validationReceiptCodeText(receipt.code ?? "", undefined);
+  }
+  return details
+    .map((detail) => validationReceiptCodeText(detail.code, detail.value))
+    .join("\n");
+}
+
+function validationReceiptCodeText(code: string, value?: string | null): string {
+  const key = VALIDATION_RECEIPT_TEXT_KEYS[code];
+  if (key) {
+    return t(key, { value: value ?? "" });
+  }
+  return t("providerReceiptFallback", {
+    code,
+    value: value ? `: ${value}` : "",
+  });
+}
+
+const VALIDATION_RECEIPT_TEXT_KEYS: Record<string, TextKey> = {
+  "provider.validation.passed": "providerReceiptValidationPassed",
+  "provider.validation.failed": "providerReceiptValidationFailed",
+  "provider.validation.unavailable": "providerReceiptValidationUnavailable",
+  "provider.base_url.ok": "providerReceiptBaseUrlOk",
+  "provider.base_url.invalid": "providerReceiptBaseUrlInvalid",
+  "provider.env.present": "providerReceiptEnvPresent",
+  "provider.env.missing": "providerReceiptEnvMissing",
+  "provider.env.none_registered": "providerReceiptEnvNoneRegistered",
+  "provider.remote.accepted": "providerReceiptRemoteAccepted",
+  "provider.remote.permission_limited": "providerReceiptRemotePermissionLimited",
+  "provider.remote.rejected": "providerReceiptRemoteRejected",
+  "provider.remote.request_failed": "providerReceiptRemoteRequestFailed",
+  "provider.validation.client_setup_failed": "providerReceiptClientSetupFailed",
+  "provider.credential.oauth_token_missing": "providerReceiptOauthTokenMissing",
+  "provider.credential.oauth_token_invalid_format": "providerReceiptOauthTokenInvalidFormat",
+  "provider.credential.token_missing": "providerReceiptTokenMissing",
+  "provider.credential.api_key_missing": "providerReceiptApiKeyMissing",
+  "provider.validation.public_model_list_unsupported": "providerReceiptPublicModelListUnsupported",
+  "provider.validation.gateway_not_configured": "providerReceiptGatewayNotConfigured",
+  "provider.request.no_paid_model": "providerReceiptNoPaidModelRequest",
+  "provider.auth.refresh.unsupported": "providerReceiptAuthRefreshUnsupported",
+  "provider.auth.refresh.failed": "providerReceiptAuthRefreshFailed",
+  "provider.auth.refresh.succeeded": "providerReceiptAuthRefreshSucceeded",
+  "provider.auth.not_configured": "providerReceiptAuthNotConfigured",
+  "provider.auth.logout.succeeded": "providerReceiptAuthLogoutSucceeded",
+  "provider.auth.logout.failed": "providerReceiptAuthLogoutFailed",
+};
+
 export function ProviderAuthDialog(props: {
   state: AppState;
   panel: { providerId: string; reason?: string };
@@ -139,6 +240,7 @@ export function ProviderAuthDialog(props: {
   onAuthDraft: (providerId: string, value: string) => void;
   onAuthCode: (providerId: string, value: string) => void;
   onSaveKey: (providerId: string, method: ProviderAuthMethod) => void;
+  onValidate: (providerId: string) => void;
   onStartLogin: (providerId: string, methodIndex: number) => void;
   onCompleteLogin: (
     providerId: string,
@@ -157,6 +259,12 @@ export function ProviderAuthDialog(props: {
   );
   const status = createMemo(
     () => props.state.providerAuthStatus[props.panel.providerId],
+  );
+  const validationReceipt = createMemo(
+    () => props.state.providerValidationReceipts[props.panel.providerId],
+  );
+  const displayState = createMemo(() =>
+    providerAuthDisplayState(props.state, props.panel.providerId),
   );
 
   return (
@@ -191,13 +299,11 @@ export function ProviderAuthDialog(props: {
         <Show when={provider()}>
           {(item) => (
             <div class="settings-fields provider-auth-info">
-              <ReadonlyRow
-                label={t("state")}
-                value={authStatusText(status())}
-              />
-              <ReadonlyRow
-                label={t("source")}
-                value={providerSourceLabel(item().source)}
+              <ProviderAuthStatusRow
+                display={displayState()}
+                receipt={validationReceipt()}
+                saving={props.state.settingsSaving}
+                onValidate={() => props.onValidate(props.panel.providerId)}
               />
               <ReadonlyRow
                 label={t("env")}
@@ -218,6 +324,7 @@ export function ProviderAuthDialog(props: {
           onAuthDraft={props.onAuthDraft}
           onAuthCode={props.onAuthCode}
           onSaveKey={props.onSaveKey}
+          onValidate={props.onValidate}
           onStartLogin={props.onStartLogin}
           onCompleteLogin={props.onCompleteLogin}
           onLogout={props.onLogout}
@@ -235,6 +342,7 @@ function ProviderAuthMethods(props: {
   onAuthDraft: (providerId: string, value: string) => void;
   onAuthCode: (providerId: string, value: string) => void;
   onSaveKey: (providerId: string, method: ProviderAuthMethod) => void;
+  onValidate: (providerId: string) => void;
   onStartLogin: (providerId: string, methodIndex: number) => void;
   onCompleteLogin: (
     providerId: string,
@@ -272,7 +380,6 @@ function ProviderAuthMethods(props: {
                     <ProtectedTokenInput
                       providerId={provider().id}
                       providerName={provider().name}
-                      providerKey={provider().key}
                       method={method}
                       status={props.status}
                       state={props.state}
@@ -282,7 +389,9 @@ function ProviderAuthMethods(props: {
                       class="secondary"
                       disabled={
                         props.state.settingsSaving ||
-                        !props.state.authDrafts[provider().id]?.trim()
+                        !props.state.authDrafts[
+                          authDraftKey(provider().id, method)
+                        ]?.trim()
                       }
                       onClick={() => props.onSaveKey(provider().id, method)}
                     >
@@ -314,6 +423,34 @@ function ProviderAuthMethods(props: {
                     >
                       <ExternalLink size={14} strokeWidth={1.7} />
                       {t("oauthLogin")}
+                    </button>
+                  </div>
+                  <div class="login-method-controls">
+                    <input
+                      value={props.state.authCodeDrafts[provider().id] ?? ""}
+                      placeholder={t("codeOrToken")}
+                      onInput={(event) =>
+                        props.onAuthCode(
+                          provider().id,
+                          event.currentTarget.value,
+                        )
+                      }
+                    />
+                    <button
+                      class="secondary"
+                      disabled={
+                        props.state.settingsSaving ||
+                        !props.state.authCodeDrafts[provider().id]?.trim()
+                      }
+                      onClick={() =>
+                        props.onCompleteLogin(
+                          provider().id,
+                          props.state.authCodeDrafts[provider().id],
+                          index(),
+                        )
+                      }
+                    >
+                      {t("login")}
                     </button>
                   </div>
                   <Show
@@ -359,7 +496,6 @@ function methodUsesTokenInput(method: ProviderAuthMethod): boolean {
 function ProtectedTokenInput(props: {
   providerId: string;
   providerName: string;
-  providerKey?: string | null;
   method: ProviderAuthMethod;
   status?: AppState["providerAuthStatus"][string];
   state: AppState;
@@ -369,15 +505,16 @@ function ProtectedTokenInput(props: {
   const value = createMemo(() =>
     tokenInputValue(
       props.providerId,
-      props.providerKey,
       props.method,
       props.status,
       props.state,
     ),
   );
+  const title = createMemo(() => value() || props.method.token_env || t("apiKey"));
   return (
     <div
       class="masked-token-field"
+      title={title()}
       onMouseEnter={() => setRevealed(true)}
       onMouseLeave={() => setRevealed(false)}
       onFocusIn={() => setRevealed(true)}
@@ -386,10 +523,14 @@ function ProtectedTokenInput(props: {
       <input
         type={revealed() ? "text" : "password"}
         value={value()}
+        title={title()}
         placeholder={props.method.token_env ?? t("apiKey")}
         onFocus={(event) => event.currentTarget.select()}
         onInput={(event) =>
-          props.onAuthDraft(props.providerId, event.currentTarget.value)
+          props.onAuthDraft(
+            authDraftKey(props.providerId, props.method),
+            event.currentTarget.value,
+          )
         }
       />
       <button
@@ -406,17 +547,13 @@ function ProtectedTokenInput(props: {
 
 function tokenInputValue(
   providerId: string,
-  providerKey: string | null | undefined,
   method: ProviderAuthMethod,
   status: AppState["providerAuthStatus"][string] | undefined,
   state: AppState,
 ): string {
-  const draft = state.authDrafts[providerId];
+  const draft = state.authDrafts[authDraftKey(providerId, method)];
   if (draft !== undefined) {
     return draft;
-  }
-  if (providerKey) {
-    return providerKey;
   }
   const methodRecord = method as unknown as Record<string, unknown>;
   const configuredValue =
@@ -432,6 +569,12 @@ function tokenInputValue(
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function authDraftKey(providerId: string, method: ProviderAuthMethod): string {
+  return [providerId, method.token_env || method.login_env || method.kind].join(
+    "::",
+  );
 }
 
 const CAPABILITY_LABELS: Record<string, TextKey> = {

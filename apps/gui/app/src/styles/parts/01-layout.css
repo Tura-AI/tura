@@ -85,43 +85,58 @@
 }
 
 .conversation-grid {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   min-height: 0;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .conversation-main {
   position: relative;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   gap: 0;
-  justify-self: center;
+  justify-self: stretch;
   width: 100%;
-  max-width: var(--page-max);
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.transcript {
+  width: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0;
+  scrollbar-gutter: stable both-edges;
+}
+
+.transcript-inner {
+  display: grid;
+  align-content: start;
+  min-height: 100%;
+  padding: var(--space-4) 0 var(--space-6);
+}
+
+.conversation-bottom {
+  display: grid;
+  justify-self: stretch;
+  width: 100%;
   min-height: 0;
   overflow: visible;
 }
 
-.transcript {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: var(--space-4) 0 var(--space-3);
-}
-
-.transcript:has(.message)::before {
-  content: "";
-  flex: 1 0 auto;
+.conversation-bottom > .composer-task-dock,
+.conversation-bottom > .bottom-composer {
+  width: min(var(--page-max), calc(100% - var(--page-edge-space) * 2));
 }
 
 .scroll-follow {
   position: absolute;
   right: 50%;
-  bottom: var(--scroll-follow-bottom, 166px);
+  bottom: 14px;
   z-index: 4;
   display: inline-grid;
   width: 38px;
@@ -284,11 +299,13 @@
 
 .message {
   display: grid;
+  align-items: start;
   gap: var(--space-3);
   padding: 18px 0;
 }
 
 .message.user {
+  align-items: start;
   justify-items: end;
 }
 
@@ -318,6 +335,7 @@
 
 .message-user-shell {
   display: grid;
+  align-self: start;
   gap: var(--space-2);
   max-width: min(680px, 88%);
   padding: 10px var(--space-4);

@@ -14,6 +14,16 @@ name = "provider_tool_call_live_smoke"
 path = "tests/provider_tool_call_live_smoke.rs"
  harness = false
 
+[[test]]
+name = "claude_code_live_smoke"
+path = "tests/claude_code_live_smoke.rs"
+harness = false
+
+[[test]]
+name = "responses_tier_live_smoke"
+path = "tests/responses_tier_live_smoke.rs"
+harness = false
+
 [dependencies]
 tokio.workspace = true
 serde.workspace = true

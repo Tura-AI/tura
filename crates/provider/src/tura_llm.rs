@@ -11,12 +11,14 @@ use thiserror::Error;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use crate::auth_registry::OAuthAuthorizeKind;
 use crate::llm::providers;
 use crate::logging::{build_call_log, write_llm_log};
 use crate::tura_conf::TuraConfig;
 
 pub static SETTINGS: OnceLock<Arc<Settings>> = OnceLock::new();
 static PROVIDER_LATENCY_TIMEOUTS: OnceLock<RwLock<ProviderLatencyTimeouts>> = OnceLock::new();
+static PROVIDER_LATENCY_CONFIG: OnceLock<RwLock<ProviderLatencyConfig>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub enum ProviderStreamEvent {
@@ -138,7 +140,9 @@ impl ProviderConfig {
     }
 
     fn get_api_key(&self, conf: &TuraConfig) -> Result<String, TuraError> {
-        conf.get(&format!("{}_API_KEY", self.provider.to_uppercase()))
+        crate::auth_registry::provider_token_env(&self.provider)
+            .and_then(|key| conf.get(key))
+            .or_else(|| conf.get(&format!("{}_API_KEY", self.provider.to_uppercase())))
             .or_else(|| conf.get(&format!("{}_api_key", self.provider)))
             .or_else(|| conf.get(&self.provider))
             .ok_or_else(|| TuraError::Config {
@@ -155,6 +159,13 @@ impl ProviderConfig {
             self.get_api_key(conf)?
         };
         match self.provider.to_lowercase().as_str() {
+            "codex" if self.model.starts_with("text-embedding-") => {
+                providers::openai::embed("https://api.openai.com/v1", &self.model, &api_key, text)
+                    .await
+            }
+            "cohere" => {
+                crate::llm::cohere::embed(&self.base_url, &self.model, &api_key, text).await
+            }
             "google" => providers::google::embed(&self.base_url, &self.model, &api_key, text).await,
             "minimax" => {
                 providers::minimax::embed(&self.base_url, &self.model, &api_key, text).await
@@ -182,7 +193,7 @@ impl ProviderConfig {
     ) -> Result<ProviderResponse, TuraError> {
         self.validate()?;
         let _parameter_policy = providers::parameter_policy(&self.provider);
-        let api_key = if should_use_openai_oauth(&self.provider, &self.base_url, conf) {
+        let mut api_key = if should_use_openai_oauth(&self.provider, &self.base_url, conf) {
             refresh_openai_access_token_if_needed(conf).await?
         } else {
             self.get_api_key(conf)?
@@ -191,7 +202,12 @@ impl ProviderConfig {
         let started_at = Utc::now();
         let request_params = serde_json::to_value(&options).unwrap_or(Value::Null);
 
-        let result = match self.provider.to_lowercase().as_str() {
+        // Reactive OAuth refresh: if the first attempt fails with an
+        // authentication error (expired/invalid token), refresh the provider's
+        // OAuth access token using its registered refresh token and retry once.
+        let mut refreshed = false;
+        let result = loop {
+        let attempt = match self.provider.to_lowercase().as_str() {
             "google" => {
                 providers::google::call(&self.base_url, &self.model, &api_key, &messages, &options)
                     .await
@@ -222,6 +238,17 @@ impl ProviderConfig {
                 )
                 .await
             }
+            "claude-code" => {
+                providers::claude_code::call_with_stream_events(
+                    &self.base_url,
+                    &self.model,
+                    &api_key,
+                    &messages,
+                    &options,
+                    stream_events.clone(),
+                )
+                .await
+            }
             "openai" if should_use_openai_oauth(&self.provider, &self.base_url, conf) => {
                 providers::codex::call_with_stream_events(
                     &self.base_url,
@@ -233,8 +260,30 @@ impl ProviderConfig {
                 )
                 .await
             }
-            "openai" => {
+            "openai" | "openai-api" | "chatgpt" => {
                 providers::openai::call_with_stream_events(
+                    &self.base_url,
+                    &self.model,
+                    &api_key,
+                    &messages,
+                    &options,
+                    stream_events.clone(),
+                )
+                .await
+            }
+            "xai" | "grok" => {
+                providers::xai::call_with_stream_events(
+                    &self.base_url,
+                    &self.model,
+                    &api_key,
+                    &messages,
+                    &options,
+                    stream_events.clone(),
+                )
+                .await
+            }
+            "qwen" | "qwen_cn" | "qwen-cn" => {
+                providers::qwen::call_with_stream_events(
                     &self.base_url,
                     &self.model,
                     &api_key,
@@ -256,6 +305,27 @@ impl ProviderConfig {
                 )
                 .await
             }
+        };
+
+        if !refreshed && is_auth_expired_error(&attempt) {
+            match try_refresh_oauth_access_token(&self.provider, conf).await {
+                Ok(Some(new_key)) => {
+                    warn!(
+                        provider = %self.provider,
+                        "provider call hit auth error; refreshed OAuth token and retrying"
+                    );
+                    api_key = new_key;
+                    refreshed = true;
+                    continue;
+                }
+                Ok(None) => break attempt,
+                Err(refresh_err) => {
+                    warn!(provider = %self.provider, error = %refresh_err, "OAuth token refresh failed");
+                    break attempt;
+                }
+            }
+        }
+        break attempt;
         };
 
         let finished_at = Utc::now();
@@ -455,6 +525,215 @@ async fn refresh_openai_access_token_if_needed(conf: &TuraConfig) -> Result<Stri
     Ok(next_access)
 }
 
+/// Whether a provider call result is an authentication failure that an OAuth
+/// token refresh could plausibly fix (expired / invalid access token).
+fn is_auth_expired_error<T>(result: &Result<T, TuraError>) -> bool {
+    matches!(
+        result,
+        Err(TuraError::HttpStatus { status, .. }) if *status == 401 || *status == 403
+    )
+}
+
+/// Reactively refresh an OAuth access token for `provider` using its registered
+/// refresh token. Returns `Ok(Some(new_access))` on success, `Ok(None)` when the
+/// provider does not support OAuth refresh or has no refresh token configured,
+/// and `Err(_)` when the refresh attempt itself failed.
+///
+/// On success the new access token (and any rotated refresh token / expiry) is
+/// written both to the process environment and persisted to the `.env` file so
+/// it survives a restart. OpenAI/Codex, Anthropic (claude-code) and Google OAuth
+/// providers are all supported via the provider auth registry.
+async fn try_refresh_oauth_access_token(
+    provider: &str,
+    conf: &TuraConfig,
+) -> Result<Option<String>, TuraError> {
+    let Some(entry) = crate::auth_registry::provider_auth_registry_entry(provider) else {
+        return Ok(None);
+    };
+    if !entry.capabilities.supports_oauth_refresh {
+        return Ok(None);
+    }
+    let Some(refresh_env) = entry.refresh_env else {
+        return Ok(None);
+    };
+    let Some(refresh) = conf.get(refresh_env).filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+
+    let env_default = |name: &str, fallback: &str| -> String {
+        std::env::var(name)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| fallback.to_string())
+    };
+
+    let kind = entry.oauth_callback_kind.or(entry.oauth_authorize_kind);
+    // (token_url, form params, send_cli_headers)
+    let (token_url, form, send_cli_headers) = match kind {
+        Some(OAuthAuthorizeKind::AnthropicPkce) => (
+            env_default(
+                "ANTHROPIC_OAUTH_TOKEN_URL",
+                "https://platform.claude.com/v1/oauth/token",
+            ),
+            vec![
+                ("grant_type".to_string(), "refresh_token".to_string()),
+                ("refresh_token".to_string(), refresh.clone()),
+                (
+                    "client_id".to_string(),
+                    env_default(
+                        "ANTHROPIC_OAUTH_CLIENT_ID",
+                        "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+                    ),
+                ),
+            ],
+            // platform.claude.com is behind Cloudflare and rejects the default
+            // reqwest user-agent with HTTP 403 (error 1010); identify as the CLI.
+            true,
+        ),
+        Some(OAuthAuthorizeKind::OpenAiPkce) => (
+            env_default("OPENAI_OAUTH_TOKEN_URL", "https://auth.openai.com/oauth/token"),
+            vec![
+                ("grant_type".to_string(), "refresh_token".to_string()),
+                ("refresh_token".to_string(), refresh.clone()),
+                (
+                    "client_id".to_string(),
+                    env_default("OPENAI_OAUTH_CLIENT_ID", "app_EMoamEEZ73f0CkXaXp7hrann"),
+                ),
+            ],
+            false,
+        ),
+        Some(OAuthAuthorizeKind::GooglePkce) => {
+            let prefix = provider.to_uppercase().replace('-', "_");
+            let mut form = vec![
+                ("grant_type".to_string(), "refresh_token".to_string()),
+                ("refresh_token".to_string(), refresh.clone()),
+            ];
+            if let Some(client_id) = conf
+                .get(&format!("{prefix}_OAUTH_CLIENT_ID"))
+                .or_else(|| conf.get("GOOGLE_OAUTH_CLIENT_ID"))
+                .filter(|value| !value.trim().is_empty())
+            {
+                form.push(("client_id".to_string(), client_id));
+            }
+            if let Some(client_secret) = conf
+                .get(&format!("{prefix}_OAUTH_CLIENT_SECRET"))
+                .or_else(|| conf.get("GOOGLE_OAUTH_CLIENT_SECRET"))
+                .filter(|value| !value.trim().is_empty())
+            {
+                form.push(("client_secret".to_string(), client_secret));
+            }
+            (
+                env_default("GOOGLE_OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token"),
+                form,
+                false,
+            )
+        }
+        _ => return Ok(None),
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|err| TuraError::Network {
+            message: err.to_string(),
+        })?;
+    let mut request = client
+        .post(&token_url)
+        .header(CONTENT_TYPE, "application/x-www-form-urlencoded");
+    if send_cli_headers {
+        request = request
+            .header(reqwest::header::USER_AGENT, "claude-cli/1.0 (external, cli)")
+            .header(reqwest::header::ACCEPT, "application/json");
+    }
+    let response = request
+        .form(&form)
+        .send()
+        .await
+        .map_err(|err| TuraError::Network {
+            message: err.to_string(),
+        })?;
+    let status = response.status();
+    let body: Value = response.json().await.map_err(|err| TuraError::Network {
+        message: err.to_string(),
+    })?;
+    if !status.is_success() {
+        return Err(TuraError::HttpStatus {
+            status: status.as_u16(),
+            body: body.to_string(),
+        });
+    }
+
+    let access = body
+        .get("access_token")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| TuraError::ProviderRequest {
+            provider: provider.to_string(),
+            message: "OAuth refresh response did not include access_token".to_string(),
+        })?
+        .to_string();
+
+    let env_path = conf.env_path().to_path_buf();
+    if let Some(token_env) = entry.token_env {
+        std::env::set_var(token_env, &access);
+        persist_env_var(&env_path, token_env, &access);
+    }
+    if let Some(new_refresh) = body
+        .get("refresh_token")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
+        std::env::set_var(refresh_env, new_refresh);
+        persist_env_var(&env_path, refresh_env, new_refresh);
+    }
+    if let Some(expires_env) = entry.expires_env {
+        let expires_at = Utc::now().timestamp_millis()
+            + body
+                .get("expires_in")
+                .and_then(Value::as_i64)
+                .unwrap_or(3600)
+                * 1000;
+        let expires_at = expires_at.to_string();
+        std::env::set_var(expires_env, &expires_at);
+        persist_env_var(&env_path, expires_env, &expires_at);
+    }
+
+    Ok(Some(access))
+}
+
+/// Upsert `key=value` into the dotenv file at `env_path`, preserving the
+/// existing newline style and leaving other entries untouched. Best-effort:
+/// failures are ignored because the in-process `set_var` already keeps the
+/// running process working.
+fn persist_env_var(env_path: &std::path::Path, key: &str, value: &str) {
+    let existing = std::fs::read_to_string(env_path).unwrap_or_default();
+    let newline = if existing.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut out = String::new();
+    let mut replaced = false;
+    for line in existing.lines() {
+        if line
+            .split_once('=')
+            .is_some_and(|(name, _)| name.trim() == key)
+        {
+            out.push_str(key);
+            out.push('=');
+            out.push_str(value);
+            out.push_str(newline);
+            replaced = true;
+        } else {
+            out.push_str(line);
+            out.push_str(newline);
+        }
+    }
+    if !replaced {
+        out.push_str(key);
+        out.push('=');
+        out.push_str(value);
+        out.push_str(newline);
+    }
+    let _ = std::fs::write(env_path, out);
+}
+
 #[derive(Debug, Clone)]
 struct CodexAuthTokens {
     access_token: String,
@@ -587,11 +866,6 @@ impl RouteConfig {
         if !(0.0..=2.0).contains(&self.default_temperature) {
             return Err(TuraError::Validation {
                 message: "default_temperature must be within [0.0, 2.0]".into(),
-            });
-        }
-        if self.providers.is_empty() {
-            return Err(TuraError::Validation {
-                message: "no providers configured for this route".into(),
             });
         }
         for p in &self.providers {
@@ -851,25 +1125,17 @@ impl Default for ProviderLatencyTimeouts {
 }
 
 fn default_latency_level() -> String {
-    "low".to_string()
+    "fast".to_string()
 }
 
 fn default_latency_levels() -> HashMap<String, ProviderLatencyTimeouts> {
     HashMap::from([
         (
-            "low".to_string(),
+            "fast".to_string(),
             ProviderLatencyTimeouts {
                 idle_output_timeout_ms: 20_000,
                 first_output_timeout_ms: 40_000,
                 total_timeout_ms: 240_000,
-            },
-        ),
-        (
-            "medium".to_string(),
-            ProviderLatencyTimeouts {
-                idle_output_timeout_ms: 30_000,
-                first_output_timeout_ms: 60_000,
-                total_timeout_ms: 360_000,
             },
         ),
         (
@@ -881,7 +1147,7 @@ fn default_latency_levels() -> HashMap<String, ProviderLatencyTimeouts> {
             },
         ),
         (
-            "highest".to_string(),
+            "x-high".to_string(),
             ProviderLatencyTimeouts {
                 idle_output_timeout_ms: 100_000,
                 first_output_timeout_ms: 180_000,
@@ -891,35 +1157,43 @@ fn default_latency_levels() -> HashMap<String, ProviderLatencyTimeouts> {
     ])
 }
 
-impl ProviderLatencyConfig {
-    pub fn selected_timeouts(&self) -> ProviderLatencyTimeouts {
-        let active = std::env::var("TURA_PROVIDER_LATENCY_LEVEL")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| {
-                std::env::var("TURA_SESSION_REASONING_EFFORT")
-                    .ok()
-                    .and_then(|value| latency_level_for_reasoning_effort(&value))
-            })
-            .unwrap_or_else(|| self.active.clone());
-        self.levels
-            .get(active.trim())
-            .copied()
-            .or_else(|| self.levels.get("low").copied())
-            .unwrap_or_default()
+/// Map a model-catalog tier (the "tier flag", i.e. the route / `tura_llm_name`)
+/// to a provider-latency level. Level selection is driven entirely by the tier,
+/// never by the thinking / reasoning_effort parameter.
+///
+/// - flagship_thinking -> x-high
+/// - thinking          -> high
+/// - fast / instant    -> fast (lowest)
+/// - embedding_high    -> high
+/// - embedding_low     -> fast
+pub fn latency_level_for_tier(tier: &str) -> &'static str {
+    match tier.trim().to_ascii_lowercase().as_str() {
+        "flagship_thinking" => "x-high",
+        "thinking" => "high",
+        "embedding_high" => "high",
+        "fast" | "instant" | "embedding_low" => "fast",
+        _ => "fast",
     }
 }
 
-fn latency_level_for_reasoning_effort(reasoning_effort: &str) -> Option<String> {
-    match reasoning_effort.trim().to_ascii_lowercase().as_str() {
-        "" | "default" => None,
-        "none" | "minimal" | "low" => Some("low".to_string()),
-        "medium" => Some("medium".to_string()),
-        "high" => Some("high".to_string()),
-        "xhigh" | "x-high" | "extra-high" | "ultra-high" | "ultrahigh" | "highest" => {
-            Some("highest".to_string())
-        }
-        _ => None,
+impl ProviderLatencyConfig {
+    pub fn selected_timeouts(&self) -> ProviderLatencyTimeouts {
+        self.timeouts_for_level(&self.active)
+    }
+
+    /// Resolve the timeouts for a specific latency level, falling back to the
+    /// `fast` level and finally to defaults.
+    pub fn timeouts_for_level(&self, level: &str) -> ProviderLatencyTimeouts {
+        self.levels
+            .get(level.trim())
+            .copied()
+            .or_else(|| self.levels.get("fast").copied())
+            .unwrap_or_default()
+    }
+
+    /// Resolve timeouts for a model-catalog tier (the tier flag).
+    pub fn timeouts_for_tier(&self, tier: &str) -> ProviderLatencyTimeouts {
+        self.timeouts_for_level(latency_level_for_tier(tier))
     }
 }
 
@@ -935,6 +1209,29 @@ pub fn provider_latency_timeouts() -> ProviderLatencyTimeouts {
     let lock =
         PROVIDER_LATENCY_TIMEOUTS.get_or_init(|| RwLock::new(ProviderLatencyTimeouts::default()));
     lock.read().map(|guard| *guard).unwrap_or_default()
+}
+
+/// Store the active provider-latency config (level table + active level) so it
+/// can later be resolved per-tier at runtime-construction time.
+pub fn set_provider_latency_config(config: ProviderLatencyConfig) {
+    let lock = PROVIDER_LATENCY_CONFIG.get_or_init(|| RwLock::new(ProviderLatencyConfig::default()));
+    if let Ok(mut guard) = lock.write() {
+        *guard = config;
+    }
+}
+
+pub fn provider_latency_config() -> ProviderLatencyConfig {
+    let lock = PROVIDER_LATENCY_CONFIG.get_or_init(|| RwLock::new(ProviderLatencyConfig::default()));
+    lock.read().map(|guard| guard.clone()).unwrap_or_default()
+}
+
+/// Resolve and install the global latency timeouts for a model-catalog tier
+/// (the tier flag). Level selection is driven entirely by the tier, never by
+/// the thinking / reasoning_effort parameter. Returns the applied timeouts.
+pub fn apply_latency_for_tier(tier: &str) -> ProviderLatencyTimeouts {
+    let timeouts = provider_latency_config().timeouts_for_tier(tier);
+    set_provider_latency_timeouts(timeouts);
+    timeouts
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1397,7 +1694,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_latency_defaults_match_low_profile() {
+    fn provider_latency_defaults_match_fast_profile() {
         let selected = ProviderLatencyConfig::default().selected_timeouts();
 
         assert_eq!(selected.idle_output_timeout_ms, 20_000);
@@ -1406,32 +1703,29 @@ mod tests {
     }
 
     #[test]
-    fn provider_latency_level_tracks_reasoning_effort() {
-        assert_eq!(
-            super::latency_level_for_reasoning_effort("minimal").as_deref(),
-            Some("low")
-        );
-        assert_eq!(
-            super::latency_level_for_reasoning_effort("low").as_deref(),
-            Some("low")
-        );
-        assert_eq!(
-            super::latency_level_for_reasoning_effort("medium").as_deref(),
-            Some("medium")
-        );
-        assert_eq!(
-            super::latency_level_for_reasoning_effort("high").as_deref(),
-            Some("high")
-        );
-        assert_eq!(
-            super::latency_level_for_reasoning_effort("xhigh").as_deref(),
-            Some("highest")
-        );
-        assert_eq!(
-            super::latency_level_for_reasoning_effort("highest").as_deref(),
-            Some("highest")
-        );
-        assert_eq!(super::latency_level_for_reasoning_effort("default"), None);
+    fn provider_latency_level_tracks_tier_flag() {
+        assert_eq!(super::latency_level_for_tier("flagship_thinking"), "x-high");
+        assert_eq!(super::latency_level_for_tier("thinking"), "high");
+        assert_eq!(super::latency_level_for_tier("fast"), "fast");
+        assert_eq!(super::latency_level_for_tier("instant"), "fast");
+        assert_eq!(super::latency_level_for_tier("embedding_high"), "high");
+        assert_eq!(super::latency_level_for_tier("embedding_low"), "fast");
+        // Unknown tiers fall back to the lowest level.
+        assert_eq!(super::latency_level_for_tier("something_else"), "fast");
+    }
+
+    #[test]
+    fn provider_latency_timeouts_for_tier_resolve_levels() {
+        let config = ProviderLatencyConfig::default();
+
+        let flagship = config.timeouts_for_tier("flagship_thinking");
+        assert_eq!(flagship.total_timeout_ms, 1_200_000);
+
+        let thinking = config.timeouts_for_tier("thinking");
+        assert_eq!(thinking.total_timeout_ms, 960_000);
+
+        let fast = config.timeouts_for_tier("instant");
+        assert_eq!(fast.total_timeout_ms, 240_000);
     }
 
     #[test]
@@ -1528,5 +1822,52 @@ mod tests {
         assert!(openai_login_is_oauth(
             &crate::tura_conf::TuraConfig::default()
         ));
+    }
+
+    #[test]
+    fn auth_expired_error_detects_401_and_403_only() {
+        let unauthorized: Result<(), super::TuraError> = Err(super::TuraError::HttpStatus {
+            status: 401,
+            body: "expired".to_string(),
+        });
+        let forbidden: Result<(), super::TuraError> = Err(super::TuraError::HttpStatus {
+            status: 403,
+            body: "forbidden".to_string(),
+        });
+        let rate_limited: Result<(), super::TuraError> = Err(super::TuraError::HttpStatus {
+            status: 429,
+            body: "slow down".to_string(),
+        });
+        let network: Result<(), super::TuraError> = Err(super::TuraError::Network {
+            message: "boom".to_string(),
+        });
+        let ok: Result<(), super::TuraError> = Ok(());
+
+        assert!(super::is_auth_expired_error(&unauthorized));
+        assert!(super::is_auth_expired_error(&forbidden));
+        assert!(!super::is_auth_expired_error(&rate_limited));
+        assert!(!super::is_auth_expired_error(&network));
+        assert!(!super::is_auth_expired_error(&ok));
+    }
+
+    #[test]
+    fn persist_env_var_upserts_and_appends_preserving_other_keys() {
+        let dir = unique_temp_dir("persist-env");
+        let path = dir.join(".env");
+        std::fs::write(&path, "ALPHA=1\nTOKEN=old\nBETA=2\n").expect("seed env");
+
+        // Update existing key in place.
+        super::persist_env_var(&path, "TOKEN", "new");
+        let after = std::fs::read_to_string(&path).expect("read env");
+        assert!(after.contains("TOKEN=new"));
+        assert!(!after.contains("TOKEN=old"));
+        assert!(after.contains("ALPHA=1"));
+        assert!(after.contains("BETA=2"));
+
+        // Append a brand-new key.
+        super::persist_env_var(&path, "EXPIRES", "12345");
+        let after = std::fs::read_to_string(&path).expect("read env");
+        assert!(after.contains("EXPIRES=12345"));
+        assert!(after.contains("TOKEN=new"));
     }
 }

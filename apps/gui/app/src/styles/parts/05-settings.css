@@ -1,9 +1,9 @@
 .settings-canvas {
   overflow: auto;
-  scrollbar-gutter: stable;
-  justify-self: center;
-  width: 100%;
-  max-width: 820px;
+}
+
+.settings-view {
+  --page-middle-top-space: var(--space-5);
 }
 
 .settings-stack,
@@ -76,9 +76,16 @@
 
 .settings-stack {
   gap: var(--space-4);
+  justify-self: center;
   width: 100%;
-  max-width: none;
+  max-width: 820px;
   min-width: 0;
+}
+
+.settings-stack.page-layer-inner {
+  width: min(820px, max(0px, calc(100% - var(--page-edge-space) * 2)));
+  max-width: 820px;
+  margin-top: var(--page-middle-top-space, 0px);
 }
 
 .settings-list {
@@ -160,11 +167,6 @@
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-}
-
-.settings-panel.appearance-panel,
-.settings-panel.model-config-panel {
-  overflow: visible;
 }
 
 .settings-panel > header {
@@ -447,6 +449,99 @@
   border-bottom: 1px solid var(--line);
 }
 
+.provider-auth-status-block {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.provider-auth-state-row {
+  grid-template-columns: minmax(120px, 0.38fr) minmax(0, 1fr) auto;
+  column-gap: var(--space-4);
+  align-items: center;
+}
+
+.provider-auth-state-value {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  padding-left: 5px;
+}
+
+.provider-auth-state-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #ef9a9a;
+  box-shadow: 0 0 0 3px rgba(239, 154, 154, 0.2);
+}
+
+.provider-auth-state-dot.neutral {
+  background: #b8bec5;
+  box-shadow: 0 0 0 3px rgba(184, 190, 197, 0.2);
+}
+
+.provider-auth-state-dot.ok {
+  background: #9fd8a8;
+  box-shadow: 0 0 0 3px rgba(159, 216, 168, 0.22);
+}
+
+.provider-auth-state-dot.warn {
+  background: #f2d46b;
+  box-shadow: 0 0 0 3px rgba(242, 212, 107, 0.24);
+}
+
+.provider-auth-validate {
+  min-height: 30px;
+  padding-inline: var(--space-3);
+}
+
+.provider-auth-receipt {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.38fr) minmax(0, 1fr) auto;
+  column-gap: var(--space-4);
+  row-gap: var(--space-2);
+  align-items: start;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 0;
+  color: var(--ink);
+  font-size: var(--font-small);
+}
+
+.provider-auth-receipt span {
+  color: var(--muted);
+}
+
+.provider-auth-receipt code {
+  grid-column: 2 / 4;
+  min-width: 0;
+  font-family: inherit;
+}
+
+.provider-auth-receipt code > span {
+  display: block;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(159, 216, 168, 0.55);
+  border-radius: var(--radius-small);
+  background: rgba(159, 216, 168, 0.09);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.provider-auth-receipt.fail code > span {
+  border-color: rgba(239, 154, 154, 0.58);
+  background: rgba(239, 154, 154, 0.08);
+}
+
+.provider-auth-receipt.warn code > span {
+  border-color: rgba(242, 212, 107, 0.68);
+  background: rgba(242, 212, 107, 0.12);
+}
+
 .provider-auth-logout-row {
   display: grid;
   justify-items: start;
@@ -539,6 +634,12 @@
   .files-view,
   .settings-view {
     padding: var(--space-6) var(--space-5);
+  }
+
+  .layered-page {
+    --page-edge-space: var(--space-5);
+    padding-right: 0;
+    padding-left: 0;
   }
 
   .conversation-grid {
@@ -647,6 +748,12 @@
   .files-view,
   .settings-view {
     padding: var(--space-5) var(--space-4);
+  }
+
+  .layered-page {
+    --page-edge-space: var(--space-4);
+    padding-right: 0;
+    padding-left: 0;
   }
 
   .page-title h1 {
@@ -831,6 +938,12 @@
     padding: var(--space-4);
   }
 
+  .layered-page {
+    --page-edge-space: var(--space-4);
+    padding-right: 0;
+    padding-left: 0;
+  }
+
   .rail-collapsed .product-workbench,
   .rail-collapsed .plan-detail,
   .rail-collapsed .conversation-view,
@@ -886,7 +999,11 @@
     gap: var(--space-4);
   }
 
-  .transcript {
+  .conversation-view .transcript {
+    padding: 0;
+  }
+
+  .transcript-inner {
     padding: var(--space-3) 0 var(--space-5);
   }
 
@@ -924,7 +1041,6 @@
       var(--inspector-max-width, 680px),
       max(var(--inspector-min-width, 320px), var(--inspector-width, 430px))
     );
-    padding-right: calc(var(--space-4) + var(--inspector-reserved));
   }
 
   .message-user-shell {
@@ -939,6 +1055,8 @@
   }
 
   .field-row,
+  .provider-auth-state-row,
+  .provider-auth-receipt,
   .provider-domain-filter-row,
   .login-method-controls,
   .login-method-controls.oauth-controls {

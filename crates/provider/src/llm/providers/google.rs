@@ -32,7 +32,10 @@ mod tests {
         assert_eq!(policy.api_style, ProviderApiStyle::Google);
         assert_eq!(policy.metrics_style, ProviderApiStyle::Google);
         assert!(!policy.supports_stream_usage);
-        assert!(policy.ignored_parameters.contains(&"tool_choice"));
+        // Forced tool choice is now supported via Gemini toolConfig, so
+        // tool_choice is no longer ignored.
+        assert!(policy.supports_forced_tool_choice);
+        assert!(!policy.ignored_parameters.contains(&"tool_choice"));
         assert!(policy.ignored_parameters.contains(&"reasoning_effort"));
     }
 }

@@ -92,35 +92,6 @@ export function copyText(value: string): void {
   }
 }
 
-export function providerSourceLabel(source?: string | null): string {
-  const normalized = source?.toLowerCase();
-  if (normalized === "config") {
-    return t("config");
-  }
-  if (normalized === "env") {
-    return t("env");
-  }
-  return source || t("notConfigured");
-}
-
-export function authStatusText(
-  status?: AppState["providerAuthStatus"][string],
-): string {
-  if (!status) {
-    return "--";
-  }
-  if (status.authenticated) {
-    return t("connected");
-  }
-  if (status.expired) {
-    return t("expired");
-  }
-  if (status.configured) {
-    return t("configured");
-  }
-  return t("notConfigured");
-}
-
 export function formatModelLimit(value?: number): string {
   if (!value) {
     return "--";

@@ -24,10 +24,11 @@ pub async fn call_with_stream_events(
         return openapi::force_search(base_url, model, api_key, messages, options).await;
     }
 
-    openapi::call_with_stream_events(
+    // Non-OAuth OpenAI now rides the shared Responses core (the `chatgpt`
+    // sub-branch of the openapi response tier).
+    crate::llm::providers::chatgpt::call_with_stream_events(
         base_url,
         model,
-        "openai",
         api_key,
         messages,
         options,
@@ -41,9 +42,9 @@ mod tests {
     use super::super::{parameter_policy, ProviderApiStyle};
 
     #[test]
-    fn openai_provider_uses_openapi_policy_with_full_parameter_support() {
+    fn openai_provider_uses_responses_policy_with_full_parameter_support() {
         let policy = parameter_policy("openai");
-        assert_eq!(policy.api_style, ProviderApiStyle::OpenApi);
+        assert_eq!(policy.api_style, ProviderApiStyle::CodexResponses);
         assert_eq!(policy.metrics_style, ProviderApiStyle::OpenApi);
         assert!(policy.supports_forced_tool_choice);
         assert!(policy.supports_stream_usage);

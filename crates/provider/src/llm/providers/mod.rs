@@ -1,8 +1,12 @@
 pub mod bedrock;
+pub mod chatgpt;
+pub mod claude_code;
 pub mod codex;
 pub mod google;
 pub mod minimax;
 pub mod openai;
+pub mod qwen;
+pub mod xai;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProviderApiStyle {
@@ -10,6 +14,7 @@ pub(crate) enum ProviderApiStyle {
     CodexResponses,
     Google,
     Bedrock,
+    AnthropicMessages,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,8 +41,27 @@ pub(crate) fn parameter_policy(provider: &str) -> ProviderParameterPolicy {
             supports_prompt_cache_key: true,
             ignored_parameters: &[],
         },
-        "openai" => ProviderParameterPolicy {
-            api_style: ProviderApiStyle::OpenApi,
+        "claude-code" => ProviderParameterPolicy {
+            api_style: ProviderApiStyle::AnthropicMessages,
+            metrics_style: ProviderApiStyle::AnthropicMessages,
+            supports_forced_tool_choice: true,
+            supports_stream_usage: false,
+            supports_reasoning_effort: true,
+            supports_service_tier: false,
+            supports_prompt_cache_key: false,
+            ignored_parameters: &[
+                "stream_options",
+                "service_tier",
+                "prompt_cache_key",
+                "parallel_tool_calls",
+            ],
+        },
+        // The non-codex Responses tier: standard OpenAI (chatgpt), xAI (grok),
+        // and Alibaba DashScope (qwen). They share the codex Responses request
+        // shape but are driven by an API key. `metrics_style` stays OpenApi
+        // because the streamed usage block is OpenAI-shaped.
+        "openai" | "openai-api" | "chatgpt" => ProviderParameterPolicy {
+            api_style: ProviderApiStyle::CodexResponses,
             metrics_style: ProviderApiStyle::OpenApi,
             supports_forced_tool_choice: true,
             supports_stream_usage: true,
@@ -46,16 +70,37 @@ pub(crate) fn parameter_policy(provider: &str) -> ProviderParameterPolicy {
             supports_prompt_cache_key: true,
             ignored_parameters: &[],
         },
+        "xai" | "grok" => ProviderParameterPolicy {
+            api_style: ProviderApiStyle::CodexResponses,
+            metrics_style: ProviderApiStyle::OpenApi,
+            supports_forced_tool_choice: true,
+            supports_stream_usage: true,
+            supports_reasoning_effort: true,
+            supports_service_tier: false,
+            supports_prompt_cache_key: false,
+            ignored_parameters: &["service_tier", "prompt_cache_key"],
+        },
+        "qwen" | "qwen_cn" | "qwen-cn" => ProviderParameterPolicy {
+            api_style: ProviderApiStyle::CodexResponses,
+            metrics_style: ProviderApiStyle::OpenApi,
+            supports_forced_tool_choice: true,
+            supports_stream_usage: true,
+            supports_reasoning_effort: true,
+            supports_service_tier: false,
+            supports_prompt_cache_key: false,
+            ignored_parameters: &["service_tier", "prompt_cache_key"],
+        },
         "google" => ProviderParameterPolicy {
             api_style: ProviderApiStyle::Google,
             metrics_style: ProviderApiStyle::Google,
-            supports_forced_tool_choice: false,
+            // Forced/constrained tool choice is supported via Gemini
+            // `toolConfig.functionCallingConfig`.
+            supports_forced_tool_choice: true,
             supports_stream_usage: false,
             supports_reasoning_effort: false,
             supports_service_tier: false,
             supports_prompt_cache_key: false,
             ignored_parameters: &[
-                "tool_choice",
                 "stream_options",
                 "reasoning_effort",
                 "service_tier",
@@ -121,14 +166,7 @@ mod tests {
 
     #[test]
     fn openapi_compatible_providers_share_openapi_metrics_and_ignore_service_tier() {
-        for provider in [
-            "minimax",
-            "deepseek",
-            "moonshotai",
-            "openrouter",
-            "qwen",
-            "anthropic",
-        ] {
+        for provider in ["minimax", "deepseek", "moonshotai", "openrouter", "anthropic"] {
             let policy = parameter_policy(provider);
             assert_eq!(policy.api_style, ProviderApiStyle::OpenApi);
             assert_eq!(policy.metrics_style, ProviderApiStyle::OpenApi);

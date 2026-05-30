@@ -55,14 +55,14 @@ pub(super) fn anthropic_oauth_redirect_uri() -> String {
     std::env::var("ANTHROPIC_OAUTH_REDIRECT_URI")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "https://console.anthropic.com/oauth/code/callback".to_string())
+        .unwrap_or_else(|| "http://localhost:1455/callback".to_string())
 }
 
 pub(super) fn anthropic_oauth_token_url() -> String {
     std::env::var("ANTHROPIC_OAUTH_TOKEN_URL")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "https://console.anthropic.com/v1/oauth/token".to_string())
+        .unwrap_or_else(|| "https://platform.claude.com/v1/oauth/token".to_string())
 }
 
 pub(super) fn anthropic_oauth_scope() -> String {
@@ -71,10 +71,10 @@ pub(super) fn anthropic_oauth_scope() -> String {
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| {
             [
-                "org:create_api_key",
                 "user:profile",
                 "user:inference",
                 "user:sessions:claude_code",
+                "user:mcp_servers",
             ]
             .join(" ")
         })
@@ -92,6 +92,26 @@ pub(super) fn google_oauth_token_url() -> String {
         .ok()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "https://oauth2.googleapis.com/token".to_string())
+}
+
+pub(super) fn github_copilot_oauth_client_id() -> Option<String> {
+    config_value("GITHUB_COPILOT_CLIENT_ID")
+        .or_else(|| config_value("COPILOT_GITHUB_CLIENT_ID"))
+        .filter(|value| !value.trim().is_empty())
+}
+
+pub(super) fn github_device_code_url() -> String {
+    config_value("GITHUB_DEVICE_CODE_URL")
+        .unwrap_or_else(|| "https://github.com/login/device/code".to_string())
+}
+
+pub(super) fn github_oauth_token_url() -> String {
+    config_value("GITHUB_OAUTH_TOKEN_URL")
+        .unwrap_or_else(|| "https://github.com/login/oauth/access_token".to_string())
+}
+
+pub(super) fn github_copilot_oauth_scope() -> String {
+    config_value("GITHUB_COPILOT_OAUTH_SCOPE").unwrap_or_else(|| "read:user".to_string())
 }
 
 pub(super) fn google_oauth_client_id(provider_id: &str) -> Option<String> {
@@ -146,7 +166,9 @@ pub(super) fn oauth_authorize_url(
             state,
             code_challenge,
         )?),
-        OAuthAuthorizeKind::BrowserTokenPaste | OAuthAuthorizeKind::Unsupported => None,
+        OAuthAuthorizeKind::GithubDevice
+        | OAuthAuthorizeKind::BrowserTokenPaste
+        | OAuthAuthorizeKind::Unsupported => None,
     }
 }
 

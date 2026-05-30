@@ -115,6 +115,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
     saveRuntimeSettings,
     updateModelTier,
     saveProviderKey,
+    validateProvider,
     startProviderLogin,
     completeProviderLogin,
     logoutProvider,
@@ -178,7 +179,9 @@ export function AppShell(props: { view: AppShellViewModel }) {
     }
 
     function isAtScrollBottom(element: HTMLElement) {
-      return element.scrollHeight - element.scrollTop - element.clientHeight <= 2;
+      return (
+        element.scrollHeight - element.scrollTop - element.clientHeight <= 2
+      );
     }
 
     function scheduleScrollbarHide(element: HTMLElement) {
@@ -230,7 +233,10 @@ export function AppShell(props: { view: AppShellViewModel }) {
         return false;
       }
       const rect = element.getBoundingClientRect();
-      const scrollbarWidth = Math.max(12, element.offsetWidth - element.clientWidth);
+      const scrollbarWidth = Math.max(
+        12,
+        element.offsetWidth - element.clientWidth,
+      );
       return (
         event.clientX >= rect.right - scrollbarWidth - 2 &&
         event.clientX <= rect.right + 2 &&
@@ -242,7 +248,10 @@ export function AppShell(props: { view: AppShellViewModel }) {
     function handleScrollbarPointerMove(event: PointerEvent) {
       const current = scrollableElementFromPoint(event.target);
       for (const element of Array.from(scrollbarPointerElements)) {
-        if (element !== current || !pointerInVerticalScrollbar(element, event)) {
+        if (
+          element !== current ||
+          !pointerInVerticalScrollbar(element, event)
+        ) {
           scrollbarPointerElements.delete(element);
           scheduleScrollbarHide(element);
         }
@@ -586,8 +595,8 @@ export function AppShell(props: { view: AppShellViewModel }) {
           "--rail": `${railWidth()}px`,
           "--app-font-family": state().mainFont || DEFAULT_MAIN_FONT,
           "--code-font-family": state().codeFont || DEFAULT_CODE_FONT,
-          "--base-font-size": `${state().mainFontSize || 13}px`,
-          "--code-font-size": `${state().codeFontSize || 12}px`,
+          "--base-font-size": `${state().mainFontSize || 12}px`,
+          "--code-font-size": `${state().codeFontSize || 11}px`,
         }}
       >
         <aside
@@ -878,140 +887,152 @@ export function AppShell(props: { view: AppShellViewModel }) {
                     <ConversationView
                       state={state()}
                       session={session()}
-                  messages={selectedMessages()}
-                  slashCommands={slashCommands()}
-                  onComposerText={(composerText) =>
-                    setState((previous) => ({ ...previous, composerText }))
-                  }
-                  onComposerImages={(composerImages) =>
-                    setState((previous) => ({ ...previous, composerImages }))
-                  }
-                  onSubmit={() => void submitCurrentComposer()}
-                  leftRailOpen={!railCollapsed()}
-                  leftRailWidth={railFullscreen() ? 0 : railWidth()}
-                  onRequestCollapseLeftRail={collapseRailForMainWidth}
-                  onInspectorLayout={setConversationInspector}
-                  conversationNotice={
-                    state().planNotice ? (
-                      <PlanConversationFeedbackNotice
-                        message={state().planNotice?.message}
-                        code={state().planNotice?.code}
-                        providerId={state().planNotice?.providerId}
-                        onOpenProviderSettings={openProviderSettings}
-                      />
-                    ) : undefined
-                  }
-                  composerToolbar={
-                    selectedSession() && selectedEditingTask() ? (
-                      <PlanComposerControls
-                        startCondition={taskStartCondition(
-                          selectedEditingTask()!,
-                        )}
-                        startAt={utcIsoToLocalDateTime(
-                          selectedEditingTask()!.start_at,
-                        )}
-                        pollInterval={
-                          selectedEditingTask()!.poll_interval ??
-                          defaultPollInterval()
-                        }
-                        onStartCondition={(start_condition) => {
-                          const task = selectedEditingTask()!;
-                          if (start_condition === "user_action") {
-                            void runEditingTaskNow(selectedSession()!, task);
-                            return;
-                          }
-                          const startAt =
-                            localDateTimeToUtcIso(
-                              utcIsoToLocalDateTime(task.start_at) ||
-                                defaultLocalStartAt(),
-                            ) ?? localDateTimeToUtcIso(defaultLocalStartAt());
-                          void updatePlanTicketTask(selectedSession()!, {
-                            nonce_id: taskNonceId(task),
-                            status: "todo",
-                            ...timedTaskPatch(
-                              start_condition,
-                              startAt,
-                              taskPollInterval(task),
-                            ),
-                          });
-                        }}
-                        onStartAt={(value) => {
-                          const start_at = localDateTimeToUtcIso(value);
-                          if (start_at) {
-                            void updatePlanTicketTask(selectedSession()!, {
-                              nonce_id: taskNonceId(selectedEditingTask()!),
-                              start_at,
-                            });
-                          }
-                        }}
-                        onPollInterval={(poll_interval) =>
-                          updatePlanTicketTask(selectedSession()!, {
-                            nonce_id: taskNonceId(selectedEditingTask()!),
-                            poll_interval,
-                          })
-                        }
-                      />
-                    ) : selectedSession() ? (
-                      <PlanComposerControls
-                        startCondition={state().planDraftStartCondition}
-                        startAt={state().planDraftStartAt}
-                        pollInterval={state().planDraftPollInterval}
-                        onStartCondition={(planDraftStartCondition) =>
-                          setState((previous) => ({
-                            ...previous,
-                            planDraftStartCondition,
-                          }))
-                        }
-                        onStartAt={(planDraftStartAt) =>
-                          setState((previous) => ({
-                            ...previous,
-                            planDraftStartAt,
-                          }))
-                        }
-                        onPollInterval={(planDraftPollInterval) =>
-                          setState((previous) => ({
-                            ...previous,
-                            planDraftPollInterval,
-                          }))
-                        }
-                      />
-                    ) : undefined
-                  }
-                  composerTaskList={
-                    selectedSession() &&
-                    hasVisibleSessionTasks(selectedSession()!) ? (
-                      <PlanComposerTaskList
-                        session={selectedSession()!}
-                        selected_nonce_id={state().editingTask?.nonce_id}
-                        pulseNonceId={
-                          state().taskPulse?.sessionId === selectedSession()!.id
-                            ? state().taskPulse?.nonce_id
-                            : undefined
-                        }
-                        pulseToken={
-                          state().taskPulse?.sessionId === selectedSession()!.id
-                            ? state().taskPulse?.token
-                            : undefined
-                        }
-                        onEdit={(task, composerText) =>
-                          editComposerTask(
-                            selectedSession()!.id,
-                            taskNonceId(task),
-                            composerText,
-                          )
-                        }
-                        onDelete={(task) =>
-                          deletePlanTask(selectedSession()!, task)
-                        }
-                        onRun={(task) =>
-                          void runEditingTaskNow(selectedSession()!, task)
-                        }
-                        onCreateSession={(task) =>
-                          createSessionFromPlanTask(selectedSession()!, task)
-                        }
-                      />
-                    ) : undefined
-                  }
+                      messages={selectedMessages()}
+                      slashCommands={slashCommands()}
+                      onComposerText={(composerText) =>
+                        setState((previous) => ({ ...previous, composerText }))
+                      }
+                      onComposerImages={(composerImages) =>
+                        setState((previous) => ({
+                          ...previous,
+                          composerImages,
+                        }))
+                      }
+                      onSubmit={() => void submitCurrentComposer()}
+                      leftRailOpen={!railCollapsed()}
+                      leftRailWidth={railFullscreen() ? 0 : railWidth()}
+                      onRequestCollapseLeftRail={collapseRailForMainWidth}
+                      onInspectorLayout={setConversationInspector}
+                      conversationNotice={
+                        state().planNotice ? (
+                          <PlanConversationFeedbackNotice
+                            message={state().planNotice?.message}
+                            code={state().planNotice?.code}
+                            providerId={state().planNotice?.providerId}
+                            onOpenProviderSettings={openProviderSettings}
+                          />
+                        ) : undefined
+                      }
+                      composerToolbar={
+                        selectedSession() && selectedEditingTask() ? (
+                          <PlanComposerControls
+                            startCondition={taskStartCondition(
+                              selectedEditingTask()!,
+                            )}
+                            startAt={utcIsoToLocalDateTime(
+                              selectedEditingTask()!.start_at,
+                            )}
+                            pollInterval={
+                              selectedEditingTask()!.poll_interval ??
+                              defaultPollInterval()
+                            }
+                            onStartCondition={(start_condition) => {
+                              const task = selectedEditingTask()!;
+                              if (start_condition === "user_action") {
+                                void runEditingTaskNow(
+                                  selectedSession()!,
+                                  task,
+                                );
+                                return;
+                              }
+                              const startAt =
+                                localDateTimeToUtcIso(
+                                  utcIsoToLocalDateTime(task.start_at) ||
+                                    defaultLocalStartAt(),
+                                ) ??
+                                localDateTimeToUtcIso(defaultLocalStartAt());
+                              void updatePlanTicketTask(selectedSession()!, {
+                                nonce_id: taskNonceId(task),
+                                status: "todo",
+                                ...timedTaskPatch(
+                                  start_condition,
+                                  startAt,
+                                  taskPollInterval(task),
+                                ),
+                              });
+                            }}
+                            onStartAt={(value) => {
+                              const start_at = localDateTimeToUtcIso(value);
+                              if (start_at) {
+                                void updatePlanTicketTask(selectedSession()!, {
+                                  nonce_id: taskNonceId(selectedEditingTask()!),
+                                  start_at,
+                                });
+                              }
+                            }}
+                            onPollInterval={(poll_interval) =>
+                              updatePlanTicketTask(selectedSession()!, {
+                                nonce_id: taskNonceId(selectedEditingTask()!),
+                                poll_interval,
+                              })
+                            }
+                          />
+                        ) : selectedSession() ? (
+                          <PlanComposerControls
+                            startCondition={state().planDraftStartCondition}
+                            startAt={state().planDraftStartAt}
+                            pollInterval={state().planDraftPollInterval}
+                            onStartCondition={(planDraftStartCondition) =>
+                              setState((previous) => ({
+                                ...previous,
+                                planDraftStartCondition,
+                              }))
+                            }
+                            onStartAt={(planDraftStartAt) =>
+                              setState((previous) => ({
+                                ...previous,
+                                planDraftStartAt,
+                              }))
+                            }
+                            onPollInterval={(planDraftPollInterval) =>
+                              setState((previous) => ({
+                                ...previous,
+                                planDraftPollInterval,
+                              }))
+                            }
+                          />
+                        ) : undefined
+                      }
+                      composerTaskList={
+                        selectedSession() &&
+                        hasVisibleSessionTasks(selectedSession()!) ? (
+                          <PlanComposerTaskList
+                            session={selectedSession()!}
+                            selected_nonce_id={state().editingTask?.nonce_id}
+                            pulseNonceId={
+                              state().taskPulse?.sessionId ===
+                              selectedSession()!.id
+                                ? state().taskPulse?.nonce_id
+                                : undefined
+                            }
+                            pulseToken={
+                              state().taskPulse?.sessionId ===
+                              selectedSession()!.id
+                                ? state().taskPulse?.token
+                                : undefined
+                            }
+                            onEdit={(task, composerText) =>
+                              editComposerTask(
+                                selectedSession()!.id,
+                                taskNonceId(task),
+                                composerText,
+                              )
+                            }
+                            onDelete={(task) =>
+                              deletePlanTask(selectedSession()!, task)
+                            }
+                            onRun={(task) =>
+                              void runEditingTaskNow(selectedSession()!, task)
+                            }
+                            onCreateSession={(task) =>
+                              createSessionFromPlanTask(
+                                selectedSession()!,
+                                task,
+                              )
+                            }
+                          />
+                        ) : undefined
+                      }
                     />
                   )}
                 </Show>
@@ -1117,12 +1138,12 @@ export function AppShell(props: { view: AppShellViewModel }) {
                   providerAuthPanel: undefined,
                 }))
               }
-              onAuthDraft={(providerId, value) =>
+              onAuthDraft={(draftKey, value) =>
                 setState((previous) => ({
                   ...previous,
                   authDrafts: {
                     ...previous.authDrafts,
-                    [providerId]: value,
+                    [draftKey]: value,
                   },
                 }))
               }
@@ -1136,6 +1157,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
                 }))
               }
               onSaveKey={saveProviderKey}
+              onValidate={validateProvider}
               onStartLogin={startProviderLogin}
               onCompleteLogin={completeProviderLogin}
               onLogout={logoutProvider}
@@ -1200,19 +1222,20 @@ function AppLoadingPlaceholder(props: {
   settingsSection: AppState["settingsSection"];
 }) {
   return (
-    <Switch
-      fallback={<ConversationLoadingPlaceholder title={t("conversation")} />}
-    >
+    <Switch fallback={<ConversationLoadingPlaceholder />}>
       <Match when={props.activeTab === "settings"}>
-        <section class="settings-view" aria-label={t("loading")}>
-          <header class="page-head">
+        <section
+          class="settings-view layered-page layered-page-two"
+          aria-label={t("loading")}
+        >
+          <header class="page-head page-layer-inner">
             <div class="page-title">
               <span>{t("settings")}</span>
               <h1>{settingsSectionTitle(props.settingsSection)}</h1>
             </div>
           </header>
-          <main class="settings-canvas">
-            <section class="settings-stack">
+          <main class="settings-canvas page-layer-middle">
+            <section class="settings-stack page-layer-inner">
               <section class="settings-panel">
                 <header>
                   <span>{settingsSectionTitle(props.settingsSection)}</span>
@@ -1286,8 +1309,11 @@ function AppLoadingPlaceholder(props: {
         </section>
       </Match>
       <Match when={props.activeTab === "files"}>
-        <section class="files-view" aria-label={t("loading")}>
-          <header class="page-head">
+        <section
+          class="files-view layered-page layered-page-two"
+          aria-label={t("loading")}
+        >
+          <header class="page-head page-layer-inner">
             <div class="page-title">
               <span>{t("fileBrowser")}</span>
               <h1>
@@ -1295,56 +1321,46 @@ function AppLoadingPlaceholder(props: {
               </h1>
             </div>
           </header>
-          <main class="file-canvas">
-            <section class="surface-list-panel">
-              <div class="surface-list-head file-list-head">
-                <span>{t("name")}</span>
-                <span>{t("git")}</span>
-                <span>{t("size")}</span>
-                <span>{t("modifiedAt")}</span>
-              </div>
-              <For each={[0, 1, 2, 3, 4, 5]}>
-                {(item) => (
-                  <div class="surface-list-row file-list-row loading-list-row">
-                    <div class="loading-bar wide" />
-                    <div class="loading-bar short" />
-                    <div class="loading-bar short" />
-                    <div class="loading-bar medium" />
-                  </div>
-                )}
-              </For>
-            </section>
+          <main class="file-canvas page-layer-middle">
+            <div class="file-canvas-inner page-layer-inner">
+              <section class="surface-list-panel">
+                <div class="surface-list-head file-list-head">
+                  <span>{t("name")}</span>
+                  <span>{t("git")}</span>
+                  <span>{t("size")}</span>
+                  <span>{t("modifiedAt")}</span>
+                </div>
+                <For each={[0, 1, 2, 3, 4, 5]}>
+                  {(item) => (
+                    <div class="surface-list-row file-list-row loading-list-row">
+                      <div class="loading-bar wide" />
+                      <div class="loading-bar short" />
+                      <div class="loading-bar short" />
+                      <div class="loading-bar medium" />
+                    </div>
+                  )}
+                </For>
+              </section>
+            </div>
           </main>
         </section>
       </Match>
       <Match when={props.activeTab === "conversation"}>
-        <ConversationLoadingPlaceholder title={t("conversation")} />
+        <ConversationLoadingPlaceholder />
       </Match>
     </Switch>
   );
 }
 
-function ConversationLoadingPlaceholder(props: { title: string }) {
+function ConversationLoadingPlaceholder() {
   return (
     <section class="conversation-view" aria-label={t("loading")}>
-      <header class="page-head">
-        <div class="page-title">
-          <span>{props.title}</span>
-          <h1>
-            <div class="loading-bar medium" />
-          </h1>
-        </div>
-      </header>
       <div class="conversation-grid">
         <div class="conversation-main">
           <div class="transcript-loading-placeholder">
             <div class="loading-bar wide" />
             <div class="loading-bar medium" />
             <div class="loading-bar" />
-          </div>
-          <div class="bottom-composer loading-composer">
-            <div class="loading-bar wide" />
-            <div class="loading-bar medium" />
           </div>
         </div>
       </div>

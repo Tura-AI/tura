@@ -390,7 +390,7 @@ export class GatewayClient {
   providerOauthCallback(
     providerId: string,
     payload: OAuthCallbackInput,
-  ): Promise<boolean> {
+  ): Promise<ProviderAuthActionResponse> {
     return this.post(
       `/provider/${encodeURIComponent(providerId)}/oauth/callback`,
       payload,
@@ -647,11 +647,25 @@ export function defaultGatewayUrl(): string {
     env?: Record<string, string | undefined>;
   };
   const fromVite = meta.env?.VITE_TURA_GATEWAY_URL;
-  return fromQuery || fromWindow || fromVite || "http://127.0.0.1:4096";
+  return (
+    [fromQuery, fromWindow, fromVite].find((value) =>
+      isValidGatewayUrl(value),
+    ) || "http://127.0.0.1:4096"
+  );
 }
 
 function normalizeBaseUrl(value: string): string {
   return value.replace(/\/+$/, "");
+}
+
+function isValidGatewayUrl(value: string | undefined | null): value is string {
+  if (!value?.trim()) return false;
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && !!url.host;
+  } catch {
+    return false;
+  }
 }
 
 function resolveFetch(): typeof fetch {

@@ -18,6 +18,39 @@ pub fn provider_idle_output_timeout() -> Duration {
     )
 }
 
+/// Upper bound for reading a full non-streaming response body. The headers may
+/// arrive promptly (passing [`send_provider_request_first_response`]) while the
+/// upstream holds the connection open during a long reasoning phase; without
+/// this bound `resp.json()` can hang indefinitely. Honors
+/// `TURA_PROVIDER_TOTAL_TIMEOUT_MS`.
+pub fn provider_total_timeout() -> Duration {
+    provider_timeout_from_env(
+        "TURA_PROVIDER_TOTAL_TIMEOUT_MS",
+        crate::tura_llm::provider_latency_timeouts().total_timeout_ms,
+    )
+}
+
+/// Await a non-streaming response body future under [`provider_total_timeout`]
+/// so a stalled upstream cannot block the call forever.
+pub async fn read_provider_response_body<T, F>(future: F) -> Result<T, TuraError>
+where
+    F: std::future::Future<Output = Result<T, reqwest::Error>>,
+{
+    let limit = provider_total_timeout();
+    match tokio::time::timeout(limit, future).await {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(err)) => Err(TuraError::Network {
+            message: err.to_string(),
+        }),
+        Err(_) => Err(TuraError::Network {
+            message: format!(
+                "provider response body timed out after {} ms (no complete body received)",
+                limit.as_millis()
+            ),
+        }),
+    }
+}
+
 pub async fn send_provider_request_first_response(
     request: reqwest::RequestBuilder,
 ) -> Result<reqwest::Response, TuraError> {

@@ -76,6 +76,13 @@ pub async fn call(
         }
     });
 
+    // Gemini has a dedicated `systemInstruction` field — use it instead of
+    // collapsing system turns into `user` content (which loses the
+    // instruction/dialogue separation the model relies on).
+    if let Some(system) = build_system_instruction(messages) {
+        payload["systemInstruction"] = system;
+    }
+
     if options.search {
         payload["tools"] = json!([{ "googleSearch": {} }]);
     } else if let Some(tools) = &options.tools {
@@ -98,6 +105,11 @@ pub async fn call(
             })
             .collect();
         payload["tools"] = json!([{ "functionDeclarations": declarations }]);
+
+        // Forced / constrained tool choice → Gemini `toolConfig`.
+        if let Some(tool_config) = build_tool_config(options.tool_choice.as_ref()) {
+            payload["toolConfig"] = tool_config;
+        }
     }
 
     if let Some(max) = options.max_tokens.or(options.max_completion_tokens) {
@@ -209,9 +221,13 @@ fn build_contents(messages: &[Value]) -> Value {
                 }));
             }
 
-            let role = match msg.get("role").and_then(Value::as_str).unwrap_or("user") {
+            // System turns are lifted into `systemInstruction`; skip them here.
+            let raw_role = msg.get("role").and_then(Value::as_str).unwrap_or("user");
+            if matches!(raw_role, "system" | "developer") {
+                return None;
+            }
+            let role = match raw_role {
                 "assistant" => "model",
-                "system" => "user",
                 x => x,
             };
             let parts = match msg.get("content") {
@@ -229,6 +245,70 @@ fn build_contents(messages: &[Value]) -> Value {
         })
         .collect();
     Value::Array(contents)
+}
+
+/// Concatenate all `system`/`developer` turns into a single Gemini
+/// `systemInstruction` object, preserving them as genuine instructions rather
+/// than user dialogue. Returns `None` when there is no system text.
+fn build_system_instruction(messages: &[Value]) -> Option<Value> {
+    let mut parts = Vec::new();
+    for msg in messages {
+        if msg.get("type").and_then(Value::as_str).is_some() {
+            continue; // function_call / function_call_output items
+        }
+        let role = msg.get("role").and_then(Value::as_str).unwrap_or("user");
+        if !matches!(role, "system" | "developer") {
+            continue;
+        }
+        match msg.get("content") {
+            Some(Value::String(text)) if !text.trim().is_empty() => {
+                parts.push(json!({ "text": text }));
+            }
+            Some(Value::Array(items)) => {
+                for item in items {
+                    if item.get("text").and_then(Value::as_str).is_some() {
+                        parts.push(item.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    (!parts.is_empty()).then(|| json!({ "parts": parts }))
+}
+
+/// Translate an OpenAI-style `tool_choice` into Gemini's
+/// `toolConfig.functionCallingConfig`. `auto`/absent → no config (model
+/// decides); `none` → NONE; `required`/`any` → ANY; a specific
+/// `{type:"function", function:{name}}` → ANY constrained to that name.
+fn build_tool_config(tool_choice: Option<&Value>) -> Option<Value> {
+    let choice = tool_choice?;
+    match choice {
+        Value::String(mode) => match mode.to_ascii_lowercase().as_str() {
+            "none" => Some(json!({ "functionCallingConfig": { "mode": "NONE" } })),
+            "required" | "any" => Some(json!({ "functionCallingConfig": { "mode": "ANY" } })),
+            _ => None, // "auto" or unknown → let the model decide
+        },
+        Value::Object(_) => {
+            if choice.get("type").and_then(Value::as_str) == Some("function") {
+                if let Some(name) = choice
+                    .get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(Value::as_str)
+                    .filter(|n| !n.trim().is_empty())
+                {
+                    return Some(json!({
+                        "functionCallingConfig": {
+                            "mode": "ANY",
+                            "allowedFunctionNames": [name]
+                        }
+                    }));
+                }
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 fn google_thought_signature(msg: &Value) -> Option<String> {
@@ -256,7 +336,10 @@ fn parse_json_string_value(value: Value) -> Value {
 mod tests {
     use serde_json::json;
 
-    use super::{build_contents, parse_json_string_value, sanitize_google_schema};
+    use super::{
+        build_contents, build_system_instruction, build_tool_config, parse_json_string_value,
+        sanitize_google_schema,
+    };
 
     #[test]
     fn google_schema_sanitization_drops_unsupported_additional_properties() {
@@ -280,17 +363,53 @@ mod tests {
     }
 
     #[test]
-    fn google_contents_map_roles_and_text_parts() {
-        let contents = build_contents(&[
+    fn google_contents_skip_system_and_map_roles() {
+        let messages = [
             json!({"role": "system", "content": "rules"}),
             json!({"role": "assistant", "content": "ok"}),
             json!({"role": "user", "content": [{"text": "hi"}]}),
-        ]);
+        ];
+        let contents = build_contents(&messages);
 
-        assert_eq!(contents[0]["role"], "user");
-        assert_eq!(contents[0]["parts"][0]["text"], "rules");
-        assert_eq!(contents[1]["role"], "model");
-        assert_eq!(contents[2]["parts"][0]["text"], "hi");
+        // System is lifted to systemInstruction, not folded into contents.
+        assert_eq!(contents.as_array().unwrap().len(), 2);
+        assert_eq!(contents[0]["role"], "model");
+        assert_eq!(contents[0]["parts"][0]["text"], "ok");
+        assert_eq!(contents[1]["role"], "user");
+        assert_eq!(contents[1]["parts"][0]["text"], "hi");
+
+        let system = build_system_instruction(&messages).expect("system instruction");
+        assert_eq!(system["parts"][0]["text"], "rules");
+    }
+
+    #[test]
+    fn google_tool_config_maps_choice_modes() {
+        assert!(build_tool_config(None).is_none());
+        assert!(build_tool_config(Some(&json!("auto"))).is_none());
+        assert_eq!(
+            build_tool_config(Some(&json!("required")))
+                .unwrap()
+                .pointer("/functionCallingConfig/mode")
+                .unwrap(),
+            "ANY"
+        );
+        assert_eq!(
+            build_tool_config(Some(&json!("none")))
+                .unwrap()
+                .pointer("/functionCallingConfig/mode")
+                .unwrap(),
+            "NONE"
+        );
+        let forced = build_tool_config(Some(&json!({
+            "type": "function",
+            "function": { "name": "echo_answer" }
+        })))
+        .unwrap();
+        assert_eq!(forced["functionCallingConfig"]["mode"], "ANY");
+        assert_eq!(
+            forced["functionCallingConfig"]["allowedFunctionNames"][0],
+            "echo_answer"
+        );
     }
 
     #[test]

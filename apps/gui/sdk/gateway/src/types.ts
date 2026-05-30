@@ -224,6 +224,10 @@ export type ProviderAuthMethod = {
   token_url?: string | null;
   api_key_url?: string | null;
   docs_url?: string | null;
+  configured_value?: string | null;
+  configuredValue?: string | null;
+  preview_value?: string | null;
+  previewValue?: string | null;
   available: boolean;
   unavailable_reason?: string | null;
   supports_refresh: boolean;
@@ -250,7 +254,14 @@ export type ProviderAuthStatusResponse = {
 export type ProviderAuthActionResponse = {
   ok: boolean;
   provider_id: string;
+  code?: string | null;
   message: string;
+  level?: "valid" | "warning" | "invalid" | string | null;
+  details?: Array<{
+    code: string;
+    message: string;
+    value?: string | null;
+  }>;
   status?: ProviderAuthStatusResponse | null;
 };
 

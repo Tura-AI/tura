@@ -13,6 +13,11 @@ use std::path::PathBuf;
 use tokio::time::{sleep, timeout, Duration, Instant};
 use tura_llm_rust::{AuthMethodKind, OAuthAuthorizeKind};
 
+mod auth_refresh;
+mod auth_registry;
+mod auth_scheduler;
+mod auth_update;
+mod auth_validator;
 pub(crate) mod config;
 mod metadata;
 mod oauth_support;
@@ -24,10 +29,12 @@ use metadata::{
 };
 use oauth_support::{
     anthropic_oauth_client_id, anthropic_oauth_redirect_uri, anthropic_oauth_token_url,
-    browser_login_token, browser_login_url, google_oauth_client_id, google_oauth_client_secret,
-    google_oauth_token_url, oauth_authorize_url, oauth_callback_html, oauth_code_challenge,
-    oauth_code_verifier, oauth_state, openai_oauth_client_id, openai_oauth_redirect_uri,
-    openai_oauth_token_url, provider_google_oauth_redirect_uri, random_confirmation_code,
+    browser_login_token, browser_login_url, github_copilot_oauth_client_id,
+    github_copilot_oauth_scope, github_device_code_url, github_oauth_token_url,
+    google_oauth_client_id, google_oauth_client_secret, google_oauth_token_url,
+    oauth_authorize_url, oauth_callback_html, oauth_code_challenge, oauth_code_verifier,
+    oauth_state, openai_oauth_client_id, openai_oauth_redirect_uri, openai_oauth_token_url,
+    provider_google_oauth_redirect_uri, random_confirmation_code,
 };
 
 // ============================================================================
@@ -546,11 +553,12 @@ fn apply_catalog_model_detail(
     model.status = detail.status.clone();
 }
 
-fn browser_login_provider_defaults() -> [(&'static str, &'static str); 3] {
+fn browser_login_provider_defaults() -> [(&'static str, &'static str); 4] {
     [
         ("codex", "gpt-5.1-codex"),
         ("anthropic", "claude-sonnet-4-20250514"),
         ("antigravity", "antigravity-browser"),
+        ("github-copilot", "copilot-chat"),
     ]
 }
 
@@ -598,6 +606,24 @@ fn enrich_provider_list(
     store_connected: &std::collections::HashSet<String>,
 ) {
     for provider in providers {
+        if let Some(entry) = tura_llm_rust::provider_auth_registry_entry(&provider.id) {
+            provider
+                .options
+                .entry("domains".to_string())
+                .or_insert_with(|| serde_json::json!(["llm"]));
+            provider
+                .options
+                .entry("capabilities".to_string())
+                .or_insert_with(|| serde_json::json!(["llm.chat", "llm.tool_call", "oauth.login"]));
+            provider.options.insert(
+                "auth_methods".to_string(),
+                serde_json::json!(entry
+                    .auth_methods
+                    .iter()
+                    .map(|method| format!("{:?}", method.kind))
+                    .collect::<Vec<_>>()),
+            );
+        }
         let fallback_env_key = provider_env_key(&provider.id);
         if provider.env.is_empty() {
             provider.env.push(fallback_env_key.clone());
@@ -705,8 +731,16 @@ pub async fn validate_model(
         });
     };
 
+    // claude-code uses the subscription OAuth token against the native Anthropic
+    // Messages API, so it must keep its own provider id (the runtime maps it to
+    // "anthropic", which would resolve ANTHROPIC_API_KEY and the wrong call path).
+    let runtime_call_provider = if provider_id == "claude-code" {
+        provider_id
+    } else {
+        runtime_provider_id
+    };
     let config = tura_llm_rust::ProviderConfig {
-        provider: runtime_provider_id.to_string(),
+        provider: runtime_call_provider.to_string(),
         base_url,
         model: tura_llm_rust::Settings::normalize_model_name(runtime_provider_id, model_id),
         temperature: 0.0,
@@ -795,173 +829,33 @@ pub struct ProviderAuthStatusResponse {
 pub struct ProviderAuthActionResponse {
     pub ok: bool,
     pub provider_id: String,
+    pub code: String,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub details: Vec<ProviderAuthActionDetail>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<ProviderAuthStatusResponse>,
 }
 
-async fn refresh_provider_auth_if_needed(provider_id: &str, force: bool) -> Result<bool, String> {
-    let Some(entry) = tura_llm_rust::provider_auth_registry_entry(provider_id) else {
-        return Ok(false);
-    };
-    if !entry.capabilities.supports_oauth_refresh {
-        return Ok(false);
-    }
-    let status = build_provider_auth_status(provider_id);
-    if !matches!(status.login.as_deref(), Some("oauth")) {
-        return Ok(false);
-    }
-    if !force && !provider_auth_expires_soon(&status) {
-        return Ok(false);
-    }
-    match provider_id {
-        "codex" => refresh_openai_provider_auth(provider_id, &status)
-            .await
-            .map(|_| true),
-        "claude-code" => refresh_anthropic_provider_auth(provider_id, &status)
-            .await
-            .map(|_| true),
-        "google" | "gemini" | "antigravity" => refresh_google_provider_auth(provider_id, &status)
-            .await
-            .map(|_| true),
-        _ => Ok(false),
-    }
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProviderAuthActionDetail {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
 }
 
-fn provider_auth_expires_soon(status: &ProviderAuthStatusResponse) -> bool {
-    if status.expired == Some(true) {
-        return true;
-    }
-    let Some(expires_at) = status
-        .expires_env
-        .as_deref()
-        .and_then(config_value)
-        .and_then(|value| value.parse::<i64>().ok())
-    else {
-        return false;
-    };
-    expires_at <= Utc::now().timestamp_millis() + 60_000
-}
-
-async fn refresh_openai_provider_auth(
+pub(super) async fn refresh_provider_auth_if_needed(
     provider_id: &str,
-    status: &ProviderAuthStatusResponse,
-) -> Result<(), String> {
-    refresh_oauth_provider_auth(
-        provider_id,
-        status,
-        openai_oauth_token_url(),
-        vec![("client_id".to_string(), openai_oauth_client_id())],
-        "OpenAI",
-    )
-    .await
+    force: bool,
+) -> Result<bool, String> {
+    auth_refresh::refresh_provider_auth_if_needed(provider_id, force).await
 }
 
-async fn refresh_google_provider_auth(
-    provider_id: &str,
-    status: &ProviderAuthStatusResponse,
-) -> Result<(), String> {
-    let mut extra_params = Vec::new();
-    if let Some(client_id) = google_oauth_client_id(provider_id) {
-        extra_params.push(("client_id".to_string(), client_id));
-    }
-    if let Some(client_secret) = google_oauth_client_secret(provider_id) {
-        extra_params.push(("client_secret".to_string(), client_secret));
-    }
-    refresh_oauth_provider_auth(
-        provider_id,
-        status,
-        google_oauth_token_url(),
-        extra_params,
-        "Google",
-    )
-    .await
-}
-
-async fn refresh_anthropic_provider_auth(
-    provider_id: &str,
-    status: &ProviderAuthStatusResponse,
-) -> Result<(), String> {
-    refresh_oauth_provider_auth(
-        provider_id,
-        status,
-        anthropic_oauth_token_url(),
-        vec![("client_id".to_string(), anthropic_oauth_client_id())],
-        "Anthropic",
-    )
-    .await
-}
-
-async fn refresh_oauth_provider_auth(
-    provider_id: &str,
-    status: &ProviderAuthStatusResponse,
-    token_url: String,
-    extra_params: Vec<(String, String)>,
-    display_name: &str,
-) -> Result<(), String> {
-    let refresh_env = status
-        .refresh_env
-        .as_deref()
-        .ok_or_else(|| format!("{display_name} refresh env is not configured"))?;
-    let refresh = config_value(refresh_env)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| format!("{refresh_env} is not configured"))?;
-    let mut form = vec![
-        ("grant_type".to_string(), "refresh_token".to_string()),
-        ("refresh_token".to_string(), refresh.clone()),
-    ];
-    form.extend(extra_params);
-    let response = reqwest::Client::new()
-        .post(token_url)
-        .header("content-type", "application/x-www-form-urlencoded")
-        .form(&form)
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    let http_status = response.status();
-    let body: serde_json::Value = response.json().await.map_err(|error| error.to_string())?;
-    if !http_status.is_success() {
-        return Err(format!(
-            "{display_name} token endpoint returned {http_status}: {body}"
-        ));
-    }
-    let access = body
-        .get("access_token")
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| format!("{display_name} refresh response did not include access_token"))?
-        .to_string();
-    let refresh = body
-        .get("refresh_token")
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(refresh.as_str())
-        .to_string();
-    let expires = Utc::now().timestamp_millis()
-        + body
-            .get("expires_in")
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or(3600)
-            * 1000;
-    let account_id = body
-        .get("id_token")
-        .and_then(serde_json::Value::as_str)
-        .and_then(extract_account_id_from_jwt)
-        .or_else(|| extract_account_id_from_jwt(&access))
-        .or_else(|| status.account_id.clone());
-    let auth = ProviderAuth {
-        auth_type: "oauth".to_string(),
-        key: Some(access.clone()),
-        access: Some(access),
-        refresh: Some(refresh),
-        expires: Some(expires),
-        account_id,
-        metadata: Some(HashMap::from([(
-            "login".to_string(),
-            serde_json::Value::String("oauth".to_string()),
-        )])),
-    };
-    persist_provider_auth(provider_id, &auth).map_err(|error| error.to_string())
+pub(crate) fn start_provider_auth_scheduler() {
+    auth_scheduler::start_provider_auth_scheduler();
 }
 
 pub async fn provider_auth_status(
@@ -974,44 +868,788 @@ pub async fn provider_auth_status(
 pub async fn provider_auth_validate(
     Path(provider_id): Path<String>,
 ) -> Json<ProviderAuthActionResponse> {
-    let refresh_result = refresh_provider_auth_if_needed(&provider_id, false).await;
     let status = build_provider_auth_status(&provider_id);
-    let ok = status.authenticated;
+    let receipt = validate_provider_auth_config(&provider_id, &status).await;
     Json(ProviderAuthActionResponse {
-        ok,
+        ok: receipt.ok,
         provider_id,
-        message: if ok {
-            "provider auth is configured".to_string()
-        } else if let Err(error) = refresh_result {
-            format!("provider auth refresh failed: {error}")
-        } else {
-            "provider auth is not configured".to_string()
-        },
+        code: receipt.code,
+        message: receipt.message,
+        level: Some(receipt.level),
+        details: receipt.details,
         status: Some(status),
     })
+}
+
+struct ProviderValidationReceipt {
+    ok: bool,
+    level: String,
+    code: String,
+    message: String,
+    details: Vec<ProviderAuthActionDetail>,
+}
+
+async fn validate_provider_auth_config(
+    provider_id: &str,
+    status: &ProviderAuthStatusResponse,
+) -> ProviderValidationReceipt {
+    let settings = tura_llm_rust::Settings::default().await.ok();
+    let provider_config = settings
+        .as_deref()
+        .and_then(|settings| settings.model_catalog.providers.get(provider_id));
+    let mut env_keys = Vec::new();
+    push_unique_env(&mut env_keys, status.token_env.as_deref());
+    push_unique_env(&mut env_keys, status.login_env.as_deref());
+    push_unique_env(&mut env_keys, status.refresh_env.as_deref());
+    if let Some(settings) = settings.as_ref() {
+        for env in provider_env_from_settings(Some(settings), provider_id) {
+            push_unique_env(&mut env_keys, Some(&env));
+        }
+    }
+    if let Some(entry) = tura_llm_rust::provider_auth_registry_entry(provider_id) {
+        push_unique_env(&mut env_keys, entry.token_env);
+        push_unique_env(&mut env_keys, entry.login_env);
+        push_unique_env(&mut env_keys, entry.refresh_env);
+    }
+
+    let present: Vec<String> = env_keys
+        .iter()
+        .filter(|key| config_value(key).is_some())
+        .cloned()
+        .collect();
+    let missing: Vec<String> = env_keys
+        .iter()
+        .filter(|key| config_value(key).is_none())
+        .cloned()
+        .collect();
+
+    let base_url = provider_api_from_settings(settings.as_deref(), provider_id).or_else(|| {
+        tura_llm_rust::provider_auth_registry_entry(provider_id)
+            .map(|entry| entry.default_base_url.to_string())
+            .filter(|url| !url.trim().is_empty())
+    });
+    let url_ok = base_url
+        .as_deref()
+        .map(|url| reqwest::Url::parse(url).is_ok())
+        .unwrap_or(true);
+    let token_env = status
+        .token_env
+        .as_deref()
+        .or_else(|| provider_config.and_then(|provider| provider.token_env.as_deref()))
+        .or_else(|| {
+            tura_llm_rust::provider_auth_registry_entry(provider_id)
+                .and_then(|entry| entry.token_env)
+        });
+    let token = token_env.and_then(config_value);
+    let external_validation = validate_provider_credentials_remotely(
+        provider_id,
+        provider_config,
+        base_url.as_deref(),
+        token.as_deref(),
+    )
+    .await;
+    let warning = matches!(
+        external_validation,
+        ProviderCredentialValidation::Warning(_)
+    );
+    let unsupported = matches!(
+        external_validation,
+        ProviderCredentialValidation::Unsupported(_)
+    );
+    let configured = status.authenticated || status.configured || !present.is_empty();
+    let ok = if unsupported {
+        url_ok && configured
+    } else {
+        url_ok
+            && matches!(
+                external_validation,
+                ProviderCredentialValidation::Passed(_) | ProviderCredentialValidation::Warning(_)
+            )
+    };
+
+    let mut parts = Vec::new();
+    let mut details = Vec::new();
+    if unsupported {
+        parts.push("credential validation unavailable".to_string());
+        details.push(validation_detail("provider.validation.unavailable", None));
+    } else if ok {
+        parts.push("credential validation passed".to_string());
+        details.push(validation_detail("provider.validation.passed", None));
+    } else {
+        parts.push("credential validation failed".to_string());
+        details.push(validation_detail("provider.validation.failed", None));
+    }
+    if let Some(base_url) = base_url {
+        details.push(validation_detail(
+            if url_ok {
+                "provider.base_url.ok"
+            } else {
+                "provider.base_url.invalid"
+            },
+            Some(base_url.clone()),
+        ));
+        parts.push(format!(
+            "base_url {} ({})",
+            if url_ok { "ok" } else { "invalid" },
+            base_url
+        ));
+    }
+    if !present.is_empty() {
+        details.push(validation_detail(
+            "provider.env.present",
+            Some(present.join(", ")),
+        ));
+        parts.push(format!("present env: {}", present.join(", ")));
+    }
+    if !missing.is_empty() {
+        details.push(validation_detail(
+            "provider.env.missing",
+            Some(missing.join(", ")),
+        ));
+        parts.push(format!("missing env: {}", missing.join(", ")));
+    }
+    if env_keys.is_empty() {
+        details.push(validation_detail("provider.env.none_registered", None));
+        parts.push("no credential env is registered for this provider".to_string());
+    }
+    match external_validation {
+        ProviderCredentialValidation::Passed(detail)
+        | ProviderCredentialValidation::Warning(detail)
+        | ProviderCredentialValidation::Failed(detail)
+        | ProviderCredentialValidation::Unsupported(detail) => {
+            parts.push(detail.message.clone());
+            details.push(detail);
+        }
+    }
+    details.push(validation_detail("provider.request.no_paid_model", None));
+    parts.push("no paid model request was sent".to_string());
+    let level = if unsupported {
+        "unsupported"
+    } else if ok && warning {
+        "warning"
+    } else if ok {
+        "valid"
+    } else {
+        "invalid"
+    };
+    let code = match level {
+        "valid" => "provider.validation.valid",
+        "warning" => "provider.validation.warning",
+        "unsupported" => "provider.validation.unsupported",
+        _ => "provider.validation.invalid",
+    };
+    ProviderValidationReceipt {
+        ok,
+        level: level.to_string(),
+        code: code.to_string(),
+        message: parts.join("; "),
+        details,
+    }
+}
+
+enum ProviderCredentialValidation {
+    Passed(ProviderAuthActionDetail),
+    Warning(ProviderAuthActionDetail),
+    Failed(ProviderAuthActionDetail),
+    Unsupported(ProviderAuthActionDetail),
+}
+
+async fn validate_provider_credentials_remotely(
+    provider_id: &str,
+    provider_config: Option<&tura_llm_rust::ProviderCatalogConfig>,
+    base_url: Option<&str>,
+    token: Option<&str>,
+) -> ProviderCredentialValidation {
+    let api_style = provider_config
+        .map(|provider| provider.api_style.as_str())
+        .unwrap_or_default();
+    let registry_entry = tura_llm_rust::provider_auth_registry_entry(provider_id);
+    let has_llm_domain = provider_config
+        .map(|provider| provider_has_domain(provider, "llm"))
+        .unwrap_or_else(|| {
+            registry_entry
+                .map(|entry| entry.capabilities.supports_model_validation)
+                .unwrap_or(false)
+                || is_openai_compatible_provider(provider_id)
+        });
+    let runtime_provider = provider_config
+        .map(|provider| provider.runtime_provider.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| registry_entry.map(|entry| entry.runtime_provider_id))
+        .unwrap_or(provider_id);
+    let token = token.map(str::trim).filter(|value| !value.is_empty());
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.validation.client_setup_failed",
+                Some(error.to_string()),
+            ));
+        }
+    };
+
+    if matches!(api_style, "codex" | "claude_code")
+        || matches!(provider_id, "codex" | "claude-code" | "antigravity")
+    {
+        let Some(token) = token else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.credential.oauth_token_missing",
+                None,
+            ));
+        };
+        if !looks_like_bearer_token(token) {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.credential.oauth_token_invalid_format",
+                None,
+            ));
+        }
+    }
+
+    if api_style == "codex" || provider_id == "codex" {
+        let Some(token) = token else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.credential.oauth_token_missing",
+                Some("Codex".to_string()),
+            ));
+        };
+        return validate_bearer_get(
+            &client,
+            "https://chatgpt.com/backend-api/models",
+            token,
+            &[],
+            "Codex subscription model list",
+        )
+        .await;
+    }
+
+    if provider_id == "antigravity" || api_style == "antigravity" {
+        let Some(token) = token else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.credential.oauth_token_missing",
+                Some("Antigravity".to_string()),
+            ));
+        };
+        return validate_bearer_get(
+            &client,
+            "https://www.googleapis.com/oauth2/v3/userinfo",
+            token,
+            &[],
+            "Google OAuth userinfo",
+        )
+        .await;
+    }
+
+    if matches!(provider_id, "github" | "github-copilot") {
+        let Some(token) = token else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.credential.token_missing",
+                Some("GitHub".to_string()),
+            ));
+        };
+        return validate_bearer_get(
+            &client,
+            "https://api.github.com/user",
+            token,
+            &[("user-agent", "tura-gateway")],
+            "GitHub /user",
+        )
+        .await;
+    }
+
+    if provider_id == "openrouter" {
+        let Some(token) = token else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.credential.api_key_missing",
+                Some("OpenRouter".to_string()),
+            ));
+        };
+        return validate_bearer_get(
+            &client,
+            "https://openrouter.ai/api/v1/key",
+            token,
+            &[],
+            "OpenRouter current key",
+        )
+        .await;
+    }
+
+    if provider_id == "huggingface" {
+        let Some(token) = token else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.credential.token_missing",
+                Some("Hugging Face".to_string()),
+            ));
+        };
+        return validate_bearer_get(
+            &client,
+            "https://huggingface.co/api/whoami-v2",
+            token,
+            &[],
+            "Hugging Face whoami-v2",
+        )
+        .await;
+    }
+
+    if provider_id == "replicate" {
+        let Some(token) = token else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.credential.token_missing",
+                Some("Replicate".to_string()),
+            ));
+        };
+        return validate_bearer_get(
+            &client,
+            "https://api.replicate.com/v1/account",
+            token,
+            &[],
+            "Replicate account",
+        )
+        .await;
+    }
+
+    if provider_id == "fireworks" {
+        let Some(token) = token else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.credential.api_key_missing",
+                Some("Fireworks".to_string()),
+            ));
+        };
+        return validate_bearer_get(
+            &client,
+            "https://api.fireworks.ai/v1/accounts",
+            token,
+            &[],
+            "Fireworks accounts",
+        )
+        .await;
+    }
+
+    if provider_id == "cohere" {
+        let Some(token) = token else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.credential.token_missing",
+                Some("Cohere".to_string()),
+            ));
+        };
+        return validate_bearer_get(
+            &client,
+            "https://api.cohere.com/v1/models",
+            token,
+            &[],
+            "Cohere /models",
+        )
+        .await;
+    }
+
+    if provider_id == "perplexity" {
+        return ProviderCredentialValidation::Unsupported(validation_detail(
+            "provider.validation.public_model_list_unsupported",
+            Some("Perplexity".to_string()),
+        ));
+    }
+
+    if provider_id == "line" {
+        let Some(token) = token else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.credential.token_missing",
+                Some("LINE".to_string()),
+            ));
+        };
+        return validate_bearer_get(
+            &client,
+            "https://api.line.me/v2/bot/info",
+            token,
+            &[],
+            "LINE bot info",
+        )
+        .await;
+    }
+
+    if provider_id == "slack" {
+        let Some(token) = token else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.credential.token_missing",
+                Some("Slack".to_string()),
+            ));
+        };
+        return validate_bearer_get(
+            &client,
+            "https://slack.com/api/auth.test",
+            token,
+            &[],
+            "Slack auth.test",
+        )
+        .await;
+    }
+
+    if provider_id == "claude-code" || api_style == "claude_code" {
+        let Some(token) = token else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.credential.oauth_token_missing",
+                Some("Claude Code".to_string()),
+            ));
+        };
+        let Some(url) = validation_url(base_url, "models") else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.base_url.invalid",
+                Some("Claude Code".to_string()),
+            ));
+        };
+        return validate_anthropic_oauth_models(&client, &url, token).await;
+    }
+
+    if (has_llm_domain && runtime_provider == "anthropic")
+        || provider_id.contains("anthropic")
+        || provider_id.contains("claude")
+        || base_url
+            .map(|url| url.contains("anthropic.com"))
+            .unwrap_or(false)
+    {
+        let Some(token) = token else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.credential.token_missing",
+                Some("Anthropic".to_string()),
+            ));
+        };
+        let Some(url) = validation_url(base_url, "models") else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.base_url.invalid",
+                Some("Anthropic".to_string()),
+            ));
+        };
+        return validate_anthropic_models(&client, &url, token).await;
+    }
+
+    if has_llm_domain && (api_style == "google" || runtime_provider == "google") {
+        let Some(token) = token else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.credential.api_key_missing",
+                Some("Google".to_string()),
+            ));
+        };
+        let Some(url) = validation_url(base_url, "models") else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.base_url.invalid",
+                Some("Google".to_string()),
+            ));
+        };
+        return validate_google_models(&client, &url, token).await;
+    }
+
+    if has_llm_domain
+        && (matches!(api_style, "openapi" | "ollama") || is_openai_compatible_provider(provider_id))
+    {
+        let Some(url) = validation_url(base_url, "models") else {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.base_url.invalid",
+                Some("OpenAI-compatible".to_string()),
+            ));
+        };
+        if !is_local_no_token_provider(provider_id, base_url) && token.is_none() {
+            return ProviderCredentialValidation::Failed(validation_detail(
+                "provider.credential.api_key_missing",
+                Some("OpenAI-compatible".to_string()),
+            ));
+        }
+        return validate_openai_compatible_models(&client, &url, token).await;
+    }
+
+    ProviderCredentialValidation::Unsupported(validation_detail(
+        "provider.validation.gateway_not_configured",
+        None,
+    ))
+}
+
+fn provider_has_domain(provider: &tura_llm_rust::ProviderCatalogConfig, domain: &str) -> bool {
+    provider
+        .domains
+        .iter()
+        .any(|value| value.eq_ignore_ascii_case(domain))
+}
+
+fn validation_detail(code: &str, value: Option<String>) -> ProviderAuthActionDetail {
+    let english = validation_detail_english(code);
+    let message = match value.as_deref() {
+        Some(value) if !value.is_empty() => format!("{english}: {value}"),
+        _ => english.to_string(),
+    };
+    ProviderAuthActionDetail {
+        code: code.to_string(),
+        message,
+        value,
+    }
+}
+
+fn validation_detail_english(code: &str) -> &'static str {
+    match code {
+        "provider.validation.passed" => "credential validation passed",
+        "provider.validation.failed" => "credential validation failed",
+        "provider.validation.unavailable" => "credential validation unavailable",
+        "provider.base_url.ok" => "base URL is valid",
+        "provider.base_url.invalid" => "base URL is invalid",
+        "provider.env.present" => "configured environment variables",
+        "provider.env.missing" => "missing environment variables",
+        "provider.env.none_registered" => "no credential environment variable is registered",
+        "provider.remote.accepted" => "remote validation accepted credentials",
+        "provider.remote.permission_limited" => {
+            "remote validation authenticated credentials but reported limited permission"
+        }
+        "provider.remote.rejected" => "remote validation rejected credentials",
+        "provider.remote.request_failed" => "remote validation request failed",
+        "provider.validation.client_setup_failed" => "validation client setup failed",
+        "provider.credential.oauth_token_missing" => "OAuth access token is missing",
+        "provider.credential.oauth_token_invalid_format" => "OAuth access token format is invalid",
+        "provider.credential.token_missing" => "token is missing",
+        "provider.credential.api_key_missing" => "API key is missing",
+        "provider.validation.public_model_list_unsupported" => {
+            "public model list cannot validate credentials"
+        }
+        "provider.validation.gateway_not_configured" => {
+            "validation gateway is not configured for this provider"
+        }
+        "provider.request.no_paid_model" => "no paid model request was sent",
+        "provider.auth.refresh.unsupported" => "auth refresh is unsupported",
+        "provider.auth.refresh.failed" => "auth refresh failed",
+        "provider.auth.refresh.succeeded" => "auth refresh succeeded",
+        "provider.auth.not_configured" => "provider auth is not configured",
+        "provider.auth.logout.succeeded" => "provider auth logged out",
+        "provider.auth.logout.failed" => "provider auth logout failed",
+        _ => "provider validation detail",
+    }
+}
+
+fn is_local_no_token_provider(provider_id: &str, base_url: Option<&str>) -> bool {
+    matches!(provider_id, "ollama" | "lmstudio")
+        || base_url
+            .map(|url| url.contains("localhost") || url.contains("127.0.0.1"))
+            .unwrap_or(false)
+}
+
+fn is_openai_compatible_provider(provider_id: &str) -> bool {
+    matches!(
+        provider_id,
+        "openai"
+            | "openai-api"
+            | "gpt"
+            | "openrouter"
+            | "deepseek"
+            | "qwen"
+            | "qwen-cn"
+            | "mistral"
+            | "xai"
+            | "grok"
+            | "kimi"
+            | "moonshot"
+            | "huggingface"
+            | "replicate"
+            | "together"
+            | "fireworks"
+            | "groq"
+            | "perplexity"
+            | "volcengine"
+            | "baidu_qianfan"
+    )
+}
+
+fn validation_url(base_url: Option<&str>, suffix: &str) -> Option<String> {
+    let base_url = base_url?.trim();
+    if base_url.is_empty() || base_url.contains('{') || base_url.contains('}') {
+        return None;
+    }
+    reqwest::Url::parse(base_url).ok()?;
+    Some(format!(
+        "{}/{}",
+        base_url.trim_end_matches('/'),
+        suffix.trim_start_matches('/')
+    ))
+}
+
+async fn validate_openai_compatible_models(
+    client: &reqwest::Client,
+    url: &str,
+    token: Option<&str>,
+) -> ProviderCredentialValidation {
+    let mut request = client.get(url);
+    if let Some(token) = token {
+        request = request.bearer_auth(token);
+    }
+    validate_response(request, "OpenAI-compatible /models").await
+}
+
+async fn validate_anthropic_models(
+    client: &reqwest::Client,
+    url: &str,
+    token: &str,
+) -> ProviderCredentialValidation {
+    validate_response(
+        client
+            .get(url)
+            .header("x-api-key", token)
+            .header("anthropic-version", "2023-06-01"),
+        "Anthropic /models",
+    )
+    .await
+}
+
+async fn validate_anthropic_oauth_models(
+    client: &reqwest::Client,
+    url: &str,
+    token: &str,
+) -> ProviderCredentialValidation {
+    validate_response(
+        client
+            .get(url)
+            .bearer_auth(token)
+            .header("anthropic-version", "2023-06-01")
+            .header("anthropic-beta", "oauth-2025-04-20"),
+        "Claude Code OAuth /models",
+    )
+    .await
+}
+
+async fn validate_google_models(
+    client: &reqwest::Client,
+    url: &str,
+    token: &str,
+) -> ProviderCredentialValidation {
+    validate_response(
+        client.get(url).query(&[("key", token)]),
+        "Google list models",
+    )
+    .await
+}
+
+async fn validate_bearer_get(
+    client: &reqwest::Client,
+    url: &str,
+    token: &str,
+    headers: &[(&str, &str)],
+    label: &str,
+) -> ProviderCredentialValidation {
+    let mut request = client.get(url).bearer_auth(token);
+    for (key, value) in headers {
+        request = request.header(*key, *value);
+    }
+    validate_response(request, label).await
+}
+
+async fn validate_response(
+    request: reqwest::RequestBuilder,
+    label: &str,
+) -> ProviderCredentialValidation {
+    match request.send().await {
+        Ok(response) => {
+            let status = response.status();
+            let text = if status.is_success() {
+                String::new()
+            } else {
+                response.text().await.unwrap_or_default()
+            };
+            if status.is_success() {
+                ProviderCredentialValidation::Passed(validation_detail(
+                    "provider.remote.accepted",
+                    Some(label.to_string()),
+                ))
+            } else if status == reqwest::StatusCode::FORBIDDEN
+                && response_forbidden_but_authenticated(&text)
+            {
+                ProviderCredentialValidation::Warning(validation_detail(
+                    "provider.remote.permission_limited",
+                    Some(label.to_string()),
+                ))
+            } else {
+                ProviderCredentialValidation::Failed(validation_detail(
+                    "provider.remote.rejected",
+                    Some(format!(
+                        "{label} HTTP {status}: {}",
+                        truncate_validation_body(&text)
+                    )),
+                ))
+            }
+        }
+        Err(error) => ProviderCredentialValidation::Failed(validation_detail(
+            "provider.remote.request_failed",
+            Some(format!("{label}: {error}")),
+        )),
+    }
+}
+
+fn response_forbidden_but_authenticated(body: &str) -> bool {
+    let body = body.to_ascii_lowercase();
+    body.contains("insufficient permissions")
+        || body.contains("missing scopes")
+        || body.contains("permission")
+}
+
+fn truncate_validation_body(body: &str) -> String {
+    let compact = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.len() > 240 {
+        format!("{}...", &compact[..240])
+    } else if compact.is_empty() {
+        "<empty response>".to_string()
+    } else {
+        compact
+    }
+}
+
+fn looks_like_bearer_token(token: &str) -> bool {
+    token.split('.').count() >= 3 || token.len() >= 24
+}
+
+fn push_unique_env(keys: &mut Vec<String>, key: Option<&str>) {
+    let Some(key) = key.map(str::trim).filter(|value| !value.is_empty()) else {
+        return;
+    };
+    if !keys.iter().any(|item| item == key) {
+        keys.push(key.to_string());
+    }
 }
 
 pub async fn provider_auth_refresh(
     Path(provider_id): Path<String>,
 ) -> Json<ProviderAuthActionResponse> {
-    let can_refresh = tura_llm_rust::provider_auth_registry_entry(&provider_id)
-        .map(|entry| entry.capabilities.supports_oauth_refresh)
-        .unwrap_or(false);
+    let can_refresh = auth_validator::provider_auth_can_refresh(&provider_id);
     let refresh_result = refresh_provider_auth_if_needed(&provider_id, true).await;
     let status = build_provider_auth_status(&provider_id);
     let ok = can_refresh && status.authenticated && refresh_result.is_ok();
+    let (code, message, details) = if !can_refresh {
+        (
+            "provider.auth.refresh.unsupported",
+            "provider auth method does not support refresh".to_string(),
+            vec![validation_detail("provider.auth.refresh.unsupported", None)],
+        )
+    } else if let Err(error) = refresh_result {
+        (
+            "provider.auth.refresh.failed",
+            format!("provider auth refresh failed: {error}"),
+            vec![validation_detail(
+                "provider.auth.refresh.failed",
+                Some(error),
+            )],
+        )
+    } else if ok {
+        (
+            "provider.auth.refresh.succeeded",
+            "provider auth refreshed".to_string(),
+            vec![validation_detail("provider.auth.refresh.succeeded", None)],
+        )
+    } else {
+        (
+            "provider.auth.not_configured",
+            "provider auth is not configured".to_string(),
+            vec![validation_detail("provider.auth.not_configured", None)],
+        )
+    };
     Json(ProviderAuthActionResponse {
         ok,
         provider_id,
-        message: if !can_refresh {
-            "provider auth method does not support refresh".to_string()
-        } else if let Err(error) = refresh_result {
-            format!("provider auth refresh failed: {error}")
-        } else if ok {
-            "provider auth refreshed".to_string()
-        } else {
-            "provider auth is not configured".to_string()
-        },
+        code: code.to_string(),
+        message,
+        level: Some(if ok { "valid" } else { "invalid" }.to_string()),
+        details,
         status: Some(status),
     })
 }
@@ -1021,12 +1659,32 @@ pub async fn provider_auth_logout(
 ) -> Json<ProviderAuthActionResponse> {
     let result = logout_provider_auth(&provider_id);
     let status = build_provider_auth_status(&provider_id);
+    let ok = result.is_ok();
+    let (code, message, details) = result
+        .map(|_| {
+            (
+                "provider.auth.logout.succeeded",
+                "provider auth logged out".to_string(),
+                vec![validation_detail("provider.auth.logout.succeeded", None)],
+            )
+        })
+        .unwrap_or_else(|error| {
+            (
+                "provider.auth.logout.failed",
+                format!("provider auth logout failed: {error}"),
+                vec![validation_detail(
+                    "provider.auth.logout.failed",
+                    Some(error.to_string()),
+                )],
+            )
+        });
     Json(ProviderAuthActionResponse {
-        ok: result.is_ok(),
+        ok,
         provider_id,
-        message: result
-            .map(|_| "provider auth logged out".to_string())
-            .unwrap_or_else(|error| format!("provider auth logout failed: {error}")),
+        code: code.to_string(),
+        message,
+        level: Some(if ok { "valid" } else { "invalid" }.to_string()),
+        details,
         status: Some(status),
     })
 }
@@ -1062,6 +1720,8 @@ pub struct ProviderAuthMethod {
     pub api_key_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub docs_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub configured_value: Option<String>,
     pub available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<String>,
@@ -1072,17 +1732,28 @@ pub async fn provider_auth(
     Query(_params): Query<ProviderAuthQuery>,
 ) -> Json<HashMap<String, Vec<ProviderAuthMethod>>> {
     let mut response = HashMap::new();
-    for entry in tura_llm_rust::provider_auth_registry() {
+    for entry in auth_registry::entries() {
         let methods = provider_auth_methods(entry.provider_id);
         if !methods.is_empty() {
             response.insert(entry.provider_id.to_string(), methods);
+        }
+    }
+    if let Ok(settings) = tura_llm_rust::Settings::default().await {
+        for (provider_id, provider) in &settings.model_catalog.providers {
+            if response.contains_key(provider_id) {
+                continue;
+            }
+            let methods = provider_auth_methods_from_config(provider_id, provider);
+            if !methods.is_empty() {
+                response.insert(provider_id.to_string(), methods);
+            }
         }
     }
     Json(response)
 }
 
 fn provider_auth_methods(provider_id: &str) -> Vec<ProviderAuthMethod> {
-    let Some(entry) = tura_llm_rust::provider_auth_registry_entry(provider_id) else {
+    let Some(entry) = auth_registry::entry(provider_id) else {
         return Vec::new();
     };
     entry
@@ -1106,6 +1777,9 @@ fn provider_auth_methods(provider_id: &str) -> Vec<ProviderAuthMethod> {
                 token_url: oauth_token_endpoint(entry.oauth_authorize_kind),
                 api_key_url: provider_api_key_url(provider_id),
                 docs_url: provider_auth_docs_url(provider_id),
+                configured_value: entry
+                    .token_env
+                    .and_then(|token_env| provider_auth_method_value(provider_id, token_env)),
                 available: unavailable_reason.is_none(),
                 unavailable_reason,
                 supports_refresh: entry.capabilities.supports_oauth_refresh,
@@ -1114,12 +1788,69 @@ fn provider_auth_methods(provider_id: &str) -> Vec<ProviderAuthMethod> {
         .collect()
 }
 
+fn provider_auth_methods_from_config(
+    provider_id: &str,
+    provider: &tura_llm_rust::ProviderCatalogConfig,
+) -> Vec<ProviderAuthMethod> {
+    let envs = provider_auth_envs_from_config(provider);
+    envs.into_iter()
+        .map(|env| ProviderAuthMethod {
+            method_type: "api".to_string(),
+            kind: AuthMethodKind::ApiKey,
+            login: "api".to_string(),
+            label: env.clone(),
+            prompts: None,
+            token_env: Some(env.clone()),
+            login_env: None,
+            authorize_url: None,
+            token_url: None,
+            api_key_url: provider_api_key_url(provider_id),
+            docs_url: provider_auth_docs_url(provider_id).or_else(|| provider.api_docs.clone()),
+            configured_value: provider_auth_method_value(provider_id, &env),
+            available: true,
+            unavailable_reason: None,
+            supports_refresh: false,
+        })
+        .collect()
+}
+
+fn provider_auth_envs_from_config(provider: &tura_llm_rust::ProviderCatalogConfig) -> Vec<String> {
+    let mut envs = Vec::new();
+    if let Some(token_env) = provider
+        .token_env
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        envs.push(token_env.to_string());
+    }
+    for env in &provider.env {
+        if !env.trim().is_empty() && !envs.iter().any(|item| item == env) {
+            envs.push(env.clone());
+        }
+    }
+    envs
+}
+
+fn configured_provider_value(provider_id: &str, env: &str) -> Option<String> {
+    if auth_registry::entry(provider_id).is_some() {
+        provider_key_value_for_env(provider_id, env)
+    } else {
+        config_value(env).map(|value| value.trim().to_string())
+    }
+}
+
+fn provider_auth_method_value(provider_id: &str, env: &str) -> Option<String> {
+    configured_provider_value(provider_id, env)
+        .or_else(|| config_value(env).map(|value| value.trim().to_string()))
+        .filter(|value| !value.is_empty())
+}
+
 fn auth_method_unavailable_reason(
     provider_id: &str,
     kind: AuthMethodKind,
     authorize_kind: Option<OAuthAuthorizeKind>,
 ) -> Option<String> {
-    if kind != AuthMethodKind::OAuthPkce {
+    if !matches!(kind, AuthMethodKind::OAuthPkce | AuthMethodKind::DeviceCode) {
         return None;
     }
     match authorize_kind.unwrap_or(OAuthAuthorizeKind::Unsupported) {
@@ -1130,6 +1861,9 @@ fn auth_method_unavailable_reason(
                 "GOOGLE_OAUTH_CLIENT_ID is required before Google OAuth can start".to_string()
             })
         }
+        OAuthAuthorizeKind::GithubDevice => github_copilot_oauth_client_id().is_none().then(|| {
+            "GITHUB_COPILOT_CLIENT_ID is required before GitHub Copilot OAuth can start".to_string()
+        }),
         OAuthAuthorizeKind::BrowserTokenPaste | OAuthAuthorizeKind::Unsupported => Some(format!(
             "{} OAuth is listed but is not implemented yet",
             provider_display_name(provider_id)
@@ -1150,7 +1884,7 @@ pub async fn oauth_authorize(
     let selected_method = methods.get(payload.method).filter(|method| {
         matches!(
             method.kind,
-            AuthMethodKind::OAuthPkce | AuthMethodKind::LocalCliToken
+            AuthMethodKind::OAuthPkce | AuthMethodKind::LocalCliToken | AuthMethodKind::DeviceCode
         )
     });
 
@@ -1175,7 +1909,35 @@ pub async fn oauth_authorize(
         .and_then(|entry| entry.oauth_authorize_kind)
         .unwrap_or(OAuthAuthorizeKind::Unsupported);
 
-    let (url, method, instructions) = if matches!(
+    let (url, method, instructions) = if authorize_kind == OAuthAuthorizeKind::GithubDevice {
+        match start_github_copilot_device_flow(&provider_id).await {
+            Ok(device) => {
+                global_store().set_oauth_state(
+                    &provider_id,
+                    "device_code".to_string(),
+                    Some(device.user_code.clone()),
+                    device.verification_uri.clone(),
+                    Some(oauth_state()),
+                    Some(device.device_code.clone()),
+                );
+                (
+                    device.verification_uri.clone(),
+                    OAuthMethod::Code,
+                    format!(
+                        "Open {} and enter code {}. After GitHub authorizes Copilot, submit the same code here.",
+                        device.verification_uri, device.user_code
+                    ),
+                )
+            }
+            Err(error) => {
+                return Json(OAuthAuthorizeResponse {
+                    url: String::new(),
+                    method: OAuthMethod::Code,
+                    instructions: format!("GitHub Copilot OAuth cannot start: {error}"),
+                });
+            }
+        }
+    } else if matches!(
         authorize_kind,
         OAuthAuthorizeKind::OpenAiPkce
             | OAuthAuthorizeKind::AnthropicPkce
@@ -1203,22 +1965,14 @@ pub async fn oauth_authorize(
             Some(state),
             Some(code_verifier),
         );
-        if authorize_kind == OAuthAuthorizeKind::AnthropicPkce {
-            (
-                url,
-                OAuthMethod::Code,
-                "Complete Claude authorization in your browser, then paste the authorization code here.".to_string(),
-            )
-        } else {
-            (
-                url,
-                OAuthMethod::Auto,
-                format!(
-                    "Complete {} authorization in your browser. This window will close automatically.",
-                    provider_display_name(&provider_id)
-                ),
-            )
-        }
+        (
+            url,
+            OAuthMethod::Auto,
+            format!(
+                "Complete {} authorization in your browser. This window will close automatically.",
+                provider_display_name(&provider_id)
+            ),
+        )
     } else if authorize_kind == OAuthAuthorizeKind::BrowserTokenPaste {
         let code = random_confirmation_code(&provider_id, payload.method);
         let url = browser_login_url(&provider_id);
@@ -1291,7 +2045,21 @@ pub async fn oauth_callback(
     Path(provider_id): Path<String>,
     Query(_params): Query<OAuthCallbackParams>,
     Json(payload): Json<OAuthCallbackPayload>,
-) -> Json<bool> {
+) -> Json<ProviderAuthActionResponse> {
+    Json(complete_oauth_callback(provider_id, payload).await)
+}
+
+pub async fn oauth_callback_info(Path(provider_id): Path<String>) -> Html<String> {
+    Html(format!(
+        "{} OAuth callback expects a POST from the GUI. Paste the copied code/token into the provider dialog instead of opening this URL directly.",
+        provider_display_name(&provider_id)
+    ))
+}
+
+async fn complete_oauth_callback(
+    provider_id: String,
+    payload: OAuthCallbackPayload,
+) -> ProviderAuthActionResponse {
     if payload
         .code
         .as_deref()
@@ -1299,18 +2067,44 @@ pub async fn oauth_callback(
         .trim()
         .is_empty()
     {
-        let waits_for_browser_callback =
-            global_store().pending_oauth_method(&provider_id).as_deref() == Some("oauth_pkce");
-        return Json(if waits_for_browser_callback {
-            wait_for_oauth_completed(&provider_id).await
-        } else {
-            false
-        });
+        let pending_method = global_store().pending_oauth_method(&provider_id);
+        let ok = match pending_method.as_deref() {
+            Some("oauth_pkce") => wait_for_oauth_completed(&provider_id).await,
+            Some("device_code") => complete_pending_device_oauth(&provider_id).await,
+            _ => false,
+        };
+        return oauth_callback_response(
+            &provider_id,
+            ok,
+            if ok {
+                "provider.oauth.completed"
+            } else {
+                "provider.oauth.code_missing"
+            },
+            if ok {
+                "provider OAuth completed"
+            } else {
+                "Paste the copied authorization code before submitting"
+            },
+        );
     }
 
-    let has_pending = global_store().consume_oauth_state(&provider_id);
+    let has_pending = global_store().peek_oauth_state(&provider_id);
     if has_pending.is_none() {
-        return Json(false);
+        let normalized_code = normalize_oauth_code(payload.code.as_deref().unwrap_or_default());
+        if provider_id == "claude-code" && looks_like_claude_code_oauth_token(&normalized_code.code)
+        {
+            return persist_direct_claude_code_oauth_token(&provider_id, normalized_code.code);
+        }
+        if provider_id == "claude-code" && normalized_code.verifier.is_some() {
+            return complete_claude_code_manual_oauth(&provider_id, &normalized_code).await;
+        }
+        return oauth_callback_response(
+            &provider_id,
+            false,
+            "provider.oauth.pending_missing",
+            "No pending OAuth login was found. Click OAuth login again, then paste the new code.",
+        );
     }
 
     let pending = has_pending.expect("pending OAuth state should exist after is_none check");
@@ -1322,39 +2116,82 @@ pub async fn oauth_callback(
             .trim()
             .is_empty()
     {
-        return Json(false);
+        return oauth_callback_response(
+            &provider_id,
+            false,
+            "provider.oauth.code_missing",
+            "Paste the copied authorization code before submitting",
+        );
     }
 
     if pending.method == "oauth_pkce"
         && payload.state.is_some()
         && payload.state.as_deref() != pending.state.as_deref()
     {
-        return Json(false);
+        return oauth_callback_response(
+            &provider_id,
+            false,
+            "provider.oauth.state_mismatch",
+            "OAuth state did not match. Click OAuth login again and paste the new code.",
+        );
     }
 
     if pending.method == "code" {
         let expected_code = pending.code.as_ref();
         if payload.code.as_ref() != expected_code {
-            return Json(false);
+            return oauth_callback_response(
+                &provider_id,
+                false,
+                "provider.oauth.code_mismatch",
+                "OAuth confirmation code did not match",
+            );
         }
     }
 
-    let tokens = if pending.method == "oauth_pkce" {
-        match exchange_oauth_code(
-            &provider_id,
-            payload.code.as_deref().unwrap_or_default(),
-            &pending,
-        )
-        .await
-        {
+    let normalized_code = normalize_oauth_code(payload.code.as_deref().unwrap_or_default());
+    if provider_id == "claude-code" && looks_like_claude_code_oauth_token(&normalized_code.code) {
+        let response = persist_direct_claude_code_oauth_token(&provider_id, normalized_code.code);
+        if response.ok {
+            let _ = global_store().consume_oauth_state(&provider_id);
+        }
+        return response;
+    }
+    if provider_id == "claude-code" && normalized_code.verifier.is_some() {
+        let response = complete_claude_code_manual_oauth(&provider_id, &normalized_code).await;
+        if response.ok {
+            let _ = global_store().consume_oauth_state(&provider_id);
+        }
+        return response;
+    }
+    if pending.method == "oauth_pkce" {
+        if let Some(state) = normalized_code.state.as_deref() {
+            if pending.state.as_deref() != Some(state) {
+                return oauth_callback_response(
+                    &provider_id,
+                    false,
+                    "provider.oauth.state_mismatch",
+                    "OAuth state does not match the pending authorization request. Start login again and paste the newest code.",
+                );
+            }
+        }
+    }
+    let tokens = if matches!(pending.method.as_str(), "oauth_pkce" | "device_code") {
+        match exchange_oauth_code(&provider_id, &normalized_code, &pending).await {
             Ok(tokens) => Some(tokens),
-            Err(_) => return Json(false),
+            Err(error) => {
+                return oauth_callback_response(
+                    &provider_id,
+                    false,
+                    "provider.oauth.exchange_failed",
+                    &format!("OAuth token exchange failed: {error}"),
+                );
+            }
         }
     } else {
         None
     };
 
-    let key = if pending.method == "oauth_pkce" {
+    let key = if matches!(pending.method.as_str(), "oauth_pkce" | "device_code") {
         tokens
             .as_ref()
             .map(|tokens| tokens.access_token.clone())
@@ -1370,43 +2207,251 @@ pub async fn oauth_callback(
         browser_login_token(&provider_id, pending.code.as_deref())
     };
 
-    let auth = ProviderAuth {
-        auth_type: "oauth".to_string(),
-        key: Some(key),
-        access: tokens.as_ref().map(|tokens| tokens.access_token.clone()),
-        refresh: tokens
+    let login = if pending.method == "oauth_pkce" {
+        "oauth"
+    } else if pending.method == "device_code" {
+        "device"
+    } else {
+        "browser"
+    };
+    let auth = auth_update::oauth_auth(
+        key,
+        tokens
             .as_ref()
             .and_then(|tokens| tokens.refresh_token.clone()),
-        expires: tokens
+        tokens
             .as_ref()
             .map(|tokens| Utc::now().timestamp_millis() + tokens.expires_in.unwrap_or(3600) * 1000),
-        account_id: tokens.as_ref().and_then(extract_account_id),
-        metadata: Some(HashMap::from([
-            (
-                "login".to_string(),
-                serde_json::Value::String(
-                    if pending.method == "oauth_pkce" {
-                        "oauth"
-                    } else {
-                        "browser"
-                    }
-                    .to_string(),
-                ),
-            ),
-            (
-                "url".to_string(),
-                serde_json::Value::String(pending.url.clone()),
-            ),
-        ])),
-    };
+        tokens.as_ref().and_then(extract_account_id),
+        login,
+        Some(pending.url.clone()),
+    );
 
-    if persist_provider_auth(&provider_id, &auth).is_err() {
-        return Json(false);
+    if let Err(error) = persist_provider_auth(&provider_id, &auth) {
+        return oauth_callback_response(
+            &provider_id,
+            false,
+            "provider.oauth.persist_failed",
+            &format!("OAuth token was received but could not be saved: {error}"),
+        );
     }
 
+    let _ = global_store().consume_oauth_state(&provider_id);
     let _ = global_store().set_auth(&provider_id, auth.clone());
 
-    Json(true)
+    oauth_callback_response(
+        &provider_id,
+        true,
+        "provider.oauth.completed",
+        "provider OAuth completed",
+    )
+}
+
+fn oauth_callback_response(
+    provider_id: &str,
+    ok: bool,
+    code: &str,
+    message: &str,
+) -> ProviderAuthActionResponse {
+    ProviderAuthActionResponse {
+        ok,
+        provider_id: provider_id.to_string(),
+        code: code.to_string(),
+        message: message.to_string(),
+        level: Some(if ok { "valid" } else { "invalid" }.to_string()),
+        details: vec![validation_detail(code, None)],
+        status: Some(build_provider_auth_status(provider_id)),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedOAuthCode {
+    code: String,
+    state: Option<String>,
+    verifier: Option<String>,
+}
+
+fn normalize_oauth_code(code: &str) -> NormalizedOAuthCode {
+    let trimmed = code.trim();
+    if let Some(code) = trimmed.strip_prefix("code=") {
+        let normalized = code
+            .split('&')
+            .next()
+            .unwrap_or_default()
+            .split('#')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let state = trimmed
+            .split('#')
+            .nth(1)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+        return NormalizedOAuthCode {
+            code: normalized,
+            state,
+            verifier: None,
+        };
+    }
+    if let Ok(url) = reqwest::Url::parse(trimmed) {
+        if let Some(code) = url
+            .query_pairs()
+            .find_map(|(key, value)| (key == "code").then(|| value.to_string()))
+        {
+            let state = url
+                .query_pairs()
+                .find_map(|(key, value)| (key == "state").then(|| value.to_string()))
+                .or_else(|| {
+                    url.fragment()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToString::to_string)
+                });
+            return NormalizedOAuthCode {
+                code: code.trim().to_string(),
+                state,
+                verifier: None,
+            };
+        }
+    }
+    let mut parts = trimmed.splitn(2, '#');
+    let code = parts.next().unwrap_or_default().trim().to_string();
+    let fragment = parts
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let verifier = fragment
+        .as_deref()
+        .filter(|value| looks_like_pkce_verifier(value))
+        .map(ToString::to_string);
+    let state = if verifier.is_some() { None } else { fragment };
+    NormalizedOAuthCode {
+        code,
+        state,
+        verifier,
+    }
+}
+
+fn looks_like_pkce_verifier(value: &str) -> bool {
+    let len = value.len();
+    (43..=128).contains(&len)
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~'))
+}
+
+fn looks_like_claude_code_oauth_token(value: &str) -> bool {
+    let token = value.trim();
+    token.starts_with("sk-ant-oat") || token.starts_with("sk-ant-ort")
+}
+
+fn persist_direct_claude_code_oauth_token(
+    provider_id: &str,
+    token: String,
+) -> ProviderAuthActionResponse {
+    let auth = auth_update::oauth_auth(token, None, None, None, "oauth", None);
+    if let Err(error) = persist_provider_auth(provider_id, &auth) {
+        return oauth_callback_response(
+            provider_id,
+            false,
+            "provider.oauth.persist_failed",
+            &format!("OAuth token could not be saved: {error}"),
+        );
+    }
+    let _ = global_store().set_auth(provider_id, auth);
+    oauth_callback_response(
+        provider_id,
+        true,
+        "provider.oauth.completed",
+        "provider OAuth token saved",
+    )
+}
+
+async fn complete_claude_code_manual_oauth(
+    provider_id: &str,
+    normalized_code: &NormalizedOAuthCode,
+) -> ProviderAuthActionResponse {
+    let pending = crate::mock::store::PendingOAuth {
+        method: "oauth_pkce".to_string(),
+        code: None,
+        url: String::new(),
+        state: None,
+        code_verifier: normalized_code.verifier.clone(),
+        expires_at: Utc::now().timestamp_millis() + 15 * 60_000,
+    };
+    let tokens = match exchange_anthropic_oauth_code(normalized_code, &pending).await {
+        Ok(tokens) => tokens,
+        Err(error) => {
+            return oauth_callback_response(
+                provider_id,
+                false,
+                "provider.oauth.exchange_failed",
+                &format!("OAuth token exchange failed: {error}"),
+            );
+        }
+    };
+    let auth = auth_update::oauth_auth(
+        tokens.access_token.clone(),
+        tokens.refresh_token.clone(),
+        Some(Utc::now().timestamp_millis() + tokens.expires_in.unwrap_or(3600) * 1000),
+        extract_account_id(&tokens),
+        "oauth",
+        None,
+    );
+    if let Err(error) = persist_provider_auth(provider_id, &auth) {
+        return oauth_callback_response(
+            provider_id,
+            false,
+            "provider.oauth.persist_failed",
+            &format!("OAuth token was received but could not be saved: {error}"),
+        );
+    }
+    let _ = global_store().set_auth(provider_id, auth);
+    oauth_callback_response(
+        provider_id,
+        true,
+        "provider.oauth.completed",
+        "provider OAuth completed",
+    )
+}
+
+async fn complete_pending_device_oauth(provider_id: &str) -> bool {
+    let Some(pending) = global_store().consume_oauth_state(provider_id) else {
+        return false;
+    };
+    if pending.method != "device_code" {
+        return false;
+    }
+    let tokens = match exchange_oauth_code(
+        provider_id,
+        &NormalizedOAuthCode {
+            code: String::new(),
+            state: None,
+            verifier: None,
+        },
+        &pending,
+    )
+    .await
+    {
+        Ok(tokens) => tokens,
+        Err(_) => return false,
+    };
+    let auth = auth_update::oauth_auth(
+        tokens.access_token.clone(),
+        tokens.refresh_token.clone(),
+        Some(Utc::now().timestamp_millis() + tokens.expires_in.unwrap_or(3600) * 1000),
+        extract_account_id(&tokens),
+        "device",
+        Some(pending.url.clone()),
+    );
+    if persist_provider_auth(provider_id, &auth).is_err() {
+        return false;
+    }
+    let _ = global_store().set_auth(provider_id, auth);
+    true
 }
 
 pub async fn oauth_redirect_callback(
@@ -1438,7 +2483,17 @@ pub async fn oauth_redirect_callback(
             "OAuth callback did not match a PKCE login",
         ));
     }
-    let tokens = match exchange_oauth_code(&provider_id, code, &pending).await {
+    let tokens = match exchange_oauth_code(
+        &provider_id,
+        &NormalizedOAuthCode {
+            code: code.to_string(),
+            state: pending.state.clone(),
+            verifier: None,
+        },
+        &pending,
+    )
+    .await
+    {
         Ok(tokens) => tokens,
         Err(error) => {
             return Html(oauth_callback_html(
@@ -1447,24 +2502,14 @@ pub async fn oauth_redirect_callback(
             ))
         }
     };
-    let auth = ProviderAuth {
-        auth_type: "oauth".to_string(),
-        key: Some(tokens.access_token.clone()),
-        access: Some(tokens.access_token.clone()),
-        refresh: tokens.refresh_token.clone(),
-        expires: Some(Utc::now().timestamp_millis() + tokens.expires_in.unwrap_or(3600) * 1000),
-        account_id: extract_account_id(&tokens),
-        metadata: Some(HashMap::from([
-            (
-                "login".to_string(),
-                serde_json::Value::String("oauth".to_string()),
-            ),
-            (
-                "url".to_string(),
-                serde_json::Value::String(pending.url.clone()),
-            ),
-        ])),
-    };
+    let auth = auth_update::oauth_auth(
+        tokens.access_token.clone(),
+        tokens.refresh_token.clone(),
+        Some(Utc::now().timestamp_millis() + tokens.expires_in.unwrap_or(3600) * 1000),
+        extract_account_id(&tokens),
+        "oauth",
+        Some(pending.url.clone()),
+    );
     if persist_provider_auth(&provider_id, &auth).is_err() {
         return Html(oauth_callback_html(
             false,
@@ -1475,7 +2520,10 @@ pub async fn oauth_redirect_callback(
     global_store().set_oauth_completed(&provider_id, auth);
     Html(oauth_callback_html(
         true,
-        "OpenAI OAuth connected. You can close this window.",
+        &format!(
+            "{} OAuth connected. You can close this window.",
+            provider_display_name(&provider_id)
+        ),
     ))
 }
 
@@ -1507,6 +2555,50 @@ struct OAuthTokenResponse {
     expires_in: Option<i64>,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+struct GithubDeviceCodeResponse {
+    device_code: String,
+    user_code: String,
+    verification_uri: String,
+    #[allow(dead_code)]
+    expires_in: Option<i64>,
+    #[allow(dead_code)]
+    interval: Option<i64>,
+}
+
+async fn start_github_copilot_device_flow(
+    provider_id: &str,
+) -> anyhow::Result<GithubDeviceCodeResponse> {
+    let client_id = github_copilot_oauth_client_id()
+        .ok_or_else(|| anyhow::anyhow!("GITHUB_COPILOT_CLIENT_ID is not configured"))?;
+    let scope = github_copilot_oauth_scope();
+    let response = reqwest::Client::new()
+        .post(github_device_code_url())
+        .header("accept", "application/json")
+        .form(&[("client_id", client_id.as_str()), ("scope", scope.as_str())])
+        .send()
+        .await?;
+    let status = response.status();
+    let body: serde_json::Value = response.json().await?;
+    if !status.is_success() {
+        return Err(anyhow::anyhow!(
+            "{} device-code endpoint returned {status}: {body}",
+            provider_display_name(provider_id)
+        ));
+    }
+    let device: GithubDeviceCodeResponse = serde_json::from_value(body)?;
+    if device.device_code.trim().is_empty()
+        || device.user_code.trim().is_empty()
+        || device.verification_uri.trim().is_empty()
+    {
+        return Err(anyhow::anyhow!(
+            "{} device-code response was incomplete",
+            provider_display_name(provider_id)
+        ));
+    }
+    Ok(device)
+}
+
 async fn wait_for_oauth_completed(provider_id: &str) -> bool {
     let deadline = Instant::now() + Duration::from_secs(5 * 60);
     while Instant::now() < deadline {
@@ -1521,22 +2613,108 @@ async fn wait_for_oauth_completed(provider_id: &str) -> bool {
 
 async fn exchange_oauth_code(
     provider_id: &str,
-    code: &str,
+    normalized_code: &NormalizedOAuthCode,
     pending: &crate::mock::store::PendingOAuth,
 ) -> anyhow::Result<OAuthTokenResponse> {
     let kind = tura_llm_rust::provider_auth_registry_entry(provider_id)
         .and_then(|entry| entry.oauth_callback_kind)
         .unwrap_or(OAuthAuthorizeKind::Unsupported);
     match kind {
-        OAuthAuthorizeKind::OpenAiPkce => exchange_openai_oauth_code(code, pending).await,
-        OAuthAuthorizeKind::AnthropicPkce => exchange_anthropic_oauth_code(code, pending).await,
+        OAuthAuthorizeKind::OpenAiPkce => {
+            exchange_openai_oauth_code(&normalized_code.code, pending).await
+        }
+        OAuthAuthorizeKind::AnthropicPkce => {
+            exchange_anthropic_oauth_code(normalized_code, pending).await
+        }
         OAuthAuthorizeKind::GooglePkce => {
-            exchange_google_oauth_code(provider_id, code, pending).await
+            exchange_google_oauth_code(provider_id, &normalized_code.code, pending).await
+        }
+        OAuthAuthorizeKind::GithubDevice => {
+            exchange_github_copilot_device_code(provider_id, pending).await
         }
         OAuthAuthorizeKind::BrowserTokenPaste | OAuthAuthorizeKind::Unsupported => Err(
             anyhow::anyhow!("unsupported OAuth callback provider: {provider_id}"),
         ),
     }
+}
+
+async fn exchange_github_copilot_device_code(
+    provider_id: &str,
+    pending: &crate::mock::store::PendingOAuth,
+) -> anyhow::Result<OAuthTokenResponse> {
+    let client_id = github_copilot_oauth_client_id()
+        .ok_or_else(|| anyhow::anyhow!("GITHUB_COPILOT_CLIENT_ID is not configured"))?;
+    let device_code = pending
+        .code_verifier
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("missing GitHub device code"))?;
+    let deadline = Instant::now() + Duration::from_secs(5 * 60);
+    let mut interval = Duration::from_secs(5);
+    let body = loop {
+        let response = reqwest::Client::new()
+            .post(github_oauth_token_url())
+            .header("accept", "application/json")
+            .form(&[
+                ("client_id", client_id.as_str()),
+                ("device_code", device_code),
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ])
+            .send()
+            .await?;
+        let status = response.status();
+        let body: serde_json::Value = response.json().await?;
+        if !status.is_success() {
+            return Err(anyhow::anyhow!(
+                "{} token endpoint returned {status}: {body}",
+                provider_display_name(provider_id)
+            ));
+        }
+        match body.get("error").and_then(serde_json::Value::as_str) {
+            Some("authorization_pending") if Instant::now() < deadline => {
+                sleep(interval).await;
+                continue;
+            }
+            Some("slow_down") if Instant::now() < deadline => {
+                interval += Duration::from_secs(5);
+                sleep(interval).await;
+                continue;
+            }
+            Some(error) => {
+                return Err(anyhow::anyhow!(
+                    "{} token endpoint returned {error}: {}",
+                    provider_display_name(provider_id),
+                    body.get("error_description")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                ));
+            }
+            None => break body,
+        }
+    };
+    let access_token = body
+        .get("access_token")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} token response did not include access_token",
+                provider_display_name(provider_id)
+            )
+        })?
+        .to_string();
+    Ok(OAuthTokenResponse {
+        id_token: body
+            .get("id_token")
+            .and_then(serde_json::Value::as_str)
+            .map(ToString::to_string),
+        access_token,
+        refresh_token: body
+            .get("refresh_token")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(ToString::to_string),
+        expires_in: body.get("expires_in").and_then(serde_json::Value::as_i64),
+    })
 }
 
 async fn exchange_openai_oauth_code(
@@ -1588,7 +2766,7 @@ async fn exchange_openai_oauth_code(
 }
 
 async fn exchange_anthropic_oauth_code(
-    code: &str,
+    normalized_code: &NormalizedOAuthCode,
     pending: &crate::mock::store::PendingOAuth,
 ) -> anyhow::Result<OAuthTokenResponse> {
     let code_verifier = pending
@@ -1597,15 +2775,26 @@ async fn exchange_anthropic_oauth_code(
         .ok_or_else(|| anyhow::anyhow!("missing PKCE code verifier"))?;
     let client_id = anthropic_oauth_client_id();
     let redirect_uri = anthropic_oauth_redirect_uri();
-    let response = reqwest::Client::new()
+    let state = normalized_code
+        .state
+        .as_deref()
+        .or(pending.state.as_deref());
+    let mut form = vec![
+        ("grant_type", "authorization_code"),
+        ("client_id", client_id.as_str()),
+        ("redirect_uri", redirect_uri.as_str()),
+        ("code", normalized_code.code.as_str()),
+        ("code_verifier", code_verifier),
+    ];
+    if let Some(state) = state {
+        form.push(("state", state));
+    }
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()?
         .post(anthropic_oauth_token_url())
-        .form(&[
-            ("grant_type", "authorization_code"),
-            ("client_id", client_id.as_str()),
-            ("redirect_uri", redirect_uri.as_str()),
-            ("code", code),
-            ("code_verifier", code_verifier),
-        ])
+        .header("content-type", "application/x-www-form-urlencoded")
+        .form(&form)
         .send()
         .await?;
     let status = response.status();
@@ -1727,7 +2916,14 @@ fn persist_provider_auth(provider_id: &str, auth: &ProviderAuth) -> io::Result<(
                 .env_path()
                 .to_path_buf()
         });
-    let api_key = provider_env_key(provider_id);
+    let api_key = auth
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("token_env"))
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().to_string())
+        .unwrap_or_else(|| provider_env_key(provider_id));
     upsert_env_value(&env_path, &api_key, key)?;
     std::env::set_var(&api_key, key);
 
@@ -1823,7 +3019,6 @@ fn login_value_for_auth(provider_id: &str, auth: &ProviderAuth) -> String {
 fn build_provider_auth_status(provider_id: &str) -> ProviderAuthStatusResponse {
     let entry = tura_llm_rust::provider_auth_registry_entry(provider_id);
     let config_entry = read_provider_auth_config(provider_id);
-    let local_claude_code_auth = claude_code_local_auth(provider_id);
     let login = config_entry
         .as_ref()
         .and_then(|entry| entry.login.clone())
@@ -1836,8 +3031,7 @@ fn build_provider_auth_status(provider_id: &str) -> ProviderAuthStatusResponse {
             entry
                 .and_then(|entry| entry.login_env)
                 .and_then(|key| tura_llm_rust::TuraConfig::default().get(key))
-        })
-        .or_else(|| local_claude_code_auth.as_ref().map(|_| "oauth".to_string()));
+        });
     let token_env = config_entry
         .as_ref()
         .and_then(|entry| entry.token_env.clone())
@@ -1872,9 +3066,9 @@ fn build_provider_auth_status(provider_id: &str) -> ProviderAuthStatusResponse {
         });
 
     let local_codex_auth = openai_codex_auth(provider_id);
-    let configured = provider_key_exists(provider_id)
+    let configured = token_env.as_deref().and_then(config_value).is_some()
+        || provider_key_exists(provider_id)
         || local_codex_auth.is_some()
-        || local_claude_code_auth.is_some()
         || bedrock_credentials_exist(provider_id);
     let expires_at = expires_env
         .as_deref()
@@ -1883,9 +3077,6 @@ fn build_provider_auth_status(provider_id: &str) -> ProviderAuthStatusResponse {
     let expired = expires_at.map(|expires_at| expires_at <= Utc::now().timestamp_millis());
     let authenticated = (configured && expired != Some(true))
         || local_codex_auth
-            .as_ref()
-            .is_some_and(|auth| !auth.access_token.trim().is_empty())
-        || local_claude_code_auth
             .as_ref()
             .is_some_and(|auth| !auth.access_token.trim().is_empty());
     let auth_state = if authenticated {
@@ -1920,8 +3111,7 @@ fn build_provider_auth_status(provider_id: &str) -> ProviderAuthStatusResponse {
             .as_ref()
             .and_then(|entry| entry.account_id.clone())
             .or_else(|| account_env.as_deref().and_then(config_value))
-            .or_else(|| local_codex_auth.and_then(|auth| auth.account_id))
-            .or_else(|| local_claude_code_auth.and_then(|auth| auth.account_id)),
+            .or_else(|| local_codex_auth.and_then(|auth| auth.account_id)),
         token_env,
         login_env: config_entry
             .as_ref()
@@ -1973,55 +3163,6 @@ fn openai_codex_auth(provider_id: &str) -> Option<OpenAiCodexAuth> {
     })
 }
 
-#[derive(Debug, Clone)]
-struct ClaudeCodeAuth {
-    access_token: String,
-    account_id: Option<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ClaudeCodeCredentials {
-    claude_ai_oauth: Option<ClaudeCodeOauthCredentials>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ClaudeCodeOauthCredentials {
-    access_token: Option<String>,
-    #[serde(default)]
-    account_id: Option<String>,
-}
-
-fn claude_code_local_auth(provider_id: &str) -> Option<ClaudeCodeAuth> {
-    if provider_id != "claude-code" {
-        return None;
-    }
-    let path = claude_code_credentials_path()?;
-    let credentials: ClaudeCodeCredentials =
-        serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?;
-    let oauth = credentials.claude_ai_oauth?;
-    let access_token = oauth
-        .access_token
-        .filter(|value| !value.trim().is_empty())?;
-    Some(ClaudeCodeAuth {
-        access_token,
-        account_id: oauth.account_id.filter(|value| !value.trim().is_empty()),
-    })
-}
-
-fn claude_code_credentials_path() -> Option<PathBuf> {
-    if let Some(config_dir) = std::env::var_os("CLAUDE_CONFIG_DIR") {
-        return Some(PathBuf::from(config_dir).join(".credentials.json"));
-    }
-    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
-    Some(
-        PathBuf::from(home)
-            .join(".claude")
-            .join(".credentials.json"),
-    )
-}
-
 fn read_provider_auth_config(provider_id: &str) -> Option<tura_llm_rust::ProviderAuthConfig> {
     let path = config::provider_config_path();
     let content = fs::read_to_string(path).ok()?;
@@ -2060,6 +3201,7 @@ fn logout_provider_auth(provider_id: &str) -> io::Result<()> {
         "claude-code" => current_login == Some("oauth"),
         "anthropic" => current_login == Some("browser"),
         "antigravity" => current_login == Some("oauth"),
+        "github-copilot" => matches!(current_login, Some("device" | "oauth" | "api")),
         "anthropic-api" | "antigravity-api" => current_login != Some("browser"),
         _ => true,
     };
@@ -2215,6 +3357,11 @@ fn provider_login_key(provider_id: &str) -> String {
 }
 
 fn provider_key_exists(provider_id: &str) -> bool {
+    if provider_id == "github-copilot" {
+        return ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]
+            .into_iter()
+            .any(|key| provider_key_value_for_env(provider_id, key).is_some());
+    }
     let key = provider_env_key(provider_id);
     provider_key_value_for_env(provider_id, &key).is_some()
 }
@@ -2235,6 +3382,7 @@ fn provider_key_value_for_env(provider_id: &str, key: &str) -> Option<String> {
             | "anthropic-api"
             | "antigravity"
             | "antigravity-api"
+            | "github-copilot"
     ) {
         let login_key = provider_login_key(provider_id);
         let login = std::env::var(&login_key)
@@ -2246,6 +3394,7 @@ fn provider_key_value_for_env(provider_id: &str, key: &str) -> Option<String> {
             "claude-code" => login.as_deref() == Some("oauth"),
             "anthropic" => login.as_deref() == Some("browser"),
             "antigravity" => login.as_deref() == Some("oauth"),
+            "github-copilot" => matches!(login.as_deref(), Some("device" | "oauth" | "api")),
             "openai-api" | "anthropic-api" | "antigravity-api" => {
                 !matches!(login.as_deref(), Some("oauth" | "browser"))
             }
@@ -2306,6 +3455,52 @@ mod tests {
         assert_eq!(provider_env_key("openai-api"), "OPENAI_API_KEY");
         assert_eq!(provider_login_key("anthropic-api"), "ANTHROPIC_LOGIN");
         assert_eq!(provider_env_key("gemini-api"), "GEMINI_API_KEY");
+    }
+
+    #[tokio::test]
+    async fn provider_auth_method_value_is_available_for_hover_reveal() {
+        let _guard = ENV_LOCK.lock().await;
+        clear_openai_refresh_test_env();
+        set_env("OPENAI_LOGIN", "oauth");
+        set_env("OPENAI_API_KEY", "sk-test-hover-reveal");
+
+        let openai = provider_auth_methods("openai");
+        assert_eq!(
+            openai[0].configured_value.as_deref(),
+            Some("sk-test-hover-reveal")
+        );
+
+        let openai_api = provider_auth_methods("openai-api");
+        assert_eq!(
+            openai_api[0].configured_value.as_deref(),
+            Some("sk-test-hover-reveal")
+        );
+
+        clear_openai_refresh_test_env();
+    }
+
+    #[tokio::test]
+    async fn non_llm_openapi_catalog_provider_does_not_use_llm_models_validator() {
+        let provider = tura_llm_rust::ProviderCatalogConfig {
+            api_style: "openapi".to_string(),
+            base_url: "https://example.com/v1".to_string(),
+            domains: vec!["infrastructure".to_string()],
+            ..Default::default()
+        };
+
+        let validation = validate_provider_credentials_remotely(
+            "example_infrastructure",
+            Some(&provider),
+            Some(&provider.base_url),
+            Some("fake-token"),
+        )
+        .await;
+
+        assert!(matches!(
+            validation,
+            ProviderCredentialValidation::Unsupported(detail)
+                if detail.code == "provider.validation.gateway_not_configured"
+        ));
     }
 
     #[tokio::test]

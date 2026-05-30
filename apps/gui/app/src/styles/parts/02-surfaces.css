@@ -657,5 +657,38 @@ body.resizing-inspector * {
 
 .files-view .file-canvas {
   justify-self: stretch;
+  border: 0;
+  border-radius: 0;
   max-width: none;
+  width: 100%;
+  overflow: auto;
+}
+
+.files-view {
+  --file-canvas-max: var(--page-max);
+  --page-middle-top-space: var(--space-5);
+}
+
+.file-canvas-inner {
+  display: grid;
+  min-height: calc(100% - var(--page-middle-top-space, 0px));
+  margin-top: var(--page-middle-top-space, 0px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.file-canvas-inner.page-layer-inner {
+  width: min(
+    var(--file-canvas-max),
+    max(0px, calc(100% - var(--page-edge-space) * 2))
+  );
+  max-width: var(--file-canvas-max);
+}
+
+.settings-view .settings-canvas {
+  justify-self: stretch;
+  max-width: none;
+  width: 100%;
+  overflow: auto;
 }

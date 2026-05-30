@@ -363,6 +363,7 @@
 }
 
 .compact-conversation {
+  --page-edge-space: var(--space-4);
   display: grid;
   flex: 1 1 auto;
   grid-template-rows: minmax(0, 1fr);
@@ -384,7 +385,12 @@
 
 .compact-conversation .conversation-main {
   max-width: none;
-  padding: var(--space-3);
+  padding: 0;
+}
+
+.compact-conversation .transcript-inner {
+  padding-top: var(--space-4);
+  padding-bottom: var(--space-5);
 }
 
 .plan-conversation-panel .compact-conversation {

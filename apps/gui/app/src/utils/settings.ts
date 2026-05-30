@@ -1,8 +1,15 @@
 import { GatewayError } from "@tura/gateway-sdk";
 import { type AppState, type ThemeMode } from "../state/global-store";
 import { t } from "../i18n";
-import { providerSourceLabel } from "./app-format";
-export { authStatusText, copyText, providerSourceLabel } from "./app-format";
+export { copyText } from "./app-format";
+
+export type ProviderAuthDisplayLevel = "ok" | "warn" | "fail" | "neutral";
+
+export type ProviderAuthDisplayState = {
+  label: string;
+  level: ProviderAuthDisplayLevel;
+  configured: boolean;
+};
 
 export function defaultModel(
   providers: AppState["providers"],
@@ -155,34 +162,80 @@ export function providerIdFromModel(value?: string | null): string | undefined {
   return parseModelRef(value)?.providerId;
 }
 
-export function providerStateLabel(
+export function providerAuthDisplayState(
   state: AppState,
   providerId: string,
-  source: string,
-): string {
+): ProviderAuthDisplayState {
+  const receipt = state.providerValidationReceipts[providerId];
+  if (receipt) {
+    if (receipt.level === "unsupported") {
+      return {
+        label: t("connected"),
+        level: "neutral",
+        configured: true,
+      };
+    }
+    if (receipt.level === "warning") {
+      return {
+        label: t("validationWarning"),
+        level: "warn",
+        configured: true,
+      };
+    }
+    if (receipt.ok || receipt.level === "valid") {
+      return {
+        label: t("validationValid"),
+        level: "ok",
+        configured: true,
+      };
+    }
+    return {
+      label: t("validationInvalid"),
+      level: "fail",
+      configured: false,
+    };
+  }
   const status = state.providerAuthStatus[providerId];
   if (status?.authenticated) {
-    return t("connected");
+    return {
+      label: t("connected"),
+      level: "neutral",
+      configured: true,
+    };
+  }
+  if (status?.expired) {
+    return {
+      label: t("expired"),
+      level: "fail",
+      configured: true,
+    };
   }
   if (status?.configured) {
-    return t("configured");
+    return {
+      label: t("configured"),
+      level: "neutral",
+      configured: true,
+    };
   }
   if (state.providers?.connected.includes(providerId)) {
-    return t("connected");
+    return {
+      label: t("connected"),
+      level: "neutral",
+      configured: true,
+    };
   }
-  return source ? providerSourceLabel(source) : t("notConfigured");
+  return {
+    label: t("notConfigured"),
+    level: "neutral",
+    configured: false,
+  };
 }
 
 export function providerConfigured(
   state: AppState,
   providerId: string,
 ): boolean {
-  const status = state.providerAuthStatus[providerId];
-  return Boolean(
-    status?.authenticated ||
-    status?.configured ||
-    state.providers?.connected.includes(providerId),
-  );
+  return providerAuthDisplayState(state, providerId).configured;
 }
 
 export function providerIdFromAuthError(

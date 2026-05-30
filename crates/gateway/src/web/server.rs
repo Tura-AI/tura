@@ -327,7 +327,7 @@ pub fn build_router() -> Router {
         )
         .route(
             "/provider/{providerID}/oauth/callback",
-            post(api::provider::oauth_callback),
+            get(api::provider::oauth_callback_info).post(api::provider::oauth_callback),
         )
         // Permission
         .route("/permission", get(api::misc::list_permissions))
@@ -433,6 +433,7 @@ fn build_oauth_callback_router() -> Router {
             "/auth/callback",
             get(api::provider::oauth_redirect_callback),
         )
+        .route("/callback", get(api::provider::oauth_redirect_callback))
         .route("/global/health", get(api::global::health))
 }
 
@@ -450,6 +451,7 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let addr = local_bind_addr(port);
     let router = build_router();
     api::session::start_task_scheduler();
+    api::provider::start_provider_auth_scheduler();
 
     println!("🚀 Gateway server starting on http://{}", addr);
     println!("📡 Health check: http://{}/global/health", addr);
@@ -481,10 +483,10 @@ async fn start_openai_oauth_callback_server(main_port: u16) {
         }
     };
 
-    println!("🔐 OpenAI OAuth callback listening on http://{addr}/auth/callback");
+    println!("🔐 OAuth callback listening on http://{addr}/auth/callback");
     tokio::spawn(async move {
         if let Err(error) = axum::serve(listener, build_oauth_callback_router()).await {
-            eprintln!("OpenAI OAuth callback server stopped: {error}");
+            eprintln!("OAuth callback server stopped: {error}");
         }
     });
 }

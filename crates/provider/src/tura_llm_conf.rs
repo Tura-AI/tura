@@ -35,6 +35,7 @@ pub async fn load_settings() -> Result<Settings, TuraError> {
     let content = fs::read_to_string(&path).await.map_err(TuraError::io)?;
     let cfg: RootConfig = serde_json::from_str(&content)?;
     crate::tura_llm::set_provider_latency_timeouts(cfg.provider_latency.selected_timeouts());
+    crate::tura_llm::set_provider_latency_config(cfg.provider_latency.clone());
 
     let mut routes = std::collections::HashMap::new();
     for (name, route) in &cfg.routes {

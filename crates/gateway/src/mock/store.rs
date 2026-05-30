@@ -402,6 +402,14 @@ impl Store {
             .filter(|pending| pending.expires_at > Utc::now().timestamp_millis())
     }
 
+    pub fn peek_oauth_state(&self, provider_id: &str) -> Option<PendingOAuth> {
+        self.pending_oauth
+            .read()
+            .get(provider_id)
+            .filter(|pending| pending.expires_at > Utc::now().timestamp_millis())
+            .cloned()
+    }
+
     pub fn pending_oauth_method(&self, provider_id: &str) -> Option<String> {
         self.pending_oauth
             .read()

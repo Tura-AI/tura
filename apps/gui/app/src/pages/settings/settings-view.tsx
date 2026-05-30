@@ -34,10 +34,9 @@ import { classNames } from "../../state/format";
 import { activeLanguage, t, type TextKey } from "../../i18n";
 
 import { ProviderConfigGroup } from "./provider-settings";
-import {
-  providerConfigured,
-} from "../../utils/settings";
+import { providerConfigured } from "../../utils/settings";
 import { settingsRoutes, settingsRouteTitle } from "./settings-router";
+import { providerDomains } from "./provider-domain";
 const DEFAULT_MAIN_FONT =
   'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 const DEFAULT_CODE_FONT =
@@ -296,25 +295,24 @@ function codeFontOptions(): AppearanceOption[] {
 }
 
 function providerDomainLabel(domain: string): string {
-  return t(PROVIDER_DOMAIN_LABELS[domain] ?? "unknown");
+  const label = PROVIDER_DOMAIN_LABELS[domain];
+  return label ? t(label) : domain;
 }
 
-function providerDomains(provider: SdkProvider): string[] {
-  const directDomains = [
-    ...(Array.isArray(provider.domains) ? provider.domains : []),
-    ...(Array.isArray(provider.domain) ? provider.domain : []),
-    ...(typeof provider.domain === "string" ? [provider.domain] : []),
-  ];
-  const optionDomains = provider.options.domains;
-  const domains = [
-    ...directDomains,
-    ...(Array.isArray(optionDomains)
-      ? optionDomains.filter(
-          (domain): domain is string => typeof domain === "string",
-        )
-      : []),
-  ];
-  return [...new Set(domains.filter(Boolean))];
+function compareProviderDomains(left: string, right: string): number {
+  if (left === DEFAULT_PROVIDER_DOMAIN) {
+    return right === DEFAULT_PROVIDER_DOMAIN ? 0 : -1;
+  }
+  if (right === DEFAULT_PROVIDER_DOMAIN) {
+    return 1;
+  }
+  if (left === "other") {
+    return right === "other" ? 0 : 1;
+  }
+  if (right === "other") {
+    return -1;
+  }
+  return providerDomainLabel(left).localeCompare(providerDomainLabel(right));
 }
 
 function sizeOptions(
@@ -473,32 +471,18 @@ export function SettingsView(props: {
         (provider) => provider.id === props.state.selectedProviderId,
       ) ?? providers()[0],
   );
-  const title = createMemo(
-    () => settingsRouteTitle(props.section),
-  );
+  const title = createMemo(() => settingsRouteTitle(props.section));
   const providerDomainOptions = createMemo(() => {
-    const domains = new Set<string>([
-      ...(props.state.providers?.enums.domains ?? []),
-      ...providers().flatMap(providerDomains),
-      DEFAULT_PROVIDER_DOMAIN,
-    ]);
-    return [...domains].sort((left, right) => {
-      if (left === DEFAULT_PROVIDER_DOMAIN) {
-        return -1;
-      }
-      if (right === DEFAULT_PROVIDER_DOMAIN) {
-        return 1;
-      }
-      if (left === "other") {
-        return 1;
-      }
-      if (right === "other") {
-        return -1;
-      }
-      return providerDomainLabel(left).localeCompare(
-        providerDomainLabel(right),
-      );
-    });
+    return [...(props.state.providers?.enums.domains ?? [])].sort(
+      compareProviderDomains,
+    );
+  });
+  createEffect(() => {
+    const options = providerDomainOptions();
+    if (options.length === 0 || options.includes(providerDomainFilter())) {
+      return;
+    }
+    setProviderDomainFilter(options[0]);
   });
   const filteredProviders = createMemo(() => {
     const query = props.state.providerSearch.trim().toLowerCase();
@@ -532,8 +516,8 @@ export function SettingsView(props: {
   }
 
   return (
-    <section class="settings-view">
-      <header class="page-head">
+    <section class="settings-view layered-page layered-page-two">
+      <header class="page-head page-layer-inner">
         <div class="page-title">
           <span>{t("settings")}</span>
           <h1>{title()}</h1>
@@ -541,8 +525,8 @@ export function SettingsView(props: {
         <div class="page-actions" />
       </header>
 
-      <main class="settings-canvas">
-        <section class="settings-stack">
+      <main class="settings-canvas page-layer-middle">
+        <section class="settings-stack page-layer-inner">
           <Switch>
             <Match when={props.section === "appearance"}>
               <section class="settings-panel appearance-panel">
@@ -602,7 +586,7 @@ export function SettingsView(props: {
                     <span>{t("mainFontSize")}</span>
                     <AppearanceSelect
                       value={String(props.state.mainFontSize)}
-                      options={sizeOptions(12, 15, 13)}
+                      options={sizeOptions(11, 15, 12)}
                       onSelect={(option) =>
                         props.onMainFontSize(Number(option.value))
                       }
@@ -612,7 +596,7 @@ export function SettingsView(props: {
                     <span>{t("codeFontSize")}</span>
                     <AppearanceSelect
                       value={String(props.state.codeFontSize)}
-                      options={sizeOptions(10, 15, 12)}
+                      options={sizeOptions(9, 15, 11)}
                       onSelect={(option) =>
                         props.onCodeFontSize(Number(option.value))
                       }
@@ -740,9 +724,7 @@ export function SettingsView(props: {
           </Switch>
 
           <Show when={props.state.settingsNotice}>
-            <div class="settings-note">
-              {props.state.settingsNotice}
-            </div>
+            <div class="settings-note">{props.state.settingsNotice}</div>
           </Show>
         </section>
       </main>
@@ -806,7 +788,10 @@ function AppearanceSelect(props: {
     const gap = 6;
     const viewportPadding = 16;
     const preferredWidth = Math.max(260, rect.width);
-    const width = Math.min(preferredWidth, window.innerWidth - viewportPadding * 2);
+    const width = Math.min(
+      preferredWidth,
+      window.innerWidth - viewportPadding * 2,
+    );
     const left = Math.min(
       Math.max(viewportPadding, rect.left),
       Math.max(viewportPadding, window.innerWidth - width - viewportPadding),

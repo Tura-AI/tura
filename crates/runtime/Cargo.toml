@@ -25,6 +25,14 @@ path = "tests/process_from_user_default_test.rs"
 name = "coding_agent_live_test"
 path = "tests/coding_agent_live_test.rs"
 
+[[test]]
+name = "claude_code_live_e2e"
+path = "tests/claude_code_live_e2e.rs"
+
+[[test]]
+name = "claude_code_mock_e2e"
+path = "tests/claude_code_mock_e2e.rs"
+
 [dependencies]
 tokio.workspace = true
 serde.workspace = true

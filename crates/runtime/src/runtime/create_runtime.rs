@@ -75,12 +75,17 @@ pub fn runtime_provider_config_from_tura(
         })
         .unwrap_or_else(|| primary.clone());
 
+    // Latency level is chosen by the tier flag (the route / tura_llm_name),
+    // never by the thinking parameter. Install the tier's timeouts globally so
+    // streaming.rs picks them up for first/idle/total deadlines.
+    let tier_timeouts = tura_llm_rust::apply_latency_for_tier(&provider_config.tura_llm_name);
+
     let mut base = provider_config.clone();
     let provider_total_timeout_ms = std::env::var("TURA_PROVIDER_TOTAL_TIMEOUT_MS")
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or_else(|| tura_llm_rust::provider_latency_timeouts().total_timeout_ms);
+        .unwrap_or(tier_timeouts.total_timeout_ms);
     base.time_out_ms = provider_total_timeout_ms;
 
     Ok(RuntimeProviderConfig {

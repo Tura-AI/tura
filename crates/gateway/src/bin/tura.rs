@@ -378,6 +378,7 @@ fn cli_live_jsonl_enabled() -> bool {
 fn aggregate_runtime_usage(session_log: &[String]) -> Value {
     let mut input_tokens = 0u64;
     let mut cached_input_tokens = 0u64;
+    let mut cache_write_tokens = 0u64;
     let mut output_tokens = 0u64;
     let mut reasoning_tokens = 0u64;
     let mut total_tokens = 0u64;
@@ -392,6 +393,8 @@ fn aggregate_runtime_usage(session_log: &[String]) -> Value {
         input_tokens = input_tokens.saturating_add(json_u64(&usage, "input_tokens"));
         cached_input_tokens =
             cached_input_tokens.saturating_add(json_u64(&usage, "cached_input_tokens"));
+        cache_write_tokens =
+            cache_write_tokens.saturating_add(json_u64(&usage, "cache_write_tokens"));
         output_tokens = output_tokens.saturating_add(json_u64(&usage, "output_tokens"));
         reasoning_tokens = reasoning_tokens.saturating_add(json_u64(&usage, "reasoning_tokens"));
         total_tokens = total_tokens.saturating_add(json_u64(&usage, "total_tokens"));
@@ -407,6 +410,7 @@ fn aggregate_runtime_usage(session_log: &[String]) -> Value {
     json!({
         "input_tokens": input_tokens,
         "cached_input_tokens": cached_input_tokens,
+        "cache_write_tokens": cache_write_tokens,
         "output_tokens": output_tokens,
         "reasoning_output_tokens": reasoning_tokens,
         "reasoning_tokens": reasoning_tokens,

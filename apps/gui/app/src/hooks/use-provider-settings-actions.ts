@@ -161,7 +161,8 @@ export function useProviderSettingsActions(
     providerId: string,
     method: ProviderAuthMethod,
   ) {
-    const key = state().authDrafts[providerId]?.trim();
+    const draftKey = providerAuthDraftKey(providerId, method);
+    const key = state().authDrafts[draftKey]?.trim();
     if (!key) {
       return;
     }
@@ -176,19 +177,56 @@ export function useProviderSettingsActions(
         type: method.type,
         key,
         access: key,
-        metadata: { login: method.login },
+        metadata: { login: method.login, token_env: method.token_env },
       });
       await refreshProviderSurface(providerId);
       setState((previous) => ({
         ...previous,
         settingsSaving: false,
         settingsNotice: ok ? t("connected") : t("notConfigured"),
-        authDrafts: { ...previous.authDrafts, [providerId]: "" },
+        authDrafts: { ...previous.authDrafts, [draftKey]: "" },
         providerAuthPanel:
           ok && previous.providerAuthPanel?.providerId === providerId
             ? undefined
             : previous.providerAuthPanel,
       }));
+      if (ok) {
+        void validateProvider(providerId);
+      }
+    } catch (error) {
+      setState((previous) => ({
+        ...previous,
+        settingsSaving: false,
+        error: errorMessage(error),
+      }));
+    }
+  }
+
+  async function validateProvider(providerId: string) {
+    setState((previous) => ({
+      ...previous,
+      settingsSaving: true,
+      settingsNotice: undefined,
+      error: undefined,
+    }));
+    try {
+      const result = await rootClient().providerAuthValidate(providerId);
+      setState((previous) => ({
+        ...previous,
+        settingsSaving: false,
+        settingsNotice: result.message,
+        providerValidationReceipts: {
+          ...previous.providerValidationReceipts,
+          [providerId]: result,
+        },
+        providerAuthStatus: result.status
+          ? {
+              ...previous.providerAuthStatus,
+              [providerId]: result.status,
+            }
+          : previous.providerAuthStatus,
+      }));
+      await refreshProviderSurface(providerId);
     } catch (error) {
       setState((previous) => ({
         ...previous,
@@ -199,6 +237,7 @@ export function useProviderSettingsActions(
   }
 
   async function startProviderLogin(providerId: string, methodIndex: number) {
+    const authWindow = window.open("", "_blank");
     setState((previous) => ({
       ...previous,
       settingsSaving: true,
@@ -210,7 +249,13 @@ export function useProviderSettingsActions(
         method: methodIndex,
       });
       if (result.url) {
-        window.open(result.url, "_blank", "noopener,noreferrer");
+        if (authWindow) {
+          authWindow.location.href = result.url;
+        } else {
+          window.location.assign(result.url);
+        }
+      } else {
+        authWindow?.close();
       }
       await refreshProviderSurface(providerId);
       setState((previous) => ({
@@ -219,15 +264,57 @@ export function useProviderSettingsActions(
         settingsNotice: result.instructions,
       }));
       if (result.method === "auto") {
+        void waitForProviderAuthenticated(providerId);
+      } else if (providerId === "github-copilot") {
         void completeProviderLogin(providerId, "", methodIndex);
       }
     } catch (error) {
+      authWindow?.close();
       setState((previous) => ({
         ...previous,
         settingsSaving: false,
         error: errorMessage(error),
       }));
     }
+  }
+
+  async function waitForProviderAuthenticated(
+    providerId: string,
+    timeoutMs = 5 * 60_000,
+  ) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const status = await safe(
+        () => rootClient().providerAuthStatus(providerId),
+        undefined,
+      );
+      if (status) {
+        setState((previous) => ({
+          ...previous,
+          providerAuthStatus: {
+            ...previous.providerAuthStatus,
+            [providerId]: status,
+          },
+          settingsNotice: status.authenticated
+            ? t("connected")
+            : previous.settingsNotice,
+          providerAuthPanel:
+            status.authenticated &&
+            previous.providerAuthPanel?.providerId === providerId
+              ? undefined
+              : previous.providerAuthPanel,
+        }));
+        if (status.authenticated) {
+          await refreshProviderSurface(providerId);
+          return;
+        }
+      }
+      await sleep(1000);
+    }
+    setState((previous) => ({
+      ...previous,
+      settingsNotice: t("loginPending"),
+    }));
   }
 
   async function completeProviderLogin(
@@ -241,7 +328,7 @@ export function useProviderSettingsActions(
       error: undefined,
     }));
     try {
-      const ok = await rootClient().providerOauthCallback(providerId, {
+      const result = await rootClient().providerOauthCallback(providerId, {
         method: methodIndex,
         code: code?.trim() || undefined,
       });
@@ -249,10 +336,22 @@ export function useProviderSettingsActions(
       setState((previous) => ({
         ...previous,
         settingsSaving: false,
-        settingsNotice: ok ? t("connected") : t("loginPending"),
-        authCodeDrafts: { ...previous.authCodeDrafts, [providerId]: "" },
+        settingsNotice: result.ok ? t("connected") : result.message,
+        authCodeDrafts: result.ok
+          ? { ...previous.authCodeDrafts, [providerId]: "" }
+          : previous.authCodeDrafts,
+        providerValidationReceipts: {
+          ...previous.providerValidationReceipts,
+          [providerId]: result,
+        },
+        providerAuthStatus: result.status
+          ? {
+              ...previous.providerAuthStatus,
+              [providerId]: result.status,
+            }
+          : previous.providerAuthStatus,
         providerAuthPanel:
-          ok && previous.providerAuthPanel?.providerId === providerId
+          result.ok && previous.providerAuthPanel?.providerId === providerId
             ? undefined
             : previous.providerAuthPanel,
       }));
@@ -295,8 +394,22 @@ export function useProviderSettingsActions(
     saveRuntimeSettings,
     updateModelTier,
     saveProviderKey,
+    validateProvider,
     startProviderLogin,
     completeProviderLogin,
     logoutProvider,
   };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function providerAuthDraftKey(
+  providerId: string,
+  method: ProviderAuthMethod,
+): string {
+  return [providerId, method.token_env || method.login_env || method.kind].join(
+    "::",
+  );
 }

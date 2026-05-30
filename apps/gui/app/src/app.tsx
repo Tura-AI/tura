@@ -90,7 +90,6 @@ import {
   defaultModel,
   draftToRecord,
   parseModelRef,
-  providerConfigured,
   providerIdFromAuthError,
   providerIdFromModel,
   recordToDraft,
@@ -442,10 +441,10 @@ export function App() {
           : (config.code_font ?? previous.codeFont),
         mainFontSize: previous.bootstrapped
           ? previous.mainFontSize
-          : clampNumber(config.main_font_size, 12, 15, 13),
+          : clampNumber(config.main_font_size, 11, 15, 12),
         codeFontSize: previous.bootstrapped
           ? previous.codeFontSize
-          : clampNumber(config.code_font_size, 10, 15, 12),
+          : clampNumber(config.code_font_size, 9, 15, 11),
         modelVariant: previous.bootstrapped
           ? previous.modelVariant
           : (configuredVariant ?? previous.modelVariant ?? "low"),
@@ -690,6 +689,7 @@ export function App() {
     saveRuntimeSettings,
     updateModelTier,
     saveProviderKey,
+    validateProvider,
     startProviderLogin,
     completeProviderLogin,
     logoutProvider,
@@ -1467,6 +1467,7 @@ export function App() {
         saveRuntimeSettings,
         updateModelTier,
         saveProviderKey,
+        validateProvider,
         startProviderLogin,
         completeProviderLogin,
         logoutProvider,

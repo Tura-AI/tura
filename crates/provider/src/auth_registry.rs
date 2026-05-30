@@ -66,6 +66,7 @@ pub enum OAuthAuthorizeKind {
     OpenAiPkce,
     AnthropicPkce,
     GooglePkce,
+    GithubDevice,
     BrowserTokenPaste,
     Unsupported,
 }
@@ -143,42 +144,74 @@ const AWS_METHODS: &[AuthMethodDescriptor] = &[AuthMethodDescriptor::new(
     AuthMethodKind::AwsCredentials,
     "AWS Credentials",
 )];
+const GITHUB_COPILOT_METHODS: &[AuthMethodDescriptor] = &[AuthMethodDescriptor::new(
+    AuthMethodKind::DeviceCode,
+    "GitHub Copilot OAuth",
+)];
 
 const OPENAI_MODELS: &[&str] = &[
-    "gpt-5.1-codex-max",
-    "gpt-5.1-codex",
-    "gpt-5.1-codex-mini",
-    "text-embedding-3-small",
+    "gpt-5.5",
+    "gpt-5.3-codex-spark",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
     "text-embedding-3-large",
+    "text-embedding-3-small",
 ];
 const OPENAI_API_MODELS: &[&str] = &[
-    "gpt-5-pro",
-    "gpt-5.1",
-    "gpt-5-mini",
-    "gpt-5-nano",
-    "text-embedding-3-small",
+    "gpt-5.5-pro",
+    "gpt-5.5",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
     "text-embedding-3-large",
+    "text-embedding-3-small",
 ];
-const ANTHROPIC_MODELS: &[&str] = &["claude-opus-4-1-20250805", "claude-sonnet-4-20250514"];
+const ANTHROPIC_MODELS: &[&str] = &["claude-opus-4-8", "claude-opus-4-7"];
 const ANTHROPIC_API_MODELS: &[&str] = ANTHROPIC_MODELS;
 const GOOGLE_MODELS: &[&str] = &[
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "models/gemini-embedding-001",
+    "gemini-3.5-flash",
+    "gemini-3.1-pro-preview",
+    "gemini-3.1-flash-lite",
+    "gemini-embedding-2",
 ];
 const ANTIGRAVITY_MODELS: &[&str] = &["antigravity-browser"];
-const ANTIGRAVITY_API_MODELS: &[&str] = &["gemini-2.5-pro", "gemini-2.5-flash"];
-const MINIMAX_MODELS: &[&str] = &["minimax-m2.7", "minimax-m2.5", "minimax-m2.1"];
+const ANTIGRAVITY_API_MODELS: &[&str] = &[
+    "gemini-3.5-flash",
+    "gemini-3.1-pro-preview",
+    "gemini-3.1-flash-lite",
+    "gemini-embedding-2",
+];
+const DEEPSEEK_MODELS: &[&str] = &["deepseek-v4-pro", "deepseek-v4-flash"];
+const MOONSHOT_MODELS: &[&str] = &["kimi-k2.6"];
+const QWEN_MODELS: &[&str] = &["qwen3.7-max", "qwen3.6-flash", "text-embedding-v4"];
+const XAI_MODELS: &[&str] = &["grok-4.3"];
+const MISTRAL_MODELS: &[&str] = &[
+    "mistral-medium-3.5",
+    "mistral-small-2603",
+    "codestral-embed-2505",
+];
+const COHERE_MODELS: &[&str] = &["embed-v4.0"];
+const TOGETHER_MODELS: &[&str] = &[
+    "BAAI/bge-large-en-v1.5",
+    "togethercomputer/m2-bert-80M-8k-retrieval",
+];
+const HUGGINGFACE_MODELS: &[&str] = &["jinaai/jina-embeddings-v5-text"];
 const OPENROUTER_MODELS: &[&str] = &[
-    "minimax/minimax-m2.7",
-    "minimax/minimax-m2.5",
-    "anthropic/claude-opus-4-1-20250805",
-    "anthropic/claude-sonnet-4-20250514",
-    "openai/gpt-5.1",
-    "openai/gpt-5-mini",
-    "google/gemini-2.5-pro",
-    "google/gemini-2.5-flash",
+    "openai/gpt-5.5-pro",
+    "anthropic/claude-opus-4-7",
+    "google/gemini-3.5-flash",
+    "google/gemini-3.1-pro-preview",
+    "deepseek/deepseek-v4-pro",
+    "moonshotai/kimi-k2.6",
+    "mistralai/mistral-medium-3.5",
+    "x-ai/grok-4.3",
+    "qwen/qwen3.7-max",
+    "openai/gpt-5.4-mini",
+    "deepseek/deepseek-v4-flash",
+    "qwen/qwen3.6-flash",
+    "openai/gpt-5.4-nano",
+    "google/gemini-3.1-flash-lite",
+    "openai/text-embedding-3-large",
+    "openai/text-embedding-3-small",
 ];
 const EMPTY_MODELS: &[&str] = &[];
 
@@ -270,26 +303,6 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
     },
     ProviderAuthRegistryEntry {
         provider_id: "openai",
-        runtime_provider_id: "openai",
-        display_name: "OpenAI API",
-        base_url_config_key: "openai",
-        default_base_url: "https://api.openai.com/v1",
-        supported_models: OPENAI_API_MODELS,
-        auth_methods: API_KEY_METHODS,
-        token_env: Some("OPENAI_API_KEY"),
-        login_env: Some("OPENAI_LOGIN"),
-        refresh_env: None,
-        expires_env: None,
-        account_env: None,
-        endpoint_env: None,
-        local_auth_discovery: None,
-        oauth_authorize_kind: None,
-        oauth_callback_kind: None,
-        capabilities: openai_compatible_api_capabilities(),
-        disabled_reason: None,
-    },
-    ProviderAuthRegistryEntry {
-        provider_id: "openai-api",
         runtime_provider_id: "openai",
         display_name: "OpenAI API",
         base_url_config_key: "openai",
@@ -454,26 +467,6 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
         disabled_reason: None,
     },
     ProviderAuthRegistryEntry {
-        provider_id: "Antigravity",
-        runtime_provider_id: "antigravity",
-        display_name: "Antigravity",
-        base_url_config_key: "antigravity",
-        default_base_url: "https://antigravity.google.com/v1",
-        supported_models: ANTIGRAVITY_MODELS,
-        auth_methods: GOOGLE_METHODS,
-        token_env: Some("ANTIGRAVITY_API_KEY"),
-        login_env: Some("ANTIGRAVITY_LOGIN"),
-        refresh_env: Some("ANTIGRAVITY_REFRESH_TOKEN"),
-        expires_env: Some("ANTIGRAVITY_TOKEN_EXPIRES"),
-        account_env: Some("ANTIGRAVITY_ACCOUNT_ID"),
-        endpoint_env: None,
-        local_auth_discovery: None,
-        oauth_authorize_kind: Some(OAuthAuthorizeKind::GooglePkce),
-        oauth_callback_kind: Some(OAuthAuthorizeKind::GooglePkce),
-        capabilities: google_capabilities(),
-        disabled_reason: None,
-    },
-    ProviderAuthRegistryEntry {
         provider_id: "antigravity",
         ..PROVIDER_AUTH_REGISTRY_ANTIGRAVITY_BROWSER
     },
@@ -508,70 +501,57 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
         "deepseek",
         "DeepSeek",
         "DEEPSEEK_API_KEY",
-        EMPTY_MODELS,
+        DEEPSEEK_MODELS,
         "https://api.deepseek.com",
-    ),
-    simple_openai_compatible(
-        "minimax",
-        "MiniMax",
-        "MINIMAX_API_KEY",
-        MINIMAX_MODELS,
-        "https://api.minimax.io/v1",
     ),
     simple_openai_compatible(
         "moonshotai",
         "Moonshot AI",
         "MOONSHOTAI_API_KEY",
-        EMPTY_MODELS,
+        MOONSHOT_MODELS,
         "https://api.moonshot.ai/v1",
     ),
+    // International DashScope endpoint (Alibaba international station key).
     simple_openai_compatible(
         "qwen",
         "Qwen",
         "QWEN_API_KEY",
-        EMPTY_MODELS,
+        QWEN_MODELS,
         "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     ),
     simple_openai_compatible(
         "qwen_cn",
         "Qwen China",
         "QWEN_CN_API_KEY",
-        EMPTY_MODELS,
+        QWEN_MODELS,
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
     ),
     simple_openai_compatible(
         "xai",
         "xAI",
         "XAI_API_KEY",
-        EMPTY_MODELS,
+        XAI_MODELS,
         "https://api.x.ai/v1",
-    ),
-    simple_openai_compatible(
-        "zhipu",
-        "GLM",
-        "ZHIPU_API_KEY",
-        EMPTY_MODELS,
-        "https://open.bigmodel.cn/api/paas/v4",
     ),
     simple_openai_compatible(
         "mistral",
         "Mistral AI",
         "MISTRAL_API_KEY",
-        EMPTY_MODELS,
+        MISTRAL_MODELS,
         "https://api.mistral.ai/v1",
     ),
     simple_openai_compatible(
         "huggingface",
         "Hugging Face Inference Providers",
         "HUGGINGFACE_API_KEY",
-        EMPTY_MODELS,
+        HUGGINGFACE_MODELS,
         "https://router.huggingface.co/v1",
     ),
     simple_openai_compatible(
         "azure",
         "Azure AI Foundry",
         "AZURE_OPENAI_API_KEY",
-        EMPTY_MODELS,
+        OPENAI_API_MODELS,
         "https://{resource}.openai.azure.com/openai/v1",
     ),
     simple_openai_compatible(
@@ -582,12 +562,45 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
         "https://api.replicate.com/v1",
     ),
     simple_openai_compatible(
-        "opencode",
-        "OpenCode",
-        "OPENCODE_API_KEY",
-        EMPTY_MODELS,
-        "https://opencode.ai/zen/v1",
+        "cohere",
+        "Cohere",
+        "COHERE_API_KEY",
+        COHERE_MODELS,
+        "https://api.cohere.com/v2",
     ),
+    simple_openai_compatible(
+        "together",
+        "Together AI",
+        "TOGETHER_API_KEY",
+        TOGETHER_MODELS,
+        "https://api.together.xyz/v1",
+    ),
+    ProviderAuthRegistryEntry {
+        provider_id: "github-copilot",
+        runtime_provider_id: "github-copilot",
+        display_name: "GitHub Copilot",
+        base_url_config_key: "github-copilot",
+        default_base_url: "https://api.githubcopilot.com",
+        supported_models: EMPTY_MODELS,
+        auth_methods: GITHUB_COPILOT_METHODS,
+        token_env: Some("COPILOT_GITHUB_TOKEN"),
+        login_env: Some("COPILOT_LOGIN"),
+        refresh_env: None,
+        expires_env: Some("COPILOT_GITHUB_TOKEN_EXPIRES"),
+        account_env: Some("COPILOT_GITHUB_ACCOUNT"),
+        endpoint_env: Some("COPILOT_API_URL"),
+        local_auth_discovery: Some("copilot_cli_credentials"),
+        oauth_authorize_kind: Some(OAuthAuthorizeKind::GithubDevice),
+        oauth_callback_kind: Some(OAuthAuthorizeKind::GithubDevice),
+        capabilities: ProviderCapabilityFlags {
+            supports_subscription: true,
+            supports_api_key: true,
+            supports_oauth_refresh: false,
+            supports_model_validation: true,
+            ..openai_compatible_api_capabilities()
+        },
+        disabled_reason: None,
+    },
     ProviderAuthRegistryEntry {
         provider_id: "bedrock",
         runtime_provider_id: "bedrock",
@@ -668,9 +681,23 @@ pub fn provider_auth_registry() -> &'static [ProviderAuthRegistryEntry] {
 pub fn provider_auth_registry_entry(
     provider_id: &str,
 ) -> Option<&'static ProviderAuthRegistryEntry> {
-    provider_auth_registry()
+    if let Some(entry) = provider_auth_registry()
         .iter()
         .find(|entry| entry.provider_id.eq_ignore_ascii_case(provider_id))
+    {
+        return Some(entry);
+    }
+    // Compatibility aliases: an `-api` suffixed id with no dedicated entry
+    // resolves to its canonical base provider (e.g. `openai-api` -> `openai`).
+    if let Some(base) = provider_id
+        .strip_suffix("-api")
+        .or_else(|| provider_id.strip_suffix("-API"))
+    {
+        return provider_auth_registry()
+            .iter()
+            .find(|entry| entry.provider_id.eq_ignore_ascii_case(base));
+    }
+    None
 }
 
 pub fn runtime_provider_id(provider_id: &str) -> &str {
@@ -700,7 +727,6 @@ mod tests {
         for provider_id in [
             "openai",
             "codex",
-            "openai-api",
             "anthropic",
             "anthropic-api",
             "claude-code",
@@ -712,17 +738,15 @@ mod tests {
             "antigravity-api",
             "openrouter",
             "deepseek",
-            "minimax",
             "moonshotai",
             "qwen",
             "qwen_cn",
             "xai",
-            "zhipu",
             "mistral",
             "huggingface",
             "azure",
             "replicate",
-            "opencode",
+            "github-copilot",
             "bedrock",
         ] {
             assert!(
@@ -734,7 +758,6 @@ mod tests {
 
     #[test]
     fn compatibility_ids_keep_runtime_mapping() {
-        assert_eq!(runtime_provider_id("openai-api"), "openai");
         assert_eq!(runtime_provider_id("anthropic-api"), "anthropic");
         assert_eq!(runtime_provider_id("google-api"), "google");
         assert_eq!(runtime_provider_id("gemini-api"), "google");

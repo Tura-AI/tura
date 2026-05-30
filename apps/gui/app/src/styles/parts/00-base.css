@@ -1,7 +1,6 @@
 * {
   box-sizing: border-box;
-  --scrollbar-active: color-mix(in srgb, var(--wash) 88%, var(--ink) 12%);
-  scrollbar-color: var(--scrollbar-active) var(--paper);
+  scrollbar-color: var(--faint) var(--paper);
 }
 
 *::-webkit-scrollbar {
@@ -11,47 +10,17 @@
 
 *::-webkit-scrollbar-track,
 *::-webkit-scrollbar-corner {
-  background: var(--paper) !important;
+  background: var(--paper);
 }
 
 *::-webkit-scrollbar-thumb {
   border: 3px solid var(--paper);
   border-radius: 999px;
-  background: var(--scrollbar-active) !important;
+  background: var(--faint);
 }
 
-*::-webkit-scrollbar-thumb:hover,
-*::-webkit-scrollbar-thumb:active {
-  border-color: var(--paper) !important;
-  background: var(--scrollbar-active) !important;
-}
-
-*::-webkit-scrollbar-button {
-  border: 3px solid var(--paper);
-  background: var(--scrollbar-active) !important;
-}
-
-*::-webkit-scrollbar-button:hover,
-*::-webkit-scrollbar-button:active {
-  border-color: var(--paper) !important;
-  background: var(--scrollbar-active) !important;
-}
-
-.scrollbar-idle-hidden {
-  scrollbar-color: transparent transparent;
-}
-
-.scrollbar-idle-hidden::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
-}
-
-.scrollbar-idle-hidden::-webkit-scrollbar-track,
-.scrollbar-idle-hidden::-webkit-scrollbar-corner,
-.scrollbar-idle-hidden::-webkit-scrollbar-thumb,
-.scrollbar-idle-hidden::-webkit-scrollbar-thumb:hover {
-  border-color: transparent;
-  background: transparent;
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--faint);
 }
 
 :root {
@@ -86,8 +55,8 @@
     "Segoe UI", sans-serif;
   --code-font-family:
     ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-  --base-font-size: 13px;
-  --code-font-size: 12px;
+  --base-font-size: 12px;
+  --code-font-size: 11px;
   --font-ui: var(--base-font-size);
   --font-body: calc(var(--base-font-size) * 1.077);
   --font-small: calc(var(--base-font-size) * 0.846);
@@ -1013,11 +982,62 @@ button.rail-empty:focus-visible {
 .files-view,
 .settings-view {
   display: grid;
-  gap: 6px;
+  gap: var(--space-5);
   height: 100vh;
   min-height: 0;
   padding: var(--space-7);
   overflow: hidden;
+}
+
+.layered-page {
+  --page-edge-space: var(--space-7);
+  gap: 0;
+  padding-right: 0;
+  padding-left: 0;
+}
+
+.layered-page-two {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.layered-page-three {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.page-layer-inner {
+  width: min(
+    var(--page-max),
+    max(0px, calc(100% - var(--page-edge-space) * 2))
+  );
+  max-width: var(--page-max);
+  min-width: 0;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.layered-page > .page-head {
+  min-height: auto;
+}
+
+.layered-page > .page-head.page-layer-inner {
+  width: max(0px, calc(100% - var(--page-edge-space) * 2));
+  max-width: none;
+}
+
+.layered-page > .page-layer-middle,
+.layered-page > .page-layer-bottom {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.conversation-view {
+  --conversation-edge-space: var(--page-edge-space);
+}
+
+.conversation-view > .page-head {
+  margin-right: auto;
+  margin-left: auto;
 }
 
 .product-workbench {
@@ -1025,7 +1045,6 @@ button.rail-empty:focus-visible {
 }
 
 .plan-detail,
-.conversation-view,
 .files-view,
 .settings-view {
   grid-template-rows: auto minmax(0, 1fr);
@@ -1036,11 +1055,10 @@ button.rail-empty:focus-visible {
     var(--inspector-max-width, 680px),
     max(var(--inspector-min-width, 320px), var(--inspector-width, 430px))
   );
-  padding-right: calc(var(--space-7) + var(--inspector-reserved));
+  padding-right: var(--inspector-reserved);
 }
 
 .page-head {
-  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(180px, auto);
   gap: var(--space-6);
@@ -1048,21 +1066,6 @@ button.rail-empty:focus-visible {
   justify-self: stretch;
   width: 100%;
   min-height: 76px;
-}
-
-.page-head::after {
-  position: absolute;
-  right: 0;
-  bottom: -6px;
-  left: 0;
-  height: 6px;
-  pointer-events: none;
-  content: "";
-  background: linear-gradient(
-    to bottom,
-    color-mix(in srgb, var(--paper) 56%, transparent),
-    transparent
-  );
 }
 
 .page-title {

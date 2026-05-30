@@ -104,8 +104,8 @@ export function FileBrowserView(props: {
   onOpenExternal: () => void;
 }) {
   return (
-    <section class="files-view">
-      <header class="page-head">
+    <section class="files-view layered-page layered-page-two">
+      <header class="page-head page-layer-inner">
         <div class="page-title">
           <span>{t("fileBrowser")}</span>
           <h1>
@@ -133,27 +133,29 @@ export function FileBrowserView(props: {
           </Show>
         </div>
       </header>
-      <main class="file-canvas">
-        <Show
-          when={props.selectedFile}
-          fallback={
-            <FileListView
-              files={props.files}
-              path={props.path}
-              selectedFile={props.selectedFile}
-              onFile={props.onFile}
-              onUp={props.onUp}
-            />
-          }
-        >
-          {(file) => (
-            <FilePreview
-              file={file()}
-              content={props.fileContent}
-              loading={props.fileContentLoadingPath === file().path}
-            />
-          )}
-        </Show>
+      <main class="file-canvas page-layer-middle">
+        <div class="file-canvas-inner page-layer-inner">
+          <Show
+            when={props.selectedFile}
+            fallback={
+              <FileListView
+                files={props.files}
+                path={props.path}
+                selectedFile={props.selectedFile}
+                onFile={props.onFile}
+                onUp={props.onUp}
+              />
+            }
+          >
+            {(file) => (
+              <FilePreview
+                file={file()}
+                content={props.fileContent}
+                loading={props.fileContentLoadingPath === file().path}
+              />
+            )}
+          </Show>
+        </div>
       </main>
     </section>
   );

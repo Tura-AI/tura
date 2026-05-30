@@ -70,6 +70,39 @@ pub fn to_bedrock_tools(tools: &[Value]) -> Vec<Value> {
         .collect()
 }
 
+pub fn to_anthropic_tools(tools: &[Value]) -> Vec<Value> {
+    tools
+        .iter()
+        .filter_map(|tool| {
+            let Value::Object(obj) = tool else {
+                return None;
+            };
+            if obj.get("type").and_then(Value::as_str) != Some("function") {
+                return None;
+            }
+            let Value::Object(function) = obj.get("function")? else {
+                return None;
+            };
+            let name = function.get("name")?.as_str()?.to_string();
+            let description = function
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let input_schema = function
+                .get("parameters")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({"type":"object","properties":{}}));
+
+            Some(serde_json::json!({
+                "name": name,
+                "description": description,
+                "input_schema": input_schema,
+            }))
+        })
+        .collect()
+}
+
 pub fn deep_merge_json(dst: &mut Value, src: Value) {
     match (dst, src) {
         (Value::Object(dst_map), Value::Object(src_map)) => {
@@ -93,7 +126,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        as_object_mut, deep_merge_json, force_strict_schema, strip_json_fence, to_bedrock_tools,
+        as_object_mut, deep_merge_json, force_strict_schema, strip_json_fence, to_anthropic_tools,
+        to_bedrock_tools,
     };
 
     #[test]
@@ -141,6 +175,29 @@ mod tests {
             tools[0]["toolSpec"]["inputSchema"]["json"]["type"],
             "object"
         );
+    }
+
+    #[test]
+    fn anthropic_tools_convert_openapi_function_tools() {
+        let tools = to_anthropic_tools(&[json!({
+            "type": "function",
+            "function": {
+                "name": "echo",
+                "description": "Echo",
+                "parameters": {"type": "object", "properties": {"msg": {"type": "string"}}}
+            }
+        })]);
+
+        assert_eq!(tools[0]["name"], "echo");
+        assert_eq!(tools[0]["description"], "Echo");
+        assert_eq!(tools[0]["input_schema"]["type"], "object");
+        assert_eq!(tools[0]["input_schema"]["properties"]["msg"]["type"], "string");
+    }
+
+    #[test]
+    fn anthropic_tools_skip_non_function_entries() {
+        let tools = to_anthropic_tools(&[json!({"type": "web_search"})]);
+        assert!(tools.is_empty());
     }
 
     #[test]

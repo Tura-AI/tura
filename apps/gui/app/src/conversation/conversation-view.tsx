@@ -293,6 +293,8 @@ export function ConversationView(props: {
     <section
       class={classNames(
         "conversation-view",
+        "layered-page",
+        "layered-page-three",
         props.compact && "compact-conversation",
         inspectorOpen() && !inspectorOverlay() && "inspector-open",
       )}
@@ -301,7 +303,7 @@ export function ConversationView(props: {
         "--inspector-max-width": `${inspectorMaxWidth()}px`,
       }}
     >
-      <header class="page-head">
+      <header class="page-head page-layer-inner">
         <div class="page-title">
           <span>{t("conversation")}</span>
           <h1>
@@ -309,7 +311,7 @@ export function ConversationView(props: {
           </h1>
         </div>
       </header>
-      <div class="conversation-grid">
+      <div class="conversation-grid page-layer-middle">
         <div
           ref={conversationMainEl}
           class="conversation-main"
@@ -337,31 +339,33 @@ export function ConversationView(props: {
               openInspectorFor(part, parts);
             }}
           />
-          <Show when={!transcriptPinned()}>
-            <button
-              class="scroll-follow"
-              type="button"
-              title={t("scrollToBottom")}
-              onClick={() => scrollTranscriptToBottom()}
-            >
-              <ArrowDown size={18} strokeWidth={1.7} />
-            </button>
-          </Show>
-          <Show when={props.composerTaskList}>
-            <div class="composer-task-dock">{props.composerTaskList}</div>
-          </Show>
-          <Composer
-            text={props.state.composerText}
-            images={props.state.composerImages}
-            submitting={props.state.submitting}
-            slashCommands={props.slashCommands}
-            onText={props.onComposerText}
-            onImages={props.onComposerImages}
-            onSubmit={props.onSubmit}
-            toolbar={props.composerToolbar}
-            submitDisabled={props.submitDisabled}
-          />
         </div>
+        <Show when={!transcriptPinned()}>
+          <button
+            class="scroll-follow"
+            type="button"
+            title={t("scrollToBottom")}
+            onClick={() => scrollTranscriptToBottom()}
+          >
+            <ArrowDown size={18} strokeWidth={1.7} />
+          </button>
+        </Show>
+      </div>
+      <div class="conversation-bottom page-layer-bottom">
+        <Show when={props.composerTaskList}>
+          <div class="composer-task-dock">{props.composerTaskList}</div>
+        </Show>
+        <Composer
+          text={props.state.composerText}
+          images={props.state.composerImages}
+          submitting={props.state.submitting}
+          slashCommands={props.slashCommands}
+          onText={props.onComposerText}
+          onImages={props.onComposerImages}
+          onSubmit={props.onSubmit}
+          toolbar={props.composerToolbar}
+          submitDisabled={props.submitDisabled}
+        />
       </div>
       <Show when={!props.compact || props.compactInspector}>
         <ToolInspector
@@ -751,42 +755,44 @@ function Transcript(props: {
       ref={props.onTranscript}
       onScroll={props.onScroll}
     >
-      <Show
-        when={!props.loading}
-        fallback={
-          <div class="transcript-loading-placeholder">
-            <div class="loading-bar wide" />
-            <div class="loading-bar medium" />
-            <div class="loading-bar" />
-          </div>
-        }
-      >
+      <div class="transcript-inner page-layer-inner">
         <Show
-          when={props.session}
-          fallback={<div class="center-state">{t("ready")}</div>}
+          when={!props.loading}
+          fallback={
+            <div class="transcript-loading-placeholder">
+              <div class="loading-bar wide" />
+              <div class="loading-bar medium" />
+              <div class="loading-bar" />
+            </div>
+          }
         >
-          <For
-            each={displayMessages()}
-            fallback={
-              <div class="center-state">{sessionTitle(props.session!)}</div>
-            }
+          <Show
+            when={props.session}
+            fallback={<div class="center-state">{t("ready")}</div>}
           >
-            {(item) => (
-              <MessageCell
-                message={item.message}
-                reactions={item.reactions}
-                activeToolId={props.activeToolId}
-                isLatest={latestId() === item.message.id}
-                sessionStatus={props.session?.status}
-                onTool={props.onTool}
-              />
-            )}
-          </For>
-          <Show when={props.conversationNotice}>
-            {props.conversationNotice}
+            <For
+              each={displayMessages()}
+              fallback={
+                <div class="center-state">{sessionTitle(props.session!)}</div>
+              }
+            >
+              {(item) => (
+                <MessageCell
+                  message={item.message}
+                  reactions={item.reactions}
+                  activeToolId={props.activeToolId}
+                  isLatest={latestId() === item.message.id}
+                  sessionStatus={props.session?.status}
+                  onTool={props.onTool}
+                />
+              )}
+            </For>
+            <Show when={props.conversationNotice}>
+              {props.conversationNotice}
+            </Show>
           </Show>
         </Show>
-      </Show>
+      </div>
     </section>
   );
 }

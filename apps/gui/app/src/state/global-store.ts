@@ -16,6 +16,7 @@ import type {
   ProductUser,
   Project,
   ProviderAuthMethod,
+  ProviderAuthActionResponse,
   ProviderAuthStatusResponse,
   ProviderListResponse,
   PollInterval,
@@ -102,6 +103,7 @@ export type AppState = {
   modelConfig?: TuraConfigResponse;
   providerAuthMethods: Record<string, ProviderAuthMethod[]>;
   providerAuthStatus: Record<string, ProviderAuthStatusResponse>;
+  providerValidationReceipts: Record<string, ProviderAuthActionResponse>;
   agents: Agent[];
   commands: Command[];
   vcs?: VcsInfo;
@@ -152,8 +154,8 @@ export function initialAppState(gatewayUrl: string): AppState {
     themeMode: systemThemeMode(),
     mainFont: "",
     codeFont: "",
-    mainFontSize: 13,
-    codeFontSize: 12,
+    mainFontSize: 12,
+    codeFontSize: 11,
     messagesBySession: {},
     todosBySession: {},
     permissions: [],
@@ -163,6 +165,7 @@ export function initialAppState(gatewayUrl: string): AppState {
     workspaceConfigDraft: {},
     providerAuthMethods: {},
     providerAuthStatus: {},
+    providerValidationReceipts: {},
     agents: [],
     commands: [],
     projects: [],

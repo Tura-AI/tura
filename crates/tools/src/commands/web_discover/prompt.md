@@ -15,6 +15,7 @@ audio "public domain bell sound" --max-results 1 --download-dir media/audio --fo
 Arguments:
 - Type: `website`, `image`, `video`, or `audio`. You may pass it as the first word or with `--type`.
 - Query: pass quoted search text, a single webpage URL, multiple direct media URLs, or `--query`.
+- For remote model/API or media-generation work, assume model/API knowledge may be stale: search official current docs and model/version pages first, using recent year+month terms instead of "latest", and save relevant docs under `doc/`.
 - For image and website tasks, start with short search query to find candidate pages and media URLs, and fetch or download from the relevant result.
 - For direct media downloads, pass one or more URLs as the quoted query. This works for image, video, and audio.
 - `--max-results N`: result limit.
