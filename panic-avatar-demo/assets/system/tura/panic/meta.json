@@ -1,0 +1,25 @@
+{
+  "role": "tura",
+  "expression": "panic",
+  "sourcePrefix": "look",
+  "frameSize": 412,
+  "grid": "grid/sheet.png",
+  "frameFiles": [
+    "frames/center.png",
+    "frames/up.png",
+    "frames/down.png",
+    "frames/left.png",
+    "frames/right.png",
+    "frames/up-left.png",
+    "frames/up-right.png",
+    "frames/down-left.png",
+    "frames/down-right.png"
+  ],
+  "emojiAliases": [
+    "😱",
+    "😨",
+    "😰",
+    "😵",
+    "🥶"
+  ]
+}

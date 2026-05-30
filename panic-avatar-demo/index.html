@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Panic Avatar</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="stage">
+      <div class="demo-layout">
+        <section class="avatar-shell" aria-label="panic avatar">
+          <canvas id="avatar" class="avatar" width="768" height="768"></canvas>
+        </section>
+
+        <aside class="controls" aria-label="像素转换器">
+          <div class="control-group">
+            <label for="pixelSize">像素</label>
+            <div class="slider-row">
+              <input id="pixelSize" type="range" min="0" max="25" value="10" />
+              <output id="pixelValue" for="pixelSize">10</output>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label for="threshold">阈值</label>
+            <div class="slider-row">
+              <input id="threshold" type="range" min="100" max="200" value="150" />
+              <output id="thresholdValue" for="threshold">150</output>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label for="bgTone">背景色</label>
+            <div class="slider-row">
+              <input id="bgTone" type="range" min="0" max="100" value="50" />
+              <output id="bgToneValue" for="bgTone">50</output>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label for="avatarScale">头像缩放</label>
+            <div class="slider-row">
+              <input id="avatarScale" type="range" min="10" max="100" value="100" />
+              <output id="avatarScaleValue" for="avatarScale">100</output>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label for="emojiMap">Emoji 快速选择</label>
+            <div class="picker-row">
+              <select id="emojiMap" aria-label="emoji 表情选择"></select>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <p class="group-label">像素模式</p>
+            <div class="mode-switch" role="radiogroup" aria-label="白天和黑夜">
+              <button class="mode-button is-active" type="button" data-mode="day">白天</button>
+              <button class="mode-button" type="button" data-mode="night">黑夜</button>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <p class="group-label">角色</p>
+            <div class="role-switch" role="radiogroup" aria-label="角色切换">
+              <button class="role-button is-active" type="button" data-role="tura">tura</button>
+              <button class="role-button" type="button" data-role="wonderful">wonderful</button>
+              <button class="role-button" type="button" data-role="pidan">Pidan</button>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <p class="group-label">表情</p>
+            <div id="expressionGrid" class="expression-grid">
+              <button class="expression-button is-active" type="button" data-expression="panic">慌张</button>
+              <button class="expression-button" type="button" data-expression="crying">慌哭</button>
+              <button class="expression-button" type="button" data-expression="confused">困惑</button>
+              <button class="expression-button" type="button" data-expression="nervous">强笑</button>
+              <button class="expression-button" type="button" data-expression="vigilant">警惕</button>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </main>
+
+    <script src="./script.js"></script>
+  </body>
+</html>
