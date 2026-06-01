@@ -48,6 +48,7 @@ export function ConversationPageOutlet(props: {
     | "useWorkspaceDirectory"
   >;
   onSubmit: () => void;
+  onQueueSubmit?: () => void;
   onInspectorLayout: (layout: {
     open: boolean;
     overlay: boolean;
@@ -139,6 +140,7 @@ export function ConversationPageOutlet(props: {
           }
           agentMenu={agentMenu()}
           onSubmit={props.onSubmit}
+          onQueueSubmit={props.onQueueSubmit}
         />
       }
     >
@@ -151,6 +153,7 @@ export function ConversationPageOutlet(props: {
           onComposerText={setComposerText}
           onComposerImages={setComposerImages}
           onSubmit={props.onSubmit}
+          onQueueSubmit={props.onQueueSubmit}
           leftRailOpen={props.leftRailOpen}
           leftRailWidth={props.leftRailWidth}
           onRequestCollapseLeftRail={props.onRequestCollapseLeftRail}

@@ -25,6 +25,7 @@ export function Composer(props: {
   onText: (text: string) => void;
   onImages: (images: ComposerImage[]) => void;
   onSubmit: () => void;
+  onQueueSubmit?: () => void;
   toolbar?: JSX.Element;
   submitDisabled?: boolean;
 }) {
@@ -73,6 +74,28 @@ export function Composer(props: {
     lastSubmitAt = now;
     void props.onSubmit();
   }
+
+  function submitFromKeyboard(event: KeyboardEvent) {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) {
+      return;
+    }
+    event.preventDefault();
+    if (submitBlocked()) {
+      return;
+    }
+    const now = Date.now();
+    if (now - lastSubmitAt < 350) {
+      return;
+    }
+    lastSubmitAt = now;
+    void ((event.metaKey || event.ctrlKey) && props.onQueueSubmit
+      ? props.onQueueSubmit()
+      : props.onSubmit());
+  }
+
+  const sendButtonTitle = createMemo(() =>
+    t("sendButtonHint", { modifier: shortcutModifierLabel() }),
+  );
 
   createEffect(() => {
     if (!attachmentMenu()) {
@@ -347,12 +370,7 @@ export function Composer(props: {
           data-placeholder={t("writeMessage")}
           onInput={syncEditor}
           onCopy={copyEditorText}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-              event.preventDefault();
-              void props.onSubmit();
-            }
-          }}
+          onKeyDown={submitFromKeyboard}
           onPaste={(event) => {
             event.preventDefault();
             const text = event.clipboardData?.getData("text/plain") ?? "";
@@ -367,12 +385,7 @@ export function Composer(props: {
           rows={3}
           style={{ height: composerInputHeight(props.text) }}
           onInput={(event) => props.onText(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-              event.preventDefault();
-              void props.onSubmit();
-            }
-          }}
+          onKeyDown={submitFromKeyboard}
           placeholder={t("writeMessage")}
         />
       </div>
@@ -397,7 +410,7 @@ export function Composer(props: {
         <button
           class="composer-send"
           type="button"
-          title={t("send")}
+          title={sendButtonTitle()}
           disabled={submitBlocked()}
           onPointerDown={(event) => {
             if (event.button !== 0) {
@@ -553,6 +566,14 @@ export function attachmentKind(attachment: ComposerImage): "image" | "file" {
     attachment.kind ??
     (attachment.mimeType?.startsWith("image/") ? "image" : "image")
   );
+}
+
+function shortcutModifierLabel(): string {
+  const platform =
+    typeof navigator === "undefined"
+      ? ""
+      : `${navigator.userAgent} ${navigator.platform}`;
+  return /\b(Mac|iPhone|iPad|iPod)\b/iu.test(platform) ? "Command" : "Ctrl";
 }
 
 export function readImageDataUrl(file: File): Promise<string> {

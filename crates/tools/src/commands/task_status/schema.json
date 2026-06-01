@@ -4,7 +4,7 @@
   "properties": {
     "task_summary": {
       "type": "string",
-      "description": "task title/summary. Set near the start only, unless the user clearly changes the task."
+      "description": "Optional task title/summary."
     },
     "status": {
       "type": "string",

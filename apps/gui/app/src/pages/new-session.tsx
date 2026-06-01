@@ -38,6 +38,7 @@ export function ConversationEmptyView(props: {
   onDraftPollInterval: (value: PollInterval) => void;
   agentMenu?: JSX.Element;
   onSubmit: () => void;
+  onQueueSubmit?: () => void;
 }) {
   const [naming, setNaming] = createSignal(false);
   const [query, setQuery] = createSignal("");
@@ -76,6 +77,7 @@ export function ConversationEmptyView(props: {
           onText={props.onComposerText}
           onImages={props.onComposerImages}
           onSubmit={props.onSubmit}
+          onQueueSubmit={props.onQueueSubmit}
           toolbar={
             <>
               <NewSessionWorkspacePicker

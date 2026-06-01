@@ -14,6 +14,7 @@ import {
   type ProductIssue,
   type Project,
   type Session,
+  type StartCondition,
   type StoredAgent,
 } from "@tura/gateway-sdk";
 import {
@@ -821,7 +822,7 @@ export function App() {
     refreshSessions,
   });
 
-  async function submitPrompt() {
+  async function submitPrompt(options: { queued?: boolean } = {}) {
     if (await updateEditingTaskFromComposer()) {
       return;
     }
@@ -842,6 +843,10 @@ export function App() {
         state().composerImages.length === 0
           ? await expandCommand(raw)
           : materializeComposerContent(raw, state().composerImages);
+      if (options.queued) {
+        await submitQueuedPrompt(content, "session_idle");
+        return;
+      }
       if (state().planDraftStartCondition !== "user_action") {
         await submitQueuedPrompt(content);
         return;
@@ -886,6 +891,9 @@ export function App() {
       setState((previous) => ({
         ...previous,
         selectedSessionId: sessionId,
+        sessions: previous.sessions.map((session) =>
+          session.id === sessionId ? { ...session, status: "busy" } : session,
+        ),
         messagesBySession: {
           ...previous.messagesBySession,
           [sessionId]: [
@@ -970,8 +978,12 @@ export function App() {
     }
   }
 
-  async function submitQueuedPrompt(content: string) {
-    const startCondition = state().planDraftStartCondition;
+  async function submitQueuedPrompt(
+    content: string,
+    forcedStartCondition?: StartCondition,
+  ) {
+    const startCondition =
+      forcedStartCondition ?? state().planDraftStartCondition;
     const startAt =
       startCondition === "scheduled_task" || startCondition === "polling_task"
         ? (localDateTimeToUtcIso(

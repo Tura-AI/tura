@@ -189,6 +189,7 @@ export function AgentAvatarCanvas(props: {
   expressionId?: string;
   interactive?: boolean;
   previewCycle?: boolean;
+  thinking?: boolean;
   class?: string;
   label?: string;
 }) {
@@ -478,6 +479,7 @@ export function AgentAvatarCanvas(props: {
     <div
       class={classNames(
         "agent-avatar-stage",
+        props.thinking && "thinking",
         loading() && "loading",
         props.class,
       )}

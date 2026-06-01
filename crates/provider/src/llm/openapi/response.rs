@@ -243,8 +243,8 @@ fn build_responses_payload(
     options: &CallOptions,
 ) -> Value {
     let mut input = Vec::new();
-    let mut instructions = "Follow the user request and answer concisely.".to_string();
-    for (index, message) in messages.iter().enumerate() {
+    let instructions = "Follow the user request and answer concisely.".to_string();
+    for message in messages {
         if matches!(
             message.get("type").and_then(Value::as_str),
             Some("function_call" | "function_call_output")
@@ -259,10 +259,6 @@ fn build_responses_payload(
         let content_text = message_content_text(message.get("content")).unwrap_or_default();
         let content = openai_responses_content_from_canonical(message.get("content"))
             .unwrap_or_else(|| Value::String(content_text.clone()));
-        if index == 0 && matches!(role, "system" | "developer") && !content_text.trim().is_empty() {
-            instructions = content_text;
-            continue;
-        }
         input.push(json!({
             "role": codex_input_role(role),
             "content": content,

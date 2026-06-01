@@ -71,6 +71,11 @@
   transition: opacity 180ms ease;
 }
 
+.agent-avatar-stage.thinking .agent-avatar-loading {
+  opacity: 0.1;
+  animation: agent-avatar-sheen 5s ease-in-out infinite;
+}
+
 .agent-avatar-stage.loading .agent-avatar-loading {
   opacity: 1;
   animation: agent-avatar-sheen 1.25s ease-in-out infinite;
@@ -144,6 +149,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .agent-avatar-stage.thinking .agent-avatar-loading,
   .agent-avatar-stage.loading .agent-avatar-loading {
     animation: none;
   }

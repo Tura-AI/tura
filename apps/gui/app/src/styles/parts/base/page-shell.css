@@ -135,7 +135,7 @@
 
 .page-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(180px, auto);
+  grid-template-columns: minmax(0, 1fr) max-content;
   gap: var(--space-6);
   align-items: start;
   justify-self: stretch;

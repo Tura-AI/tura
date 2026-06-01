@@ -35,6 +35,7 @@ import {
   type ComposerImage,
   messageCreatedAt,
   partText,
+  sessionUpdatedAt,
   sessionTitle,
 } from "../state/global-store";
 import { Composer } from "./composer";
@@ -72,6 +73,7 @@ export function ConversationView(props: {
   onComposerText: (text: string) => void;
   onComposerImages: (images: ComposerImage[]) => void;
   onSubmit: () => void;
+  onQueueSubmit?: () => void;
   compact?: boolean;
   composerToolbar?: JSX.Element;
   composerTaskList?: JSX.Element;
@@ -425,6 +427,7 @@ export function ConversationView(props: {
           onText={props.onComposerText}
           onImages={props.onComposerImages}
           onSubmit={props.onSubmit}
+          onQueueSubmit={props.onQueueSubmit}
           toolbar={props.composerToolbar}
           submitDisabled={props.submitDisabled}
         />
@@ -879,10 +882,12 @@ function Transcript(props: {
   onScroll: () => void;
   onTool: (part: MessagePart, parts: MessagePart[]) => void;
 }) {
-  const latestId = createMemo(() => props.messages.at(-1)?.id);
   const displayMessages = createMemo(() =>
-    conversationReactionItems(props.messages),
+    conversationReactionItems(
+      messagesWithSessionThinking(props.messages, props.session),
+    ),
   );
+  const latestId = createMemo(() => displayMessages().at(-1)?.message.id);
   const [floatingAvatar, setFloatingAvatar] = createSignal<
     { left: number; top: number } | undefined
   >();
@@ -1030,6 +1035,7 @@ function Transcript(props: {
   const avatarMode = createMemo<AvatarDisplayMode>(
     () => props.avatarSettings.display_mode ?? "static",
   );
+  const isThinking = createMemo(() => sessionIsWorking(props.session?.status));
 
   return (
     <section
@@ -1110,6 +1116,7 @@ function Transcript(props: {
               }
               expressionId={avatarMode() === "static" ? "vigilant" : undefined}
               interactive={avatarMode() === "dynamic"}
+              thinking={isThinking()}
             />
           </div>
         )}
@@ -1611,6 +1618,37 @@ function conversationReactionItems(
     });
   }
   return items;
+}
+
+function messagesWithSessionThinking(
+  messages: Message[],
+  session: Session | undefined,
+): Message[] {
+  if (!session || !sessionIsWorking(session.status)) {
+    return messages;
+  }
+  if (messages.at(-1)?.role === "assistant") {
+    return messages;
+  }
+  return [...messages, sessionThinkingMessage(session)];
+}
+
+function sessionThinkingMessage(session: Session): Message {
+  const updatedAt = sessionUpdatedAt(session) ?? Date.now();
+  return {
+    id: `session-thinking:${session.id}`,
+    sessionID: session.id,
+    session_id: session.id,
+    role: "assistant",
+    created_at: updatedAt,
+    updated_at: updatedAt,
+    time: { created: updatedAt, updated: updatedAt },
+    parts: [],
+  };
+}
+
+function sessionIsWorking(status: Session["status"] | undefined): boolean {
+  return status !== undefined && status !== "idle";
 }
 
 function messageReactionEmojis(message: Message): string[] {

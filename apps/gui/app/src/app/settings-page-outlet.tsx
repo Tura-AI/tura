@@ -53,6 +53,15 @@ export function SettingsPageOutlet(props: {
           },
         }))
       }
+      onLanguage={(language) =>
+        props.onRuntimeSetting((previous) => ({
+          ...previous,
+          configDraft: {
+            ...previous.configDraft,
+            language,
+          },
+        }))
+      }
       onConfigureProviders={() =>
         props.setState((previous) => ({
           ...previous,

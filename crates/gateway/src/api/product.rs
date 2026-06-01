@@ -545,6 +545,10 @@ pub async fn current_user() -> Json<ProductUser> {
     Json(PRODUCT_STORE.user.read().clone())
 }
 
+pub fn current_user_snapshot() -> ProductUser {
+    PRODUCT_STORE.user.read().clone()
+}
+
 pub async fn patch_current_user(Json(input): Json<UserPatch>) -> Json<ProductUser> {
     let mut user = PRODUCT_STORE.user.write();
     if let Some(name) = input.name.filter(|value| !value.trim().is_empty()) {

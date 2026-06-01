@@ -31,7 +31,7 @@ export type AppShellViewModel = {
   useWorkspaceDirectory: (directory: string) => void;
   createNamedWorkspace: (name: string) => Promise<void>;
   pickExistingWorkspaceDirectory: () => Promise<void>;
-  submitPrompt: () => Promise<void>;
+  submitPrompt: (options?: { queued?: boolean }) => Promise<void>;
   updatePlanTicketStatus: (
     session: Session,
     status: PlanStatus,

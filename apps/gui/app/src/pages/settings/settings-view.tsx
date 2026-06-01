@@ -80,6 +80,10 @@ const PROVIDER_DOMAIN_LABELS: Record<string, TextKey> = {
 const AGENT_MODEL_TIERS = ["thinking", "flagship_thinking"] as const;
 const AGENT_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
 const MODEL_SETTINGS_TIERS = ["flagship_thinking", "thinking"];
+const LANGUAGE_OPTIONS = [
+  { id: "zh-CN", label: "简体中文" },
+  { id: "en", label: "English" },
+];
 
 type FontLocale =
   | "en"
@@ -346,6 +350,13 @@ function modelOptionValue(
   return option ? `${option.provider}/${option.model}` : "";
 }
 
+function languageLabel(value: string | undefined): string {
+  return (
+    LANGUAGE_OPTIONS.find((option) => option.id === value)?.label ??
+    LANGUAGE_OPTIONS[0].label
+  );
+}
+
 function modelConfigOption(option: TuraConfigModelPair): AppearanceOption {
   const provider = option.provider_name || option.provider;
   const model = option.model_name || option.model;
@@ -495,6 +506,7 @@ export function SettingsView(props: {
   ) => Promise<void>;
   onDeleteAgent: (agentId: string) => Promise<void>;
   onSavePersonalization: (avatar: AvatarRenderSettings) => void;
+  onLanguage: (language: string) => void;
 }) {
   const providers = createMemo(() => props.state.providers?.all ?? []);
   const [providerDomainFilter, setProviderDomainFilter] = createSignal(
@@ -557,6 +569,32 @@ export function SettingsView(props: {
       <main class="settings-canvas page-layer-middle">
         <section class="settings-stack page-layer-inner">
           <Switch>
+            <Match when={props.section === "application"}>
+              <section class="settings-panel">
+                <header>
+                  <span>{t("applicationSettings")}</span>
+                  <small>
+                    {languageLabel(props.state.configDraft.language)}
+                  </small>
+                </header>
+                <div class="settings-fields">
+                  <div class="field-row">
+                    <span>{t("language")}</span>
+                    <AppearanceSelect
+                      value={props.state.configDraft.language || "zh-CN"}
+                      options={LANGUAGE_OPTIONS.map((option) => ({
+                        id: option.id,
+                        label: option.label,
+                        value: option.id,
+                        preview: "inherit",
+                      }))}
+                      onSelect={(option) => props.onLanguage(option.value)}
+                    />
+                  </div>
+                </div>
+              </section>
+            </Match>
+
             <Match when={props.section === "appearance"}>
               <section class="settings-panel appearance-panel">
                 <header>

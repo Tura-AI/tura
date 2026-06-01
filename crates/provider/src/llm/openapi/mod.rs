@@ -834,14 +834,19 @@ mod tests {
 
         assert_eq!(
             payload["instructions"],
+            "Follow the user request and answer concisely."
+        );
+        assert_eq!(payload["input"][0]["role"], "system");
+        assert_eq!(
+            payload["input"][0]["content"],
             "You are Tura an agent based on gpt-5.1-codex from LLM provider: openai."
         );
-        assert_eq!(payload["input"][0]["role"], "user");
-        assert_eq!(payload["input"][0]["content"], "task");
-        assert_eq!(payload["input"][1]["role"], "system");
-        assert_eq!(payload["input"][1]["content"], "dynamic runtime state");
-        assert_eq!(payload["input"][2]["role"], "assistant");
-        assert_eq!(payload["input"][2]["content"], "progress");
+        assert_eq!(payload["input"][1]["role"], "user");
+        assert_eq!(payload["input"][1]["content"], "task");
+        assert_eq!(payload["input"][2]["role"], "system");
+        assert_eq!(payload["input"][2]["content"], "dynamic runtime state");
+        assert_eq!(payload["input"][3]["role"], "assistant");
+        assert_eq!(payload["input"][3]["content"], "progress");
         assert_eq!(payload["tool_choice"], "auto");
     }
 

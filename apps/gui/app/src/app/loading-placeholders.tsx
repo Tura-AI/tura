@@ -204,6 +204,7 @@ function ConversationLoadingPlaceholder() {
 
 function settingsSectionTitle(section: AppState["settingsSection"]): string {
   const labels: Record<AppState["settingsSection"], string> = {
+    application: t("applicationSettings"),
     appearance: t("appearance"),
     providers: t("providers"),
     models: t("models"),

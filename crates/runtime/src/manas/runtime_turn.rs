@@ -78,12 +78,21 @@ pub(super) fn execute_turn(
             .map_err(|err| format!("failed to load tura llm settings: {err}"))?;
         let runtime_provider_config =
             runtime_provider_config_from_tura(&agent.provider, settings.as_ref(), false)?;
+        let persona_names = agent
+            .agent_persona
+            .iter()
+            .map(|persona| persona.persona_name.clone())
+            .collect::<Vec<_>>();
+        let language = session_language();
+        let user_name = session_user_name();
         let identity = PromptBuilder::new()
             .part(agent_identity::agent_identity(
-                "Tura",
+                &agent.agent_name,
+                &user_name,
+                &persona_names,
                 &runtime_provider_config.model_name,
                 &runtime_provider_config.llm_provider_name,
-                "简体中文",
+                &language,
             ))
             .render();
         let mut runtime_messages = vec![serde_json::json!({
@@ -144,6 +153,24 @@ pub(super) fn execute_turn(
     }
 
     Ok((runtime, tool_calls))
+}
+
+fn session_language() -> String {
+    std::env::var("TURA_SESSION_LANGUAGE")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "zh-CN".to_string())
+}
+
+fn session_user_name() -> String {
+    std::env::var("TURA_SESSION_USER_NAME")
+        .ok()
+        .or_else(|| std::env::var("USERNAME").ok())
+        .or_else(|| std::env::var("USER").ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "user".to_string())
 }
 
 fn debug_runtime_enabled() -> bool {

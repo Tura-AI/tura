@@ -1,5 +1,6 @@
 //! Session API handlers
 
+use crate::api::product::current_user_snapshot;
 use crate::api::types::*;
 use crate::mock::global_store;
 use crate::session::config::{load_config, merge_config, TuraSessionConfig};
@@ -1897,6 +1898,13 @@ fn run_mano_for_prompt(session_id: String, payload: serde_json::Value) {
         .map(load_config)
         .map(|config| config.command_run_stall_guard())
         .unwrap_or_else(|| TuraSessionConfig::default().command_run_stall_guard());
+    let language = directory
+        .as_deref()
+        .map(load_config)
+        .and_then(|config| config.language)
+        .or_else(|| global_store().get_config().language)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 
     // worker env 契约：取代旧的进程级 with_*_env 注入，由 router 注入 runtime worker 子进程。
     let mut worker_env: std::collections::HashMap<String, String> =
@@ -1922,6 +1930,13 @@ fn run_mano_for_prompt(session_id: String, payload: serde_json::Value) {
             "TURA_SESSION_ACCELERATION_ENABLED".to_string(),
             "1".to_string(),
         );
+    }
+    if let Some(language) = language {
+        worker_env.insert("TURA_SESSION_LANGUAGE".to_string(), language);
+    }
+    let user_name = current_user_snapshot().name.trim().to_string();
+    if !user_name.is_empty() {
+        worker_env.insert("TURA_SESSION_USER_NAME".to_string(), user_name);
     }
     worker_env.insert(
         "TURA_COMMAND_RUN_STALL_CHECK_SECS".to_string(),

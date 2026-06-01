@@ -36,6 +36,7 @@ import { draftStateDefaults } from "./drafts";
 export type ConnectionState = "connecting" | "connected" | "disconnected";
 export type MainTab = "conversation" | "plan" | "files" | "settings";
 export type SettingsSection =
+  | "application"
   | "appearance"
   | "providers"
   | "models"
