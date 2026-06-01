@@ -1,6 +1,5 @@
-@import "./parts/00-base.css";
-@import "./parts/01-layout.css";
-@import "./parts/02-surfaces.css";
-@import "./parts/03-plan.css";
-@import "./parts/04-conversation.css";
-@import "./parts/05-settings.css";
+@import "./tokens.css";
+@import "./components/sidebar.css";
+@import "./components/range-control.css";
+@import "./components/avatar.css";
+@import "./parts/index.css";

@@ -1,0 +1,198 @@
+.main-column {
+  position: relative;
+  container-type: inline-size;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--paper);
+}
+
+.rail-open-button {
+  position: fixed;
+  top: var(--rail-open-button-top);
+  left: calc(var(--rail) + var(--rail-open-button-top));
+  z-index: 120;
+  display: grid;
+  width: var(--rail-open-button-size);
+  height: var(--rail-open-button-size);
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--paper);
+  color: var(--muted);
+  box-shadow: var(--shadow-control);
+}
+
+.rail-collapsed .rail-open-button,
+.rail-fullscreen .rail-open-button {
+  left: var(--rail-open-button-top);
+}
+
+.rail-open-button:hover,
+.rail-open-button:focus-visible {
+  background: var(--wash);
+  color: var(--ink);
+}
+
+.rail-collapsed .product-workbench,
+.rail-collapsed .plan-detail,
+.rail-collapsed .conversation-view,
+.rail-collapsed .files-view,
+.rail-collapsed .settings-view {
+  padding-top: var(--page-title-top-space);
+}
+
+.product-workbench,
+.plan-detail,
+.conversation-view,
+.files-view,
+.settings-view {
+  display: grid;
+  gap: var(--space-5);
+  height: 100vh;
+  min-height: 0;
+  padding: var(--page-title-top-space) var(--page-shell-padding-inline)
+    var(--page-shell-padding-bottom);
+  overflow: hidden;
+}
+
+.layered-page {
+  --page-edge-space: var(--space-7);
+  gap: 0;
+  padding-right: 0;
+  padding-left: 0;
+}
+
+.layered-page-two {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.layered-page-three {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.page-layer-inner {
+  width: min(
+    var(--page-max),
+    max(0px, calc(100% - var(--page-edge-space) * 2))
+  );
+  max-width: var(--page-max);
+  min-width: 0;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.layered-page > .page-head {
+  min-height: var(--page-title-bar-height);
+}
+
+.layered-page > .page-head.page-layer-inner {
+  width: max(0px, calc(100% - var(--page-edge-space) * 2));
+  max-width: none;
+}
+
+.layered-page > .page-layer-middle,
+.layered-page > .page-layer-bottom {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.conversation-view {
+  --conversation-edge-space: var(--page-edge-space);
+}
+
+.conversation-view.layered-page {
+  padding-bottom: 0;
+}
+
+.conversation-view > .conversation-bottom.page-layer-bottom {
+  align-self: end;
+}
+
+.conversation-view > .page-head {
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.product-workbench {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.plan-detail,
+.files-view,
+.settings-view {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.conversation-view.inspector-open {
+  --inspector-reserved: min(
+    var(--inspector-max-width, 680px),
+    max(var(--inspector-min-width, 320px), var(--inspector-width, 430px))
+  );
+  padding-right: var(--inspector-reserved);
+}
+
+.page-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, auto);
+  gap: var(--space-6);
+  align-items: start;
+  justify-self: stretch;
+  width: 100%;
+  min-height: var(--page-title-bar-height);
+}
+
+.page-title {
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 64px;
+  width: 100%;
+  padding-left: var(--page-title-offset);
+}
+
+.page-title span {
+  font-size: var(--font-ui);
+  line-height: 1;
+}
+
+.page-title h1 {
+  margin: 0;
+  min-height: 1.18em;
+  padding-bottom: 3px;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--font-title);
+  font-weight: 620;
+  line-height: 1.12;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.search-box,
+.bottom-composer,
+.content-surface,
+.board-column,
+.board-card,
+.file-canvas,
+.tool-inspector,
+.message-user-shell {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+}
+
+.bottom-composer {
+  background: var(--paper);
+}

@@ -1,0 +1,231 @@
+.plan-composer-tools {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--space-4);
+  align-items: center;
+  height: 34px;
+  max-width: 100%;
+  min-width: 0;
+  overflow: visible;
+}
+
+.plan-session-picker {
+  position: relative;
+  z-index: 82;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.plan-trigger-control {
+  position: relative;
+  z-index: 84;
+  display: grid;
+  gap: var(--space-2);
+  width: fit-content;
+  max-width: calc(100% - var(--space-3));
+  min-width: 0;
+  flex: 0 0 auto;
+  justify-self: start;
+  margin-left: var(--space-3);
+}
+
+.plan-composer-tools .plan-trigger-control {
+  width: fit-content;
+  margin-left: 0;
+}
+
+.plan-trigger-button,
+.plan-session-button {
+  display: inline-flex;
+  flex: 0 1 auto;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  max-width: 180px;
+  min-width: 54px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--font-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-trigger-button > svg,
+.plan-session-button > svg {
+  flex: 0 0 auto;
+}
+
+.plan-session-button {
+  max-width: min(100%, 150px);
+}
+
+.plan-session-button.no-icon {
+  justify-content: flex-start;
+}
+
+.plan-trigger-button > svg:last-child,
+.plan-session-button > svg:last-child {
+  color: var(--muted);
+}
+
+.plan-trigger-button span,
+.plan-session-button span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-trigger-button:hover,
+.plan-session-button:hover,
+.plan-trigger-option:hover,
+.plan-trigger-option.selected {
+  background: var(--wash);
+}
+
+.plan-trigger-menu {
+  z-index: 84;
+}
+
+.agent-trigger-menu {
+  width: min(380px, calc(100vw - 48px));
+}
+
+.agent-trigger-button {
+  max-width: 220px;
+}
+
+.agent-trigger-button span {
+  text-align: center;
+}
+
+.plan-trigger-option {
+  grid-template-columns: 22px minmax(0, 1fr) auto auto;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-small);
+  font-size: var(--font-ui);
+}
+
+.plan-trigger-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-trigger-option small {
+  color: var(--muted);
+  font-size: var(--font-small);
+  white-space: pre;
+}
+
+.agent-trigger-option {
+  grid-template-columns: minmax(0, 1fr) auto 18px;
+}
+
+.agent-trigger-list {
+  display: grid;
+  gap: var(--space-1);
+  max-height: calc(34px * 5 + var(--space-1) * 4);
+  overflow-y: auto;
+}
+
+.agent-trigger-links {
+  display: grid;
+  gap: var(--space-1);
+  padding-top: var(--space-2);
+  margin-top: var(--space-1);
+  border-top: 1px solid var(--line);
+}
+
+.agent-trigger-links button {
+  display: grid;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.agent-trigger-links button:hover {
+  background: var(--wash);
+}
+
+.plan-session-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  z-index: 82;
+  display: grid;
+  gap: var(--space-1);
+  width: min(340px, calc(100vw - 48px));
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+  box-shadow: 0 18px 44px rgb(28 28 24 / 14%);
+}
+
+.plan-session-list {
+  max-height: 232px;
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--line);
+}
+
+.plan-session-menu .workspace-search-row + .plan-session-list {
+  border-top: 0;
+}
+
+.plan-session-menu .session-pick-row {
+  grid-template-columns: 22px minmax(0, 1fr) 18px;
+  padding: 0 var(--space-2);
+  min-height: 36px;
+}
+
+.plan-session-menu .session-pick-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-session-menu .workspace-pick-row:hover,
+.plan-session-menu .workspace-pick-row.selected,
+.plan-session-menu .plan-trigger-option:hover,
+.plan-session-menu .plan-trigger-option.selected {
+  background: var(--wash);
+}
+
+@container (max-width: 360px) {
+  .plan-composer-tools {
+    gap: var(--space-2);
+  }
+
+  .plan-trigger-control {
+    margin-left: 0;
+  }
+
+  .plan-trigger-button,
+  .plan-session-button {
+    width: 54px;
+    min-width: 54px;
+    max-width: 54px;
+    flex: 0 0 54px;
+    padding: 0;
+  }
+
+  .plan-trigger-button span,
+  .plan-session-button span {
+    display: none;
+  }
+}
