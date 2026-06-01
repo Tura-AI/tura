@@ -5,13 +5,14 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::state_machine::agent_management::{
-    AgentCapabilityItem, AgentManagement, AgentPromptItem, ValidatorConfig,
+    AgentCapabilityItem, AgentManagement, AgentPersonaItem, AgentPromptItem, ValidatorConfig,
 };
 use crate::state_machine::session_management::SessionManagement;
 use tura_agents::coding_agent::CodingAgent;
 
-const CODING_AGENT_NAME: &str = "coding_agent";
+const CODING_AGENT_NAME: &str = "coding_agent_planning";
 const TOOLS_DIR: &str = "crates/tools/src";
+const DEFAULT_PERSONA_NAME: &str = "tura";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapabilityDefinition {
@@ -131,6 +132,7 @@ fn build_agent(
         agent_directory.to_path_buf(),
         None,
         report_to_user,
+        false,
         provider,
         validator,
         now,
@@ -139,10 +141,11 @@ fn build_agent(
     agent.add_prompt(
         AgentPromptItem {
             agent_prompt: agent_name.to_string(),
-            prompt_directory: agent_directory.join("crates/agents/src").join(agent_name),
+            prompt_directory: agent_directory.join("agents/src").join(agent_name),
         },
         now,
     );
+    add_default_persona(&mut agent, agent_directory, now);
 
     for capability_name in capability_names {
         agent.add_capability(
@@ -179,6 +182,7 @@ pub fn build_agent_with_capabilities(
         agent_directory.to_path_buf(),
         None,
         report_to_user,
+        false,
         provider,
         validator,
         now,
@@ -187,12 +191,31 @@ pub fn build_agent_with_capabilities(
     for prompt_item in prompt_items {
         agent.add_prompt(prompt_item.clone(), now);
     }
+    add_default_persona(&mut agent, agent_directory, now);
 
     for capability_item in capability_items {
         agent.add_capability(capability_item.clone(), now);
     }
 
     agent
+}
+
+fn add_default_persona(
+    agent: &mut AgentManagement,
+    project_directory: &Path,
+    now: chrono::DateTime<Utc>,
+) {
+    agent.add_persona(
+        AgentPersonaItem {
+            persona_name: DEFAULT_PERSONA_NAME.to_string(),
+            persona_directory: project_directory
+                .join("personas")
+                .join("src")
+                .join(DEFAULT_PERSONA_NAME)
+                .join("prompt"),
+        },
+        now,
+    );
 }
 
 fn generate_agent_id(agent_name: &str) -> String {
@@ -245,7 +268,10 @@ mod tests {
             actual, expected,
             "coding_agent should receive configured coding capabilities"
         );
-        assert_eq!(actual.len(), 1, "coding_agent exposes only command_run");
+        assert!(
+            actual.contains("apply_patch"),
+            "coding_agent should allow apply_patch inside command_run"
+        );
         assert!(
             !actual.contains("write_file"),
             "coding_agent should keep write_file behind command_run"
@@ -260,7 +286,7 @@ mod tests {
         );
         assert!(
             !actual.contains("multiple_tasks"),
-            "multiple_tasks is not model-visible"
+            "multiple_tasks is env-gated"
         );
         assert!(
             !actual.contains("send_message_to_user"),

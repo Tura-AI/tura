@@ -80,6 +80,7 @@ export type Session = {
   model?: string | null;
   agent?: string | null;
   session_type?: string | null;
+  auto_session_name?: boolean;
   status: SessionStatus;
   message_count?: number;
   created_at?: number;
@@ -302,6 +303,115 @@ export type Agent = {
     allow: string[];
     deny: string[];
   };
+};
+
+export type AgentSummary = {
+  id: string;
+  name: string;
+  description: string;
+  source: "dynamic" | "static";
+  path: string;
+  aliases: string[];
+  capabilities: string[];
+  provider?: string | null;
+  hidden: boolean;
+};
+
+export type AgentConfig = {
+  agent_name: string;
+  description?: string | null;
+  aliases?: string[];
+  icon_emoji?: string | null;
+  agent_directory?: string;
+  parent_agent_id?: string | null;
+  report_to_user?: boolean;
+  default_config?: boolean;
+  provider?: unknown;
+  agent_persona?: unknown[];
+  agent_prompt?: unknown[];
+  agent_capabilities?: unknown[];
+  validator?: unknown;
+  avatar?: AgentAvatarConfig;
+};
+
+export type AgentAvatarConfig = {
+  persona_id?: string;
+  role?: string;
+  display_mode?: "hidden" | "static" | "dynamic";
+  pixel_size: number;
+  threshold: number;
+  scale: number;
+};
+
+export type StoredAgent = {
+  summary: AgentSummary;
+  config: AgentConfig;
+  prompt?: string | null;
+};
+
+export type AgentUpsertRequest = {
+  id?: string;
+  config?: AgentConfig;
+  prompt?: string;
+};
+
+export type PersonaExpression = {
+  id: string;
+  name: string;
+  emoji_aliases?: string[];
+  source_directory: string;
+  grid_path: string;
+  frames: Record<string, string>;
+};
+
+export type PersonaMediaConfig = {
+  name: string;
+  root_directory: string;
+  expression_directory: string;
+  direction_order?: string[];
+  default_expression: string;
+  default_direction: string;
+  expression_manifest?: string | null;
+  expressions?: PersonaExpression[];
+};
+
+export type PersonaConfig = {
+  persona_name: string;
+  display_name?: string | null;
+  description?: string | null;
+  short_description?: string | null;
+  default_config?: boolean;
+  persona_directory: string;
+  prompt_directory: string;
+  media?: PersonaMediaConfig | null;
+  metadata?: unknown;
+};
+
+export type PersonaSummary = {
+  id: string;
+  display_name: string;
+  description: string;
+  short_description?: string;
+  source: "dynamic" | "static";
+  path: string;
+  default_config: boolean;
+  state: "draft" | "active" | "archived" | "error";
+  media?: PersonaMediaConfig | null;
+};
+
+export type StoredPersona = {
+  summary: PersonaSummary;
+  config: PersonaConfig;
+  persona?: string | null;
+  communication_style?: string | null;
+  management: unknown;
+};
+
+export type PersonaUpsertRequest = {
+  id?: string;
+  config?: PersonaConfig;
+  persona?: string;
+  communication_style?: string;
 };
 
 export type Command = {
@@ -628,6 +738,7 @@ export type PromptAsyncRequest = {
   parts: PromptPart[];
   messageID?: string;
   model?: string | { providerID: string; modelID: string };
+  agent?: string;
   variant?: string;
   model_acceleration_enabled?: boolean;
   system?: string;
@@ -644,5 +755,6 @@ export type CreateSessionRequest = {
   model_variant?: string;
   model_acceleration_enabled?: boolean;
   disable_permission_restrictions?: boolean;
+  auto_session_name?: boolean;
   task_management?: TaskManagement;
 };

@@ -1,6 +1,6 @@
 import type { Message, MessagePart } from "@tura/gateway-sdk";
-import { jsonPreview } from "../state/format";
 import { t } from "../i18n";
+import { jsonPreview } from "../state/format";
 
 type JsonRecord = Record<string, unknown>;
 

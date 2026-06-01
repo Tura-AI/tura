@@ -65,15 +65,6 @@ pub fn kill_processes_in_directory(
             continue;
         };
 
-        if control_plane_cwd(cwd) {
-            skipped.push(SkippedProcess {
-                pid: raw_pid,
-                name,
-                reason: "tura frontend control plane directory".to_string(),
-            });
-            continue;
-        }
-
         if !path_is_under(cwd, &target) {
             continue;
         }
@@ -129,6 +120,7 @@ fn control_plane_reason(process: &Process) -> Option<String> {
         .unwrap_or_default();
     let haystack = format!("{name} {cmd} {exe}");
 
+    // 受保护控制面进程：router、gateway 二进制（runtime worker 同一二进制 + TURA_ROLE）。
     let protected = [
         "tura_router",
         "cargo run -p tura_router",
@@ -137,13 +129,6 @@ fn control_plane_reason(process: &Process) -> Option<String> {
         "target/debug/gateway",
         "target\\release\\gateway",
         "target/release/gateway",
-        "target\\release\\lsp",
-        "target/release/lsp",
-        "target\\debug\\lsp",
-        "target/debug/lsp",
-        "apps\\ui\\packages\\app",
-        "apps/ui/packages/app",
-        "vite",
     ];
 
     if protected.iter().any(|needle| haystack.contains(needle)) {
@@ -151,14 +136,6 @@ fn control_plane_reason(process: &Process) -> Option<String> {
     }
 
     None
-}
-
-fn control_plane_cwd(cwd: &Path) -> bool {
-    let cwd = cwd
-        .to_string_lossy()
-        .replace('/', "\\")
-        .to_ascii_lowercase();
-    cwd.contains("\\apps\\ui\\packages\\app") || cwd.ends_with("\\apps\\ui")
 }
 
 fn path_is_under(path: &Path, directory: &Path) -> bool {

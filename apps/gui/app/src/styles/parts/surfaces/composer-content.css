@@ -95,8 +95,10 @@
 }
 
 .composer-attachment-token img {
+  box-sizing: border-box;
   width: 18px;
   height: 18px;
+  border: 1px solid var(--line);
   border-radius: 4px;
   object-fit: cover;
 }

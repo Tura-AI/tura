@@ -4,7 +4,8 @@ use code_tools::runtime::file_locks::{self, Access};
 use code_tools::runtime::tool::{
     FunctionToolOutput, ToolCall, ToolContext, ToolError, ToolPayload, ToolRouter, ToolRuntimeEvent,
 };
-use serde_json::json;
+use serde_json::{json, Value};
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -1065,6 +1066,517 @@ fn pass_missing_steps_default_to_original_order() {
 }
 
 #[test]
+fn pass_top_level_task_status_argument_is_not_model_visible() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("top-level-task-status");
+
+    let output = command_run::execute(
+        &json!({
+            "task_status": { "status": "done" },
+            "commands": [
+                { "command": "shell_command", "command_line": json!({ "command": "Write-Output ok" }).to_string() }
+            ]
+        }),
+        &root,
+    );
+
+    assert!(output.get("task_status").is_none());
+}
+
+#[test]
+fn pass_multiple_tasks_command_routes_through_command_run() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS", "1");
+    let root = temp_workspace("multiple-tasks");
+
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "command": "multiple_tasks",
+                    "command_line": "[{\"nonce_id\":\"inspect\",\"step\":1,\"task_summary\":\"Inspect files\",\"delivery\":\"Read relevant files and identify edits.\"},{\"nonce_id\":\"apply\",\"step\":1,\"task_summary\":\"Apply changes\",\"delivery\":\"Patch files and verify behavior.\"}]"
+                }
+            ]
+        }),
+        &root,
+    );
+
+    std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS");
+
+    assert_eq!(output["results"][0]["success"], true);
+    assert_eq!(output["results"][0]["command_type"], "multiple_tasks");
+    assert_eq!(
+        output["results"][0]["output"]["steps"][0]["task_summary"],
+        "Inspect files"
+    );
+    assert_eq!(output["results"][0]["output"]["steps"][0]["step"], 1);
+    assert_eq!(
+        output["results"][0]["output"]["steps"][0]["delivery"],
+        "Read relevant files and identify edits."
+    );
+    assert_eq!(output["results"][0]["output"]["steps"][1]["step"], 1);
+}
+
+#[test]
+fn pass_task_status_command_inside_command_run_is_not_shell_executed() {
+    let root = temp_workspace("task-status");
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "step": 1,
+                    "command_type": "task_status",
+                    "command_line": "{\"status\":\"done\",\"task_summary\":\"Patch code\"}"
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["command_type"], "task_status");
+    assert_eq!(output["results"][0]["success"], true);
+    assert_eq!(
+        output["results"][0]["output"],
+        json!({ "task_status": { "status": "done", "task_summary": "Patch code" } })
+    );
+}
+
+#[test]
+fn pass_task_status_payload_in_command_field_is_recovered() {
+    let root = temp_workspace("task-status-command-field");
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "step": 1,
+                    "command_type": "task_status",
+                    "command": "{\"status\":\"done\",\"task_summary\":\"Smoke confirmation\"}"
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["command_type"], "task_status");
+    assert_eq!(output["results"][0]["success"], true);
+    assert_eq!(
+        output["results"][0]["output"],
+        json!({ "task_status": { "status": "done", "task_summary": "Smoke confirmation" } })
+    );
+}
+
+#[test]
+fn pass_task_status_accepts_no_required_arguments() {
+    let root = temp_workspace("task-status-empty");
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "step": 1,
+                    "command_type": "task_status",
+                    "command_line": "{}"
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["command_type"], "task_status");
+    assert_eq!(output["results"][0]["success"], true);
+    assert_eq!(
+        output["results"][0]["output"],
+        json!({ "task_status": { "status": null, "task_summary": null } })
+    );
+}
+
+#[test]
+fn fail_task_status_rejects_status_outside_question_or_done() {
+    let root = temp_workspace("task-status-invalid");
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "step": 1,
+                    "command_type": "task_status",
+                    "command_line": "{\"status\":\"doing\"}"
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["command_type"], "task_status");
+    assert_eq!(output["results"][0]["success"], false);
+    assert_eq!(
+        output["results"][0]["error"],
+        "task_status status must be question or done"
+    );
+}
+
+#[test]
+fn fail_multiple_tasks_command_is_unavailable_by_default() {
+    let _guard = env_lock_blocking();
+    std::env::remove_var("TURA_FORCE_MULTIPLE_TASKS");
+    std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS");
+    let root = temp_workspace("multiple-tasks-disabled");
+
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "command": "multiple_tasks",
+                    "command_line": "[{\"nonce_id\":\"inspect\",\"task_summary\":\"Inspect files\",\"delivery\":\"Read relevant files and identify edits.\"},{\"nonce_id\":\"apply\",\"task_summary\":\"Apply changes\",\"delivery\":\"Patch files and verify behavior.\"}]"
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["success"], false);
+    assert_eq!(
+        output["results"][0]["error"],
+        "unsupported command_run command"
+    );
+}
+
+#[tokio::test]
+async fn fail_command_run_rejects_commands_outside_agent_capabilities() {
+    let root = temp_workspace("allowed-commands");
+    let allowed = BTreeSet::from(["shell_command".to_string()]);
+    let output = command_run::execute_async_value_with_allowed(
+        json!({
+            "commands": [
+                {
+                    "command_type": "read_media",
+                    "command_line": "read_media sample.png"
+                }
+            ]
+        }),
+        root,
+        Some(allowed),
+    )
+    .await;
+
+    assert_eq!(output["results"][0]["command_type"], "read_media");
+    assert_eq!(output["results"][0]["success"], false);
+    assert_eq!(
+        output["results"][0]["error"],
+        "unsupported command_run command"
+    );
+}
+
+#[test]
+fn pass_compact_context_command_routes_and_outputs_summary() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("compact-context");
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "step": 1,
+                    "command_type": "shell_command",
+                    "command_line": json!({ "command": "Write-Output before-compact" }).to_string()
+                },
+                {
+                    "step": 2,
+                    "command_type": "compact_context",
+                    "command_line": "{\"summary\":\"Goal done partly. Next read src/lib.rs.\"}"
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][1]["command_type"], "compact_context");
+    assert_eq!(output["results"][1]["success"], true);
+    assert_eq!(
+        output["results"][1]["output"]["compact_context"],
+        "Goal done partly. Next read src/lib.rs."
+    );
+}
+
+#[test]
+fn fail_compact_context_must_be_final_highest_step() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("compact-context-position");
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "step": 2,
+                    "command_type": "compact_context",
+                    "command_line": "summary"
+                },
+                {
+                    "step": 3,
+                    "command_type": "shell_command",
+                    "command_line": json!({ "command": "Write-Output after" }).to_string()
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["success"], false);
+    assert_eq!(
+        output["results"][0]["error"],
+        "compact_context must be the final command in the highest step of command_run"
+    );
+}
+
+#[test]
+fn pass_shell_command_output_matches_current_code_mode_string() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("shell-output");
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                { "command": "shell_command", "command_line": json!({ "command": "Write-Output current-backfill-ok" }).to_string() }
+            ]
+        }),
+        &root,
+    );
+
+    let text = output["results"][0]["output"]
+        .as_str()
+        .expect("shell command_run output should be current-style text");
+    assert!(text.starts_with("Exit code: 0\nWall time: "));
+    assert!(text.contains("\nOutput:\n"));
+    assert!(text.contains("current-backfill-ok"));
+    assert!(!text.contains("\"metadata\""));
+    assert!(!text.contains("\"stdout\""));
+    assert!(!text.contains("\"stderr\""));
+}
+
+#[test]
+fn pass_model_backfill_matches_current_shape_except_command_type_key() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("model-backfill");
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                { "command": "shell_command", "command_line": json!({ "command": "Write-Output command-type-diff-only" }).to_string() }
+            ]
+        }),
+        &root,
+    );
+    let result = output["results"][0].as_object().expect("result object");
+    let mut keys = result.keys().cloned().collect::<Vec<_>>();
+    keys.sort();
+    assert_eq!(keys, vec!["command_type", "output", "step", "success"]);
+
+    let mut current_equivalent = output.clone();
+    let result = current_equivalent["results"][0]
+        .as_object_mut()
+        .expect("result object");
+    let command_type = result.remove("command_type").expect("command_type");
+    result.insert("command".to_string(), command_type);
+
+    let expected = json!({
+        "results": [
+            {
+                "step": 1,
+                "command": commands::active_shell_command_name(),
+                "success": true,
+                "output": current_equivalent["results"][0]["output"].clone()
+            }
+        ]
+    });
+    assert_eq!(current_equivalent, expected);
+}
+
+#[test]
+fn pass_command_only_shell_text_is_mapped_to_active_shell_command() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("command-only-shell");
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                { "command": "Write-Output ok", "step": 1 }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["success"], true);
+    assert_eq!(
+        output["results"][0]["command_type"],
+        commands::active_shell_command_name()
+    );
+}
+
+#[test]
+fn pass_top_level_workdir_is_accepted_for_current_style_shell_items() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("top-level-workdir");
+    let output = command_run::execute(
+        &json!({
+            "workdir": ".",
+            "commands": [
+                { "command": "Write-Output ok", "step": 1 }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["success"], true);
+}
+
+#[test]
+fn pass_unknown_command_with_shell_payload_is_mapped_to_active_shell_command() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("unknown-command-payload");
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "command": "Get-Content src/app.py",
+                    "command_line": json!({ "command": "Write-Output mapped-ok" }).to_string(),
+                    "step": 1
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["success"], true);
+    assert_eq!(
+        output["results"][0]["command_type"],
+        commands::active_shell_command_name()
+    );
+}
+
+#[test]
+fn pass_unknown_command_without_payload_runs_command_text_as_shell() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("unknown-command-no-payload");
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "command": "Write-Output raw-command-ok",
+                    "command_line": "",
+                    "step": 1
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["success"], true);
+    assert_eq!(
+        output["results"][0]["command_type"],
+        commands::active_shell_command_name()
+    );
+}
+
+#[test]
+fn pass_command_line_without_command_defaults_to_active_shell_command() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("command-line-only");
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "command_line": json!({ "command": "Write-Output command-line-only-ok" }).to_string(),
+                    "step": 1
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["success"], true);
+    assert_eq!(
+        output["results"][0]["command_type"],
+        commands::active_shell_command_name()
+    );
+}
+
+#[test]
+fn pass_command_line_without_command_type_accepts_workdir_and_timeout() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("default-shell-workdir");
+    let subdir = root.join("subdir");
+    fs::create_dir_all(&subdir).expect("temp subdir");
+
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "command_line": json!({ "command": "Get-Location", "timeout_ms": 5000 }).to_string(),
+                    "workdir": "subdir",
+                    "timeout_ms": 5000,
+                    "step": 1
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["success"], true);
+    assert_eq!(
+        output["results"][0]["command_type"],
+        commands::active_shell_command_name()
+    );
+    assert!(output["results"][0]["output"]
+        .as_str()
+        .is_some_and(|text| text.replace('\\', "/").contains("/subdir")));
+}
+
+#[test]
+fn pass_legacy_steps_shape_is_accepted() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("legacy-steps");
+    let output = command_run::execute(
+        &json!({
+            "steps": [
+                {
+                    "tool_name": "shell_command",
+                    "command_code": json!({ "command": "Write-Output legacy-steps-ok" }).to_string(),
+                    "step": 1
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["success"], true);
+    assert_eq!(
+        output["results"][0]["command_type"],
+        commands::active_shell_command_name()
+    );
+}
+
+#[test]
+fn pass_command_run_arguments_accept_requests_wrapper_and_json_fence() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("json-fence");
+    let output = command_run::execute(
+        &Value::String(
+            "```json\n{\"requests\":{\"commands\":[{\"command\":\"shell_command\",\"command_line\":\"{\\\"command\\\":\\\"Write-Output fenced-ok\\\",\\\"timeout_ms\\\":5000}\",\"step\":1}]}}\n```"
+                .to_string(),
+        ),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["success"], true);
+}
+
+#[test]
 fn pass_apply_patch_success_and_fail_context_mismatch() {
     let root = temp_workspace("patch");
     fs::write(root.join("app.txt"), "old\n").unwrap();
@@ -1182,6 +1694,239 @@ fn pass_shell_embedded_apply_patch_is_intercepted_before_shell_execution() {
 
     assert_eq!(output["results"][0]["success"], true);
     assert_eq!(fs::read_to_string(root.join("app.txt")).unwrap(), "new\n");
+}
+
+#[test]
+fn pass_command_line_wrapped_apply_patch_routes_to_apply_patch() {
+    let root = temp_workspace("patch-payload-route");
+    fs::write(root.join("app.txt"), "old\n").expect("fixture");
+
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "command": "shell_command",
+                    "command_line": "apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: app.txt\n@@\n-old\n+new\n*** End Patch\nPATCH",
+                    "step": 1
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["success"], true);
+    assert_eq!(output["results"][0]["command_type"], "apply_patch");
+    assert_eq!(fs::read_to_string(root.join("app.txt")).unwrap(), "new\n");
+}
+
+#[test]
+fn pass_aliases_cmd_and_command_line_are_accepted() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("aliases");
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                { "cmd": "shell_command", "commandLine": json!({ "command": "Write-Output ok" }).to_string(), "step": 1 }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["success"], true);
+    assert_eq!(output["results"][0]["command_type"], "shell_command");
+}
+
+#[test]
+fn pass_single_shell_object_without_commands_is_wrapped() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("single-shell-object");
+    let output = command_run::execute(
+        &json!({
+            "command": json!({ "command": "Write-Output ok", "timeout_ms": 5000 }).to_string(),
+            "timeoutMs": 120000
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["success"], true);
+}
+
+#[test]
+fn pass_command_only_here_string_patch_is_routed_to_apply_patch() {
+    let root = temp_workspace("patch-route");
+    fs::write(root.join("app.txt"), "old\n").expect("fixture");
+
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "command": "@'\n*** Begin Patch\n*** Update File: app.txt\n@@\n-old\n+new\n*** End Patch\n'@",
+                    "step": 1
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["success"], true);
+    assert_eq!(output["results"][0]["command_type"], "apply_patch");
+    assert_eq!(fs::read_to_string(root.join("app.txt")).unwrap(), "new\n");
+}
+
+#[test]
+fn fail_later_batch_commands_stop_after_apply_patch_failure() {
+    let root = temp_workspace("patch-failure-stop");
+    fs::write(root.join("app.txt"), "actual\n").expect("fixture");
+
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "command": "apply_patch",
+                    "command_line": "*** Begin Patch\n*** Update File: app.txt\n@@\n-missing\n+new\n*** End Patch\n",
+                    "step": 1
+                },
+                {
+                    "command": "shell_command",
+                    "command_line": "echo after",
+                    "step": 1
+                },
+                {
+                    "command": "shell_command",
+                    "command_line": "echo next-step",
+                    "step": 2
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["cancelled"], true);
+    assert!(output["cancel_reason"]
+        .as_str()
+        .is_some_and(|text| text.contains("apply_patch failed")));
+    assert_eq!(output["results"].as_array().expect("results").len(), 1);
+    assert_eq!(output["results"][0]["success"], false);
+    assert_eq!(
+        output["results"][0]["output"]["output"]["error_type"],
+        "ContextMismatch"
+    );
+}
+
+#[test]
+fn pass_streaming_executor_returns_apply_patch_result_without_finish() {
+    let root = temp_workspace("streaming-immediate");
+    fs::write(root.join("app.txt"), "old\n").expect("fixture");
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let mut executor = command_run::StreamingCommandRunExecutor::new(root.clone());
+
+    let immediate = runtime.block_on(executor.push_command_value(json!({
+        "command": "apply_patch",
+        "command_line": "*** Begin Patch\n*** Update File: app.txt\n@@\n-old\n+new\n*** End Patch\n",
+        "step": 1
+    })));
+
+    assert_eq!(immediate.len(), 1);
+    assert_eq!(immediate[0]["command_type"], "apply_patch");
+    assert_eq!(immediate[0]["success"], true);
+    assert_eq!(fs::read_to_string(root.join("app.txt")).unwrap(), "new\n");
+    let final_results = runtime.block_on(executor.finish());
+    assert!(final_results.is_empty());
+}
+
+#[test]
+fn pass_streaming_executor_strips_apply_patch_tool_prefix() {
+    let root = temp_workspace("streaming-prefixed-patch");
+    fs::write(root.join("app.txt"), "old\n").expect("fixture");
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let mut executor = command_run::StreamingCommandRunExecutor::new(root.clone());
+
+    let immediate = runtime.block_on(executor.push_command_value(json!({
+        "command_type": "apply_patch",
+        "command_line": "apply_patch\n*** Begin Patch\n*** Update File: app.txt\n@@\n-old\n+new\n*** End Patch\n",
+        "step": 1
+    })));
+
+    assert_eq!(immediate.len(), 1);
+    assert_eq!(immediate[0]["command_type"], "apply_patch");
+    assert_eq!(immediate[0]["success"], true);
+    assert_eq!(fs::read_to_string(root.join("app.txt")).unwrap(), "new\n");
+}
+
+#[test]
+fn fail_streaming_executor_ignores_commands_after_failed_apply_patch() {
+    let root = temp_workspace("streaming-patch-stop");
+    fs::write(root.join("app.txt"), "actual\n").expect("fixture");
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let mut executor = command_run::StreamingCommandRunExecutor::new(root.clone());
+
+    let failed = runtime.block_on(executor.push_command_value(json!({
+        "command": "apply_patch",
+        "command_line": "*** Begin Patch\n*** Update File: app.txt\n@@\n-missing\n+new\n*** End Patch\n",
+        "step": 1
+    })));
+    let ignored = runtime.block_on(executor.push_command_value(json!({
+        "command": "shell_command",
+        "command_line": "echo after",
+        "step": 1
+    })));
+    let final_results = runtime.block_on(executor.finish());
+
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0]["command_type"], "apply_patch");
+    assert_eq!(failed[0]["success"], false);
+    assert!(ignored.is_empty());
+    assert!(final_results.is_empty());
+    assert_eq!(
+        fs::read_to_string(root.join("app.txt")).unwrap(),
+        "actual\n"
+    );
+}
+
+#[test]
+fn pass_streaming_executor_exposes_output_deltas_before_command_finishes() {
+    let root = temp_workspace("streaming-output-deltas");
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let mut executor = command_run::StreamingCommandRunExecutor::new(root);
+    let event_ctx = executor.event_context();
+    let command_line = if cfg!(windows) {
+        "Write-Output 'stream-live-1'; Start-Sleep -Seconds 2; Write-Output 'stream-live-2'"
+    } else {
+        "printf 'stream-live-1\\n'; sleep 2; printf 'stream-live-2\\n'"
+    };
+    let handle = thread::spawn(move || {
+        runtime.block_on(executor.push_command_value(json!({
+            "command_type": commands::active_shell_command_name(),
+            "command_line": command_line,
+            "timeout_ms": 8000,
+            "step": 1
+        })))
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let mut saw_delta_before_finish = false;
+    while Instant::now() < deadline {
+        saw_delta_before_finish = event_ctx.events().iter().any(|event| {
+            matches!(
+                event,
+                ToolRuntimeEvent::OutputDelta { text, .. } if text.contains("stream-live-1")
+            )
+        });
+        if saw_delta_before_finish {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    assert!(
+        saw_delta_before_finish,
+        "expected stdout delta before the shell command finished"
+    );
+    let results = handle.join().expect("streaming command thread");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["success"], true);
 }
 
 #[test]

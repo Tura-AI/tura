@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use crate::metrics::extract_google_metrics;
 use crate::streaming::send_provider_request_first_response;
 use crate::tura_llm::{default_client, CallOptions, ProviderResponse, TuraError};
-use crate::utils::deep_merge_json;
+use crate::utils::{deep_merge_json, google_parts_from_canonical, text_from_content};
 
 pub async fn embed(
     base_url: &str,
@@ -174,77 +174,107 @@ fn sanitize_google_schema(value: &mut Value) {
 
 fn build_contents(messages: &[Value]) -> Value {
     let mut call_names = std::collections::HashMap::<String, String>::new();
-    let contents: Vec<Value> = messages
-        .iter()
-        .filter_map(|msg| {
-            if msg.get("type").and_then(Value::as_str) == Some("function_call") {
-                let name = msg
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("function")
-                    .to_string();
-                if let Some(call_id) = msg.get("call_id").and_then(Value::as_str) {
-                    call_names.insert(call_id.to_string(), name.clone());
-                }
-                let args = msg
-                    .get("arguments")
-                    .cloned()
-                    .map(parse_json_string_value)
-                    .unwrap_or_else(|| json!({}));
-                let mut part = json!({ "functionCall": { "name": name, "args": args } });
-                if let Some(signature) = google_thought_signature(msg) {
-                    part["thoughtSignature"] = json!(signature);
-                }
-                return Some(json!({
-                    "role": "model",
-                    "parts": [part]
+    let mut contents = Vec::new();
+    for msg in messages {
+        if msg.get("type").and_then(Value::as_str) == Some("function_call") {
+            let name = msg
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("function")
+                .to_string();
+            if let Some(call_id) = msg.get("call_id").and_then(Value::as_str) {
+                call_names.insert(call_id.to_string(), name.clone());
+            }
+            let args = msg
+                .get("arguments")
+                .cloned()
+                .map(parse_json_string_value)
+                .unwrap_or_else(|| json!({}));
+            let mut part = json!({ "functionCall": { "name": name, "args": args } });
+            if let Some(signature) = google_thought_signature(msg) {
+                part["thoughtSignature"] = json!(signature);
+            }
+            contents.push(json!({
+                "role": "model",
+                "parts": [part]
+            }));
+            continue;
+        }
+
+        if msg.get("type").and_then(Value::as_str) == Some("function_call_output") {
+            let call_id = msg
+                .get("call_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let name = call_names
+                .get(call_id)
+                .cloned()
+                .unwrap_or_else(|| "function".to_string());
+            let output_value = msg.get("output");
+            let response = output_value
+                .filter(|value| value.is_array())
+                .and_then(|_| text_from_content(output_value))
+                .map(|text| json!({ "output": text }))
+                .or_else(|| output_value.cloned().map(parse_json_string_value))
+                .or_else(|| msg.get("content").cloned().map(parse_json_string_value))
+                .unwrap_or_else(|| json!({}));
+            push_google_function_response(
+                &mut contents,
+                json!({ "functionResponse": { "name": name, "response": response } }),
+            );
+            if let Some(media_parts) = google_parts_from_canonical(output_value)
+                .filter(|parts| parts.iter().any(|part| part.get("inlineData").is_some()))
+            {
+                contents.push(json!({
+                    "role": "user",
+                    "parts": media_parts
                 }));
             }
+            continue;
+        }
 
-            if msg.get("type").and_then(Value::as_str) == Some("function_call_output") {
-                let call_id = msg
-                    .get("call_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                let name = call_names
-                    .get(call_id)
-                    .cloned()
-                    .unwrap_or_else(|| "function".to_string());
-                let response = msg
-                    .get("output")
-                    .cloned()
-                    .map(parse_json_string_value)
-                    .unwrap_or_else(|| json!({}));
-                return Some(json!({
-                    "role": "function",
-                    "parts": [{ "functionResponse": { "name": name, "response": response } }]
-                }));
-            }
-
-            // System turns are lifted into `systemInstruction`; skip them here.
-            let raw_role = msg.get("role").and_then(Value::as_str).unwrap_or("user");
-            if matches!(raw_role, "system" | "developer") {
-                return None;
-            }
-            let role = match raw_role {
-                "assistant" => "model",
-                x => x,
-            };
-            let parts = match msg.get("content") {
-                Some(Value::String(text)) => vec![json!({ "text": text })],
-                Some(Value::Array(items)) => items.clone(),
-                Some(other) => vec![json!({ "text": other.to_string() })],
-                None => vec![],
-            };
-            (!parts.is_empty()).then(|| {
-                json!({
-                    "role": role,
-                    "parts": parts
-                })
-            })
-        })
-        .collect();
+        // System turns are lifted into `systemInstruction`; skip them here.
+        let raw_role = msg.get("role").and_then(Value::as_str).unwrap_or("user");
+        if matches!(raw_role, "system" | "developer") {
+            continue;
+        }
+        let role = match raw_role {
+            "assistant" => "model",
+            x => x,
+        };
+        let parts = google_parts_from_canonical(msg.get("content")).unwrap_or_default();
+        if !parts.is_empty() {
+            contents.push(json!({
+                "role": role,
+                "parts": parts
+            }));
+        }
+    }
     Value::Array(contents)
+}
+
+fn _removed_build_contents_old_marker() {}
+
+fn push_google_function_response(contents: &mut Vec<Value>, part: Value) {
+    let Some(last) = contents.last_mut() else {
+        contents.push(json!({ "role": "user", "parts": [part] }));
+        return;
+    };
+    let last_has_function_response =
+        last.get("parts")
+            .and_then(Value::as_array)
+            .is_some_and(|parts| {
+                parts
+                    .iter()
+                    .any(|part| part.get("functionResponse").is_some())
+            });
+    if last.get("role").and_then(Value::as_str) == Some("user") && last_has_function_response {
+        if let Some(parts) = last.get_mut("parts").and_then(Value::as_array_mut) {
+            parts.push(part);
+            return;
+        }
+    }
+    contents.push(json!({ "role": "user", "parts": [part] }));
 }
 
 /// Concatenate all `system`/`developer` turns into a single Gemini
@@ -436,11 +466,73 @@ mod tests {
             "pong"
         );
         assert_eq!(contents[0]["parts"][0]["thoughtSignature"], "sig");
-        assert_eq!(contents[1]["role"], "function");
+        assert_eq!(contents[1]["role"], "user");
         assert_eq!(contents[1]["parts"][0]["functionResponse"]["name"], "echo");
         assert_eq!(
             contents[1]["parts"][0]["functionResponse"]["response"]["ok"],
             true
+        );
+    }
+
+    #[test]
+    fn google_function_output_media_adds_inline_data_sidecar() {
+        let contents = build_contents(&[
+            json!({
+                "type": "function_call",
+                "call_id": "call_media",
+                "name": "command_run",
+                "arguments": "{}"
+            }),
+            json!({
+                "type": "function_call_output",
+                "call_id": "call_media",
+                "output": [
+                    { "type": "input_text", "text": "read_media returned image" },
+                    { "type": "input_image", "image_url": "data:image/png;base64,AAA" }
+                ]
+            }),
+        ]);
+
+        assert_eq!(contents[1]["role"], "user");
+        assert_eq!(
+            contents[1]["parts"][0]["functionResponse"]["response"]["output"],
+            "read_media returned image"
+        );
+        assert_eq!(contents[2]["role"], "user");
+        assert_eq!(
+            contents[2]["parts"][1]["inlineData"]["mimeType"],
+            "image/png"
+        );
+        assert_eq!(contents[2]["parts"][1]["inlineData"]["data"], "AAA");
+    }
+
+    #[test]
+    fn google_function_outputs_merge_into_one_user_turn() {
+        let contents = build_contents(&[
+            json!({
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "first",
+                "arguments": "{}"
+            }),
+            json!({
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": "{\"ok\":1}"
+            }),
+            json!({
+                "type": "function_call_output",
+                "call_id": "call_missing",
+                "output": "{\"ok\":2}"
+            }),
+        ]);
+
+        assert_eq!(contents[1]["role"], "user");
+        assert_eq!(contents[1]["parts"].as_array().unwrap().len(), 2);
+        assert_eq!(contents[1]["parts"][0]["functionResponse"]["name"], "first");
+        assert_eq!(
+            contents[1]["parts"][1]["functionResponse"]["name"],
+            "function"
         );
     }
 

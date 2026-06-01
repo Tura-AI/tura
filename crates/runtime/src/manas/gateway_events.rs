@@ -1,11 +1,10 @@
-use chrono::Utc;
-use std::io::Write;
-use tracing::warn;
-
 use crate::prompt_style::{runtime_fallback, tool_progress};
 use crate::runtime::types::ToolCallData;
 use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::state_machine::session_management::SessionManagement;
+use chrono::Utc;
+use std::io::Write;
+use tracing::warn;
 
 use super::constants::DISABLE_GATEWAY_CALLBACKS_ENV;
 use super::final_response::summarize_tool_results_for_user;
@@ -57,6 +56,11 @@ pub(super) fn summarize_single_tool_output(tool_name: &str, output: &serde_json:
     if let Some(markdown) = first_summary_markdown(output) {
         return markdown.lines().take(10).collect::<Vec<_>>().join("\n");
     }
+    if tool_name == "command_run" {
+        if let Some(summary) = summarize_command_run_output(output) {
+            return summary;
+        }
+    }
 
     if matches!(tool_name, "find" | "glob") {
         let mut matched_paths = Vec::new();
@@ -107,6 +111,59 @@ pub(super) fn summarize_single_tool_output(tool_name: &str, output: &serde_json:
         .take(8)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn summarize_command_run_output(output: &serde_json::Value) -> Option<String> {
+    let results = output
+        .get("results")
+        .and_then(serde_json::Value::as_array)
+        .filter(|results| !results.is_empty())?;
+    let mut lines = Vec::new();
+    for result in results.iter().take(5) {
+        let command = result
+            .get("command_type")
+            .or_else(|| result.get("command"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("command");
+        let status = if result.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
+            "failed"
+        } else {
+            "ok"
+        };
+        let detail = result
+            .get("output")
+            .and_then(serde_json::Value::as_str)
+            .map(compact_command_output)
+            .or_else(|| {
+                result
+                    .get("output")
+                    .and_then(|value| value.get("task_status"))
+                    .and_then(|value| value.get("status"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(|status| format!("task_status {status}"))
+            })
+            .filter(|value| !value.is_empty());
+        lines.push(match detail {
+            Some(detail) => format!("{command} {status}: {detail}"),
+            None => format!("{command} {status}"),
+        });
+    }
+    Some(lines.join("; "))
+}
+
+fn compact_command_output(output: &str) -> String {
+    output
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            !line.is_empty()
+                && !line.starts_with("Exit code:")
+                && !line.starts_with("Wall time:")
+                && *line != "Output:"
+        })
+        .take(3)
+        .collect::<Vec<_>>()
+        .join(" / ")
 }
 
 pub(super) fn publish_step_summary(
@@ -463,10 +520,9 @@ pub(super) fn publish_task_plan_todos(session: &SessionManagement) {
                 crate::state_machine::session_management::TaskStatus::Archived => "archived",
             };
             let content = first_non_empty([
-                task.task_name.as_str(),
                 task.task_summary.as_str(),
                 task.step_task.as_str(),
-                task.step_context.as_str(),
+                task.step_deliverable_description.as_str(),
             ])
             .unwrap_or_else(|| format!("Step {}", index + 1));
             serde_json::json!({
@@ -510,7 +566,9 @@ pub(super) fn gateway_callback_base_url() -> String {
     std::env::var("TURA_GATEWAY_URL")
         .or_else(|_| std::env::var("GATEWAY_BASE_URL"))
         .unwrap_or_else(|_| {
-            let port = std::env::var("PORT").unwrap_or_else(|_| "4096".to_string());
+            let port = std::env::var("TURA_GATEWAY_PORT")
+                .or_else(|_| std::env::var("PORT"))
+                .unwrap_or_else(|_| "4096".to_string());
             format!("http://127.0.0.1:{port}")
         })
         .trim_end_matches('/')

@@ -104,11 +104,12 @@ addCheck("prompt describes topology, ordered barriers, and doc-driven parallel w
 
 addCheck("command_run routes multiple_tasks through the shared command consumer path", () => {
   const handler = read("crates/tools/src/command_run/handler.rs")
+  const commandRunTests = read("crates/tools/tests/command_run_current_flow.rs")
   assert.match(handler, /"multiple_tasks"\s*=>\s*ToolPayload::Function/)
   assert.match(handler, /normalize_multiple_tasks_arguments/)
-  assert.match(handler, /run_parallel_items/)
+  assert.match(handler, /run_macro_command_batch/)
   assert.match(handler, /run_command_run_step/)
-  assert.match(handler, /multiple_tasks_command_routes_through_command_run/)
+  assert.match(commandRunTests, /pass_multiple_tasks_command_routes_through_command_run/)
 })
 
 addCheck("runtime plan mapping preserves same-step parallelism and delivery spelling", () => {

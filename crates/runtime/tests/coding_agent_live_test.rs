@@ -47,7 +47,7 @@ fn coding_agent_can_call_command_run_tool_e2e() {
     .expect("coding agent should complete the command_run e2e flow");
 
     assert_eq!(result.agents.len(), 1);
-    assert_eq!(result.agents[0].agent_name, "coding_agent");
+    assert_eq!(result.agents[0].agent_name, "coding_agent_planning");
     assert_eq!(result.session.state, SessionState::Completed);
 
     let tool_results = tool_results(&result.session.session_log);
@@ -100,7 +100,11 @@ fn coding_agent_can_call_command_run_tool_e2e() {
         .expect("at least one provider request should include tools");
     let first_tool_names = first_tools
         .iter()
-        .filter_map(|tool| tool.pointer("/function/name").and_then(Value::as_str))
+        .filter_map(|tool| {
+            tool.pointer("/function/name")
+                .or_else(|| tool.get("name"))
+                .and_then(Value::as_str)
+        })
         .collect::<Vec<_>>();
     assert!(first_tool_names.contains(&"command_run"));
 }
@@ -232,43 +236,27 @@ fn handle_provider_connection(
 
     let index = counter.fetch_add(1, Ordering::SeqCst);
     let response = provider_response(index, mode);
-    let is_stream = request.get("stream").and_then(Value::as_bool) == Some(true);
     requests
         .lock()
         .expect("mock provider requests lock")
         .push(request);
     let stream = reader.get_mut();
-    if matches!(mode, MockMode::CodexStreamingProbe) {
-        if index == 0 {
-            write_codex_streaming_probe_response(
-                stream,
-                workspace.expect("codex streaming probe workspace"),
-                first_command_observed_before_response_finished,
-            );
-        } else {
-            write_codex_final_response(stream, "streaming command probe completed.");
+    match mode {
+        MockMode::CommandRun => {
+            write_command_run_responses(stream, &response);
         }
-        return;
+        MockMode::CodexStreamingProbe => {
+            if index == 0 {
+                write_codex_streaming_probe_response(
+                    stream,
+                    workspace.expect("codex streaming probe workspace"),
+                    first_command_observed_before_response_finished,
+                );
+            } else {
+                write_codex_final_response(stream, "streaming command probe completed.");
+            }
+        }
     }
-    if is_stream {
-        let response_text = response_to_sse(&response);
-        let _ = write!(
-            stream,
-            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            response_text.len(),
-            response_text
-        );
-    } else {
-        let response_text =
-            serde_json::to_string(&response).expect("mock provider response should serialize");
-        let _ = write!(
-            stream,
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            response_text.len(),
-            response_text
-        );
-    }
-    let _ = stream.flush();
 }
 
 fn provider_response(index: usize, mode: MockMode) -> Value {
@@ -419,6 +407,133 @@ fn write_codex_streaming_probe_response(
     let _ = stream.flush();
 }
 
+/// Translate the chat.completion-shaped mock `response` into the OpenAI
+/// Responses-API SSE stream that the runtime now consumes for the `openai`
+/// provider (non-OAuth OpenAI rides the shared Responses core).
+fn write_command_run_responses(stream: &mut TcpStream, response: &Value) {
+    let _ = write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+    );
+
+    let message = response
+        .pointer("/choices/0/message")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+
+    if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
+        let mut output_items = Vec::new();
+        for (index, call) in tool_calls.iter().enumerate() {
+            let call_id = call
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("call_mock")
+                .to_string();
+            let item_id = format!("fc_cmd_{index}");
+            let name = call
+                .pointer("/function/name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let arguments = call
+                .pointer("/function/arguments")
+                .and_then(Value::as_str)
+                .unwrap_or("{}")
+                .to_string();
+            write_codex_sse(
+                stream,
+                json!({
+                    "type": "response.output_item.added",
+                    "item": {
+                        "id": item_id,
+                        "type": "function_call",
+                        "call_id": call_id,
+                        "name": name,
+                        "arguments": ""
+                    }
+                }),
+            );
+            write_codex_sse(
+                stream,
+                json!({
+                    "type": "response.function_call_arguments.delta",
+                    "item_id": item_id,
+                    "delta": arguments
+                }),
+            );
+            write_codex_sse(
+                stream,
+                json!({
+                    "type": "response.function_call_arguments.done",
+                    "item_id": item_id,
+                    "arguments": arguments
+                }),
+            );
+            output_items.push(json!({
+                "id": item_id,
+                "type": "function_call",
+                "call_id": call_id,
+                "name": name,
+                "arguments": arguments
+            }));
+        }
+        write_codex_sse(
+            stream,
+            json!({
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_cmd_run",
+                    "output": output_items,
+                    "usage": { "input_tokens": 1, "output_tokens": 1, "total_tokens": 2 }
+                }
+            }),
+        );
+        write_codex_sse_raw(stream, "data: [DONE]\n\n");
+        let _ = write!(stream, "0\r\n\r\n");
+        let _ = stream.flush();
+        return;
+    }
+
+    let content = message
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    write_command_run_final_text(stream, &content);
+}
+
+fn write_command_run_final_text(stream: &mut TcpStream, content: &str) {
+    write_codex_sse(
+        stream,
+        json!({
+            "type": "response.output_text.delta",
+            "delta": content
+        }),
+    );
+    write_codex_sse(
+        stream,
+        json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_cmd_run_final",
+                "output": [{
+                    "id": "msg_cmd_run_final",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": content
+                    }]
+                }],
+                "usage": { "input_tokens": 1, "output_tokens": 1, "total_tokens": 2 }
+            }
+        }),
+    );
+    write_codex_sse_raw(stream, "data: [DONE]\n\n");
+    let _ = write!(stream, "0\r\n\r\n");
+    let _ = stream.flush();
+}
+
 fn write_codex_sse(stream: &mut TcpStream, value: Value) {
     write_codex_sse_raw(stream, &format!("data: {}\n\n", value));
 }
@@ -545,66 +660,6 @@ fn tool_response(id: &str, name: &str, arguments: Value) -> Value {
         }],
         "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 }
     })
-}
-
-fn response_to_sse(response: &Value) -> String {
-    let message = response
-        .pointer("/choices/0/message")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    let mut lines = Vec::new();
-    if let Some(content) = message.get("content").and_then(Value::as_str) {
-        lines.push(format!(
-            "data: {}\n\n",
-            json!({"choices":[{"index":0,"delta":{"content":content},"finish_reason":null}]}),
-        ));
-        lines.push(format!(
-            "data: {}\n\n",
-            json!({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}),
-        ));
-    }
-    if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
-        for (index, call) in tool_calls.iter().enumerate() {
-            let id = call
-                .get("id")
-                .and_then(Value::as_str)
-                .unwrap_or("call_mock");
-            let name = call
-                .pointer("/function/name")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let arguments = call
-                .pointer("/function/arguments")
-                .and_then(Value::as_str)
-                .unwrap_or("{}");
-            lines.push(format!(
-                "data: {}\n\n",
-                json!({
-                    "choices": [{
-                        "index": 0,
-                        "delta": {
-                            "tool_calls": [{
-                                "index": index,
-                                "id": id,
-                                "type": "function",
-                                "function": {
-                                    "name": name,
-                                    "arguments": arguments
-                                }
-                            }]
-                        },
-                        "finish_reason": null
-                    }]
-                }),
-            ));
-        }
-        lines.push(format!(
-            "data: {}\n\n",
-            json!({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}),
-        ));
-    }
-    lines.push("data: [DONE]\n\n".to_string());
-    lines.concat()
 }
 
 fn create_rust_workspace() -> PathBuf {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { applyGatewayEvent } from "./event-reducer";
 import type { AppState } from "./global-store";
 import { initialAppState } from "./global-store";
-import { applyGatewayEvent } from "./event-reducer";
 
 describe("applyGatewayEvent", () => {
   test("upserts sessions and messages", () => {
@@ -182,5 +182,40 @@ describe("applyGatewayEvent", () => {
 
     expect(state.messagesBySession.s1[0]?.id).toBe("m1");
     expect(state.messagesBySession.s1[0]?.parts[0]?.tool).toBe("runtime");
+  });
+
+  test("removes matching optimistic user prompt when gateway echoes real message", () => {
+    let state: AppState = {
+      ...initialAppState("http://127.0.0.1:4096"),
+      messagesBySession: {
+        s1: [
+          {
+            id: "prompt:s1:1",
+            sessionID: "s1",
+            role: "user",
+            parts: [{ id: "prompt:s1:1:text", type: "text", text: "hello" }],
+          },
+        ],
+      },
+    };
+
+    state = applyGatewayEvent(state, {
+      payload: {
+        type: "message.updated",
+        properties: {
+          sessionID: "s1",
+          info: {
+            id: "m-real",
+            sessionID: "s1",
+            role: "user",
+            parts: [{ id: "p1", type: "text", text: "hello" }],
+            time: { created: 2, updated: 2 },
+          },
+        },
+      },
+    });
+
+    expect(state.messagesBySession.s1).toHaveLength(1);
+    expect(state.messagesBySession.s1[0]?.id).toBe("m-real");
   });
 });

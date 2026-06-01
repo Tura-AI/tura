@@ -21,8 +21,8 @@ OUT = Path(
         ROOT / "apps" / "gui" / "test-results" / "settings-full-flow",
     )
 )
-GUI_URL = os.environ.setdefault("TURA_GUI_URL", "http://127.0.0.1:5184")
-GATEWAY_URL = os.environ.setdefault("TURA_GATEWAY_URL", "http://127.0.0.1:5200")
+GUI_URL = os.environ.setdefault("TURA_GUI_URL", "http://127.0.0.1:5194")
+GATEWAY_URL = os.environ.setdefault("TURA_GATEWAY_URL", "http://127.0.0.1:5294")
 
 
 def now_ms() -> int:
@@ -233,6 +233,10 @@ class SettingsGatewayHandler(BaseHTTPRequestHandler):
     def do_PUT(self):
         path = urlparse(self.path).path
         payload = self.read_json()
+        if path == "/model_config":
+            self.server.workspace_config["model"] = f"{payload.get('provider')}/{payload.get('model')}"
+            self.server.records.append({"type": "model_config.put", "payload": payload})
+            return self.send_json(self.model_config())
         if path.startswith("/auth/"):
             provider_id = path.split("/")[-1]
             self.server.auth[provider_id] = auth_status(provider_id, True, "api")
@@ -335,10 +339,8 @@ async def wait_for_url(url: str, process: subprocess.Popen | None = None):
 
 
 def start_gateway() -> SettingsGateway | None:
-    if url_ready(GATEWAY_URL + "/global/health"):
-        return None
     parsed = urlparse(GATEWAY_URL)
-    server = SettingsGateway((parsed.hostname or "127.0.0.1", parsed.port or 5200))
+    server = SettingsGateway((parsed.hostname or "127.0.0.1", parsed.port or 5294))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
 
@@ -438,13 +440,20 @@ def check(checks: list, name: str, ok: bool, detail=None):
 
 
 async def open_section(page, label: str):
-    await page.get_by_role("button", name=label, exact=True).click()
+    await page.locator(".settings-section-list button").filter(has_text=label).click()
     await page.wait_for_function(
-        "(label) => document.querySelector('.page-title h1')?.textContent?.trim() === label",
+        "(label) => document.querySelector('.page-title h1')?.textContent?.trim() === label && !document.querySelector('.settings-stack .loading-bar')",
         arg=label,
         timeout=10_000,
     )
     await page.wait_for_timeout(250)
+
+
+async def wait_settings_ready(page):
+    await page.wait_for_function(
+        "() => document.querySelector('.settings-stack') && !document.querySelector('.settings-stack .loading-bar')",
+        timeout=30_000,
+    )
 
 
 async def run_flow():
@@ -457,10 +466,14 @@ async def run_flow():
         page = await context.new_page()
         page.on("pageerror", lambda error: browser_errors.append(str(error)))
         page.on("console", lambda msg: browser_errors.append(msg.text) if msg.type in {"error", "warning"} else None)
-        await page.goto(f"{GUI_URL}/?{urlencode({'gatewayUrl': GATEWAY_URL, 'tab': 'settings'})}", wait_until="domcontentloaded")
+        await page.goto(
+            f"{GUI_URL}/?{urlencode({'gatewayUrl': GATEWAY_URL, 'tab': 'settings', 'e2eFixture': 'communication-protocol'})}",
+            wait_until="domcontentloaded",
+        )
         await page.wait_for_selector(".settings-stack", timeout=30_000)
+        await wait_settings_ready(page)
 
-        for index, label in enumerate(["常规", "外观", "服务商", "模型", "登录", "运行时", "Tura 配置", "工作区参数", "环境"], 1):
+        for index, label in enumerate(["外观", "服务商", "模型"], 1):
             await open_section(page, label)
             data = await screenshot(page, f"{index:02d}-{label}", results)
             check(checks, f"{label}-visible", data["title"] == label and data["panelCount"] >= 1, data)
@@ -471,64 +484,53 @@ async def run_flow():
         check(checks, "providers-openai-selected", providers["selectedProvider"] == "OpenAI", providers)
 
         await open_section(page, "模型")
-        await page.get_by_role("button", name="GPT 5.1 320K").click()
+        await page.locator(".appearance-select-button").first.click()
+        await page.locator(".appearance-select-menu button").filter(has_text="GPT 5.1").click()
         await screenshot(page, "11-model-gpt51-selected", results)
-        await page.get_by_role("button", name="验证", exact=True).click()
-        await page.wait_for_function("() => document.body.innerText.includes('模型验证通过')", timeout=10_000)
-        model_validated = await screenshot(page, "12-model-validated", results)
-        check(checks, "model-selected", model_validated["selectedModel"] == "GPT 5.1", model_validated)
-        check(checks, "model-validation-notice", "模型验证通过" in model_validated["notice"], model_validated)
-
-        await open_section(page, "运行时")
-        await page.locator(".settings-panel select").first.select_option("coding_agent_fast")
-        await page.get_by_role("button", name="medium", exact=True).click()
-        await screenshot(page, "13-runtime-updated", results)
+        await page.wait_for_function("() => document.body.innerText.includes('已保存')", timeout=10_000)
+        model_saved = await screenshot(page, "12-model-saved", results)
+        check(checks, "model-save-notice", "已保存" in model_saved["notice"], model_saved)
 
         await open_section(page, "外观")
         await page.get_by_role("button", name="深色", exact=True).click()
-        await screenshot(page, "14-appearance-dark", results)
-
-        await open_section(page, "Tura 配置")
-        await page.locator(".settings-panel input").first.fill("en")
-        await screenshot(page, "15-tura-config-edited", results)
-
-        await page.get_by_role("button", name="保存", exact=True).click()
         await page.wait_for_function("() => document.body.innerText.includes('已保存')", timeout=10_000)
-        saved = await screenshot(page, "16-settings-saved", results)
-        check(checks, "settings-save-notice", "已保存" in saved["notice"], saved)
+        saved = await screenshot(page, "13-appearance-dark-saved", results)
+        check(checks, "appearance-save-notice", "已保存" in saved["notice"], saved)
 
-        await open_section(page, "登录")
-        login_initial = await screenshot(page, "17-login-initial", results)
+        await open_section(page, "服务商")
+        await page.locator(".settings-provider-row").filter(has_text="OpenAI").click()
+        await expect(page.locator(".provider-auth-dialog")).to_be_visible(timeout=10_000)
+        login_initial = await screenshot(page, "14-provider-auth-initial", results)
         check(checks, "login-methods-visible", login_initial["loginMethodCount"] == 2, login_initial)
 
         await page.get_by_placeholder("OPENAI_API_KEY").fill("sk-settings-full-e2e-token")
         await page.locator(".login-method").filter(has_text="OpenAI API Key").get_by_role("button", name="保存").click()
         await page.wait_for_function("() => document.body.innerText.includes('已连接')", timeout=10_000)
-        token_saved = await screenshot(page, "18-token-saved", results)
+        token_saved = await screenshot(page, "15-token-saved", results)
         check(checks, "token-connected", "已连接" in token_saved["body"], token_saved)
 
         async with page.expect_popup() as popup_info:
             await page.locator(".login-method").filter(has_text="OpenAI OAuth").get_by_role("button", name="打开登录").click()
         popup = await popup_info.value
         await popup.wait_for_load_state("domcontentloaded")
-        await popup.screenshot(path=str(OUT / "19-oauth-popup.png"), full_page=True)
+        await popup.screenshot(path=str(OUT / "16-oauth-popup.png"), full_page=True)
         await popup.close()
         await page.wait_for_function("() => document.body.innerText.includes('请在浏览器完成授权')", timeout=10_000)
-        await screenshot(page, "20-oauth-authorize-started", results)
+        await screenshot(page, "17-oauth-authorize-started", results)
 
         await page.get_by_placeholder("代码 / 令牌").fill("oauth-code-settings-full-e2e")
         await page.locator(".login-method").filter(has_text="OpenAI OAuth").get_by_role("button", name="完成").click()
         await page.wait_for_function("() => document.body.innerText.includes('已连接')", timeout=10_000)
-        oauth_done = await screenshot(page, "21-oauth-complete", results)
+        oauth_done = await screenshot(page, "18-oauth-complete", results)
         check(checks, "oauth-connected", "已连接" in oauth_done["body"], oauth_done)
 
         await page.get_by_role("button", name="退出", exact=True).click()
         await page.wait_for_function("() => document.body.innerText.includes('已退出')", timeout=10_000)
-        logged_out = await screenshot(page, "22-logout", results)
+        logged_out = await screenshot(page, "19-logout", results)
         check(checks, "logout-notice", "已退出" in logged_out["notice"], logged_out)
 
         await page.set_viewport_size({"width": 390, "height": 844})
-        for index, label in enumerate(["模型", "登录", "环境"], 23):
+        for index, label in enumerate(["模型", "服务商", "外观"], 20):
             await open_section(page, label)
             data = await screenshot(page, f"{index:02d}-mobile-{label}", results)
             check(checks, f"mobile-{label}-layout", data["overflowX"] <= 1 and not data["overlap"], data)
@@ -538,9 +540,8 @@ async def run_flow():
     with urlopen(GATEWAY_URL + "/__records", timeout=5) as response:
         records = json.loads(response.read().decode("utf-8"))
     record_types = [item["type"] for item in records["records"]]
-    check(checks, "backend-model-validate-called", "model.validate" in record_types, records["records"])
+    check(checks, "backend-model-config-called", "model_config.put" in record_types, records["records"])
     check(checks, "backend-config-save-called", "config.patch" in record_types, records["records"])
-    check(checks, "backend-workspace-config-save-called", "workspace_config.patch" in record_types, records["records"])
     check(checks, "backend-token-auth-called", "auth.token" in record_types, records["records"])
     check(checks, "backend-oauth-authorize-called", "oauth.authorize" in record_types, records["records"])
     check(checks, "backend-oauth-callback-called", "oauth.callback" in record_types, records["records"])

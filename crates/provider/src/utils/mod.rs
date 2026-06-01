@@ -1,4 +1,25 @@
 use serde_json::{Map, Value};
+mod command_run_arguments;
+mod command_run_stream_events;
+mod json_prefix;
+mod media_content;
+mod text_tool_calls;
+mod xml;
+
+pub use command_run_arguments::normalize_command_run_tool_input;
+pub use command_run_stream_events::emit_command_run_stream_events_from_content;
+pub use json_prefix::json_prefix;
+pub use media_content::{
+    anthropic_blocks_from_canonical, anthropic_tool_result_content_from_canonical,
+    google_parts_from_canonical, openai_chat_content_from_canonical,
+    openai_chat_media_content_from_canonical, openai_responses_content_from_canonical,
+    text_from_content,
+};
+pub use text_tool_calls::{
+    extract_xml_tool_calls, strip_text_tool_calls, strip_xml_tool_calls, text_tool_calls_value,
+};
+pub use xml::{parse_xml_parameter_value, xml_parameters, xml_unescape};
+
 pub fn strip_json_fence(input: &str) -> String {
     let s = input.trim();
     if let Some(rest) = s.strip_prefix("```json") {
@@ -191,7 +212,10 @@ mod tests {
         assert_eq!(tools[0]["name"], "echo");
         assert_eq!(tools[0]["description"], "Echo");
         assert_eq!(tools[0]["input_schema"]["type"], "object");
-        assert_eq!(tools[0]["input_schema"]["properties"]["msg"]["type"], "string");
+        assert_eq!(
+            tools[0]["input_schema"]["properties"]["msg"]["type"],
+            "string"
+        );
     }
 
     #[test]

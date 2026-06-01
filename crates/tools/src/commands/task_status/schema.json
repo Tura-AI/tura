@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "task_summary": {
+      "type": "string",
+      "description": "task title/summary. Set near the start only, unless the user clearly changes the task."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["question", "done"],
+      "description": "question when blocked on user feedback; done when the task is complete and verified."
+    }
+  }
+}

@@ -1,121 +1,59 @@
 import {
+  type PollInterval,
+  type Session,
+  type StartCondition,
+  type TaskManagement,
+} from "@tura/gateway-sdk";
+import CalendarClock from "lucide-solid/icons/calendar-clock";
+import CalendarDays from "lucide-solid/icons/calendar-days";
+import ChartGantt from "lucide-solid/icons/chart-gantt";
+import Check from "lucide-solid/icons/check";
+import ChevronDown from "lucide-solid/icons/chevron-down";
+import Columns3 from "lucide-solid/icons/columns-3";
+import MoreHorizontal from "lucide-solid/icons/ellipsis";
+import FileIcon from "lucide-solid/icons/file";
+import ImageIcon from "lucide-solid/icons/image";
+import LayoutList from "lucide-solid/icons/layout-list";
+import Play from "lucide-solid/icons/play";
+import Plus from "lucide-solid/icons/plus";
+import Repeat2 from "lucide-solid/icons/repeat-2";
+import ScrollText from "lucide-solid/icons/scroll-text";
+import Search from "lucide-solid/icons/search";
+import Timer from "lucide-solid/icons/timer";
+import {
   For,
-  Match,
   Show,
-  Switch,
   createEffect,
   createMemo,
   createSignal,
   onCleanup,
-  onMount,
-  type Accessor,
   type JSX,
-  type Setter,
 } from "solid-js";
 import { Dynamic, Portal } from "solid-js/web";
-import ExternalLink from "lucide-solid/icons/external-link";
-import LayoutList from "lucide-solid/icons/layout-list";
-import ArrowLeft from "lucide-solid/icons/arrow-left";
-import CalendarDays from "lucide-solid/icons/calendar-days";
-import CalendarClock from "lucide-solid/icons/calendar-clock";
-import ChartGantt from "lucide-solid/icons/chart-gantt";
-import Check from "lucide-solid/icons/check";
-import ChevronDown from "lucide-solid/icons/chevron-down";
-import ChevronLeft from "lucide-solid/icons/chevron-left";
-import ChevronRight from "lucide-solid/icons/chevron-right";
-import Columns3 from "lucide-solid/icons/columns-3";
-import Copy from "lucide-solid/icons/copy";
-import Edit3 from "lucide-solid/icons/pencil";
-import FolderOpen from "lucide-solid/icons/folder-open";
-import KeyRound from "lucide-solid/icons/key-round";
-import MoreHorizontal from "lucide-solid/icons/ellipsis";
-import FileIcon from "lucide-solid/icons/file";
-import ImageIcon from "lucide-solid/icons/image";
-import Pin from "lucide-solid/icons/pin";
-import Play from "lucide-solid/icons/play";
-import Plus from "lucide-solid/icons/plus";
-import Repeat2 from "lucide-solid/icons/repeat-2";
-import Search from "lucide-solid/icons/search";
-import Settings from "lucide-solid/icons/settings";
-import ScrollText from "lucide-solid/icons/scroll-text";
-import Timer from "lucide-solid/icons/timer";
-import Trash2 from "lucide-solid/icons/trash-2";
-import {
-  GatewayClient,
-  GatewayError,
-  connectGatewayEvents,
-  defaultGatewayUrl,
-  errorMessage,
-  type Agent,
-  type Command,
-  type FileContentResponse,
-  type FileInfo,
-  type GatewayConfig,
-  type Message,
-  type ProviderAuthMethod,
-  type ProductIssue,
-  type Project,
-  type PollInterval,
-  type SdkProvider,
-  type Session,
-  type StartCondition,
-  type TaskManagement,
-  type PlanStatus,
-} from "@tura/gateway-sdk";
-import {
-  Composer,
-  ConversationView,
-  composerFileToken,
-  composerImageToken,
-} from "../../conversation/conversation-view";
-import { applyGatewayEvent } from "../../state/event-reducer";
-import {
-  activeSession,
-  type ComposerImage,
-  initialAppState,
-  type MainTab,
-  type PlanMode,
-  sessionDirectory,
-  sessionUpdatedAt,
-  sessionTitle,
-  type AppState,
-  type SettingsSection,
-  type ThemeMode,
-} from "../../state/global-store";
-import { classNames, truncate } from "../../state/format";
 import { t, type TextKey } from "../../i18n";
+import { classNames } from "../../state/format";
+import { sessionTitle, type PlanMode } from "../../state/global-store";
 
 import {
-  applyTaskPatchToSession,
   defaultLocalStartAt,
-  defaultPollInterval,
   firstRunnableTask,
   formatPollIntervalEveryCompact,
   formatPollingTaskTiming,
   formatStartCondition,
   formatTaskRemaining,
   formatTicketTime,
-  hasVisibleSessionTasks,
   isTimedStartCondition,
   localDateTimeToUtcIso,
   normalizeIntervalPart,
   normalizePollInterval,
-  planSessionStartCondition,
   planSessionStatus,
   sessionTaskState,
-  sessionTasks,
-  shortSessionId,
   sortedSessionTasks,
   taskDisplayText,
   taskNonceId,
-  taskStartAt,
   taskStartCondition,
-  taskStateLabel,
   taskSummaryText,
-  timedTaskPatch,
-  utcIsoToLocalDateTime,
 } from "../../features/plan/tasks";
-import { inputHeight } from "../../utils/app-format";
 export function PlanModeButtons(props: {
   mode: PlanMode;
   splitOpen: boolean;
@@ -163,7 +101,9 @@ export function PlanTicketMeta(props: { session: Session }) {
   const task = createMemo(() => sessionTaskState(props.session));
   const condition = createMemo(() => taskStartCondition(task()));
   const label = createMemo(() =>
-    condition() === "user_action" ? t("sessionIdle") : formatStartCondition(condition()),
+    condition() === "user_action"
+      ? t("sessionIdle")
+      : formatStartCondition(condition()),
   );
   return (
     <div class="ticket-meta">
@@ -215,9 +155,7 @@ export function PlanComposerTaskList(props: {
       <section class="composer-task-list" aria-label={t("taskManagement")}>
         <For each={queuedTasks()}>
           {(task, index) => {
-            const rowKey = createMemo(
-              () => taskNonceId(task) ?? `queued:${index()}`,
-            );
+            const rowKey = () => taskNonceId(task) ?? `queued:${index()}`;
             return (
               <PlanTaskRow
                 pulseId={rowKey()}
@@ -229,25 +167,25 @@ export function PlanComposerTaskList(props: {
                 }
                 selected={Boolean(
                   props.selected_nonce_id &&
-                    props.selected_nonce_id === taskNonceId(task),
+                  props.selected_nonce_id === taskNonceId(task),
                 )}
                 menuOpen={menuNonce() === rowKey()}
                 onMenu={() =>
                   setMenuNonce(menuNonce() === rowKey() ? undefined : rowKey())
                 }
                 onEdit={() => props.onEdit(task, taskDisplayText(task))}
-              onDelete={() => {
-                setMenuNonce(undefined);
-                props.onDelete(task);
-              }}
-              onRun={() => {
-                setMenuNonce(undefined);
-                props.onRun(task);
-              }}
-              onCreateSession={() => {
-                setMenuNonce(undefined);
-                props.onCreateSession(task);
-              }}
+                onDelete={() => {
+                  setMenuNonce(undefined);
+                  props.onDelete(task);
+                }}
+                onRun={() => {
+                  setMenuNonce(undefined);
+                  props.onRun(task);
+                }}
+                onCreateSession={() => {
+                  setMenuNonce(undefined);
+                  props.onCreateSession(task);
+                }}
               />
             );
           }}
@@ -257,9 +195,7 @@ export function PlanComposerTaskList(props: {
         </Show>
         <For each={timedTasks()}>
           {(task, index) => {
-            const rowKey = createMemo(
-              () => taskNonceId(task) ?? `timed:${index()}`,
-            );
+            const rowKey = () => taskNonceId(task) ?? `timed:${index()}`;
             return (
               <PlanTaskRow
                 pulseId={rowKey()}
@@ -271,7 +207,7 @@ export function PlanComposerTaskList(props: {
                 }
                 selected={Boolean(
                   props.selected_nonce_id &&
-                    props.selected_nonce_id === taskNonceId(task),
+                  props.selected_nonce_id === taskNonceId(task),
                 )}
                 menuOpen={menuNonce() === rowKey()}
                 onMenu={() =>
@@ -310,9 +246,7 @@ export function PlanConversationFeedbackNotice(props: {
       <span aria-hidden="true" />
       <p>
         {props.message ?? "请输入命令或者反馈"}
-        <Show when={props.code}>
-          {(code) => <small>{code()}</small>}
-        </Show>
+        <Show when={props.code}>{(code) => <small>{code()}</small>}</Show>
         <Show when={props.providerId}>
           {(providerId) => (
             <button
@@ -377,10 +311,7 @@ function TaskRowText(props: { text: string }) {
     <>
       <For each={segments()}>
         {(segment) => (
-          <Show
-            when={segment.type !== "text"}
-            fallback={<>{segment.value}</>}
-          >
+          <Show when={segment.type !== "text"} fallback={<>{segment.value}</>}>
             <TaskMediaToken
               type={segment.type as "image" | "file"}
               id={segment.value}
@@ -719,7 +650,9 @@ export function PlanComposerControls(props: {
   const SelectedIcon = createMemo(() => selectedCondition().icon);
   const conditionRemainingText = (condition: StartCondition) =>
     formatTaskRemaining({
-      start_at: localDateTimeToUtcIso(props.startAt || scheduleDefaultStartAt()),
+      start_at: localDateTimeToUtcIso(
+        props.startAt || scheduleDefaultStartAt(),
+      ),
       poll_interval: condition === "polling_task" ? props.pollInterval : {},
     });
   const conditionMetaText = (condition: StartCondition) => {
@@ -897,7 +830,9 @@ export function PlanScheduleDialog(props: {
       { label: "今晚", value: localDateTimeFromDate(atLocalTime(now, 20, 0)) },
       {
         label: "明早",
-        value: localDateTimeFromDate(atLocalTime(addMinutes(now, 24 * 60), 9, 0)),
+        value: localDateTimeFromDate(
+          atLocalTime(addMinutes(now, 24 * 60), 9, 0),
+        ),
       },
     ];
     return items;

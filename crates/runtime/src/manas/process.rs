@@ -1,10 +1,17 @@
 use super::constants::{COMMAND_RUN_TOOL, TASK_STATUS_COMMAND};
 use super::final_response::user_visible_runtime_text;
-use super::gateway_events::{publish_runtime_failure_message, publish_runtime_usage_record};
-use super::prompt_messages::{messages_for_turn, push_task_continuity_message};
+use super::gateway_events::{
+    publish_gateway_agent_message, publish_runtime_failure_message, publish_runtime_usage_record,
+};
+use super::prompt_messages::{
+    messages_for_turn, push_task_continuity_message, push_task_status_nudge,
+};
 use super::runtime_turn::execute_turn;
-use super::tool_catalog::{multiple_tasks_child_depth, multiple_tasks_env_enabled};
+use super::tool_catalog::{
+    command_run_commands_for_agent, multiple_tasks_child_depth, multiple_tasks_env_enabled,
+};
 use super::tool_execution::execute_tool_calls;
+use super::validator_feedback::apply_validator_reliability_feedback;
 use chrono::Utc;
 use std::{
     collections::HashSet,
@@ -14,6 +21,9 @@ use std::{
     time::Duration,
 };
 use tracing::{info, warn};
+use tura_llm_rust::{
+    provider_media_fallback, replace_unsupported_content_type_in_messages, ProviderMediaFallback,
+};
 
 use crate::context::{
     accumulate_tool_result_with_provider_metadata, build_context, compact_session_context,
@@ -39,6 +49,8 @@ use super::tool_arguments::{normalize_tool_arguments, normalize_tool_arguments_f
 use super::tool_catalog::{
     filter_tools_for_turn, remove_tool, require_multiple_tasks_tool_for_multiple_tasks_mode,
 };
+#[cfg(test)]
+use tura_llm_rust::provider_unsupported_content_type;
 
 pub struct ManasInput<'a> {
     pub agents: &'a mut [AgentManagement],
@@ -88,6 +100,16 @@ pub fn process_manas_internal(
     let mut no_tool_retries = 0_u8;
     let mut command_run_turns = 0_u64;
     let mut last_task_done = false;
+    let mut final_answer_turn = false;
+    let supports_task_status = agents
+        .first()
+        .map(command_run_commands_for_agent)
+        .is_some_and(|commands| commands.contains(TASK_STATUS_COMMAND));
+    // Count consecutive command_run turns that neither wrote (apply_patch) nor
+    // settled task state (task_status). After the threshold, inject the
+    // task_status nudge so a model stuck re-running read-only/verification
+    // commands is reminded to mark done or ask a question.
+    let mut no_write_command_run_turns = 0_u64;
     loop {
         turn = turn.saturating_add(1);
         info!(
@@ -102,8 +124,8 @@ pub fn process_manas_internal(
             &messages_for_turn(&current_messages, session, &original_user_task),
             redis_url,
             turn == 1,
-            false,
-            false,
+            final_answer_turn,
+            final_answer_turn,
         ) {
             Ok(result) => result,
             Err(error) => {
@@ -141,7 +163,28 @@ pub fn process_manas_internal(
             let error_text = runtime_failure_text(&runtime)
                 .unwrap_or_else(|| "Provider runtime failed before producing output.".to_string());
             if let Some(wait_duration) = provider_timeout_retry_wait(provider_timeout_retries) {
-                let removed_media = provider_unsupported_content_type(&error_text)
+                if let Some(ProviderMediaFallback::UnsupportedRequiredContent { content_type }) =
+                    provider_media_fallback(&error_text)
+                {
+                    warn!(
+                        session_id = %session.session_id,
+                        turn = turn,
+                        runtime_id = %runtime.runtime_id,
+                        content_type = content_type,
+                        error = %error_text,
+                        "provider rejected required media content; not retrying without media"
+                    );
+                    publish_runtime_failure_message(
+                        session,
+                        &runtime.runtime_id,
+                        &format!(
+                            "Provider/model does not support `{content_type}` media input for this request. Use an image-capable model or a route whose model metadata includes that input modality. Original provider error: {error_text}"
+                        ),
+                    );
+                    break;
+                }
+                let removed_media = provider_media_fallback(&error_text)
+                    .and_then(ProviderMediaFallback::retry_content_type)
                     .map(|content_type| {
                         let removed = replace_unsupported_content_type_in_messages(
                             &mut current_messages,
@@ -213,6 +256,24 @@ pub fn process_manas_internal(
         }
 
         if !tool_calls.is_empty() {
+            if let Some(content) = user_visible_runtime_text(&runtime.text)
+                .map(|text| text.trim().to_string())
+                .filter(|text| !text.is_empty())
+            {
+                if let Err(error) = publish_gateway_agent_message(
+                    &session.session_id,
+                    &runtime.runtime_id,
+                    content,
+                    String::new(),
+                ) {
+                    warn!(
+                        session_id = %session.session_id,
+                        runtime_id = %runtime.runtime_id,
+                        error = %error,
+                        "failed to publish assistant text before tool execution"
+                    );
+                }
+            }
             provider_timeout_retries = 0;
             no_tool_retries = 0;
             if tool_calls
@@ -221,11 +282,22 @@ pub fn process_manas_internal(
             {
                 command_run_turns = command_run_turns.saturating_add(1);
             }
-            let mut tool_results = execute_tool_calls(&tool_calls, session, &runtime, redis_url)?;
+            let mut tool_results =
+                execute_tool_calls(&tool_calls, agents.first(), session, &runtime, redis_url)?;
             apply_compact_context_results(session, &mut tool_results)?;
             last_task_done = tool_results
                 .iter()
-                .any(|result| command_run_result_contains_task_status_done(&result.result));
+                .any(|result| command_run_result_contains_terminal_task_status(&result.result));
+
+            // Track consecutive command_run turns with no write/state command.
+            if command_run_turn_has_write_or_status(&tool_calls) || last_task_done {
+                no_write_command_run_turns = 0;
+            } else if tool_calls
+                .iter()
+                .any(|tool_call| tool_call.tool_name == COMMAND_RUN_TOOL)
+            {
+                no_write_command_run_turns = no_write_command_run_turns.saturating_add(1);
+            }
 
             for (index, tool_result) in tool_results.iter().enumerate() {
                 if command_run_results_empty(&tool_result.result) {
@@ -249,9 +321,25 @@ pub fn process_manas_internal(
                 info!(
                     session_id = %session.session_id,
                     turn = turn,
-                    "task_status done returned from command_run; ending session"
+                    "task_status done returned from command_run; requesting final assistant reply"
                 );
-                break;
+                let context_output = build_context(ContextInput {
+                    session: session.clone(),
+                    runtime: runtime.clone(),
+                    additional_messages: Vec::new(),
+                })?;
+
+                current_messages = messages_with_initial_context_prefix(
+                    &initial_messages,
+                    context_output.messages,
+                    &original_user_task,
+                );
+                current_messages.push(serde_json::json!({
+                    "role": "system",
+                    "content": "The latest command_run task_status is done. Do not call tools now. Reply to the user naturally with the final user-facing answer in the user's language. Do not summarize internal tool plumbing unless it is directly relevant."
+                }));
+                final_answer_turn = true;
+                continue;
             }
 
             if multiple_tasks_env_enabled() && planned_tasks_all_completed(session) {
@@ -282,6 +370,20 @@ pub fn process_manas_internal(
                     "content": "All planned tasks are marked delivered. Provide the final user-facing answer now."
                 }));
             }
+
+            // The model keeps running command_run without writing or settling
+            // task state; remind it to mark done or ask a question.
+            if supports_task_status
+                && no_write_command_run_turns >= NO_WRITE_COMMAND_RUN_NUDGE_THRESHOLD
+            {
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    no_write_turns = no_write_command_run_turns,
+                    "injecting task_status nudge after consecutive no-write command_run turns"
+                );
+                push_task_status_nudge(&mut current_messages);
+            }
         } else {
             let context_output = build_context(ContextInput {
                 session: session.clone(),
@@ -294,7 +396,9 @@ pub fn process_manas_internal(
                 context_output.messages,
                 &original_user_task,
             );
-            push_task_continuity_message(&mut current_messages, session, &original_user_task);
+            if supports_task_status {
+                push_task_continuity_message(&mut current_messages, session, &original_user_task);
+            }
             if multiple_tasks_child_depth() > 0 {
                 info!(
                     session_id = %session.session_id,
@@ -307,11 +411,25 @@ pub fn process_manas_internal(
             let final_text = user_visible_runtime_text(&runtime.text)
                 .map(|text| text.trim().to_string())
                 .filter(|text| !text.is_empty());
+            if final_answer_turn {
+                if let Some(text) = final_text.as_deref() {
+                    publish_final_agent_text(session, &runtime, text);
+                }
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    "final assistant reply turn completed"
+                );
+                break;
+            }
             if !multiple_tasks_env_enabled()
                 && final_text
                     .as_deref()
                     .is_some_and(text_looks_like_final_answer)
             {
+                if let Some(text) = final_text.as_deref() {
+                    publish_final_agent_text(session, &runtime, text);
+                }
                 info!(
                     session_id = %session.session_id,
                     turn = turn,
@@ -328,6 +446,9 @@ pub fn process_manas_internal(
                     .as_deref()
                     .is_some_and(text_looks_like_final_answer)
             {
+                if let Some(text) = final_text.as_deref() {
+                    publish_final_agent_text(session, &runtime, text);
+                }
                 info!(
                     session_id = %session.session_id,
                     turn = turn,
@@ -345,7 +466,9 @@ pub fn process_manas_internal(
                     && command_run_turns > 0
                     && planned_tasks_incomplete(session)
                     && !last_task_done;
-                let completion_guard = if multiple_tasks_delivery_missing {
+                let completion_guard = if !supports_task_status {
+                    "If the task is complete and verified, provide the final user-facing answer now. If user feedback or more information is needed, ask a concise question. If work remains, continue the original task with command_run to inspect, edit, test, or write required files."
+                } else if multiple_tasks_delivery_missing {
                     "The active planned task is not marked done. If it is complete and verified, call command_run with task_status status done now. If user input is needed, use task_status status question. Do not call command_run only to rerun verification or status. Use command_run for workspace work that remains."
                 } else if planned_tasks_incomplete(session) {
                     "The planned task list is not complete. Continue the active planned task with command_run."
@@ -403,27 +526,71 @@ pub fn process_manas_internal(
     })
 }
 
-fn command_run_result_contains_task_status_done(result: &serde_json::Value) -> bool {
+/// Inject the task_status nudge once this many consecutive command_run turns
+/// have produced no write (`apply_patch`) and no task state change
+/// (`task_status`).
+const NO_WRITE_COMMAND_RUN_NUDGE_THRESHOLD: u64 = 3;
+
+/// True if any command_run tool call in this turn includes a write command
+/// (`apply_patch`) or a task-state command (`task_status`).
+fn command_run_turn_has_write_or_status(
+    tool_calls: &[crate::runtime::types::ToolCallData],
+) -> bool {
+    tool_calls.iter().any(|tool_call| {
+        if tool_call.tool_name != COMMAND_RUN_TOOL {
+            return false;
+        }
+        tool_call
+            .arguments
+            .get("commands")
+            .and_then(|commands| commands.as_array())
+            .is_some_and(|commands| {
+                commands.iter().any(|command| {
+                    let command_type = command
+                        .get("command_type")
+                        .or_else(|| command.get("command"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .trim()
+                        .to_ascii_lowercase()
+                        .replace('-', "_");
+                    matches!(command_type.as_str(), "apply_patch" | "task_status")
+                })
+            })
+    })
+}
+
+fn command_run_result_contains_terminal_task_status(result: &serde_json::Value) -> bool {
+    let result = result.get("streamed_command_run_result").unwrap_or(result);
     result
         .get("results")
         .and_then(|value| value.as_array())
-        .map(|items| {
-            items.iter().any(|item| {
-                item.get("success").and_then(serde_json::Value::as_bool) == Some(true)
-                    && item
-                        .get("command_type")
-                        .or_else(|| item.get("command"))
-                        .and_then(serde_json::Value::as_str)
-                        == Some(TASK_STATUS_COMMAND)
-                    && item
-                        .get("output")
-                        .and_then(|output| output.get("task_status"))
-                        .and_then(|status| status.get("status"))
-                        .and_then(serde_json::Value::as_str)
-                        == Some("done")
-            })
-        })
+        .map(|items| items.iter().any(command_run_item_is_terminal_task_status))
         .unwrap_or(false)
+}
+
+fn command_run_item_is_terminal_task_status(item: &serde_json::Value) -> bool {
+    let command_type = item
+        .get("command_type")
+        .or_else(|| item.get("command"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .replace('-', "_");
+    if command_type != TASK_STATUS_COMMAND {
+        return false;
+    }
+    if item.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
+        return false;
+    }
+    matches!(
+        item.get("output")
+            .and_then(|output| output.get("task_status"))
+            .and_then(|status| status.get("status"))
+            .and_then(serde_json::Value::as_str),
+        Some("done" | "question")
+    )
 }
 
 fn should_end_after_task_status_done(session: &SessionManagement, last_task_done: bool) -> bool {
@@ -604,6 +771,26 @@ fn text_looks_like_final_answer(text: &str) -> bool {
     !continuation_markers
         .iter()
         .any(|marker| normalized.contains(marker))
+}
+
+fn publish_final_agent_text(
+    session: &SessionManagement,
+    runtime: &RuntimeManagement,
+    final_text: &str,
+) {
+    if let Err(error) = publish_gateway_agent_message(
+        &session.session_id,
+        &runtime.runtime_id,
+        final_text.to_string(),
+        String::new(),
+    ) {
+        warn!(
+            session_id = %session.session_id,
+            runtime_id = %runtime.runtime_id,
+            error = %error,
+            "failed to publish final assistant text to gateway"
+        );
+    }
 }
 
 fn persist_session_checkpoint(session: &SessionManagement, stage: &str) {
@@ -792,204 +979,6 @@ fn runtime_failure_text(runtime: &RuntimeManagement) -> Option<String> {
         })
 }
 
-fn provider_unsupported_content_type(error_text: &str) -> Option<&'static str> {
-    let normalized = error_text.to_ascii_lowercase();
-    if normalized.contains("invalid file data") || normalized.contains("unsupported mime type") {
-        return Some("input_file");
-    }
-    for content_type in ["input_file", "input_image", "input_audio"] {
-        let quoted = format!("'{content_type}'");
-        let double_quoted = format!("\"{content_type}\"");
-        if normalized.contains("invalid value")
-            && (normalized.contains(&quoted) || normalized.contains(&double_quoted))
-        {
-            return Some(content_type);
-        }
-    }
-    None
-}
-
-fn replace_unsupported_content_type_in_messages(
-    messages: &mut [serde_json::Value],
-    content_type: &'static str,
-) -> usize {
-    messages
-        .iter_mut()
-        .map(|message| replace_unsupported_content_type(message, content_type))
-        .sum()
-}
-
-fn replace_unsupported_content_type(
-    value: &mut serde_json::Value,
-    content_type: &'static str,
-) -> usize {
-    match value {
-        serde_json::Value::Object(object) => {
-            if object.get("type").and_then(serde_json::Value::as_str) == Some(content_type) {
-                *value = serde_json::json!({
-                    "type": "input_text",
-                    "text": format!(
-                        "[Unsupported media omitted: provider rejected `{content_type}` content.]"
-                    )
-                });
-                return 1;
-            }
-            object
-                .values_mut()
-                .map(|child| replace_unsupported_content_type(child, content_type))
-                .sum()
-        }
-        serde_json::Value::Array(items) => items
-            .iter_mut()
-            .map(|child| replace_unsupported_content_type(child, content_type))
-            .sum(),
-        _ => 0,
-    }
-}
-
-fn apply_validator_reliability_feedback(runtime: &RuntimeManagement) {
-    for record in &runtime.tool_call {
-        let Some(success) = record.validator_reported_success else {
-            continue;
-        };
-        if record.tool_called_name != COMMAND_RUN_TOOL {
-            continue;
-        }
-        let Some(commands) = record
-            .tool_called_input
-            .get("commands")
-            .and_then(|value| value.as_array())
-        else {
-            continue;
-        };
-        for command in commands {
-            let Some(label) = command.get("command").and_then(|value| value.as_str()) else {
-                continue;
-            };
-            if !label.trim_start().starts_with("py:") {
-                continue;
-            }
-            let tool_name = registry_tool_name_for_command_label(label);
-            let note = if success {
-                None
-            } else {
-                Some(format!(
-                    "validator reported failure for runtime {} command {}",
-                    runtime.runtime_id, label
-                ))
-            };
-            let _ = call_alaya_registry_reliability(
-                "command-run-auto",
-                &tool_name,
-                success,
-                note.as_deref(),
-            );
-        }
-    }
-}
-
-fn call_alaya_registry_reliability(
-    service_id: &str,
-    tool_name: &str,
-    success: bool,
-    note: Option<&str>,
-) -> Result<(), String> {
-    let root = project_root_for_alaya().ok_or_else(|| "project root not found".to_string())?;
-    let exe = alaya_executable_for_feedback(&root)
-        .ok_or_else(|| "alaya executable not found".to_string())?;
-    let mut command = std::process::Command::new(exe);
-    command
-        .args([
-            "registry",
-            "update-reliability",
-            "--service-id",
-            service_id,
-            "--tool-name",
-            tool_name,
-            "--success",
-            if success { "true" } else { "false" },
-        ])
-        .env("TURA_PROJECT_ROOT", &root);
-    if let Some(note) = note {
-        command.args(["--note", note]);
-    }
-    let status = command.status().map_err(|err| err.to_string())?;
-    status
-        .success()
-        .then_some(())
-        .ok_or_else(|| "alaya update-reliability failed".to_string())
-}
-
-fn registry_tool_name_for_command_label(command: &str) -> String {
-    let mut out = command
-        .trim()
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    while out.contains("__") {
-        out = out.replace("__", "_");
-    }
-    let out = out.trim_matches('_').to_string();
-    if out.is_empty() {
-        "command_run_tool".to_string()
-    } else {
-        out
-    }
-}
-
-fn alaya_executable_for_feedback(root: &std::path::Path) -> Option<std::path::PathBuf> {
-    let exe_name = if cfg!(windows) {
-        "alaya_memory_server.exe"
-    } else {
-        "alaya_memory_server"
-    };
-    [
-        root.join("target")
-            .join("alaya-service-target")
-            .join("debug")
-            .join(exe_name),
-        root.join("target").join("debug").join(exe_name),
-    ]
-    .into_iter()
-    .find(|path| path.exists())
-}
-
-fn project_root_for_alaya() -> Option<std::path::PathBuf> {
-    if let Ok(root) = std::env::var("TURA_PROJECT_ROOT") {
-        let path = std::path::PathBuf::from(root);
-        if path
-            .join("services")
-            .join("alaya")
-            .join("Cargo.toml")
-            .exists()
-        {
-            return Some(path);
-        }
-    }
-    for start in [std::env::current_dir().ok(), std::env::current_exe().ok()]
-        .into_iter()
-        .flatten()
-    {
-        for candidate in start.ancestors() {
-            if candidate
-                .join("services")
-                .join("alaya")
-                .join("Cargo.toml")
-                .exists()
-            {
-                return Some(candidate.to_path_buf());
-            }
-        }
-    }
-    None
-}
-
 fn create_dummy_runtime(runtime_id: RuntimeId, session: &SessionManagement) -> RuntimeManagement {
     let now = Utc::now();
     let provider_name = crate::agent_router::coding_agent_provider_name();
@@ -997,7 +986,7 @@ fn create_dummy_runtime(runtime_id: RuntimeId, session: &SessionManagement) -> R
     let runtime_provider_config = crate::state_machine::runtime_management::RuntimeProviderConfig {
         base: crate::state_machine::agent_management::ProviderConfig {
             tura_llm_name: provider_name.clone(),
-            stream: false,
+            stream: true,
             temperature: 0.5,
             max_tokens: 0,
             tool_choice: crate::state_machine::agent_management::ToolChoice::Auto,
@@ -1026,13 +1015,15 @@ fn create_dummy_runtime(runtime_id: RuntimeId, session: &SessionManagement) -> R
 #[cfg(test)]
 mod tests {
     use super::{
-        filter_tools_for_turn, load_agent_prompt_messages, messages_with_initial_context_prefix,
-        normalize_tool_arguments, normalize_tool_arguments_for_tool, provider_timeout_retry_wait,
+        command_run_turn_has_write_or_status, filter_tools_for_turn, load_agent_prompt_messages,
+        messages_with_initial_context_prefix, normalize_tool_arguments,
+        normalize_tool_arguments_for_tool, provider_timeout_retry_wait,
         provider_unsupported_content_type, remove_tool,
         replace_unsupported_content_type_in_messages,
         require_multiple_tasks_tool_for_multiple_tasks_mode, runtime_failure_allows_retry,
         runtime_failure_text, user_visible_runtime_text, COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL,
     };
+    use crate::runtime::types::ToolCallData;
     use crate::state_machine::agent_management::{
         AgentCapabilityItem, AgentManagement, AgentPromptItem, ProviderConfig, ToolChoice,
         ValidatorConfig,
@@ -1043,6 +1034,62 @@ mod tests {
     use chrono::Utc;
     use serde_json::json;
     use std::collections::HashSet;
+
+    fn command_run_call(command_types: &[&str]) -> ToolCallData {
+        ToolCallData {
+            tool_name: COMMAND_RUN_TOOL.to_string(),
+            arguments: json!({
+                "commands": command_types
+                    .iter()
+                    .map(|ct| json!({ "command_type": ct, "command_line": "x" }))
+                    .collect::<Vec<_>>()
+            }),
+            provider_metadata: None,
+        }
+    }
+
+    #[test]
+    fn no_write_detection_drives_task_status_nudge_counter() {
+        // Read-only / verification-only command_run turns are "no write".
+        assert!(!command_run_turn_has_write_or_status(&[command_run_call(
+            &["shell_command"]
+        )]));
+        assert!(!command_run_turn_has_write_or_status(&[command_run_call(
+            &["shell_command", "read_media"]
+        )]));
+        // A write (apply_patch) or a task state command (task_status) counts.
+        assert!(command_run_turn_has_write_or_status(&[command_run_call(
+            &["shell_command", "apply_patch"]
+        )]));
+        assert!(command_run_turn_has_write_or_status(&[command_run_call(
+            &["task_status"]
+        )]));
+        // Alias spelling normalizes too.
+        assert!(command_run_turn_has_write_or_status(&[command_run_call(
+            &["apply-patch"]
+        )]));
+    }
+
+    #[test]
+    fn task_status_done_detection_accepts_streamed_command_run_results() {
+        let result = json!({
+            "streamed_command_run_result": {
+                "results": [{
+                    "command_type": "task_status",
+                    "output": {
+                        "task_status": {
+                            "status": "done",
+                            "task_summary": "finished"
+                        }
+                    }
+                }]
+            }
+        });
+
+        assert!(super::command_run_result_contains_terminal_task_status(
+            &result
+        ));
+    }
 
     #[test]
     fn provider_timeout_retry_waits_use_three_step_backoff() {
@@ -1503,6 +1550,7 @@ mod tests {
             root.clone(),
             None,
             true,
+            false,
             provider,
             validator,
             now,

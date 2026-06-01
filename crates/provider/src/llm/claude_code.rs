@@ -25,7 +25,11 @@ use crate::tura_llm::{
     CallMetrics, CallOptions, ProviderResponse, ProviderStreamEvent, ProviderStreamEventSink,
     TuraError,
 };
-use crate::utils::{strip_json_fence, to_anthropic_tools};
+use crate::utils::{
+    anthropic_blocks_from_canonical, anthropic_tool_result_content_from_canonical,
+    emit_command_run_stream_events_from_content, extract_xml_tool_calls,
+    normalize_command_run_tool_input, strip_json_fence, strip_xml_tool_calls, to_anthropic_tools,
+};
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const OAUTH_BETA: &str = "oauth-2025-04-20";
@@ -101,6 +105,7 @@ pub async fn call_with_stream_events(
     })?;
 
     let content = normalize_response_content(&data);
+    emit_command_run_stream_events_from_content(&content, stream_events.as_ref());
     let mut metrics = extract_metrics(&data);
     metrics.provider_request_id = req_id;
 
@@ -133,10 +138,7 @@ fn build_payload(model: &str, messages: &[Value], options: &CallOptions, oauth: 
         // breakpoint (`cache_control: ephemeral`). Replicate that shape so big
         // prompts are accepted. Verified by ablation: the cache breakpoint is
         // the single decisive factor (betas/stream/temperature are irrelevant).
-        payload.insert(
-            "system".to_string(),
-            Value::Array(system_blocks(&system)),
-        );
+        payload.insert("system".to_string(), Value::Array(system_blocks(&system)));
     }
     payload.insert("messages".to_string(), Value::Array(converted));
     payload.insert("stream".to_string(), Value::Bool(false));
@@ -266,8 +268,11 @@ fn convert_messages(messages: &[Value], oauth: bool) -> (String, Vec<Value>) {
                 }
             }
             _ => {
-                let text = message_text(message.get("content")).unwrap_or_default();
-                push("user", json!({ "type": "text", "text": text }));
+                let blocks = anthropic_blocks_from_canonical(message.get("content"))
+                    .unwrap_or_else(|| vec![json!({ "type": "text", "text": "" })]);
+                for block in blocks {
+                    push("user", block);
+                }
             }
         }
     }
@@ -307,9 +312,9 @@ fn responses_tool_result_block(message: &Value) -> Value {
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("call_command_run");
-    let output = message_text(message.get("output"))
-        .or_else(|| message_text(message.get("content")))
-        .unwrap_or_default();
+    let output = anthropic_tool_result_content_from_canonical(
+        message.get("output").or_else(|| message.get("content")),
+    );
     json!({ "type": "tool_result", "tool_use_id": id, "content": output })
 }
 
@@ -319,7 +324,7 @@ fn chat_tool_result_block(message: &Value) -> Value {
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("call_command_run");
-    let output = message_text(message.get("content")).unwrap_or_default();
+    let output = anthropic_tool_result_content_from_canonical(message.get("content"));
     json!({ "type": "tool_result", "tool_use_id": id, "content": output })
 }
 
@@ -348,10 +353,8 @@ fn chat_tool_use_blocks(message: &Value) -> Vec<Value> {
 /// `input` must be an object.
 fn parse_arguments(value: Option<&Value>) -> Value {
     match value {
-        Some(Value::String(text)) => {
-            serde_json::from_str(text).unwrap_or_else(|_| json!({}))
-        }
-        Some(Value::Object(_)) => value.cloned().unwrap(),
+        Some(Value::String(text)) => serde_json::from_str(text).unwrap_or_else(|_| json!({})),
+        Some(obj @ Value::Object(_)) => obj.clone(),
         _ => json!({}),
     }
 }
@@ -375,7 +378,11 @@ fn convert_tool_choice(choice: Option<&Value>) -> Option<Value> {
 }
 
 fn thinking_budget(options: &CallOptions, max_tokens: u64) -> Option<u64> {
-    let effort = options.reasoning_effort.as_deref()?.trim().to_ascii_lowercase();
+    let effort = options
+        .reasoning_effort
+        .as_deref()?
+        .trim()
+        .to_ascii_lowercase();
     if effort.is_empty() || effort == "default" || effort == "none" || effort == "minimal" {
         return None;
     }
@@ -412,6 +419,7 @@ fn normalize_response_content(data: &Value) -> Value {
                 Some("text") => {
                     if let Some(value) = block.get("text").and_then(Value::as_str) {
                         text.push_str(value);
+                        tool_calls.extend(extract_xml_tool_calls(value));
                     }
                 }
                 Some("tool_use") => {
@@ -425,7 +433,10 @@ fn normalize_response_content(data: &Value) -> Value {
                         .and_then(Value::as_str)
                         .unwrap_or("")
                         .to_string();
-                    let input = block.get("input").cloned().unwrap_or_else(|| json!({}));
+                    let input = normalize_command_run_tool_input(
+                        &name,
+                        block.get("input").cloned().unwrap_or_else(|| json!({})),
+                    );
                     tool_calls.push(json!({
                         "id": id,
                         "type": "function",
@@ -437,7 +448,7 @@ fn normalize_response_content(data: &Value) -> Value {
         }
     }
 
-    let stripped = strip_json_fence(&text);
+    let stripped = strip_xml_tool_calls(&strip_json_fence(&text));
     if !tool_calls.is_empty() && !stripped.trim().is_empty() {
         json!({ "content": stripped, "tool_calls": tool_calls })
     } else if !tool_calls.is_empty() {
@@ -628,6 +639,28 @@ mod tests {
     }
 
     #[test]
+    fn responses_function_output_media_converts_to_anthropic_image_block() {
+        let messages = vec![json!({
+            "type": "function_call_output",
+            "call_id": "c_media",
+            "output": [
+                { "type": "input_text", "text": "read_media returned image" },
+                { "type": "input_image", "image_url": "data:image/jpeg;base64,AAA" }
+            ]
+        })];
+
+        let payload = build_payload("claude-opus-4-8", &messages, &CallOptions::default(), true);
+        let content = &payload["messages"][0]["content"][0]["content"];
+
+        assert_eq!(payload["messages"][0]["role"], "user");
+        assert_eq!(payload["messages"][0]["content"][0]["type"], "tool_result");
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content[1]["source"]["media_type"], "image/jpeg");
+        assert_eq!(content[1]["source"]["data"], "AAA");
+    }
+
+    #[test]
     fn adjacent_same_role_messages_merge() {
         let messages = vec![
             json!({ "role": "user", "content": "one" }),
@@ -635,7 +668,10 @@ mod tests {
         ];
         let payload = build_payload("claude-opus-4-8", &messages, &CallOptions::default(), true);
         assert_eq!(payload["messages"].as_array().unwrap().len(), 1);
-        assert_eq!(payload["messages"][0]["content"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            payload["messages"][0]["content"].as_array().unwrap().len(),
+            2
+        );
     }
 
     #[test]
@@ -707,7 +743,10 @@ mod tests {
         assert_eq!(content["tool_calls"][0]["id"], "tu_1");
         assert_eq!(content["tool_calls"][0]["type"], "function");
         assert_eq!(content["tool_calls"][0]["function"]["name"], "grep");
-        assert_eq!(content["tool_calls"][0]["function"]["arguments"]["pattern"], "x");
+        assert_eq!(
+            content["tool_calls"][0]["function"]["arguments"]["pattern"],
+            "x"
+        );
         assert_eq!(extract_metrics(&data).tool_call_count, 1);
     }
 

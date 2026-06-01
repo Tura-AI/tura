@@ -1,28 +1,45 @@
 import {
+  type Agent,
+  type AgentAvatarConfig,
+  type AgentConfig,
+  type AgentUpsertRequest,
+  type PersonaMediaConfig,
+  type SdkProvider,
+  type StoredAgent,
+  type StoredPersona,
+  type TuraConfigModelPair,
+  type TuraConfigResponse,
+} from "@tura/gateway-sdk";
+import ArrowLeft from "lucide-solid/icons/arrow-left";
+import FolderSearch from "lucide-solid/icons/folder-search";
+import LayoutList from "lucide-solid/icons/layout-list";
+import MessageSquare from "lucide-solid/icons/message-square";
+import Search from "lucide-solid/icons/search";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
   For,
   Match,
   Show,
   Switch,
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-  onMount,
   type JSX,
 } from "solid-js";
-import { Portal } from "solid-js/web";
-import LayoutList from "lucide-solid/icons/layout-list";
-import ArrowLeft from "lucide-solid/icons/arrow-left";
-import Check from "lucide-solid/icons/check";
-import ChevronDown from "lucide-solid/icons/chevron-down";
-import FolderSearch from "lucide-solid/icons/folder-search";
-import MessageSquare from "lucide-solid/icons/message-square";
-import Search from "lucide-solid/icons/search";
+import { activeLanguage, t, type TextKey } from "../../i18n";
+import { AgentIcon } from "../../components/agent-icon";
 import {
-  type SdkProvider,
-  type TuraConfigModelPair,
-  type TuraConfigResponse,
-} from "@tura/gateway-sdk";
+  AgentAvatarCanvas,
+  AVATAR_WORKSPACE_CONFIG_KEY,
+  AVATAR_SETTING_LIMITS,
+  DEFAULT_AVATAR_SETTINGS,
+  agentAvatarMedia,
+  avatarSettingsFromConfigValue,
+  normalizeAvatarSettings,
+  type AvatarDisplayMode,
+  type AvatarRenderSettings,
+} from "../../components/avatar/agent-avatar-canvas";
+import { DEFAULT_CODE_FONT } from "../../config/defaults";
+import { classNames } from "../../state/format";
 import {
   systemThemeMode,
   type AppState,
@@ -30,17 +47,20 @@ import {
   type SettingsSection,
   type ThemeMode,
 } from "../../state/global-store";
-import { classNames } from "../../state/format";
-import { activeLanguage, t, type TextKey } from "../../i18n";
 
-import { ProviderConfigGroup } from "./provider-settings";
 import { providerConfigured } from "../../utils/settings";
-import { settingsRoutes, settingsRouteTitle } from "./settings-router";
+import {
+  agentDisplayName,
+  visibleConfigurableAgents,
+} from "../../utils/agent-display";
+import {
+  AppearanceSelect,
+  CONFIGURE_PROVIDER_OPTION,
+  type AppearanceOption,
+} from "./appearance-select";
 import { providerDomains } from "./provider-domain";
-const DEFAULT_MAIN_FONT =
-  'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-const DEFAULT_CODE_FONT =
-  'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
+import { ProviderConfigGroup } from "./provider-settings";
+import { settingsRoutes, settingsRouteTitle } from "./settings-router";
 const THEME_OPTIONS: Array<{ id: ThemeMode; label: string }> = [
   { id: "light", label: t("light") },
   { id: "dark", label: t("dark") },
@@ -57,6 +77,9 @@ const PROVIDER_DOMAIN_LABELS: Record<string, TextKey> = {
   productivity: "domainProductivity",
   search: "domainSearch",
 };
+const AGENT_MODEL_TIERS = ["thinking", "flagship_thinking"] as const;
+const AGENT_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
+const MODEL_SETTINGS_TIERS = ["flagship_thinking", "thinking"];
 
 type FontLocale =
   | "en"
@@ -69,21 +92,6 @@ type FontLocale =
   | "bn"
   | "ru"
   | "ja";
-type AppearanceOption = {
-  id: string;
-  label: string;
-  value: string;
-  preview: string;
-  size?: number;
-};
-
-type AppearanceSelectFooter = {
-  label: string;
-  onSelect: () => void;
-};
-
-const CONFIGURE_PROVIDER_OPTION = "__configure_provider__";
-
 const FONT_LOCALE_ORDER: FontLocale[] = [
   "zhHans",
   "zhHant",
@@ -386,6 +394,7 @@ function modelTierLabel(tier: string): string {
 
 export function MainTabs(props: {
   active: Exclude<MainTab, "settings">;
+  conversationLabel?: string;
   onChange: (tab: Exclude<MainTab, "settings">) => void;
 }) {
   const tabs: Array<{
@@ -395,7 +404,7 @@ export function MainTabs(props: {
   }> = [
     {
       id: "conversation",
-      label: t("session"),
+      label: props.conversationLabel ?? t("session"),
       icon: <MessageSquare size={15} />,
     },
     { id: "plan", label: t("plan"), icon: <LayoutList size={15} /> },
@@ -411,6 +420,11 @@ export function MainTabs(props: {
           >
             <Show when={item.icon}>{(icon) => icon()}</Show>
             <span>{item.label}</span>
+            <Show when={item.id === "conversation"}>
+              <span class="main-tab-hidden-alias">
+                {t("sessionHistory")} {t("newSession")}
+              </span>
+            </Show>
           </button>
         )}
       </For>
@@ -423,6 +437,17 @@ export function SettingsRail(props: {
   onBack: () => void;
   onSection: (section: SettingsSection) => void;
 }) {
+  function selectSection(
+    event: MouseEvent & { currentTarget: HTMLButtonElement },
+  ) {
+    const section = event.currentTarget.dataset.section as
+      | SettingsSection
+      | undefined;
+    if (section) {
+      props.onSection(section);
+    }
+  }
+
   return (
     <nav class="settings-rail">
       <button class="settings-back" type="button" onClick={props.onBack}>
@@ -435,8 +460,10 @@ export function SettingsRail(props: {
           {(item) => (
             <button
               class={classNames(props.active === item.id && "selected")}
+              data-section={item.id}
+              aria-current={props.active === item.id ? "page" : undefined}
               type="button"
-              onClick={() => props.onSection(item.id)}
+              onClick={selectSection}
             >
               {item.label}
             </button>
@@ -460,16 +487,18 @@ export function SettingsView(props: {
   onCodeFontSize: (size: number) => void;
   onProviderSearch: (value: string) => void;
   onOpenProviderAuth: (providerId: string) => void;
+  onRefreshAgents: () => Promise<void>;
+  onGetAgent: (agentId: string) => Promise<StoredAgent | undefined>;
+  onSaveAgent: (
+    agentId: string | undefined,
+    payload: AgentUpsertRequest,
+  ) => Promise<void>;
+  onDeleteAgent: (agentId: string) => Promise<void>;
+  onSavePersonalization: (avatar: AvatarRenderSettings) => void;
 }) {
   const providers = createMemo(() => props.state.providers?.all ?? []);
   const [providerDomainFilter, setProviderDomainFilter] = createSignal(
     DEFAULT_PROVIDER_DOMAIN,
-  );
-  const selectedProvider = createMemo(
-    () =>
-      providers().find(
-        (provider) => provider.id === props.state.selectedProviderId,
-      ) ?? providers()[0],
   );
   const title = createMemo(() => settingsRouteTitle(props.section));
   const providerDomainOptions = createMemo(() => {
@@ -674,10 +703,16 @@ export function SettingsView(props: {
                   fallback={<div class="surface-list-empty">{t("empty")}</div>}
                 >
                   <div class="settings-fields">
-                    <For each={props.state.modelConfig?.tiers ?? []}>
+                    <For
+                      each={(props.state.modelConfig?.tiers ?? []).filter(
+                        (tier) => MODEL_SETTINGS_TIERS.includes(tier.tier),
+                      )}
+                    >
                       {(tier) => (
                         <div class="field-row">
-                          <span>{modelTierLabel(tier.tier)}</span>
+                          <span class="model-tier-label">
+                            <span>{modelTierLabel(tier.tier)}</span>
+                          </span>
                           <Show
                             when={modelTierOptions(tier).length > 0}
                             fallback={
@@ -721,15 +756,722 @@ export function SettingsView(props: {
                 </Show>
               </section>
             </Match>
-          </Switch>
 
-          <Show when={props.state.settingsNotice}>
-            <div class="settings-note">{props.state.settingsNotice}</div>
-          </Show>
+            <Match when={props.section === "agents"}>
+              <AgentSettingsPanel
+                agents={props.state.agents}
+                saving={props.state.settingsSaving}
+                modelConfig={props.state.modelConfig}
+                onRefresh={props.onRefreshAgents}
+                onGetAgent={props.onGetAgent}
+                onSaveAgent={props.onSaveAgent}
+              />
+            </Match>
+            <Match when={props.section === "personalization"}>
+              <PersonalizationSettingsPanel
+                personas={props.state.personas}
+                savedAvatar={personalizationAvatarFromState(props.state)}
+                saving={props.state.settingsSaving}
+                onSave={props.onSavePersonalization}
+              />
+            </Match>
+          </Switch>
         </section>
       </main>
     </section>
   );
+}
+
+function AgentSettingsPanel(props: {
+  agents: Agent[];
+  saving: boolean;
+  modelConfig?: TuraConfigResponse;
+  onRefresh: () => Promise<void>;
+  onGetAgent: (agentId: string) => Promise<StoredAgent | undefined>;
+  onSaveAgent: (
+    agentId: string | undefined,
+    payload: AgentUpsertRequest,
+  ) => Promise<void>;
+}) {
+  const [selectedAgentId, setSelectedAgentId] = createSignal<string>();
+  const [storedAgent, setStoredAgent] = createSignal<StoredAgent>();
+  const [selectedTier, setSelectedTier] =
+    createSignal<(typeof AGENT_MODEL_TIERS)[number]>("thinking");
+  const [selectedReasoningEffort, setSelectedReasoningEffort] =
+    createSignal<(typeof AGENT_REASONING_EFFORTS)[number]>("low");
+  const [priorityEnabled, setPriorityEnabled] = createSignal(false);
+  const [loadingAgent, setLoadingAgent] = createSignal(false);
+  const [agentQuery, setAgentQuery] = createSignal("");
+  const visibleAgents = createMemo(() =>
+    visibleConfigurableAgents(props.agents),
+  );
+  const selectedAgent = createMemo(() =>
+    visibleAgents().find((agent) => agent.name === selectedAgentId()),
+  );
+  const filteredAgents = createMemo(() => {
+    const query = agentQuery().trim().toLowerCase();
+    if (!query) {
+      return visibleAgents();
+    }
+    return visibleAgents().filter((agent) =>
+      `${agentDisplayName(agent)} ${agent.description} ${agent.mode}`
+        .toLowerCase()
+        .includes(query),
+    );
+  });
+  const configuredAgentCount = createMemo(() => filteredAgents().length);
+  const selectedCapabilities = createMemo(() =>
+    capabilitiesForAgent(selectedAgent(), storedAgent()),
+  );
+  const modelTierOptions = createMemo(() =>
+    AGENT_MODEL_TIERS.map((tier) => ({
+      id: tier,
+      label: modelTierLabel(tier),
+      value: tier,
+      detail: modelForTier(props.modelConfig, tier),
+      preview: "inherit",
+    })),
+  );
+  const reasoningEffortOptions = createMemo(() =>
+    AGENT_REASONING_EFFORTS.map((effort) => ({
+      id: effort,
+      label: reasoningEffortLabel(effort),
+      value: effort,
+      preview: "inherit",
+    })),
+  );
+
+  createEffect(() => {
+    if (!selectedAgentId() && filteredAgents().length > 0) {
+      void selectAgent(filteredAgents()[0]!);
+    }
+  });
+
+  async function selectAgent(agent: Agent) {
+    setSelectedAgentId(agent.name);
+    setLoadingAgent(true);
+    const stored = await props.onGetAgent(agent.name);
+    setStoredAgent(stored);
+    setSelectedTier(normalizeAgentModelTier(agentModelTier(agent, stored)));
+    setSelectedReasoningEffort(
+      normalizeReasoningEffort(agentReasoningEffort(agent, stored)),
+    );
+    setPriorityEnabled(agentPriorityEnabled(agent, stored));
+    setLoadingAgent(false);
+  }
+
+  async function saveAgentSettings() {
+    const agent = selectedAgent();
+    const stored = storedAgent();
+    if (!agent || !stored) {
+      return;
+    }
+    const payload: AgentUpsertRequest = {
+      config: agentConfigWithProviderSettings(stored.config, {
+        tier: selectedTier(),
+        reasoningEffort: selectedReasoningEffort(),
+        priority: priorityEnabled(),
+      }),
+      prompt: stored.prompt ?? undefined,
+    };
+    await props.onSaveAgent(agent.name, payload);
+    await props.onRefresh();
+    await selectAgent(agent);
+  }
+
+  return (
+    <section class="settings-panel agent-settings-panel">
+      <header>
+        <span>{t("agentSettings")}</span>
+        <small>{visibleAgents().length}</small>
+      </header>
+      <div class="agent-settings-layout">
+        <div class="settings-list agent-list">
+          <label class="workspace-search-row provider-search-row agent-search-row">
+            <Search size={14} strokeWidth={1.7} />
+            <input
+              class="workspace-search"
+              value={agentQuery()}
+              placeholder={`${t("search")}...`}
+              onInput={(event) => setAgentQuery(event.currentTarget.value)}
+            />
+          </label>
+          <div class="settings-list provider-config-list agent-config-list">
+            <div class="provider-config-group agent-configured-group">
+              <div class="provider-config-group-title">
+                <span>默认智能体</span>
+                <small>{configuredAgentCount()}</small>
+              </div>
+              <div class="workspace-picker-list agent-list-scroll">
+                <For each={filteredAgents()}>
+                  {(agent) => (
+                    <button
+                      type="button"
+                      class={classNames(
+                        "workspace-pick-row",
+                        "agent-pick-row",
+                        selectedAgentId() === agent.name && "selected",
+                      )}
+                      onClick={() => void selectAgent(agent)}
+                    >
+                      <AgentIcon agent={agent} />
+                      <span>{agentDisplayName(agent)}</span>
+                      <small>
+                        {modelTierLabel(
+                          normalizeAgentModelTier(agentModelTier(agent)),
+                        )}
+                      </small>
+                    </button>
+                  )}
+                </For>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="settings-fields agent-editor">
+          <Show when={loadingAgent()}>
+            <div class="settings-inline-loading" aria-label={t("loading")}>
+              <div class="loading-bar wide" />
+              <div class="loading-bar medium" />
+            </div>
+          </Show>
+          <ReadonlyRow
+            label={t("agentName")}
+            value={agentDisplayName(selectedAgent(), storedAgent())}
+          />
+          <ReadonlyRow
+            label={t("description")}
+            value={
+              storedAgent()?.summary.description ??
+              selectedAgent()?.description ??
+              ""
+            }
+          />
+          <div class="field-row">
+            <label for="agent-settings-model">{t("model")}</label>
+            <AppearanceSelect
+              value={selectedTier()}
+              options={modelTierOptions()}
+              onSelect={(option) =>
+                setSelectedTier(normalizeAgentModelTier(option.value))
+              }
+            />
+          </div>
+          <div class="field-row">
+            <label for="agent-settings-reasoning">
+              {t("modelReasoningEffort")}
+            </label>
+            <AppearanceSelect
+              value={selectedReasoningEffort()}
+              options={reasoningEffortOptions()}
+              onSelect={(option) =>
+                setSelectedReasoningEffort(
+                  normalizeReasoningEffort(option.value),
+                )
+              }
+            />
+          </div>
+          <div class="field-row">
+            <span>{t("modelPriority")}</span>
+            <div class="segmented two agent-priority-segmented">
+              <button
+                type="button"
+                class={classNames(priorityEnabled() && "selected")}
+                onClick={() => setPriorityEnabled(true)}
+              >
+                {t("enabled")}
+              </button>
+              <button
+                type="button"
+                class={classNames(!priorityEnabled() && "selected")}
+                onClick={() => setPriorityEnabled(false)}
+              >
+                {t("disabled")}
+              </button>
+            </div>
+          </div>
+          <div class="field-row agent-capabilities-row">
+            <span>{t("capabilities")}</span>
+            <div class="agent-capability-list">
+              <Show
+                when={selectedCapabilities().length > 0}
+                fallback={<span class="settings-note">暂无能力</span>}
+              >
+                <For each={selectedCapabilities()}>
+                  {(capability) => <code>{capability}</code>}
+                </For>
+              </Show>
+            </div>
+          </div>
+          <div class="settings-actions-row agent-actions-row">
+            <button
+              type="button"
+              class="primary"
+              disabled={!selectedAgent() || !storedAgent() || props.saving}
+              aria-busy={props.saving}
+              onClick={() => void saveAgentSettings()}
+            >
+              <Show
+                when={!props.saving}
+                fallback={<span class="button-loading-bar loading-bar short" />}
+              >
+                {t("save")}
+              </Show>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function agentModelTier(agent?: Agent, stored?: StoredAgent): string {
+  return (
+    readProviderTier(stored?.config.provider) ??
+    readProviderTier(agent?.options?.provider) ??
+    readProviderTier(agent?.options) ??
+    "thinking"
+  );
+}
+
+function normalizeAgentModelTier(
+  value: string | undefined,
+): (typeof AGENT_MODEL_TIERS)[number] {
+  return value === "flagship_thinking" ? "flagship_thinking" : "thinking";
+}
+
+function agentReasoningEffort(agent?: Agent, stored?: StoredAgent): string {
+  return (
+    readProviderString(stored?.config.provider, [
+      "model_reasoning_effort",
+      "reasoning_effort",
+      "model_variant",
+    ]) ??
+    readProviderString(agent?.options?.provider, [
+      "model_reasoning_effort",
+      "reasoning_effort",
+      "model_variant",
+    ]) ??
+    "low"
+  );
+}
+
+function normalizeReasoningEffort(
+  value: string | undefined,
+): (typeof AGENT_REASONING_EFFORTS)[number] {
+  return value === "medium" ||
+    value === "high" ||
+    value === "xhigh" ||
+    value === "highest"
+    ? value === "highest"
+      ? "xhigh"
+      : value
+    : "low";
+}
+
+function reasoningEffortLabel(value: string): string {
+  const labels: Record<string, TextKey> = {
+    high: "modelReasoningEffortHigh",
+    low: "modelReasoningEffortLow",
+    medium: "modelReasoningEffortMedium",
+    xhigh: "modelReasoningEffortXHigh",
+  };
+  return labels[value] ? t(labels[value]) : value;
+}
+
+function agentPriorityEnabled(agent?: Agent, stored?: StoredAgent): boolean {
+  const configured =
+    readProviderBool(stored?.config.provider, "model_acceleration_enabled") ??
+    readProviderBool(agent?.options?.provider, "model_acceleration_enabled");
+  if (configured !== undefined) {
+    return configured;
+  }
+  return (
+    readProviderString(stored?.config.provider, ["service_tier"]) ===
+      "priority" ||
+    readProviderString(agent?.options?.provider, ["service_tier"]) ===
+      "priority"
+  );
+}
+
+function readProviderTier(value: unknown): string | undefined {
+  return readProviderString(value, ["tura_llm_name"]);
+}
+
+function readProviderString(
+  value: unknown,
+  keys: string[],
+): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  for (const key of keys) {
+    const field = record[key];
+    if (typeof field === "string" && field.trim()) {
+      return field.trim();
+    }
+  }
+  return undefined;
+}
+
+function readProviderBool(value: unknown, key: string): boolean | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "boolean" ? field : undefined;
+}
+
+function agentConfigWithProviderSettings(
+  config: AgentConfig,
+  settings: {
+    tier: (typeof AGENT_MODEL_TIERS)[number];
+    reasoningEffort: (typeof AGENT_REASONING_EFFORTS)[number];
+    priority: boolean;
+  },
+): AgentConfig {
+  const provider =
+    config.provider &&
+    typeof config.provider === "object" &&
+    !Array.isArray(config.provider)
+      ? { ...(config.provider as Record<string, unknown>) }
+      : {};
+  return {
+    ...config,
+    provider: {
+      ...provider,
+      tura_llm_name: settings.tier,
+      model_reasoning_effort: settings.reasoningEffort,
+      model_acceleration_enabled: settings.priority,
+      service_tier: settings.priority ? "priority" : "default",
+    },
+  };
+}
+
+function capabilitiesForAgent(agent?: Agent, stored?: StoredAgent): string[] {
+  const values = [
+    ...(stored?.summary.capabilities ?? []),
+    ...readStringList(stored?.config.agent_capabilities),
+    ...(Array.isArray(agent?.options?.capabilities)
+      ? (agent!.options.capabilities as unknown[])
+          .map((item) => (typeof item === "string" ? item : undefined))
+          .filter((item): item is string => !!item)
+      : []),
+  ];
+  return [...new Set(values)].sort();
+}
+
+function modelForTier(
+  modelConfig: TuraConfigResponse | undefined,
+  tier: string,
+): string {
+  const current = modelConfig?.tiers.find(
+    (item) => item.tier === tier,
+  )?.current;
+  return current ? modelOptionValue(current) : "--";
+}
+
+function PersonalizationSettingsPanel(props: {
+  personas: StoredPersona[];
+  savedAvatar: AvatarRenderSettings;
+  saving: boolean;
+  onSave: (avatar: AvatarRenderSettings) => void;
+}) {
+  const personas = createMemo(() => avatarPersonaOptions(props.personas));
+  const [selectedPersonaId, setSelectedPersonaId] = createSignal(
+    props.savedAvatar.persona_id ?? props.savedAvatar.role,
+  );
+  const [avatar, setAvatar] = createSignal<AvatarRenderSettings>(
+    props.savedAvatar,
+  );
+  const selectedMedia = createMemo(() =>
+    agentAvatarMedia(
+      personaMediaForAvatar(props.personas, selectedPersonaId()),
+      selectedPersonaId(),
+    ),
+  );
+
+  createEffect(() => {
+    if (!personas().some((persona) => persona.id === selectedPersonaId())) {
+      setSelectedPersonaId(personas()[0]?.id ?? "tura");
+    }
+  });
+
+  function selectPersona(personaId: string) {
+    setSelectedPersonaId(personaId);
+    setAvatar((current) =>
+      normalizeAvatarSettings({
+        ...current,
+        persona_id: personaId,
+        role: personaId,
+      }),
+    );
+  }
+
+  function savePersonalization() {
+    props.onSave(
+      normalizeAvatarSettings({
+        ...avatar(),
+        persona_id: selectedPersonaId(),
+        role: selectedPersonaId(),
+      }),
+    );
+  }
+
+  return (
+    <section class="settings-panel agent-settings-panel personalization-panel">
+      <header>
+        <span>{t("personalization")}</span>
+        <small>{personas().length}</small>
+      </header>
+      <div class="agent-settings-layout">
+        <div class="settings-list agent-list">
+          <div class="settings-list provider-config-list agent-config-list">
+            <div class="provider-config-group agent-configured-group">
+              <div class="provider-config-group-title">
+                <span>可配置 Persona</span>
+                <small>{personas().length}</small>
+              </div>
+              <div class="workspace-picker-list agent-list-scroll">
+                <For each={personas()}>
+                  {(persona) => (
+                    <button
+                      type="button"
+                      class={classNames(
+                        "workspace-pick-row",
+                        "agent-pick-row",
+                        "persona-pick-row",
+                        selectedPersonaId() === persona.id && "selected",
+                      )}
+                      onClick={() => selectPersona(persona.id)}
+                    >
+                      <span>{persona.label}</span>
+                      <small>{persona.description}</small>
+                    </button>
+                  )}
+                </For>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="settings-fields agent-editor">
+          <AgentAvatarSettings
+            media={selectedMedia()}
+            value={avatar()}
+            onChange={setAvatar}
+          />
+          <div class="settings-actions-row agent-actions-row">
+            <button
+              type="button"
+              class="primary"
+              disabled={props.saving}
+              aria-busy={props.saving}
+              onClick={savePersonalization}
+            >
+              <Show
+                when={!props.saving}
+                fallback={<span class="button-loading-bar loading-bar short" />}
+              >
+                {t("save")}
+              </Show>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function personalizationAvatarFromState(state: AppState): AvatarRenderSettings {
+  return avatarSettingsFromConfigValue(
+    state.workspaceConfigDraft[AVATAR_WORKSPACE_CONFIG_KEY] ??
+      state.workspaceConfig[AVATAR_WORKSPACE_CONFIG_KEY],
+  );
+}
+
+function AgentAvatarSettings(props: {
+  media: PersonaMediaConfig;
+  value: AvatarRenderSettings;
+  onChange: (value: AvatarRenderSettings) => void;
+}) {
+  function updateAvatar(patch: Partial<AgentAvatarConfig>) {
+    props.onChange(normalizeAvatarSettings({ ...props.value, ...patch }));
+  }
+  const displayModeOptions: Array<{ value: AvatarDisplayMode; label: string }> =
+    [
+      { value: "hidden", label: "隐藏头像" },
+      { value: "static", label: "静态头像" },
+      { value: "dynamic", label: "动态头像" },
+    ];
+
+  return (
+    <section class="agent-avatar-settings">
+      <div class="agent-avatar-controls">
+        <div class="agent-avatar-control-row">
+          <span>头像显示</span>
+          <div class="segmented agent-avatar-mode-segmented">
+            <For each={displayModeOptions}>
+              {(option) => (
+                <button
+                  type="button"
+                  class={classNames(
+                    props.value.display_mode === option.value && "selected",
+                  )}
+                  onClick={() => updateAvatar({ display_mode: option.value })}
+                >
+                  {option.label}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+        <AvatarRange
+          id="agent-avatar-pixel"
+          label="像素画"
+          min={AVATAR_SETTING_LIMITS.pixelSize.min}
+          max={AVATAR_SETTING_LIMITS.pixelSize.max}
+          value={props.value.pixel_size}
+          onInput={(pixel_size) => updateAvatar({ pixel_size })}
+        />
+        <AvatarRange
+          id="agent-avatar-threshold"
+          label="阈值"
+          min={AVATAR_SETTING_LIMITS.threshold.min}
+          max={AVATAR_SETTING_LIMITS.threshold.max}
+          value={props.value.threshold}
+          onInput={(threshold) => updateAvatar({ threshold })}
+        />
+        <AvatarRange
+          id="agent-avatar-scale"
+          label="头像缩放"
+          min={AVATAR_SETTING_LIMITS.scale.min}
+          max={AVATAR_SETTING_LIMITS.scale.max}
+          value={props.value.scale}
+          onInput={(scale) => updateAvatar({ scale })}
+        />
+      </div>
+      <div class="agent-avatar-preview" aria-label="头像预览">
+        <span>头像预览</span>
+        <div class="agent-avatar-preview-shell">
+          <Show
+            when={props.value.display_mode !== "hidden"}
+            fallback={<span class="settings-note">头像已隐藏</span>}
+          >
+            <AgentAvatarCanvas
+              media={props.media}
+              settings={{
+                ...props.value,
+                scale: DEFAULT_AVATAR_SETTINGS.scale,
+              }}
+              expressionId="vigilant"
+              interactive={props.value.display_mode === "dynamic"}
+              label="头像预览"
+            />
+          </Show>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function AvatarRange(props: {
+  id: string;
+  label: string;
+  min: number;
+  max: number;
+  value: number;
+  onInput: (value: number) => void;
+}) {
+  const progress = createMemo(() =>
+    Math.round(((props.value - props.min) / (props.max - props.min)) * 100),
+  );
+  return (
+    <div class="agent-avatar-control-row">
+      <label for={props.id}>{props.label}</label>
+      <div
+        class="range-control"
+        style={{ "--range-progress": `${progress()}%` }}
+      >
+        <input
+          id={props.id}
+          type="range"
+          min={props.min}
+          max={props.max}
+          value={props.value}
+          onInput={(event) => props.onInput(Number(event.currentTarget.value))}
+        />
+        <output for={props.id}>{props.value}</output>
+      </div>
+    </div>
+  );
+}
+
+function avatarPersonaOptions(personas: StoredPersona[]) {
+  const fromGateway = personas
+    .filter((persona) => persona.summary.media || persona.config.media)
+    .map((persona) => ({
+      id: persona.summary.id,
+      label: persona.summary.display_name || persona.summary.id,
+      description:
+        persona.summary.short_description ||
+        persona.config.short_description ||
+        persona.summary.description ||
+        persona.config.description ||
+        "",
+    }));
+  const fallback = ["tura", "wonderful", "pidan"].map((id) => ({
+    id,
+    label: id,
+    description:
+      id === "tura"
+        ? "Sharp supervisor"
+        : id === "wonderful"
+          ? "Loyal companion"
+          : "Sleepy strategist",
+  }));
+  const seen = new Set<string>();
+  return [...fromGateway, ...fallback].filter((item) => {
+    if (seen.has(item.id)) {
+      return false;
+    }
+    seen.add(item.id);
+    return true;
+  });
+}
+
+function personaMediaForAvatar(
+  personas: StoredPersona[],
+  personaId: string | undefined,
+): PersonaMediaConfig | undefined {
+  return (
+    personas.find((persona) => persona.summary.id === personaId)?.summary
+      .media ??
+    personas.find((persona) => persona.summary.id === personaId)?.config
+      .media ??
+    undefined
+  );
+}
+
+function readStringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .map((item) => {
+          if (typeof item === "string") {
+            return item;
+          }
+          if (
+            item &&
+            typeof item === "object" &&
+            "capability_name" in item &&
+            typeof item.capability_name === "string"
+          ) {
+            return item.capability_name;
+          }
+          return undefined;
+        })
+        .filter((item): item is string => !!item)
+    : [];
 }
 
 export function ReadonlyRow(props: { label: string; value: string }) {
@@ -738,181 +1480,5 @@ export function ReadonlyRow(props: { label: string; value: string }) {
       <span>{props.label}</span>
       <code>{props.value}</code>
     </div>
-  );
-}
-
-function AppearanceSelect(props: {
-  value: string;
-  options: AppearanceOption[];
-  placeholder?: string;
-  footer?: AppearanceSelectFooter;
-  onSelect: (option: AppearanceOption) => void;
-}) {
-  const [open, setOpen] = createSignal(false);
-  const [menuPosition, setMenuPosition] = createSignal({
-    left: 0,
-    top: 0,
-    width: 340,
-    maxHeight: 320,
-  });
-  let root: HTMLElement | undefined;
-  let menu: HTMLDivElement | undefined;
-  const selected = createMemo(
-    () =>
-      props.options.find((option) => option.value === props.value) ??
-      props.options[0],
-  );
-  const visibleOptions = createMemo(() =>
-    props.options.length > 0
-      ? props.options
-      : props.footer
-        ? [
-            {
-              id: CONFIGURE_PROVIDER_OPTION,
-              label: props.footer.label,
-              value: CONFIGURE_PROVIDER_OPTION,
-              preview: "inherit",
-            },
-          ]
-        : [],
-  );
-  const buttonLabel = createMemo(
-    () => selected()?.label ?? props.placeholder ?? t("selectStep"),
-  );
-
-  function updateMenuPosition() {
-    if (!root) {
-      return;
-    }
-    const rect = root.getBoundingClientRect();
-    const gap = 6;
-    const viewportPadding = 16;
-    const preferredWidth = Math.max(260, rect.width);
-    const width = Math.min(
-      preferredWidth,
-      window.innerWidth - viewportPadding * 2,
-    );
-    const left = Math.min(
-      Math.max(viewportPadding, rect.left),
-      Math.max(viewportPadding, window.innerWidth - width - viewportPadding),
-    );
-    const top = Math.min(
-      rect.bottom + gap,
-      Math.max(viewportPadding, window.innerHeight - viewportPadding - 120),
-    );
-    setMenuPosition({
-      left,
-      top,
-      width,
-      maxHeight: Math.max(120, window.innerHeight - top - viewportPadding),
-    });
-  }
-
-  onMount(() => {
-    const closeOutside = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!root?.contains(target) && !menu?.contains(target)) {
-        setOpen(false);
-      }
-    };
-    const reposition = () => {
-      if (open()) {
-        updateMenuPosition();
-      }
-    };
-    document.addEventListener("pointerdown", closeOutside);
-    window.addEventListener("resize", reposition);
-    window.addEventListener("scroll", reposition, true);
-    onCleanup(() => {
-      document.removeEventListener("pointerdown", closeOutside);
-      window.removeEventListener("resize", reposition);
-      window.removeEventListener("scroll", reposition, true);
-    });
-  });
-
-  createEffect(() => {
-    if (open()) {
-      updateMenuPosition();
-    }
-  });
-
-  return (
-    <section class="appearance-select" ref={root}>
-      <button
-        type="button"
-        class="appearance-select-button"
-        style={{
-          "font-family": selected()?.preview,
-          "font-size": selected()?.size ? `${selected()!.size}px` : undefined,
-        }}
-        onClick={(event) => {
-          event.preventDefault();
-          const nextOpen = !open();
-          setOpen(nextOpen);
-          if (nextOpen) {
-            updateMenuPosition();
-          }
-        }}
-      >
-        <span>{buttonLabel()}</span>
-        <ChevronDown size={13} strokeWidth={1.8} />
-      </button>
-      <Show when={open()}>
-        <Portal>
-          <div
-            ref={menu}
-            class="plan-session-menu appearance-select-menu"
-            style={{
-              left: `${menuPosition().left}px`,
-              top: `${menuPosition().top}px`,
-              width: `${menuPosition().width}px`,
-              "max-height": `${menuPosition().maxHeight}px`,
-            }}
-            onPointerDown={(event) => event.stopPropagation()}
-          >
-            <For each={visibleOptions()}>
-              {(option) => (
-                <button
-                  type="button"
-                  class={classNames(
-                    "plan-trigger-option",
-                    props.value === option.value && "selected",
-                  )}
-                  style={{
-                    "font-family": option.preview,
-                    "font-size": option.size ? `${option.size}px` : undefined,
-                  }}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    props.onSelect(option);
-                    setOpen(false);
-                  }}
-                >
-                  <span>{option.label}</span>
-                  <Show when={props.value === option.value}>
-                    <Check size={14} strokeWidth={1.8} />
-                  </Show>
-                </button>
-              )}
-            </For>
-            <Show when={props.options.length > 0 ? props.footer : undefined}>
-              {(footer) => (
-                <button
-                  type="button"
-                  class="plan-trigger-option appearance-select-footer"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    footer().onSelect();
-                    setOpen(false);
-                  }}
-                >
-                  <span>{footer().label}</span>
-                </button>
-              )}
-            </Show>
-          </div>
-        </Portal>
-      </Show>
-    </section>
   );
 }

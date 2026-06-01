@@ -101,6 +101,11 @@
   max-width: 220px;
 }
 
+.agent-trigger-button .agent-icon {
+  flex: 0 0 18px;
+  overflow: visible;
+}
+
 .agent-trigger-button span {
   text-align: center;
 }
@@ -121,13 +126,21 @@
 }
 
 .plan-trigger-option small {
+  min-width: 0;
+  overflow: hidden;
   color: var(--muted);
   font-size: var(--font-small);
+  text-align: right;
+  text-overflow: ellipsis;
   white-space: pre;
 }
 
 .agent-trigger-option {
-  grid-template-columns: minmax(0, 1fr) auto 18px;
+  grid-template-columns: 18px minmax(0, 1fr) minmax(0, 1fr) 18px;
+}
+
+.agent-trigger-option .agent-icon {
+  overflow: visible;
 }
 
 .agent-trigger-list {

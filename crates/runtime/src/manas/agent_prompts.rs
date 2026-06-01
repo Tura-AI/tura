@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::state_machine::agent_management::{AgentManagement, AgentPromptItem};
+use crate::state_machine::agent_management::{AgentManagement, AgentPersonaItem, AgentPromptItem};
 
 pub(super) fn load_agent_prompt_messages(
     agent: &AgentManagement,
@@ -25,15 +25,39 @@ pub(super) fn load_agent_prompt_messages(
     Ok(messages)
 }
 
-fn ordered_agent_prompt_paths(prompt_item: &AgentPromptItem) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    for supplemental_name in ["persona.md", "communication_style.md"] {
-        let supplemental_path = prompt_item.prompt_directory.join(supplemental_name);
-        if supplemental_path.exists() {
-            paths.push(supplemental_path);
+pub(super) fn load_agent_system_prompt_messages(
+    agent: &AgentManagement,
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut messages = load_agent_persona_messages(agent)?;
+    messages.extend(load_agent_prompt_messages(agent)?);
+    Ok(messages)
+}
+
+pub(super) fn load_agent_persona_messages(
+    agent: &AgentManagement,
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut messages = Vec::new();
+
+    for persona_item in &agent.agent_persona {
+        for prompt_path in ordered_persona_prompt_paths(persona_item) {
+            let content = std::fs::read_to_string(&prompt_path).map_err(|err| {
+                format!(
+                    "failed to read agent persona prompt {}: {err}",
+                    prompt_path.display()
+                )
+            })?;
+            messages.push(serde_json::json!({
+                "role": "system",
+                "content": content,
+            }));
         }
     }
 
+    Ok(messages)
+}
+
+fn ordered_agent_prompt_paths(prompt_item: &AgentPromptItem) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
     let standard_path = prompt_item.prompt_directory.join("prompt.md");
     if standard_path.exists() {
         paths.push(standard_path);
@@ -54,27 +78,53 @@ fn ordered_agent_prompt_paths(prompt_item: &AgentPromptItem) -> Vec<PathBuf> {
     paths
 }
 
+fn ordered_persona_prompt_paths(persona_item: &AgentPersonaItem) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for prompt_name in ["persona.md", "communication_style.md"] {
+        let path = persona_item.persona_directory.join(prompt_name);
+        if path.exists() {
+            paths.push(path);
+            continue;
+        }
+        if prompt_name == "communication_style.md" {
+            let typo_compatible_path = persona_item
+                .persona_directory
+                .join("communication_stlye.md");
+            if typo_compatible_path.exists() {
+                paths.push(typo_compatible_path);
+            }
+        }
+    }
+    paths
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::state_machine::agent_management::{
-        AgentPromptItem, ProviderConfig, ToolChoice, ValidatorConfig,
+        AgentPersonaItem, AgentPromptItem, ProviderConfig, ToolChoice, ValidatorConfig,
     };
     use chrono::Utc;
 
     #[test]
-    fn loader_includes_persona_and_communication_style_before_prompt() {
+    fn loader_includes_persona_and_communication_style_from_persona_binding() {
         let run_id = format!(
             "tura-agent-prompt-supplemental-test-{}",
             Utc::now().timestamp_nanos_opt().unwrap_or_default()
         );
         let root = std::env::temp_dir().join(run_id);
-        let prompt_dir = root.join("agents").join("coding_agent");
+        let prompt_dir = root.join("agents").join("src").join("coding_agent");
+        let persona_prompt_dir = root
+            .join("personas")
+            .join("src")
+            .join("tura")
+            .join("prompt");
         std::fs::create_dir_all(&prompt_dir).expect("prompt dir should be created");
-        std::fs::write(prompt_dir.join("persona.md"), "persona prompt")
+        std::fs::create_dir_all(&persona_prompt_dir).expect("persona prompt dir should be created");
+        std::fs::write(persona_prompt_dir.join("persona.md"), "persona prompt")
             .expect("persona prompt should be written");
         std::fs::write(
-            prompt_dir.join("communication_style.md"),
+            persona_prompt_dir.join("communication_style.md"),
             "communication style prompt",
         )
         .expect("communication style prompt should be written");
@@ -90,8 +140,17 @@ mod tests {
             },
             now,
         );
+        agent.add_persona(
+            AgentPersonaItem {
+                persona_name: "tura".to_string(),
+                persona_directory: persona_prompt_dir,
+            },
+            now,
+        );
 
-        let messages = load_agent_prompt_messages(&agent).expect("prompt loading should succeed");
+        let mut messages =
+            load_agent_persona_messages(&agent).expect("persona loading should succeed");
+        messages.extend(load_agent_prompt_messages(&agent).expect("prompt loading should succeed"));
         let contents = message_contents(&messages);
 
         assert_eq!(
@@ -218,6 +277,7 @@ mod tests {
             root.to_path_buf(),
             None,
             true,
+            false,
             ProviderConfig {
                 tura_llm_name: "test".to_string(),
                 stream: false,

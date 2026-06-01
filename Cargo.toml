@@ -1,9 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/agents",
+  "agents",
   "crates/gateway",
   "crates/provider",
+  "personas",
   "crates/router",
   "crates/runtime",
   "crates/tools",
@@ -36,5 +37,6 @@ tower = "0.5"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4", "serde"] }
 
-tura-agents = { path = "crates/agents" }
+tura-agents = { path = "agents" }
 tura-llm-rust = { path = "crates/provider" }
+tura-persona = { path = "personas" }

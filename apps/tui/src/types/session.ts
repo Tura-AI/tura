@@ -44,6 +44,7 @@ export interface Session {
   agent?: string | null;
   session_type?: string | null;
   lsp?: unknown;
+  auto_session_name?: boolean;
   kill_processes_on_start?: boolean;
   validator_enabled?: boolean;
   force_multiple_tasks?: boolean;
@@ -113,6 +114,7 @@ export interface CreateSessionRequest {
   kill_processes_on_start?: boolean;
   validator_enabled?: boolean;
   force_multiple_tasks?: boolean;
+  auto_session_name?: boolean;
   task_management?: TaskManagement;
 }
 

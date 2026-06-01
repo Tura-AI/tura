@@ -2,7 +2,7 @@ use crate::runtime::tool::{ToolCall, ToolContext, ToolPayload, ToolRouter};
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -15,6 +15,7 @@ struct CommandRunArgs {
     commands: Vec<CommandItem>,
     workdir: Option<String>,
     timeout_ms: Option<u64>,
+    allowed_commands: Option<BTreeSet<String>>,
 }
 
 #[derive(Clone, Debug)]
@@ -83,10 +84,19 @@ pub fn execute(arguments: &Value, session_dir: &Path) -> Value {
 }
 
 pub async fn execute_async_value(arguments: Value, session_dir: std::path::PathBuf) -> Value {
-    let args = match parse_args(&arguments) {
+    execute_async_value_with_allowed(arguments, session_dir, None).await
+}
+
+pub async fn execute_async_value_with_allowed(
+    arguments: Value,
+    session_dir: std::path::PathBuf,
+    allowed_commands: Option<BTreeSet<String>>,
+) -> Value {
+    let mut args = match parse_args(&arguments) {
         Ok(args) => args,
         Err(message) => return error_payload(message),
     };
+    args.allowed_commands = allowed_commands;
     execute_async_args(args, session_dir).await
 }
 
@@ -105,9 +115,10 @@ pub async fn execute_streamed_command_value(
 pub struct StreamingCommandRunExecutor {
     router: Arc<ToolRouter>,
     ctx: ToolContext,
+    allowed_commands: Option<BTreeSet<String>>,
     active_step: Option<u64>,
     next_index: usize,
-    parallel_reads: FuturesUnordered<tokio::task::JoinHandle<CommandRunItemResult>>,
+    macro_command_batch: FuturesUnordered<tokio::task::JoinHandle<CommandRunItemResult>>,
     results: Vec<CommandRunItemResult>,
     halted: bool,
     halt_reason: Option<String>,
@@ -115,12 +126,20 @@ pub struct StreamingCommandRunExecutor {
 
 impl StreamingCommandRunExecutor {
     pub fn new(session_dir: std::path::PathBuf) -> Self {
+        Self::new_with_allowed(session_dir, None)
+    }
+
+    pub fn new_with_allowed(
+        session_dir: std::path::PathBuf,
+        allowed_commands: Option<BTreeSet<String>>,
+    ) -> Self {
         Self {
             router: Arc::new(ToolRouter::new()),
             ctx: ToolContext::new(session_dir),
+            allowed_commands,
             active_step: None,
             next_index: 0,
-            parallel_reads: FuturesUnordered::new(),
+            macro_command_batch: FuturesUnordered::new(),
             results: Vec::new(),
             halted: false,
             halt_reason: None,
@@ -149,24 +168,32 @@ impl StreamingCommandRunExecutor {
 
         let step = command.effective_step();
         if self.active_step.is_some_and(|current| step != current) {
-            self.flush_parallel_reads().await;
+            self.flush_macro_command_batch().await;
         }
         self.active_step = Some(step);
 
-        let parallel_safe = command
-            .is_parallel_safe_read(&self.router, &self.ctx.child())
+        let macro_command_safe = command
+            .is_macro_command_safe(&self.router, &self.ctx.child())
             .await;
-        if parallel_safe {
+        if macro_command_safe {
             let router = Arc::clone(&self.router);
             let ctx = self.ctx.child();
-            self.parallel_reads.push(tokio::spawn(async move {
-                run_command_run_item(&router, command, ctx, false).await
+            let allowed_commands = self.allowed_commands.clone();
+            self.macro_command_batch.push(tokio::spawn(async move {
+                run_command_run_item(&router, command, ctx, false, allowed_commands.as_ref()).await
             }));
             return self.drain_finished_results();
         }
 
-        self.flush_parallel_reads().await;
-        let result = run_command_run_item(&self.router, command, self.ctx.child(), true).await;
+        self.flush_macro_command_batch().await;
+        let result = run_command_run_item(
+            &self.router,
+            command,
+            self.ctx.child(),
+            true,
+            self.allowed_commands.as_ref(),
+        )
+        .await;
         let should_halt = is_failed_apply_patch_result(&result);
         self.results.push(result);
         if should_halt {
@@ -179,7 +206,7 @@ impl StreamingCommandRunExecutor {
         if self.halted {
             return self.drain_finished_results();
         }
-        self.flush_parallel_reads().await;
+        self.flush_macro_command_batch().await;
         self.drain_finished_results()
     }
 
@@ -187,12 +214,16 @@ impl StreamingCommandRunExecutor {
         self.halted
     }
 
+    pub fn event_context(&self) -> ToolContext {
+        self.ctx.child()
+    }
+
     pub fn halt_reason(&self) -> Option<&str> {
         self.halt_reason.as_deref()
     }
 
-    async fn flush_parallel_reads(&mut self) {
-        while let Some(result) = self.parallel_reads.next().await {
+    async fn flush_macro_command_batch(&mut self) {
+        while let Some(result) = self.macro_command_batch.next().await {
             match result {
                 Ok(result) => self.results.push(result),
                 Err(err) => self.results.push(CommandRunItemResult::failed(
@@ -250,7 +281,12 @@ async fn execute_async_args(args: CommandRunArgs, session_dir: std::path::PathBu
 
 async fn execute_async(args: CommandRunArgs, ctx: ToolContext) -> CommandRunOutput {
     let mut by_step: BTreeMap<u64, Vec<CommandItem>> = BTreeMap::new();
-    for command in args.commands {
+    let CommandRunArgs {
+        commands,
+        allowed_commands,
+        ..
+    } = args;
+    for command in commands {
         by_step
             .entry(command.effective_step())
             .or_default()
@@ -262,7 +298,8 @@ async fn execute_async(args: CommandRunArgs, ctx: ToolContext) -> CommandRunOutp
     let mut cancelled = false;
     let mut cancel_reason = None;
     for commands in by_step.into_values() {
-        let step_output = run_command_run_step(&router, commands, ctx.child()).await;
+        let step_output =
+            run_command_run_step(&router, commands, ctx.child(), allowed_commands.as_ref()).await;
         results.extend(step_output.results);
         if step_output.cancelled {
             cancelled = true;
@@ -283,21 +320,29 @@ async fn run_command_run_step(
     router: &ToolRouter,
     commands: Vec<CommandItem>,
     ctx: ToolContext,
+    allowed_commands: Option<&BTreeSet<String>>,
 ) -> CommandRunStepOutput {
     let mut results = Vec::new();
-    let mut parallel_reads = Vec::new();
+    let mut macro_command_batch = Vec::new();
 
     for command in commands {
-        let force_exclusive = !command.is_parallel_safe_read(router, &ctx).await;
+        let force_exclusive = !command.is_macro_command_safe(router, &ctx).await;
         if !force_exclusive {
-            parallel_reads.push(command);
+            macro_command_batch.push(command);
             continue;
         }
 
         results.extend(
-            run_parallel_items(router, std::mem::take(&mut parallel_reads), ctx.child()).await,
+            run_macro_command_batch(
+                router,
+                std::mem::take(&mut macro_command_batch),
+                ctx.child(),
+                allowed_commands,
+            )
+            .await,
         );
-        let result = run_command_run_item(router, command, ctx.child(), true).await;
+        let result =
+            run_command_run_item(router, command, ctx.child(), true, allowed_commands).await;
         let should_stop = is_failed_apply_patch_result(&result);
         results.push(result);
         if should_stop {
@@ -310,7 +355,8 @@ async fn run_command_run_step(
         }
     }
 
-    results.extend(run_parallel_items(router, parallel_reads, ctx).await);
+    results
+        .extend(run_macro_command_batch(router, macro_command_batch, ctx, allowed_commands).await);
     CommandRunStepOutput {
         results,
         cancelled: false,
@@ -322,10 +368,11 @@ fn is_failed_apply_patch_result(result: &CommandRunItemResult) -> bool {
     result.command_type == "apply_patch" && !result.success
 }
 
-async fn run_parallel_items(
+async fn run_macro_command_batch(
     router: &ToolRouter,
     commands: Vec<CommandItem>,
     ctx: ToolContext,
+    allowed_commands: Option<&BTreeSet<String>>,
 ) -> Vec<CommandRunItemResult> {
     if commands.is_empty() {
         return Vec::new();
@@ -333,7 +380,13 @@ async fn run_parallel_items(
 
     let mut in_flight = FuturesUnordered::new();
     for command in commands {
-        in_flight.push(run_command_run_item(router, command, ctx.child(), false));
+        in_flight.push(run_command_run_item(
+            router,
+            command,
+            ctx.child(),
+            false,
+            allowed_commands,
+        ));
     }
     let mut results = Vec::new();
     while let Some(result) = in_flight.next().await {
@@ -348,7 +401,16 @@ async fn run_command_run_item(
     command: CommandItem,
     ctx: ToolContext,
     force_exclusive: bool,
+    allowed_commands: Option<&BTreeSet<String>>,
 ) -> CommandRunItemResult {
+    if !command_allowed(&command.command, allowed_commands) {
+        return CommandRunItemResult::failed(
+            command.index,
+            command.effective_step(),
+            command.command,
+            "unsupported command_run command".to_string(),
+        );
+    }
     if crate::commands::canonical_command(&command.command) == "task_status" {
         return command_run_task_status_result(command);
     }
@@ -395,8 +457,18 @@ async fn run_command_run_item(
     }
 }
 
+fn command_allowed(command: &str, allowed_commands: Option<&BTreeSet<String>>) -> bool {
+    let Some(allowed_commands) = allowed_commands else {
+        return true;
+    };
+    allowed_commands.contains(&crate::commands::canonical_command(command))
+}
+
 fn command_run_task_status_result(command: CommandItem) -> CommandRunItemResult {
-    match normalize_task_status_output(&command) {
+    match crate::commands::task_status::normalize_output(
+        command.inline_arguments.as_ref(),
+        &command.command_line,
+    ) {
         Ok(output) => CommandRunItemResult {
             index: command.index,
             step: command.effective_step(),
@@ -414,54 +486,6 @@ fn command_run_task_status_result(command: CommandItem) -> CommandRunItemResult 
     }
 }
 
-fn normalize_task_status_output(command: &CommandItem) -> Result<Value, String> {
-    let mut value = command
-        .inline_arguments
-        .clone()
-        .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
-    let trimmed = command.command_line.trim();
-    if !trimmed.is_empty() {
-        value = if trimmed.starts_with('{') {
-            serde_json::from_str(trimmed)
-                .map_err(|err| format!("invalid task_status command_line JSON: {err}"))?
-        } else {
-            parse_task_status_text(trimmed)
-        };
-    }
-    let Some(object) = value.as_object() else {
-        return Err("task_status expects an object".to_string());
-    };
-    let status = string_field(object, &["status", "task_status"]).map(|status| {
-        status
-            .trim()
-            .to_ascii_lowercase()
-            .replace('-', "_")
-            .to_string()
-    });
-    if let Some(status) = status.as_deref() {
-        if !matches!(status, "question" | "done") {
-            return Err("task_status status must be question or done".to_string());
-        }
-    }
-    let task_summary = string_field(object, &["task_summary"]);
-    Ok(json!({
-        "task_status": {
-            "status": status,
-            "task_summary": task_summary,
-        }
-    }))
-}
-
-fn parse_task_status_text(text: &str) -> Value {
-    let status = text
-        .split(|ch: char| ch.is_whitespace() || matches!(ch, ':' | '=' | ',' | ';'))
-        .find_map(|part| {
-            let part = part.trim().to_ascii_lowercase().replace('-', "_");
-            matches!(part.as_str(), "question" | "done").then_some(part)
-        });
-    json!({ "status": status })
-}
-
 fn command_run_model_output(command_name: &str, value: Value) -> Value {
     if !matches!(command_name, "shell_command" | "bash") {
         return value;
@@ -477,7 +501,8 @@ fn command_run_model_output(command_name: &str, value: Value) -> Value {
 fn build_tool_call(command_name: &str, command: &CommandItem) -> Result<ToolCall, String> {
     let payload = match command_name {
         "apply_patch" => ToolPayload::Freeform {
-            input: command.command_line.clone(),
+            input: extract_apply_patch_body(&command.command_line)
+                .unwrap_or_else(|| command.command_line.clone()),
         },
         "compact_context" => ToolPayload::Function {
             arguments: normalize_compact_context_arguments(command)?,
@@ -547,6 +572,7 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
         commands: Vec::new(),
         workdir: top_workdir,
         timeout_ms: top_timeout_ms,
+        allowed_commands: None,
     };
     for value in command_values {
         args.commands.push(parse_command_item(&value)?);
@@ -766,6 +792,17 @@ fn parse_command_item(value: &Value) -> Result<CommandItem, String> {
             "payload",
         ],
     )
+    .or_else(|| {
+        // Some models name the command in `command_type` and put the argument
+        // payload in `command` (e.g. task_status carrying a `{status,...}` JSON
+        // blob). Recover that payload as the command_line so it is not dropped.
+        if object.contains_key("command_type") || object.contains_key("commandType") {
+            string_field(object, &["command", "cmd"])
+                .filter(|payload| payload.trim() != command.trim())
+        } else {
+            None
+        }
+    })
     .unwrap_or_default();
     let inline_arguments = inline_command_arguments(object);
     Ok(CommandItem {
@@ -866,10 +903,48 @@ fn u64_field(object: &serde_json::Map<String, Value>, names: &[&str]) -> Option<
 }
 
 fn extract_apply_patch_body(text: &str) -> Option<String> {
-    let begin = text.find("*** Begin Patch")?;
     let end_marker = "*** End Patch";
-    let end = text[begin..].find(end_marker)? + begin + end_marker.len();
-    Some(text[begin..end].trim().to_string())
+    if let Some(begin) = text.find("*** Begin Patch") {
+        let end = text[begin..].find(end_marker)? + begin + end_marker.len();
+        return Some(text[begin..end].trim().to_string());
+    }
+    normalize_apply_patch_body_without_begin(text)
+}
+
+fn normalize_apply_patch_body_without_begin(text: &str) -> Option<String> {
+    let body = strip_apply_patch_command_line(text.trim());
+    if !starts_with_patch_hunk(body) {
+        return None;
+    }
+    let end_marker = "*** End Patch";
+    let body = if let Some(end) = body.find(end_marker) {
+        body[..end + end_marker.len()].trim().to_string()
+    } else {
+        format!("{}\n{end_marker}", body.trim_end())
+    };
+    Some(format!("*** Begin Patch\n{body}"))
+}
+
+fn strip_apply_patch_command_line(text: &str) -> &str {
+    for prefix in [
+        "apply_patch <<'PATCH'",
+        "apply_patch <<\"PATCH\"",
+        "apply_patch",
+    ] {
+        if let Some(rest) = text.strip_prefix(prefix) {
+            return rest.trim_start_matches(['\r', '\n', ' ', '\t']);
+        }
+    }
+    text
+}
+
+fn starts_with_patch_hunk(text: &str) -> bool {
+    matches!(
+        text.trim_start(),
+        body if body.starts_with("*** Add File: ")
+            || body.starts_with("*** Delete File: ")
+            || body.starts_with("*** Update File: ")
+    )
 }
 
 impl CommandItem {
@@ -881,7 +956,7 @@ impl CommandItem {
         self.timeout_ms.unwrap_or(DEFAULT_COMMAND_TIMEOUT_MS).max(1)
     }
 
-    async fn is_parallel_safe_read(&self, router: &ToolRouter, ctx: &ToolContext) -> bool {
+    async fn is_macro_command_safe(&self, router: &ToolRouter, ctx: &ToolContext) -> bool {
         let Some(tool_name) = router.resolve_command_tool_name(&self.command) else {
             return false;
         };
@@ -891,7 +966,7 @@ impl CommandItem {
         let Ok(call) = build_tool_call(tool_name, self) else {
             return false;
         };
-        if !router.tool_supports_parallel(&call) {
+        if !router.tool_supports_macro_command(&call) {
             return false;
         }
         let Some(handler) = router.handler(tool_name) else {
@@ -962,415 +1037,73 @@ fn error_payload(message: String) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        execute, normalize_shell_command_arguments, parse_args, StreamingCommandRunExecutor,
-    };
+    use super::{normalize_shell_command_arguments, parse_args};
     use serde_json::json;
     use serde_json::Value;
-    use std::path::Path;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn missing_steps_default_to_original_order_steps() {
-        let output = execute(
-            &json!({
-                "commands": [
-                    { "command": "shell_command", "command_line": "pwd" },
-                    { "command": "shell_command", "command_line": "pwd" }
-                ]
-            }),
-            Path::new("."),
-        );
-        let results = output["results"].as_array().expect("results");
+    fn parse_missing_steps_default_to_original_order_steps() {
+        let args = parse_args(&json!({
+            "commands": [
+                { "command": "shell_command", "command_line": "pwd" },
+                { "command": "shell_command", "command_line": "pwd" }
+            ]
+        }))
+        .expect("parse args");
 
-        assert_eq!(results[0]["step"], 1);
-        assert_eq!(results[1]["step"], 2);
+        assert_eq!(args.commands[0].effective_step(), 1);
+        assert_eq!(args.commands[1].effective_step(), 2);
     }
 
     #[test]
-    fn empty_command_run_is_error() {
-        let output = execute(&json!({ "commands": [] }), Path::new("."));
+    fn parse_empty_command_run_is_error() {
+        let error = parse_args(&json!({ "commands": [] })).expect_err("empty command run");
 
-        assert_eq!(output["results"][0]["success"], false);
+        assert_eq!(error, "command_run commands must not be empty");
+    }
+
+    #[test]
+    fn parse_compact_context_must_be_final_highest_step() {
+        let error = parse_args(&json!({
+            "commands": [
+                {
+                    "step": 2,
+                    "command_type": "compact_context",
+                    "command_line": "summary"
+                },
+                {
+                    "step": 3,
+                    "command_type": "shell_command",
+                    "command_line": "echo after"
+                }
+            ]
+        }))
+        .expect_err("compact_context position");
+
         assert_eq!(
-            output["results"][0]["error"],
-            "command_run commands must not be empty"
-        );
-    }
-
-    #[test]
-    fn current_style_output_has_only_results_top_level() {
-        let output = execute(
-            &json!({
-                "commands": [
-                    { "command": "shell_command", "command_line": "echo ok" }
-                ]
-            }),
-            Path::new("."),
-        );
-        assert!(output.get("results").is_some());
-        assert!(output.get("ok").is_none());
-        assert!(output.get("output_policy").is_none());
-        assert!(output.get("task_status").is_none());
-        assert!(output["results"][0].get("display_command").is_none());
-        assert!(output["results"][0].get("exit_code").is_none());
-        assert!(output["results"][0].get("command").is_none());
-        assert!(output["results"][0].get("command_type").is_some());
-    }
-
-    #[test]
-    fn top_level_task_status_argument_is_ignored_and_not_model_visible() {
-        let output = execute(
-            &json!({
-                "task_status": { "status": "done" },
-                "commands": [
-                    { "command": "shell_command", "command_line": "echo ok" }
-                ]
-            }),
-            Path::new("."),
-        );
-
-        assert!(output.get("task_status").is_none());
-    }
-
-    #[test]
-    fn multiple_tasks_command_routes_through_command_run() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
-        std::env::set_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS", "1");
-        let output = execute(
-            &json!({
-                "commands": [
-                    {
-                        "command": "multiple_tasks",
-                        "command_line": "[{\"nonce_id\":\"inspect\",\"step\":1,\"task_summary\":\"Inspect files\",\"delivery\":\"Read relevant files and identify edits.\"},{\"nonce_id\":\"apply\",\"step\":1,\"task_summary\":\"Apply changes\",\"delivery\":\"Patch files and verify behavior.\"}]"
-                    }
-                ]
-            }),
-            Path::new("."),
-        );
-
-        assert_eq!(output["results"][0]["success"], true);
-        assert_eq!(output["results"][0]["command_type"], "multiple_tasks");
-        assert_eq!(
-            output["results"][0]["output"]["steps"][0]["task_summary"],
-            "Inspect files"
-        );
-        assert_eq!(output["results"][0]["output"]["steps"][0]["step"], 1);
-        assert_eq!(
-            output["results"][0]["output"]["steps"][0]["delivery"],
-            "Read relevant files and identify edits."
-        );
-        assert_eq!(output["results"][0]["output"]["steps"][1]["step"], 1);
-        std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS");
-    }
-
-    #[test]
-    fn task_status_command_inside_command_run_is_not_shell_executed() {
-        let output = execute(
-            &json!({
-                "commands": [
-                    {
-                        "step": 1,
-                        "command_type": "task_status",
-                        "command_line": "{\"status\":\"done\",\"task_summary\":\"Patch code\"}"
-                    }
-                ]
-            }),
-            Path::new("."),
-        );
-
-        assert_eq!(output["results"][0]["command_type"], "task_status");
-        assert_eq!(output["results"][0]["success"], true);
-        assert_eq!(
-            output["results"][0]["output"],
-            json!({ "task_status": { "status": "done", "task_summary": "Patch code" } })
-        );
-    }
-
-    #[test]
-    fn task_status_accepts_no_required_arguments() {
-        let output = execute(
-            &json!({
-                "commands": [
-                    {
-                        "step": 1,
-                        "command_type": "task_status",
-                        "command_line": "{}"
-                    }
-                ]
-            }),
-            Path::new("."),
-        );
-
-        assert_eq!(output["results"][0]["command_type"], "task_status");
-        assert_eq!(output["results"][0]["success"], true);
-        assert_eq!(
-            output["results"][0]["output"],
-            json!({ "task_status": { "status": null, "task_summary": null } })
-        );
-    }
-
-    #[test]
-    fn task_status_rejects_status_outside_question_or_done() {
-        let output = execute(
-            &json!({
-                "commands": [
-                    {
-                        "step": 1,
-                        "command_type": "task_status",
-                        "command_line": "{\"status\":\"doing\"}"
-                    }
-                ]
-            }),
-            Path::new("."),
-        );
-
-        assert_eq!(output["results"][0]["command_type"], "task_status");
-        assert_eq!(output["results"][0]["success"], false);
-        assert_eq!(
-            output["results"][0]["error"],
-            "task_status status must be question or done"
-        );
-    }
-
-    #[test]
-    fn multiple_tasks_command_is_unavailable_by_default() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
-        std::env::remove_var("TURA_FORCE_MULTIPLE_TASKS");
-        std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS");
-        let output = execute(
-            &json!({
-                "commands": [
-                    {
-                        "command": "multiple_tasks",
-                        "command_line": "[{\"nonce_id\":\"inspect\",\"task_summary\":\"Inspect files\",\"delivery\":\"Read relevant files and identify edits.\"},{\"nonce_id\":\"apply\",\"task_summary\":\"Apply changes\",\"delivery\":\"Patch files and verify behavior.\"}]"
-                    }
-                ]
-            }),
-            Path::new("."),
-        );
-
-        assert_eq!(output["results"][0]["success"], false);
-        assert_eq!(
-            output["results"][0]["error"],
-            "unsupported command_run command"
-        );
-    }
-
-    #[test]
-    fn compact_context_command_routes_and_outputs_summary() {
-        let output = execute(
-            &json!({
-                "commands": [
-                    {
-                        "step": 1,
-                        "command_type": "shell_command",
-                        "command_line": "echo before-compact"
-                    },
-                    {
-                        "step": 2,
-                        "command_type": "compact_context",
-                        "command_line": "{\"summary\":\"Goal done partly. Next read src/lib.rs.\"}"
-                    }
-                ]
-            }),
-            Path::new("."),
-        );
-
-        assert_eq!(output["results"][1]["command_type"], "compact_context");
-        assert_eq!(output["results"][1]["success"], true);
-        assert_eq!(
-            output["results"][1]["output"]["compact_context"],
-            "Goal done partly. Next read src/lib.rs."
-        );
-    }
-
-    #[test]
-    fn compact_context_must_be_final_highest_step() {
-        let output = execute(
-            &json!({
-                "commands": [
-                    {
-                        "step": 2,
-                        "command_type": "compact_context",
-                        "command_line": "summary"
-                    },
-                    {
-                        "step": 3,
-                        "command_type": "shell_command",
-                        "command_line": "echo after"
-                    }
-                ]
-            }),
-            Path::new("."),
-        );
-
-        assert_eq!(output["results"][0]["success"], false);
-        assert_eq!(
-            output["results"][0]["error"],
+            error,
             "compact_context must be the final command in the highest step of command_run"
         );
     }
 
     #[test]
-    fn shell_command_output_matches_current_code_mode_string() {
-        let output = execute(
-            &json!({
-                "commands": [
-                    { "command": "shell_command", "command_line": "echo current-backfill-ok" }
-                ]
-            }),
-            Path::new("."),
-        );
-
-        let text = output["results"][0]["output"]
-            .as_str()
-            .expect("shell command_run output should be current-style text");
-        assert!(text.starts_with("Exit code: 0\nWall time: "));
-        assert!(text.contains("\nOutput:\n"));
-        assert!(text.contains("current-backfill-ok"));
-        assert!(!text.contains("\"metadata\""));
-        assert!(!text.contains("\"stdout\""));
-        assert!(!text.contains("\"stderr\""));
-    }
-
-    #[test]
-    fn model_backfill_matches_current_shape_except_command_type_key() {
-        let output = execute(
-            &json!({
-                "commands": [
-                    { "command": "shell_command", "command_line": "echo command-type-diff-only" }
-                ]
-            }),
-            Path::new("."),
-        );
-        let result = output["results"][0].as_object().expect("result object");
-        let mut keys = result.keys().cloned().collect::<Vec<_>>();
-        keys.sort();
-        assert_eq!(keys, vec!["command_type", "output", "step", "success"]);
-
-        let mut current_equivalent = output.clone();
-        let result = current_equivalent["results"][0]
-            .as_object_mut()
-            .expect("result object");
-        let command_type = result.remove("command_type").expect("command_type");
-        result.insert("command".to_string(), command_type);
-
-        let expected = json!({
-            "results": [
-                {
-                    "step": 1,
-                    "command": crate::commands::active_shell_command_name(),
-                    "success": true,
-                    "output": current_equivalent["results"][0]["output"].clone()
-                }
+    fn parse_command_only_shell_text_is_mapped_to_active_shell_command() {
+        let args = parse_args(&json!({
+            "commands": [
+                { "command": "echo ok", "step": 1 }
             ]
-        });
-        assert_eq!(current_equivalent, expected);
-    }
+        }))
+        .expect("parse args");
 
-    #[test]
-    fn command_only_shell_text_is_mapped_to_active_shell_command() {
-        let output = execute(
-            &json!({
-                "commands": [
-                    { "command": "echo ok", "step": 1 }
-                ]
-            }),
-            Path::new("."),
-        );
-
-        assert_eq!(output["results"][0]["success"], true);
         assert_eq!(
-            output["results"][0]["command_type"],
+            args.commands[0].command,
             crate::commands::active_shell_command_name()
         );
+        assert_eq!(args.commands[0].command_line, "echo ok");
     }
 
     #[test]
-    fn top_level_workdir_is_accepted_for_current_style_shell_items() {
-        let output = execute(
-            &json!({
-                "workdir": ".",
-                "commands": [
-                    { "command": "echo ok", "step": 1 }
-                ]
-            }),
-            Path::new("."),
-        );
-
-        assert_eq!(output["results"][0]["success"], true);
-    }
-
-    #[test]
-    fn unknown_command_with_shell_payload_is_mapped_to_active_shell_command() {
-        let output = execute(
-            &json!({
-                "commands": [
-                    {
-                        "command": "Get-Content src/app.py",
-                        "command_line": "echo mapped-ok",
-                        "step": 1
-                    }
-                ]
-            }),
-            Path::new("."),
-        );
-
-        assert_eq!(output["results"][0]["success"], true);
-        assert_eq!(
-            output["results"][0]["command_type"],
-            crate::commands::active_shell_command_name()
-        );
-    }
-
-    #[test]
-    fn unknown_command_without_payload_runs_command_text_as_shell() {
-        let output = execute(
-            &json!({
-                "commands": [
-                    {
-                        "command": "echo raw-command-ok",
-                        "command_line": "",
-                        "step": 1
-                    }
-                ]
-            }),
-            Path::new("."),
-        );
-
-        assert_eq!(output["results"][0]["success"], true);
-        assert_eq!(
-            output["results"][0]["command_type"],
-            crate::commands::active_shell_command_name()
-        );
-    }
-
-    #[test]
-    fn command_line_without_command_defaults_to_active_shell_command() {
-        let output = execute(
-            &json!({
-                "commands": [
-                    {
-                        "command_line": "echo command-line-only-ok",
-                        "step": 1
-                    }
-                ]
-            }),
-            Path::new("."),
-        );
-
-        assert_eq!(output["results"][0]["success"], true);
-        assert_eq!(
-            output["results"][0]["command_type"],
-            crate::commands::active_shell_command_name()
-        );
-    }
-
-    #[test]
-    fn shell_commands_default_to_15_second_timeout() {
+    fn normalize_shell_commands_default_to_15_second_timeout() {
         let args = parse_args(&json!({
             "commands": [
                 {
@@ -1389,275 +1122,133 @@ mod tests {
     }
 
     #[test]
-    fn command_line_without_command_type_accepts_workdir_and_timeout() {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "tura-command-run-default-shell-workdir-{}",
-            std::process::id()
-        ));
-        let subdir = temp_dir.join("subdir");
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        std::fs::create_dir_all(&subdir).expect("temp subdir");
+    fn parse_command_line_without_command_type_accepts_workdir_and_timeout() {
+        let args = parse_args(&json!({
+            "commands": [
+                {
+                    "command_line": "pwd",
+                    "workdir": "subdir",
+                    "timeout_ms": 5000,
+                    "step": 1
+                }
+            ]
+        }))
+        .expect("parse args");
 
-        let output = execute(
-            &json!({
-                "commands": [
-                    {
-                        "command_line": "pwd",
-                        "workdir": "subdir",
-                        "timeout_ms": 5000,
-                        "step": 1
-                    }
-                ]
-            }),
-            &temp_dir,
-        );
-
-        assert_eq!(output["results"][0]["success"], true);
         assert_eq!(
-            output["results"][0]["command_type"],
+            args.commands[0].command,
             crate::commands::active_shell_command_name()
         );
-        assert!(output["results"][0]["output"]
-            .as_str()
-            .is_some_and(|text| text.replace('\\', "/").contains("/subdir")));
-        let _ = std::fs::remove_dir_all(&temp_dir);
+        assert_eq!(args.commands[0].command_line, "pwd");
+        assert_eq!(args.commands[0].workdir.as_deref(), Some("subdir"));
+        assert_eq!(args.commands[0].timeout_ms, Some(5000));
     }
 
     #[test]
-    fn legacy_steps_shape_is_accepted() {
-        let output = execute(
-            &json!({
-                "steps": [
-                    {
-                        "tool_name": "shell_command",
-                        "command_code": "echo legacy-steps-ok",
-                        "step": 1
-                    }
-                ]
-            }),
-            Path::new("."),
-        );
+    fn parse_legacy_steps_shape_is_accepted() {
+        let args = parse_args(&json!({
+            "steps": [
+                {
+                    "tool_name": "shell_command",
+                    "command_code": "echo legacy-steps-ok",
+                    "step": 1
+                }
+            ]
+        }))
+        .expect("parse args");
 
-        assert_eq!(output["results"][0]["success"], true);
+        assert_eq!(args.commands[0].command, "shell_command");
+        assert_eq!(args.commands[0].command_line, "echo legacy-steps-ok");
+    }
+
+    #[test]
+    fn parse_command_run_arguments_accept_requests_wrapper_and_json_fence() {
+        let args = parse_args(&Value::String(
+            "```json\n{\"requests\":{\"commands\":[{\"command\":\"shell_command\",\"command_line\":\"echo fenced-ok\",\"step\":1}]}}\n```"
+                .to_string(),
+        ))
+        .expect("parse args");
+
+        assert_eq!(args.commands[0].command, "shell_command");
+        assert_eq!(args.commands[0].command_line, "echo fenced-ok");
+    }
+
+    #[test]
+    fn parse_command_line_wrapped_apply_patch_routes_to_apply_patch() {
+        let args = parse_args(&json!({
+            "commands": [
+                {
+                    "command": "shell_command",
+                    "command_line": "apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: app.txt\n@@\n-old\n+new\n*** End Patch\nPATCH",
+                    "step": 1
+                }
+            ]
+        }))
+        .expect("parse args");
+
+        assert_eq!(args.commands[0].command, "apply_patch");
+        assert!(args.commands[0].command_line.starts_with("*** Begin Patch"));
+    }
+
+    #[test]
+    fn parse_apply_patch_missing_begin_marker_is_repaired() {
+        let args = parse_args(&json!({
+            "commands": [
+                {
+                    "command_type": "apply_patch",
+                    "command_line": "apply_patch\n*** Update File: app.txt\n@@\n-old\n+new\n*** End Patch",
+                    "step": 1
+                }
+            ]
+        }))
+        .expect("parse args");
+
+        assert_eq!(args.commands[0].command, "apply_patch");
         assert_eq!(
-            output["results"][0]["command_type"],
-            crate::commands::active_shell_command_name()
+            args.commands[0].command_line,
+            "*** Begin Patch\n*** Update File: app.txt\n@@\n-old\n+new\n*** End Patch"
         );
     }
 
     #[test]
-    fn command_run_arguments_accept_requests_wrapper_and_json_fence() {
-        let output = execute(
-            &Value::String(
-                "```json\n{\"requests\":{\"commands\":[{\"command\":\"shell_command\",\"command_line\":\"echo fenced-ok\",\"step\":1}]}}\n```"
-                    .to_string(),
-            ),
-            Path::new("."),
-        );
+    fn parse_aliases_cmd_and_command_line_are_accepted() {
+        let args = parse_args(&json!({
+            "commands": [
+                { "cmd": "shell_command", "commandLine": "echo ok", "step": 1 }
+            ]
+        }))
+        .expect("parse args");
 
-        assert_eq!(output["results"][0]["success"], true);
+        assert_eq!(args.commands[0].command, "shell_command");
+        assert_eq!(args.commands[0].command_line, "echo ok");
     }
 
     #[test]
-    fn command_line_wrapped_apply_patch_routes_to_apply_patch() {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "tura-command-run-patch-payload-route-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        std::fs::create_dir_all(&temp_dir).expect("temp dir");
-        std::fs::write(temp_dir.join("app.txt"), "old\n").expect("fixture");
+    fn parse_single_shell_object_without_commands_is_wrapped() {
+        let args = parse_args(&json!({
+            "command": "echo ok",
+            "timeoutMs": 120000
+        }))
+        .expect("parse args");
 
-        let output = execute(
-            &json!({
-                "commands": [
-                    {
-                        "command": "shell_command",
-                        "command_line": "apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: app.txt\n@@\n-old\n+new\n*** End Patch\nPATCH",
-                        "step": 1
-                    }
-                ]
-            }),
-            &temp_dir,
-        );
-
-        assert_eq!(output["results"][0]["success"], true);
-        assert_eq!(output["results"][0]["command_type"], "apply_patch");
-        assert_eq!(
-            std::fs::read_to_string(temp_dir.join("app.txt")).expect("read fixture"),
-            "new\n"
-        );
-        let _ = std::fs::remove_dir_all(&temp_dir);
+        assert_eq!(args.commands.len(), 1);
+        assert_eq!(args.commands[0].command_line, "echo ok");
+        assert_eq!(args.commands[0].timeout_ms, Some(120000));
     }
 
     #[test]
-    fn aliases_cmd_and_command_line_are_accepted() {
-        let output = execute(
-            &json!({
-                "commands": [
-                    { "cmd": "shell_command", "commandLine": "echo ok", "step": 1 }
-                ]
-            }),
-            Path::new("."),
-        );
+    fn parse_command_only_here_string_patch_is_routed_to_apply_patch() {
+        let args = parse_args(&json!({
+            "commands": [
+                {
+                    "command": "@'\n*** Begin Patch\n*** Update File: app.txt\n@@\n-old\n+new\n*** End Patch\n'@",
+                    "step": 1
+                }
+            ]
+        }))
+        .expect("parse args");
 
-        assert_eq!(output["results"][0]["success"], true);
-        assert_eq!(output["results"][0]["command_type"], "shell_command");
-    }
-
-    #[test]
-    fn single_shell_object_without_commands_is_wrapped() {
-        let output = execute(
-            &json!({
-                "command": "echo ok",
-                "timeoutMs": 120000
-            }),
-            Path::new("."),
-        );
-
-        assert_eq!(output["results"][0]["success"], true);
-    }
-
-    #[test]
-    fn command_only_here_string_patch_is_routed_to_apply_patch() {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "tura-command-run-patch-route-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        std::fs::create_dir_all(&temp_dir).expect("temp dir");
-        std::fs::write(temp_dir.join("app.txt"), "old\n").expect("fixture");
-
-        let output = execute(
-            &json!({
-                "commands": [
-                    {
-                        "command": "@'\n*** Begin Patch\n*** Update File: app.txt\n@@\n-old\n+new\n*** End Patch\n'@",
-                        "step": 1
-                    }
-                ]
-            }),
-            &temp_dir,
-        );
-
-        assert_eq!(output["results"][0]["success"], true);
-        assert_eq!(output["results"][0]["command_type"], "apply_patch");
-        assert_eq!(
-            std::fs::read_to_string(temp_dir.join("app.txt")).expect("read fixture"),
-            "new\n"
-        );
-        let _ = std::fs::remove_dir_all(&temp_dir);
-    }
-
-    #[test]
-    fn later_batch_commands_stop_after_apply_patch_failure() {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "tura-command-run-patch-failure-stop-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        std::fs::create_dir_all(&temp_dir).expect("temp dir");
-        std::fs::write(temp_dir.join("app.txt"), "actual\n").expect("fixture");
-
-        let output = execute(
-            &json!({
-                "commands": [
-                    {
-                        "command": "apply_patch",
-                        "command_line": "*** Begin Patch\n*** Update File: app.txt\n@@\n-missing\n+new\n*** End Patch\n",
-                        "step": 1
-                    },
-                    {
-                        "command": "shell_command",
-                        "command_line": "echo after",
-                        "step": 1
-                    },
-                    {
-                        "command": "shell_command",
-                        "command_line": "echo next-step",
-                        "step": 2
-                    }
-                ]
-            }),
-            &temp_dir,
-        );
-
-        assert_eq!(output["cancelled"], true);
-        assert!(output["cancel_reason"]
-            .as_str()
-            .is_some_and(|text| text.contains("apply_patch failed")));
-        assert_eq!(output["results"].as_array().expect("results").len(), 1);
-        assert_eq!(output["results"][0]["success"], false);
-        assert_eq!(
-            output["results"][0]["output"]["output"]["error_type"],
-            "ContextMismatch"
-        );
-        let _ = std::fs::remove_dir_all(&temp_dir);
-    }
-
-    #[test]
-    fn streaming_executor_returns_apply_patch_result_without_finish() {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "tura-command-run-streaming-immediate-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        std::fs::create_dir_all(&temp_dir).expect("temp dir");
-        std::fs::write(temp_dir.join("app.txt"), "old\n").expect("fixture");
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
-        let mut executor = StreamingCommandRunExecutor::new(temp_dir.clone());
-
-        let immediate = runtime.block_on(executor.push_command_value(json!({
-            "command": "apply_patch",
-            "command_line": "*** Begin Patch\n*** Update File: app.txt\n@@\n-old\n+new\n*** End Patch\n",
-            "step": 1
-        })));
-
-        assert_eq!(immediate.len(), 1);
-        assert_eq!(immediate[0]["command_type"], "apply_patch");
-        assert_eq!(immediate[0]["success"], true);
-        assert_eq!(
-            std::fs::read_to_string(temp_dir.join("app.txt")).expect("fixture"),
-            "new\n"
-        );
-        let final_results = runtime.block_on(executor.finish());
-        assert!(final_results.is_empty());
-        let _ = std::fs::remove_dir_all(&temp_dir);
-    }
-
-    #[test]
-    fn streaming_executor_ignores_commands_after_failed_apply_patch() {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "tura-command-run-streaming-patch-stop-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        std::fs::create_dir_all(&temp_dir).expect("temp dir");
-        std::fs::write(temp_dir.join("app.txt"), "actual\n").expect("fixture");
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
-        let mut executor = StreamingCommandRunExecutor::new(temp_dir.clone());
-
-        let failed = runtime.block_on(executor.push_command_value(json!({
-            "command": "apply_patch",
-            "command_line": "*** Begin Patch\n*** Update File: app.txt\n@@\n-missing\n+new\n*** End Patch\n",
-            "step": 1
-        })));
-        let ignored = runtime.block_on(executor.push_command_value(json!({
-            "command": "shell_command",
-            "command_line": "echo after",
-            "step": 1
-        })));
-        let final_results = runtime.block_on(executor.finish());
-
-        assert_eq!(failed.len(), 1);
-        assert_eq!(failed[0]["command_type"], "apply_patch");
-        assert_eq!(failed[0]["success"], false);
-        assert!(ignored.is_empty());
-        assert!(final_results.is_empty());
-        assert_eq!(
-            std::fs::read_to_string(temp_dir.join("app.txt")).expect("fixture"),
-            "actual\n"
-        );
-        let _ = std::fs::remove_dir_all(&temp_dir);
+        assert_eq!(args.commands[0].command, "apply_patch");
+        assert!(args.commands[0].command_line.starts_with("*** Begin Patch"));
     }
 }

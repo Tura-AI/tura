@@ -10,7 +10,6 @@ const MAX_CMD_CHARS: usize = 500;
 pub struct SessionProcessSnapshot {
     pub session_directory: String,
     pub processes: Vec<SessionProcessInfo>,
-    pub lsp_processes: Vec<SessionProcessInfo>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -34,19 +33,12 @@ pub fn collect_session_process_snapshot(session_directory: &Path) -> SessionProc
         .iter()
         .filter_map(|(pid, process)| process_info_for_session(*pid, process, &target))
         .collect::<Vec<_>>();
-    processes.sort_by_key(|process| (process.kind != "lsp", process.name.clone(), process.pid));
+    processes.sort_by_key(|process| (process.name.clone(), process.pid));
     processes.truncate(MAX_PROCESSES);
-
-    let lsp_processes = processes
-        .iter()
-        .filter(|process| process.kind == "lsp")
-        .cloned()
-        .collect::<Vec<_>>();
 
     SessionProcessSnapshot {
         session_directory: session_directory.display().to_string(),
         processes,
-        lsp_processes,
     }
 }
 
@@ -60,11 +52,6 @@ pub fn session_process_snapshot_text(session_directory: &Path) -> String {
     }
 
     let mut lines = vec![format!("session_directory: {}", snapshot.session_directory)];
-    if snapshot.lsp_processes.is_empty() {
-        lines.push("lsp_processes: none detected".to_string());
-    } else {
-        lines.push(format!("lsp_processes: {}", snapshot.lsp_processes.len()));
-    }
     lines.push("processes:".to_string());
     for process in snapshot.processes {
         lines.push(format!(
@@ -96,9 +83,8 @@ fn process_info_for_session(
         .map(|exe| path_is_under(exe, target))
         .unwrap_or(false);
     let cmd_matches = command_mentions_path(&cmd, target);
-    let lsp = is_lsp_process(process, &cmd);
 
-    if !cwd_matches && !exe_matches && !cmd_matches && !lsp {
+    if !cwd_matches && !exe_matches && !cmd_matches {
         return None;
     }
 
@@ -109,20 +95,12 @@ fn process_info_for_session(
         cwd: process.cwd().map(|path| path.display().to_string()),
         command_line: truncate(&cmd, MAX_CMD_CHARS),
         running_file: running_file_from_command(process, &cmd),
-        kind: if lsp {
-            "lsp".to_string()
-        } else if cmd.contains("command_run") || process.name().contains("command_run") {
+        kind: if cmd.contains("command_run") || process.name().contains("command_run") {
             "command_run".to_string()
         } else {
             "workspace".to_string()
         },
     })
-}
-
-fn is_lsp_process(process: &Process, cmd: &str) -> bool {
-    let name = process.name().to_ascii_lowercase();
-    let cmd = cmd.to_ascii_lowercase();
-    name == "lsp" || name == "lsp.exe" || cmd.contains("tura_lsp") || cmd.contains("--kind lsp")
 }
 
 fn running_file_from_command(process: &Process, cmd: &str) -> Option<String> {

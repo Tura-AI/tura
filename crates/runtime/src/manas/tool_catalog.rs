@@ -1,11 +1,11 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use crate::state_machine::agent_management::AgentManagement;
 
 use super::constants::{
-    CODING_AGENT_CONTEXT_EXCLUDED_TOOLS, COMMAND_RUN_TOOL, DISABLE_EXECUTE_TOOLS_TOOL_ENV,
-    DISABLE_MULTIPLE_TASKS_TOOL_ENV, FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS_ENV,
-    FORCE_MULTIPLE_TASKS_ENV, PROJECT_ROOT_ENV,
+    COMMAND_RUN_TOOL, DISABLE_EXECUTE_TOOLS_TOOL_ENV, DISABLE_MULTIPLE_TASKS_TOOL_ENV,
+    FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS_ENV, FORCE_MULTIPLE_TASKS_ENV, PROJECT_ROOT_ENV,
 };
 
 #[cfg(test)]
@@ -14,28 +14,24 @@ use super::constants::MULTIPLE_TASKS_TOOL;
 pub(super) fn load_agent_capabilities(
     agent: &AgentManagement,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let mut tools = Vec::new();
-
-    for capability in &agent.agent_capabilities {
-        if should_hide_from_coding_agent_context(agent, &capability.capability_name) {
-            continue;
-        }
-        let interface_path = capability
-            .capability_directory
-            .join(&capability.capability_name)
-            .join("schema.json");
-
-        if interface_path.exists() {
-            let content = std::fs::read_to_string(&interface_path)
-                .map_err(|e| format!("failed to read tool interface: {}", e))?;
-
-            if let Ok(interface) = serde_json::from_str::<serde_json::Value>(&content) {
-                tools.push(tool_interface_to_provider_schema(interface));
-            }
-        }
+    let Some(command_run_directory) = command_run_capability_directory(agent)? else {
+        return Ok(Vec::new());
+    };
+    let interface_path = command_run_directory
+        .join(COMMAND_RUN_TOOL)
+        .join("schema.json");
+    if !interface_path.exists() {
+        return Ok(Vec::new());
     }
 
-    Ok(tools)
+    let content = std::fs::read_to_string(&interface_path)
+        .map_err(|e| format!("failed to read tool interface: {}", e))?;
+    let interface = serde_json::from_str::<serde_json::Value>(&content)
+        .map_err(|e| format!("failed to parse tool interface: {}", e))?;
+
+    Ok(vec![tool_interface_to_provider_schema_for_agent(
+        interface, agent,
+    )])
 }
 
 pub(super) fn filter_tools_for_turn(
@@ -153,14 +149,76 @@ pub(super) fn project_directory_with_tools() -> Result<PathBuf, String> {
     Ok(current)
 }
 
-fn should_hide_from_coding_agent_context(agent: &AgentManagement, tool_name: &str) -> bool {
-    matches!(
-        agent.agent_name.as_str(),
-        "coding_agent" | "coding_agent_fast"
-    ) && CODING_AGENT_CONTEXT_EXCLUDED_TOOLS.contains(&tool_name)
+fn command_run_capability_directory(agent: &AgentManagement) -> Result<Option<PathBuf>, String> {
+    if let Some(capability) = agent
+        .agent_capabilities
+        .iter()
+        .find(|capability| capability.capability_name == COMMAND_RUN_TOOL)
+    {
+        return Ok(Some(capability.capability_directory.clone()));
+    }
+
+    if let Some(capability) = agent.agent_capabilities.first() {
+        return Ok(Some(capability.capability_directory.clone()));
+    }
+
+    let project_directory = project_directory_with_tools()?;
+    Ok(Some(
+        project_directory.join("crates").join("tools").join("src"),
+    ))
 }
 
+#[cfg(test)]
 pub(super) fn tool_interface_to_provider_schema(interface: serde_json::Value) -> serde_json::Value {
+    tool_interface_to_provider_schema_with_commands(interface, None)
+}
+
+pub(super) fn tool_interface_to_provider_schema_for_agent(
+    interface: serde_json::Value,
+    agent: &AgentManagement,
+) -> serde_json::Value {
+    let allowed_commands = command_run_commands_for_agent(agent);
+    tool_interface_to_provider_schema_with_commands(interface, Some(&allowed_commands))
+}
+
+pub(super) fn command_run_commands_for_agent(agent: &AgentManagement) -> BTreeSet<String> {
+    let mut commands = agent
+        .agent_capabilities
+        .iter()
+        .filter_map(|capability| {
+            let name = code_tools::commands::canonical_command(&capability.capability_name);
+            (name != COMMAND_RUN_TOOL).then_some(name)
+        })
+        .collect::<BTreeSet<_>>();
+
+    if commands.is_empty() {
+        commands = default_command_run_commands();
+    }
+    commands
+}
+
+fn default_command_run_commands() -> BTreeSet<String> {
+    let mut commands = [
+        "apply_patch",
+        active_shell_command_name(),
+        "read_media",
+        "web_discover",
+        "compact_context",
+        "task_status",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect::<BTreeSet<_>>();
+    if multiple_tasks_env_enabled() {
+        commands.insert("multiple_tasks".to_string());
+    }
+    commands
+}
+
+fn tool_interface_to_provider_schema_with_commands(
+    interface: serde_json::Value,
+    allowed_commands: Option<&BTreeSet<String>>,
+) -> serde_json::Value {
     let name = interface
         .get("name")
         .and_then(|value| value.as_str())
@@ -171,14 +229,19 @@ pub(super) fn tool_interface_to_provider_schema(interface: serde_json::Value) ->
         .unwrap_or("")
         .to_string();
     if name == COMMAND_RUN_TOOL {
-        description = command_run_description_for_active_shell(&description);
+        description = command_run_description_for_active_shell(&description, allowed_commands);
     }
-    let input_schema = sanitize_provider_schema(
+    let mut input_schema = sanitize_provider_schema(
         interface
             .get("input_schema")
             .cloned()
             .unwrap_or_else(|| serde_json::json!({ "type": "object" })),
     );
+    if name == COMMAND_RUN_TOOL {
+        if let Some(commands) = allowed_commands {
+            input_schema = restrict_command_run_schema(input_schema, commands);
+        }
+    }
     let mut parameters =
         if input_schema.get("type").and_then(|value| value.as_str()) == Some("array") {
             serde_json::json!({
@@ -206,6 +269,24 @@ pub(super) fn tool_interface_to_provider_schema(interface: serde_json::Value) ->
             "strict": strict
         }
     })
+}
+
+fn restrict_command_run_schema(
+    mut schema: serde_json::Value,
+    commands: &BTreeSet<String>,
+) -> serde_json::Value {
+    let active = active_shell_command_name();
+    let command_names = command_list_for_description(commands, active)
+        .into_iter()
+        .map(serde_json::Value::String)
+        .collect::<Vec<_>>();
+    if let Some(command_type) = schema
+        .pointer_mut("/properties/commands/items/properties/command_type")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        command_type.insert("enum".to_string(), serde_json::Value::Array(command_names));
+    }
+    schema
 }
 
 fn strip_tura_schema_extensions(mut value: serde_json::Value) -> serde_json::Value {
@@ -278,8 +359,19 @@ fn active_shell_command_name() -> &'static str {
     }
 }
 
-fn command_run_description_for_active_shell(original: &str) -> String {
+fn command_run_description_for_active_shell(
+    original: &str,
+    allowed_commands: Option<&BTreeSet<String>>,
+) -> String {
     let active = active_shell_command_name();
+    let default_commands;
+    let allowed_commands = match allowed_commands {
+        Some(commands) => commands,
+        None => {
+            default_commands = default_command_run_commands();
+            &default_commands
+        }
+    };
     let prefix = original
         .split("\nAvailable command details")
         .next()
@@ -290,60 +382,102 @@ fn command_run_description_for_active_shell(original: &str) -> String {
         .replace("Available commands: apply_patch, bash, shell_command.", "")
         .trim_end()
         .to_string();
-    let shell_prompt = if active == "shell_command" {
-        code_tools::commands::shell_command::PROMPT
-    } else {
-        code_tools::commands::bash::PROMPT
-    };
-    let mut description = format!(
-        "{prefix} Available commands: apply_patch, {active}, read_media, web_discover, compact_context, task_status.\nCommand run patterns:\n{}\nCommand line formats:\n- apply_patch: {}\n- {active}: {}\n- read_media: {} Schema: {}\n- web_discover: {} Schema: {}\n- compact_context: {} Schema: {}\n- task_status: {} Schema: {}",
-        command_run_usage_patterns(),
-        current_apply_patch_command_format(),
-        current_shell_command_format(active, shell_prompt),
-        compact_prompt(code_tools::commands::read_media::PROMPT),
-        compact_schema(code_tools::commands::read_media::SCHEMA),
-        compact_prompt(code_tools::commands::web_discover::PROMPT),
-        compact_schema(code_tools::commands::web_discover::SCHEMA),
-        compact_prompt(code_tools::commands::compact_context::PROMPT),
-        compact_schema(code_tools::commands::compact_context::SCHEMA),
-        task_status_prompt(),
-        task_status_schema(),
-    );
-    if multiple_tasks_env_enabled() {
-        description.push_str(&format!(
-            "\n- multiple_tasks: {} Schema: {}",
+    let mut command_lines = Vec::new();
+    if allowed_commands.contains("apply_patch") {
+        command_lines.push(format!(
+            "- apply_patch: {}",
+            current_apply_patch_command_format()
+        ));
+    }
+    if allowed_commands.contains(active) {
+        let shell_prompt = if active == "shell_command" {
+            code_tools::commands::shell_command::PROMPT
+        } else {
+            code_tools::commands::bash::PROMPT
+        };
+        command_lines.push(format!(
+            "- {active}: {}",
+            current_shell_command_format(active, shell_prompt)
+        ));
+    }
+    if allowed_commands.contains("read_media") {
+        command_lines.push(format!(
+            "- read_media: {} Schema: {}",
+            compact_prompt(code_tools::commands::read_media::PROMPT),
+            compact_schema(code_tools::commands::read_media::SCHEMA),
+        ));
+    }
+    if allowed_commands.contains("web_discover") {
+        command_lines.push(format!(
+            "- web_discover: {} Schema: {}",
+            compact_prompt(code_tools::commands::web_discover::PROMPT),
+            compact_schema(code_tools::commands::web_discover::SCHEMA),
+        ));
+    }
+    if allowed_commands.contains("compact_context") {
+        command_lines.push(format!(
+            "- compact_context: {} Schema: {}",
+            compact_prompt(code_tools::commands::compact_context::PROMPT),
+            compact_schema(code_tools::commands::compact_context::SCHEMA),
+        ));
+    }
+    if allowed_commands.contains("task_status") {
+        command_lines.push(format!(
+            "- task_status: {} Schema: {}",
+            compact_prompt(code_tools::commands::task_status::PROMPT),
+            compact_schema(code_tools::commands::task_status::SCHEMA),
+        ));
+    }
+    if multiple_tasks_env_enabled() && allowed_commands.contains("multiple_tasks") {
+        command_lines.push(format!(
+            "- multiple_tasks: {} Schema: {}",
             compact_prompt(code_tools::commands::multiple_tasks::PROMPT),
             compact_schema(code_tools::commands::multiple_tasks::SCHEMA),
         ));
-        description = description.replace(
-            &format!("Available commands: apply_patch, {active}, read_media, web_discover, compact_context, task_status."),
-            &format!("Available commands: apply_patch, {active}, read_media, web_discover, compact_context, task_status, multiple_tasks."),
-        );
     }
-    description
+    format!(
+        "{prefix} Available commands: {}.\nCommand run patterns:\n{}\nCommand line formats:\n{}",
+        command_list_for_description(allowed_commands, active).join(", "),
+        command_run_usage_patterns(allowed_commands),
+        command_lines.join("\n"),
+    )
 }
 
-fn task_status_prompt() -> &'static str {
-    "Update the task-management state only when the current task is done or needs user input. The only visible fields are optional task_summary and optional status. Use status done only after completion and verification; use status question when user feedback or more information is needed. If neither question nor done applies, continue with command_run work. Once task_summary exists, do not rename it during execution unless the user clearly changed the task; a rejected rename will be reported back and other state does not need updating."
+fn command_list_for_description(commands: &BTreeSet<String>, active_shell: &str) -> Vec<String> {
+    let order = [
+        "apply_patch",
+        active_shell,
+        "read_media",
+        "web_discover",
+        "compact_context",
+        "task_status",
+        "multiple_tasks",
+    ];
+    order
+        .into_iter()
+        .filter(|name| commands.contains(*name))
+        .map(str::to_string)
+        .collect()
 }
 
-fn task_status_schema() -> &'static str {
-    "{\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"task_summary\":{\"type\":\"string\",\"description\":\"Optional task title/summary. Set near the start only, unless the user clearly changes the task.\"},\"status\":{\"type\":\"string\",\"enum\":[\"question\",\"done\"],\"description\":\"question when blocked on user feedback; done when the task is complete and verified.\"}}}"
-}
-
-fn command_run_usage_patterns() -> &'static str {
-    r#"- Batch investigation: use early commands for the specific discovery, searches, and file reads needed to understand the failure surface.
-- Keep related path listing, targeted search, and candidate file reads in the same command_run batch and same read-only step when they are independent.
-- Parallel reads: put independent safe read-only commands in the same step when they do not depend on each other.
-- Code repair loop: use early steps for needed discovery/reads, a later step for one multi-file `apply_patch`, and final steps in the same command_run for tests plus focused validation searches.
-- Avoid embedding long generated source code or complex quoting directly in shell/bash command lines; for complex logic, invoke a script/interpreter from shell/bash rather than encoding the logic in shell syntax.
-- Verification: run the relevant test or build command after edits in the same command_run when the edit target is already clear.
-- Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.
-- Context compaction: after a meaningful phase completes, or when context is near 200,000 tokens and feels crowded, put `compact_context` as the final command in the highest step with a concise handoff summary for the next turn.
-- Example investigation batch: step 1 needed `rg --files`, targeted `rg -n`, and candidate file reads.
-- Example repair batch: step 1 `apply_patch` across related files, step 2 write or update a focused test script when needed, step 3 run the narrow test and focused validation searches.
-- Example frontend batch: step 1 write or reuse the focused frontend test script, step 2 run that script and capture outputs/screenshots, step 3 read the resulting artifacts and analyze display quality and functionality.
-- Example media batch: step 1 use `web_discover` or generation to collect the needed media, docs, or repo artifacts, step 2 use `read_media` or focused reads to verify the resulting media or repo content."#
+fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
+    let mut patterns = vec![
+        "- Batch investigation: use early commands for the specific discovery, searches, and file reads needed to understand the failure surface.",
+        "- Keep related path listing, targeted search, and candidate file reads in the same command_run batch and same read-only step when they are independent.",
+        "- Parallel reads: put independent safe read-only commands in the same step when they do not depend on each other.",
+        "- Code repair loop: use early steps for needed discovery/reads, a later step for one multi-file `apply_patch`, and final steps in the same command_run for tests plus focused validation searches.",
+        "- Avoid embedding long generated source code or complex quoting directly in shell/bash command lines; for complex logic, invoke a script/interpreter from shell/bash rather than encoding the logic in shell syntax.",
+        "- Verification: run the relevant test or build command after edits in the same command_run when the edit target is already clear.",
+        "- Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.",
+        "- Context compaction: after a meaningful phase completes, or when context is near 200,000 tokens and feels crowded, put `compact_context` as the final command in the highest step with a concise handoff summary for the next turn.",
+        "- Example investigation batch: step 1 needed `rg --files`, targeted `rg -n`, and candidate file reads.",
+        "- Example repair batch: step 1 `apply_patch` across related files, step 2 write or update a focused test script when needed, step 3 run the narrow test and focused validation searches.",
+        "- Example frontend batch: step 1 write or reuse the focused frontend test script, step 2 run that script and inspect generated textual outputs.",
+    ];
+    if allowed_commands.contains("read_media") || allowed_commands.contains("web_discover") {
+        patterns.push("- Example media batch: step 1 use `web_discover` or generation to collect the needed media, docs, or repo artifacts, step 2 use `read_media` or focused reads to verify the resulting media or repo content.");
+    }
+    patterns.join("\n")
 }
 
 fn current_apply_patch_command_format() -> String {
@@ -427,7 +561,7 @@ mod tests {
     fn command_run_interface() -> serde_json::Value {
         serde_json::json!({
             "name": COMMAND_RUN_TOOL,
-            "description": "Run Codex tools as a pure batch+step command runner. Use assistant content only for concise reasoning, progress, and conclusions. Available commands: apply_patch, bash, shell_command.\nCommand line formats:\n- apply_patch: patch\n- bash: bash details\n- shell_command: shell details",
+            "description": "Run tools as a pure batch+step command runner. Use assistant content only for concise reasoning, progress, and conclusions. Available commands: apply_patch, bash, shell_command.\nCommand line formats:\n- apply_patch: patch\n- bash: bash details\n- shell_command: shell details",
             "input_schema": {
                 "type": "object",
                 "required": ["commands"],
@@ -447,6 +581,38 @@ mod tests {
                 }
             }
         })
+    }
+
+    #[test]
+    fn command_run_description_injects_task_status_command_prompt() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let schema = tool_interface_to_provider_schema(command_run_interface());
+        let description = schema
+            .pointer("/function/description")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+
+        // task_status is advertised as an available command.
+        assert!(
+            description.contains("task_status"),
+            "description missing task_status command"
+        );
+        // The dedicated command prompt (prompt.md) content is present, including
+        // the question/done guidance and the single usage example.
+        assert!(
+            description.contains("task_status status `done`")
+                && description.contains("task_status status `question`"),
+            "description missing question/done guidance"
+        );
+        assert!(
+            description.contains("\"command_type\":\"task_status\""),
+            "description missing task_status usage example"
+        );
+        // The schema enum is injected too.
+        assert!(
+            description.contains("\"enum\":[\"question\",\"done\"]"),
+            "description missing task_status schema enum"
+        );
     }
 
     #[test]
@@ -710,6 +876,7 @@ mod tests {
             root.clone(),
             None,
             true,
+            false,
             ProviderConfig {
                 tura_llm_name: "test".to_string(),
                 stream: false,

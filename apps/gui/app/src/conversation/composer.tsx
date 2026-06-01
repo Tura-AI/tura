@@ -1,50 +1,21 @@
+import type { Command } from "@tura/gateway-sdk";
+import ArrowUp from "lucide-solid/icons/arrow-up";
+import ExternalLink from "lucide-solid/icons/external-link";
+import FolderOpen from "lucide-solid/icons/folder-open";
+import Plus from "lucide-solid/icons/plus";
 import {
   For,
+  type JSX,
   Show,
   createEffect,
   createMemo,
   createSignal,
-  type JSX,
   onCleanup,
 } from "solid-js";
-import ArrowDown from "lucide-solid/icons/arrow-down";
-import ArrowUp from "lucide-solid/icons/arrow-up";
-import FolderOpen from "lucide-solid/icons/folder-open";
-import Plus from "lucide-solid/icons/plus";
-import SquareTerminal from "lucide-solid/icons/square-terminal";
-import ExternalLink from "lucide-solid/icons/external-link";
-import type {
-  Command,
-  Message,
-  MessagePart,
-  ServiceStatusResponse,
-  Session,
-} from "@tura/gateway-sdk";
-import {
-  type ComposerImage,
-  type AppState,
-  messageCreatedAt,
-  partText,
-  sessionTitle,
-} from "../state/global-store";
-import { classNames, formatTime, jsonPreview } from "../state/format";
 import { t } from "../i18n";
-import {
-  asRecord,
-  diffLines,
-  formatDuration,
-  isPatchRecord,
-  isToolPart,
-  messageDurationMs,
-  toolRecords,
-  toolStatus,
-} from "./message-tools";
-import {
-  ImageLightbox,
-  RichText,
-  reactionEmojiValues,
-  stripReactionEmoji,
-} from "./message-rich-text";
+import { classNames } from "../state/format";
+import { type ComposerImage } from "../state/global-store";
+import { ImageLightbox } from "./message-rich-text";
 
 export function Composer(props: {
   text: string;
@@ -614,7 +585,7 @@ export function composerInputHeight(value: string): string {
   const lines = Math.min(
     8,
     Math.max(
-      3,
+      2,
       value.split(/\r\n|\r|\n/u).length + Math.floor(value.length / 88),
     ),
   );

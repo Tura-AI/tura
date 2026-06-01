@@ -147,7 +147,6 @@ fn normalize_command_run_tool_name(command: &str) -> String {
         .to_ascii_lowercase()
         .replace(['_', '-'], ":")
         .trim_start_matches("semantic:")
-        .trim_start_matches("lsp:")
         .trim_start_matches("source:")
         .replace(':', "_");
     match normalized.as_str() {
@@ -160,9 +159,9 @@ fn normalize_command_run_tool_name(command: &str) -> String {
         "apply_patch" | "applypatch" | "patch" | "apply_diff" | "applydiff" => {
             "apply_patch".to_string()
         }
-        "lsp_outline" | "outline" | "symbols" => "get_file_outline".to_string(),
-        "lsp_definition" | "definition" => "find_definition".to_string(),
-        "lsp_references" | "references" => "find_references".to_string(),
+        "outline" | "symbols" => "get_file_outline".to_string(),
+        "definition" => "find_definition".to_string(),
+        "references" => "find_references".to_string(),
         _ => normalized,
     }
 }

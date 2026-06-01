@@ -13,7 +13,7 @@ from playwright.async_api import async_playwright
 
 ROOT = Path(__file__).resolve().parents[3]
 COMMUNICATION_STYLE = (
-    ROOT / "crates" / "agents" / "src" / "coding_agent" / "communication_style.md"
+    ROOT / "crates" / "persona" / "src" / "tura" / "prompt" / "communication_style.md"
 )
 OUT = Path(
     os.environ.get(
@@ -24,7 +24,7 @@ OUT = Path(
 GUI_URL = os.environ.get("TURA_GUI_URL", "http://127.0.0.1:5180")
 GATEWAY_URL = os.environ.get("TURA_GATEWAY_URL", "http://127.0.0.1:4096")
 MODEL = os.environ.get("TURA_E2E_MODEL", "openai/gpt-5.5")
-AGENT = os.environ.get("TURA_E2E_AGENT", "coding_agent")
+AGENT = os.environ.get("TURA_E2E_AGENT", "coding_agent_planning")
 PROMPT_NONCE = os.environ.get("TURA_E2E_NONCE", f"tura-tool-e2e-{int(time.time())}")
 EXPECTED = os.environ.get("TURA_E2E_EXPECTED", f"TURA_TOOL_E2E_DONE {PROMPT_NONCE}")
 COMMAND_MARKER = os.environ.get("TURA_E2E_COMMAND_MARKER", f"TURA_PLAYWRIGHT_STEP {PROMPT_NONCE}")

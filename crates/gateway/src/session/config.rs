@@ -8,7 +8,7 @@ const CONFIG_FILE: &str = "config.conf";
 pub const DEFAULT_SESSION_MODEL: &str = "codex/gpt-5.1-codex";
 pub const DEFAULT_SESSION_PROVIDER: &str = "codex";
 pub const DEFAULT_SESSION_MODEL_ID: &str = "gpt-5.1-codex";
-pub const DEFAULT_SESSION_AGENT: &str = "coding_agent";
+pub const DEFAULT_SESSION_AGENT: &str = "coding_agent_planning";
 pub const DEFAULT_SESSION_TYPE: &str = "coding";
 pub const DEFAULT_SESSION_REASONING_EFFORT: &str = "low";
 
@@ -30,6 +30,7 @@ pub struct TuraSessionConfig {
     pub command_run_stall_guard_profile: Option<String>,
     pub command_run_stall_guard_check_secs: Option<u64>,
     pub command_run_stall_guard_identical_checks: Option<u8>,
+    pub agent_avatar: Option<serde_json::Value>,
 }
 
 impl Default for TuraSessionConfig {
@@ -50,6 +51,7 @@ impl Default for TuraSessionConfig {
             command_run_stall_guard_profile: None,
             command_run_stall_guard_check_secs: None,
             command_run_stall_guard_identical_checks: None,
+            agent_avatar: None,
         }
     }
 }
@@ -101,6 +103,9 @@ impl TuraSessionConfig {
         if next.command_run_stall_guard_identical_checks.is_some() {
             self.command_run_stall_guard_identical_checks =
                 next.command_run_stall_guard_identical_checks;
+        }
+        if next.agent_avatar.is_some() {
+            self.agent_avatar = next.agent_avatar;
         }
         self.fill_model_parts();
     }
@@ -276,6 +281,9 @@ fn parse_config(content: &str) -> TuraSessionConfig {
             .get("command_run_stall_guard_identical_checks")
             .and_then(|value| value.parse::<u8>().ok())
             .filter(|value| *value > 0),
+        agent_avatar: values
+            .get("agent_avatar")
+            .map(|value| parse_json_value(value)),
     };
     if config.model_acceleration_enabled.is_none() {
         config.model_acceleration_enabled = Some(true);
@@ -324,6 +332,10 @@ fn serialize_config(config: &TuraSessionConfig) -> String {
     }
     if let Some(value) = config.command_run_stall_guard_identical_checks {
         lines.push(format!("command_run_stall_guard_identical_checks={value}"));
+    }
+    if let Some(value) = config.agent_avatar.as_ref() {
+        let encoded = serialize_json_value(value);
+        push_line(&mut lines, "agent_avatar", Some(&encoded));
     }
     lines.push(String::new());
     lines.join("\n")
@@ -376,6 +388,17 @@ fn parse_bool(value: &str) -> Option<bool> {
         "true" | "1" | "yes" | "on" => Some(true),
         "false" | "0" | "no" | "off" => Some(false),
         _ => None,
+    }
+}
+
+fn parse_json_value(value: &str) -> serde_json::Value {
+    serde_json::from_str(value).unwrap_or_else(|_| serde_json::Value::String(value.to_string()))
+}
+
+fn serialize_json_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(value) => value.clone(),
+        value => serde_json::to_string(value).unwrap_or_default(),
     }
 }
 

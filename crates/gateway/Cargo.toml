@@ -32,6 +32,8 @@ tokio-stream = "0.1"
 # Internal
 code-tools-suite = { path = "../runtime" }
 tura-llm-rust = { workspace = true }
+tura-agents = { path = "../../agents" }
+tura-persona = { path = "../../personas" }
 
 [[bin]]
 name = "tura"

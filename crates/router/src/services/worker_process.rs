@@ -13,7 +13,7 @@ use tracing::{error, info, warn};
 use super::models::{CallContext, WorkerEnvelope};
 
 const WORKER_HEALTH_TIMEOUT: Duration = Duration::from_secs(10);
-const WORKER_INVOKE_TIMEOUT: Duration = Duration::from_secs(45);
+const DEFAULT_WORKER_INVOKE_TIMEOUT: Duration = Duration::from_secs(180);
 
 pub enum WorkerMode {
     Persistent,
@@ -25,18 +25,23 @@ pub struct WorkerProcess {
     pub service_name: String,
     pub mode: WorkerMode,
     pub executable_path: std::path::PathBuf,
+    spawn_args: Vec<String>,
+    spawn_env: Vec<(String, String)>,
     child: Mutex<Option<Child>>,
     stdin: Mutex<Option<ChildStdin>>,
     stdout: Mutex<Option<BufReader<ChildStdout>>>,
 }
 
 impl WorkerProcess {
-    pub async fn start(
+    /// 声明式启动：任意 worker（可执行 + 启动参数 + env 契约）。
+    pub async fn start_with(
         worker_id: String,
         service_name: String,
         executable_path: &Path,
+        args: &[String],
+        env: &[(String, String)],
     ) -> Result<Arc<Self>> {
-        match Self::spawn_persistent(&worker_id, &service_name, executable_path).await {
+        match Self::spawn_persistent(&worker_id, &service_name, executable_path, args, env).await {
             Ok(worker) => Ok(Arc::new(worker)),
             Err(err) => {
                 warn!(
@@ -49,6 +54,8 @@ impl WorkerProcess {
                     service_name,
                     mode: WorkerMode::OneShot,
                     executable_path: executable_path.to_path_buf(),
+                    spawn_args: args.to_vec(),
+                    spawn_env: env.to_vec(),
                     child: Mutex::new(None),
                     stdin: Mutex::new(None),
                     stdout: Mutex::new(None),
@@ -61,30 +68,24 @@ impl WorkerProcess {
         worker_id: &str,
         service_name: &str,
         executable_path: &Path,
+        args: &[String],
+        env: &[(String, String)],
     ) -> Result<Self> {
-        let mut child = Command::new(executable_path)
-            .arg("--worker")
-            .arg("--kind")
-            .arg("check")
-            .arg("--lang")
-            .arg("*") // placeholder, actual language set by LSP service based on request
-            .arg("--session")
-            .arg(
-                std::env::temp_dir()
-                    .join("tura_lsp_session")
-                    .to_string_lossy()
-                    .to_string(),
-            )
+        let mut command = Command::new(executable_path);
+        command
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .with_context(|| {
-                format!(
-                    "failed to spawn worker executable: {}",
-                    executable_path.display()
-                )
-            })?;
+            .stderr(Stdio::null());
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let mut child = command.spawn().with_context(|| {
+            format!(
+                "failed to spawn worker executable: {}",
+                executable_path.display()
+            )
+        })?;
 
         let stdin = child
             .stdin
@@ -136,6 +137,8 @@ impl WorkerProcess {
             service_name: service_name.to_string(),
             mode: WorkerMode::Persistent,
             executable_path: executable_path.to_path_buf(),
+            spawn_args: args.to_vec(),
+            spawn_env: env.to_vec(),
             child: Mutex::new(Some(child)),
             stdin: Mutex::new(Some(stdin_for_probe)),
             stdout: Mutex::new(Some(reader)),
@@ -201,12 +204,13 @@ impl WorkerProcess {
             let stdout = stdout_guard
                 .as_mut()
                 .ok_or_else(|| anyhow!("persistent worker stdout unavailable"))?;
-            timeout(WORKER_INVOKE_TIMEOUT, stdout.read_line(&mut response_line))
+            let invoke_timeout = worker_invoke_timeout();
+            timeout(invoke_timeout, stdout.read_line(&mut response_line))
                 .await
                 .map_err(|_| {
                     anyhow!(
                         "worker invocation timed out after {}s",
-                        WORKER_INVOKE_TIMEOUT.as_secs()
+                        invoke_timeout.as_secs()
                     )
                 })??;
             response_line
@@ -237,17 +241,21 @@ impl WorkerProcess {
     }
 
     async fn invoke_one_shot(&self, ctx: CallContext) -> Result<Value> {
-        let mut child = Command::new(&self.executable_path)
+        let mut command = Command::new(&self.executable_path);
+        command
+            .args(&self.spawn_args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .with_context(|| {
-                format!(
-                    "failed to spawn one-shot executable: {}",
-                    self.executable_path.display()
-                )
-            })?;
+            .stderr(Stdio::piped());
+        for (key, value) in &self.spawn_env {
+            command.env(key, value);
+        }
+        let mut child = command.spawn().with_context(|| {
+            format!(
+                "failed to spawn one-shot executable: {}",
+                self.executable_path.display()
+            )
+        })?;
 
         let input = serde_json::to_vec(&ctx.input)?;
         if let Some(mut stdin) = child.stdin.take() {
@@ -255,12 +263,13 @@ impl WorkerProcess {
             stdin.flush().await?;
         }
 
-        let out = timeout(WORKER_INVOKE_TIMEOUT, child.wait_with_output())
+        let invoke_timeout = worker_invoke_timeout();
+        let out = timeout(invoke_timeout, child.wait_with_output())
             .await
             .map_err(|_| {
                 anyhow!(
                     "one-shot worker timed out after {}s",
-                    WORKER_INVOKE_TIMEOUT.as_secs()
+                    invoke_timeout.as_secs()
                 )
             })??;
         let stdout = String::from_utf8_lossy(&out.stdout).to_string();
@@ -308,12 +317,13 @@ impl WorkerProcess {
             }
         }
     }
+}
 
-    pub async fn pid(&self) -> Option<u32> {
-        self.child
-            .lock()
-            .await
-            .as_ref()
-            .and_then(|child| child.id())
-    }
+fn worker_invoke_timeout() -> Duration {
+    std::env::var("TURA_WORKER_INVOKE_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_WORKER_INVOKE_TIMEOUT)
 }

@@ -1,17 +1,16 @@
-//! Permission, Question, Agent, Command, VCS, LSP, Skill, Path, Formatter, Log handlers
+//! Permission, Question, Agent, Command, VCS, Skill, Path, Formatter, Log handlers
 
 use crate::api::types::*;
 use crate::mock::global_store;
 use axum::{
     extract::{Path, Query},
-    http::HeaderMap,
+    http::{HeaderMap, StatusCode},
     Json,
 };
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path as StdPath, PathBuf};
-use std::process::Command as ProcessCommand;
-use std::time::Duration;
+use std::process::{Command as ProcessCommand, Stdio};
 
 // ============================================================================
 // Permission
@@ -53,48 +52,354 @@ pub async fn reply_question(
 // ============================================================================
 
 pub async fn list_agents() -> Json<Vec<Agent>> {
-    let model = crate::api::provider::active_agent_model().await;
-    Json(vec![
-        Agent {
-            name: "general".to_string(),
-            description: "General session agent".to_string(),
-            mode: "primary".to_string(),
-            native: true,
-            hidden: false,
-            model: None,
-            options: HashMap::new(),
-            permission: PermissionRuleset {
-                allow: vec!["*".to_string()],
-                deny: vec![],
-            },
+    Json(list_agents_from_store())
+}
+
+pub async fn get_agent(
+    Path(agent_id): Path<String>,
+) -> Result<Json<tura_agents::store::StoredAgent>, (StatusCode, Json<BadRequestError>)> {
+    let root = project_root_for_registry();
+    tura_agents::store::load_agent(&root, &agent_id)
+        .map(Json)
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                format!("agent `{agent_id}` not found"),
+            )
+        })
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct UpsertAgentRequest {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub config: Option<tura_agents::store::AgentConfig>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+}
+
+pub async fn create_agent(
+    Json(payload): Json<UpsertAgentRequest>,
+) -> Result<Json<tura_agents::store::StoredAgent>, (StatusCode, Json<BadRequestError>)> {
+    upsert_agent_in_store(None, payload)
+        .map(Json)
+        .map_err(|err| {
+            api_error(
+                StatusCode::BAD_REQUEST,
+                format!("failed to create agent: {err}"),
+            )
+        })
+}
+
+pub async fn update_agent(
+    Path(agent_id): Path<String>,
+    Json(payload): Json<UpsertAgentRequest>,
+) -> Result<Json<tura_agents::store::StoredAgent>, (StatusCode, Json<BadRequestError>)> {
+    upsert_agent_in_store(Some(agent_id), payload)
+        .map(Json)
+        .map_err(|err| {
+            api_error(
+                StatusCode::BAD_REQUEST,
+                format!("failed to update agent: {err}"),
+            )
+        })
+}
+
+pub async fn delete_agent(
+    Path(agent_id): Path<String>,
+) -> Result<Json<bool>, (StatusCode, Json<BadRequestError>)> {
+    tura_agents::store::delete_dynamic_agent(&project_root_for_registry(), &agent_id)
+        .map(Json)
+        .map_err(|err| api_error(StatusCode::BAD_REQUEST, err))
+}
+
+pub async fn list_personas() -> Json<Vec<tura_persona::store::StoredPersona>> {
+    Json(tura_persona::store::discover_personas(
+        &project_root_for_registry(),
+    ))
+}
+
+pub async fn get_persona(
+    Path(persona_id): Path<String>,
+) -> Result<Json<tura_persona::store::StoredPersona>, (StatusCode, Json<BadRequestError>)> {
+    let root = project_root_for_registry();
+    tura_persona::store::load_persona(&root, &persona_id)
+        .map(Json)
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                format!("persona `{persona_id}` not found"),
+            )
+        })
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct UpsertPersonaRequest {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub config: Option<tura_persona::store::PersonaConfig>,
+    #[serde(default)]
+    pub persona: Option<String>,
+    #[serde(default)]
+    pub communication_style: Option<String>,
+}
+
+pub async fn create_persona(
+    Json(payload): Json<UpsertPersonaRequest>,
+) -> Result<Json<tura_persona::store::StoredPersona>, (StatusCode, Json<BadRequestError>)> {
+    upsert_persona_in_store(None, payload)
+        .map(Json)
+        .map_err(|err| {
+            api_error(
+                StatusCode::BAD_REQUEST,
+                format!("failed to create persona: {err}"),
+            )
+        })
+}
+
+pub async fn update_persona(
+    Path(persona_id): Path<String>,
+    Json(payload): Json<UpsertPersonaRequest>,
+) -> Result<Json<tura_persona::store::StoredPersona>, (StatusCode, Json<BadRequestError>)> {
+    upsert_persona_in_store(Some(persona_id), payload)
+        .map(Json)
+        .map_err(|err| {
+            api_error(
+                StatusCode::BAD_REQUEST,
+                format!("failed to update persona: {err}"),
+            )
+        })
+}
+
+pub async fn delete_persona(
+    Path(persona_id): Path<String>,
+) -> Result<Json<bool>, (StatusCode, Json<BadRequestError>)> {
+    tura_persona::store::delete_dynamic_persona(&project_root_for_registry(), &persona_id)
+        .map(Json)
+        .map_err(|err| api_error(StatusCode::BAD_REQUEST, err))
+}
+
+fn api_error(status: StatusCode, error: String) -> (StatusCode, Json<BadRequestError>) {
+    (status, Json(BadRequestError { error }))
+}
+
+fn list_agents_from_store() -> Vec<Agent> {
+    tura_agents::store::discover_agents(&project_root_for_registry())
+        .into_iter()
+        .map(agent_from_stored_agent)
+        .collect()
+}
+
+fn agent_from_stored_agent(agent: tura_agents::store::StoredAgent) -> Agent {
+    let mut options = HashMap::new();
+    options.insert(
+        "source".to_string(),
+        serde_json::json!(agent.summary.source),
+    );
+    options.insert("path".to_string(), serde_json::json!(agent.summary.path));
+    options.insert(
+        "aliases".to_string(),
+        serde_json::json!(agent.summary.aliases),
+    );
+    if let Some(icon_emoji) = agent.config.icon_emoji.as_deref() {
+        options.insert("icon_emoji".to_string(), serde_json::json!(icon_emoji));
+    }
+    options.insert(
+        "capabilities".to_string(),
+        serde_json::json!(agent.summary.capabilities),
+    );
+    options.insert(
+        "personas".to_string(),
+        serde_json::json!(resolve_agent_personas(&agent.config)),
+    );
+    options.insert(
+        "default_config".to_string(),
+        serde_json::json!(agent.config.default_config),
+    );
+    Agent {
+        name: agent.summary.id,
+        description: agent.summary.description,
+        mode: "primary".to_string(),
+        native: agent.summary.source == tura_agents::store::AgentSource::Static,
+        hidden: agent.summary.hidden,
+        model: None,
+        options,
+        permission: PermissionRuleset {
+            allow: vec!["*".to_string()],
+            deny: Vec::new(),
         },
-        Agent {
-            name: "coding_agent".to_string(),
-            description: "Coding session agent".to_string(),
-            mode: "primary".to_string(),
-            native: true,
-            hidden: false,
-            model: model.clone(),
-            options: HashMap::new(),
-            permission: PermissionRuleset {
-                allow: vec!["*".to_string()],
-                deny: vec![],
-            },
-        },
-        Agent {
-            name: "coding_agent_fast".to_string(),
-            description: "Coding session agent using the gpt-5.1-codex-mini prompt".to_string(),
-            mode: "primary".to_string(),
-            native: true,
-            hidden: false,
-            model,
-            options: HashMap::new(),
-            permission: PermissionRuleset {
-                allow: vec!["*".to_string()],
-                deny: vec![],
-            },
-        },
-    ])
+    }
+}
+
+fn resolve_agent_personas(
+    config: &tura_agents::store::AgentConfig,
+) -> Vec<tura_persona::store::StoredPersona> {
+    let root = project_root_for_registry();
+    config
+        .agent_persona
+        .iter()
+        .filter_map(|item| {
+            item.get("persona_name")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|name| tura_persona::store::load_persona(&root, name))
+        })
+        .collect()
+}
+
+fn upsert_agent_in_store(
+    agent_id: Option<String>,
+    payload: UpsertAgentRequest,
+) -> Result<tura_agents::store::StoredAgent, String> {
+    let root = project_root_for_registry();
+    let agent_id = agent_id
+        .or(payload.id)
+        .or_else(|| {
+            payload
+                .config
+                .as_ref()
+                .map(|config| config.agent_name.clone())
+        })
+        .ok_or_else(|| "agent id is required".to_string())?;
+    let mut config = payload.config.unwrap_or(
+        tura_agents::store::load_agent(&root, &agent_id)
+            .map(|agent| agent.config)
+            .unwrap_or(tura_agents::store::default_agent_config(&root, &agent_id)?),
+    );
+    config.agent_name = agent_id;
+    tura_agents::store::save_dynamic_agent(&root, &config, payload.prompt.as_deref())
+}
+
+fn upsert_persona_in_store(
+    persona_id: Option<String>,
+    payload: UpsertPersonaRequest,
+) -> Result<tura_persona::store::StoredPersona, String> {
+    let root = project_root_for_registry();
+    let persona_id = persona_id
+        .or(payload.id)
+        .or_else(|| {
+            payload
+                .config
+                .as_ref()
+                .map(|config| config.persona_name.clone())
+        })
+        .ok_or_else(|| "persona id is required".to_string())?;
+    let mut config = payload.config.unwrap_or(
+        tura_persona::store::load_persona(&root, &persona_id)
+            .map(|persona| persona.config)
+            .unwrap_or(tura_persona::store::default_persona_config(
+                &root,
+                &persona_id,
+            )?),
+    );
+    config.persona_name = persona_id;
+    tura_persona::store::save_dynamic_persona(
+        &root,
+        &config,
+        payload.persona.as_deref(),
+        payload.communication_style.as_deref(),
+    )
+}
+
+fn project_root_for_registry() -> PathBuf {
+    project_root_for_router_cli()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+}
+
+async fn run_router_registry_cli<T>(
+    command: &'static str,
+    args: &[String],
+    payload: Option<serde_json::Value>,
+) -> Result<T, String>
+where
+    T: serde::de::DeserializeOwned + Send + 'static,
+{
+    let args = args.to_vec();
+    tokio::task::spawn_blocking(move || run_router_registry_cli_blocking(command, &args, payload))
+        .await
+        .map_err(|err| format!("router registry task failed: {err}"))?
+}
+
+fn run_router_registry_cli_blocking<T>(
+    command: &str,
+    args: &[String],
+    payload: Option<serde_json::Value>,
+) -> Result<T, String>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let router = router_binary_path();
+    let mut process = ProcessCommand::new(&router);
+    process.arg(command).args(args);
+    if payload.is_some() {
+        process.stdin(Stdio::piped());
+    }
+    process.stdout(Stdio::piped()).stderr(Stdio::piped());
+    if let Some(root) = project_root_for_router_cli() {
+        process.env("TURA_PROJECT_ROOT", root);
+    }
+    let mut child = process
+        .spawn()
+        .map_err(|err| format!("failed to start router CLI {}: {err}", router.display()))?;
+    if let Some(payload) = payload {
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            let encoded = serde_json::to_vec(&payload)
+                .map_err(|err| format!("failed to encode router payload: {err}"))?;
+            stdin
+                .write_all(&encoded)
+                .map_err(|err| format!("failed to write router payload: {err}"))?;
+        }
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|err| format!("router CLI failed: {err}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return Err(if stderr.is_empty() { stdout } else { stderr });
+    }
+    serde_json::from_slice(&output.stdout).map_err(|err| {
+        format!(
+            "failed to parse router CLI output: {err}; output={}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    })
+}
+
+fn router_binary_path() -> PathBuf {
+    let file_name = if cfg!(windows) {
+        "tura_router.exe"
+    } else {
+        "tura_router"
+    };
+    let mut candidates = Vec::new();
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(parent) = current_exe.parent() {
+            candidates.push(parent.join(file_name));
+        }
+    }
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(current_dir.join("target").join("release").join(file_name));
+        candidates.push(current_dir.join("target").join("debug").join(file_name));
+    }
+    candidates
+        .into_iter()
+        .find(|path| path.exists())
+        .unwrap_or_else(|| PathBuf::from(file_name))
+}
+
+fn project_root_for_router_cli() -> Option<String> {
+    std::env::current_dir().ok().and_then(|current| {
+        current
+            .ancestors()
+            .find(|candidate| {
+                candidate.join("Cargo.toml").exists() && candidate.join("crates").exists()
+            })
+            .map(|path| path.display().to_string())
+    })
 }
 
 pub async fn console_switch() -> Json<bool> {
@@ -106,164 +411,33 @@ pub async fn console_switch() -> Json<bool> {
 // ============================================================================
 
 pub async fn list_commands() -> Json<Vec<Command>> {
-    Json(discover_commands())
+    let payload = serde_json::json!({
+        "directory": global_store().get_current_directory()
+    });
+    Json(
+        run_router_registry_cli::<Vec<Command>>("registry-commands-list", &[], Some(payload))
+            .await
+            .unwrap_or_default(),
+    )
 }
 
 pub async fn execute_command(
     Json(payload): Json<ExecuteCommandRequest>,
 ) -> Json<ExecuteCommandResponse> {
-    let command_name = payload.command.trim().trim_start_matches('/').to_string();
-    let command = discover_commands()
-        .into_iter()
-        .find(|command| command.name == command_name);
-    let output = match command.and_then(|command| command.template) {
-        Some(template) => render_command_template(&template, payload.args.as_deref().unwrap_or_default()),
-        None => format!(
-            "Command `{}` is not configured. Add a markdown or JSON command under .tura/commands, .opencode/command, .opencode/commands, command, or commands.",
-            command_name
-        ),
-    };
-    Json(ExecuteCommandResponse { output })
-}
-
-fn discover_commands() -> Vec<Command> {
-    let mut commands = Vec::new();
-    for directory in command_directories() {
-        let Ok(entries) = fs::read_dir(&directory) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(command) = command_from_file(&path) {
-                    commands.push(command);
-                }
-            }
-        }
-    }
-    commands.sort_by(|left, right| left.name.cmp(&right.name));
-    commands.dedup_by(|left, right| left.name == right.name);
-    commands
-}
-
-fn command_directories() -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    if let Some(current_directory) = global_store().get_current_directory() {
-        roots.push(PathBuf::from(current_directory));
-    }
-    if let Ok(current_directory) = std::env::current_dir() {
-        roots.push(current_directory);
-    }
-
-    let suffixes = [
-        [".tura", "commands"].as_slice(),
-        [".opencode", "command"].as_slice(),
-        [".opencode", "commands"].as_slice(),
-        ["command"].as_slice(),
-        ["commands"].as_slice(),
-    ];
-
-    let mut directories = Vec::new();
-    for root in roots {
-        for suffix in suffixes {
-            let mut directory = root.clone();
-            for part in suffix {
-                directory.push(part);
-            }
-            directories.push(directory);
-        }
-    }
-    directories
-}
-
-fn command_from_file(path: &StdPath) -> Option<Command> {
-    let extension = path.extension()?.to_string_lossy().to_ascii_lowercase();
-    if !matches!(extension.as_str(), "md" | "txt" | "json") {
-        return None;
-    }
-    let content = fs::read_to_string(path).ok()?;
-    if extension == "json" {
-        return command_from_json(path, &content);
-    }
-    let name = path.file_stem()?.to_string_lossy().to_string();
-    let description = first_command_description(&content).unwrap_or_else(|| name.clone());
-    Some(Command {
-        name,
-        description,
-        agent: None,
-        model: None,
-        source: "command".to_string(),
-        template: Some(content),
-        subtask: false,
-        hints: vec![],
-    })
-}
-
-fn command_from_json(path: &StdPath, content: &str) -> Option<Command> {
-    let value: serde_json::Value = serde_json::from_str(content).ok()?;
-    let fallback_name = path.file_stem()?.to_string_lossy().to_string();
-    let name = value
-        .get("name")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or(&fallback_name)
-        .to_string();
-    let description = value
-        .get("description")
-        .and_then(serde_json::Value::as_str)
-        .or_else(|| value.get("summary").and_then(serde_json::Value::as_str))
-        .unwrap_or(&name)
-        .to_string();
-    Some(Command {
-        name,
-        description,
-        agent: value
-            .get("agent")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string),
-        model: value
-            .get("model")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string),
-        source: "command".to_string(),
-        template: value
-            .get("template")
-            .and_then(serde_json::Value::as_str)
-            .or_else(|| value.get("prompt").and_then(serde_json::Value::as_str))
-            .map(str::to_string),
-        subtask: value
-            .get("subtask")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false),
-        hints: value
-            .get("hints")
-            .and_then(serde_json::Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(serde_json::Value::as_str)
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default(),
-    })
-}
-
-fn first_command_description(content: &str) -> Option<String> {
-    content
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(|line| line.trim_start_matches('#').trim().to_string())
-        .filter(|line| !line.is_empty())
-}
-
-fn render_command_template(template: &str, args: &[String]) -> String {
-    let joined_args = args.join(" ");
-    let mut output = template.replace("$ARGUMENTS", &joined_args);
-    for (index, arg) in args.iter().enumerate() {
-        output = output.replace(&format!("${}", index + 1), arg);
-    }
-    output
+    let router_payload = serde_json::json!({
+        "directory": global_store().get_current_directory(),
+        "command": payload.command,
+        "args": payload.args
+    });
+    Json(
+        run_router_registry_cli::<ExecuteCommandResponse>(
+            "registry-command-execute",
+            &[],
+            Some(router_payload),
+        )
+        .await
+        .unwrap_or_else(|error| ExecuteCommandResponse { output: error }),
+    )
 }
 
 pub async fn open_directory_picker(
@@ -423,7 +597,7 @@ pub struct ExecuteCommandRequest {
     pub args: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct ExecuteCommandResponse {
     pub output: String,
 }
@@ -577,23 +751,7 @@ fn parse_hunk_range(value: &str) -> Option<(u32, u32)> {
     Some((start.parse().ok()?, lines.parse().ok()?))
 }
 
-// ============================================================================
-// LSP
-// ============================================================================
-
-pub async fn get_lsp_status() -> Json<Vec<LSPStatus>> {
-    let statuses = router_services_status()
-        .await
-        .ok()
-        .map(lsp_statuses_from_router)
-        .unwrap_or_default();
-
-    Json(statuses)
-}
-
 pub async fn get_service_status() -> Json<ServiceStatusResponse> {
-    let router_url =
-        std::env::var("TURA_ROUTER_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
     let session_directory = crate::mock::global_store()
         .get_current_directory()
         .or_else(|| {
@@ -614,23 +772,18 @@ pub async fn get_service_status() -> Json<ServiceStatusResponse> {
         },
         router: ServiceHealth {
             status: "checking".to_string(),
-            url: Some(router_url.clone()),
+            url: None,
             error: None,
         },
-        lsp: Vec::new(),
         session_processes,
         docker: crate::session::docker_snapshot::collect_docker_snapshot(),
     };
 
-    match router_services_status().await {
-        Ok(status) => {
-            response.router.status = "connected".to_string();
-            response.lsp = lsp_statuses_from_router(status);
-        }
-        Err(error) => {
-            response.router.status = "error".to_string();
-            response.router.error = Some(error);
-        }
+    if router_binary_path().exists() {
+        response.router.status = "available".to_string();
+    } else {
+        response.router.status = "error".to_string();
+        response.router.error = Some("router CLI binary not found".to_string());
     }
 
     Json(response)
@@ -674,55 +827,10 @@ pub async fn stop_service_process(Path(pid): Path<u32>) -> Json<StopProcessRespo
     })
 }
 
-async fn router_services_status() -> Result<RouterServicesStatus, String> {
-    let router_url =
-        std::env::var("TURA_ROUTER_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()
-        .map_err(|error| format!("failed to build router status client: {error}"))?;
-    let url = format!("{}/services/status", router_url.trim_end_matches('/'));
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|error| format!("router status request failed: {error}"))?;
-
-    if !response.status().is_success() {
-        return Err(format!("router status returned HTTP {}", response.status()));
-    }
-
-    response
-        .json::<RouterServicesStatus>()
-        .await
-        .map_err(|error| format!("failed to parse router status: {error}"))
-}
-
-fn lsp_statuses_from_router(status: RouterServicesStatus) -> Vec<LSPStatus> {
-    status
-        .workers
-        .into_iter()
-        .filter(|worker| worker.service_name == "lsp")
-        .map(|worker| LSPStatus {
-            id: worker.worker_id,
-            name: worker.service_name,
-            root: worker.url,
-            pid: worker.pid,
-            executable_path: Some(worker.executable_path),
-            status: if worker.alive {
-                "connected".to_string()
-            } else {
-                "error".to_string()
-            },
-        })
-        .collect()
-}
-
 #[derive(Debug, serde::Serialize)]
 pub struct ServiceStatusResponse {
     pub mano: ServiceHealth,
     pub router: ServiceHealth,
-    pub lsp: Vec<LSPStatus>,
     pub session_processes: Option<crate::session::process_snapshot::SessionProcessSnapshot>,
     pub docker: crate::session::docker_snapshot::DockerSnapshot,
 }
@@ -732,24 +840,6 @@ pub struct ServiceHealth {
     pub status: String,
     pub url: Option<String>,
     pub error: Option<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct RouterServicesStatus {
-    #[serde(default)]
-    workers: Vec<RouterWorkerStatus>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct RouterWorkerStatus {
-    worker_id: String,
-    service_name: String,
-    url: String,
-    alive: bool,
-    #[serde(default)]
-    pid: Option<u32>,
-    #[serde(default)]
-    executable_path: String,
 }
 
 #[derive(Debug, serde::Serialize)]

@@ -2,6 +2,7 @@ use chrono::Utc;
 use tracing::error;
 
 use crate::runtime::types::ToolCallData;
+use crate::state_machine::agent_management::AgentManagement;
 use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::state_machine::session_management::{PlanStatus, SessionManagement, TaskStep};
 use crate::tool_router::execute_tool::{execute_tool, ExecuteToolInput, ToolExecutionResult};
@@ -14,10 +15,11 @@ use super::gateway_events::{
 };
 use super::permission_gate::{permission_denial_for_tool, request_command_run_sandbox_bypass};
 use super::tool_arguments::normalize_tool_arguments_for_tool;
-use super::tool_catalog::project_directory_with_tools;
+use super::tool_catalog::{command_run_commands_for_agent, project_directory_with_tools};
 
 pub(super) fn execute_tool_calls(
     tool_calls: &[ToolCallData],
+    agent: Option<&AgentManagement>,
     session: &mut SessionManagement,
     runtime: &RuntimeManagement,
     _redis_url: &str,
@@ -33,14 +35,18 @@ pub(super) fn execute_tool_calls(
             tool_call.arguments.clone(),
             &session.session_directory,
         );
-        publish_tool_call_started(
-            session,
-            runtime,
-            tool_call,
-            normalized_arguments.clone(),
-            tool_started_at,
-        );
-        publish_step_summary(session, runtime, tool_call);
+        let has_streamed_command_run_result = tool_call.tool_name == COMMAND_RUN_TOOL
+            && streamed_command_run_result(runtime).is_some();
+        if !has_streamed_command_run_result {
+            publish_tool_call_started(
+                session,
+                runtime,
+                tool_call,
+                normalized_arguments.clone(),
+                tool_started_at,
+            );
+            publish_step_summary(session, runtime, tool_call);
+        }
         if let Some(blocked_result) = permission_denial_for_tool(
             &tool_call.tool_name,
             &normalized_arguments,
@@ -88,16 +94,6 @@ pub(super) fn execute_tool_calls(
                     pending_changes,
                     &execution_result,
                 );
-                publish_tool_call_record(
-                    session,
-                    runtime,
-                    tool_call,
-                    normalized_arguments,
-                    &execution_result.result,
-                    execution_result.success,
-                    execution_result.error.as_deref(),
-                    tool_started_at,
-                );
                 results.push(execution_result);
                 continue;
             }
@@ -110,6 +106,7 @@ pub(super) fn execute_tool_calls(
             session_directory: session.session_directory.clone(),
             tools_directory: tools_directory.clone(),
             disable_permission_restrictions: session.disable_permission_restrictions,
+            allowed_command_run_commands: agent.map(command_run_commands_for_agent),
         };
 
         let mut result = tokio::runtime::Runtime::new()
@@ -317,6 +314,17 @@ fn apply_tool_result_session_state_update(
                 .enumerate()
                 .filter_map(|(index, step)| task_step_from_multiple_tasks_step(index, step))
                 .collect();
+            if session.auto_session_name {
+                if let Some(summary) = session
+                    .task_plan
+                    .detailed_tasks
+                    .iter()
+                    .rev()
+                    .find_map(|task| non_empty_string(&task.task_summary))
+                {
+                    session.session_name = summary;
+                }
+            }
             if let Some(first) = session.task_plan.detailed_tasks.first_mut() {
                 first.status = PlanStatus::Doing;
             }
@@ -400,11 +408,15 @@ fn apply_task_summary(
     output: &mut serde_json::Map<String, serde_json::Value>,
     summary: String,
 ) -> bool {
+    let mut changed = false;
+    if session.auto_session_name && session.session_name.trim() != summary.trim() {
+        session.session_name = summary.clone();
+        changed = true;
+    }
     if session.task_plan.plan_summary.trim().is_empty() {
         session.task_plan.plan_summary = summary.clone();
         ensure_single_task(session, Utc::now());
         if let Some(task) = session.task_plan.detailed_tasks.first_mut() {
-            task.task_name = summary.clone();
             task.task_summary = summary;
         }
         return true;
@@ -417,7 +429,12 @@ fn apply_task_summary(
             ),
         );
     }
-    false
+    changed
+}
+
+fn non_empty_string(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 fn complete_active_task(session: &mut SessionManagement) -> bool {
@@ -469,7 +486,6 @@ fn ensure_single_task(session: &mut SessionManagement, now: chrono::DateTime<Utc
         nonce_id: format!("{}:0", session.session_id),
         step: 0,
         start_at: now,
-        task_name: summary.clone(),
         task_summary: summary.clone(),
         step_deliverable_description: summary,
         status: PlanStatus::Doing,
@@ -509,7 +525,7 @@ fn task_step_from_multiple_tasks_step(index: usize, value: &serde_json::Value) -
         .and_then(|value| value.as_str())
         .unwrap_or_default()
         .to_string();
-    let task_name = if !step_goal.trim().is_empty() {
+    let task_summary = if !step_goal.trim().is_empty() {
         step_goal.clone()
     } else if !task_instruction.trim().is_empty() {
         task_instruction.clone()
@@ -534,9 +550,8 @@ fn task_step_from_multiple_tasks_step(index: usize, value: &serde_json::Value) -
             .get("step")
             .and_then(|value| value.as_u64())
             .unwrap_or(index as u64),
-        task_name,
         status,
-        task_summary: step_goal.clone(),
+        task_summary,
         step_task: task_instruction,
         step_turn: object
             .get("child_session_turns")
@@ -600,7 +615,7 @@ mod tests {
         let mut session = session();
         let mut result = json!({
             "results": [{
-                "command_type": "status",
+                "command_type": "task_status",
                 "success": true,
                 "output": {
                     "status": {
@@ -620,10 +635,40 @@ mod tests {
 
         assert!(changed);
         assert_eq!(session.task_plan.plan_summary, "Fix startup crash");
+        assert_eq!(session.session_name, "Fix startup crash");
         assert_eq!(session.task_plan.detailed_tasks.len(), 1);
         assert_eq!(session.task_plan.detailed_tasks[0].status, PlanStatus::Done);
         assert_eq!(session.task_plan.detailed_tasks[0].step, 0);
         assert!(!session.task_plan.detailed_tasks[0].nonce_id.is_empty());
+    }
+
+    #[test]
+    fn task_summary_does_not_rename_session_when_auto_name_disabled() {
+        let mut session = session();
+        session.session_name = "Manual title".to_string();
+        session.auto_session_name = false;
+        let mut result = json!({
+            "results": [{
+                "command_type": "task_status",
+                "success": true,
+                "output": {
+                    "status": {
+                        "task_summary": "Generated task"
+                    }
+                }
+            }]
+        });
+
+        let changed = apply_tool_result_session_state_update(
+            &mut session,
+            COMMAND_RUN_TOOL,
+            &json!({}),
+            &mut result,
+        );
+
+        assert!(changed);
+        assert_eq!(session.task_plan.plan_summary, "Generated task");
+        assert_eq!(session.session_name, "Manual title");
     }
 
     #[test]
@@ -639,7 +684,7 @@ mod tests {
         });
         let mut result = json!({
             "results": [{
-                "command_type": "status",
+                "command_type": "task_status",
                 "success": true,
                 "output": {
                     "status": {
@@ -665,9 +710,10 @@ mod tests {
     }
 
     #[test]
-    fn status_rename_is_rejected_after_summary_exists() {
+    fn status_summary_refreshes_auto_session_name_after_summary_exists() {
         let mut session = session();
         session.task_plan.plan_summary = "Existing task".to_string();
+        session.session_name = "Existing task".to_string();
         session.task_plan.detailed_tasks.push(TaskStep {
             nonce_id: "nonce-1".to_string(),
             step: 0,
@@ -677,7 +723,7 @@ mod tests {
         });
         let mut result = json!({
             "results": [{
-                "command_type": "status",
+                "command_type": "task_status",
                 "success": true,
                 "output": {
                     "status": {
@@ -694,8 +740,9 @@ mod tests {
             &mut result,
         );
 
-        assert!(!changed);
+        assert!(changed);
         assert_eq!(session.task_plan.plan_summary, "Existing task");
+        assert_eq!(session.session_name, "New task name");
         assert_eq!(
             session.task_plan.detailed_tasks[0].task_summary,
             "Existing task"

@@ -1,4 +1,3 @@
-import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
 import ChevronLeft from "lucide-solid/icons/chevron-left";
 import ChevronRight from "lucide-solid/icons/chevron-right";
 import Crop from "lucide-solid/icons/crop";
@@ -7,8 +6,9 @@ import Minimize2 from "lucide-solid/icons/minimize-2";
 import Pencil from "lucide-solid/icons/pencil";
 import RotateCw from "lucide-solid/icons/rotate-cw";
 import X from "lucide-solid/icons/x";
-import { classNames } from "../state/format";
+import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
 import { t } from "../i18n";
+import { classNames } from "../state/format";
 
 type RichNode =
   | { kind: "text"; text: string }
@@ -158,9 +158,10 @@ function MediaGallery(props: {
   paths: string[];
   onOpen: (path: string) => void;
 }) {
+  const imagePaths = createMemo(() => props.paths.filter(isImagePath));
   return (
-    <div class="rich-gallery">
-      <For each={props.paths.filter(isImagePath)}>
+    <div class="rich-gallery grid">
+      <For each={imagePaths()}>
         {(path) => (
           <button
             type="button"
@@ -299,6 +300,13 @@ export function reactionEmojiValues(source: string): string[] {
     .filter(Boolean);
 }
 
+export function stickerEmojiValues(source: string): string[] {
+  return Array.from(source.matchAll(TOKEN_PATTERN))
+    .filter((match) => match[3] === "sticker")
+    .map((match) => (match[4] ?? "").trim())
+    .filter(Boolean);
+}
+
 export function stripReactionEmoji(source: string): string {
   return source.replace(/\[EMOJI:react:[\s\S]*?:EMOJI\]/gu, "");
 }
@@ -400,16 +408,31 @@ function plainText(nodes: RichNode[]): string {
 }
 
 function mediaSource(path: string): string {
-  if (/^(https?:|data:|\/)/iu.test(path)) {
+  if (/^(https?:|data:)/iu.test(path) || path.startsWith("/assets/")) {
     return path;
   }
-  return `/assets/${path.replace(/^.*[\\/]/u, "")}`;
+  const gatewayUrl = gatewayBaseUrl();
+  const query = new URLSearchParams({ path });
+  return `${gatewayUrl}/file/media?${query.toString()}`;
 }
 
 function isImagePath(path: string): boolean {
   return (
     /^data:image\//iu.test(path) || /\.(png|jpe?g|gif|webp|svg)$/iu.test(path)
   );
+}
+
+function gatewayBaseUrl(): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  const configured = new URLSearchParams(window.location.search)
+    .get("gatewayUrl")
+    ?.trim();
+  if (configured) {
+    return configured.replace(/\/+$/u, "");
+  }
+  return window.location.origin.replace(/\/+$/u, "");
 }
 
 function groupMediaNodes(nodes: RichNode[]): RichGroup[] {

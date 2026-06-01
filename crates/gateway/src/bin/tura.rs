@@ -112,15 +112,19 @@ Usage:
 Options:
   -C, --cwd PATH                  workspace directory for the session
   -m, --model MODEL               model override; bare names become openai/MODEL
-      --agent NAME                agent override
+  -p, --priority                  enable priority model routing for this model
+  -a, --agent-id ID               agent id loaded from agents/ or built-ins
       --session-id ID             reuse a deterministic session id
       --json                      emit JSONL events instead of final text only
       --output-last-message PATH  write the final assistant message to PATH
-      --multiple-tasks-mode       enable the multiple_tasks command surface
-      --enable-multiple-tasks     alias for --multiple-tasks-mode
+      --model-reasoning-effort LEVEL
+                                  reasoning effort override
+      --force-multiple-tasks      enable the multiple_tasks command surface
+      --multiple-tasks-mode       alias for --force-multiple-tasks
+      --enable-multiple-tasks     alias for --force-multiple-tasks
   -c, --config KEY=VALUE          runtime override:
                                   model_reasoning_effort, max_tokens,
-                                  model_max_tokens, service_tier=priority,
+                                  model_max_tokens,
                                   force_multiple_tasks=true
       --skip-git-repo-check       accepted for compatibility
       --dangerously-bypass-approvals-and-sandbox
@@ -131,6 +135,7 @@ If PROMPT is omitted, tura reads it from stdin.
 
 Examples:
   tura exec -C . -m openai/gpt-5 \"Inspect the workspace\"
+  tura exec -C . -m openai/gpt-5 -p --model-reasoning-effort high \"Fix tests\"
   echo \"Summarize the architecture\" | tura exec --json
 "
     );
@@ -173,7 +178,26 @@ impl CliConfig {
 
         let mut index = 0;
         while index < args.len() {
-            match args[index].as_str() {
+            let arg = args[index].as_str();
+            if let Some(value) = arg.strip_prefix("--model=") {
+                config.model = Some(value.to_string());
+                index += 1;
+                continue;
+            }
+            if let Some(value) = arg
+                .strip_prefix("--agent-id=")
+                .or_else(|| arg.strip_prefix("--agent="))
+            {
+                config.agent = Some(value.to_string());
+                index += 1;
+                continue;
+            }
+            if let Some(value) = arg.strip_prefix("--model-reasoning-effort=") {
+                config.reasoning_effort = Some(value.to_string());
+                index += 1;
+                continue;
+            }
+            match arg {
                 "--skip-git-repo-check" | "--dangerously-bypass-approvals-and-sandbox" => {
                     index += 1;
                 }
@@ -181,8 +205,16 @@ impl CliConfig {
                     config.json = true;
                     index += 1;
                 }
-                "--multiple-tasks-mode" | "--enable-multiple-tasks" => {
+                "--multiple-tasks-mode" | "--enable-multiple-tasks" | "--force-multiple-tasks" => {
                     config.multiple_tasks_mode = true;
+                    index += 1;
+                }
+                "--no-force-multiple-tasks" => {
+                    config.multiple_tasks_mode = false;
+                    index += 1;
+                }
+                "-p" | "--priority" => {
+                    config.priority = true;
                     index += 1;
                 }
                 "-C" | "--cwd" => {
@@ -194,11 +226,15 @@ impl CliConfig {
                     config.model = Some(take_value(&args, index)?);
                     index += 2;
                 }
+                "--model-reasoning-effort" | "--reasoning-effort" => {
+                    config.reasoning_effort = Some(take_value(&args, index)?);
+                    index += 2;
+                }
                 "--output-last-message" => {
                     config.last_message_path = Some(PathBuf::from(take_value(&args, index)?));
                     index += 2;
                 }
-                "--agent" => {
+                "-a" | "--agent" | "--agent-id" | "--agent-name" => {
                     config.agent = Some(take_value(&args, index)?);
                     index += 2;
                 }
@@ -252,18 +288,28 @@ fn apply_config_arg(config: &mut CliConfig, value: &str) {
     };
     let value = raw_value.trim().trim_matches('"');
     match key.trim() {
-        "model_reasoning_effort" => config.reasoning_effort = Some(value.to_string()),
+        "model_reasoning_effort" | "reasoning_effort" | "model_variant" => {
+            config.reasoning_effort = Some(value.to_string())
+        }
+        "model_acceleration_enabled" if is_truthy(value) => config.priority = true,
         "max_tokens" | "model_max_tokens" => {
             if let Ok(max_tokens) = value.parse::<u64>() {
                 config.max_tokens = Some(max_tokens);
             }
         }
         "service_tier" if value.eq_ignore_ascii_case("priority") => config.priority = true,
-        "force_multiple_tasks" | "multiple_tasks_mode" if value.eq_ignore_ascii_case("true") => {
+        "force_multiple_tasks" | "multiple_tasks_mode" if is_truthy(value) => {
             config.multiple_tasks_mode = true
         }
         _ => {}
     }
+}
+
+fn is_truthy(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on" | "enabled" | "priority"
+    )
 }
 
 fn normalize_model(model: &str) -> String {

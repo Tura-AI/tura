@@ -172,7 +172,7 @@
       },
       "anthropic": {
         "api_docs": null,
-        "api_style": "openapi",
+        "api_style": "anthropic",
         "auth_methods": [
           "api_key"
         ],
@@ -182,7 +182,7 @@
           "llm.embedding",
           "llm.tool_call"
         ],
-        "display_name": "Claude",
+        "display_name": "Anthropic API",
         "domains": [
           "llm"
         ],
@@ -2512,7 +2512,7 @@
             {
               "attachment": false,
               "family": "openai_embedding",
-              "id": "openai/text-embedding-3-large",
+              "id": "text-embedding-3-large",
               "limit": {
                 "context": 8191,
                 "input": 8191,
@@ -2526,7 +2526,7 @@
                   "embedding"
                 ]
               },
-              "name": "openai/text-embedding-3-large",
+              "name": "text-embedding-3-large",
               "options": {
                 "dimensions": 3072
               },
@@ -2541,7 +2541,7 @@
             {
               "attachment": false,
               "family": "openai_embedding",
-              "id": "openai/text-embedding-3-small",
+              "id": "text-embedding-3-small",
               "limit": {
                 "context": 8191,
                 "input": 8191,
@@ -2555,7 +2555,7 @@
                   "embedding"
                 ]
               },
-              "name": "openai/text-embedding-3-small",
+              "name": "text-embedding-3-small",
               "options": {
                 "dimensions": 1536
               },
@@ -2570,7 +2570,7 @@
             {
               "attachment": true,
               "family": "gpt-5.4",
-              "id": "openai/gpt-5.4-mini",
+              "id": "gpt-5.4-mini",
               "limit": {
                 "context": 400000,
                 "input": 400000,
@@ -2585,7 +2585,7 @@
                   "text"
                 ]
               },
-              "name": "openai/gpt-5.4-mini",
+              "name": "gpt-5.4-mini",
               "options": {},
               "reasoning": true,
               "release_date": "2026-03-18",
@@ -2596,7 +2596,7 @@
             {
               "attachment": true,
               "family": "deepseek",
-              "id": "deepseek/deepseek-v4-flash",
+              "id": "deepseek-v4-flash",
               "limit": {
                 "context": 1000000,
                 "input": 1000000,
@@ -2610,7 +2610,7 @@
                   "text"
                 ]
               },
-              "name": "deepseek/deepseek-v4-flash",
+              "name": "deepseek-v4-flash",
               "options": {},
               "reasoning": true,
               "release_date": "2026-04-24",
@@ -2621,7 +2621,7 @@
             {
               "attachment": true,
               "family": "qwen",
-              "id": "qwen/qwen3.6-flash",
+              "id": "qwen3.6-flash",
               "limit": {
                 "context": 1000000,
                 "input": 1000000,
@@ -2637,7 +2637,7 @@
                   "text"
                 ]
               },
-              "name": "qwen/qwen3.6-flash",
+              "name": "qwen3.6-flash",
               "options": {},
               "reasoning": true,
               "release_date": "2026-04-16",
@@ -2648,7 +2648,7 @@
             {
               "attachment": true,
               "family": "gemini",
-              "id": "google/gemini-3.5-flash",
+              "id": "gemini-3.5-flash",
               "limit": {
                 "context": 1048576,
                 "input": 1048576,
@@ -2666,7 +2666,7 @@
                   "text"
                 ]
               },
-              "name": "google/gemini-3.5-flash",
+              "name": "gemini-3.5-flash",
               "options": {
                 "thinking_levels": true
               },
@@ -2681,7 +2681,7 @@
             {
               "attachment": true,
               "family": "gpt-5.5",
-              "id": "openai/gpt-5.5-pro",
+              "id": "gpt-5.5-pro",
               "limit": {
                 "context": 1050000,
                 "input": 1050000,
@@ -2696,7 +2696,7 @@
                   "text"
                 ]
               },
-              "name": "openai/gpt-5.5-pro",
+              "name": "gpt-5.5-pro",
               "options": {},
               "reasoning": true,
               "release_date": "2026-04-23",
@@ -2707,7 +2707,7 @@
             {
               "attachment": true,
               "family": "claude",
-              "id": "anthropic/claude-opus-4-7",
+              "id": "claude-opus-4-7",
               "limit": {
                 "context": 1000000,
                 "input": 1000000,
@@ -2722,7 +2722,7 @@
                   "text"
                 ]
               },
-              "name": "anthropic/claude-opus-4-7",
+              "name": "claude-opus-4-7",
               "options": {
                 "thinking_type": "adaptive"
               },
@@ -2737,7 +2737,7 @@
             {
               "attachment": true,
               "family": "gpt-5.4",
-              "id": "openai/gpt-5.4-nano",
+              "id": "gpt-5.4-nano",
               "limit": {
                 "context": 400000,
                 "input": 400000,
@@ -2752,7 +2752,7 @@
                   "text"
                 ]
               },
-              "name": "openai/gpt-5.4-nano",
+              "name": "gpt-5.4-nano",
               "options": {},
               "reasoning": true,
               "release_date": "2026-03-17",
@@ -2763,7 +2763,7 @@
             {
               "attachment": true,
               "family": "gemini",
-              "id": "google/gemini-3.1-flash-lite",
+              "id": "gemini-3.1-flash-lite",
               "limit": {
                 "context": 1048576,
                 "input": 1048576,
@@ -2781,7 +2781,7 @@
                   "text"
                 ]
               },
-              "name": "google/gemini-3.1-flash-lite",
+              "name": "gemini-3.1-flash-lite",
               "options": {},
               "reasoning": true,
               "release_date": "2026-05-07",
@@ -2794,7 +2794,7 @@
             {
               "attachment": true,
               "family": "deepseek",
-              "id": "deepseek/deepseek-v4-pro",
+              "id": "deepseek-v4-pro",
               "limit": {
                 "context": 1000000,
                 "input": 1000000,
@@ -2808,7 +2808,7 @@
                   "text"
                 ]
               },
-              "name": "deepseek/deepseek-v4-pro",
+              "name": "deepseek-v4-pro",
               "options": {},
               "reasoning": true,
               "release_date": "2026-04-24",
@@ -2819,7 +2819,7 @@
             {
               "attachment": true,
               "family": "grok",
-              "id": "x-ai/grok-4.3",
+              "id": "grok-4.3",
               "limit": {
                 "context": 1000000,
                 "input": 1000000,
@@ -2834,7 +2834,7 @@
                   "text"
                 ]
               },
-              "name": "x-ai/grok-4.3",
+              "name": "grok-4.3",
               "options": {},
               "reasoning": true,
               "release_date": "2026-05-09",
@@ -2845,7 +2845,7 @@
             {
               "attachment": true,
               "family": "kimi",
-              "id": "moonshotai/kimi-k2.6",
+              "id": "kimi-k2.6",
               "limit": {
                 "context": 262144,
                 "input": 262144,
@@ -2861,7 +2861,7 @@
                   "text"
                 ]
               },
-              "name": "moonshotai/kimi-k2.6",
+              "name": "kimi-k2.6",
               "options": {},
               "reasoning": true,
               "release_date": "2026-04-20",
@@ -2872,7 +2872,7 @@
             {
               "attachment": true,
               "family": "qwen",
-              "id": "qwen/qwen3.7-max",
+              "id": "qwen3.7-max",
               "limit": {
                 "context": 262144,
                 "input": 262144,
@@ -2888,7 +2888,7 @@
                   "text"
                 ]
               },
-              "name": "qwen/qwen3.7-max",
+              "name": "qwen3.7-max",
               "options": {},
               "reasoning": true,
               "release_date": "2026-05-21",
@@ -2899,7 +2899,7 @@
             {
               "attachment": true,
               "family": "gemini",
-              "id": "google/gemini-3.1-pro-preview",
+              "id": "gemini-3.1-pro-preview",
               "limit": {
                 "context": 1048576,
                 "input": 1048576,
@@ -2917,7 +2917,7 @@
                   "text"
                 ]
               },
-              "name": "google/gemini-3.1-pro-preview",
+              "name": "gemini-3.1-pro-preview",
               "options": {
                 "thinking_levels": true
               },
@@ -3911,18 +3911,8 @@
     ]
   },
   "provider_auth": {
-    "anthropic": {
-      "auth_url": "https://claude.ai/login",
-      "login": "browser",
-      "login_env": "ANTHROPIC_LOGIN",
-      "provider": "anthropic",
-      "status": "connected",
-      "token_env": "ANTHROPIC_API_KEY",
-      "type": "oauth",
-      "updated_at": "2026-05-08T15:02:45.185671200+00:00"
-    },
     "claude-code": {
-      "auth_url": "https://claude.ai/oauth/authorize?code=true&response_type=code&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fcallback&scope=user%3Aprofile+user%3Ainference+user%3Asessions%3Aclaude_code+user%3Amcp_servers&code_challenge=jmhgvzQxUQUAJIwBpC3JK8jxA63pJRX4qJP5YmZcIg0&code_challenge_method=S256&state=fba0b081809243f8afd4b68abff0ee1e",
+      "auth_url": "https://auth.example.com/oauth/claude-code",
       "endpoint": "https://api.anthropic.com/v1",
       "expires_env": "CLAUDE_CODE_TOKEN_EXPIRES",
       "login": "oauth",
@@ -3932,7 +3922,7 @@
       "status": "connected",
       "token_env": "CLAUDE_CODE_OAUTH_TOKEN",
       "type": "oauth",
-      "updated_at": "2026-05-28T18:38:15.854988300+00:00"
+      "updated_at": "2026-06-01T08:16:13.184740500+00:00"
     },
     "codex": {
       "account_env": "OPENAI_ACCOUNT_ID",
@@ -4027,6 +4017,7 @@
     "perplexity": "https://api.perplexity.ai",
     "qiniu": "https://rs.qiniu.com",
     "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    "qwen_cn": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "replicate": "https://api.replicate.com/v1",
     "sendgrid": "https://api.sendgrid.com/v3",
     "slack": "https://slack.com/api",
@@ -4043,8 +4034,7 @@
     "wechat_pay": "https://api.mch.weixin.qq.com/v3",
     "wecom": "https://qyapi.weixin.qq.com/cgi-bin",
     "xai": "https://api.x.ai/v1",
-    "zoom": "https://api.zoom.us/v2",
-    "qwen_cn": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    "zoom": "https://api.zoom.us/v2"
   },
   "provider_enums": {
     "api_styles": [
@@ -4345,8 +4335,8 @@
       "default_temperature": 0.2,
       "providers": [
         {
-          "model": "deepseek-v4-pro",
-          "provider": "deepseek"
+          "model": "gemini-3.1-pro-preview",
+          "provider": "antigravity"
         },
         {
           "model": "kimi-k2.6",

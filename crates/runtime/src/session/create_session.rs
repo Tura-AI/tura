@@ -11,7 +11,7 @@ pub fn create_session(
     input: SessionInput,
 ) -> Result<SessionManagement, String> {
     let now = Utc::now();
-    let session_id = generate_session_id();
+    let session_id = generate_session_id(&session_directory, now);
     let session_name = format!("temp-session-{}", now.format("%Y%m%d%H%M%S"));
     let user_goal = input.user_input.clone();
 
@@ -31,9 +31,15 @@ pub fn create_session(
     Ok(session)
 }
 
-fn generate_session_id() -> String {
-    format!(
-        "session-{:x}",
-        Utc::now().timestamp_nanos_opt().unwrap_or_default()
-    )
+fn generate_session_id(session_directory: &std::path::Path, now: chrono::DateTime<Utc>) -> String {
+    let prefix = session_directory
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("session")
+        .chars()
+        .take(8)
+        .collect::<String>();
+    format!("{prefix}-{}", now.timestamp_millis())
 }

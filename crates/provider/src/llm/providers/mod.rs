@@ -166,7 +166,13 @@ mod tests {
 
     #[test]
     fn openapi_compatible_providers_share_openapi_metrics_and_ignore_service_tier() {
-        for provider in ["minimax", "deepseek", "moonshotai", "openrouter", "anthropic"] {
+        for provider in [
+            "minimax",
+            "deepseek",
+            "moonshotai",
+            "openrouter",
+            "anthropic",
+        ] {
             let policy = parameter_policy(provider);
             assert_eq!(policy.api_style, ProviderApiStyle::OpenApi);
             assert_eq!(policy.metrics_style, ProviderApiStyle::OpenApi);

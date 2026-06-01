@@ -66,15 +66,109 @@ impl ToolHandler for ApplyPatchHandler {
 }
 
 fn patch_text_from_payload(payload: &ToolPayload) -> String {
-    match payload {
+    let raw = match payload {
         ToolPayload::Freeform { input } => input.clone(),
-        ToolPayload::Function { arguments } => arguments
-            .get("patch")
-            .or_else(|| arguments.get("command"))
-            .and_then(Value::as_str)
-            .map(ToString::to_string)
-            .unwrap_or_else(|| arguments.as_str().unwrap_or_default().to_string()),
+        ToolPayload::Function { arguments } => {
+            if let Some(patch) = extract_apply_patch_body_from_value(arguments) {
+                patch
+            } else {
+                arguments
+                    .get("patch")
+                    .or_else(|| arguments.get("command"))
+                    .or_else(|| arguments.get("command_line"))
+                    .or_else(|| arguments.get("input"))
+                    .or_else(|| arguments.get("payload"))
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| arguments.as_str().unwrap_or_default().to_string())
+            }
+        }
+    };
+    normalize_apply_patch_text(&raw)
+}
+
+fn normalize_apply_patch_text(text: &str) -> String {
+    extract_apply_patch_body_from_json_wrapper(text)
+        .or_else(|| extract_apply_patch_body(text))
+        .or_else(|| normalize_apply_patch_body_without_begin(text))
+        .unwrap_or_else(|| text.to_string())
+}
+
+fn extract_apply_patch_body_from_json_wrapper(text: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(text.trim()).ok()?;
+    extract_apply_patch_body_from_value(&value)
+}
+
+fn extract_apply_patch_body_from_value(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => extract_apply_patch_body(text),
+        Value::Object(object) => [
+            "patch",
+            "command",
+            "command_line",
+            "input",
+            "payload",
+            "content",
+        ]
+        .iter()
+        .find_map(|key| {
+            object
+                .get(*key)
+                .and_then(extract_apply_patch_body_from_value)
+        })
+        .or_else(|| {
+            object
+                .values()
+                .find_map(extract_apply_patch_body_from_value)
+        }),
+        Value::Array(items) => items.iter().find_map(extract_apply_patch_body_from_value),
+        _ => None,
     }
+}
+
+fn extract_apply_patch_body(text: &str) -> Option<String> {
+    let end_marker = "*** End Patch";
+    if let Some(begin) = text.find("*** Begin Patch") {
+        let end = text[begin..].find(end_marker)? + begin + end_marker.len();
+        return Some(text[begin..end].trim().to_string());
+    }
+    normalize_apply_patch_body_without_begin(text)
+}
+
+fn normalize_apply_patch_body_without_begin(text: &str) -> Option<String> {
+    let body = strip_apply_patch_command_line(text.trim());
+    if !starts_with_patch_hunk(body) {
+        return None;
+    }
+    let end_marker = "*** End Patch";
+    let body = if let Some(end) = body.find(end_marker) {
+        body[..end + end_marker.len()].trim().to_string()
+    } else {
+        format!("{}\n{end_marker}", body.trim_end())
+    };
+    Some(format!("*** Begin Patch\n{body}"))
+}
+
+fn strip_apply_patch_command_line(text: &str) -> &str {
+    for prefix in [
+        "apply_patch <<'PATCH'",
+        "apply_patch <<\"PATCH\"",
+        "apply_patch",
+    ] {
+        if let Some(rest) = text.strip_prefix(prefix) {
+            return rest.trim_start_matches(['\r', '\n', ' ', '\t']);
+        }
+    }
+    text
+}
+
+fn starts_with_patch_hunk(text: &str) -> bool {
+    matches!(
+        text.trim_start(),
+        body if body.starts_with("*** Add File: ")
+            || body.starts_with("*** Delete File: ")
+            || body.starts_with("*** Update File: ")
+    )
 }
 
 pub fn execute(patch_text: &str, session_dir: &Path) -> CommandResponse {
@@ -269,6 +363,8 @@ fn parse_patch(patch_text: &str) -> Result<Vec<PatchChange>, String> {
             finish_change(&mut changes, &mut current, &mut hunk);
             ended = true;
             break;
+        } else if line == "*** End of File" {
+            continue;
         } else if let Some(change) = current.as_mut() {
             if change.kind == "add" && line.starts_with('+') {
                 change.lines.push(line[1..].to_string());
@@ -348,12 +444,6 @@ fn validate_changes(changes: &[PatchChange]) -> Result<(), String> {
                 }
             }
             "update" => {
-                if change.hunks.is_empty() {
-                    return Err(format!(
-                        "invalid patch: update file {} must contain at least one hunk",
-                        change.path
-                    ));
-                }
                 if change.hunks.iter().any(Vec::is_empty) {
                     return Err(format!(
                         "invalid patch: update file {} contains an empty hunk",
@@ -703,286 +793,4 @@ fn normalize_match_text(text: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::execute;
-    use serde_json::json;
-    use std::fs;
-
-    fn temp_workspace(name: &str) -> std::path::PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("tura-apply-patch-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&path);
-        fs::create_dir_all(&path).expect("create temp workspace");
-        path
-    }
-
-    #[test]
-    fn add_file_accepts_relative_path_under_session_dir() {
-        let root = temp_workspace("relative");
-        let result = execute(
-            "*** Begin Patch\n*** Add File: checked.txt\n+ok\n*** End Patch\n",
-            &root,
-        );
-
-        assert!(result.success, "{}", result.stderr);
-        assert_eq!(
-            fs::read_to_string(root.join("checked.txt")).expect("created file"),
-            "ok\n"
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn update_file_matches_lf_patch_against_crlf_file_and_preserves_crlf() {
-        let root = temp_workspace("crlf");
-        fs::write(root.join("app.txt"), "alpha\r\nold\r\nomega\r\n").expect("fixture");
-
-        let result = execute(
-            "*** Begin Patch\n*** Update File: app.txt\n@@\n alpha\n-old\n+new\n omega\n*** End Patch\n",
-            &root,
-        );
-
-        assert!(result.success, "{}", result.stderr);
-        assert_eq!(
-            fs::read_to_string(root.join("app.txt")).expect("read fixture"),
-            "alpha\r\nnew\r\nomega\r\n"
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn update_file_tolerates_trailing_whitespace_context_mismatch() {
-        let root = temp_workspace("trailing-space");
-        fs::write(root.join("app.txt"), "alpha  \nold\t\nomega\n").expect("fixture");
-
-        let result = execute(
-            "*** Begin Patch\n*** Update File: app.txt\n@@\n alpha\n-old\n+new\n omega\n*** End Patch\n",
-            &root,
-        );
-
-        assert!(result.success, "{}", result.stderr);
-        assert_eq!(
-            fs::read_to_string(root.join("app.txt")).expect("read fixture"),
-            "alpha  \nnew\nomega\n"
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn update_file_tolerates_normalized_unicode_punctuation_context() {
-        let root = temp_workspace("unicode-normalize");
-        fs::write(root.join("app.txt"), "say “hello”\nold – value\n").expect("fixture");
-
-        let result = execute(
-            "*** Begin Patch\n*** Update File: app.txt\n@@\n say \"hello\"\n-old - value\n+new - value\n*** End Patch\n",
-            &root,
-        );
-
-        assert!(result.success, "{}", result.stderr);
-        assert_eq!(
-            fs::read_to_string(root.join("app.txt")).expect("read fixture"),
-            "say “hello”\nnew - value\n"
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn update_file_applies_multiple_hunks_without_position_shift() {
-        let root = temp_workspace("multi-hunk");
-        fs::write(root.join("app.txt"), "one\nold-a\nmiddle\nold-b\nend\n").expect("fixture");
-
-        let result = execute(
-            "*** Begin Patch\n*** Update File: app.txt\n@@\n-old-a\n+new-a\n@@\n-old-b\n+new-b\n*** End Patch\n",
-            &root,
-        );
-
-        assert!(result.success, "{}", result.stderr);
-        assert_eq!(
-            fs::read_to_string(root.join("app.txt")).expect("read fixture"),
-            "one\nnew-a\nmiddle\nnew-b\nend\n"
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn failed_middle_file_continues_and_reports_partial_changes() {
-        let root = temp_workspace("partial");
-        fs::write(root.join("first.txt"), "old\n").expect("first");
-        fs::write(root.join("second.txt"), "actual\n").expect("second");
-        fs::write(root.join("third.txt"), "old\n").expect("third");
-
-        let result = execute(
-            "*** Begin Patch\n*** Update File: first.txt\n@@\n-old\n+new\n*** Update File: second.txt\n@@\n-missing\n+value\n*** Update File: third.txt\n@@\n-old\n+new\n*** End Patch\n",
-            &root,
-        );
-
-        assert!(!result.success);
-        assert_eq!(result.output["error_type"], json!("ContextMismatch"));
-        assert_eq!(
-            result.output["partial_changes"][0]["path"],
-            json!("first.txt")
-        );
-        assert_eq!(
-            result.output["partial_changes"][1]["path"],
-            json!("third.txt")
-        );
-        assert_eq!(result.output["failed_change"]["path"], json!("second.txt"));
-        assert_eq!(
-            result.output["failed_changes"][0]["failed_change"]["path"],
-            json!("second.txt")
-        );
-        assert_eq!(
-            fs::read_to_string(root.join("first.txt")).expect("first"),
-            "new\n"
-        );
-        assert_eq!(
-            fs::read_to_string(root.join("second.txt")).expect("second"),
-            "actual\n"
-        );
-        assert_eq!(
-            fs::read_to_string(root.join("third.txt")).expect("third"),
-            "new\n"
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn path_escape_failure_is_classified_as_permission_denied() {
-        let root = temp_workspace("path-escape");
-        let outside = root.parent().unwrap().join("outside-apply-patch-test.txt");
-        let _ = fs::remove_file(&outside);
-
-        let result = execute(
-            &format!(
-                "*** Begin Patch\n*** Add File: {}\n+bad\n*** End Patch\n",
-                outside.display()
-            ),
-            &root,
-        );
-
-        assert!(!result.success);
-        assert_eq!(result.output["error_type"], json!("PermissionDenied"));
-        assert!(!outside.exists());
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn parser_rejects_patch_without_begin_marker() {
-        let root = temp_workspace("missing-begin");
-
-        let result = execute("*** Add File: app.txt\n+ok\n*** End Patch\n", &root);
-
-        assert!(!result.success);
-        assert_eq!(result.output["error_type"], json!("ParseError"));
-        assert!(result.output["message"]
-            .as_str()
-            .is_some_and(|text| text.contains("Begin Patch")));
-        assert!(!root.join("app.txt").exists());
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn parser_rejects_patch_without_end_marker() {
-        let root = temp_workspace("missing-end");
-
-        let result = execute("*** Begin Patch\n*** Add File: app.txt\n+ok\n", &root);
-
-        assert!(!result.success);
-        assert_eq!(result.output["error_type"], json!("ParseError"));
-        assert!(result.output["message"]
-            .as_str()
-            .is_some_and(|text| text.contains("End Patch")));
-        assert!(!root.join("app.txt").exists());
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn parser_rejects_update_content_outside_hunk() {
-        let root = temp_workspace("outside-hunk");
-        fs::write(root.join("app.txt"), "old\n").expect("fixture");
-
-        let result = execute(
-            "*** Begin Patch\n*** Update File: app.txt\n-old\n+new\n*** End Patch\n",
-            &root,
-        );
-
-        assert!(!result.success);
-        assert_eq!(result.output["error_type"], json!("ParseError"));
-        assert_eq!(
-            fs::read_to_string(root.join("app.txt")).expect("fixture"),
-            "old\n"
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn update_file_missing_is_structured_error() {
-        let root = temp_workspace("update-missing");
-
-        let result = execute(
-            "*** Begin Patch\n*** Update File: missing.txt\n@@\n-old\n+new\n*** End Patch\n",
-            &root,
-        );
-
-        assert!(!result.success);
-        assert_eq!(result.output["error_type"], json!("UpdateFileNotFound"));
-        assert_eq!(result.output["failed_change"]["path"], json!("missing.txt"));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn delete_file_missing_is_structured_error() {
-        let root = temp_workspace("delete-missing");
-
-        let result = execute(
-            "*** Begin Patch\n*** Delete File: missing.txt\n*** End Patch\n",
-            &root,
-        );
-
-        assert!(!result.success);
-        assert_eq!(result.output["error_type"], json!("DeleteFileNotFound"));
-        assert_eq!(result.output["failed_change"]["path"], json!("missing.txt"));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn add_file_existing_is_structured_error() {
-        let root = temp_workspace("add-existing");
-        fs::write(root.join("app.txt"), "old\n").expect("fixture");
-
-        let result = execute(
-            "*** Begin Patch\n*** Add File: app.txt\n+new\n*** End Patch\n",
-            &root,
-        );
-
-        assert!(!result.success);
-        assert_eq!(result.output["error_type"], json!("AddFileExists"));
-        assert_eq!(
-            fs::read_to_string(root.join("app.txt")).expect("fixture"),
-            "old\n"
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn add_file_accepts_git_bash_absolute_path_inside_session_dir() {
-        let root = temp_workspace("git-bash-path");
-        let path = root.join("checked.txt");
-        let raw = path.to_string_lossy().replace('\\', "/");
-        let drive = raw
-            .chars()
-            .next()
-            .expect("drive letter")
-            .to_ascii_lowercase();
-        let git_bash_path = format!("/{drive}/{}", &raw[3..]);
-        let result = execute(
-            &format!("*** Begin Patch\n*** Add File: {git_bash_path}\n+ok\n*** End Patch\n"),
-            &root,
-        );
-
-        assert!(result.success, "{}", result.stderr);
-        assert_eq!(fs::read_to_string(path).expect("created file"), "ok\n");
-        let _ = fs::remove_dir_all(root);
-    }
-}
+mod tests;

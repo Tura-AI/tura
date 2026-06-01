@@ -3,6 +3,7 @@
   "properties": {
     "summary": {
       "type": "string",
+      "maxLength": 40000,
       "description": "Context checkpoint text to preserve for the next model turn."
     }
   },

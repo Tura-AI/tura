@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -15,6 +16,7 @@ pub struct ExecuteToolInput {
     pub session_directory: PathBuf,
     pub tools_directory: PathBuf,
     pub disable_permission_restrictions: bool,
+    pub allowed_command_run_commands: Option<BTreeSet<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,9 +49,10 @@ pub async fn execute_tool(input: ExecuteToolInput) -> Result<ToolExecutionResult
         .map_err(|e| format!("failed to parse tool interface: {}", e))?;
 
     if execution_tool_name == "command_run" {
-        let output_value = code_tools::command_run::execute_async_value(
+        let output_value = code_tools::command_run::execute_async_value_with_allowed(
             input.arguments.clone(),
             input.session_directory.clone(),
+            input.allowed_command_run_commands.clone(),
         )
         .await;
         return Ok(ToolExecutionResult {

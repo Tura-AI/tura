@@ -39,7 +39,7 @@ impl ToolHandler for CompactContextHandler {
         "compact_context"
     }
 
-    fn supports_parallel_tool_calls(&self) -> bool {
+    fn supports_macro_command(&self) -> bool {
         false
     }
 

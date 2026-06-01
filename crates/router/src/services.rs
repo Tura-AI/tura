@@ -4,7 +4,5 @@ pub mod managed_process;
 pub mod manager;
 #[path = "services/models.rs"]
 pub mod models;
-#[path = "services/rust_service.rs"]
-pub mod rust_service;
 #[path = "services/worker_process.rs"]
 pub mod worker_process;

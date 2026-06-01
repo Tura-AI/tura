@@ -49,7 +49,7 @@ stay compatible.
 ```text
 crates/gateway     -> package gateway
 crates/runtime     -> package code-tools-suite, library code_tools_suite
-crates/agents      -> package tura-agents, library tura_agents
+agents      -> package tura-agents, library tura_agents
 crates/provider    -> package tura-llm-rust, library tura_llm_rust
 crates/tools       -> package code-tools
 crates/router      -> package tura_router, default binary tura_router
@@ -101,34 +101,51 @@ large component.
 ### `crates/gateway`
 
 Gateway is the middleware between the frontend and backend crates. It provides
-the UI-facing API surface, translates UI requests into runtime/router/provider
-calls, persists UI-facing session data, and streams backend events back to the
-frontend.
+the UI-facing API surface, forwards agent turns to the router, persists UI-facing
+session data, owns the provider OAuth credential lifecycle, launches the router,
+and streams backend events back to the frontend.
 
 Gateway owns frontend-facing API routes, payload validation, session/thread/turn
-APIs, UI persistence, event streaming, permission request forwarding, provider
-config projection, process/PTY adapters, workspace config, and runtime client
-calls.
+APIs, UI persistence (file-based sessions), event streaming, permission request
+forwarding, provider config projection, OAuth credential lifecycle, process/PTY
+adapters, workspace config, router launch, and `POST /run_agent` forwarding to
+the router.
 
-Gateway does not own agent loops, provider calls, tool execution, shell
-sandboxing, file locks, command registration, or CLI forwarding rules.
+Gateway does not own agent loops, an in-process runtime, provider request
+formatting, tool execution, shell sandboxing, file locks, command registration,
+or CLI forwarding rules. It never runs the agent loop in-process; every agent
+turn is forwarded to the router, which dispatches a runtime worker.
 
 ### `crates/runtime`
 
 Runtime is the agent orchestration crate. It replaces the old Mano directory
-while preserving the useful MANO/MANAS split as internal modules.
+while preserving the useful MANO/MANAS split as internal modules. Runtime is a
+library executed inside a runtime worker — the gateway binary re-invoked with
+`TURA_ROLE=runtime_worker` and dispatched by the router. It is never spawned
+directly by the gateway and does not bind a fixed service port.
 
 Runtime owns session creation/resume, agent activation, state machines, prompt
 assembly, tool catalog selection, one provider turn at a time, tool-call
-normalization, tool execution orchestration through `crates/tools`, gateway
-event publishing, final-response forcing, and session completion.
+**consumption** (not parsing — that's provider-side), tool execution
+orchestration through `crates/tools`, gateway event publishing,
+final-response forcing, and session completion. Runtime emits/consumes the
+canonical OpenAI Responses-API content shape only.
 
-Runtime does not own provider auth, shell execution details, file locks, router
-command registration, CLI forwarding, or memory/vector internals.
+Runtime does not own:
 
-### `crates/agents`
+- provider auth or any per-provider format branch (response parsing,
+  `<thought>` stripping, prompt-cache key flag, SSE usage flag, unsupported
+  content-type fallback) — these live in `crates/provider`;
+- shell execution details, file locks, router command registration, CLI
+  forwarding, runtime-worker dispatch, or memory/vector internals.
 
-Agents are configured under `crates/agents`.
+For multi-agent dispatch, runtime spawns child sub-sessions by invoking
+`tura_router run-agent` as a subprocess (stdin/stdout JSON). It never calls
+the router or gateway over HTTP/URL. See `crates/runtime/src/manas/child_dispatch.rs`.
+
+### `agents`
+
+Agents are configured under `agents`.
 
 Agents own identity, default prompts, provider defaults, command selections,
 planning/multiple-task defaults, and generated/static agent interfaces.
@@ -138,7 +155,7 @@ defaults.
 Current agent-owned files live under:
 
 ```text
-crates/agents/src/<agent_name>/
+agents/src/<agent_name>/
   agent_config.json
   persona.md
   communication_style.md
@@ -188,8 +205,9 @@ Tools owns:
   top-level model-visible tool.
 
 `command_run` remains the compact model-visible request shape. It accepts
-command items, asks router-owned metadata how to route those command names, and
-then executes the selected `crates/tools/commands/<command>` handler.
+command items, canonicalizes the command names through
+`crates/tools/src/commands` (`canonical_command`), and then executes the
+selected `crates/tools/commands/<command>` handler.
 
 `command_run` executes commands in ascending `step` order. Independent
 read-only commands in the same step may run concurrently. Mutating commands,
@@ -207,25 +225,27 @@ and clean up only the started process tree on timeout.
 
 ### `crates/router`
 
-Router owns CLI forwarding, command registration metadata, and managed local
-service/process lifecycle. It no longer uses ports as the service boundary.
+Router owns CLI forwarding, agent registration metadata, runtime-worker
+dispatch, and runtime-worker lifecycle. It no longer uses ports as the service
+boundary.
 
 Router owns:
 
-- Command registry.
-- Command alias mapping.
-- CLI forwarding rules.
-- Runtime/tool command routing metadata.
-- Managed service/process startup and shutdown.
-- Managed service status monitoring.
+- Agent registry (agent spec resolution).
+- CLI forwarding rules (`POST /run_tool`: resolve a tool binary, forward stdio).
+- Runtime-worker dispatch via `POST /run_agent`: agent resolution, worker
+  environment contract assembly, and worker subprocess lifecycle.
+- Runtime-worker concurrency guards (multiple-tasks depth and active-worker
+  limits, returning `429` on breach).
+- Worker status monitoring via `/services/status`.
 - Health checks that do not depend on port allocation.
-- Restart and cleanup policy for router-managed processes.
-- Permission forwarding for routed command actions.
 
-Router does not own command implementation logic, shell execution, file locks,
-provider calls, or port allocation. It resolves a CLI command request to the
-crate or command handler that should execute it, and it owns lifecycle for any
-managed process needed to serve that request.
+Router does not own command implementation logic, command alias canonicalization
+(owned by `crates/tools`), agent loops, prompt assembly, provider request
+formatting, provider credentials, shell execution, file locks, or port
+allocation. It resolves an agent or tool-binary request to the worker that
+should execute it, and it owns lifecycle for any worker needed to serve that
+request. Spawning is single-direction: gateway → router → runtime worker.
 
 ### `crates/memory`
 
@@ -255,11 +275,18 @@ apps/gui or apps/tui
   -> crates/gateway API
   -> gateway session manager
   -> gateway translates request and loads UI/session config
-  -> crates/runtime starts or resumes session
-  -> crates/agents supplies active agent config
+  -> gateway forwards POST /run_agent to crates/router
+  -> router resolves agent spec and dispatches a runtime worker
+     (gateway binary re-invoked with TURA_ROLE=runtime_worker)
+  -> crates/runtime (in the worker) starts or resumes session
+  -> agents supplies active agent config
   -> crates/runtime builds prompt/context/tool catalog
   -> crates/provider calls selected model
-  -> crates/runtime normalizes text/tool calls
+  -> crates/provider normalizes text/tool calls (extract_response_text,
+     extract_tool_calls, strip_thought_blocks); runtime consumes ProviderToolCall
+  -> crates/runtime (optional) spawns child sub-sessions via
+     `tura_router run-agent` CLI subprocess for multi-agent concurrent /
+     recursive dispatch (never over HTTP/URL)
   -> crates/tools receives command_run requests
   -> crates/router resolves CLI forwarding and starts managed services when needed
   -> crates/tools/commands executes the selected command handler
@@ -273,7 +300,7 @@ apps/gui or apps/tui
 
 Prompt text has three owners:
 
-- Agent prompts: `crates/agents/src/<agent_name>/`, loaded by
+- Agent prompts: `agents/src/<agent_name>/`, loaded by
   `crates/runtime/src/manas/agent_prompts.rs`.
 - Runtime prompt fragments: `crates/runtime/src/prompt_style/`.
 - The `command_run` visible tool description:
@@ -296,10 +323,10 @@ Rules:
 
 ## Agent Config
 
-Current `crates/agents` layout:
+Current `agents` layout:
 
 ```text
-crates/agents/
+agents/
   Cargo.toml
   ARCHITECTURE.md
   src/
@@ -358,8 +385,19 @@ crates/tools/
 
     commands/
       mod.rs
+      command_safety.rs
       shell_command/
         mod.rs
+        src/
+          execution.rs
+          process.rs
+          read_batch.rs
+          readonly.rs
+          request.rs
+          response.rs
+          shell.rs
+        tests/
+          mod.rs
         schema.json
         prompt.md
         policy.toml
@@ -370,6 +408,8 @@ crates/tools/
         policy.toml
       read_media/
         mod.rs
+        src/
+          config.rs
         schema.json
         prompt.md
         policy.toml
@@ -384,6 +424,28 @@ crates/tools/
         prompt.md
         policy.toml
       web_discover/
+        mod.rs
+        src/
+          access.rs
+          args.rs
+          download.rs
+          files.rs
+          filter.rs
+          html.rs
+          media.rs
+          output.rs
+          policy.rs
+          runner.rs
+          search.rs
+          types.rs
+          util.rs
+          website.rs
+        tests/
+          mod.rs
+        schema.json
+        prompt.md
+        policy.toml
+      task_status/
         mod.rs
         schema.json
         prompt.md
@@ -410,10 +472,14 @@ crates/tools/
 
 Command files:
 
-- `handler.rs`: argument normalization and high-level command handling.
+- `mod.rs` or a focused `handler.rs`: argument normalization and high-level
+  command handling. Larger commands may keep helper modules under command-local
+  `src/` directories.
 - `schema.json`: validation and UI/handler matching.
 - `prompt.md`: compact model-facing usage guidance.
-- `policy.toml`: read/write/network/background/permission policy.
+- `policy.toml`: read/write/network/background/permission policy. Commands may
+  add a small `[configurable]` table for bounded non-secret defaults using
+  `{ default = "...", enum = ["...", "..."] }`.
 
 Schemas are for validation and handlers. Compact prompts are what should enter
 model context.
@@ -447,7 +513,12 @@ Execution rules:
   handler treats a missing step as the command's original 1-based order.
 - Every command item executes with a positive integer `step` after
   normalization.
-- Same-step read-only commands may run concurrently.
+- Same-step read-only commands may run concurrently as a **macro_command**
+  batch. The opt-in is per command handler via the unified trait method
+  `supports_macro_command` (formerly `supports_parallel_tool_calls`); the
+  command-run router checks it via `tool_supports_macro_command`. The OpenAI
+  request field `parallel_tool_calls` is a separate provider-side concept and
+  keeps its upstream name.
 - Different steps run in ascending order.
 - Mutating commands need compatible file locks.
 - Partial results may be emitted after each step group.
@@ -458,12 +529,15 @@ Built-in command families:
 - `shell_command`
 - `apply_patch`
 - `read_media`
+- `web_discover`
+- `task_status`
 - `compact_context`
 - `multiple_tasks`
 
 This version exposes console shell commands (`shell_command`, `powershell:*`,
-`bash:*`, `shell:*`), `apply_patch`, read-only local media inspection, and
-mode-gated context/task lifecycle commands through `command_run`.
+`bash:*`, `shell:*`), `apply_patch`, read-only local media inspection,
+network-backed web/media discovery, internal task status, and mode-gated
+context/task lifecycle commands through `command_run`.
 
 `command_type` is the canonical provider-facing command field. Legacy
 `command` payloads may be accepted for compatibility at the handler boundary,
@@ -497,6 +571,12 @@ only a trigger; the token savings come from the context-management reset above.
 or sampled frames. It returns compact textual observations to the model. Binary
 payloads and raw base64 are not kept in retained context; later turns recall the
 media through the summarized tool output.
+
+Tools policy configurables are standardized across commands: use a single
+`[configurable]` table, one inline table per setting, a `default` string, and an
+`enum` string list. `read_media` uses this for media compression, PDF default
+page count, directory expansion count, document attachment size, and audio
+preview size; `web_discover` uses it for ordered search route fallback.
 
 ## File Locks
 
@@ -569,7 +649,7 @@ checks. Runtime and tools should call it through explicit clients or commands.
 3. Register command aliases, CLI forwarding metadata, and lifecycle metadata in
    `crates/router`.
 4. Add router forwarding and lifecycle tests.
-5. Enable it in the target agent config under `crates/agents`.
+5. Enable it in the target agent config under `agents`.
 6. If it needs memory, add an explicit memory client/command path.
 7. Run focused tools and runtime checks.
 
@@ -578,7 +658,7 @@ checks. Runtime and tools should call it through explicit clients or commands.
 1. Implement behavior in the owning crate or `crates/tools/commands`.
 2. Add command and lifecycle metadata in `crates/router`.
 3. Add timeout, health check, restart, and permission/sandbox policy.
-4. Add agent command selection in `crates/agents`.
+4. Add agent command selection in `agents`.
 5. Update scripts only when startup/build/install detection changes.
 
 ## Workspace Members
@@ -587,7 +667,7 @@ Workspace members should follow the current crate layout:
 
 ```toml
 members = [
-  "crates/agents",
+  "agents",
   "crates/gateway",
   "crates/provider",
   "crates/router",
@@ -643,7 +723,7 @@ Direct package checks should use the same package names as the build targets.
 - `crates/gateway/**`: `cargo fmt -p gateway`, `cargo check -p gateway`.
 - `crates/runtime/**`: `cargo fmt -p code-tools-suite`,
   `cargo check -p code-tools-suite`.
-- `crates/agents/**`: `cargo fmt -p tura-agents`,
+- `agents/**`: `cargo fmt -p tura-agents`,
   `cargo check -p tura-agents`, plus affected agent interface checks.
 - `crates/provider/**`: `cargo fmt -p tura-llm-rust`,
   `cargo check -p tura-llm-rust`.
@@ -661,7 +741,7 @@ Direct package checks should use the same package names as the build targets.
 - `crates/gateway/ARCHITECTURE.md`: gateway API/session/event design.
 - `crates/runtime/ARCHITECTURE.md`: runtime, state machines, prompt flow, and
   turn flow.
-- `crates/agents/ARCHITECTURE.md`: agent config and prompt rules.
+- `agents/ARCHITECTURE.md`: agent config and prompt rules.
 - `crates/provider/ARCHITECTURE.md`: provider auth, settings, routing, usage,
   and monitoring.
 - `crates/tools/ARCHITECTURE.md`: command-run, commands, policies, file locks,

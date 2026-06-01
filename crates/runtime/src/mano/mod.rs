@@ -11,8 +11,6 @@ pub use process::{
 };
 use std::path::PathBuf;
 
-pub const MANO_SERVICE_PORT: u16 = 37_001;
-
 pub type SessionFactory = fn(SessionInput) -> Result<SessionManagement, String>;
 pub type ManasEntry = fn(&SessionManagement) -> Result<Vec<AgentManagement>, String>;
 
@@ -26,10 +24,6 @@ pub struct ManoProcessResult {
 pub struct ManoOverrides {
     pub session_factory: Option<SessionFactory>,
     pub manas_entry: Option<ManasEntry>,
-}
-
-pub fn service_port() -> u16 {
-    MANO_SERVICE_PORT
 }
 
 pub fn process_from_user(input: SessionInput) -> Result<ManoProcessResult, String> {

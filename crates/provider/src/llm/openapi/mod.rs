@@ -17,10 +17,12 @@ mod chat;
 mod common;
 mod response;
 
-pub use chat::{call, call_with_stream_events, embed};
 pub(crate) use chat::force_search;
+pub use chat::{call, call_with_stream_events, embed, embed_for_provider};
 pub(crate) use response::{codex_oauth_call, responses_api_key_call};
 
+#[cfg(test)]
+pub(crate) use chat::process_chat_stream_line_for_test;
 #[cfg(test)]
 pub(crate) use chat::{
     build_chat_payload, emit_completed_tool_call, last_complete_minimax_invoke,
@@ -28,8 +30,6 @@ pub(crate) use chat::{
 };
 #[cfg(test)]
 pub(crate) use common::should_pass_service_tier;
-#[cfg(test)]
-pub(crate) use chat::process_chat_stream_line_for_test;
 #[cfg(test)]
 pub(crate) use response::{
     append_codex_stream_text, build_codex_oauth_payload, build_responses_payload_for_provider,
@@ -171,9 +171,8 @@ mod tests {
         assert_eq!(reasoning2, "step 1");
 
         // Empty reasoning must not be treated as activity.
-        let (event3, _, reasoning3) = process_chat_stream_line_for_test(
-            r#"data: {"choices":[{"delta":{"reasoning":""}}]}"#,
-        );
+        let (event3, _, reasoning3) =
+            process_chat_stream_line_for_test(r#"data: {"choices":[{"delta":{"reasoning":""}}]}"#);
         assert!(!event3);
         assert!(reasoning3.is_empty());
     }
@@ -194,6 +193,31 @@ mod tests {
         // Qwen Responses branch must also omit it.
         let qwen = build_responses_payload_for_provider("qwen", "qwen3.7-max", &messages, &options);
         assert!(qwen.get("service_tier").is_none());
+    }
+
+    #[test]
+    fn responses_payload_preserves_canonical_media_content() {
+        let messages = vec![json!({
+            "role": "user",
+            "content": [
+                { "type": "input_text", "text": "see image" },
+                { "type": "input_image", "image_url": "data:image/jpeg;base64,AAA" }
+            ]
+        })];
+
+        let payload = build_responses_payload_for_provider(
+            "chatgpt",
+            "gpt-5.2",
+            &messages,
+            &CallOptions::default(),
+        );
+
+        assert_eq!(payload["input"][0]["content"][0]["type"], "input_text");
+        assert_eq!(payload["input"][0]["content"][1]["type"], "input_image");
+        assert_eq!(
+            payload["input"][0]["content"][1]["image_url"],
+            "data:image/jpeg;base64,AAA"
+        );
     }
 
     #[test]

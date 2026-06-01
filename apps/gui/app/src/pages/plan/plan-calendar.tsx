@@ -1,82 +1,10 @@
-import {
-  For,
-  Match,
-  Show,
-  Switch,
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-  onMount,
-  type Accessor,
-  type JSX,
-  type Setter,
-} from "solid-js";
-import { Portal } from "solid-js/web";
-import ExternalLink from "lucide-solid/icons/external-link";
-import LayoutList from "lucide-solid/icons/layout-list";
-import ArrowLeft from "lucide-solid/icons/arrow-left";
-import CalendarDays from "lucide-solid/icons/calendar-days";
-import ChartGantt from "lucide-solid/icons/chart-gantt";
-import Check from "lucide-solid/icons/check";
-import ChevronDown from "lucide-solid/icons/chevron-down";
+import { type Session } from "@tura/gateway-sdk";
 import ChevronLeft from "lucide-solid/icons/chevron-left";
 import ChevronRight from "lucide-solid/icons/chevron-right";
-import Columns3 from "lucide-solid/icons/columns-3";
-import Copy from "lucide-solid/icons/copy";
-import Edit3 from "lucide-solid/icons/pencil";
-import FolderOpen from "lucide-solid/icons/folder-open";
-import KeyRound from "lucide-solid/icons/key-round";
-import MoreHorizontal from "lucide-solid/icons/ellipsis";
-import Pin from "lucide-solid/icons/pin";
-import Plus from "lucide-solid/icons/plus";
-import Search from "lucide-solid/icons/search";
-import Settings from "lucide-solid/icons/settings";
-import Trash2 from "lucide-solid/icons/trash-2";
-import {
-  GatewayClient,
-  GatewayError,
-  connectGatewayEvents,
-  defaultGatewayUrl,
-  errorMessage,
-  type Agent,
-  type Command,
-  type FileContentResponse,
-  type FileInfo,
-  type GatewayConfig,
-  type Message,
-  type ProviderAuthMethod,
-  type ProductIssue,
-  type Project,
-  type PollInterval,
-  type SdkProvider,
-  type Session,
-  type StartCondition,
-  type TaskManagement,
-  type PlanStatus,
-} from "@tura/gateway-sdk";
-import {
-  Composer,
-  ConversationView,
-  composerFileToken,
-  composerImageToken,
-} from "../../conversation/conversation-view";
-import { applyGatewayEvent } from "../../state/event-reducer";
-import {
-  activeSession,
-  type ComposerImage,
-  initialAppState,
-  type MainTab,
-  type PlanMode,
-  sessionDirectory,
-  sessionUpdatedAt,
-  sessionTitle,
-  type AppState,
-  type SettingsSection,
-  type ThemeMode,
-} from "../../state/global-store";
-import { classNames, truncate } from "../../state/format";
-import { t, type TextKey } from "../../i18n";
+import { For, Show, createMemo, createSignal } from "solid-js";
+import { t } from "../../i18n";
+import { classNames } from "../../state/format";
+import { sessionTitle } from "../../state/global-store";
 
 import {
   PlanDragGhost,
@@ -87,6 +15,15 @@ import {
   type PlanDragState,
 } from "../../features/plan/drag";
 import {
+  formatCalendarEventTime,
+  planInitialCalendarDate,
+  planSessionStatus,
+  planTimedSessions,
+  planTriggerClass,
+  sessionTaskState,
+  type PlanCalendarMode,
+} from "../../features/plan/tasks";
+import {
   DAY_MS,
   calendarGridDays,
   calendarWeekDays,
@@ -96,17 +33,6 @@ import {
   sameCalendarDay,
   startOfDay,
 } from "../../features/plan/timeline";
-import {
-  formatCalendarEventTime,
-  planInitialCalendarDate,
-  planSessionStatus,
-  planTaskTitle,
-  planTimedSessions,
-  planTriggerClass,
-  sessionTaskState,
-  timedTaskPatch,
-  type PlanCalendarMode,
-} from "../../features/plan/tasks";
 export function PlanCalendarView(props: {
   sessions: Session[];
   selectedSessionId?: string;

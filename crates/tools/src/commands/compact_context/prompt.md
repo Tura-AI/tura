@@ -16,4 +16,4 @@ The output is one handoff text for the next model turn. Include:
 - directory/file requirements needed to continue
 - exactly what to do next
 
-Keep the text concise and structured. Do not exceed about 15,000 English words, which is roughly 20,000 tokens.
+Keep the text concise and structured. Do not exceed 20,000 tokens, roughly 15,000 English words.

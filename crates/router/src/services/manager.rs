@@ -1,13 +1,11 @@
-use std::collections::HashSet;
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use parking_lot::RwLock;
 use tracing::{info, warn};
 
 use super::{
-    models::{CallContext, WorkerHandle, WorkerStatus},
-    rust_service::prepare_service,
+    models::{CallContext, WorkerHandle, WorkerSpec},
     worker_process::WorkerProcess,
 };
 
@@ -25,12 +23,12 @@ impl ServiceManager {
         }
     }
 
-    pub async fn ensure_service_ready(&self, service_dir: &Path) -> Result<WorkerHandle> {
-        let canonical_service_key = service_dir.canonicalize()?.display().to_string();
-
+    /// 声明式拉起任意 worker：按 `spec.key` 复用与探活，进程已亡则重建（自愈）。
+    /// 不绑定具体服务；供 runtime worker / 子 session 派发等场景复用。
+    pub async fn ensure_worker(&self, spec: WorkerSpec) -> Result<WorkerHandle> {
         let existing_worker_id = {
             let service_to_worker = self.service_to_worker.read();
-            service_to_worker.get(&canonical_service_key).cloned()
+            service_to_worker.get(&spec.key).cloned()
         };
 
         if let Some(existing_id) = existing_worker_id {
@@ -38,26 +36,21 @@ impl ServiceManager {
                 let workers = self.workers.read();
                 workers.get(&existing_id).cloned()
             };
-
             if let Some(worker) = worker {
-                let is_alive = worker.is_alive().await;
-                if is_alive {
+                if worker.is_alive().await {
                     info!(
                         worker_id = existing_id,
-                        service = worker.service_name,
+                        key = spec.key,
                         "reusing existing worker"
                     );
                     return Ok(WorkerHandle {
                         worker_id: existing_id.clone(),
-                        service_name: worker.service_name.clone(),
-                        url: service_url(&worker.service_name, &existing_id),
                     });
                 }
-
                 warn!(
                     worker_id = existing_id,
-                    service = worker.service_name,
-                    "worker record existed but process is gone, recreating"
+                    key = spec.key,
+                    "worker gone, recreating"
                 );
                 self.workers.write().remove(&existing_id);
                 self.service_to_worker
@@ -66,26 +59,33 @@ impl ServiceManager {
             }
         }
 
-        let prepared = prepare_service(service_dir).await?;
-
         let worker_id = uuid::Uuid::new_v4().to_string();
-        let worker = WorkerProcess::start(
+        let worker = WorkerProcess::start_with(
             worker_id.clone(),
-            prepared.service_name.clone(),
-            &prepared.executable_path,
+            spec.service_name.clone(),
+            &spec.executable,
+            &spec.args,
+            &spec.env,
         )
         .await?;
 
         self.workers.write().insert(worker_id.clone(), worker);
         self.service_to_worker
             .write()
-            .insert(canonical_service_key, worker_id.clone());
+            .insert(spec.key.clone(), worker_id.clone());
 
         Ok(WorkerHandle {
             worker_id: worker_id.clone(),
-            service_name: prepared.service_name.clone(),
-            url: service_url(&prepared.service_name, &worker_id),
         })
+    }
+
+    /// 统计当前以 `key_prefix` 开头注册的活跃 worker 数量（用于并发上限防 fork 爆炸）。
+    pub fn count_workers_with_prefix(&self, key_prefix: &str) -> usize {
+        self.service_to_worker
+            .read()
+            .keys()
+            .filter(|key| key.starts_with(key_prefix))
+            .count()
     }
 
     pub async fn call_worker(
@@ -103,51 +103,4 @@ impl ServiceManager {
 
         worker.invoke(ctx).await
     }
-
-    pub async fn statuses(&self) -> Vec<WorkerStatus> {
-        let active_worker_ids = self
-            .service_to_worker
-            .read()
-            .values()
-            .cloned()
-            .collect::<HashSet<_>>();
-        let workers = self
-            .workers
-            .read()
-            .iter()
-            .filter(|(id, _)| active_worker_ids.contains(*id))
-            .map(|(id, worker)| (id.clone(), worker.clone()))
-            .collect::<Vec<_>>();
-
-        let mut statuses = Vec::with_capacity(workers.len());
-        let mut stale = Vec::new();
-        for (worker_id, worker) in workers {
-            let alive = worker.is_alive().await;
-            if !alive {
-                stale.push(worker_id.clone());
-                continue;
-            }
-            statuses.push(WorkerStatus {
-                worker_id: worker_id.clone(),
-                service_name: worker.service_name.clone(),
-                url: service_url(&worker.service_name, &worker_id),
-                alive,
-                pid: worker.pid().await,
-                executable_path: worker.executable_path.display().to_string(),
-            });
-        }
-        if !stale.is_empty() {
-            let mut workers = self.workers.write();
-            let mut service_to_worker = self.service_to_worker.write();
-            for worker_id in stale {
-                workers.remove(&worker_id);
-                service_to_worker.retain(|_, mapped| mapped != &worker_id);
-            }
-        }
-        statuses
-    }
-}
-
-fn service_url(service_name: &str, worker_id: &str) -> String {
-    format!("/services/{service_name}/{worker_id}")
 }

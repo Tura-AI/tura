@@ -1,91 +1,22 @@
 import {
-  For,
-  Match,
-  Show,
-  Switch,
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-  onMount,
-  type Accessor,
-  type JSX,
-  type Setter,
-} from "solid-js";
-import { Portal } from "solid-js/web";
-import ExternalLink from "lucide-solid/icons/external-link";
-import LinkIcon from "lucide-solid/icons/link";
-import LayoutList from "lucide-solid/icons/layout-list";
-import CalendarDays from "lucide-solid/icons/calendar-days";
-import ChartGantt from "lucide-solid/icons/chart-gantt";
-import Check from "lucide-solid/icons/check";
-import ChevronDown from "lucide-solid/icons/chevron-down";
-import ChevronLeft from "lucide-solid/icons/chevron-left";
-import ChevronRight from "lucide-solid/icons/chevron-right";
-import Columns3 from "lucide-solid/icons/columns-3";
-import Copy from "lucide-solid/icons/copy";
-import Edit3 from "lucide-solid/icons/pencil";
-import FolderOpen from "lucide-solid/icons/folder-open";
-import KeyRound from "lucide-solid/icons/key-round";
-import LogOut from "lucide-solid/icons/log-out";
-import MoreHorizontal from "lucide-solid/icons/ellipsis";
-import Pin from "lucide-solid/icons/pin";
-import Plus from "lucide-solid/icons/plus";
-import Search from "lucide-solid/icons/search";
-import Settings from "lucide-solid/icons/settings";
-import Trash2 from "lucide-solid/icons/trash-2";
-import {
-  GatewayClient,
-  GatewayError,
-  connectGatewayEvents,
-  defaultGatewayUrl,
-  errorMessage,
-  type Agent,
-  type Command,
-  type FileContentResponse,
-  type FileInfo,
-  type GatewayConfig,
-  type Message,
   type ProviderAuthActionResponse,
   type ProviderAuthMethod,
-  type ProductIssue,
-  type Project,
-  type PollInterval,
   type SdkProvider,
-  type Session,
-  type StartCondition,
-  type TaskManagement,
-  type PlanStatus,
 } from "@tura/gateway-sdk";
-import {
-  Composer,
-  ConversationView,
-  composerFileToken,
-  composerImageToken,
-} from "../../conversation/conversation-view";
-import { applyGatewayEvent } from "../../state/event-reducer";
-import {
-  activeSession,
-  type ComposerImage,
-  initialAppState,
-  type MainTab,
-  type PlanMode,
-  sessionDirectory,
-  sessionUpdatedAt,
-  sessionTitle,
-  type AppState,
-  type SettingsSection,
-  type ThemeMode,
-} from "../../state/global-store";
-import { classNames, truncate } from "../../state/format";
+import Copy from "lucide-solid/icons/copy";
+import ExternalLink from "lucide-solid/icons/external-link";
+import LinkIcon from "lucide-solid/icons/link";
+import LogOut from "lucide-solid/icons/log-out";
+import { For, Show, createMemo, createSignal } from "solid-js";
 import { t, type TextKey } from "../../i18n";
+import { classNames } from "../../state/format";
+import { type AppState } from "../../state/global-store";
 
 import {
   copyText,
   providerAuthDisplayState,
   type ProviderAuthDisplayState,
 } from "../../utils/settings";
-import { formatModelLimit } from "../../utils/app-format";
 import { ReadonlyRow } from "./settings-view";
 export function ProviderConfigGroup(props: {
   label: string;
@@ -104,25 +35,20 @@ export function ProviderConfigGroup(props: {
         fallback={<div class="surface-list-empty">{t("empty")}</div>}
       >
         {(provider) => (
-          (() => {
-            const display = createMemo(() =>
-              providerAuthDisplayState(props.state, provider.id),
-            );
-            return (
-              <button
-                class="settings-provider-row"
-                onClick={() => props.onProvider(provider)}
-              >
-                <span class="provider-row-name">
-                  <span>{provider.name}</span>
-                  <Show when={providerHasOauthLogin(props.state, provider.id)}>
-                    <small>{t("oauthLogin")}</small>
-                  </Show>
-                </span>
-                <small>{display().label}</small>
-              </button>
-            );
-          })()
+          <button
+            class="settings-provider-row"
+            onClick={() => props.onProvider(provider)}
+          >
+            <span class="provider-row-name">
+              <span>{provider.name}</span>
+              <Show when={providerHasOauthLogin(props.state, provider.id)}>
+                <small>{t("oauthLogin")}</small>
+              </Show>
+            </span>
+            <small>
+              {providerAuthDisplayState(props.state, provider.id).label}
+            </small>
+          </button>
         )}
       </For>
     </section>
@@ -148,10 +74,7 @@ function ProviderAuthStatusRow(props: {
         <span>{t("state")}</span>
         <code class="provider-auth-state-value">
           <span
-            class={classNames(
-              "provider-auth-state-dot",
-              props.display.level,
-            )}
+            class={classNames("provider-auth-state-dot", props.display.level)}
           />
           {props.display.label}
         </code>
@@ -166,12 +89,7 @@ function ProviderAuthStatusRow(props: {
       </div>
       <Show when={props.receipt}>
         {(receipt) => (
-          <div
-            class={classNames(
-              "provider-auth-receipt",
-              props.display.level,
-            )}
-          >
+          <div class={classNames("provider-auth-receipt", props.display.level)}>
             <span>{t("receipt")}:</span>
             <code>
               <span>{validationReceiptText(receipt())}</span>
@@ -193,7 +111,10 @@ function validationReceiptText(receipt: ProviderAuthActionResponse): string {
     .join("\n");
 }
 
-function validationReceiptCodeText(code: string, value?: string | null): string {
+function validationReceiptCodeText(
+  code: string,
+  value?: string | null,
+): string {
   const key = VALIDATION_RECEIPT_TEXT_KEYS[code];
   if (key) {
     return t(key, { value: value ?? "" });
@@ -214,16 +135,20 @@ const VALIDATION_RECEIPT_TEXT_KEYS: Record<string, TextKey> = {
   "provider.env.missing": "providerReceiptEnvMissing",
   "provider.env.none_registered": "providerReceiptEnvNoneRegistered",
   "provider.remote.accepted": "providerReceiptRemoteAccepted",
-  "provider.remote.permission_limited": "providerReceiptRemotePermissionLimited",
+  "provider.remote.permission_limited":
+    "providerReceiptRemotePermissionLimited",
   "provider.remote.rejected": "providerReceiptRemoteRejected",
   "provider.remote.request_failed": "providerReceiptRemoteRequestFailed",
   "provider.validation.client_setup_failed": "providerReceiptClientSetupFailed",
   "provider.credential.oauth_token_missing": "providerReceiptOauthTokenMissing",
-  "provider.credential.oauth_token_invalid_format": "providerReceiptOauthTokenInvalidFormat",
+  "provider.credential.oauth_token_invalid_format":
+    "providerReceiptOauthTokenInvalidFormat",
   "provider.credential.token_missing": "providerReceiptTokenMissing",
   "provider.credential.api_key_missing": "providerReceiptApiKeyMissing",
-  "provider.validation.public_model_list_unsupported": "providerReceiptPublicModelListUnsupported",
-  "provider.validation.gateway_not_configured": "providerReceiptGatewayNotConfigured",
+  "provider.validation.public_model_list_unsupported":
+    "providerReceiptPublicModelListUnsupported",
+  "provider.validation.gateway_not_configured":
+    "providerReceiptGatewayNotConfigured",
   "provider.request.no_paid_model": "providerReceiptNoPaidModelRequest",
   "provider.auth.refresh.unsupported": "providerReceiptAuthRefreshUnsupported",
   "provider.auth.refresh.failed": "providerReceiptAuthRefreshFailed",
@@ -503,14 +428,11 @@ function ProtectedTokenInput(props: {
 }) {
   const [revealed, setRevealed] = createSignal(false);
   const value = createMemo(() =>
-    tokenInputValue(
-      props.providerId,
-      props.method,
-      props.status,
-      props.state,
-    ),
+    tokenInputValue(props.providerId, props.method, props.status, props.state),
   );
-  const title = createMemo(() => value() || props.method.token_env || t("apiKey"));
+  const title = createMemo(
+    () => value() || props.method.token_env || t("apiKey"),
+  );
   return (
     <div
       class="masked-token-field"

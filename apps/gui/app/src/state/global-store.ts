@@ -10,33 +10,37 @@ import type {
   Message,
   PathResponse,
   PermissionRequest,
+  PlanStatus,
+  PollInterval,
   ProductConfig,
   ProductIssue,
   ProductProject,
   ProductUser,
   Project,
-  ProviderAuthMethod,
   ProviderAuthActionResponse,
+  ProviderAuthMethod,
   ProviderAuthStatusResponse,
   ProviderListResponse,
-  PollInterval,
   QuestionRequest,
   ServiceStatusResponse,
   Session,
   StartCondition,
-  PlanStatus,
+  StoredPersona,
   TodoItem,
   TuraConfigResponse,
   VcsInfo,
   Workspace,
 } from "@tura/gateway-sdk";
+import { draftStateDefaults } from "./drafts";
 
 export type ConnectionState = "connecting" | "connected" | "disconnected";
 export type MainTab = "conversation" | "plan" | "files" | "settings";
 export type SettingsSection =
   | "appearance"
   | "providers"
-  | "models";
+  | "models"
+  | "agents"
+  | "personalization";
 export type ThemeMode = "light" | "dark" | "caral" | "uruk" | "liangzhu";
 export type PlanMode = "todo" | "gantt" | "calendar";
 export type ProviderAuthPanel = {
@@ -84,7 +88,7 @@ export type AppState = {
   codeFontSize: number;
   directory?: string;
   selectedSessionId?: string;
-  lastCessionOpenedId?: string;
+  lastSessionOpenedId?: string;
   health?: HealthResponse;
   serviceStatus?: ServiceStatusResponse;
   config?: GatewayConfig;
@@ -105,6 +109,7 @@ export type AppState = {
   providerAuthStatus: Record<string, ProviderAuthStatusResponse>;
   providerValidationReceipts: Record<string, ProviderAuthActionResponse>;
   agents: Agent[];
+  personas: StoredPersona[];
   commands: Command[];
   vcs?: VcsInfo;
   diff: FileDiff[];
@@ -131,6 +136,7 @@ export type AppState = {
 };
 
 export function initialAppState(gatewayUrl: string): AppState {
+  const drafts = draftStateDefaults();
   return {
     gatewayUrl,
     connection: "connecting",
@@ -140,17 +146,17 @@ export function initialAppState(gatewayUrl: string): AppState {
     workspaces: [],
     productIssues: [],
     productProjects: [],
-    issueDraft: "",
-    issueSearch: "",
+    issueDraft: drafts.issueDraft,
+    issueSearch: drafts.issueSearch,
     planMode: "todo",
-    planDraftStartCondition: "user_action",
-    planDraftStartAt: "",
-    planDraftPollInterval: { m: 0, d: 0, h: 1, s: 0 },
+    planDraftStartCondition: drafts.planDraftStartCondition,
+    planDraftStartAt: drafts.planDraftStartAt,
+    planDraftPollInterval: drafts.planDraftPollInterval,
     editingTask: undefined,
     activeTab: "conversation",
     previousMainTab: "conversation",
-    settingsSection: "appearance",
-    lastCessionOpenedId: undefined,
+    settingsSection: drafts.settingsSection,
+    lastSessionOpenedId: undefined,
     themeMode: systemThemeMode(),
     mainFont: "",
     codeFont: "",
@@ -160,27 +166,28 @@ export function initialAppState(gatewayUrl: string): AppState {
     todosBySession: {},
     permissions: [],
     questions: [],
-    configDraft: {},
+    configDraft: drafts.configDraft,
     workspaceConfig: {},
-    workspaceConfigDraft: {},
+    workspaceConfigDraft: drafts.workspaceConfigDraft,
     providerAuthMethods: {},
     providerAuthStatus: {},
     providerValidationReceipts: {},
     agents: [],
+    personas: [],
     commands: [],
     projects: [],
     diff: [],
     files: [],
     filePath: "",
-    composerText: "",
-    composerImages: [],
+    composerText: drafts.composerText,
+    composerImages: drafts.composerImages,
     selectedProviderId: undefined,
-    providerSearch: "",
+    providerSearch: drafts.providerSearch,
     providerAuthPanel: undefined,
     modelVariant: "low",
     accelerationEnabled: true,
-    authDrafts: {},
-    authCodeDrafts: {},
+    authDrafts: drafts.authDrafts,
+    authCodeDrafts: drafts.authCodeDrafts,
     settingsSaving: false,
     submitting: false,
   };

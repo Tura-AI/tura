@@ -1,102 +1,62 @@
 import {
-  Show,
-  Switch,
-  Match,
+  GatewayClient,
+  GatewayError,
+  connectGatewayEvents,
+  defaultGatewayUrl,
+  errorMessage,
+  type Agent,
+  type AgentConfig,
+  type AgentUpsertRequest,
+  type FileContentResponse,
+  type FileInfo,
+  type Message,
+  type PlanStatus,
+  type ProductIssue,
+  type Project,
+  type Session,
+  type StoredAgent,
+} from "@tura/gateway-sdk";
+import {
   createEffect,
   createMemo,
   createSignal,
   onCleanup,
   onMount,
 } from "solid-js";
-import { Portal } from "solid-js/web";
+import { AppShell } from "./app/app-shell";
+import { AppProviders } from "./context/app-providers";
+import { DEFAULT_MODEL_ID } from "./config/defaults";
 import {
-  GatewayClient,
-  GatewayError,
-  connectGatewayEvents,
-  defaultGatewayUrl,
-  errorMessage,
-  type Message,
-  type FileContentResponse,
-  type FileInfo,
-  type ProductIssue,
-  type Project,
-  type PollInterval,
-  type ProviderAuthMethod,
-  type Session,
-  type StartCondition,
-  type TaskManagement,
-  type PlanStatus,
-} from "@tura/gateway-sdk";
-import {
-  Composer,
-  ConversationView,
-  composerFileToken,
-  composerImageToken,
-} from "./conversation/conversation-view";
-import { applyGatewayEvent } from "./state/event-reducer";
-import {
-  activeSession,
-  type ComposerImage,
-  initialAppState,
-  type MainTab,
-  sessionDirectory,
-  sessionTitle,
-  systemThemeMode,
-  type AppState,
-  type SettingsSection,
-  type ThemeMode,
-} from "./state/global-store";
-import { classNames } from "./state/format";
+  appendTaskToSession,
+  defaultLocalStartAt,
+  defaultPollInterval,
+  localDateTimeToUtcIso,
+  materializeComposerContent,
+  sessionTasks,
+  timedTaskPatch,
+} from "./features/plan/tasks";
+import { usePlanActions } from "./hooks/use-plan-actions";
+import { useProviderSettingsActions } from "./hooks/use-provider-settings-actions";
 import { t } from "./i18n";
-import { WorkspaceTree } from "./components/sidebar";
-import {
-  MainTabs,
-  SettingsRail,
-  SettingsView,
-} from "./pages/settings/settings-view";
-import { ProviderAuthDialog } from "./pages/settings/provider-settings";
-import { PlanView } from "./pages/plan/plan-view";
-import { FileBrowserView } from "./pages/files/file-browser";
+import { agentDisplayName } from "./utils/agent-display";
 import {
   fixtureAppState,
   fixtureFileContent,
   fixtureFiles,
-} from "./mock/fixtures";
+} from "./test/fixtures/app-fixtures";
+import { applyGatewayEvent } from "./state/event-reducer";
 import {
-  applyTaskPatchToSession,
-  appendTaskToSession,
-  defaultLocalStartAt,
-  defaultPollInterval,
-  firstRunnableTask,
-  formatTicketTime,
-  hasVisibleSessionTasks,
-  localDateTimeToUtcIso,
-  materializeComposerContent,
-  normalizePollInterval,
-  sessionAttentionKey,
-  sessionTaskState,
-  sessionTasks,
-  taskDisplayText,
-  taskNonceId,
-  taskPollInterval,
-  taskStartAt,
-  taskStartCondition,
-  timedTaskPatch,
-  utcIsoToLocalDateTime,
-} from "./features/plan/tasks";
-import {
-  configDraftToPatch,
-  configToDraft,
-  defaultModel,
-  draftToRecord,
-  parseModelRef,
-  providerIdFromAuthError,
-  providerIdFromModel,
-  recordToDraft,
-} from "./utils/settings";
+  activeSession,
+  initialAppState,
+  sessionDirectory,
+  systemThemeMode,
+  type AppState,
+  type MainTab,
+  type SettingsSection,
+  type ThemeMode,
+} from "./state/global-store";
 import {
   eventBelongsToState,
-  parentPath,
   readBooleanSearchParam,
   readConfigBoolean,
   readConfigString,
@@ -108,54 +68,63 @@ import {
 } from "./utils/app-format";
 import { safe } from "./utils/safe";
 import {
-  PlanComposerControls,
-  PlanComposerTaskList,
-} from "./pages/plan/plan-composer";
-import { useProviderSettingsActions } from "./hooks/use-provider-settings-actions";
-import { usePlanActions } from "./hooks/use-plan-actions";
-import { AppShell } from "./app/app-shell";
+  configToDraft,
+  defaultModel,
+  providerIdFromAuthError,
+  providerIdFromModel,
+  recordToDraft,
+} from "./utils/settings";
 
 const PROMPT_RESPONSE_TIMEOUT_MS = 30_000;
 const PROMPT_RESPONSE_TIMEOUT_CODE = "GATEWAY_NO_RESPONSE_30S";
 const GATEWAY_CONNECT_TIMEOUT_MS = 5_000;
-const LAST_CESSION_OPENED_STORAGE_KEY = "last cession oppend";
-let lastCessionOpenedMemory: string | undefined;
+const LAST_SESSION_OPENED_STORAGE_KEY = "last_session_opened";
+const LEGACY_LAST_SESSION_OPENED_STORAGE_KEY = "last cession oppend";
+let lastSessionOpenedMemory: string | undefined;
 
-function readLastCessionOpened(): string | undefined {
+function readLastSessionOpened(): string | undefined {
   let stored: string | undefined;
   if (typeof window === "undefined") {
-    return lastCessionOpenedMemory;
+    return lastSessionOpenedMemory;
   }
   try {
     stored =
+      window.localStorage.getItem(LAST_SESSION_OPENED_STORAGE_KEY)?.trim() ||
       window.localStorage
-        .getItem(LAST_CESSION_OPENED_STORAGE_KEY)
-        ?.trim() || undefined;
+        .getItem(LEGACY_LAST_SESSION_OPENED_STORAGE_KEY)
+        ?.trim() ||
+      undefined;
+    if (stored) {
+      window.localStorage.setItem(LAST_SESSION_OPENED_STORAGE_KEY, stored);
+      window.localStorage.removeItem(LEGACY_LAST_SESSION_OPENED_STORAGE_KEY);
+    }
   } catch {
     stored = undefined;
   }
-  return stored ?? lastCessionOpenedMemory;
+  return stored ?? lastSessionOpenedMemory;
 }
 
-function writeLastCessionOpened(sessionId: string) {
-  lastCessionOpenedMemory = sessionId;
+function writeLastSessionOpened(sessionId: string) {
+  lastSessionOpenedMemory = sessionId;
   if (typeof window === "undefined") {
     return;
   }
   try {
-    window.localStorage.setItem(LAST_CESSION_OPENED_STORAGE_KEY, sessionId);
+    window.localStorage.setItem(LAST_SESSION_OPENED_STORAGE_KEY, sessionId);
+    window.localStorage.removeItem(LEGACY_LAST_SESSION_OPENED_STORAGE_KEY);
   } catch {
     // Memory fallback keeps tab navigation deterministic when storage is blocked.
   }
 }
 
-function clearLastCessionOpened() {
-  lastCessionOpenedMemory = undefined;
+function clearLastSessionOpened() {
+  lastSessionOpenedMemory = undefined;
   if (typeof window === "undefined") {
     return;
   }
   try {
-    window.localStorage.removeItem(LAST_CESSION_OPENED_STORAGE_KEY);
+    window.localStorage.removeItem(LAST_SESSION_OPENED_STORAGE_KEY);
+    window.localStorage.removeItem(LEGACY_LAST_SESSION_OPENED_STORAGE_KEY);
   } catch {
     // Nothing else to clear when storage is blocked.
   }
@@ -182,6 +151,21 @@ function providerIssueIdFromError(
   return billingLike ? providerIdFromModel(state.selectedModel) : undefined;
 }
 
+function mergeSessions(remoteSessions: Session[], localSessions: Session[]) {
+  const byId = new Map<string, Session>();
+  for (const session of remoteSessions) {
+    byId.set(session.id, session);
+  }
+  for (const session of localSessions) {
+    if (!byId.has(session.id)) {
+      byId.set(session.id, session);
+    }
+  }
+  return [...byId.values()].sort(
+    (a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0),
+  );
+}
+
 function isGatewayTimeoutError(error: unknown): boolean {
   if (
     error instanceof DOMException &&
@@ -197,13 +181,15 @@ function isGatewayTimeoutError(error: unknown): boolean {
 
 export function App() {
   const e2eFixture = readSearchParam("e2eFixture");
+  const requestedTab = readSearchParam("tab");
   const initialTab = readMainTabSearchParam();
-  const forceNewSession = readBooleanSearchParam("newSession");
+  const forceNewSession =
+    readBooleanSearchParam("newSession") || requestedTab === "new";
   const disablePermissionRestrictions = readBooleanSearchParam(
     "disablePermissionRestrictions",
   );
   const initialSessionId = forceNewSession
-    ? undefined
+    ? null
     : readSearchParam("sessionId");
   const initialModel = readSearchParam("model");
   const initialAgent = readSearchParam("agent");
@@ -253,9 +239,8 @@ export function App() {
   const [expandedFileTreePaths, setExpandedFileTreePaths] = createSignal(
     new Set<string>(),
   );
+  const e2eStoredAgents = new Map<string, StoredAgent>();
   let fileContentRequestId = 0;
-  const [acknowledgedAttentionSessions, setAcknowledgedAttentionSessions] =
-    createSignal(new Set<string>());
 
   createEffect(() => {
     if (!workspaceTreeTouched() && state().directory) {
@@ -349,15 +334,23 @@ export function App() {
       const directory =
         paths.directory || currentProject.project?.worktree || paths.worktree;
       const scoped = client.withDirectory(directory);
-      const [sessions, providers, agents, commands, files, workspaceConfig] =
-        await Promise.all([
-          safe(() => scoped.sessions({ limit: 100 }), []),
-          safe(() => scoped.providers(), undefined),
-          safe(() => scoped.agents(), []),
-          safe(() => scoped.commands(), []),
-          safe(() => scoped.files(), []),
-          safe(() => scoped.workspaceConfig(), {}),
-        ]);
+      const [
+        sessions,
+        providers,
+        agents,
+        personas,
+        commands,
+        files,
+        workspaceConfig,
+      ] = await Promise.all([
+        safe(() => scoped.sessions({ limit: 100 }), []),
+        safe(() => scoped.providers(), undefined),
+        safe(() => scoped.agents(), []),
+        safe(() => scoped.personas(), []),
+        safe(() => scoped.commands(), []),
+        safe(() => scoped.files(), []),
+        safe(() => scoped.workspaceConfig(), {}),
+      ]);
       const providerAuthMethods = await safe(
         () => client.providerAuthMethods(),
         {},
@@ -407,14 +400,15 @@ export function App() {
         currentProject,
         projects,
         directory,
-        sessions,
+        sessions: mergeSessions(sessions, previous.sessions),
         providers,
         providerAuthMethods,
         providerAuthStatus,
         agents,
+        personas,
         commands,
         files,
-        selectedSessionId,
+        selectedSessionId: previous.selectedSessionId ?? selectedSessionId,
         selectedAgent:
           previous.selectedAgent ??
           configuredAgent ??
@@ -423,7 +417,7 @@ export function App() {
           previous.selectedModel ??
           configuredModel ??
           defaultModel(providers) ??
-          "openai/gpt-5.5",
+          DEFAULT_MODEL_ID,
         selectedProviderId:
           previous.selectedProviderId ??
           providerIdFromModel(configuredModel) ??
@@ -471,19 +465,22 @@ export function App() {
     }
   }
 
-  async function openSession(sessionId: string) {
-    writeLastCessionOpened(sessionId);
+  async function openSession(
+    sessionId: string,
+    options: { forceRefreshMessages?: boolean } = {},
+  ) {
+    writeLastSessionOpened(sessionId);
     acknowledgeSessionAttention(sessionId);
     setState((previous) => ({
       ...previous,
-      lastCessionOpenedId: sessionId,
+      lastSessionOpenedId: sessionId,
       selectedSessionId: sessionId,
       error: undefined,
     }));
     const client = directoryClient();
     const existingMessages = state().messagesBySession[sessionId] ?? [];
     const [messages] = await Promise.all([
-      e2eFixture && existingMessages.length > 0
+      e2eFixture && existingMessages.length > 0 && !options.forceRefreshMessages
         ? Promise.resolve(existingMessages)
         : safe(() => client.messages(sessionId), existingMessages),
     ]);
@@ -496,37 +493,15 @@ export function App() {
     }));
   }
 
-  async function newSession() {
-    setState((previous) => ({ ...previous, error: undefined }));
-    try {
-      const session = await directoryClient().createSession(
-        createSessionPayload(),
-      );
-      setState((previous) => ({
-        ...previous,
-        sessions: [
-          session,
-          ...previous.sessions.filter((item) => item.id !== session.id),
-        ],
-        selectedSessionId: session.id,
-      }));
-      await openSession(session.id);
-    } catch (error) {
-      if (!handleProviderAuthError(error)) {
-        setState((previous) => ({ ...previous, error: errorMessage(error) }));
-      }
-    }
-  }
-
   function openBlankSession() {
     const currentSessionId = state().selectedSessionId;
     if (currentSessionId) {
-      writeLastCessionOpened(currentSessionId);
+      writeLastSessionOpened(currentSessionId);
     }
     setState((previous) => ({
       ...previous,
-      lastCessionOpenedId:
-        previous.selectedSessionId ?? previous.lastCessionOpenedId,
+      lastSessionOpenedId:
+        previous.selectedSessionId ?? previous.lastSessionOpenedId,
       activeTab: "conversation",
       previousMainTab: "conversation",
       selectedSessionId: undefined,
@@ -543,6 +518,7 @@ export function App() {
     try {
       const session = await directoryClient().updateSession(sessionId, {
         name: cleanTitle,
+        auto_session_name: false,
       });
       setState((previous) => ({
         ...previous,
@@ -685,7 +661,6 @@ export function App() {
 
   const {
     refreshProviderSurface,
-    handleProviderAuthError,
     saveRuntimeSettings,
     updateModelTier,
     saveProviderKey,
@@ -699,6 +674,130 @@ export function App() {
     rootClient,
     directoryClient,
   });
+
+  async function refreshAgents() {
+    if (e2eFixture) {
+      return;
+    }
+    const [agents, personas] = await Promise.all([
+      safe(() => directoryClient().agents(), state().agents),
+      safe(() => directoryClient().personas(), state().personas),
+    ]);
+    setState((previous) => ({ ...previous, agents, personas }));
+  }
+
+  async function getAgent(agentId: string): Promise<StoredAgent | undefined> {
+    if (e2eFixture) {
+      const storedAgent = e2eStoredAgents.get(agentId);
+      if (storedAgent) {
+        return storedAgent;
+      }
+      const agent = state().agents.find((item) => item.name === agentId);
+      return agent ? storedAgentFromRuntimeAgent(agent) : undefined;
+    }
+    try {
+      return await directoryClient().agent(agentId);
+    } catch (error) {
+      setState((previous) => ({ ...previous, error: errorMessage(error) }));
+      return undefined;
+    }
+  }
+
+  async function saveAgent(
+    agentId: string | undefined,
+    payload: AgentUpsertRequest,
+  ) {
+    setState((previous) => ({
+      ...previous,
+      settingsSaving: true,
+      settingsNotice: undefined,
+      error: undefined,
+    }));
+    try {
+      if (e2eFixture) {
+        const nextAgent = runtimeAgentFromUpsert(agentId, payload);
+        e2eStoredAgents.set(
+          nextAgent.name,
+          storedAgentFromUpsert(nextAgent, payload),
+        );
+        setState((previous) => ({
+          ...previous,
+          agents: [
+            nextAgent,
+            ...previous.agents.filter((agent) => agent.name !== nextAgent.name),
+          ],
+          settingsSaving: false,
+          settingsNotice: t("saved"),
+        }));
+        return;
+      }
+      await (agentId
+        ? directoryClient().updateAgent(agentId, payload)
+        : directoryClient().createAgent(payload));
+      const agents = await safe(
+        () => directoryClient().agents(),
+        state().agents,
+      );
+      setState((previous) => ({
+        ...previous,
+        agents,
+        settingsSaving: false,
+        settingsNotice: t("saved"),
+      }));
+    } catch (error) {
+      setState((previous) => ({
+        ...previous,
+        settingsSaving: false,
+        error: errorMessage(error),
+      }));
+    }
+  }
+
+  async function deleteAgent(agentId: string) {
+    setState((previous) => ({
+      ...previous,
+      settingsSaving: true,
+      settingsNotice: undefined,
+      error: undefined,
+    }));
+    try {
+      if (e2eFixture) {
+        e2eStoredAgents.delete(agentId);
+        setState((previous) => ({
+          ...previous,
+          agents: previous.agents.filter((agent) => agent.name !== agentId),
+          selectedAgent:
+            previous.selectedAgent === agentId
+              ? undefined
+              : previous.selectedAgent,
+          settingsSaving: false,
+          settingsNotice: t("saved"),
+        }));
+        return;
+      }
+      await directoryClient().deleteAgent(agentId);
+      const agents = await safe(
+        () => directoryClient().agents(),
+        state().agents,
+      );
+      setState((previous) => ({
+        ...previous,
+        agents,
+        selectedAgent:
+          previous.selectedAgent === agentId
+            ? undefined
+            : previous.selectedAgent,
+        settingsSaving: false,
+        settingsNotice: t("saved"),
+      }));
+    } catch (error) {
+      setState((previous) => ({
+        ...previous,
+        settingsSaving: false,
+        error: errorMessage(error),
+      }));
+    }
+  }
 
   const {
     openPlanSession,
@@ -720,7 +819,6 @@ export function App() {
     openSession,
     createSessionPayload,
     refreshSessions,
-    handleProviderAuthError,
   });
 
   async function submitPrompt() {
@@ -802,8 +900,7 @@ export function App() {
         directoryClient().promptAsync(sessionId, {
           parts: [{ type: "text", text: content }],
           model: state().selectedModel,
-          variant: state().modelVariant,
-          model_acceleration_enabled: state().accelerationEnabled,
+          agent: state().selectedAgent,
         }),
         new Promise<never>((_, reject) =>
           window.setTimeout(
@@ -812,6 +909,7 @@ export function App() {
           ),
         ),
       ]);
+      await openSession(sessionId, { forceRefreshMessages: true });
       setState((previous) => ({
         ...previous,
         composerText: "",
@@ -998,6 +1096,7 @@ export function App() {
       model_variant: state().modelVariant,
       model_acceleration_enabled: state().accelerationEnabled,
       disable_permission_restrictions: disablePermissionRestrictions,
+      auto_session_name: true,
       task_management: timedTaskPatch(
         state().planDraftStartCondition,
         startAt,
@@ -1011,81 +1110,10 @@ export function App() {
       () => directoryClient().sessions({ limit: 100 }),
       state().sessions,
     );
-    setState((previous) => ({ ...previous, sessions }));
-  }
-
-  async function refreshProduct() {
-    const client = rootClient();
-    const [productIssues, productProjects] = await Promise.all([
-      safe(
-        () => client.productIssues({ search: state().issueSearch }),
-        state().productIssues,
-      ),
-      safe(() => client.productProjects(), state().productProjects),
-    ]);
     setState((previous) => ({
       ...previous,
-      productIssues,
-      productProjects,
+      sessions: mergeSessions(sessions, previous.sessions),
     }));
-  }
-
-  async function createIssue() {
-    const title = state().issueDraft.trim();
-    if (!title) {
-      return;
-    }
-    const optimistic: ProductIssue = {
-      id: `local-${Date.now()}`,
-      workspace_id: state().workspaces[0]?.id ?? "local",
-      number:
-        Math.max(0, ...state().productIssues.map((issue) => issue.number)) + 1,
-      title,
-      description: "",
-      status: "todo",
-      priority: "medium",
-      position: state().productIssues.length + 1,
-      assignee_type: state().selectedAgent ? "agent" : null,
-      assignee_id: state().selectedAgent ?? null,
-      project_id: state().productProjects[0]?.id ?? null,
-      labels: [],
-      session_id: null,
-      active_task: null,
-      created_at: Date.now(),
-      updated_at: Date.now(),
-    };
-    setState((previous) => ({
-      ...previous,
-      issueDraft: "",
-      productIssues: [optimistic, ...previous.productIssues],
-      error: undefined,
-    }));
-    try {
-      const issue = await rootClient().createProductIssue({
-        title,
-        priority: "medium",
-        status: "todo",
-        assignee_type: state().selectedAgent ? "agent" : undefined,
-        assignee_id: state().selectedAgent,
-        project_id: state().productProjects[0]?.id,
-      });
-      setState((previous) => ({
-        ...previous,
-        productIssues: [
-          issue,
-          ...previous.productIssues.filter(
-            (item) => item.id !== optimistic.id && item.id !== issue.id,
-          ),
-        ],
-      }));
-    } catch (error) {
-      setState((previous) => ({
-        ...previous,
-        productIssues: previous.productIssues.map((item) =>
-          item.id === optimistic.id ? { ...item, labels: ["local"] } : item,
-        ),
-      }));
-    }
   }
 
   async function switchWorkspace(
@@ -1160,8 +1188,15 @@ export function App() {
   async function toggleWorkspace(project: Project) {
     setWorkspaceTreeTouched(true);
     if (state().activeTab === "files") {
-      setExpandedWorkspace(project.worktree);
       setExpandedRailGroup(undefined);
+      if (
+        expandedWorkspace() === project.worktree &&
+        samePath(project.worktree, state().directory)
+      ) {
+        setExpandedWorkspace(undefined);
+        return;
+      }
+      setExpandedWorkspace(project.worktree);
       if (!samePath(project.worktree, state().directory)) {
         await switchWorkspace(project, { selectSession: false });
         return;
@@ -1348,10 +1383,14 @@ export function App() {
   }
 
   async function changeMainTab(activeTab: Exclude<MainTab, "settings">) {
-    const lastCessionId =
-      state().lastCessionOpenedId ?? readLastCessionOpened();
-    const lastCession = lastCessionId
-      ? state().sessions.find((session) => session.id === lastCessionId)
+    const lastSessionId =
+      state().lastSessionOpenedId ??
+      readLastSessionOpened() ??
+      (state().activeTab === "conversation"
+        ? undefined
+        : (state().selectedSessionId ?? state().planPreviewSessionId));
+    const lastSession = lastSessionId
+      ? state().sessions.find((session) => session.id === lastSessionId)
       : undefined;
 
     if (activeTab === "conversation") {
@@ -1359,13 +1398,13 @@ export function App() {
         openBlankSession();
         return;
       }
-      if (!lastCessionId || !lastCession) {
-        if (lastCessionId) {
-          clearLastCessionOpened();
+      if (!lastSessionId || !lastSession) {
+        if (lastSessionId) {
+          clearLastSessionOpened();
         }
         setState((previous) => ({
           ...previous,
-          lastCessionOpenedId: undefined,
+          lastSessionOpenedId: undefined,
         }));
         openBlankSession();
         return;
@@ -1374,31 +1413,31 @@ export function App() {
         ...previous,
         activeTab: "conversation",
         previousMainTab: "conversation",
-        selectedSessionId: lastCessionId,
+        selectedSessionId: lastSessionId,
         error: undefined,
       }));
-      await openSession(lastCessionId);
+      await openSession(lastSessionId);
       return;
     }
 
     if (activeTab === "plan") {
-      if (lastCessionId && !lastCession) {
-        clearLastCessionOpened();
+      if (lastSessionId && !lastSession) {
+        clearLastSessionOpened();
         setState((previous) => ({
           ...previous,
-          lastCessionOpenedId: undefined,
+          lastSessionOpenedId: undefined,
         }));
       }
       setState((previous) => ({
         ...previous,
         activeTab: "plan",
         previousMainTab: "plan",
-        selectedSessionId: lastCession?.id ?? previous.selectedSessionId,
-        planPreviewSessionId: lastCession?.id ?? previous.planPreviewSessionId,
+        selectedSessionId: lastSession?.id ?? previous.selectedSessionId,
+        planPreviewSessionId: lastSession?.id ?? previous.planPreviewSessionId,
         error: undefined,
       }));
-      if (lastCession) {
-        await openSession(lastCession.id);
+      if (lastSession) {
+        await openSession(lastSession.id);
       }
       return;
     }
@@ -1416,65 +1455,62 @@ export function App() {
   }
 
   return (
-    <AppShell
-      view={{
-        state,
-        closeSettings,
-        changeMainTab,
-        expandedRailGroup,
-        setExpandedRailGroup,
-        toggleRailGroup,
-        selectedSession,
-        selectedMessages,
-        slashCommands,
-        openBlankSession,
-        openSession,
-        newSession,
-        useWorkspaceDirectory,
-        createNamedWorkspace,
-        pickExistingWorkspaceDirectory,
-        setState,
-        submitPrompt,
-        updatePlanTicketStatus,
-        sessionAttentionAcknowledged,
-        deletePlanTask,
-        runPlanTaskNow,
-        openPlanSession,
-        selectDraftSession,
-        createPlanTicket,
-        createSessionFromPlanTask,
-        updatePlanTicketTask,
-        updateEditingTaskFromComposer,
-        fileTree,
-        fileLoadingPath,
-        fileContentLoadingPath,
-        expandedFileTreePaths,
-        expandedWorkspace,
-        setExpandedWorkspace,
-        setWorkspaceTreeTouched,
-        loadFiles,
-        openFile,
-        toggleFileTreeDirectory,
-        renameSession,
-        openSettings,
-        openIssueConversation,
-        refreshProduct,
-        switchWorkspace,
-        toggleWorkspace,
-        directory,
-        openCurrentDirectory,
-        openSelectedFile,
-        saveRuntimeSettings,
-        updateModelTier,
-        saveProviderKey,
-        validateProvider,
-        startProviderLogin,
-        completeProviderLogin,
-        logoutProvider,
-        e2eFixture,
-        providerAuthPanel: state().providerAuthPanel,
-      }}
-    />
+    <AppProviders state={state} setState={setState} gatewayUrl={gatewayUrl}>
+      <AppShell
+        view={{
+          state,
+          closeSettings,
+          changeMainTab,
+          expandedRailGroup,
+          toggleRailGroup,
+          selectedSession,
+          selectedMessages,
+          slashCommands,
+          openBlankSession,
+          openSession,
+          useWorkspaceDirectory,
+          createNamedWorkspace,
+          pickExistingWorkspaceDirectory,
+          setState,
+          submitPrompt,
+          updatePlanTicketStatus,
+          sessionAttentionAcknowledged,
+          deletePlanTask,
+          runPlanTaskNow,
+          openPlanSession,
+          selectDraftSession,
+          createPlanTicket,
+          createSessionFromPlanTask,
+          updatePlanTicketTask,
+          updateEditingTaskFromComposer,
+          fileTree,
+          fileLoadingPath,
+          fileContentLoadingPath,
+          expandedFileTreePaths,
+          expandedWorkspace,
+          loadFiles,
+          openFile,
+          toggleFileTreeDirectory,
+          renameSession,
+          openSettings,
+          openIssueConversation,
+          toggleWorkspace,
+          openCurrentDirectory,
+          openSelectedFile,
+          saveRuntimeSettings,
+          updateModelTier,
+          refreshAgents,
+          getAgent,
+          saveAgent,
+          deleteAgent,
+          saveProviderKey,
+          validateProvider,
+          startProviderLogin,
+          completeProviderLogin,
+          logoutProvider,
+        }}
+      />
+    </AppProviders>
   );
 }
 
@@ -1486,6 +1522,135 @@ function normalizeThemeMode(value: string | null | undefined): ThemeMode {
     value === "liangzhu"
     ? value
     : systemThemeMode();
+}
+
+function storedAgentFromRuntimeAgent(agent: Agent): StoredAgent {
+  const capabilities = agentCapabilitiesFromOptions(agent.options);
+  const displayName = agentDisplayName(agent);
+  return {
+    summary: {
+      id: agent.name,
+      name: displayName,
+      description: agent.description,
+      source: agent.native ? "static" : "dynamic",
+      path: "",
+      aliases: [],
+      capabilities,
+      provider:
+        agentProviderTierFromOptions(agent.options) ??
+        agent.model?.providerID ??
+        null,
+      hidden: agent.hidden,
+    },
+    config: {
+      agent_name: displayName,
+      description: agent.description,
+      aliases: [],
+      provider: {
+        tura_llm_name:
+          agentProviderTierFromOptions(agent.options) ?? "thinking",
+      },
+      agent_capabilities: capabilities.map((capability) => ({
+        capability_name: capability,
+        capability_directory: "crates/tools/src",
+      })),
+    },
+    prompt: "",
+  };
+}
+
+function runtimeAgentFromUpsert(
+  agentId: string | undefined,
+  payload: AgentUpsertRequest,
+): Agent {
+  const name = payload.config?.agent_name || payload.id || agentId || "agent";
+  return {
+    name: agentId ?? payload.id ?? name,
+    description: payload.config?.description ?? "",
+    mode: "custom",
+    native: false,
+    hidden: false,
+    model: null,
+    options: {
+      ...(payload.config?.avatar ? { avatar: payload.config.avatar } : {}),
+      ...(payload.config?.provider
+        ? { provider: payload.config.provider }
+        : {}),
+      capabilities: readCapabilityArray(payload.config?.agent_capabilities),
+    },
+    permission: { allow: [], deny: [] },
+  };
+}
+
+function storedAgentFromUpsert(
+  agent: Agent,
+  payload: AgentUpsertRequest,
+): StoredAgent {
+  const config: AgentConfig = payload.config ?? { agent_name: agent.name };
+  const aliases = readStringArray(config.aliases);
+  const capabilities = readCapabilityArray(config.agent_capabilities);
+  return {
+    summary: {
+      id: agent.name,
+      name: config.agent_name ?? agent.name,
+      description: config.description ?? agent.description ?? "",
+      source: "dynamic",
+      path: "",
+      aliases,
+      capabilities,
+      provider: agent.model?.providerID ?? null,
+      hidden: agent.hidden,
+    },
+    config,
+    prompt: payload.prompt ?? "",
+  };
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function readCapabilityArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .map((item) => {
+          if (typeof item === "string") {
+            return item;
+          }
+          if (
+            item &&
+            typeof item === "object" &&
+            "capability_name" in item &&
+            typeof item.capability_name === "string"
+          ) {
+            return item.capability_name;
+          }
+          return undefined;
+        })
+        .filter((item): item is string => !!item)
+    : [];
+}
+
+function agentProviderTierFromOptions(
+  options: Record<string, unknown>,
+): string | undefined {
+  const provider = options.provider;
+  if (!provider || typeof provider !== "object" || Array.isArray(provider)) {
+    return undefined;
+  }
+  const tier = (provider as Record<string, unknown>).tura_llm_name;
+  return typeof tier === "string" ? tier : undefined;
+}
+
+function agentCapabilitiesFromOptions(
+  options: Record<string, unknown>,
+): string[] {
+  const capabilities = options.capabilities;
+  return Array.isArray(capabilities)
+    ? capabilities.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 function clampNumber(

@@ -7,6 +7,7 @@ import { configCommand } from "./commands/config.js";
 import { providerCommand } from "./commands/provider.js";
 import { permissionCommand } from "./commands/permission.js";
 import { commandCommand } from "./commands/command.js";
+import { agentCommand } from "./commands/agent.js";
 import { statusCommand } from "./commands/status.js";
 import { completionCommand } from "./commands/completion.js";
 import { runTui } from "./tui/app.js";
@@ -48,6 +49,7 @@ export async function main(argv: string[]): Promise<void> {
       if (command === "provider") return printProviderHelp();
       if (command === "permission") return printPermissionHelp();
       if (command === "command") return printCommandHelp();
+      if (command === "agent") return printAgentHelp();
       if (command === "status") return printStatusHelp();
       if (command === "completion") return printCompletionHelp();
     }
@@ -56,6 +58,7 @@ export async function main(argv: string[]): Promise<void> {
     if (command === "provider") return providerCommand(context, args);
     if (command === "permission") return permissionCommand(context, args);
     if (command === "command") return commandCommand(context, args);
+    if (command === "agent") return agentCommand(context, args);
     if (command === "status") return statusCommand(context);
     if (command === "completion") return completionCommand(args);
     await runTui(context, [command, ...args].join(" "));
@@ -129,13 +132,24 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--session") sessionID = args[++index];
-    else if (arg === "--model") model = args[++index];
-    else if (arg === "--agent") agent = args[++index];
+    else if (arg.startsWith("--session=")) sessionID = arg.slice("--session=".length);
+    else if (arg === "--model" || arg === "-m") model = args[++index];
+    else if (arg.startsWith("--model=")) model = arg.slice("--model=".length);
+    else if (arg === "--agent" || arg === "--agent-id" || arg === "--agent-name" || arg === "-a") agent = args[++index];
+    else if (arg.startsWith("--agent=")) agent = arg.slice("--agent=".length);
+    else if (arg.startsWith("--agent-id=")) agent = arg.slice("--agent-id=".length);
     else if (arg === "--session-type") sessionType = args[++index];
-    else if (arg === "--model-variant" || arg === "--variant" || arg === "--reasoning-effort") {
+    else if (arg.startsWith("--session-type=")) sessionType = arg.slice("--session-type=".length);
+    else if (arg === "--model-variant" || arg === "--variant" || arg === "--reasoning-effort" || arg === "--model-reasoning-effort") {
       modelVariant = args[++index];
-    } else if (arg === "--model-acceleration" || arg === "--accelerated") modelAccelerationEnabled = true;
+    } else if (arg.startsWith("--model-variant=")) modelVariant = arg.slice("--model-variant=".length);
+    else if (arg.startsWith("--model-reasoning-effort=")) modelVariant = arg.slice("--model-reasoning-effort=".length);
+    else if (arg.startsWith("--reasoning-effort=")) modelVariant = arg.slice("--reasoning-effort=".length);
+    else if (arg === "--model-acceleration" || arg === "--accelerated") modelAccelerationEnabled = true;
     else if (arg === "--no-model-acceleration" || arg === "--no-accelerated") modelAccelerationEnabled = false;
+    else if (arg === "-p" || arg === "--priority") modelAccelerationEnabled = true;
+    else if (arg === "--force-multiple-tasks") forceMultipleTasks = true;
+    else if (arg === "--no-force-multiple-tasks") forceMultipleTasks = false;
     else if (arg === "--output") output = parseOutput(args[++index]);
     else if (arg === "--json") output = "json";
     else if (arg === "--stream") stream = true;
@@ -228,6 +242,7 @@ Commands:
   provider      list providers and inspect auth state
   permission    list and answer pending permission requests
   command       list or execute gateway slash commands
+  agent         list, read, write, or delete agents under agents/
   status        print gateway, workspace, provider, and service status
   completion    generate shell completion for bash, zsh, or fish
 
@@ -253,13 +268,17 @@ function printRunHelp(): void {
 
 Run options:
   --session ID                  append the prompt to an existing session
-  --model PROVIDER/MODEL        request-scoped model override
-  --agent NAME                  request-scoped agent override
+  -m, --model PROVIDER/MODEL    request-scoped model override
+  -p, --priority                enable priority model routing for this model
+  -a, --agent-id ID             request-scoped agent id loaded from agents/ or built-ins
   --session-type TYPE           session type passed to gateway
   --model-variant LEVEL         reasoning/model variant override
+  --model-reasoning-effort LEVEL alias for --model-variant
   --reasoning-effort LEVEL      alias for --model-variant
   --model-acceleration          enable priority/accelerated model routing
   --no-model-acceleration       disable priority/accelerated routing
+  --force-multiple-tasks        enable the multiple_tasks capability path
+  --no-force-multiple-tasks     disable forced multiple_tasks
   --output text|json|ndjson     output format
   --json                        alias for --output json
   --stream, --no-stream         stream gateway events or poll for completion
@@ -328,6 +347,19 @@ function printCommandHelp(): void {
   process.stdout.write(`Usage:
   tura [OPTIONS] command list [--json]
   tura [OPTIONS] command run NAME [ARGS...]
+`);
+}
+
+function printAgentHelp(): void {
+  process.stdout.write(`Usage:
+  tura [OPTIONS] agent list [--json]
+  tura [OPTIONS] agent show AGENT_ID [--json]
+  tura [OPTIONS] agent create AGENT_ID [--config JSON_OR_PATH] [--prompt TEXT|--prompt-file PATH]
+  tura [OPTIONS] agent update AGENT_ID [--config JSON_OR_PATH] [--prompt TEXT|--prompt-file PATH]
+  tura [OPTIONS] agent delete AGENT_ID
+
+Agents are read and written through gateway /agent and dynamic agents live under agents/.
+Start a session with: tura run -a AGENT_ID -m PROVIDER/MODEL -p "prompt"
 `);
 }
 

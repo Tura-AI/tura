@@ -18,7 +18,7 @@ impl ToolHandler for BashHandler {
         "bash"
     }
 
-    fn supports_parallel_tool_calls(&self) -> bool {
+    fn supports_macro_command(&self) -> bool {
         true
     }
 

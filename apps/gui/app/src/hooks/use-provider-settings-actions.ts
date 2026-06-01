@@ -1,12 +1,13 @@
-import type { Accessor, Setter } from "solid-js";
 import {
   GatewayClient,
   errorMessage,
   type ProviderAuthMethod,
   type TuraConfigModelPair,
 } from "@tura/gateway-sdk";
+import type { Accessor, Setter } from "solid-js";
 import { t } from "../i18n";
 import type { AppState } from "../state/global-store";
+import { safe } from "../utils/safe";
 import {
   configDraftToPatch,
   configToDraft,
@@ -14,7 +15,6 @@ import {
   providerIdFromAuthError,
   recordToDraft,
 } from "../utils/settings";
-import { safe } from "../utils/safe";
 
 type ProviderSettingsActionsOptions = {
   state: Accessor<AppState>;
@@ -34,7 +34,10 @@ export function useProviderSettingsActions(
       safe(() => directoryClient().providers(), state().providers),
       safe(() => client.providerAuthMethods(), state().providerAuthMethods),
     ]);
-    const modelConfig = await safe(() => client.modelConfig(), state().modelConfig);
+    const modelConfig = await safe(
+      () => client.modelConfig(),
+      state().modelConfig,
+    );
     const ids = providerId
       ? [providerId]
       : (providers?.all ?? state().providers?.all ?? []).map(

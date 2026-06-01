@@ -9,6 +9,12 @@ Focused command-run CLI flows now live with the gateway crate under
 aggregate Cargo tests live under `crates/tools/tests/contracts/`. The TUI
 gateway CLI fixture lives under `apps/tui/e2e/`.
 
+Multi-agent dispatch (router-CLI subprocess + concurrent + 2-level recursive
+sub-sessions) is covered by `crates/runtime/tests/child_dispatch_test.rs`
+against an in-package mock router binary (`mock_router_for_test`). It
+verifies the runtime never opens a URL/HTTP channel to the router — all
+internal runtime ↔ router traffic is CLI stdin/stdout JSON.
+
 ## Business Tests
 
 `tests/business/command-run-agent-benchmarks/` contains long-running business

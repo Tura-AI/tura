@@ -32,6 +32,7 @@ crates/runtime/
       mod.rs
       process.rs
       agent_prompts.rs
+      child_dispatch.rs        # 子 session 派发：经 router CLI 子进程拉起子 agent
       constants.rs
       prompt_messages.rs
       runtime_turn.rs
@@ -42,6 +43,7 @@ crates/runtime/
       final_response.rs
       change_tracker.rs
       permission_gate.rs
+      validator_feedback.rs    # 校验器可靠性反馈 → alaya 注册表
 
     session/
       activate_session.rs
@@ -62,7 +64,9 @@ crates/runtime/
       runtime_receive.rs
 
     context/
-      context_management.rs
+      context_management.rs    
+      command_run_streams.rs   
+      text_truncate.rs        
       docker_snapshot.rs
       process_snapshot.rs
       workspace_snapshot.rs
@@ -259,12 +263,12 @@ task-status guidance should prefer `done` or `completed`.
 
 ## Agent Loading
 
-Runtime loads agents from `crates/agents`.
+Runtime loads agents from `agents`.
 
 Preferred order:
 
-1. `crates/agents/<agent>/interface/I<agent>.json`.
-2. Generated Rust definitions from `crates/agents`.
+1. `agents/<agent>/interface/I<agent>.json`.
+2. Generated Rust definitions from `agents`.
 3. Test override loader.
 
 Provider defaults and command lists come from agent config.
@@ -322,15 +326,49 @@ identity from `prompt_style/` is injected first, then agent prompt resources fro
 
 Runtime creates one provider turn through `crates/provider`.
 
-Provider owns:
+Provider owns **all** per-provider format/wire handling. Runtime contains
+**zero** provider-name branches. The contract:
 
-- Provider route lookup.
-- Model request construction.
-- Streaming normalization.
-- Tool-call extraction normalization.
-- Usage accounting.
+| Concern | Owner |
+|---|---|
+| Provider route lookup | provider (`route_by_name`) |
+| Model request construction | provider |
+| Streaming normalization (OpenAI Chat / OpenAI Responses / Anthropic / Google / MiniMax XML) | provider (`normalize_response_content`) |
+| Response text extraction from normalized content | provider (`extract_response_text`) |
+| Tool-call extraction from normalized content | provider (`extract_tool_calls` → `ProviderToolCall`) |
+| `<thought>` block stripping | provider (`strip_thought_blocks`) |
+| prompt-cache key support flag | provider (`prompt_cache_key_supported`) |
+| OpenAI-compatible SSE usage support flag | provider (`openai_compatible_usage_stream_supported`) |
+| Provider error → unsupported-content-type fallback | provider (`provider_unsupported_content_type`, `replace_unsupported_content_type_in_messages`) |
+| Usage accounting | provider |
 
-Runtime owns what to do with provider output.
+Runtime owns what to do with the normalized output (state update, tool
+dispatch, context compaction, final response). It emits and consumes the
+canonical OpenAI Responses-API content shape (`input_image`, `input_audio`,
+`input_file`, `tool_calls`); the provider crate translates that shape into and
+out of each provider's wire format.
+
+## Child Sub-Session Dispatch
+
+When the manas loop produces a `TaskStep` carrying `step_agent_name` (from a
+`multiple_tasks` tool result with `child_agent_names`), runtime spawns a child
+sub-session through `manas::child_dispatch`. Dispatch always uses the router
+CLI subprocess (`tura_router run-agent`) over stdin/stdout JSON — never an
+HTTP/URL call. This holds the project rule:
+
+- internal runtime ↔ router communication is **CLI only**;
+- router and gateway are a single process;
+- all runtimes are subprocesses.
+
+`child_dispatch` exposes:
+
+- `dispatch_child_agent(req)` — single child, blocking;
+- `dispatch_child_agents_concurrent(reqs)` — N parallel children (each is its
+  own router-CLI subprocess); collects summaries.
+
+The router CLI mirrors the HTTP handler exactly (same `dispatch_run_agent`
+core), so child-session depth/concurrency caps (`MAX_MULTIPLE_TASKS_DEPTH`,
+`MAX_RUNTIME_WORKERS`) apply uniformly.
 
 ## Final Response
 

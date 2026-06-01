@@ -36,11 +36,6 @@ fn persisted_record(session: &SessionManagement) -> serde_json::Value {
             "model": null,
             "agent": session.input.agent,
             "session_type": session.session_topic,
-            "lsp": {
-                "mode": "auto",
-                "enabled": [],
-                "disabled": [],
-            },
             "kill_processes_on_start": false,
             "validator_enabled": false,
             "force_multiple_tasks": false,

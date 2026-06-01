@@ -10,7 +10,6 @@ fn explicit_start_condition_round_trips_and_idle_scheduler_claims_it() {
         None,
         None,
         Some("coding".to_string()),
-        None,
         false,
         false,
         false,
@@ -22,7 +21,6 @@ fn explicit_start_condition_round_trips_and_idle_scheduler_claims_it() {
     let updated = store
         .update_session(
             &session.id,
-            None,
             None,
             None,
             None,
@@ -66,7 +64,6 @@ fn legacy_status_start_condition_still_round_trips() {
         None,
         None,
         Some("coding".to_string()),
-        None,
         false,
         false,
         false,
@@ -78,7 +75,6 @@ fn legacy_status_start_condition_still_round_trips() {
     let updated = store
         .update_session(
             &session.id,
-            None,
             None,
             None,
             None,

@@ -302,7 +302,7 @@ impl ProductStore {
         let now = Utc::now().timestamp_millis();
         let workspace_id = "local".to_string();
         let runtime_id = "runtime-local".to_string();
-        let agent_id = "coding_agent".to_string();
+        let agent_id = "coding_agent_planning".to_string();
         let task_id = "task-active".to_string();
 
         let mut workspaces = HashMap::new();
@@ -327,8 +327,8 @@ impl ProductStore {
             ProductAgent {
                 id: agent_id.clone(),
                 workspace_id: workspace_id.clone(),
-                name: "Coding Agent".to_string(),
-                description: "Default Tura coding agent".to_string(),
+                name: "Coding Agent Planning".to_string(),
+                description: "Default Tura planning coding agent".to_string(),
                 provider: "openai".to_string(),
                 model: "default".to_string(),
                 runtime_id: Some(runtime_id.clone()),
@@ -921,7 +921,7 @@ pub async fn dashboard_usage_daily() -> Json<Vec<UsagePoint>> {
 
 pub async fn dashboard_usage_by_agent() -> Json<Vec<UsageByAgent>> {
     Json(vec![UsageByAgent {
-        agent_id: "coding_agent".to_string(),
+        agent_id: "coding_agent_planning".to_string(),
         tasks: session_store().session_count() as u32,
         tokens: 13_940,
         cost: 0.29,

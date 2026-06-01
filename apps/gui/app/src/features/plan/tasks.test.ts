@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import type { TaskManagement } from "@tura/gateway-sdk";
+import { describe, expect, test } from "bun:test";
 import { taskStartCondition, timedTaskPatch } from "./tasks";
 
 describe("plan task contract", () => {
@@ -35,17 +35,19 @@ describe("plan task contract", () => {
     expect(timedTaskPatch("session_idle", undefined, undefined)).toEqual({
       start_condition: "session_idle",
     });
-    expect(timedTaskPatch("scheduled_task", "2026-05-27T10:00", undefined))
-      .toEqual({
-        start_condition: "scheduled_task",
-        start_at: "2026-05-27T10:00",
-        poll_interval: { m: 0, d: 0, h: 0, s: 0 },
-      });
-    expect(timedTaskPatch("polling_task", "2026-05-27T10:00", { h: 2 }))
-      .toEqual({
-        start_condition: "polling_task",
-        start_at: "2026-05-27T10:00",
-        poll_interval: { m: 0, d: 0, h: 2, s: 0 },
-      });
+    expect(
+      timedTaskPatch("scheduled_task", "2026-05-27T10:00", undefined),
+    ).toEqual({
+      start_condition: "scheduled_task",
+      start_at: "2026-05-27T10:00",
+      poll_interval: { m: 0, d: 0, h: 0, s: 0 },
+    });
+    expect(
+      timedTaskPatch("polling_task", "2026-05-27T10:00", { h: 2 }),
+    ).toEqual({
+      start_condition: "polling_task",
+      start_at: "2026-05-27T10:00",
+      poll_interval: { m: 0, d: 0, h: 2, s: 0 },
+    });
   });
 });

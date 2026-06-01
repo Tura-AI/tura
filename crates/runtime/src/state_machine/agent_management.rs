@@ -14,6 +14,9 @@ pub type AgentName = String;
 /// Natural-language prompt name.
 pub type PromptName = String;
 
+/// Natural-language persona name.
+pub type PersonaName = String;
+
 /// Natural-language capability name.
 pub type CapabilityName = String;
 
@@ -24,6 +27,15 @@ pub struct AgentPromptItem {
     pub agent_prompt: PromptName,
     /// Absolute path to the prompt directory.
     pub prompt_directory: PathBuf,
+}
+
+/// One persona prompt resource attached to an agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentPersonaItem {
+    /// Natural-language persona name.
+    pub persona_name: PersonaName,
+    /// Absolute path to the persona prompt directory.
+    pub persona_directory: PathBuf,
 }
 
 /// One command capability resource attached to an agent.
@@ -113,10 +125,15 @@ pub struct AgentManagement {
     pub parent_agent_id: Option<AgentId>,
     /// Whether this agent reports directly to the user.
     pub report_to_user: bool,
+    /// Whether this is a protected built-in/default configuration.
+    pub default_config: bool,
     /// Provider/LLM configuration.
     pub provider: ProviderConfig,
     /// Prompts bound to this agent.
     pub agent_prompt: Vec<AgentPromptItem>,
+    /// Persona prompt resources bound to this agent.
+    #[serde(default)]
+    pub agent_persona: Vec<AgentPersonaItem>,
     /// Capabilities bound to this agent.
     pub agent_capabilities: Vec<AgentCapabilityItem>,
     /// Validator configuration.
@@ -141,6 +158,7 @@ impl AgentManagement {
         agent_directory: PathBuf,
         parent_agent_id: Option<AgentId>,
         report_to_user: bool,
+        default_config: bool,
         provider: ProviderConfig,
         validator: ValidatorConfig,
         now: UtcDateTimeMs,
@@ -151,8 +169,10 @@ impl AgentManagement {
             agent_directory,
             parent_agent_id,
             report_to_user,
+            default_config,
             provider,
             agent_prompt: Vec::new(),
+            agent_persona: Vec::new(),
             agent_capabilities: Vec::new(),
             validator,
             state: AgentState::Idle,
@@ -178,6 +198,12 @@ impl AgentManagement {
     /// Adds a prompt binding to the agent.
     pub fn add_prompt(&mut self, prompt: AgentPromptItem, now: UtcDateTimeMs) {
         self.agent_prompt.push(prompt);
+        self.updated_at = now;
+    }
+
+    /// Adds a persona prompt binding to the agent.
+    pub fn add_persona(&mut self, persona: AgentPersonaItem, now: UtcDateTimeMs) {
+        self.agent_persona.push(persona);
         self.updated_at = now;
     }
 

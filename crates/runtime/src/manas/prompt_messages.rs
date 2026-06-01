@@ -3,17 +3,18 @@ use crate::prompt_style::{
 };
 use crate::state_machine::session_management::SessionManagement;
 
-use super::constants::DISABLE_GATEWAY_CALLBACKS_ENV;
-use super::gateway_events::gateway_callback_base_url;
-use super::tool_catalog::env_flag;
-
 pub(super) fn messages_for_turn(
     current_messages: &[serde_json::Value],
     session: &SessionManagement,
     original_user_task: &str,
 ) -> Vec<serde_json::Value> {
     let mut messages = current_messages.to_vec();
-    let _ = (session, original_user_task);
+    if should_append_original_user_task(&messages, original_user_task) {
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": original_user_task.trim(),
+        }));
+    }
     if let Some(content) = user_new_command_message(&session.session_id) {
         messages.push(serde_json::json!({
             "role": "system",
@@ -27,6 +28,24 @@ pub(super) fn messages_for_turn(
         }));
     }
     messages
+}
+
+fn should_append_original_user_task(
+    messages: &[serde_json::Value],
+    original_user_task: &str,
+) -> bool {
+    let task = original_user_task.trim();
+    if task.is_empty() {
+        return false;
+    }
+    !messages.iter().any(|message| {
+        message.get("role").and_then(serde_json::Value::as_str) == Some("user")
+            && message
+                .get("content")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                == Some(task)
+    })
 }
 
 fn approximate_message_tokens(messages: &[serde_json::Value]) -> usize {
@@ -163,42 +182,18 @@ pub(super) fn user_new_command_message(session_id: &str) -> Option<String> {
 }
 
 pub(super) fn fetch_user_commands(session_id: &str) -> Vec<String> {
-    if session_id.trim().is_empty() || env_flag(DISABLE_GATEWAY_CALLBACKS_ENV) {
-        return Vec::new();
-    }
-    let gateway_base = gateway_callback_base_url();
-    let endpoint = format!("{gateway_base}/session/{session_id}/user-commands");
-    let Ok(value) = tokio::runtime::Runtime::new()
-        .map_err(|_| ())
-        .and_then(|runtime| {
-            runtime.block_on(async {
-                let response = reqwest::Client::new()
-                    .get(endpoint)
-                    .send()
-                    .await
-                    .map_err(|_| ())?;
-                if !response.status().is_success() {
-                    return Err(());
-                }
-                response.json::<serde_json::Value>().await.map_err(|_| ())
-            })
-        })
-    else {
-        return Vec::new();
-    };
-    value
-        .get("commands")
-        .and_then(|value| value.as_array())
-        .map(|commands| {
-            commands
-                .iter()
-                .filter_map(|value| value.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
+    let _ = session_id;
+    Vec::new()
+}
+
+/// Inject the short task_status reminder when the model keeps doing workspace
+/// work (command_run turns) without ever writing or settling the task state.
+/// Used by the runtime loop after N consecutive no-write command_run turns.
+pub(super) fn push_task_status_nudge(messages: &mut Vec<serde_json::Value>) {
+    messages.push(serde_json::json!({
+        "role": "system",
+        "content": task_status::TASK_STATUS,
+    }));
 }
 
 pub(super) fn push_task_continuity_message(
@@ -314,8 +309,8 @@ mod tests {
             .expect("prompt message content should be a string");
 
         assert!(content.contains("task_status"));
-        assert!(content.contains("status is done"));
-        assert!(content.contains("status is question"));
+        assert!(content.contains("settle the task state"));
+        assert!(content.contains("`done`") && content.contains("`question`"));
     }
 
     #[test]

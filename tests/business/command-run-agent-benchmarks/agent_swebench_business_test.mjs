@@ -521,7 +521,7 @@ function serviceTierConfigArgs() {
 function turaServiceTierConfigArgs() {
   const tier = String(serviceTier || "").trim()
   if (!tier || tier === "default" || tier === "none" || tier === "off") return []
-  return ["-c", `service_tier=${tier}`]
+  return tier === "priority" ? ["-p"] : []
 }
 
 async function fetchVerifiedInstances() {
@@ -779,13 +779,13 @@ async function runTura(agentId, workspace, agentDir, prompt, agentPrompt) {
     "--skip-git-repo-check",
     "--session-id",
     sessionId,
-    "--agent",
+    "--agent-id",
     agentPrompt,
     "-m",
     turaModel,
-    "-c",
-    `model_reasoning_effort=${reasoning}`,
     ...turaServiceTierConfigArgs(),
+    "--model-reasoning-effort",
+    reasoning,
     "--cwd",
     workspace,
   ]

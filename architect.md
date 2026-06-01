@@ -19,11 +19,21 @@ gateway session projection changes.
 
 - GUI talks to backend code only through `apps/gui/sdk/gateway`.
 - Gateway owns session scanning, persistence, message history, task-management
-  patches, status projection, and workspace scoping.
+  patches, status projection, workspace scoping, router launch, and forwarding
+  agent turns to the router. Gateway runs no in-process agent loop.
+- Router owns the agent registry, CLI forwarding, and runtime-worker dispatch
+  (`POST /run_agent`). Command alias canonicalization stays in `crates/tools`.
+  Spawning is single-direction: gateway → router → runtime worker.
 - Runtime owns agent prompt/tool exposure, MANAS loop behavior, compact context,
-  and task-management state transitions caused by model tool results.
+  and task-management state transitions caused by model tool results. It runs as
+  a library inside a runtime worker (gateway binary with
+  `TURA_ROLE=runtime_worker`), dispatched by the router.
 - Tools own command execution primitives. `task_status` is a command inside
   `command_run`; it must not become an independent top-level tool.
+- Tool command `policy.toml` configurables use one shared shape under
+  `[configurable]`: `name = { default = "...", enum = ["...", "..."] }`.
+  `read_media` and `web_discover` both follow this contract for bounded
+  command-local defaults.
 - Provider owns OAuth discovery and refresh. Gateway may expose auth status and
   refresh endpoints, but runtime and tools must not paper over missing provider
   credentials.

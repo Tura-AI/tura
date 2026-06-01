@@ -47,6 +47,7 @@ function startGateway() {
     providerLogouts: [],
     sessionUpdates: [],
     sentMessages: [],
+    agents: [],
     aborts: [],
     streamDeltaAt: null,
     completedAt: null,
@@ -143,6 +144,23 @@ function startGateway() {
   let permissions = [{ id: "perm-1", session_id: session.id, permission: "shell", args: { command: "echo ok" } }]
   let questions = [{ id: "q-1", session_id: session.id, question: "Proceed?", metadata: {} }]
   const todos = [{ id: "todo-1", content: "Wire gateway", status: "in_progress" }]
+  const agents = new Map([
+    ["coding_agent_fast", {
+      summary: {
+        id: "coding_agent_fast",
+        name: "Coding Agent Fast",
+        description: "Fast coding agent",
+        source: "static",
+        path: "agents/src/coding_agent_fast",
+        aliases: [],
+        capabilities: ["command_run"],
+        provider: "fast",
+        hidden: false,
+      },
+      config: { agent_name: "coding_agent_fast", agent_directory: "agents/src/coding_agent_fast" },
+      prompt: "Fast prompt",
+    }],
+  ])
 
   const pushEvent = (event) => {
     const data = `data: ${JSON.stringify(event)}\n\n`
@@ -223,6 +241,57 @@ function startGateway() {
       const payload = await readJson(req)
       records.commandRuns.push(payload)
       return sendJson(res, { output: `ran ${payload.command} ${(payload.args || []).join(" ")}`.trim() })
+    }
+    if (req.method === "GET" && url.pathname === "/agent") {
+      return sendJson(res, Array.from(agents.values()).map((item) => ({
+        name: item.summary.id,
+        description: item.summary.description,
+        mode: "primary",
+        native: item.summary.source === "static",
+        hidden: false,
+        options: { source: item.summary.source, path: item.summary.path, capabilities: item.summary.capabilities },
+        permission: { allow: ["*"], deny: [] },
+      })))
+    }
+    if (req.method === "POST" && url.pathname === "/agent") {
+      const payload = await readJson(req)
+      records.agents.push({ method: "POST", payload })
+      const id = payload.id || payload.config?.agent_name
+      const item = {
+        summary: {
+          id,
+          name: id,
+          description: payload.config?.description || "Custom Tura agent",
+          source: "dynamic",
+          path: `agents/${id}`,
+          aliases: [],
+          capabilities: ["command_run"],
+          provider: "fast",
+          hidden: false,
+        },
+        config: payload.config || { agent_name: id },
+        prompt: payload.prompt || "",
+      }
+      agents.set(id, item)
+      return sendJson(res, item)
+    }
+    const agentMatch = url.pathname.match(/^\/agent\/([^/]+)$/)
+    if (agentMatch) {
+      const id = decodeURIComponent(agentMatch[1])
+      if (req.method === "GET") return sendJson(res, agents.get(id) || { error: "not found" }, agents.has(id) ? 200 : 404)
+      if (req.method === "PATCH" || req.method === "PUT") {
+        const payload = await readJson(req)
+        records.agents.push({ method: req.method, id, payload })
+        const existing = agents.get(id) || { summary: { id, name: id, description: "", source: "dynamic", path: `agents/${id}`, aliases: [], capabilities: [], hidden: false }, config: { agent_name: id }, prompt: "" }
+        const updated = { ...existing, config: payload.config || existing.config, prompt: payload.prompt ?? existing.prompt }
+        agents.set(id, updated)
+        return sendJson(res, updated)
+      }
+      if (req.method === "DELETE") {
+        records.agents.push({ method: "DELETE", id })
+        const deleted = agents.delete(id)
+        return sendJson(res, deleted)
+      }
     }
     if (req.method === "GET" && url.pathname === "/vcs") return sendJson(res, { branch: "main", default_branch: "main" })
     if (req.method === "GET" && url.pathname === "/vcs/diff") return sendJson(res, { files: [{ old_file_name: "a.txt", new_file_name: "a.txt", hunks: [{ lines: ["+ok"] }] }] })
@@ -597,7 +666,7 @@ async function runWebTerminalE2e(gateway) {
     await runStep("settings-config-get", "--json config get", async (output) => {
       assert.match(output, /coding_agent_fast|coding_agent/)
     })
-    await runStep("settings-config-set", "config set agent=coding_agent model_reasoning_effort=low", async (output) => {
+    await runStep("settings-config-set", "config set agent=coding_agent model_variant=low", async (output) => {
       assert.match(output, /"active_agent":\s*"coding_agent"/)
       assert.match(output, /"model_variant":\s*"low"/)
     })
@@ -621,7 +690,7 @@ async function runWebTerminalE2e(gateway) {
       assert.match(text, /streaming-middle final/)
       assert.match(text, /"status":\s*"completed"/)
     })
-    await runStep("settings-restore", "config set agent=coding_agent_fast model_reasoning_effort=medium", async (output) => {
+    await runStep("settings-restore", "config set agent=coding_agent_fast model_variant=medium", async (output) => {
       assert.match(output, /"active_agent":\s*"coding_agent_fast"/)
       assert.match(output, /"model_variant":\s*"medium"/)
     })
@@ -650,8 +719,8 @@ async function main() {
       "config",
       "set",
       "agent=coding_agent_fast",
-      "model_reasoning_effort=medium",
-      "service_tier=priority",
+      "model_variant=medium",
+      "model_acceleration_enabled=true",
     ])
     assert.deepEqual(gateway.records.configPatches[0], {
       active_agent: "coding_agent_fast",
@@ -725,6 +794,23 @@ async function main() {
     assert.match(commandRun.stdout, /ran hello world/)
     assert.deepEqual(gateway.records.commandRuns[0], { command: "hello", args: ["world"] })
 
+    const agentList = await expectCliJson([...baseArgs(gateway), "--json", "agent", "list"])
+    assert.equal(agentList[0].name, "coding_agent_fast")
+    const agentCreate = await expectCliJson([
+      ...baseArgs(gateway),
+      "--json",
+      "agent",
+      "create",
+      "cli_agent",
+      "--prompt",
+      "Use command_run.",
+    ])
+    assert.equal(agentCreate.summary.id, "cli_agent")
+    const agentShow = await expectCliJson([...baseArgs(gateway), "--json", "agent", "show", "cli_agent"])
+    assert.equal(agentShow.summary.id, "cli_agent")
+    const agentDelete = await expectCliJson([...baseArgs(gateway), "--json", "agent", "delete", "cli_agent"])
+    assert.equal(agentDelete.deleted, true)
+
     const status = await expectCliJson([...baseArgs(gateway), "--json", "status"])
     assert.equal(status.health.version, "e2e")
     assert.equal(status.sessions[0].id, "sess-e2e")
@@ -745,11 +831,10 @@ async function main() {
       "ndjson",
       "--model",
       "openai/gpt-test",
-      "--reasoning-effort",
+      "--model-reasoning-effort",
       "high",
       "--no-model-acceleration",
-      "-c",
-      "force_multiple_tasks=true",
+      "--force-multiple-tasks",
       "--timeout",
       "5",
     ])
@@ -813,6 +898,11 @@ async function main() {
     assert.equal((await client.validateModel("openai/gpt-test")).ok, true)
     assert.equal((await client.listCommands())[0].name, "hello")
     assert.match((await client.executeCommand("hello", ["client"])).output, /client/)
+    assert.equal((await client.listAgents())[0].name, "coding_agent_fast")
+    assert.equal((await client.createAgent({ id: "client_agent" })).summary.id, "client_agent")
+    assert.equal((await client.updateAgent("client_agent", { prompt: "updated" })).summary.id, "client_agent")
+    assert.equal((await client.getAgent("client_agent")).summary.id, "client_agent")
+    assert.equal(await client.deleteAgent("client_agent"), true)
     assert.equal((await client.vcs()).branch, "main")
     assert.equal((await client.diff()).files[0].new_file_name, "a.txt")
     assert.equal((await client.serviceStatus()).mano.status, "ok")

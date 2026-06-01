@@ -1,4 +1,5 @@
 import type { TuraCommand } from "../types/command.js";
+import type { AgentUpsertRequest, StoredAgent } from "../types/agent.js";
 import type { GlobalConfig, SessionConfig } from "../types/config.js";
 import type { GatewayEventEnvelope } from "../types/event.js";
 import type { PermissionReplyResponse, PermissionRequest, QuestionRequest } from "../types/permission.js";
@@ -160,6 +161,31 @@ export class GatewayClient {
   async listCommands(): Promise<TuraCommand[]> {
     await this.syncWorkspace();
     return this.get("/command");
+  }
+
+  async listAgents(): Promise<unknown[]> {
+    await this.syncWorkspace();
+    return this.get("/agent");
+  }
+
+  async getAgent(agentID: string): Promise<StoredAgent> {
+    await this.syncWorkspace();
+    return this.get(`/agent/${encodeURIComponent(agentID)}`);
+  }
+
+  async createAgent(payload: AgentUpsertRequest): Promise<StoredAgent> {
+    await this.syncWorkspace();
+    return this.post("/agent", payload);
+  }
+
+  async updateAgent(agentID: string, payload: AgentUpsertRequest): Promise<StoredAgent> {
+    await this.syncWorkspace();
+    return this.patch(`/agent/${encodeURIComponent(agentID)}`, payload);
+  }
+
+  async deleteAgent(agentID: string): Promise<boolean> {
+    await this.syncWorkspace();
+    return this.delete(`/agent/${encodeURIComponent(agentID)}`);
   }
 
   async executeCommand(command: string, args: string[]): Promise<{ output: string }> {

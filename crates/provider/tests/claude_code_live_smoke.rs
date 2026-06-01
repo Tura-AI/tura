@@ -167,7 +167,11 @@ async fn run_tool_call_probe(conf: &TuraConfig) -> Result<(), String> {
     if first.pointer("/function/name").and_then(Value::as_str) != Some("echo_answer") {
         return Err("first tool call was not echo_answer".to_string());
     }
-    if first.pointer("/function/arguments/answer").and_then(Value::as_str) != Some("pong") {
+    if first
+        .pointer("/function/arguments/answer")
+        .and_then(Value::as_str)
+        != Some("pong")
+    {
         return Err("echo_answer arguments did not contain answer=pong".to_string());
     }
 

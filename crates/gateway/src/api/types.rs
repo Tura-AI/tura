@@ -82,7 +82,8 @@ pub struct Session {
     pub model: Option<String>,
     pub agent: Option<String>,
     pub session_type: Option<String>,
-    pub lsp: Option<serde_json::Value>,
+    #[serde(default)]
+    pub auto_session_name: bool,
     #[serde(default)]
     pub kill_processes_on_start: bool,
     #[serde(default)]
@@ -739,20 +740,6 @@ pub struct McpTool {
     pub name: String,
     pub description: Option<String>,
     pub input_schema: serde_json::Value,
-}
-
-// ============================================================================
-// LSP Types
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LSPStatus {
-    pub id: String,
-    pub name: String,
-    pub root: String,
-    pub pid: Option<u32>,
-    pub executable_path: Option<String>,
-    pub status: String,
 }
 
 // ============================================================================

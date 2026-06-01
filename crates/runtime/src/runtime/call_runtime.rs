@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{
@@ -7,17 +8,21 @@ use std::sync::{
     mpsc, Arc, Mutex,
 };
 use std::time::{Duration, Instant};
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::state_machine::runtime_management::{
     RuntimeCallResultStatus, RuntimeManagement, RuntimeState, ToolCallRecord,
 };
 use crate::state_machine::session_management::SessionId;
 
-use super::runtime_receive::command_run_stream_event_command;
-use super::types::{RuntimeQueueItem, ToolCallData};
+use super::types::RuntimeQueueItem;
+use tura_llm_rust::{
+    extract_response_text, extract_tool_calls, openai_compatible_usage_stream_supported,
+    prompt_cache_key_supported, strip_thought_blocks,
+};
 
 const COMMAND_RUN_TOOL_NAME: &str = "command_run";
+const DISABLE_GATEWAY_CALLBACKS_ENV: &str = "TURA_DISABLE_GATEWAY_CALLBACKS";
 const DEFAULT_STREAMED_COMMAND_RUN_POST_RESULT_TIMEOUT_MS: u64 = 15_000;
 
 pub struct CallRuntimeInput {
@@ -29,6 +34,7 @@ pub struct CallRuntimeInput {
     pub max_tokens: u32,
     pub tool_choice: Option<serde_json::Value>,
     pub session_directory: PathBuf,
+    pub allowed_command_run_commands: Option<BTreeSet<String>>,
 }
 
 pub async fn call_runtime(
@@ -96,7 +102,7 @@ pub async fn call_runtime(
         }
     }));
 
-    if input.stream {
+    if input.stream || !input_tools.is_empty() {
         call_runtime_streaming(
             &mut runtime,
             route_config,
@@ -104,6 +110,7 @@ pub async fn call_runtime(
             provider_messages,
             call_options,
             input.session_directory.clone(),
+            input.allowed_command_run_commands.clone(),
         )
         .await?;
     } else {
@@ -135,6 +142,42 @@ fn normalize_provider_messages(messages: Vec<serde_json::Value>) -> Vec<serde_js
             .get("role")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("user");
+        if role == "assistant" {
+            if let Some(tool_calls) = message
+                .get("tool_calls")
+                .filter(|value| value.as_array().is_some_and(|calls| !calls.is_empty()))
+                .cloned()
+            {
+                let mut item = serde_json::json!({
+                    "role": "assistant",
+                    "content": message_content(&message),
+                    "tool_calls": tool_calls,
+                });
+                if let Some(name) = message.get("name").and_then(serde_json::Value::as_str) {
+                    item["name"] = serde_json::Value::String(name.to_string());
+                }
+                normalized.push(item);
+                continue;
+            }
+        }
+        if role == "tool" {
+            if let Some(tool_call_id) = message
+                .get("tool_call_id")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            {
+                let mut item = serde_json::json!({
+                    "role": "tool",
+                    "content": message_content(&message),
+                    "tool_call_id": tool_call_id,
+                });
+                if let Some(name) = message.get("name").and_then(serde_json::Value::as_str) {
+                    item["name"] = serde_json::Value::String(name.to_string());
+                }
+                normalized.push(item);
+                continue;
+            }
+        }
         let content = message_content(&message);
         if content.trim().is_empty() {
             continue;
@@ -198,25 +241,6 @@ fn prompt_cache_key(
     ))
 }
 
-fn prompt_cache_key_supported(provider: &str, base_url: &str) -> bool {
-    if std::env::var("TURA_DISABLE_PROMPT_CACHE")
-        .ok()
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
-    {
-        return false;
-    }
-    if provider.eq_ignore_ascii_case("openai") {
-        return true;
-    }
-    base_url.contains("api.openai.com")
-}
-
 fn stream_options(
     route_config: &tura_llm_rust::RouteConfig,
     stream: bool,
@@ -229,20 +253,6 @@ fn stream_options(
         return None;
     }
     Some(serde_json::json!({ "include_usage": true }))
-}
-
-fn openai_compatible_usage_stream_supported(provider: &str, base_url: &str) -> bool {
-    if provider.eq_ignore_ascii_case("openai")
-        || provider.eq_ignore_ascii_case("minimax")
-        || provider.eq_ignore_ascii_case("qwen")
-        || provider.eq_ignore_ascii_case("openrouter")
-    {
-        return true;
-    }
-    base_url.contains("api.openai.com")
-        || base_url.contains("api.minimax.io")
-        || base_url.contains("dashscope")
-        || base_url.contains("openrouter.ai")
 }
 
 fn tool_name(tool: &serde_json::Value) -> Option<String> {
@@ -451,98 +461,6 @@ fn finish_runtime_failure(
         .map_err(|e| format!("failed to finish runtime failure: {}", e))
 }
 
-fn extract_response_text(content: &Value) -> Option<String> {
-    if let Some(text) = content.as_str() {
-        return Some(text.to_string());
-    }
-    if let Some(text) = content.get("text").and_then(Value::as_str) {
-        return Some(text.to_string());
-    }
-    if let Some(parts) = content.get("parts").and_then(Value::as_array) {
-        let text = parts
-            .iter()
-            .filter_map(|part| part.get("text").and_then(Value::as_str))
-            .collect::<Vec<_>>()
-            .join("");
-        if !text.is_empty() {
-            return Some(text);
-        }
-    }
-    None
-}
-
-fn extract_tool_calls(content: &Value) -> Vec<ToolCallData> {
-    let mut calls = Vec::new();
-
-    if let Some(tool_calls) = content.get("tool_calls").and_then(Value::as_array) {
-        for call in tool_calls {
-            if let Some(function) = call.get("function") {
-                if let Some(name) = function.get("name").and_then(Value::as_str) {
-                    let arguments = function.get("arguments").cloned().unwrap_or(Value::Null);
-                    calls.push(ToolCallData {
-                        tool_name: name.to_string(),
-                        arguments: parse_arguments(arguments),
-                        provider_metadata: None,
-                    });
-                }
-            }
-        }
-    }
-
-    if let Some(parts) = content.get("parts").and_then(Value::as_array) {
-        for part in parts {
-            if let Some(function_call) = part.get("functionCall") {
-                if let Some(name) = function_call.get("name").and_then(Value::as_str) {
-                    calls.push(ToolCallData {
-                        tool_name: name.to_string(),
-                        arguments: function_call.get("args").cloned().unwrap_or(Value::Null),
-                        provider_metadata: google_function_call_metadata(part),
-                    });
-                }
-            }
-        }
-    }
-
-    calls
-}
-
-fn google_function_call_metadata(part: &Value) -> Option<Value> {
-    let signature = part
-        .get("thoughtSignature")
-        .or_else(|| part.get("thought_signature"))
-        .and_then(Value::as_str)?;
-    Some(serde_json::json!({
-        "google_thought_signature": signature,
-    }))
-}
-
-fn parse_arguments(arguments: Value) -> Value {
-    match arguments {
-        Value::String(text) => serde_json::from_str(&text).unwrap_or(Value::String(text)),
-        other => other,
-    }
-}
-
-fn strip_thought_blocks(text: &str) -> String {
-    let mut output = String::with_capacity(text.len());
-    let mut rest = text;
-    loop {
-        let lower = rest.to_ascii_lowercase();
-        let Some(start) = lower.find("<thought>") else {
-            output.push_str(rest);
-            break;
-        };
-        output.push_str(&rest[..start]);
-        let after_start = &rest[start + "<thought>".len()..];
-        let lower_after_start = after_start.to_ascii_lowercase();
-        let Some(end) = lower_after_start.find("</thought>") else {
-            break;
-        };
-        rest = &after_start[end + "</thought>".len()..];
-    }
-    output.trim().to_string()
-}
-
 #[cfg(test)]
 mod provider_message_tests {
     use super::{normalize_provider_messages, strip_thought_blocks};
@@ -577,6 +495,36 @@ mod provider_message_tests {
     }
 
     #[test]
+    fn normalize_provider_messages_preserves_chat_tool_envelope() {
+        let normalized = normalize_provider_messages(vec![
+            serde_json::json!({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "command_run",
+                        "arguments": "{\"commands\":[]}"
+                    }
+                }]
+            }),
+            serde_json::json!({
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": "{\"ok\":true}"
+            }),
+        ]);
+
+        assert_eq!(normalized.len(), 2);
+        assert_eq!(normalized[0]["role"], "assistant");
+        assert_eq!(normalized[0]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(normalized[1]["role"], "tool");
+        assert_eq!(normalized[1]["tool_call_id"], "call_1");
+        assert_eq!(normalized[1]["content"], "{\"ok\":true}");
+    }
+
+    #[test]
     fn strip_thought_blocks_removes_visible_reasoning_text() {
         assert_eq!(
             strip_thought_blocks("<thought>hidden</thought>visible"),
@@ -593,10 +541,12 @@ async fn call_runtime_streaming(
     messages: Vec<serde_json::Value>,
     options: tura_llm_rust::CallOptions,
     session_directory: PathBuf,
+    allowed_command_run_commands: Option<BTreeSet<String>>,
 ) -> Result<(), String> {
     let started_at = Utc::now();
     let timeout_duration = runtime_timeout(runtime);
     let (stream_tx, stream_rx) = mpsc::channel::<tura_llm_rust::ProviderStreamEvent>();
+    let final_response_stream_tx = stream_tx.clone();
     let first_stream_output_at: Arc<Mutex<Option<DateTime<Utc>>>> = Arc::new(Mutex::new(None));
     let streamed_command_results: Arc<Mutex<Vec<serde_json::Value>>> =
         Arc::new(Mutex::new(Vec::new()));
@@ -621,20 +571,105 @@ async fn call_runtime_streaming(
     let command_results_for_task = Arc::clone(&streamed_command_results);
     let last_command_result_for_task = Arc::clone(&last_streamed_command_result_at);
     let command_cancelled_for_task = Arc::clone(&streamed_command_run_cancelled);
+    let gateway_session_id = runtime.session_id.clone();
+    let gateway_runtime_id = runtime.runtime_id.clone();
+    let gateway_provider = serde_json::to_value(&runtime.provider).unwrap_or(Value::Null);
+    let gateway_call_id = streamed_command_run_call_id(&gateway_runtime_id);
     let command_task = std::thread::spawn(move || {
-        let mut executor =
-            code_tools::command_run::StreamingCommandRunExecutor::new(command_session_directory);
+        let mut executor = code_tools::command_run::StreamingCommandRunExecutor::new_with_allowed(
+            command_session_directory,
+            allowed_command_run_commands,
+        );
         let runtime = match tokio::runtime::Runtime::new() {
             Ok(runtime) => runtime,
             Err(_) => return Vec::new(),
         };
         let mut results = Vec::new();
+        let mut streamed_commands = Vec::new();
         let mut live_item_index = 0usize;
         while let Ok(event) = stream_rx.recv() {
             let Some(command) = command_run_stream_event_command(event) else {
                 continue;
             };
+            streamed_commands.push(command.clone());
+            let mut live_results = results.clone();
+            live_results.push(command_run_live_delta_result(&command, "", ""));
+            runtime.block_on(publish_streamed_command_run_update(
+                &gateway_session_id,
+                &gateway_runtime_id,
+                &gateway_provider,
+                &gateway_call_id,
+                &streamed_commands,
+                &live_results,
+                "running",
+                started_at,
+                None,
+            ));
+            let delta_poll_stop = Arc::new(AtomicBool::new(false));
+            let delta_poll_stop_for_task = Arc::clone(&delta_poll_stop);
+            let delta_event_ctx = executor.event_context();
+            let delta_event_start = delta_event_ctx.events().len();
+            let delta_gateway_session_id = gateway_session_id.clone();
+            let delta_gateway_runtime_id = gateway_runtime_id.clone();
+            let delta_gateway_provider = gateway_provider.clone();
+            let delta_gateway_call_id = gateway_call_id.clone();
+            let delta_commands = streamed_commands.clone();
+            let delta_base_results = results.clone();
+            let delta_command = command.clone();
+            let delta_poll_task = std::thread::spawn(move || {
+                let Ok(runtime) = tokio::runtime::Runtime::new() else {
+                    return;
+                };
+                let mut seen = delta_event_start;
+                let mut stdout = String::new();
+                let mut stderr = String::new();
+                loop {
+                    let events = delta_event_ctx.events();
+                    let mut changed = false;
+                    for event in events.iter().skip(seen) {
+                        if let code_tools::runtime::tool::ToolRuntimeEvent::OutputDelta {
+                            stream,
+                            text,
+                            ..
+                        } = event
+                        {
+                            if stream == "stderr" {
+                                stderr.push_str(text);
+                            } else {
+                                stdout.push_str(text);
+                            }
+                            changed = true;
+                        }
+                    }
+                    seen = events.len();
+                    if changed {
+                        let mut live_results = delta_base_results.clone();
+                        live_results.push(command_run_live_delta_result(
+                            &delta_command,
+                            &stdout,
+                            &stderr,
+                        ));
+                        runtime.block_on(publish_streamed_command_run_update(
+                            &delta_gateway_session_id,
+                            &delta_gateway_runtime_id,
+                            &delta_gateway_provider,
+                            &delta_gateway_call_id,
+                            &delta_commands,
+                            &live_results,
+                            "running",
+                            started_at,
+                            None,
+                        ));
+                    }
+                    if delta_poll_stop_for_task.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(120));
+                }
+            });
             let completed = runtime.block_on(executor.push_command_value(command));
+            delta_poll_stop.store(true, Ordering::SeqCst);
+            let _ = delta_poll_task.join();
             emit_cli_live_command_run_results(&completed, &mut live_item_index);
             if !completed.is_empty() {
                 {
@@ -648,6 +683,17 @@ async fn call_runtime_streaming(
                     .unwrap_or_else(|err| err.into_inner()) = Some(Instant::now());
             }
             results.extend(completed);
+            runtime.block_on(publish_streamed_command_run_update(
+                &gateway_session_id,
+                &gateway_runtime_id,
+                &gateway_provider,
+                &gateway_call_id,
+                &streamed_commands,
+                &results,
+                "running",
+                started_at,
+                None,
+            ));
             if executor.is_halted() {
                 command_cancelled_for_task.store(true, Ordering::SeqCst);
                 break;
@@ -668,6 +714,23 @@ async fn call_runtime_streaming(
                 .unwrap_or_else(|err| err.into_inner()) = Some(Instant::now());
         }
         results.extend(completed);
+        if !streamed_commands.is_empty() {
+            runtime.block_on(publish_streamed_command_run_update(
+                &gateway_session_id,
+                &gateway_runtime_id,
+                &gateway_provider,
+                &gateway_call_id,
+                &streamed_commands,
+                &results,
+                if halted_before_finish {
+                    "error"
+                } else {
+                    "completed"
+                },
+                started_at,
+                Some(Utc::now()),
+            ));
+        }
         if halted_before_finish {
             command_cancelled_for_task.store(true, Ordering::SeqCst);
         }
@@ -904,6 +967,16 @@ async fn call_runtime_streaming(
         }
     };
     let finished_at = Utc::now();
+    let already_streamed_command_results = !streamed_command_results
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .is_empty();
+    if !already_streamed_command_results {
+        for event in command_run_stream_events_from_provider_content(&response.content) {
+            let _ = final_response_stream_tx.send(event);
+        }
+    }
+    drop(final_response_stream_tx);
     let streamed_command_results = command_task.join().unwrap_or_default();
 
     let mut runtime_output = response.content.clone();
@@ -968,6 +1041,253 @@ fn command_run_results_contain_task_status_done(results: &[serde_json::Value]) -
                 .and_then(serde_json::Value::as_str)
                 == Some("done")
     })
+}
+
+fn command_run_stream_events_from_provider_content(
+    content: &serde_json::Value,
+) -> Vec<tura_llm_rust::ProviderStreamEvent> {
+    extract_tool_calls(content)
+        .into_iter()
+        .enumerate()
+        .filter(|(_, tool_call)| tool_call.tool_name == COMMAND_RUN_TOOL_NAME)
+        .flat_map(|(tool_index, tool_call)| {
+            let tool_call_id = tool_call
+                .provider_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("id"))
+                .and_then(serde_json::Value::as_str)
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("call_command_run_{tool_index}"));
+            tool_call
+                .arguments
+                .get("commands")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .enumerate()
+                .map(move |(command_index, command)| {
+                    tura_llm_rust::ProviderStreamEvent::CommandRunCommandReady {
+                        tool_call_id: tool_call_id.clone(),
+                        command_index,
+                        command,
+                    }
+                })
+        })
+        .collect()
+}
+
+fn command_run_stream_event_command(
+    event: tura_llm_rust::ProviderStreamEvent,
+) -> Option<serde_json::Value> {
+    match event {
+        tura_llm_rust::ProviderStreamEvent::CommandRunCommandReady { command, .. } => Some(command),
+        tura_llm_rust::ProviderStreamEvent::ProviderOutputStarted => None,
+    }
+}
+
+fn streamed_command_run_call_id(runtime_id: &str) -> String {
+    format!("{runtime_id}-streamed-command-run")
+}
+
+fn command_run_live_delta_result(
+    command: &serde_json::Value,
+    stdout: &str,
+    stderr: &str,
+) -> serde_json::Value {
+    let command_type = command
+        .get("command_type")
+        .or_else(|| command.get("command"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(COMMAND_RUN_TOOL_NAME);
+    let command_line = command
+        .get("command_line")
+        .or_else(|| command.get("command"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(command_type);
+    let step = command
+        .get("step")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(1)
+        .max(1);
+    let mut output_text = String::from("Output:\n");
+    output_text.push_str(stdout);
+    if !stderr.is_empty() {
+        output_text.push_str("\nStderr:\n");
+        output_text.push_str(stderr);
+    }
+    serde_json::json!({
+        "step": step,
+        "command_type": command_type,
+        "command_line": command_line,
+        "status": "running",
+        "success": null,
+        "output": {
+            "stdout": stdout,
+            "stderr": stderr,
+            "text": output_text,
+        },
+    })
+}
+
+async fn publish_streamed_command_run_update(
+    session_id: &str,
+    runtime_id: &str,
+    provider: &serde_json::Value,
+    call_id: &str,
+    commands: &[serde_json::Value],
+    results: &[serde_json::Value],
+    status: &str,
+    started_at: DateTime<Utc>,
+    ended_at: Option<DateTime<Utc>>,
+) {
+    if gateway_callbacks_disabled() {
+        return;
+    }
+
+    let target_session_id = gateway_callback_session_id(session_id);
+    let endpoint = format!(
+        "{}/session/{target_session_id}/message/agent",
+        gateway_callback_base_url()
+    );
+    let input = serde_json::json!({ "commands": commands });
+    let output = serde_json::json!({
+        "streamed_command_run_result": {
+            "results": results,
+        }
+    });
+    let success = match status {
+        "completed" => serde_json::Value::Bool(true),
+        "error" => serde_json::Value::Bool(false),
+        _ => serde_json::Value::Null,
+    };
+    let error_value = if status == "error" {
+        serde_json::Value::String("command_run stream halted".to_string())
+    } else {
+        serde_json::Value::Null
+    };
+    let metadata = serde_json::json!({
+        "kind": "mano_tool_call",
+        "tool": COMMAND_RUN_TOOL_NAME,
+        "input": input,
+        "output": output,
+        "success": success,
+        "error": error_value,
+        "runtime_id": runtime_id,
+        "session_id": session_id,
+        "provider": provider,
+    });
+    let mut time = serde_json::Map::new();
+    time.insert(
+        "start".to_string(),
+        serde_json::Value::Number(started_at.timestamp_millis().into()),
+    );
+    if let Some(ended_at) = ended_at {
+        time.insert(
+            "end".to_string(),
+            serde_json::Value::Number(ended_at.timestamp_millis().into()),
+        );
+    }
+    let state = serde_json::json!({
+        "status": status,
+        "input": input,
+        "output": output,
+        "streamed_command_run_result": {
+            "results": results,
+        },
+        "title": if status == "completed" {
+            "Called `command_run`"
+        } else {
+            "Calling `command_run`"
+        },
+        "metadata": metadata,
+        "time": time,
+    });
+    let payload = serde_json::json!({
+        "reply_message": "",
+        "new_learning": "",
+        "media": [],
+        "runtime_id": runtime_id,
+        "tool_call": {
+            "tool_name": COMMAND_RUN_TOOL_NAME,
+            "call_id": call_id,
+            "state": state,
+            "metadata": metadata,
+        }
+    });
+
+    let result = reqwest::Client::new()
+        .post(endpoint)
+        .json(&payload)
+        .send()
+        .await;
+    match result {
+        Ok(response) if response.status().is_success() => {}
+        Ok(response) => {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            warn!(
+                session_id = %session_id,
+                runtime_id = %runtime_id,
+                gateway_status = %status,
+                body = %body,
+                "failed to publish streamed command_run update"
+            );
+        }
+        Err(error) => {
+            warn!(
+                session_id = %session_id,
+                runtime_id = %runtime_id,
+                error = %error,
+                "failed to call gateway for streamed command_run update"
+            );
+        }
+    }
+}
+
+fn gateway_callbacks_disabled() -> bool {
+    std::env::var(DISABLE_GATEWAY_CALLBACKS_ENV)
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn gateway_callback_base_url() -> String {
+    std::env::var("TURA_GATEWAY_URL")
+        .or_else(|_| std::env::var("GATEWAY_BASE_URL"))
+        .unwrap_or_else(|_| {
+            let port = std::env::var("TURA_GATEWAY_PORT")
+                .or_else(|_| std::env::var("PORT"))
+                .unwrap_or_else(|_| "4096".to_string());
+            format!("http://127.0.0.1:{port}")
+        })
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn gateway_callback_session_id(session_id: &str) -> String {
+    if multiple_tasks_child_depth_from_env() > 0 {
+        if let Ok(parent_session_id) = std::env::var("TURA_PARENT_SESSION_ID") {
+            let parent_session_id = parent_session_id.trim();
+            if !parent_session_id.is_empty() {
+                return parent_session_id.to_string();
+            }
+        }
+    }
+
+    session_id.to_string()
+}
+
+fn multiple_tasks_child_depth_from_env() -> usize {
+    std::env::var("TURA_MULTIPLE_TASKS_DEPTH")
+        .or_else(|_| std::env::var("TURA_EXECUTE_TOOLS_DEPTH"))
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0)
 }
 
 fn emit_cli_live_command_run_results(results: &[serde_json::Value], item_index: &mut usize) {
@@ -1403,7 +1723,7 @@ mod tests {
             assert!(
                 prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &tools_a)
                     .expect("prompt cache key should be generated")
-                    .starts_with("turaosv2:tura-coder:sess-a:")
+                    .starts_with("turaosv2:flagship-thinking:sess-a:")
             );
             assert_ne!(
                 prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &tools_a),

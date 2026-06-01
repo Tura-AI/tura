@@ -95,16 +95,6 @@ pub async fn list_providers() -> Json<ProviderListResponse> {
     })
 }
 
-pub(crate) async fn active_agent_model() -> Option<AgentModel> {
-    let settings = tura_llm_rust::Settings::default().await.ok()?;
-    let route = active_agent_route(settings.as_ref())?;
-    let primary = route.providers.first()?;
-    Some(AgentModel {
-        provider_id: primary.provider.clone(),
-        model_id: primary.model.clone(),
-    })
-}
-
 fn provider_list_for_route(
     settings: &tura_llm_rust::Settings,
     route: &tura_llm_rust::RouteConfig,
@@ -3199,7 +3189,7 @@ fn logout_provider_auth(provider_id: &str) -> io::Result<()> {
         "openai" => current_login == Some("oauth"),
         "openai-api" => current_login != Some("oauth"),
         "claude-code" => current_login == Some("oauth"),
-        "anthropic" => current_login == Some("browser"),
+        "anthropic" => !matches!(current_login, Some("oauth" | "browser")),
         "antigravity" => current_login == Some("oauth"),
         "github-copilot" => matches!(current_login, Some("device" | "oauth" | "api")),
         "anthropic-api" | "antigravity-api" => current_login != Some("browser"),
@@ -3392,7 +3382,7 @@ fn provider_key_value_for_env(provider_id: &str, key: &str) -> Option<String> {
             "codex" => login.as_deref() == Some("oauth"),
             "openai" => !matches!(login.as_deref(), Some("oauth" | "browser")),
             "claude-code" => login.as_deref() == Some("oauth"),
-            "anthropic" => login.as_deref() == Some("browser"),
+            "anthropic" => !matches!(login.as_deref(), Some("oauth" | "browser")),
             "antigravity" => login.as_deref() == Some("oauth"),
             "github-copilot" => matches!(login.as_deref(), Some("device" | "oauth" | "api")),
             "openai-api" | "anthropic-api" | "antigravity-api" => {
@@ -3429,9 +3419,9 @@ mod tests {
         assert_eq!(openai[0].method_type, "api");
 
         let anthropic = provider_auth_methods("anthropic");
-        assert_eq!(anthropic[0].kind, AuthMethodKind::BrowserToken);
-        assert_eq!(anthropic[0].method_type, "token");
-        assert_eq!(anthropic[0].login, "browser");
+        assert_eq!(anthropic[0].kind, AuthMethodKind::ApiKey);
+        assert_eq!(anthropic[0].method_type, "api");
+        assert_eq!(anthropic[0].login, "api");
 
         let claude_code = provider_auth_methods("claude-code");
         assert_eq!(claude_code[0].kind, AuthMethodKind::LocalCliToken);
@@ -3630,7 +3620,7 @@ mod tests {
             account_id: None,
             metadata: None,
         };
-        assert_eq!(login_value_for_auth("anthropic", &auth), "browser");
+        assert_eq!(login_value_for_auth("anthropic", &auth), "api");
 
         let with_metadata = ProviderAuth {
             metadata: Some(HashMap::from([(

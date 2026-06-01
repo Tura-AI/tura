@@ -1,4 +1,14 @@
 import {
+  type Command,
+  type Message,
+  type PlanStatus,
+  type PollInterval,
+  type Session,
+  type StartCondition,
+  type TaskManagement,
+} from "@tura/gateway-sdk";
+import Plus from "lucide-solid/icons/plus";
+import {
   For,
   Match,
   Show,
@@ -8,94 +18,30 @@ import {
   createSignal,
   onCleanup,
   onMount,
-  type Accessor,
-  type JSX,
-  type Setter,
 } from "solid-js";
-import { Portal } from "solid-js/web";
-import ExternalLink from "lucide-solid/icons/external-link";
-import LayoutList from "lucide-solid/icons/layout-list";
-import ArrowLeft from "lucide-solid/icons/arrow-left";
-import CalendarDays from "lucide-solid/icons/calendar-days";
-import ChartGantt from "lucide-solid/icons/chart-gantt";
-import Check from "lucide-solid/icons/check";
-import ChevronDown from "lucide-solid/icons/chevron-down";
-import ChevronLeft from "lucide-solid/icons/chevron-left";
-import ChevronRight from "lucide-solid/icons/chevron-right";
-import Columns3 from "lucide-solid/icons/columns-3";
-import Copy from "lucide-solid/icons/copy";
-import Edit3 from "lucide-solid/icons/pencil";
-import FolderOpen from "lucide-solid/icons/folder-open";
-import KeyRound from "lucide-solid/icons/key-round";
-import MoreHorizontal from "lucide-solid/icons/ellipsis";
-import Pin from "lucide-solid/icons/pin";
-import Plus from "lucide-solid/icons/plus";
-import Search from "lucide-solid/icons/search";
-import Settings from "lucide-solid/icons/settings";
-import Trash2 from "lucide-solid/icons/trash-2";
+import { AgentComposerMenu } from "../../conversation/agent-composer-menu";
+import { ConversationView } from "../../conversation/conversation-view";
+import { t } from "../../i18n";
+import { classNames } from "../../state/format";
 import {
-  GatewayClient,
-  GatewayError,
-  connectGatewayEvents,
-  defaultGatewayUrl,
-  errorMessage,
-  type Agent,
-  type Command,
-  type FileContentResponse,
-  type FileInfo,
-  type GatewayConfig,
-  type Message,
-  type ProviderAuthMethod,
-  type ProductIssue,
-  type Project,
-  type PollInterval,
-  type SdkProvider,
-  type Session,
-  type StartCondition,
-  type TaskManagement,
-  type PlanStatus,
-} from "@tura/gateway-sdk";
-import {
-  Composer,
-  ConversationView,
-  composerFileToken,
-  composerImageToken,
-} from "../../conversation/conversation-view";
-import { applyGatewayEvent } from "../../state/event-reducer";
-import {
-  activeSession,
-  type ComposerImage,
-  initialAppState,
-  type MainTab,
-  type PlanMode,
   sessionDirectory,
   sessionTitle,
   type AppState,
+  type ComposerImage,
+  type PlanMode,
   type SettingsSection,
-  type ThemeMode,
 } from "../../state/global-store";
-import { classNames, truncate } from "../../state/format";
-import { t, type TextKey } from "../../i18n";
 
-import { PlanGanttView } from "./plan-gantt";
-import { PlanCalendarView } from "./plan-calendar";
 import {
-  PlanModeButtons,
-  PlanComposerControls,
-  PlanComposerTaskList,
-  PlanDraftSessionPicker,
-  PlanConversationFeedbackNotice,
-  PlanScheduleDialog,
-  PlanTicketMeta,
-  shouldShowPlanFeedbackPrompt,
-} from "./plan-composer";
+  PlanDragGhost,
+  beginPlanPointerDrag,
+  type PlanDragState,
+} from "../../features/plan/drag";
 import {
   defaultPollInterval,
-  formatTicketTime,
   hasVisibleSessionTasks,
   localDateTimeToUtcIso,
   planSessionStatus,
-  planTaskTitle,
   sessionTaskState,
   sessionTasks,
   shortSessionId,
@@ -108,22 +54,27 @@ import {
   utcIsoToLocalDateTime,
 } from "../../features/plan/tasks";
 import {
-  PlanDragGhost,
-  beginPlanPointerDrag,
-  type PlanDragState,
-} from "../../features/plan/drag";
-import {
   relativeSessionTime,
   samePath,
-  sessionHoverTitle,
-  shortSessionTitle,
   shortWorkspaceLabel,
 } from "../../utils/app-format";
+import { PlanCalendarView } from "./plan-calendar";
+import {
+  PlanComposerControls,
+  PlanComposerTaskList,
+  PlanConversationFeedbackNotice,
+  PlanDraftSessionPicker,
+  PlanModeButtons,
+  PlanTicketMeta,
+  shouldShowPlanFeedbackPrompt,
+} from "./plan-composer";
+import { PlanGanttView } from "./plan-gantt";
 
 const PLAN_PANEL_MIN_WIDTH = 320;
 const PLAN_PANEL_MAX_WIDTH = 680;
 const PLAN_PANEL_COLLAPSE_WIDTH = 260;
 const PLAN_MAIN_MIN_WIDTH = 430;
+const PLAN_PANEL_GAP = 24;
 
 export function PlanView(props: {
   state: AppState;
@@ -162,8 +113,18 @@ export function PlanView(props: {
   onComposerText: (text: string) => void;
   onComposerImages: (images: ComposerImage[]) => void;
   onSubmit: () => void;
+  onAgent: (agentId: string) => void;
+  onOpenSettings: (section: SettingsSection) => void;
   onOpenProviderSettings?: (providerId?: string) => void;
   onClosePanel: () => void;
+  leftRailOpen?: boolean;
+  leftRailWidth?: number;
+  onRequestCollapseLeftRail?: () => void;
+  onPanelLayout?: (layout: {
+    open: boolean;
+    overlay: boolean;
+    width: number;
+  }) => void;
 }) {
   const workspaceSessions = createMemo(() =>
     props.state.sessions.filter((session) =>
@@ -186,6 +147,15 @@ export function PlanView(props: {
   });
   const panelOpen = createMemo(() =>
     Boolean(props.previewSession || props.state.planDraftLane),
+  );
+  const agentMenu = () => (
+    <AgentComposerMenu
+      agents={props.state.agents}
+      modelConfig={props.state.modelConfig}
+      selectedAgent={props.state.selectedAgent}
+      onAgent={props.onAgent}
+      onSettings={props.onOpenSettings}
+    />
   );
   const editingTask = createMemo(() => {
     const preview = props.previewSession;
@@ -236,8 +206,25 @@ export function PlanView(props: {
   const [workbenchWidth, setWorkbenchWidth] = createSignal(0);
   let workbenchEl: HTMLElement | undefined;
   let workbenchResizeObserver: ResizeObserver | undefined;
+  function panelMaxWidth(width = workbenchWidth()) {
+    return Math.min(
+      PLAN_PANEL_MAX_WIDTH,
+      Math.max(
+        PLAN_PANEL_MIN_WIDTH,
+        width - PLAN_MAIN_MIN_WIDTH + PLAN_PANEL_GAP,
+      ),
+    );
+  }
+  function clampPanelWidth(width: number, availableWidth = workbenchWidth()) {
+    return Math.min(
+      panelMaxWidth(availableWidth),
+      Math.max(PLAN_PANEL_MIN_WIDTH, width),
+    );
+  }
   const planPanelFullscreen = createMemo(
-    () => panelOpen() && workbenchWidth() - panelWidth() < PLAN_MAIN_MIN_WIDTH,
+    () =>
+      panelOpen() &&
+      workbenchWidth() - panelWidth() + PLAN_PANEL_GAP < PLAN_MAIN_MIN_WIDTH,
   );
 
   onMount(() => {
@@ -254,6 +241,33 @@ export function PlanView(props: {
     onCleanup(() => {
       window.removeEventListener("resize", updateWorkbenchWidth);
       workbenchResizeObserver?.disconnect();
+    });
+  });
+
+  createEffect(() => {
+    const availableWidth = workbenchWidth();
+    if (!panelOpen() || availableWidth <= 0) {
+      props.onPanelLayout?.({ open: false, overlay: false, width: 0 });
+      return;
+    }
+    if (
+      props.leftRailOpen &&
+      availableWidth + (props.leftRailWidth ?? 0) >=
+        PLAN_MAIN_MIN_WIDTH + PLAN_PANEL_MIN_WIDTH - PLAN_PANEL_GAP &&
+      availableWidth <
+        PLAN_MAIN_MIN_WIDTH + PLAN_PANEL_MIN_WIDTH - PLAN_PANEL_GAP
+    ) {
+      props.onRequestCollapseLeftRail?.();
+      return;
+    }
+    const nextWidth = clampPanelWidth(panelWidth(), availableWidth);
+    if (nextWidth !== panelWidth()) {
+      setPanelWidth(nextWidth);
+    }
+    props.onPanelLayout?.({
+      open: panelOpen() && !planPanelFullscreen(),
+      overlay: planPanelFullscreen(),
+      width: panelOpen() && !planPanelFullscreen() ? nextWidth : 0,
     });
   });
 
@@ -274,16 +288,18 @@ export function PlanView(props: {
         closePlanPanel();
         return;
       }
-      const maxWidth = Math.max(
-        PLAN_PANEL_MIN_WIDTH,
-        Math.min(
-          PLAN_PANEL_MAX_WIDTH,
-          workbenchWidth - PLAN_MAIN_MIN_WIDTH - 12,
-        ),
-      );
-      setPanelWidth(
-        Math.min(maxWidth, Math.max(PLAN_PANEL_MIN_WIDTH, nextWidth)),
-      );
+      if (
+        props.leftRailOpen &&
+        workbenchWidth +
+          (props.leftRailWidth ?? 0) -
+          nextWidth +
+          PLAN_PANEL_GAP >=
+          PLAN_MAIN_MIN_WIDTH &&
+        workbenchWidth - nextWidth + PLAN_PANEL_GAP < PLAN_MAIN_MIN_WIDTH
+      ) {
+        props.onRequestCollapseLeftRail?.();
+      }
+      setPanelWidth(clampPanelWidth(nextWidth, workbenchWidth));
     };
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
@@ -353,6 +369,8 @@ export function PlanView(props: {
       ref={workbenchEl}
       style={{
         "--plan-panel-width": `${panelWidth()}px`,
+        "--plan-main-min-width": `${PLAN_MAIN_MIN_WIDTH}px`,
+        "--plan-panel-max-width": `${PLAN_PANEL_MAX_WIDTH}px`,
       }}
     >
       <div class="plan-main">
@@ -491,59 +509,68 @@ export function PlanView(props: {
                     onStartAt={props.onDraftStartAt}
                     onPollInterval={props.onDraftPollInterval}
                   />
+                  {agentMenu()}
                 </div>
               ) : props.previewSession && !props.state.editingTask ? (
-                <PlanComposerControls
-                  startCondition={props.state.planDraftStartCondition}
-                  startAt={props.state.planDraftStartAt}
-                  pollInterval={props.state.planDraftPollInterval}
-                  onStartCondition={props.onDraftStartCondition}
-                  onStartAt={props.onDraftStartAt}
-                  onPollInterval={props.onDraftPollInterval}
-                />
+                <>
+                  <PlanComposerControls
+                    startCondition={props.state.planDraftStartCondition}
+                    startAt={props.state.planDraftStartAt}
+                    pollInterval={props.state.planDraftPollInterval}
+                    onStartCondition={props.onDraftStartCondition}
+                    onStartAt={props.onDraftStartAt}
+                    onPollInterval={props.onDraftPollInterval}
+                  />
+                  {agentMenu()}
+                </>
               ) : props.previewSession ? (
-                <PlanComposerControls
-                  startCondition={taskStartCondition(composerTask()!)}
-                  startAt={utcIsoToLocalDateTime(taskStartAt(composerTask()!))}
-                  pollInterval={taskPollInterval(composerTask()!)}
-                  onStartCondition={(startCondition) => {
-                    const currentTask = composerTask()!;
-                    if (startCondition === "user_action") {
-                      props.onRunTask(
-                        props.previewSession!,
-                        taskWithComposerText(currentTask),
+                <>
+                  <PlanComposerControls
+                    startCondition={taskStartCondition(composerTask()!)}
+                    startAt={utcIsoToLocalDateTime(
+                      taskStartAt(composerTask()!),
+                    )}
+                    pollInterval={taskPollInterval(composerTask()!)}
+                    onStartCondition={(startCondition) => {
+                      const currentTask = composerTask()!;
+                      if (startCondition === "user_action") {
+                        props.onRunTask(
+                          props.previewSession!,
+                          taskWithComposerText(currentTask),
+                        );
+                        return;
+                      }
+                      const startAt = localDateTimeToUtcIso(
+                        utcIsoToLocalDateTime(taskStartAt(currentTask)),
                       );
-                      return;
-                    }
-                    const startAt = localDateTimeToUtcIso(
-                      utcIsoToLocalDateTime(taskStartAt(currentTask)),
-                    );
-                    props.onTask(props.previewSession!, {
-                      nonce_id: composerTaskNonce(),
-                      status: "todo",
-                      ...timedTaskPatch(
-                        startCondition,
-                        startAt,
-                        taskPollInterval(currentTask),
-                      ),
-                    });
-                  }}
-                  onStartAt={(value) => {
-                    const start_at = localDateTimeToUtcIso(value);
-                    if (start_at) {
                       props.onTask(props.previewSession!, {
                         nonce_id: composerTaskNonce(),
-                        start_at,
+                        status: "todo",
+                        ...timedTaskPatch(
+                          startCondition,
+                          startAt,
+                          taskPollInterval(currentTask),
+                        ),
                       });
+                    }}
+                    onStartAt={(value) => {
+                      const start_at = localDateTimeToUtcIso(value);
+                      if (start_at) {
+                        props.onTask(props.previewSession!, {
+                          nonce_id: composerTaskNonce(),
+                          start_at,
+                        });
+                      }
+                    }}
+                    onPollInterval={(poll_interval) =>
+                      props.onTask(props.previewSession!, {
+                        nonce_id: composerTaskNonce(),
+                        poll_interval,
+                      })
                     }
-                  }}
-                  onPollInterval={(poll_interval) =>
-                    props.onTask(props.previewSession!, {
-                      nonce_id: composerTaskNonce(),
-                      poll_interval,
-                    })
-                  }
-                />
+                  />
+                  {agentMenu()}
+                </>
               ) : undefined
             }
             composerTaskList={
@@ -569,9 +596,7 @@ export function PlanView(props: {
                   onDelete={(task) =>
                     props.onDeleteTask(props.previewSession!, task)
                   }
-                  onRun={(task) =>
-                    props.onRunTask(props.previewSession!, task)
-                  }
+                  onRun={(task) => props.onRunTask(props.previewSession!, task)}
                   onCreateSession={(task) =>
                     props.onCreateSessionFromTask(props.previewSession!, task)
                   }
@@ -587,10 +612,10 @@ export function PlanView(props: {
                   onOpenProviderSettings={props.onOpenProviderSettings}
                 />
               ) : props.previewSession &&
-              shouldShowPlanFeedbackPrompt(
-                props.previewSession,
-                props.state.composerText,
-              ) ? (
+                shouldShowPlanFeedbackPrompt(
+                  props.previewSession,
+                  props.state.composerText,
+                ) ? (
                 <PlanConversationFeedbackNotice />
               ) : undefined
             }
@@ -664,11 +689,10 @@ export function PlanBoard(props: {
       <section class="board-grid">
         <For each={columns}>
           {(column) => {
-            const sessions = createMemo(() =>
+            const sessions = () =>
               props.sessions.filter(
                 (session) => planSessionStatus(session) === column.id,
-              ),
-            );
+              );
             return (
               <section
                 class="board-column"
@@ -766,8 +790,6 @@ export function PlanBoard(props: {
     </section>
   );
 }
-
-let activePlanPointerDrag = false;
 
 export function PlanStatusIndicator(props: { status: PlanStatus }) {
   return (

@@ -78,7 +78,7 @@ fn claude_code_gateway_session_tool_calling_e2e() {
 
     eprintln!("final session state: {:?}", result.session.state);
     assert_eq!(result.agents.len(), 1);
-    assert_eq!(result.agents[0].agent_name, "coding_agent");
+    assert_eq!(result.agents[0].agent_name, "coding_agent_planning");
     assert_eq!(
         result.session.state,
         SessionState::Completed,

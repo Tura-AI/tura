@@ -193,7 +193,7 @@ function serviceTierConfigArgs() {
 function turaServiceTierConfigArgs() {
   const tier = String(serviceTier || "").trim()
   if (!tier || tier === "default" || tier === "none" || tier === "off") return []
-  return ["-c", `service_tier=${tier}`]
+  return tier === "priority" ? ["-p"] : []
 }
 
 function runLive(command, args, options = {}) {
@@ -1348,13 +1348,13 @@ async function runTura(workspace, agentDir, agentPort, agentPrompt = "coding_age
     "--skip-git-repo-check",
     "--session-id",
     sessionId,
-    "--agent",
+    "--agent-id",
     agentPrompt,
     "-m",
     turaModel,
-    "-c",
-    `model_reasoning_effort=${reasoning}`,
     ...turaServiceTierConfigArgs(),
+    "--model-reasoning-effort",
+    reasoning,
     "--cwd",
     workspace,
   ]
@@ -1772,7 +1772,7 @@ async function runTuraViaWebTerminal(workspace, agentDir, agentPort, agentPrompt
     await sendRealTuiInput(page, "/new", path.join(agentDir, "tui-setup-new-session.png"))
     await sendRealTuiInput(page, `/agent ${agentPrompt}`, path.join(agentDir, "tui-setup-agent.png"))
     await sendRealTuiInput(page, `/model ${turaModel}`, path.join(agentDir, "tui-setup-model.png"))
-    await sendRealTuiInput(page, `/config set model_reasoning_effort=${reasoning} service_tier=${serviceTier}`, path.join(agentDir, "tui-setup-config.png"))
+    await sendRealTuiInput(page, `/config set model_variant=${reasoning} model_acceleration_enabled=${serviceTier === "priority"}`, path.join(agentDir, "tui-setup-config.png"))
 
     const firstStarted = performance.now()
     await sendRealTuiInput(page, smokeOnly ? promptSmoke(agentPort, shellSurface) : promptPhase1(agentPort, shellSurface), path.join(agentDir, "tui-phase1-terminal.png"))

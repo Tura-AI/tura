@@ -28,6 +28,14 @@
   min-width: 0;
 }
 
+.message.assistant.avatar-hidden .assistant-response {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.message.assistant.avatar-hidden .message-avatar-wrap {
+  display: none;
+}
+
 .assistant-text,
 .assistant-text-block {
   min-width: 0;
@@ -37,6 +45,11 @@
   display: grid;
   gap: var(--space-2);
   min-width: 0;
+}
+
+.assistant-thinking-anchor {
+  min-height: 56px;
+  align-content: end;
 }
 
 .message-user-shell {
@@ -225,9 +238,12 @@
 
 .rich-media img,
 .rich-gallery img {
+  box-sizing: border-box;
   display: block;
   width: 100%;
   height: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
   object-fit: cover;
 }
 
@@ -238,12 +254,12 @@
 
 .rich-media {
   display: grid;
-  max-width: 320px;
+  max-width: 160px;
   margin: var(--space-3) 0;
 }
 
 .rich-media img {
-  max-height: 220px;
+  max-height: 110px;
 }
 
 .rich-media figcaption {
@@ -253,14 +269,12 @@
 .rich-gallery {
   display: grid;
   gap: var(--space-2);
-  max-width: min(100%, 720px);
+  max-width: min(100%, 360px);
   margin: var(--space-3) 0;
 }
 
 .rich-gallery.single {
-  grid-template-columns: minmax(0, 1fr);
-  width: 50%;
-  max-width: 360px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .rich-gallery.grid {
@@ -276,7 +290,7 @@
   padding: 0;
   place-items: center;
   border: 0;
-  border-radius: 0;
+  border-radius: var(--radius-small);
   background: transparent;
   overflow: hidden;
 }
@@ -284,7 +298,7 @@
 .media-lightbox {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: 1600;
   display: grid;
   place-items: center;
   overflow: hidden;

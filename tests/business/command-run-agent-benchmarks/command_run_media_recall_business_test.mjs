@@ -142,14 +142,13 @@ function runTura(imagePath) {
     "--skip-git-repo-check",
     "--session-id",
     sessionId,
-    "--agent",
+    "--agent-id",
     "coding_agent_fast",
     "-m",
     process.env.COMMAND_RUN_AGENT_TURA_MODEL || (model.includes("/") ? model : `openai/${model}`),
-    "-c",
-    `model_reasoning_effort=${reasoning}`,
-    "-c",
-    "service_tier=priority",
+    "-p",
+    "--model-reasoning-effort",
+    reasoning,
     "--cwd",
     turaDir,
   ]
@@ -178,10 +177,14 @@ function runTura(imagePath) {
   })
   const allText = collectText(first.stdout, second.stdout, providerText)
   const events = [...parseJsonl(first.stdout), ...parseJsonl(second.stdout)]
+  const unsupportedMedia =
+    /provider\/model does not support [`'"]?input_image/i.test(allText) ||
+    /no endpoints found that support image input/i.test(allText)
   return {
     id: "tura",
     ok: allText.includes("yellow") && allText.includes("star") && allText.includes("green"),
     recall_ok: allText.includes("star") && allText.includes("green"),
+    unsupported_media: unsupportedMedia,
     image_context_present_in_second_request: secondRequestHasImage,
     media_tool_calls: parseJsonl(first.stdout + "\n" + second.stdout).filter((event) => {
       const item = event.item || {}
@@ -268,8 +271,15 @@ function main() {
   assert(fs.existsSync(turaExe), `missing tura exe: ${turaExe}`)
   assert(fs.existsSync(codexExe), `missing current codex exe: ${codexExe}`)
   const results = [runCurrent(imagePath), runTura(imagePath)]
+  const expectMediaUnsupported = process.env.COMMAND_RUN_AGENT_EXPECT_MEDIA_UNSUPPORTED === "1"
+  const ok = results.every((result) => {
+    if (expectMediaUnsupported && result.id === "tura") {
+      return result.unsupported_media && result.media_tool_calls > 0
+    }
+    return result.ok
+  })
   const summary = {
-    ok: results.every((result) => result.ok),
+    ok,
     run_root: runRoot,
     image_path: imagePath,
     model,
@@ -278,7 +288,12 @@ function main() {
   }
   fs.writeFileSync(path.join(runRoot, "summary.json"), JSON.stringify(summary, null, 2))
   console.log(JSON.stringify(summary, null, 2))
-  assert(summary.ok, "media recall should pass for current and tura")
+  assert(
+    summary.ok,
+    expectMediaUnsupported
+      ? "media recall should pass for current and tura should clearly report unsupported image input"
+      : "media recall should pass for current and tura",
+  )
 }
 
 main()

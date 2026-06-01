@@ -306,12 +306,44 @@ export function upsertMessage(
   messages: Message[],
   message: Message,
 ): Message[] {
-  const without = messages.filter((item) => item.id !== message.id);
+  const without = messages.filter(
+    (item) =>
+      item.id !== message.id && !isOptimisticDuplicateUserMessage(item, message),
+  );
   return [...without, message].sort((left, right) => {
     const leftTime = left.time?.created ?? left.created_at ?? 0;
     const rightTime = right.time?.created ?? right.created_at ?? 0;
     return leftTime - rightTime;
   });
+}
+
+function isOptimisticDuplicateUserMessage(
+  existing: Message,
+  incoming: Message,
+): boolean {
+  if (
+    existing.role !== "user" ||
+    incoming.role !== "user" ||
+    !existing.id.startsWith("prompt:")
+  ) {
+    return false;
+  }
+  const existingText = messageText(existing).trim();
+  const incomingText = messageText(incoming).trim();
+  return existingText.length > 0 && existingText === incomingText;
+}
+
+function messageText(message: Message): string {
+  return message.parts
+    .map((part) => {
+      const record = part as Record<string, unknown>;
+      return typeof record.text === "string"
+        ? record.text
+        : typeof record.content === "string"
+          ? record.content
+          : "";
+    })
+    .join("\n");
 }
 
 function applyPartDelta(

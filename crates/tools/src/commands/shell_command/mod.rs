@@ -3,23 +3,28 @@ pub const PROMPT: &str = include_str!("prompt.md");
 pub const POLICY: &str = include_str!("policy.toml");
 pub const SCHEMA: &str = include_str!("schema.json");
 
+#[path = "src/execution.rs"]
+mod execution;
+#[path = "src/process.rs"]
+mod process;
+#[path = "src/read_batch.rs"]
+mod read_batch;
+#[path = "src/readonly.rs"]
+mod readonly;
+#[path = "src/request.rs"]
+mod request;
+#[path = "src/response.rs"]
+mod response;
+#[path = "src/shell.rs"]
+mod shell;
+
 use super::{apply_patch, CommandResponse};
 use crate::runtime::file_locks::Access;
 use crate::runtime::tool::{
     FunctionToolOutput, ToolCall, ToolContext, ToolError, ToolHandler, ToolPayload,
 };
-use serde_json::Value;
-use std::io::Read;
-use std::path::{Path, PathBuf};
-use std::process::ExitStatus;
-use std::process::{Command, Stdio};
-use std::thread;
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
-use tokio::io::AsyncReadExt;
-
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
+use std::path::Path;
+use std::process::Command;
 
 pub struct ShellCommandHandler;
 
@@ -29,12 +34,12 @@ impl ToolHandler for ShellCommandHandler {
         "shell_command"
     }
 
-    fn supports_parallel_tool_calls(&self) -> bool {
+    fn supports_macro_command(&self) -> bool {
         true
     }
 
     async fn is_mutating(&self, call: &ToolCall, ctx: &ToolContext) -> bool {
-        !looks_read_only_with_root(&payload_command_line(&call.payload), &ctx.session_dir)
+        !readonly::looks_read_only_with_root(&payload_command_line(&call.payload), &ctx.session_dir)
     }
 
     async fn access(&self, call: &ToolCall, ctx: &ToolContext) -> Access {
@@ -63,17 +68,10 @@ impl ToolHandler for ShellCommandHandler {
         .await;
         let success = response.success;
         Ok(FunctionToolOutput::from_value(
-            shell_output_value(response),
+            response::shell_output_value(response),
             Some(success),
         ))
     }
-}
-
-#[derive(Clone, Debug)]
-struct ShellRequest {
-    command: String,
-    cwd: PathBuf,
-    timeout_secs: u64,
 }
 
 pub fn execute(command_line: &str, session_dir: &Path, timeout_secs: u64) -> CommandResponse {
@@ -86,23 +84,26 @@ pub(super) fn execute_with_shell(
     timeout_secs: u64,
     shell_kind: &str,
 ) -> CommandResponse {
-    let request = parse_shell_request(command_line, session_dir, timeout_secs);
-    if let Some(patch_text) = embedded_apply_patch_text(&request.command) {
+    let request = request::parse_shell_request(command_line, session_dir, timeout_secs);
+    if let Some(patch_text) = request::embedded_apply_patch_text(&request.command) {
         return apply_patch::execute(&patch_text, session_dir);
     }
-    let use_bash =
-        shell_kind == "bash" || (cfg!(windows) && looks_posix_shell_script(&request.command));
-    let command_text = space_batched_read_command(&request.command, use_bash)
+    if let Some(reason) = super::command_safety::is_dangerous_command(&request.command) {
+        return response::blocked_command_response(&request.command, &reason);
+    }
+    let use_bash = shell_kind == "bash"
+        || (cfg!(windows) && shell::looks_posix_shell_script(&request.command));
+    let command_text = read_batch::space_batched_read_command(&request.command, use_bash)
         .unwrap_or_else(|| request.command.clone());
     let mut command = if use_bash {
-        let bash = bash_executable();
+        let bash = shell::bash_executable();
         let mut command = Command::new(bash);
         command
             .arg("-lc")
-            .arg(normalize_bash_command(&command_text));
+            .arg(shell::normalize_bash_command(&command_text));
         command
     } else if cfg!(windows) {
-        let mut command = Command::new(powershell_executable());
+        let mut command = Command::new(shell::powershell_executable());
         command.arg("-NoProfile").arg("-Command").arg(&command_text);
         command
     } else {
@@ -112,7 +113,7 @@ pub(super) fn execute_with_shell(
     };
     command.current_dir(&request.cwd);
 
-    run_command_with_timeout(command, request.timeout_secs)
+    execution::run_command_with_timeout(command, request.timeout_secs)
 }
 
 pub(super) async fn execute_async_with_shell(
@@ -122,30 +123,33 @@ pub(super) async fn execute_async_with_shell(
     shell_kind: &str,
     ctx: &ToolContext,
 ) -> CommandResponse {
-    let request = parse_shell_request(command_line, session_dir, timeout_secs);
-    if let Some(patch_text) = embedded_apply_patch_text(&request.command) {
+    let request = request::parse_shell_request(command_line, session_dir, timeout_secs);
+    if let Some(patch_text) = request::embedded_apply_patch_text(&request.command) {
         return apply_patch::execute(&patch_text, session_dir);
     }
-    if ctx.cancellation.is_cancelled() {
-        return failed_async_response("tool task aborted", -1);
+    if let Some(reason) = super::command_safety::is_dangerous_command(&request.command) {
+        return response::blocked_command_response(&request.command, &reason);
     }
-    let use_bash =
-        shell_kind == "bash" || (cfg!(windows) && looks_posix_shell_script(&request.command));
-    let command_text = space_batched_read_command(&request.command, use_bash)
+    if ctx.cancellation.is_cancelled() {
+        return response::failed_async_response("tool task aborted", -1);
+    }
+    let use_bash = shell_kind == "bash"
+        || (cfg!(windows) && shell::looks_posix_shell_script(&request.command));
+    let command_text = read_batch::space_batched_read_command(&request.command, use_bash)
         .unwrap_or_else(|| request.command.clone());
     let mut command = if use_bash {
-        let bash = bash_executable();
+        let bash = shell::bash_executable();
         let mut command = tokio::process::Command::new(bash);
         command
             .arg("-lc")
-            .arg(normalize_bash_command(&command_text));
+            .arg(shell::normalize_bash_command(&command_text));
         command
     } else if cfg!(windows) {
-        let mut command = tokio::process::Command::new(powershell_executable());
+        let mut command = tokio::process::Command::new(shell::powershell_executable());
         command
             .arg("-NoProfile")
             .arg("-Command")
-            .arg(prefix_powershell_script_with_utf8(&command_text));
+            .arg(shell::prefix_powershell_script_with_utf8(&command_text));
         command
     } else {
         let mut command = tokio::process::Command::new("/bin/bash");
@@ -153,443 +157,11 @@ pub(super) async fn execute_async_with_shell(
         command
     };
     command.current_dir(&request.cwd);
-    run_tokio_command_with_timeout(command, request.timeout_secs, ctx).await
-}
-
-fn run_command_with_timeout(mut command: Command, timeout_secs: u64) -> CommandResponse {
-    let started = Instant::now();
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    configure_process_group(&mut command);
-    match command.spawn() {
-        Ok(mut child) => {
-            let stdout_task = child
-                .stdout
-                .take()
-                .map(|stream| thread::spawn(move || read_blocking_stream(stream)));
-            let stderr_task = child
-                .stderr
-                .take()
-                .map(|stream| thread::spawn(move || read_blocking_stream(stream)));
-            loop {
-                match child.try_wait() {
-                    Ok(Some(status)) => {
-                        let (stdout, stderr) = drain_blocking_stream_tasks(
-                            stdout_task,
-                            stderr_task,
-                            Duration::from_secs(2),
-                        );
-                        return command_response_from_status(started, status, stdout, stderr);
-                    }
-                    Ok(None) => {
-                        if started.elapsed() >= Duration::from_secs(timeout_secs) {
-                            kill_child_process_tree(child.id());
-                            let _ = child.kill();
-                            let _ = child.wait();
-                            let (stdout, stderr) = drain_blocking_stream_tasks(
-                                stdout_task,
-                                stderr_task,
-                                Duration::from_secs(2),
-                            );
-                            let mut message = format!("Timed out after {timeout_secs} seconds");
-                            if !stderr.is_empty() {
-                                message.push_str("\nStderr tail:\n");
-                                message.push_str(&tail_chars(&stderr, 4000));
-                            }
-                            return CommandResponse {
-                                success: false,
-                                exit_code: -1,
-                                stdout,
-                                stderr,
-                                output: Value::String(message),
-                                changes: Vec::new(),
-                            };
-                        }
-                        thread::sleep(Duration::from_millis(50));
-                    }
-                    Err(err) => {
-                        return CommandResponse {
-                            success: false,
-                            exit_code: 1,
-                            stdout: String::new(),
-                            stderr: err.to_string(),
-                            output: Value::String(err.to_string()),
-                            changes: Vec::new(),
-                        };
-                    }
-                }
-            }
-        }
-        Err(err) => CommandResponse {
-            success: false,
-            exit_code: 1,
-            stdout: String::new(),
-            stderr: err.to_string(),
-            output: Value::String(err.to_string()),
-            changes: Vec::new(),
-        },
-    }
-}
-
-fn read_blocking_stream<R: Read>(mut stream: R) -> String {
-    let mut output = Vec::new();
-    let _ = stream.read_to_end(&mut output);
-    String::from_utf8_lossy(&output).to_string()
-}
-
-fn drain_blocking_stream_tasks(
-    mut stdout_task: Option<JoinHandle<String>>,
-    mut stderr_task: Option<JoinHandle<String>>,
-    timeout: Duration,
-) -> (String, String) {
-    fn finished(task: &Option<JoinHandle<String>>) -> bool {
-        task.as_ref().is_none_or(JoinHandle::is_finished)
-    }
-
-    let started = Instant::now();
-    while !(finished(&stdout_task) && finished(&stderr_task)) && started.elapsed() < timeout {
-        thread::sleep(Duration::from_millis(10));
-    }
-
-    fn take_if_finished(task: &mut Option<JoinHandle<String>>) -> String {
-        if task.as_ref().is_some_and(JoinHandle::is_finished) {
-            let task = task.take().expect("task was checked as present");
-            task.join().unwrap_or_default()
-        } else {
-            String::new()
-        }
-    }
-
-    let stdout = take_if_finished(&mut stdout_task);
-    let stderr = take_if_finished(&mut stderr_task);
-    (stdout, stderr)
-}
-
-fn command_response_from_status(
-    started: Instant,
-    status: ExitStatus,
-    stdout: String,
-    stderr: String,
-) -> CommandResponse {
-    let wall = started.elapsed().as_secs_f32();
-    let exit_code = status.code().unwrap_or(1);
-    let mut text = format!(
-        "Exit code: {exit_code}\nWall time: {:.1} seconds\nOutput:\n{}",
-        wall, stdout
-    );
-    if !stderr.is_empty() {
-        text.push_str("\nStderr:\n");
-        text.push_str(&stderr);
-    }
-    CommandResponse {
-        success: status.success(),
-        exit_code,
-        stdout,
-        stderr,
-        output: Value::String(text),
-        changes: Vec::new(),
-    }
-}
-
-fn tail_chars(text: &str, max_chars: usize) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    let start = chars.len().saturating_sub(max_chars);
-    chars[start..].iter().collect()
-}
-
-async fn run_tokio_command_with_timeout(
-    mut command: tokio::process::Command,
-    timeout_secs: u64,
-    ctx: &ToolContext,
-) -> CommandResponse {
-    let started = Instant::now();
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    configure_tokio_process_group(&mut command);
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(err) => return failed_async_response(&err.to_string(), 1),
-    };
-    let pid = child.id();
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let call_id = ctx.current_call_id().unwrap_or("command_run").to_string();
-    let stdout_task = stdout.map(|reader| {
-        tokio::spawn(read_stream_with_deltas(
-            reader,
-            ctx.clone(),
-            call_id.clone(),
-            "stdout",
-        ))
-    });
-    let stderr_task = stderr.map(|reader| {
-        tokio::spawn(read_stream_with_deltas(
-            reader,
-            ctx.clone(),
-            call_id.clone(),
-            "stderr",
-        ))
-    });
-    let mut wait_task = tokio::spawn(async move { child.wait().await });
-    let mut expiration = None;
-    let status = if ctx.cancellation.is_cancelled() {
-        expiration = Some("tool task aborted".to_string());
-        if let Some(pid) = pid {
-            kill_child_process_tree(pid);
-        }
-        None
-    } else {
-        tokio::select! {
-            output = &mut wait_task => output.ok().and_then(Result::ok),
-            _ = tokio::time::sleep(Duration::from_secs(timeout_secs)) => {
-                expiration = Some(format!("Timed out after {timeout_secs} seconds"));
-                if let Some(pid) = pid {
-                    kill_child_process_tree(pid);
-                }
-                None
-            }
-            _ = ctx.cancellation.cancelled() => {
-                expiration = Some("tool task aborted".to_string());
-                if let Some(pid) = pid {
-                    kill_child_process_tree(pid);
-                }
-                None
-            }
-        }
-    };
-    if status.is_none() {
-        wait_task.abort();
-    }
-    let (stdout, stderr) = drain_stream_tasks(stdout_task, stderr_task).await;
-
-    let wall = started.elapsed().as_secs_f32();
-    match status {
-        Some(status) => {
-            let exit_code = status.code().unwrap_or(1);
-            let mut text = format!(
-                "Exit code: {exit_code}\nWall time: {:.1} seconds\nOutput:\n{}",
-                wall, stdout
-            );
-            if !stderr.is_empty() {
-                text.push_str("\nStderr:\n");
-                text.push_str(&stderr);
-            }
-            CommandResponse {
-                success: status.success(),
-                exit_code,
-                stdout,
-                stderr,
-                output: Value::String(text),
-                changes: Vec::new(),
-            }
-        }
-        None => {
-            let message = expiration.unwrap_or_else(|| "tool task aborted".to_string());
-            CommandResponse {
-                success: false,
-                exit_code: -1,
-                stdout: String::new(),
-                stderr: message.clone(),
-                output: Value::String(message),
-                changes: Vec::new(),
-            }
-        }
-    }
-}
-
-async fn read_stream_with_deltas<R>(
-    mut reader: R,
-    ctx: ToolContext,
-    call_id: String,
-    stream: &'static str,
-) -> String
-where
-    R: tokio::io::AsyncRead + Unpin,
-{
-    let mut output = Vec::new();
-    let mut buffer = [0_u8; 8192];
-    loop {
-        match reader.read(&mut buffer).await {
-            Ok(0) => break,
-            Ok(n) => {
-                output.extend_from_slice(&buffer[..n]);
-                ctx.record_event(crate::runtime::tool::ToolRuntimeEvent::OutputDelta {
-                    call_id: call_id.clone(),
-                    stream: stream.to_string(),
-                    text: String::from_utf8_lossy(&buffer[..n]).to_string(),
-                });
-            }
-            Err(_) => break,
-        }
-    }
-    String::from_utf8_lossy(&output).to_string()
-}
-
-async fn drain_stream_tasks(
-    mut stdout_task: Option<tokio::task::JoinHandle<String>>,
-    mut stderr_task: Option<tokio::task::JoinHandle<String>>,
-) -> (String, String) {
-    async fn wait_task(task: &mut Option<tokio::task::JoinHandle<String>>) -> String {
-        match task.as_mut() {
-            Some(task) => task.await.unwrap_or_default(),
-            None => String::new(),
-        }
-    }
-
-    match tokio::time::timeout(Duration::from_secs(2), async {
-        tokio::join!(wait_task(&mut stdout_task), wait_task(&mut stderr_task))
-    })
-    .await
-    {
-        Ok(outputs) => outputs,
-        Err(_) => {
-            if let Some(task) = stdout_task {
-                task.abort();
-            }
-            if let Some(task) = stderr_task {
-                task.abort();
-            }
-            (String::new(), String::new())
-        }
-    }
-}
-
-fn failed_async_response(message: &str, exit_code: i32) -> CommandResponse {
-    CommandResponse {
-        success: false,
-        exit_code,
-        stdout: String::new(),
-        stderr: message.to_string(),
-        output: Value::String(message.to_string()),
-        changes: Vec::new(),
-    }
-}
-
-fn shell_output_value(response: CommandResponse) -> Value {
-    json_like_output(
-        response.exit_code,
-        response.stdout,
-        response.stderr,
-        response.output,
-        response.changes,
-    )
-}
-
-pub(crate) fn json_like_output(
-    exit_code: i32,
-    stdout: String,
-    stderr: String,
-    output: Value,
-    changes: Vec<Value>,
-) -> Value {
-    let transcript = output.as_str().unwrap_or_default().to_string();
-    let mut object = serde_json::Map::new();
-    object.insert("exit_code".to_string(), Value::Number(exit_code.into()));
-    object.insert("stdout".to_string(), Value::String(stdout));
-    object.insert("stderr".to_string(), Value::String(stderr));
-    object.insert("output".to_string(), output);
-    object.insert("transcript".to_string(), Value::String(transcript));
-    if !changes.is_empty() {
-        object.insert("changes".to_string(), Value::Array(changes));
-    }
-    Value::Object(object)
-}
-
-fn configure_process_group(command: &mut Command) {
-    #[cfg(unix)]
-    {
-        command.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(CREATE_NEW_PROCESS_GROUP);
-    }
-    let _ = command;
-}
-
-fn configure_tokio_process_group(command: &mut tokio::process::Command) {
-    #[cfg(unix)]
-    {
-        command.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        command.creation_flags(CREATE_NEW_PROCESS_GROUP);
-    }
-    let _ = command;
-}
-
-fn kill_child_process_tree(pid: u32) {
-    #[cfg(windows)]
-    {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-    #[cfg(unix)]
-    {
-        let group = format!("-{}", pid);
-        let _ = Command::new("kill")
-            .args(["-TERM", &group])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        thread::sleep(Duration::from_millis(100));
-        let _ = Command::new("kill")
-            .args(["-KILL", &group])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
+    execution::run_tokio_command_with_timeout(command, request.timeout_secs, ctx).await
 }
 
 pub fn looks_read_only(command_line: &str) -> bool {
-    looks_read_only_with_root(command_line, Path::new("."))
-}
-
-fn looks_read_only_with_root(command_line: &str, root: &Path) -> bool {
-    let request = parse_shell_request(command_line, root, 120);
-    let command = request.command.trim_start();
-    let lower = command.to_ascii_lowercase();
-    let tokens = lower
-        .split_whitespace()
-        .map(|token| token.trim_matches(&['"', '\''][..]))
-        .collect::<Vec<_>>();
-    let first_token = tokens.first().copied().unwrap_or_default();
-
-    if first_token == "git" {
-        return git_command_line_is_read_only(&tokens) && !contains_shell_write_operator(&lower);
-    }
-
-    matches!(
-        first_token,
-        "rg" | "grep"
-            | "find"
-            | "fd"
-            | "ls"
-            | "dir"
-            | "pwd"
-            | "cat"
-            | "type"
-            | "get-content"
-            | "select-string"
-            | "get-childitem"
-            | "get-location"
-            | "test-path"
-            | "where-object"
-    ) && !contains_shell_write_operator(&lower)
+    readonly::looks_read_only(command_line)
 }
 
 fn payload_command_line(payload: &ToolPayload) -> String {
@@ -605,650 +177,27 @@ fn payload_command_line(payload: &ToolPayload) -> String {
     }
 }
 
-fn prefix_powershell_script_with_utf8(script: &str) -> String {
-    if script.contains("[Console]::OutputEncoding") {
-        script.to_string()
-    } else {
-        format!(
-            "[Console]::InputEncoding=[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); $OutputEncoding=[Console]::OutputEncoding; {script}"
-        )
-    }
-}
-
 pub fn display_command(command_line: &str, session_dir: &Path, timeout_secs: u64) -> String {
-    parse_shell_request(command_line, session_dir, timeout_secs).command
+    request::parse_shell_request(command_line, session_dir, timeout_secs).command
 }
 
-fn bash_executable() -> PathBuf {
-    if !cfg!(windows) {
-        return PathBuf::from("/bin/bash");
-    }
-    [
-        r"C:\Program Files\Git\bin\bash.exe",
-        r"C:\Program Files\Git\usr\bin\bash.exe",
-        r"C:\Program Files (x86)\Git\bin\bash.exe",
-        "bash",
-    ]
-    .iter()
-    .map(PathBuf::from)
-    .find(|path| path == Path::new("bash") || path.exists())
-    .unwrap_or_else(|| PathBuf::from("bash"))
-}
-
-fn powershell_executable() -> PathBuf {
-    if !cfg!(windows) {
-        return PathBuf::from("pwsh");
-    }
-    [
-        r"C:\Program Files\PowerShell\7\pwsh.exe",
-        "pwsh",
-        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
-        "powershell",
-    ]
-    .iter()
-    .map(PathBuf::from)
-    .find(|path| path == Path::new("pwsh") || path == Path::new("powershell") || path.exists())
-    .unwrap_or_else(|| PathBuf::from("powershell"))
-}
-
-fn normalize_bash_command(command: &str) -> String {
-    if !cfg!(windows) {
-        return command.to_string();
-    }
-
-    let mut normalized = String::with_capacity(command.len());
-    let mut rest = command;
-    while let Some(index) = rest.find("/mnt/") {
-        normalized.push_str(&rest[..index]);
-        rest = &rest[index + "/mnt/".len()..];
-        let Some(drive) = rest.chars().next() else {
-            normalized.push_str("/mnt/");
-            break;
-        };
-        let drive_len = drive.len_utf8();
-        let after_drive = &rest[drive_len..];
-        if drive.is_ascii_alphabetic() && after_drive.starts_with('/') {
-            normalized.push(drive.to_ascii_uppercase());
-            normalized.push(':');
-            rest = after_drive;
-        } else {
-            normalized.push_str("/mnt/");
-        }
-    }
-    normalized.push_str(rest);
-    normalized
-}
-
-fn looks_posix_shell_script(command: &str) -> bool {
-    let text = command.trim_start();
-    let lower = text.to_ascii_lowercase();
-    if lower.starts_with("powershell ")
-        || lower.starts_with("powershell.exe ")
-        || lower.starts_with("pwsh ")
-        || lower.starts_with("pwsh.exe ")
-        || (lower.starts_with('"')
-            && (lower.contains("powershell.exe\"") || lower.contains("pwsh.exe\"")))
-    {
-        return false;
-    }
-
-    lower.starts_with("python - <<")
-        || lower.contains(" python - <<")
-        || lower.starts_with("python3 - <<")
-        || lower.contains(" python3 - <<")
-        || lower.starts_with("pythonpath=")
-        || lower.contains(" pythonpath=")
-        || lower.contains("; do ")
-        || lower.contains("; done")
-        || (lower.starts_with("for ") && lower.contains(" in ") && lower.contains(" do "))
-        || lower.contains(" && sed ")
-        || lower.contains(" && cat ")
-        || lower.contains("$(basename ")
-        || lower.contains("#!/usr/bin/env bash")
-        || lower.contains("#!/bin/bash")
-}
-
-fn parse_shell_request(
-    command_line: &str,
-    session_dir: &Path,
-    default_timeout_secs: u64,
-) -> ShellRequest {
-    let text = command_line.trim();
-    if text.starts_with('{') || text.starts_with('"') || text.starts_with('\'') {
-        if let Some(value) = parse_shell_request_json(text) {
-            if let Some(command) = value
-                .get("command")
-                .or_else(|| value.get("cmd"))
-                .and_then(Value::as_str)
-            {
-                let timeout_secs = value
-                    .get("timeout_secs")
-                    .and_then(Value::as_u64)
-                    .or_else(|| {
-                        value
-                            .get("timeout_ms")
-                            .and_then(Value::as_u64)
-                            .map(|ms| ms.div_ceil(1000).max(1))
-                    })
-                    .unwrap_or(default_timeout_secs);
-                let cwd = value
-                    .get("workdir")
-                    .or_else(|| value.get("cwd"))
-                    .and_then(Value::as_str)
-                    .map(PathBuf::from)
-                    .map(|path| {
-                        if path.is_absolute() {
-                            path
-                        } else {
-                            session_dir.join(path)
-                        }
-                    })
-                    .unwrap_or_else(|| session_dir.to_path_buf());
-                return ShellRequest {
-                    command: normalize_shell_command_text(command),
-                    cwd,
-                    timeout_secs,
-                };
-            }
-        }
-    }
-    ShellRequest {
-        command: normalize_shell_command_text(command_line),
-        cwd: session_dir.to_path_buf(),
-        timeout_secs: default_timeout_secs,
-    }
-}
-
-fn normalize_shell_command_text(command: &str) -> String {
-    let trimmed = command.trim_start();
-    for prefix in ["command:", "cmd:", "shell:", "bash:"] {
-        if trimmed
-            .get(..prefix.len())
-            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
-        {
-            return trimmed[prefix.len()..].trim_start().to_string();
-        }
-    }
-    let normalized_lines = command
-        .lines()
-        .map(|line| {
-            let line_trimmed = line.trim_start();
-            for prefix in ["command:", "cmd:", "shell:", "bash:"] {
-                if line_trimmed
-                    .get(..prefix.len())
-                    .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
-                {
-                    let leading_len = line.len().saturating_sub(line_trimmed.len());
-                    return format!(
-                        "{}{}",
-                        &line[..leading_len],
-                        line_trimmed[prefix.len()..].trim_start()
-                    );
-                }
-            }
-            line.to_string()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    if command.ends_with('\n') {
-        format!("{normalized_lines}\n")
-    } else {
-        normalized_lines
-    }
-}
-
-fn space_batched_read_command(command: &str, use_bash: bool) -> Option<String> {
-    if command.contains('\n') {
-        return None;
-    }
-    let parts = split_shell_sequence(command)?;
-    let parsed = parts
-        .iter()
-        .map(|part| simple_read_command(part, use_bash))
-        .collect::<Option<Vec<_>>>()?;
-    let target_count = parsed
-        .iter()
-        .map(|command| command.targets.len())
-        .sum::<usize>();
-    if target_count < 2 {
-        return None;
-    }
-
-    let mut spaced = Vec::with_capacity(target_count * 2);
-    for command in parsed {
-        for target in &command.targets {
-            if !spaced.is_empty() {
-                spaced.push(blank_line_command(use_bash).to_string());
-            }
-            spaced.push(command.command_for_target(target, use_bash));
-        }
-    }
-
-    Some(spaced.join("; "))
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct SimpleReadCommand {
-    prefix: Vec<String>,
-    targets: Vec<String>,
-}
-
-fn split_shell_sequence(command: &str) -> Option<Vec<&str>> {
-    let mut parts = Vec::new();
-    let mut start = 0usize;
-    let mut single_quoted = false;
-    let mut double_quoted = false;
-    let mut escaped = false;
-
-    for (index, ch) in command.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if ch == '\\' && !single_quoted {
-            escaped = true;
-            continue;
-        }
-        match ch {
-            '\'' if !double_quoted => single_quoted = !single_quoted,
-            '"' if !single_quoted => double_quoted = !double_quoted,
-            ';' if !single_quoted && !double_quoted => {
-                let part = command[start..index].trim();
-                if part.is_empty() {
-                    return None;
-                }
-                parts.push(part);
-                start = index + ch.len_utf8();
-            }
-            _ => {}
-        }
-    }
-
-    if single_quoted || double_quoted {
-        return None;
-    }
-    let tail = command[start..].trim();
-    if tail.is_empty() {
-        return None;
-    }
-    parts.push(tail);
-    Some(parts)
-}
-
-fn simple_read_command(command: &str, use_bash: bool) -> Option<SimpleReadCommand> {
-    if command
-        .chars()
-        .any(|ch| matches!(ch, '|' | '>' | '<' | '&' | '`' | '{' | '}'))
-        || command.contains("$(")
-    {
-        return None;
-    }
-    let tokens = shell_words(command, use_bash)?;
-    let cmd = tokens.first()?.to_ascii_lowercase();
-    if !matches!(cmd.as_str(), "get-content" | "gc" | "cat" | "type") {
-        return None;
-    }
-
-    let mut prefix = vec![tokens[0].clone()];
-    let mut targets = Vec::new();
-    let mut index = 1usize;
-    while index < tokens.len() {
-        let token = tokens[index].as_str();
-        if token == "--" {
-            prefix.push(token.to_string());
-            index += 1;
-            continue;
-        }
-        if use_bash && token.starts_with('-') {
-            prefix.push(token.to_string());
-            index += 1;
-            continue;
-        }
-        if !use_bash && token.starts_with('-') {
-            let option = token.to_ascii_lowercase();
-            prefix.push(token.to_string());
-            index += 1;
-            if powershell_option_takes_value(&option) && index < tokens.len() {
-                if powershell_path_option(&option) {
-                    collect_read_targets(&tokens[index], &mut targets)?;
-                } else {
-                    prefix.push(tokens[index].clone());
-                }
-                index += 1;
-            }
-            continue;
-        }
-        collect_read_targets(token, &mut targets)?;
-        index += 1;
-    }
-
-    (!targets.is_empty()).then_some(SimpleReadCommand { prefix, targets })
-}
-
-impl SimpleReadCommand {
-    fn command_for_target(&self, target: &str, use_bash: bool) -> String {
-        let mut tokens = self.prefix.clone();
-        tokens.push(shell_quote_for_runtime(target, use_bash));
-        tokens.join(" ")
-    }
-}
-
-fn powershell_option_takes_value(option: &str) -> bool {
-    matches!(
-        option,
-        "-path"
-            | "-literalpath"
-            | "-filepath"
-            | "-totalcount"
-            | "-head"
-            | "-first"
-            | "-tail"
-            | "-last"
-            | "-encoding"
-            | "-readcount"
-            | "-delimiter"
-            | "-filter"
-            | "-include"
-            | "-exclude"
-    )
-}
-
-fn powershell_path_option(option: &str) -> bool {
-    matches!(option, "-path" | "-literalpath" | "-filepath")
-}
-
-fn collect_read_targets(token: &str, targets: &mut Vec<String>) -> Option<()> {
-    for part in token.split(',') {
-        let target = normalize_read_target_for_marker(part)?;
-        targets.push(target);
-    }
-    Some(())
-}
-
-fn shell_words(command: &str, escape_backslash: bool) -> Option<Vec<String>> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut single_quoted = false;
-    let mut double_quoted = false;
-    let mut escaped = false;
-
-    for ch in command.chars() {
-        if escaped {
-            current.push(ch);
-            escaped = false;
-            continue;
-        }
-        if escape_backslash && ch == '\\' && !single_quoted {
-            escaped = true;
-            continue;
-        }
-        match ch {
-            '\'' if !double_quoted => single_quoted = !single_quoted,
-            '"' if !single_quoted => double_quoted = !double_quoted,
-            ch if ch.is_whitespace() && !single_quoted && !double_quoted => {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-            }
-            _ => current.push(ch),
-        }
-    }
-
-    if escaped {
-        current.push('\\');
-    }
-    if single_quoted || double_quoted {
-        return None;
-    }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-    Some(tokens)
-}
-
-fn normalize_read_target_for_marker(value: &str) -> Option<String> {
-    let target = value.trim().trim_matches(';').trim_matches(',');
-    if target.is_empty() || target.starts_with('$') || target.starts_with('|') {
-        return None;
-    }
-    if !(target.contains('/') || target.contains('\\') || target.contains('.')) {
-        return None;
-    }
-    Some(target.to_string())
-}
-
-fn shell_quote_for_runtime(value: &str, use_bash: bool) -> String {
-    if use_bash {
-        format!("'{}'", sh_single_quote(value))
-    } else {
-        format!("'{}'", powershell_single_quote(value))
-    }
-}
-
-fn blank_line_command(use_bash: bool) -> &'static str {
-    if use_bash {
-        "printf '\\n'"
-    } else {
-        "Write-Output ''"
-    }
-}
-
-fn powershell_single_quote(value: &str) -> String {
-    value.replace('\'', "''")
-}
-
-fn sh_single_quote(value: &str) -> String {
-    value.replace('\'', "'\"'\"'")
-}
-
-fn embedded_apply_patch_text(command: &str) -> Option<String> {
-    let begin = command.find("*** Begin Patch")?;
-    let after_begin = &command[begin..];
-    let end_relative = after_begin.find("*** End Patch")?;
-    let end = begin + end_relative + "*** End Patch".len();
-    let patch = &command[begin..end];
-    if command[..begin].contains("cat ")
-        || command[..begin].contains("Get-Content")
-        || command[..begin].contains("grep ")
-        || command[..begin].contains("rg ")
-    {
-        return None;
-    }
-    Some(patch.trim().to_string())
-}
-
-fn parse_shell_request_json(text: &str) -> Option<Value> {
-    fn parse_candidate(candidate: &str, depth: usize) -> Option<Value> {
-        if depth > 3 {
-            return None;
-        }
-        match serde_json::from_str::<Value>(candidate).ok()? {
-            Value::String(inner) => parse_candidate(inner.trim(), depth + 1),
-            value => Some(value),
-        }
-    }
-
-    let trimmed = text.trim();
-    parse_candidate(trimmed, 0)
-        .or_else(|| parse_candidate(&format!("\"{trimmed}\""), 0))
-        .or_else(|| parse_loose_shell_request_object(trimmed))
-        .or_else(|| {
-            trimmed
-                .strip_prefix('\'')
-                .and_then(|value| value.strip_suffix('\''))
-                .and_then(|inner| parse_candidate(inner.trim(), 0))
-        })
-        .or_else(|| {
-            if trimmed.contains("\\\"") {
-                parse_candidate(&trimmed.replace("\\\"", "\""), 0)
-            } else {
-                None
-            }
-        })
-}
-
-fn parse_loose_shell_request_object(text: &str) -> Option<Value> {
-    let trimmed = text.trim();
-    if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
-        return None;
-    }
-
-    let command = loose_json_string_field(trimmed, "command")
-        .or_else(|| loose_json_string_field(trimmed, "cmd"))?;
-    let mut object = serde_json::Map::new();
-    object.insert("command".to_string(), Value::String(command));
-    if let Some(workdir) = loose_json_string_field(trimmed, "workdir") {
-        object.insert("workdir".to_string(), Value::String(workdir));
-    }
-    if let Some(timeout_ms) = loose_json_number_field(trimmed, "timeout_ms") {
-        object.insert("timeout_ms".to_string(), Value::Number(timeout_ms.into()));
-    }
-    if let Some(timeout_secs) = loose_json_number_field(trimmed, "timeout_secs") {
-        object.insert(
-            "timeout_secs".to_string(),
-            Value::Number(timeout_secs.into()),
-        );
-    }
-    Some(Value::Object(object))
-}
-
-fn loose_json_string_field(text: &str, field: &str) -> Option<String> {
-    let marker = format!("\"{field}\":\"");
-    let start = text.find(&marker)? + marker.len();
-    let raw = loose_json_string_field_raw(&text[start..])?;
-    decode_loose_json_string(raw)
-}
-
-fn loose_json_string_field_raw(rest: &str) -> Option<&str> {
-    let bytes = rest.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'"' {
-            let mut slash_count = 0;
-            let mut cursor = index;
-            while cursor > 0 && bytes[cursor - 1] == b'\\' {
-                slash_count += 1;
-                cursor -= 1;
-            }
-            if slash_count % 2 == 0 {
-                let after = &rest[index + 1..];
-                if after.trim_start().starts_with(',')
-                    || after.trim_start().starts_with('}')
-                    || after.trim_start().is_empty()
-                {
-                    return Some(&rest[..index]);
-                }
-            }
-        }
-        index += 1;
-    }
-    None
-}
-
-fn loose_json_number_field(text: &str, field: &str) -> Option<u64> {
-    let marker = format!("\"{field}\":");
-    let start = text.find(&marker)? + marker.len();
-    let rest = text[start..].trim_start();
-    let digits = rest
-        .chars()
-        .take_while(|ch| ch.is_ascii_digit())
-        .collect::<String>();
-    (!digits.is_empty())
-        .then(|| digits.parse::<u64>().ok())
-        .flatten()
-}
-
-fn decode_loose_json_string(raw: &str) -> Option<String> {
-    let mut decoded = String::with_capacity(raw.len());
-    let mut chars = raw.chars();
-    while let Some(ch) = chars.next() {
-        if ch != '\\' {
-            decoded.push(ch);
-            continue;
-        }
-        let Some(next) = chars.next() else {
-            decoded.push('\\');
-            break;
-        };
-        match next {
-            '"' => decoded.push('"'),
-            '\\' => decoded.push('\\'),
-            '/' => decoded.push('/'),
-            'n' => decoded.push('\n'),
-            'r' => decoded.push('\r'),
-            't' => decoded.push('\t'),
-            'b' => decoded.push('\u{0008}'),
-            'f' => decoded.push('\u{000c}'),
-            'u' => {
-                let digits = chars.by_ref().take(4).collect::<String>();
-                if let Ok(code) = u16::from_str_radix(&digits, 16) {
-                    if let Some(value) = char::from_u32(code as u32) {
-                        decoded.push(value);
-                    }
-                }
-            }
-            other => {
-                decoded.push('\\');
-                decoded.push(other);
-            }
-        }
-    }
-    Some(decoded)
-}
-
-fn git_command_line_is_read_only(tokens: &[&str]) -> bool {
-    let mut index = 1;
-    while index < tokens.len() {
-        let token = tokens[index];
-        match token {
-            "-c" | "-C" | "--git-dir" | "--work-tree" => {
-                index += 2;
-            }
-            token if token.starts_with('-') => {
-                index += 1;
-            }
-            "status" | "diff" | "show" | "log" | "ls-files" | "grep" | "rev-parse" | "describe"
-            | "blame" => {
-                return true;
-            }
-            "branch" => {
-                return tokens
-                    .iter()
-                    .skip(index + 1)
-                    .any(|token| matches!(*token, "--show-current" | "--list" | "-a" | "-r"));
-            }
-            _ => return false,
-        }
-    }
-
-    false
-}
-
-fn contains_shell_write_operator(command: &str) -> bool {
-    command.contains(" >")
-        || command.contains(">>")
-        || command.contains("set-content")
-        || command.contains("out-file")
-        || command.contains("new-item")
-        || command.contains("remove-item")
-        || command.contains("move-item")
-        || command.contains("copy-item")
-        || command.contains("tee-object")
-        || command.contains("apply_patch")
-        || command.contains("cargo test")
-        || command.contains("cargo build")
-        || command.contains("cargo check")
+pub(crate) fn json_like_output(
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
+    output: serde_json::Value,
+    changes: Vec<serde_json::Value>,
+) -> serde_json::Value {
+    response::json_like_output(exit_code, stdout, stderr, output, changes)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        embedded_apply_patch_text, execute_with_shell, looks_posix_shell_script,
-        normalize_bash_command, parse_shell_request, space_batched_read_command,
-    };
-    use std::fs;
+    use super::{read_batch, request, shell};
+    use read_batch::space_batched_read_command;
+    use request::{embedded_apply_patch_text, parse_shell_request};
+    use shell::{looks_posix_shell_script, normalize_bash_command};
     use std::path::Path;
-    use std::time::{Duration, Instant};
 
     #[test]
     fn parses_json_shell_request_with_escaped_quotes() {
@@ -1478,37 +427,6 @@ mod tests {
     }
 
     #[test]
-    fn executed_simple_batch_reads_emit_plain_output_with_blank_line_separator() {
-        let root =
-            std::env::temp_dir().join(format!("tura-shell-batch-read-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("src")).expect("create temp src");
-        fs::write(root.join("src/a.txt"), "alpha\n").expect("write a");
-        fs::write(root.join("src/b.txt"), "bravo\n").expect("write b");
-
-        let (command, shell_kind) = if cfg!(windows) {
-            (
-                "Get-Content src/a.txt; Get-Content src/b.txt",
-                "shell_command",
-            )
-        } else {
-            ("cat src/a.txt; cat src/b.txt", "bash")
-        };
-        let response = execute_with_shell(command, &root, 10, shell_kind);
-        let _ = fs::remove_dir_all(&root);
-
-        assert!(response.success, "{}", response.stderr);
-        let output = response.output.as_str().unwrap_or_default();
-        assert!(!output.contains("---FILE---"), "{output}");
-        assert!(output.contains("alpha"), "{output}");
-        assert!(output.contains("bravo"), "{output}");
-        assert!(
-            output.contains("alpha\n\nbravo") || output.contains("alpha\r\n\r\nbravo"),
-            "{output}"
-        );
-    }
-
-    #[test]
     fn windows_bash_command_normalizes_wsl_mount_paths() {
         let command = "cd /mnt/c/Users/example/project && python - <<'PY'\nprint('ok')\nPY";
 
@@ -1539,41 +457,8 @@ mod tests {
             "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -Command 'for f in *.py; do echo $f; done'"
         ));
     }
-
-    #[test]
-    fn timeout_kills_descendants_that_hold_output_pipes() {
-        let started = Instant::now();
-        let response = execute_with_shell(
-            r#"{"command":"sh -c 'sleep 10 & wait'","timeout_ms":1000}"#,
-            Path::new("."),
-            120,
-            "bash",
-        );
-
-        assert!(!response.success);
-        assert_eq!(response.exit_code, -1);
-        assert!(
-            started.elapsed() < Duration::from_secs(5),
-            "timeout should not wait for orphaned descendants"
-        );
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn exited_parent_returns_even_when_descendant_holds_output_pipes() {
-        let started = Instant::now();
-        let response = execute_with_shell(
-            r#"{"command":"sh -c 'sleep 3 &'","timeout_ms":10000}"#,
-            Path::new("."),
-            120,
-            "bash",
-        );
-
-        assert!(response.success);
-        assert_eq!(response.exit_code, 0);
-        assert!(
-            started.elapsed() < Duration::from_secs(3),
-            "early parent exit should not wait for descendant-held pipes"
-        );
-    }
 }
+
+#[cfg(test)]
+#[path = "tests/mod.rs"]
+mod business_tests;

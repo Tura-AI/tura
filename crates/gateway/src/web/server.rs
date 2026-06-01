@@ -109,6 +109,15 @@ pub fn build_router() -> Router {
             patch(api::product::patch_product_project),
         )
         .route("/api/agents", get(api::product::list_product_agents))
+        .route("/api/personas", get(api::misc::list_personas))
+        .route("/api/personas", post(api::misc::create_persona))
+        .route(
+            "/api/personas/{personaID}",
+            get(api::misc::get_persona)
+                .put(api::misc::update_persona)
+                .patch(api::misc::update_persona)
+                .delete(api::misc::delete_persona),
+        )
         .route("/api/agent-templates", get(api::product::agent_templates))
         .route("/api/runtimes", get(api::product::list_runtimes))
         .route("/api/skills", get(api::product::list_product_skills))
@@ -287,6 +296,7 @@ pub fn build_router() -> Router {
         .route("/file", post(api::file::write_file))
         .route("/file/content", get(api::file::get_file_content))
         .route("/file/content", post(api::file::write_file))
+        .route("/file/media", get(api::file::get_file_media))
         .route("/file/open", post(api::file::open_file))
         .route("/file/open-location", post(api::file::open_file_location))
         .route("/file/status", get(api::file::get_file_status))
@@ -368,15 +378,35 @@ pub fn build_router() -> Router {
             get(api::mcp::mcp_auth_callback),
         )
         // Agent
-        .route("/agent", get(api::misc::list_agents))
+        .route(
+            "/agent",
+            get(api::misc::list_agents).post(api::misc::create_agent),
+        )
+        .route(
+            "/agent/{agentID}",
+            get(api::misc::get_agent)
+                .put(api::misc::update_agent)
+                .patch(api::misc::update_agent)
+                .delete(api::misc::delete_agent),
+        )
+        // Persona
+        .route(
+            "/persona",
+            get(api::misc::list_personas).post(api::misc::create_persona),
+        )
+        .route(
+            "/persona/{personaID}",
+            get(api::misc::get_persona)
+                .put(api::misc::update_persona)
+                .patch(api::misc::update_persona)
+                .delete(api::misc::delete_persona),
+        )
         // Command
         .route("/command", get(api::misc::list_commands))
         .route("/command", post(api::misc::execute_command))
         // VCS
         .route("/vcs", get(api::misc::get_vcs_info))
         .route("/vcs/diff", get(api::misc::get_vcs_diff))
-        // LSP
-        .route("/lsp", get(api::misc::get_lsp_status))
         .route("/service/status", get(api::misc::get_service_status))
         .route(
             "/service/process/{pid}/stop",

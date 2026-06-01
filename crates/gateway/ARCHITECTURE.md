@@ -587,6 +587,13 @@ The router client should support:
 - proxy command events into gateway app events
 - PTY create/list/update/delete/connect
 
+The gateway↔router HTTP route (`POST /run_agent`) is the **external** boundary
+(frontend → gateway → router). For **internal** runtime-initiated child
+sub-session dispatch, the runtime worker invokes `tura_router run-agent`
+directly as a subprocess (CLI stdin/stdout JSON); it does not go back through
+the gateway or over HTTP. Router + gateway are a single process; all runtimes
+are subprocesses spawned by that process.
+
 ## Daemon And Runtime APIs
 
 Multica-compatible daemon behavior:

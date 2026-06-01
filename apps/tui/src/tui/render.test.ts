@@ -6,6 +6,14 @@ import { render } from "./render.js";
 
 process.env.TURA_LANG = "en";
 
+const providerEnums = {
+  domains: [],
+  capabilities: [],
+  api_styles: [],
+  auth_methods: [],
+  statuses: [],
+};
+
 test("TUI i18n dictionaries keep zh-CN and en keys in sync", () => {
   assert.doesNotThrow(() => assertDictionaryParity());
 });
@@ -43,6 +51,7 @@ test("render includes core TUI panels without throwing", () => {
       all: [{ id: "openai", name: "OpenAI", models: { "gpt-5.5": { id: "gpt-5.5", name: "gpt-5.5" } } }],
       default: { openai: "gpt-5.5" },
       connected: ["openai"],
+      enums: providerEnums,
     },
     sessions: [session],
   });
@@ -87,7 +96,7 @@ test("render applies communication style rich text without leaking protocol mark
     ],
     todos: [],
     permissions: [],
-    providers: { all: [], default: {}, connected: [] },
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
     sessions: [session],
   });
 
@@ -136,7 +145,7 @@ test("render applies rich text cleanup to tool summaries", () => {
     ],
     todos: [],
     permissions: [],
-    providers: { all: [], default: {}, connected: [] },
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
     sessions: [session],
   });
 

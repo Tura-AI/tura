@@ -6,27 +6,12 @@
 use serde_json::Value;
 
 use crate::tura_llm::CallOptions;
+use crate::utils::text_from_content;
 
 /// Flatten a message `content` field (string or array-of-parts) into a single
 /// text blob, returning `None` when there is nothing meaningful.
 pub(crate) fn message_content_text(content: Option<&Value>) -> Option<String> {
-    match content? {
-        Value::String(value) => Some(value.clone()),
-        Value::Array(items) => {
-            let text = items
-                .iter()
-                .filter_map(|item| {
-                    item.get("text")
-                        .and_then(Value::as_str)
-                        .or_else(|| item.get("content").and_then(Value::as_str))
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            (!text.trim().is_empty()).then_some(text)
-        }
-        other if other.is_null() => None,
-        other => Some(other.to_string()),
-    }
+    text_from_content(content)
 }
 
 /// Insert `key` into `payload` only when `value` is `Some`.

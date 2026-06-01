@@ -1,82 +1,27 @@
 import {
+  type Command,
+  type FileInfo,
+  type PollInterval,
+  type Project,
+  type StartCondition,
+} from "@tura/gateway-sdk";
+import Check from "lucide-solid/icons/check";
+import ChevronDown from "lucide-solid/icons/chevron-down";
+import FolderOpen from "lucide-solid/icons/folder-open";
+import Search from "lucide-solid/icons/search";
+import {
   For,
-  Match,
+  type JSX,
   Show,
-  Switch,
   createEffect,
   createMemo,
   createSignal,
   onCleanup,
-  onMount,
-  type Accessor,
-  type JSX,
-  type Setter,
 } from "solid-js";
-import { Portal } from "solid-js/web";
-import ExternalLink from "lucide-solid/icons/external-link";
-import LayoutList from "lucide-solid/icons/layout-list";
-import ArrowLeft from "lucide-solid/icons/arrow-left";
-import CalendarDays from "lucide-solid/icons/calendar-days";
-import ChartGantt from "lucide-solid/icons/chart-gantt";
-import Check from "lucide-solid/icons/check";
-import ChevronDown from "lucide-solid/icons/chevron-down";
-import ChevronLeft from "lucide-solid/icons/chevron-left";
-import ChevronRight from "lucide-solid/icons/chevron-right";
-import Columns3 from "lucide-solid/icons/columns-3";
-import Copy from "lucide-solid/icons/copy";
-import Edit3 from "lucide-solid/icons/pencil";
-import FolderOpen from "lucide-solid/icons/folder-open";
-import KeyRound from "lucide-solid/icons/key-round";
-import MoreHorizontal from "lucide-solid/icons/ellipsis";
-import Pin from "lucide-solid/icons/pin";
-import Plus from "lucide-solid/icons/plus";
-import Search from "lucide-solid/icons/search";
-import Settings from "lucide-solid/icons/settings";
-import Trash2 from "lucide-solid/icons/trash-2";
-import {
-  GatewayClient,
-  GatewayError,
-  connectGatewayEvents,
-  defaultGatewayUrl,
-  errorMessage,
-  type Agent,
-  type Command,
-  type FileContentResponse,
-  type FileInfo,
-  type GatewayConfig,
-  type Message,
-  type ProviderAuthMethod,
-  type ProductIssue,
-  type Project,
-  type PollInterval,
-  type SdkProvider,
-  type Session,
-  type StartCondition,
-  type TaskManagement,
-  type PlanStatus,
-} from "@tura/gateway-sdk";
-import {
-  Composer,
-  ConversationView,
-  composerFileToken,
-  composerImageToken,
-} from "../conversation/conversation-view";
-import { applyGatewayEvent } from "../state/event-reducer";
-import {
-  activeSession,
-  type ComposerImage,
-  initialAppState,
-  type MainTab,
-  type PlanMode,
-  sessionDirectory,
-  sessionUpdatedAt,
-  sessionTitle,
-  type AppState,
-  type SettingsSection,
-  type ThemeMode,
-} from "../state/global-store";
-import { classNames, truncate } from "../state/format";
-import { t, type TextKey } from "../i18n";
+import { Composer } from "../conversation/conversation-view";
+import { t } from "../i18n";
+import { classNames } from "../state/format";
+import { type AppState, type ComposerImage } from "../state/global-store";
 
 import { samePath, shortWorkspaceLabel } from "../utils/app-format";
 import { PlanComposerControls } from "./plan/plan-composer";
@@ -91,6 +36,7 @@ export function ConversationEmptyView(props: {
   onDraftStartCondition: (value: StartCondition) => void;
   onDraftStartAt: (value: string) => void;
   onDraftPollInterval: (value: PollInterval) => void;
+  agentMenu?: JSX.Element;
   onSubmit: () => void;
 }) {
   const [naming, setNaming] = createSignal(false);
@@ -149,6 +95,7 @@ export function ConversationEmptyView(props: {
                 onStartAt={props.onDraftStartAt}
                 onPollInterval={props.onDraftPollInterval}
               />
+              {props.agentMenu}
             </>
           }
         />
@@ -263,8 +210,21 @@ export function NewSessionWorkspacePicker(props: {
               <span>{t("createWorkspace")}</span>
             </button>
             <button type="button" onClick={pickDirectory}>
-              <span>{t("localDirectory")}</span>
+              <span>{t("existingDirectory")}</span>
             </button>
+            <Show when={props.directory}>
+              {(directory) => (
+                <button
+                  type="button"
+                  onClick={() => {
+                    props.onWorkspace(directory());
+                    setOpen(false);
+                  }}
+                >
+                  <span>{t("defaultWorkspace")}</span>
+                </button>
+              )}
+            </Show>
           </div>
         </div>
       </Show>

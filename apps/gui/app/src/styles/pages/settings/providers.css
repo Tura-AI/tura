@@ -1,0 +1,244 @@
+.provider-detail {
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.provider-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.metric-cell {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.model-list {
+  gap: 2px;
+}
+
+.login-method {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.login-method:last-child {
+  border-bottom: 0;
+}
+
+.login-method-copy {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.login-method-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+  min-width: 0;
+}
+
+.login-method-controls.oauth-controls {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.provider-auth-dialog {
+  width: min(520px, calc(100vw - 32px));
+  border-radius: 18px;
+}
+
+.login-method-controls.oauth-controls .secondary {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: center;
+}
+
+.oauth-login-button {
+  width: fit-content;
+}
+
+.provider-api-page-link {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  width: fit-content;
+  color: var(--ink);
+  font-size: var(--font-small);
+  font-weight: 540;
+  text-decoration: none;
+}
+
+.provider-api-page-link:hover {
+  color: var(--accent);
+}
+
+.provider-auth-reason {
+  padding: 10px var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--wash);
+  color: var(--ink);
+  font-size: var(--font-ui);
+  line-height: 1.45;
+}
+
+.provider-auth-methods {
+  padding: 0;
+}
+
+.provider-auth-info {
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.provider-auth-status-block {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.provider-auth-state-row {
+  grid-template-columns: minmax(120px, 0.38fr) minmax(0, 1fr) auto;
+  column-gap: var(--space-4);
+  align-items: center;
+}
+
+.provider-auth-state-value {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  padding-left: 5px;
+}
+
+.provider-auth-state-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #ef9a9a;
+  box-shadow: 0 0 0 3px rgba(239, 154, 154, 0.2);
+}
+
+.provider-auth-state-dot.neutral {
+  background: #b8bec5;
+  box-shadow: 0 0 0 3px rgba(184, 190, 197, 0.2);
+}
+
+.provider-auth-state-dot.ok {
+  background: #9fd8a8;
+  box-shadow: 0 0 0 3px rgba(159, 216, 168, 0.22);
+}
+
+.provider-auth-state-dot.warn {
+  background: #f2d46b;
+  box-shadow: 0 0 0 3px rgba(242, 212, 107, 0.24);
+}
+
+.provider-auth-validate {
+  min-height: 30px;
+  padding-inline: var(--space-3);
+}
+
+.provider-auth-receipt {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.38fr) minmax(0, 1fr) auto;
+  column-gap: var(--space-4);
+  row-gap: var(--space-2);
+  align-items: start;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 0;
+  color: var(--ink);
+  font-size: var(--font-small);
+}
+
+.provider-auth-receipt span {
+  color: var(--muted);
+}
+
+.provider-auth-receipt code {
+  grid-column: 2 / 4;
+  min-width: 0;
+  font-family: inherit;
+}
+
+.provider-auth-receipt code > span {
+  display: block;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(159, 216, 168, 0.55);
+  border-radius: var(--radius-small);
+  background: rgba(159, 216, 168, 0.09);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.provider-auth-receipt.fail code > span {
+  border-color: rgba(239, 154, 154, 0.58);
+  background: rgba(239, 154, 154, 0.08);
+}
+
+.provider-auth-receipt.warn code > span {
+  border-color: rgba(242, 212, 107, 0.68);
+  background: rgba(242, 212, 107, 0.12);
+}
+
+.provider-auth-logout-row {
+  display: grid;
+  justify-items: start;
+  min-width: 0;
+  padding-top: var(--space-1);
+}
+
+.provider-auth-logout {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+  min-height: 32px;
+}
+
+.masked-token-field {
+  position: relative;
+  min-width: 0;
+}
+
+.masked-token-field input {
+  padding-right: 40px;
+}
+
+.masked-token-field button {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--muted);
+  opacity: 0;
+  transform: translateY(-50%);
+}
+
+.masked-token-field:hover button,
+.masked-token-field button:focus-visible {
+  opacity: 1;
+}
+
+.masked-token-field button:hover {
+  background: var(--wash);
+  color: var(--ink);
+}

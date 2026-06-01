@@ -1,6 +1,6 @@
 import { GatewayError } from "@tura/gateway-sdk";
-import { type AppState, type ThemeMode } from "../state/global-store";
 import { t } from "../i18n";
+import { type AppState, type ThemeMode } from "../state/global-store";
 export { copyText } from "./app-format";
 
 export type ProviderAuthDisplayLevel = "ok" | "warn" | "fail" | "neutral";
@@ -48,12 +48,8 @@ export function configToDraft(
     theme: config.theme ?? "",
     main_font: config.main_font ?? "",
     code_font: config.code_font ?? "",
-    main_font_size: config.main_font_size
-      ? String(config.main_font_size)
-      : "",
-    code_font_size: config.code_font_size
-      ? String(config.code_font_size)
-      : "",
+    main_font_size: config.main_font_size ? String(config.main_font_size) : "",
+    code_font_size: config.code_font_size ? String(config.code_font_size) : "",
     model: config.model ?? "",
     agent: config.agent ?? "",
     skill_folders: (config.skill_folders ?? []).join(", "),
@@ -69,12 +65,8 @@ export function configDraftToPatch(
     theme: themeMode,
     main_font: draft.main_font || null,
     code_font: draft.code_font || null,
-    main_font_size: draft.main_font_size
-      ? Number(draft.main_font_size)
-      : null,
-    code_font_size: draft.code_font_size
-      ? Number(draft.code_font_size)
-      : null,
+    main_font_size: draft.main_font_size ? Number(draft.main_font_size) : null,
+    code_font_size: draft.code_font_size ? Number(draft.code_font_size) : null,
     model: draft.model || null,
     agent: draft.agent || null,
     skill_folders: draft.skill_folders

@@ -46,6 +46,8 @@ crates/provider/
     lib.rs
     mod.rs
     auth_registry.rs
+    content_type_fallback.rs   # provider 错误 → 不支持媒体类型 fallback（runtime 调本接口，不重复实现）
+    response_extraction.rs     # 归一化响应文本/工具调用抽取 + provider 能力探测
     tura_conf.rs
     tura_llm_conf.rs
     tura_llm.rs
@@ -479,6 +481,26 @@ ProviderResponse should include:
 - provider metadata
 - raw response reference if stored
 
+### Public response normalization API (consumed by runtime)
+
+Runtime never branches on provider wire format. It calls these provider-crate
+functions with the already-normalized content payload from
+`normalize_response_content`:
+
+| Function | Purpose |
+|---|---|
+| `extract_response_text(&Value) -> Option<String>` | Pull plain text from OpenAI string / `text` field / Google `parts[].text` |
+| `extract_tool_calls(&Value) -> Vec<ProviderToolCall>` | Pull tool calls from OpenAI `tool_calls` array / Google `parts[].functionCall + thoughtSignature` |
+| `strip_thought_blocks(&str) -> String` | Remove `<thought>…</thought>` leakage |
+| `prompt_cache_key_supported(provider, base_url) -> bool` | Whether to attach OpenAI prompt-cache key (`TURA_DISABLE_PROMPT_CACHE` honored) |
+| `openai_compatible_usage_stream_supported(provider, base_url) -> bool` | Whether the route accepts `stream_options.include_usage` (OpenAI/minimax/qwen/openrouter family) |
+| `provider_unsupported_content_type(error_text) -> Option<&'static str>` | Detect provider rejection of `input_image` / `input_audio` / `input_file` from error string |
+| `replace_unsupported_content_type_in_messages(messages, content_type) -> usize` | Replace rejected media blocks with `input_text` placeholders; returns replacement count |
+
+`ProviderToolCall { tool_name, arguments, provider_metadata }` is the
+normalized tool-call shape; runtime maps it 1:1 into its internal
+`ToolCallData` without inspecting `provider_metadata`.
+
 ## Streaming
 
 Streaming support is optional per provider but must normalize to shared events.
@@ -698,6 +720,14 @@ crates/runtime/provider_runtime
 ```
 
 Runtime owns turn/session behavior. Provider owns provider-call behavior.
+
+**Provider-branch ownership rule (binding):** runtime must contain zero
+provider-name `if`/`match` branches, zero per-provider URL or format checks,
+and zero `<thought>` / `tool_calls` / `functionCall` / `thoughtSignature`
+parsing. Every such concern lives in this crate and is exposed through the
+response-normalization API above. Runtime only sees the canonical
+Responses-API content shape (`input_image`, `input_audio`, `input_file`,
+`tool_calls`) and the `ProviderToolCall` struct.
 
 ## Gateway Integration
 

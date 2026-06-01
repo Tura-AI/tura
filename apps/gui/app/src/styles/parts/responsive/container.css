@@ -115,9 +115,19 @@
     display: none;
   }
 
+  .plan-trigger-button .agent-icon {
+    display: inline-flex;
+  }
+
   .plan-session-menu,
   .plan-trigger-menu {
     width: min(260px, calc(100cqw - 32px));
+  }
+
+  .agent-trigger-menu {
+    right: 0;
+    left: auto;
+    width: min(220px, calc(100cqw - 32px));
   }
 
   .conversation-grid {

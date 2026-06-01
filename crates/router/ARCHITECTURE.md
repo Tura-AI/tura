@@ -1,7 +1,8 @@
 # Router Crate Architecture
 
-`crates/router` owns CLI forwarding, command registration metadata, and managed
-local service/process lifecycle. It does not own command implementation or port
+`crates/router` owns CLI forwarding, agent registration metadata,
+runtime-worker dispatch, and worker lifecycle. It does not own command
+implementation, command alias canonicalization, agent loop logic, or port
 allocation.
 
 The Cargo package and default binary name should stay compatible with Tura:
@@ -20,6 +21,9 @@ crates/router/
   ARCHITECTURE.md
   src/
     main.rs
+    registry.rs
+    registry/
+      agent.rs
     services.rs
     services/
       managed_process.rs
@@ -33,101 +37,113 @@ crates/router/
       process.rs
 ```
 
-Registry, lifecycle, monitor, route, client, security, and event modules are
-target architecture areas. The current implementation is concentrated in the
-Axum entrypoint plus service and utility modules above.
+The current implementation is concentrated in the Axum entrypoint plus the agent
+registry, service manager, and utility modules above.
 
 ## Responsibilities
 
 Router owns:
 
-- Command registry.
-- Command aliases.
-- CLI forwarding rules.
-- Runtime/tool command routing metadata.
-- Managed service/process startup and shutdown.
-- Managed service status monitoring.
+- Agent registry (agent spec resolution metadata).
+- CLI forwarding rules (`/run_tool`: resolve a tool binary and forward stdio).
+- Runtime-worker dispatch (`POST /run_agent`): agent resolution, worker
+  environment contract assembly, and worker subprocess lifecycle.
+- Concurrency guards for runtime workers (depth and active-worker limits).
+- Worker status monitoring (`/services/status`).
 - Health checks that do not depend on port allocation.
-- Restart and cleanup policy for router-managed processes.
-- Permission forwarding for routed command actions.
-- Route status and command-resolution diagnostics.
 
 Router does not own:
 
 - Agent loops.
 - Prompt assembly.
 - Provider request formatting.
+- Provider credentials (owned by gateway OAuth).
 - Command handler logic.
+- Command alias canonicalization (owned by `crates/tools`).
 - Shell execution.
 - File locks.
 - Memory/vector behavior.
 - Port allocation.
 
-## Command Registration
+## Runtime Worker Dispatch
 
-Every routed command needs:
+`POST /run_agent` is the HTTP entrypoint for running an agent turn (used by the
+gateway boundary). The CLI subcommand `tura_router run-agent` is the
+**internal** entrypoint used by a running runtime worker that wants to spawn a
+child sub-session — it reads a `RunAgentRequest` JSON from stdin and writes the
+result JSON to stdout. Both entrypoints share the same core
+`dispatch_run_agent(...)` implementation, so behavior is identical.
 
-- `command_id`
-- aliases
-- owning crate path
-- handler or binary target
-- CLI argument schema
-- startup mode
-- health check
-- default timeout
-- restart policy
-- permission scope
-- stdio strategy
+The router:
 
-Registered command metadata lives in `crates/router`, not under
-`crates/tools/src/command_run`.
+1. Resolves the agent spec from the agent registry.
+2. Resolves the gateway binary target (the runtime worker is the gateway binary
+   re-invoked with `TURA_ROLE=runtime_worker`).
+3. Builds the worker environment contract: `TURA_ROLE`, `TURA_GATEWAY_URL`,
+   `TURA_SESSION_MODEL_OVERRIDE`, `TURA_PARENT_SESSION_ID`,
+   `TURA_MULTIPLE_TASKS_DEPTH`, plus any caller-supplied session-config env
+   merged from the request `worker_env`.
+4. Enforces concurrency guards before dispatch: child depth must not exceed
+   `MAX_MULTIPLE_TASKS_DEPTH`, and active runtime workers must not exceed
+   `MAX_RUNTIME_WORKERS`. Either breach returns `429 Too Many Requests`.
+5. Ensures the worker is live and forwards the call over the worker NDJSON
+   protocol.
 
-## Lifecycle Management
+The worker owns its own session state and reports progress back to the gateway
+through callbacks; the router does not replay or merge agent state.
 
-Router is responsible for pulling up managed local services or processes when a
-routed command needs them. A managed service can be a crate binary, script,
-stdio process, or in-process task. It should not require a fixed port.
+### Internal-only CLI channel (runtime ↔ router)
 
-Lifecycle records should include:
+When a runtime worker needs to spawn a child sub-session (concurrent or
+recursive multi-agent dispatch), it invokes `tura_router run-agent` as a
+**subprocess** (stdin/stdout JSON). It does **not** call the router over
+HTTP/URL. This rule is enforced repo-wide:
 
-- service id
-- owning crate or script path
-- startup command
-- environment contract
-- readiness check
-- health check
-- stop strategy
-- restart policy
-- status event shape
+- Internal runtime ↔ router communication is **always CLI** (subprocess +
+  stdin/stdout NDJSON), never URL/HTTP.
+- All runtimes are subprocesses; the router process never embeds a runtime in
+  the same address space.
+- The HTTP `POST /run_agent` route remains only for the external gateway
+  boundary; child sub-session dispatch from a runtime never goes through it.
 
-Router tracks status for each managed process and exposes it through `status`
-and command events.
+The runtime resolves the router binary in this order: `TURA_ROUTER_BIN` env,
+`current_exe()` sibling, then repo `target/{release,debug}/tura_router`.
+
+## Agent Registration
+
+The agent registry (`registry/agent.rs`) resolves an agent spec from a static,
+in-memory table keyed by agent name and session type. `POST /run_agent` consults
+it to pick the agent that the dispatched runtime worker activates. It introduces
+no database and no fixed port.
+
+Command alias canonicalization and handler dispatch are **not** owned here. They
+live in `crates/tools` (`commands::canonical_command` plus the
+`crates/tools/src/commands/<command>` handlers) and run inside the runtime
+worker. The router does not keep a parallel command table.
+
+## Worker Lifecycle
+
+Router owns the lifecycle of runtime workers through `ServiceManager`
+(`services/manager.rs`) and `WorkerProcess` (`services/worker_process.rs`). A
+worker is the gateway binary re-invoked with `TURA_ROLE=runtime_worker`; it
+speaks a line-delimited NDJSON protocol over stdio and must not require a fixed
+port.
+
+Lifecycle records include:
+
+- service id / worker id
+- executable target
+- startup args and environment contract
+- readiness (`health_check`) and invocation (`call`) over NDJSON
+- persistent vs. one-shot mode (one-shot falls back when persistent spawn fails)
+- status surfaced through `/services/status`
 
 ## CLI Forwarding
 
-Typical routes or internal calls:
-
-- `resolve_command`
-- `forward_cli`
-- `status`
-
-The exact transport can be in-process, stdio, or a local CLI process. The
-architecture rule is that router resolves command requests and owns lifecycle
-for any managed process needed to serve them, while the owning crate or
-`crates/tools/src/commands/<command>` owns behavior.
-
-Example local path:
-
-```text
-cargo run -p tura_router -- forward shell_command -- rg "pattern" crates
-```
-
-## Memory Boundary
-
-Memory behavior lives under `crates/memory`. Router can start and monitor a
-memory-backed managed process when needed, but the implementation stays in
-`crates/memory` and must not require a fixed port or a separate `services/`
-directory.
+`POST /run_tool` resolves a tool binary under `target/{release,debug}` and
+forwards JSON input over stdio. The owning crate or
+`crates/tools/src/commands/<command>` owns behavior; the router only resolves and
+forwards.
 
 ## Checks
 

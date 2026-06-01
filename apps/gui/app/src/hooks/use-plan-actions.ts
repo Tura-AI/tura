@@ -1,45 +1,35 @@
-import { createSignal, type Accessor, type Setter } from "solid-js";
+import type { GatewayClient } from "@tura/gateway-sdk";
 import {
   errorMessage,
   GatewayError,
   type Message,
+  type PlanStatus,
   type PollInterval,
   type Session,
   type TaskManagement,
-  type PlanStatus,
 } from "@tura/gateway-sdk";
-import type { GatewayClient } from "@tura/gateway-sdk";
+import { createSignal, type Accessor, type Setter } from "solid-js";
+import {
+  appendTaskToSession,
+  applyTaskPatchToSession,
+  defaultPollInterval,
+  firstRunnableTask,
+  localDateTimeToUtcIso,
+  planSessionStatus,
+  sessionAttentionKey,
+  sessionTasks,
+  taskDisplayText,
+  taskNonceId,
+  taskSummaryText,
+  timedTaskPatch,
+} from "../features/plan/tasks";
 import { t } from "../i18n";
 import type { AppState } from "../state/global-store";
 import { sessionTitle } from "../state/global-store";
 import {
-  composerFileToken,
-  composerImageToken,
-} from "../conversation/conversation-view";
-import {
-  applyTaskPatchToSession,
-  appendTaskToSession,
-  defaultLocalStartAt,
-  defaultPollInterval,
-  firstRunnableTask,
-  formatTicketTime,
-  localDateTimeToUtcIso,
-  materializeComposerContent,
-  normalizePollInterval,
-  planSessionStatus,
-  sessionAttentionKey,
-  sessionTaskState,
-  sessionTasks,
-  taskDisplayText,
-  taskNonceId,
-  taskPollInterval,
-  taskStartAt,
-  taskStartCondition,
-  taskSummaryText,
-  timedTaskPatch,
-  utcIsoToLocalDateTime,
-} from "../features/plan/tasks";
-import { providerIdFromAuthError, providerIdFromModel } from "../utils/settings";
+  providerIdFromAuthError,
+  providerIdFromModel,
+} from "../utils/settings";
 
 const PLAN_RUN_TIMEOUT_MS = 30_000;
 const PLAN_RUN_TIMEOUT_CODE = "GATEWAY_NO_RESPONSE_30S";
@@ -73,7 +63,6 @@ type PlanActionsOptions = {
   openSession: (sessionId: string) => Promise<void>;
   createSessionPayload: () => Parameters<GatewayClient["createSession"]>[0];
   refreshSessions: () => Promise<void>;
-  handleProviderAuthError: (error: unknown) => boolean;
 };
 
 export function usePlanActions(options: PlanActionsOptions) {
@@ -85,7 +74,6 @@ export function usePlanActions(options: PlanActionsOptions) {
     openSession,
     createSessionPayload,
     refreshSessions,
-    handleProviderAuthError,
   } = options;
   const [acknowledgedAttentionSessions, setAcknowledgedAttentionSessions] =
     createSignal(new Set<string>());
@@ -178,8 +166,7 @@ export function usePlanActions(options: PlanActionsOptions) {
       await directoryClient().promptAsync(session.id, {
         parts: [{ type: "text", text: taskDisplayText(task) }],
         model: state().selectedModel,
-        variant: state().modelVariant,
-        model_acceleration_enabled: state().accelerationEnabled,
+        agent: state().selectedAgent,
       });
     } catch (error) {
       setState((previous) => ({ ...previous, error: errorMessage(error) }));
@@ -285,8 +272,7 @@ export function usePlanActions(options: PlanActionsOptions) {
         directoryClient().promptAsync(session.id, {
           parts: [{ type: "text", text }],
           model: state().selectedModel,
-          variant: state().modelVariant,
-          model_acceleration_enabled: state().accelerationEnabled,
+          agent: state().selectedAgent,
         }),
         new Promise<never>((_, reject) =>
           window.setTimeout(
@@ -590,9 +576,7 @@ export function usePlanActions(options: PlanActionsOptions) {
     }
     const draftSessionId = sessionIdOverride ?? state().planDraftSessionId;
     const existingSession = draftSessionId
-      ? state().sessions.find(
-          (session) => session.id === draftSessionId,
-        )
+      ? state().sessions.find((session) => session.id === draftSessionId)
       : undefined;
     const startAt = localDateTimeToUtcIso(state().planDraftStartAt);
     const timingPatch = timedTaskPatch(
@@ -608,9 +592,7 @@ export function usePlanActions(options: PlanActionsOptions) {
       step: existingSession ? sessionTasks(existingSession).length : 0,
       plan_summary: title,
       task_summary: title,
-      ...(draftLane === "todo"
-        ? {}
-        : { status: draftLane }),
+      ...(draftLane === "todo" ? {} : { status: draftLane }),
       ...timingPatch,
     };
     const taskState = baseTaskState;

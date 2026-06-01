@@ -223,7 +223,7 @@ struct ToolHooks {
 pub trait ToolHandler: Send + Sync {
     fn tool_name(&self) -> &'static str;
 
-    fn supports_parallel_tool_calls(&self) -> bool {
+    fn supports_macro_command(&self) -> bool {
         false
     }
 
@@ -296,9 +296,9 @@ impl ToolRouter {
         }
     }
 
-    pub fn tool_supports_parallel(&self, call: &ToolCall) -> bool {
+    pub fn tool_supports_macro_command(&self, call: &ToolCall) -> bool {
         self.handler(&call.tool_name)
-            .map(|handler| handler.supports_parallel_tool_calls())
+            .map(|handler| handler.supports_macro_command())
             .unwrap_or(false)
     }
 

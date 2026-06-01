@@ -3,10 +3,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, RwLock};
 
 use chrono::Utc;
-use regex::Regex;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use thiserror::Error;
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -15,6 +14,7 @@ use crate::auth_registry::OAuthAuthorizeKind;
 use crate::llm::providers;
 use crate::logging::{build_call_log, write_llm_log};
 use crate::tura_conf::TuraConfig;
+use crate::utils::{strip_text_tool_calls, text_tool_calls_value};
 
 pub static SETTINGS: OnceLock<Arc<Settings>> = OnceLock::new();
 static PROVIDER_LATENCY_TIMEOUTS: OnceLock<RwLock<ProviderLatencyTimeouts>> = OnceLock::new();
@@ -170,6 +170,16 @@ impl ProviderConfig {
             "minimax" => {
                 providers::minimax::embed(&self.base_url, &self.model, &api_key, text).await
             }
+            "openrouter" => {
+                crate::llm::openapi::embed_for_provider(
+                    "openrouter",
+                    &self.base_url,
+                    &self.model,
+                    &api_key,
+                    text,
+                )
+                .await
+            }
             _ => providers::openai::embed(&self.base_url, &self.model, &api_key, text).await,
         }
     }
@@ -207,125 +217,137 @@ impl ProviderConfig {
         // OAuth access token using its registered refresh token and retry once.
         let mut refreshed = false;
         let result = loop {
-        let attempt = match self.provider.to_lowercase().as_str() {
-            "google" => {
-                providers::google::call(&self.base_url, &self.model, &api_key, &messages, &options)
+            let attempt = match self.provider.to_lowercase().as_str() {
+                "google" => {
+                    providers::google::call(
+                        &self.base_url,
+                        &self.model,
+                        &api_key,
+                        &messages,
+                        &options,
+                    )
                     .await
-            }
-            "bedrock" => {
-                providers::bedrock::call(&self.base_url, &self.model, &api_key, &messages, &options)
+                }
+                "bedrock" => {
+                    providers::bedrock::call(
+                        &self.base_url,
+                        &self.model,
+                        &api_key,
+                        &messages,
+                        &options,
+                    )
                     .await
-            }
-            "codex" => {
-                providers::codex::call_with_stream_events(
-                    &self.base_url,
-                    &self.model,
-                    &api_key,
-                    &messages,
-                    &options,
-                    stream_events.clone(),
-                )
-                .await
-            }
-            "minimax" => {
-                providers::minimax::call_with_stream_events(
-                    &self.base_url,
-                    &self.model,
-                    &api_key,
-                    &messages,
-                    &options,
-                    stream_events.clone(),
-                )
-                .await
-            }
-            "claude-code" => {
-                providers::claude_code::call_with_stream_events(
-                    &self.base_url,
-                    &self.model,
-                    &api_key,
-                    &messages,
-                    &options,
-                    stream_events.clone(),
-                )
-                .await
-            }
-            "openai" if should_use_openai_oauth(&self.provider, &self.base_url, conf) => {
-                providers::codex::call_with_stream_events(
-                    &self.base_url,
-                    &self.model,
-                    &api_key,
-                    &messages,
-                    &options,
-                    stream_events.clone(),
-                )
-                .await
-            }
-            "openai" | "openai-api" | "chatgpt" => {
-                providers::openai::call_with_stream_events(
-                    &self.base_url,
-                    &self.model,
-                    &api_key,
-                    &messages,
-                    &options,
-                    stream_events.clone(),
-                )
-                .await
-            }
-            "xai" | "grok" => {
-                providers::xai::call_with_stream_events(
-                    &self.base_url,
-                    &self.model,
-                    &api_key,
-                    &messages,
-                    &options,
-                    stream_events.clone(),
-                )
-                .await
-            }
-            "qwen" | "qwen_cn" | "qwen-cn" => {
-                providers::qwen::call_with_stream_events(
-                    &self.base_url,
-                    &self.model,
-                    &api_key,
-                    &messages,
-                    &options,
-                    stream_events.clone(),
-                )
-                .await
-            }
-            other => {
-                crate::llm::openapi::call_with_stream_events(
-                    &self.base_url,
-                    &self.model,
-                    other,
-                    &api_key,
-                    &messages,
-                    &options,
-                    stream_events.clone(),
-                )
-                .await
-            }
-        };
+                }
+                "codex" => {
+                    providers::codex::call_with_stream_events(
+                        &self.base_url,
+                        &self.model,
+                        &api_key,
+                        &messages,
+                        &options,
+                        stream_events.clone(),
+                    )
+                    .await
+                }
+                "minimax" => {
+                    providers::minimax::call_with_stream_events(
+                        &self.base_url,
+                        &self.model,
+                        &api_key,
+                        &messages,
+                        &options,
+                        stream_events.clone(),
+                    )
+                    .await
+                }
+                "anthropic" | "anthropic-api" | "claude-code" => {
+                    providers::claude_code::call_with_stream_events(
+                        &self.base_url,
+                        &self.model,
+                        &api_key,
+                        &messages,
+                        &options,
+                        stream_events.clone(),
+                    )
+                    .await
+                }
+                "openai" if should_use_openai_oauth(&self.provider, &self.base_url, conf) => {
+                    providers::codex::call_with_stream_events(
+                        &self.base_url,
+                        &self.model,
+                        &api_key,
+                        &messages,
+                        &options,
+                        stream_events.clone(),
+                    )
+                    .await
+                }
+                "openai" | "openai-api" | "chatgpt" => {
+                    providers::openai::call_with_stream_events(
+                        &self.base_url,
+                        &self.model,
+                        &api_key,
+                        &messages,
+                        &options,
+                        stream_events.clone(),
+                    )
+                    .await
+                }
+                "xai" | "grok" => {
+                    providers::xai::call_with_stream_events(
+                        &self.base_url,
+                        &self.model,
+                        &api_key,
+                        &messages,
+                        &options,
+                        stream_events.clone(),
+                    )
+                    .await
+                }
+                "qwen" | "qwen_cn" | "qwen-cn" => {
+                    providers::qwen::call_with_stream_events(
+                        &self.base_url,
+                        &self.model,
+                        &api_key,
+                        &messages,
+                        &options,
+                        stream_events.clone(),
+                    )
+                    .await
+                }
+                other => {
+                    crate::llm::openapi::call_with_stream_events(
+                        &self.base_url,
+                        &self.model,
+                        other,
+                        &api_key,
+                        &messages,
+                        &options,
+                        stream_events.clone(),
+                    )
+                    .await
+                }
+            };
 
-        if !refreshed && is_auth_expired_error(&attempt) {
-            match try_refresh_oauth_access_token(&self.provider, conf).await {
-                Ok(Some(new_key)) => {
-                    warn!(
-                        provider = %self.provider,
-                        "provider call hit auth error; refreshed OAuth token and retrying"
-                    );
-                    api_key = new_key;
-                    refreshed = true;
-                    continue;
-                }
-                Ok(None) => break attempt,
-                Err(refresh_err) => {
-                    warn!(provider = %self.provider, error = %refresh_err, "OAuth token refresh failed");
-                    break attempt;
+            if !refreshed && is_auth_expired_error(&attempt) {
+                match try_refresh_oauth_access_token(&self.provider, conf).await {
+                    Ok(Some(new_key)) => {
+                        warn!(
+                            provider = %self.provider,
+                            "provider call hit auth error; refreshed OAuth token and retrying"
+                        );
+                        api_key = new_key;
+                        refreshed = true;
+                        continue;
+                    }
+                    Ok(None) => break attempt,
+                    Err(refresh_err) => {
+                        warn!(provider = %self.provider, error = %refresh_err, "OAuth token refresh failed");
+                        break attempt;
+                    }
                 }
             }
-        }
-        break attempt;
+            break attempt;
         };
 
         let finished_at = Utc::now();
@@ -556,7 +578,10 @@ async fn try_refresh_oauth_access_token(
     let Some(refresh_env) = entry.refresh_env else {
         return Ok(None);
     };
-    let Some(refresh) = conf.get(refresh_env).filter(|value| !value.trim().is_empty()) else {
+    let Some(refresh) = conf
+        .get(refresh_env)
+        .filter(|value| !value.trim().is_empty())
+    else {
         return Ok(None);
     };
 
@@ -591,7 +616,10 @@ async fn try_refresh_oauth_access_token(
             true,
         ),
         Some(OAuthAuthorizeKind::OpenAiPkce) => (
-            env_default("OPENAI_OAUTH_TOKEN_URL", "https://auth.openai.com/oauth/token"),
+            env_default(
+                "OPENAI_OAUTH_TOKEN_URL",
+                "https://auth.openai.com/oauth/token",
+            ),
             vec![
                 ("grant_type".to_string(), "refresh_token".to_string()),
                 ("refresh_token".to_string(), refresh.clone()),
@@ -623,7 +651,10 @@ async fn try_refresh_oauth_access_token(
                 form.push(("client_secret".to_string(), client_secret));
             }
             (
-                env_default("GOOGLE_OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token"),
+                env_default(
+                    "GOOGLE_OAUTH_TOKEN_URL",
+                    "https://oauth2.googleapis.com/token",
+                ),
                 form,
                 false,
             )
@@ -642,7 +673,10 @@ async fn try_refresh_oauth_access_token(
         .header(CONTENT_TYPE, "application/x-www-form-urlencoded");
     if send_cli_headers {
         request = request
-            .header(reqwest::header::USER_AGENT, "claude-cli/1.0 (external, cli)")
+            .header(
+                reqwest::header::USER_AGENT,
+                "claude-cli/1.0 (external, cli)",
+            )
             .header(reqwest::header::ACCEPT, "application/json");
     }
     let response = request
@@ -707,7 +741,11 @@ async fn try_refresh_oauth_access_token(
 /// running process working.
 fn persist_env_var(env_path: &std::path::Path, key: &str, value: &str) {
     let existing = std::fs::read_to_string(env_path).unwrap_or_default();
-    let newline = if existing.contains("\r\n") { "\r\n" } else { "\n" };
+    let newline = if existing.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
     let mut out = String::new();
     let mut replaced = false;
     for line in existing.lines() {
@@ -1214,14 +1252,16 @@ pub fn provider_latency_timeouts() -> ProviderLatencyTimeouts {
 /// Store the active provider-latency config (level table + active level) so it
 /// can later be resolved per-tier at runtime-construction time.
 pub fn set_provider_latency_config(config: ProviderLatencyConfig) {
-    let lock = PROVIDER_LATENCY_CONFIG.get_or_init(|| RwLock::new(ProviderLatencyConfig::default()));
+    let lock =
+        PROVIDER_LATENCY_CONFIG.get_or_init(|| RwLock::new(ProviderLatencyConfig::default()));
     if let Ok(mut guard) = lock.write() {
         *guard = config;
     }
 }
 
 pub fn provider_latency_config() -> ProviderLatencyConfig {
-    let lock = PROVIDER_LATENCY_CONFIG.get_or_init(|| RwLock::new(ProviderLatencyConfig::default()));
+    let lock =
+        PROVIDER_LATENCY_CONFIG.get_or_init(|| RwLock::new(ProviderLatencyConfig::default()));
     lock.read().map(|guard| guard.clone()).unwrap_or_default()
 }
 
@@ -1444,11 +1484,11 @@ pub fn normalize_response_content(raw: &Value) -> Value {
         let tool_calls = message
             .get("tool_calls")
             .cloned()
-            .or_else(|| content.as_str().map(minimax_xml_tool_calls_value));
+            .or_else(|| content.as_str().map(text_tool_calls_value));
         if let Some(tool_calls) = tool_calls.filter(|value| !value.is_null()) {
             let mut object = serde_json::Map::new();
             if let Some(text) = content.as_str() {
-                let stripped = strip_minimax_xml_tool_calls(text);
+                let stripped = strip_text_tool_calls(text);
                 if !stripped.trim().is_empty() {
                     object.insert("text".to_string(), Value::String(stripped));
                 }
@@ -1467,97 +1507,6 @@ pub fn normalize_response_content(raw: &Value) -> Value {
         return candidates.clone();
     }
     raw.clone()
-}
-
-fn minimax_xml_tool_calls_value(text: &str) -> Value {
-    let calls = extract_minimax_xml_tool_calls(text);
-    if calls.is_empty() {
-        Value::Null
-    } else {
-        Value::Array(calls)
-    }
-}
-
-fn extract_minimax_xml_tool_calls(text: &str) -> Vec<Value> {
-    if !text.contains("<minimax:tool_call>") && !text.contains("<invoke") {
-        return Vec::new();
-    }
-
-    let Ok(invoke_re) = Regex::new(r#"(?s)<invoke\s+name=["']([^"']+)["']\s*>(.*?)</invoke>"#)
-    else {
-        return Vec::new();
-    };
-    let Ok(param_re) = Regex::new(r#"(?s)<parameter\s+name=["']([^"']+)["']\s*>(.*?)</parameter>"#)
-    else {
-        return Vec::new();
-    };
-
-    invoke_re
-        .captures_iter(text)
-        .enumerate()
-        .map(|(index, capture)| {
-            let name = xml_unescape(
-                capture
-                    .get(1)
-                    .map(|value| value.as_str())
-                    .unwrap_or_default(),
-            );
-            let body = capture
-                .get(2)
-                .map(|value| value.as_str())
-                .unwrap_or_default();
-            let mut arguments = serde_json::Map::new();
-            for parameter in param_re.captures_iter(body) {
-                let key = xml_unescape(
-                    parameter
-                        .get(1)
-                        .map(|value| value.as_str())
-                        .unwrap_or_default(),
-                );
-                let value = xml_unescape(
-                    parameter
-                        .get(2)
-                        .map(|value| value.as_str())
-                        .unwrap_or_default(),
-                )
-                .trim()
-                .to_string();
-                arguments.insert(key, parse_minimax_parameter_value(&value));
-            }
-            json!({
-                "id": format!("minimax_tool_call_{index}"),
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "arguments": Value::String(Value::Object(arguments).to_string()),
-                },
-            })
-        })
-        .collect()
-}
-
-fn strip_minimax_xml_tool_calls(text: &str) -> String {
-    let Ok(block_re) = Regex::new(r#"(?s)<minimax:tool_call>.*?</minimax:tool_call>"#) else {
-        return text.to_string();
-    };
-    let stripped = block_re.replace_all(text, "");
-    let Ok(invoke_re) = Regex::new(r#"(?s)<invoke\s+name=["'][^"']+["']\s*>.*?</invoke>"#) else {
-        return stripped.trim().to_string();
-    };
-    invoke_re.replace_all(&stripped, "").trim().to_string()
-}
-
-fn parse_minimax_parameter_value(value: &str) -> Value {
-    serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_string()))
-}
-
-fn xml_unescape(value: &str) -> String {
-    value
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&amp;", "&")
 }
 
 pub fn estimate_context_utilization(metrics: &mut CallMetrics) {
@@ -1652,30 +1601,6 @@ mod tests {
         let content = normalize_response_content(&raw);
 
         assert_eq!(content["tool_calls"][0]["function"]["name"], "glob");
-    }
-
-    #[test]
-    fn normalizes_minimax_xml_tool_call_content() {
-        let raw = json!({
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": "<minimax:tool_call>\n<invoke name=\"get_file_outline\">\n<parameter name=\"path\">services/mano/src/manas</parameter>\n<parameter name=\"max_results\">3</parameter>\n</invoke>\n</minimax:tool_call>"
-                }
-            }]
-        });
-
-        let content = normalize_response_content(&raw);
-
-        assert_eq!(
-            content["tool_calls"][0]["function"]["name"],
-            "get_file_outline"
-        );
-        assert_eq!(
-            content["tool_calls"][0]["function"]["arguments"],
-            "{\"max_results\":3,\"path\":\"services/mano/src/manas\"}"
-        );
-        assert!(content.get("text").is_none());
     }
 
     #[test]

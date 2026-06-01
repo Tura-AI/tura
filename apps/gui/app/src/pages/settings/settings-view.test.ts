@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import type { SdkProvider } from "@tura/gateway-sdk";
+import { describe, expect, test } from "bun:test";
 import { providerDomains } from "./provider-domain";
 
 function provider(overrides: Partial<SdkProvider>): SdkProvider {

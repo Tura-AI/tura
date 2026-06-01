@@ -22,6 +22,10 @@ name = "process_from_user_default_test"
 path = "tests/process_from_user_default_test.rs"
 
 [[test]]
+name = "prompt_injection_e2e"
+path = "tests/prompt_injection_e2e.rs"
+
+[[test]]
 name = "coding_agent_live_test"
 path = "tests/coding_agent_live_test.rs"
 
@@ -32,6 +36,14 @@ path = "tests/claude_code_live_e2e.rs"
 [[test]]
 name = "claude_code_mock_e2e"
 path = "tests/claude_code_mock_e2e.rs"
+
+[[test]]
+name = "child_dispatch_test"
+path = "tests/child_dispatch_test.rs"
+
+[[bin]]
+name = "mock_router_for_test"
+path = "src/bin/mock_router_for_test.rs"
 
 [dependencies]
 tokio.workspace = true

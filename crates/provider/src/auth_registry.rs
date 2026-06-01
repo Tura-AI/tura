@@ -128,10 +128,6 @@ const OPENAI_OAUTH_METHODS: &[AuthMethodDescriptor] = &[AuthMethodDescriptor::ne
 )];
 const API_KEY_METHODS: &[AuthMethodDescriptor] =
     &[AuthMethodDescriptor::new(AuthMethodKind::ApiKey, "API Key")];
-const BROWSER_TOKEN_METHODS: &[AuthMethodDescriptor] = &[AuthMethodDescriptor::new(
-    AuthMethodKind::BrowserToken,
-    "Browser Token",
-)];
 const CLAUDE_CODE_METHODS: &[AuthMethodDescriptor] = &[AuthMethodDescriptor::new(
     AuthMethodKind::LocalCliToken,
     "Claude Code OAuth",
@@ -166,7 +162,6 @@ const OPENAI_API_MODELS: &[&str] = &[
     "text-embedding-3-small",
 ];
 const ANTHROPIC_MODELS: &[&str] = &["claude-opus-4-8", "claude-opus-4-7"];
-const ANTHROPIC_API_MODELS: &[&str] = ANTHROPIC_MODELS;
 const GOOGLE_MODELS: &[&str] = &[
     "gemini-3.5-flash",
     "gemini-3.1-pro-preview",
@@ -196,22 +191,22 @@ const TOGETHER_MODELS: &[&str] = &[
 ];
 const HUGGINGFACE_MODELS: &[&str] = &["jinaai/jina-embeddings-v5-text"];
 const OPENROUTER_MODELS: &[&str] = &[
-    "openai/gpt-5.5-pro",
-    "anthropic/claude-opus-4-7",
-    "google/gemini-3.5-flash",
-    "google/gemini-3.1-pro-preview",
-    "deepseek/deepseek-v4-pro",
-    "moonshotai/kimi-k2.6",
-    "mistralai/mistral-medium-3.5",
-    "x-ai/grok-4.3",
-    "qwen/qwen3.7-max",
-    "openai/gpt-5.4-mini",
-    "deepseek/deepseek-v4-flash",
-    "qwen/qwen3.6-flash",
-    "openai/gpt-5.4-nano",
-    "google/gemini-3.1-flash-lite",
-    "openai/text-embedding-3-large",
-    "openai/text-embedding-3-small",
+    "gpt-5.5-pro",
+    "claude-opus-4-7",
+    "gemini-3.5-flash",
+    "gemini-3.1-pro-preview",
+    "deepseek-v4-pro",
+    "kimi-k2.6",
+    "mistral-medium-3.5",
+    "grok-4.3",
+    "qwen3.7-max",
+    "gpt-5.4-mini",
+    "deepseek-v4-flash",
+    "qwen3.6-flash",
+    "gpt-5.4-nano",
+    "gemini-3.1-flash-lite",
+    "text-embedding-3-large",
+    "text-embedding-3-small",
 ];
 const EMPTY_MODELS: &[&str] = &[];
 
@@ -324,32 +319,10 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
     ProviderAuthRegistryEntry {
         provider_id: "anthropic",
         runtime_provider_id: "anthropic",
-        display_name: "Claude Browser Token",
-        base_url_config_key: "anthropic",
-        default_base_url: "https://api.anthropic.com/v1",
-        supported_models: ANTHROPIC_MODELS,
-        auth_methods: BROWSER_TOKEN_METHODS,
-        token_env: Some("ANTHROPIC_API_KEY"),
-        login_env: Some("ANTHROPIC_LOGIN"),
-        refresh_env: None,
-        expires_env: None,
-        account_env: None,
-        endpoint_env: None,
-        local_auth_discovery: None,
-        oauth_authorize_kind: Some(OAuthAuthorizeKind::BrowserTokenPaste),
-        oauth_callback_kind: Some(OAuthAuthorizeKind::BrowserTokenPaste),
-        capabilities: disabled_subscription_capabilities(),
-        disabled_reason: Some(
-            "Claude browser tokens are persisted but runtime support is not verified",
-        ),
-    },
-    ProviderAuthRegistryEntry {
-        provider_id: "anthropic-api",
-        runtime_provider_id: "anthropic",
         display_name: "Anthropic API",
         base_url_config_key: "anthropic",
         default_base_url: "https://api.anthropic.com/v1",
-        supported_models: ANTHROPIC_API_MODELS,
+        supported_models: ANTHROPIC_MODELS,
         auth_methods: API_KEY_METHODS,
         token_env: Some("ANTHROPIC_API_KEY"),
         login_env: Some("ANTHROPIC_LOGIN"),
@@ -728,7 +701,6 @@ mod tests {
             "openai",
             "codex",
             "anthropic",
-            "anthropic-api",
             "claude-code",
             "google",
             "google-api",

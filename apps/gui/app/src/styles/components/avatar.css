@@ -1,0 +1,160 @@
+.agent-avatar-stage {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.agent-avatar-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  user-select: none;
+}
+
+.agent-avatar-preview {
+  display: grid;
+  grid-template-columns: minmax(104px, 0.32fr) minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.agent-avatar-preview > span {
+  color: var(--muted);
+  font-size: var(--font-small);
+  font-weight: 520;
+}
+
+.agent-avatar-preview-shell {
+  display: grid;
+  justify-self: center;
+  width: min(240px, 100%);
+  aspect-ratio: 1;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+}
+
+.agent-avatar-preview-shell .agent-avatar-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.floating-agent-avatar .agent-avatar-stage {
+  width: 56px;
+  height: 56px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+  box-shadow: var(--shadow-control);
+}
+
+.agent-avatar-loading {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: linear-gradient(
+    115deg,
+    color-mix(in srgb, var(--paper) 96%, var(--ink) 4%) 0%,
+    color-mix(in srgb, var(--paper) 80%, var(--ink) 12%) 48%,
+    color-mix(in srgb, var(--paper) 96%, var(--ink) 4%) 100%
+  );
+  background-size: 220% 100%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+
+.agent-avatar-stage.loading .agent-avatar-loading {
+  opacity: 1;
+  animation: agent-avatar-sheen 1.25s ease-in-out infinite;
+}
+
+.agent-avatar-settings {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+  padding-top: var(--space-2);
+}
+
+.agent-avatar-controls {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.agent-avatar-control-row {
+  display: grid;
+  grid-template-columns: minmax(104px, 0.32fr) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: center;
+  min-width: 0;
+}
+
+.agent-avatar-control-row > label,
+.agent-avatar-control-row > span {
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+
+.agent-capabilities-row {
+  align-items: start;
+}
+
+.agent-capability-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-top: 7px;
+}
+
+.agent-capability-list code {
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--wash);
+  color: var(--ink);
+  font-size: var(--font-small);
+  line-height: 1.3;
+}
+
+.model-tier-label {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  min-width: 0;
+}
+
+@keyframes agent-avatar-sheen {
+  0% {
+    background-position: 120% 0;
+  }
+
+  100% {
+    background-position: -120% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-avatar-stage.loading .agent-avatar-loading {
+    animation: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .agent-avatar-settings {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-avatar-preview-shell {
+    width: min(200px, 100%);
+  }
+}

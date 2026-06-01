@@ -65,7 +65,7 @@ fn claude_code_gateway_session_tool_calling_mock_e2e() {
     .expect("claude-code mock gateway session should complete");
 
     assert_eq!(result.agents.len(), 1);
-    assert_eq!(result.agents[0].agent_name, "coding_agent");
+    assert_eq!(result.agents[0].agent_name, "coding_agent_planning");
     assert_eq!(
         result.session.state,
         SessionState::Completed,
@@ -84,11 +84,13 @@ fn claude_code_gateway_session_tool_calling_mock_e2e() {
             .session_log
             .iter()
             .filter_map(|entry| serde_json::from_str::<Value>(entry).ok())
-            .any(|entry| entry.get("role").and_then(Value::as_str) == Some("assistant")
-                && entry
-                    .get("content")
-                    .and_then(Value::as_str)
-                    .is_some_and(|text| text.contains("claude-code mock e2e completed"))),
+            .any(
+                |entry| entry.get("role").and_then(Value::as_str) == Some("assistant")
+                    && entry
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .is_some_and(|text| text.contains("claude-code mock e2e completed"))
+            ),
         "expected the final assistant completion text; log={:#?}",
         result.session.session_log
     );
@@ -104,14 +106,31 @@ fn claude_code_gateway_session_tool_calling_mock_e2e() {
         first.get("temperature").is_none(),
         "native payload must not forward temperature; got {first}"
     );
-    // OAuth route prepends the Claude Code identity.
-    let system = first
+    // OAuth route prepends the Claude Code identity as typed system blocks. The
+    // first block carries that identity plus a prompt-cache breakpoint
+    // (`cache_control: ephemeral`), mirroring the real claude-code CLI.
+    let system_blocks = first
         .get("system")
+        .and_then(Value::as_array)
+        .expect("payload should carry typed system blocks");
+    let first_block = system_blocks
+        .first()
+        .expect("system blocks must not be empty");
+    let identity = first_block
+        .get("text")
         .and_then(Value::as_str)
-        .expect("payload should carry a system string");
+        .expect("first system block must carry text");
     assert!(
-        system.starts_with("You are Claude Code, Anthropic's official CLI for Claude."),
-        "OAuth route must prepend the Claude Code system identity; got {system:?}"
+        identity.starts_with("You are Claude Code, Anthropic's official CLI for Claude."),
+        "OAuth route must prepend the Claude Code system identity; got {identity:?}"
+    );
+    assert_eq!(
+        first_block
+            .get("cache_control")
+            .and_then(|cache| cache.get("type"))
+            .and_then(Value::as_str),
+        Some("ephemeral"),
+        "first system block must carry the prompt-cache breakpoint; got {first_block}"
     );
     // Tools are converted to the Anthropic shape with `input_schema`.
     let tools = first
@@ -180,11 +199,7 @@ impl MockAnthropic {
     }
 }
 
-fn handle_connection(
-    stream: TcpStream,
-    counter: &AtomicUsize,
-    requests: &Arc<Mutex<Vec<Value>>>,
-) {
+fn handle_connection(stream: TcpStream, counter: &AtomicUsize, requests: &Arc<Mutex<Vec<Value>>>) {
     let mut reader = BufReader::new(stream);
     let mut content_length = 0usize;
     loop {

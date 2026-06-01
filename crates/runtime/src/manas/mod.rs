@@ -1,5 +1,6 @@
 mod agent_prompts;
 mod change_tracker;
+pub mod child_dispatch;
 mod constants;
 mod final_response;
 mod gateway_events;
@@ -10,23 +11,24 @@ mod runtime_turn;
 mod tool_arguments;
 mod tool_catalog;
 mod tool_execution;
+mod validator_feedback;
 
 pub use process::{process_manas_internal, ManasInput, ManasResult};
 
 use crate::state_machine::agent_management::AgentManagement;
 use crate::state_machine::session_management::SessionManagement;
 
-pub const MANAS_SERVICE_PORT: u16 = 37_002;
-
 pub type AgentLoader = fn(&SessionManagement) -> Result<Vec<AgentManagement>, String>;
+
+pub fn load_agent_system_prompt_messages(
+    agent: &AgentManagement,
+) -> Result<Vec<serde_json::Value>, String> {
+    agent_prompts::load_agent_system_prompt_messages(agent)
+}
 
 #[derive(Clone, Copy, Default)]
 pub struct ManasOverrides {
     pub agent_loader: Option<AgentLoader>,
-}
-
-pub fn service_port() -> u16 {
-    MANAS_SERVICE_PORT
 }
 
 pub fn process_from_session(session: &SessionManagement) -> Result<Vec<AgentManagement>, String> {

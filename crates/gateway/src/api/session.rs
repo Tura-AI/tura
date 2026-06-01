@@ -2,10 +2,7 @@
 
 use crate::api::types::*;
 use crate::mock::global_store;
-use crate::session::config::{
-    load_config, merge_config, CommandRunStallGuardConfig, TuraSessionConfig,
-};
-use crate::session::manager::{LspMode, LspSessionConfig};
+use crate::session::config::{load_config, merge_config, TuraSessionConfig};
 use crate::session::{
     process_cleanup::kill_processes_in_directory, session_store, MessageRole as SessionMessageRole,
     SessionStatus as SessionStatusMano,
@@ -18,7 +15,6 @@ use axum::{
 };
 use serde::Deserialize;
 use std::collections::BTreeSet;
-use std::ffi::OsString;
 use std::fs;
 use std::path::{Path as StdPath, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
@@ -155,7 +151,7 @@ pub async fn get_session(Path(session_id): Path<String>) -> Json<Session> {
                 model: None,
                 agent: None,
                 session_type: Some("coding".to_string()),
-                lsp: Some(serde_json::json!({"mode":"auto","enabled":[],"disabled":[]})),
+                auto_session_name: true,
                 kill_processes_on_start: false,
                 validator_enabled: false,
                 force_multiple_tasks: false,
@@ -201,6 +197,7 @@ pub async fn create_session(
         .or(persisted_config.model_acceleration_enabled)
         .unwrap_or(false);
     let disable_permission_restrictions = payload.disable_permission_restrictions.unwrap_or(false);
+    let auto_session_name = payload.auto_session_name.unwrap_or(true);
     if kill_processes_on_start {
         if let Some(directory) = directory.as_deref() {
             let cleanup = tokio::task::spawn_blocking({
@@ -226,15 +223,11 @@ pub async fn create_session(
         .agent
         .clone()
         .or(persisted_config.active_agent.clone());
-    let lsp = payload.lsp.clone().unwrap_or_else(|| {
-        default_lsp_for_session(&requested_session_type, requested_agent.as_deref())
-    });
     let mut session = session_store().create_session(
         directory,
         payload.model.or(persisted_config.model),
         requested_agent,
         Some(requested_session_type),
-        Some(lsp.clone()),
         kill_processes_on_start,
         validator_enabled,
         force_multiple_tasks,
@@ -242,6 +235,13 @@ pub async fn create_session(
         model_acceleration_enabled,
         disable_permission_restrictions,
     );
+    if auto_session_name != session.auto_session_name {
+        if let Some(updated) =
+            session_store().update_session_auto_session_name(&session.id, auto_session_name)
+        {
+            session = updated;
+        }
+    }
     if let Some(task_management) = payload.task_management {
         if let Some(updated) = session_store().update_session(
             &session.id,
@@ -253,19 +253,9 @@ pub async fn create_session(
             None,
             None,
             None,
-            None,
             Some(task_management),
         ) {
             session = updated;
-        }
-    }
-    if should_start_session_lsp(
-        session.session_type.as_deref(),
-        session.agent.as_deref(),
-        &lsp,
-    ) {
-        if let Err(err) = start_session_lsp(session.directory.clone(), lsp).await {
-            tracing::warn!(error = %err, "session LSP startup wait failed");
         }
     }
     session_store().push_event(GlobalEvent::SessionCreated {
@@ -283,13 +273,14 @@ pub struct CreateSessionRequest {
     pub model: Option<String>,
     pub agent: Option<String>,
     pub session_type: Option<String>,
-    pub lsp: Option<LspSessionConfig>,
     pub kill_processes_on_start: Option<bool>,
     pub validator_enabled: Option<bool>,
     pub force_multiple_tasks: Option<bool>,
     pub model_variant: Option<String>,
     pub model_acceleration_enabled: Option<bool>,
     pub disable_permission_restrictions: Option<bool>,
+    #[serde(alias = "autoSessionName")]
+    pub auto_session_name: Option<bool>,
     pub task_management: Option<serde_json::Value>,
 }
 
@@ -330,174 +321,6 @@ pub async fn patch_session_config(
     }
 }
 
-fn default_lsp_for_session(session_type: &str, agent: Option<&str>) -> LspSessionConfig {
-    if session_uses_lsp(session_type, agent) {
-        LspSessionConfig::default()
-    } else {
-        LspSessionConfig {
-            mode: LspMode::Manual,
-            enabled: Vec::new(),
-            disabled: Vec::new(),
-        }
-    }
-}
-
-fn should_start_session_lsp(
-    session_type: Option<&str>,
-    agent: Option<&str>,
-    lsp: &LspSessionConfig,
-) -> bool {
-    session_uses_lsp(session_type.unwrap_or("coding"), agent)
-        && (matches!(lsp.mode, LspMode::Auto) || !active_lsp_languages_for_config(lsp).is_empty())
-}
-
-fn session_uses_lsp(session_type: &str, agent: Option<&str>) -> bool {
-    matches!(
-        session_type,
-        "coding" | "programming" | "development" | "testing"
-    ) || matches!(agent, Some("coding_agent" | "coding_agent_fast"))
-}
-
-fn active_lsp_languages_for_config(lsp: &LspSessionConfig) -> Vec<&'static str> {
-    let mut ids = Vec::<String>::new();
-    ids.extend(lsp.enabled.iter().cloned());
-    ids.retain(|id| !lsp.disabled.iter().any(|disabled| disabled == id));
-    ids.sort();
-    ids.dedup();
-    ids.into_iter()
-        .filter_map(|id| lsp_id_to_suffix(&id))
-        .collect()
-}
-
-async fn start_session_lsp(directory: Option<String>, lsp: LspSessionConfig) -> Result<(), String> {
-    let Some(directory) = directory else {
-        return Ok(());
-    };
-    let languages = active_lsp_languages(&directory, &lsp);
-    if languages.is_empty() {
-        return Ok(());
-    }
-
-    let router_url = std::env::var("TURA_ROUTER_URL")
-        .or_else(|_| std::env::var("ROUTER_BASE_URL"))
-        .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
-    let services_dir = std::env::current_dir()
-        .unwrap_or_default()
-        .join("services")
-        .join("lsp")
-        .to_string_lossy()
-        .to_string();
-    let session_path = PathBuf::from(&directory)
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(&directory))
-        .to_string_lossy()
-        .to_string();
-
-    let input = serde_json::json!({
-        "services_dir": services_dir,
-        "input": {
-            "start_lsp": languages,
-            "start_checks": [],
-            "session_path": session_path,
-        }
-    });
-
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(120))
-        .no_proxy()
-        .build()
-        .map_err(|err| err.to_string())?;
-
-    ensure_router_ready(&client, &router_url).await?;
-
-    let response = client
-        .post(format!("{}/run_service", router_url.trim_end_matches('/')))
-        .json(&input)
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
-
-    if !response.status().is_success() {
-        return Err(format!("HTTP {}", response.status()));
-    }
-    wait_for_router_lsp_worker(&client, router_url.trim_end_matches('/')).await?;
-    Ok(())
-}
-
-async fn ensure_router_ready(client: &reqwest::Client, router_url: &str) -> Result<(), String> {
-    if router_health_ok(client, router_url).await {
-        return Ok(());
-    }
-    if router_autostart_disabled() {
-        return Err(format!("router is not healthy at {router_url}/health"));
-    }
-
-    start_local_router(router_url)?;
-
-    let deadline = std::time::Instant::now() + Duration::from_secs(90);
-    while std::time::Instant::now() < deadline {
-        if router_health_ok(client, router_url).await {
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-
-    Err(format!(
-        "router did not become healthy at {router_url}/health"
-    ))
-}
-
-fn router_autostart_disabled() -> bool {
-    std::env::var("TURA_DISABLE_ROUTER_AUTOSTART")
-        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-        .unwrap_or(false)
-}
-
-async fn router_health_ok(client: &reqwest::Client, router_url: &str) -> bool {
-    match client
-        .get(format!("{}/health", router_url.trim_end_matches('/')))
-        .send()
-        .await
-    {
-        Ok(response) => response.status().is_success(),
-        Err(_) => false,
-    }
-}
-
-fn start_local_router(router_url: &str) -> Result<(), String> {
-    let root = repo_root_for_router()
-        .ok_or_else(|| "failed to locate repository root for router startup".to_string())?;
-    let router_executable = router_executable_candidates(&root)
-        .into_iter()
-        .find(|path| path.exists());
-
-    let mut command = if let Some(executable) = router_executable {
-        tokio::process::Command::new(executable)
-    } else {
-        let mut command = tokio::process::Command::new("cargo");
-        command.args(["run", "-p", "tura_router"]);
-        command
-    };
-
-    command
-        .current_dir(&root)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-
-    if let Some(port) = router_port_from_url(router_url) {
-        command.env("TURA_ROUTER_PORT", port.to_string());
-    }
-    if let Ok(port) = std::env::var("PORT") {
-        command.env("TURA_GATEWAY_PORT", port);
-    }
-
-    command
-        .spawn()
-        .map(|_| ())
-        .map_err(|err| format!("failed to start local router: {err}"))
-}
-
 fn repo_root_for_router() -> Option<PathBuf> {
     let mut starts = Vec::new();
     if let Ok(current) = std::env::current_dir() {
@@ -514,7 +337,7 @@ fn repo_root_for_router() -> Option<PathBuf> {
             .ancestors()
             .find(|candidate| {
                 candidate
-                    .join("services")
+                    .join("crates")
                     .join("router")
                     .join("Cargo.toml")
                     .exists()
@@ -538,184 +361,6 @@ fn router_executable_candidates(root: &StdPath) -> Vec<PathBuf> {
     candidates.push(root.join("target").join("release").join(executable));
     candidates.push(root.join("target").join("debug").join(executable));
     candidates
-}
-
-fn router_port_from_url(router_url: &str) -> Option<u16> {
-    reqwest::Url::parse(router_url)
-        .ok()?
-        .port_or_known_default()
-}
-
-async fn wait_for_router_lsp_worker(
-    client: &reqwest::Client,
-    router_url: &str,
-) -> Result<(), String> {
-    let deadline = std::time::Instant::now() + Duration::from_secs(120);
-    let mut last_error = String::from("not attempted");
-
-    while std::time::Instant::now() < deadline {
-        match client
-            .get(format!("{router_url}/services/status"))
-            .send()
-            .await
-        {
-            Ok(response) if response.status().is_success() => {
-                match response.json::<serde_json::Value>().await {
-                    Ok(value) => {
-                        let ready = value
-                            .get("workers")
-                            .and_then(|workers| workers.as_array())
-                            .into_iter()
-                            .flatten()
-                            .any(|worker| {
-                                worker.get("service_name").and_then(|value| value.as_str())
-                                    == Some("lsp")
-                                    && worker
-                                        .get("alive")
-                                        .and_then(|value| value.as_bool())
-                                        .unwrap_or(false)
-                            });
-                        if ready {
-                            return Ok(());
-                        }
-                        last_error = "lsp worker not listed as alive yet".to_string();
-                    }
-                    Err(err) => last_error = err.to_string(),
-                }
-            }
-            Ok(response) => last_error = format!("HTTP {}", response.status()),
-            Err(err) => last_error = err.to_string(),
-        }
-
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-
-    Err(format!(
-        "timed out waiting for router LSP worker: {last_error}"
-    ))
-}
-
-fn active_lsp_languages(directory: &str, lsp: &LspSessionConfig) -> Vec<&'static str> {
-    let mut ids = Vec::<String>::new();
-
-    if matches!(lsp.mode, crate::session::manager::LspMode::Auto) {
-        ids.extend(detect_lsp_language_ids(StdPath::new(directory)));
-    }
-    ids.extend(lsp.enabled.iter().cloned());
-    ids.retain(|id| !lsp.disabled.iter().any(|disabled| disabled == id));
-    ids.sort();
-    ids.dedup();
-
-    ids.into_iter()
-        .filter_map(|id| lsp_id_to_suffix(&id))
-        .collect()
-}
-
-fn detect_lsp_language_ids(root: &StdPath) -> Vec<String> {
-    const MAX_FILES: usize = 10_000;
-    let mut detected = BTreeSet::new();
-    let mut stack = vec![root.to_path_buf()];
-    let mut files_seen = 0usize;
-
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or_default();
-            if path.is_dir() {
-                if should_skip_lsp_scan_dir(name) {
-                    continue;
-                }
-                stack.push(path);
-                continue;
-            }
-
-            files_seen += 1;
-            if files_seen > MAX_FILES {
-                break;
-            }
-
-            match name {
-                "Cargo.toml" => {
-                    detected.insert("rust".to_string());
-                }
-                "go.mod" => {
-                    detected.insert("go".to_string());
-                }
-                "package.json" | "tsconfig.json" => {
-                    detected.insert("typescript".to_string());
-                }
-                _ => {}
-            }
-
-            match path
-                .extension()
-                .and_then(|value| value.to_str())
-                .unwrap_or_default()
-            {
-                "rs" => {
-                    detected.insert("rust".to_string());
-                }
-                "ts" | "tsx" => {
-                    detected.insert("typescript".to_string());
-                }
-                "js" | "jsx" => {
-                    detected.insert("javascript".to_string());
-                }
-                "py" => {
-                    detected.insert("python".to_string());
-                }
-                "go" => {
-                    detected.insert("go".to_string());
-                }
-                "java" => {
-                    detected.insert("java".to_string());
-                }
-                _ => {}
-            }
-        }
-        if files_seen > MAX_FILES {
-            break;
-        }
-    }
-
-    detected.into_iter().collect()
-}
-
-fn should_skip_lsp_scan_dir(name: &str) -> bool {
-    matches!(
-        name,
-        ".git"
-            | "node_modules"
-            | "target"
-            | "dist"
-            | "build"
-            | "__pycache__"
-            | ".venv"
-            | "venv"
-            | "vendor"
-            | "bin"
-            | "obj"
-            | "out"
-            | "deps"
-    )
-}
-
-fn lsp_id_to_suffix(id: &str) -> Option<&'static str> {
-    match id {
-        "rust" => Some("rs"),
-        "typescript" => Some("ts"),
-        "python" => Some("py"),
-        "javascript" => Some("js"),
-        "go" => Some("go"),
-        "java" => Some("java"),
-        _ => None,
-    }
 }
 
 fn encoded_header(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -771,6 +416,9 @@ pub async fn update_session(
     Path(session_id): Path<String>,
     Json(payload): Json<UpdateSessionRequest>,
 ) -> Json<Session> {
+    if let Some(auto_session_name) = payload.auto_session_name {
+        let _ = session_store().update_session_auto_session_name(&session_id, auto_session_name);
+    }
     let session = session_store()
         .update_session(
             &session_id,
@@ -778,8 +426,7 @@ pub async fn update_session(
             payload.model,
             payload.agent,
             payload.session_type,
-            payload.lsp.clone(),
-            payload.kill_processes_on_start,
+            None,
             payload.validator_enabled,
             payload.force_multiple_tasks,
             payload.disable_permission_restrictions,
@@ -793,9 +440,9 @@ pub async fn update_session(
             updated_at: 0,
             directory: None,
             model: None,
-            agent: Some("coding_agent".to_string()),
+            agent: Some("coding_agent_planning".to_string()),
             session_type: Some("coding".to_string()),
-            lsp: Some(serde_json::json!({"mode":"auto","enabled":[],"disabled":[]})),
+            auto_session_name: true,
             kill_processes_on_start: false,
             validator_enabled: false,
             force_multiple_tasks: false,
@@ -808,18 +455,6 @@ pub async fn update_session(
             plan_summary: None,
             session_display_name: None,
         });
-
-    if let Some(lsp) = payload.lsp {
-        if should_start_session_lsp(
-            session.session_type.as_deref(),
-            session.agent.as_deref(),
-            &lsp,
-        ) {
-            if let Err(err) = start_session_lsp(session.directory.clone(), lsp).await {
-                tracing::warn!(error = %err, "session LSP startup wait failed");
-            }
-        }
-    }
 
     session_store().push_event(GlobalEvent::SessionUpdated {
         properties: SessionUpdatedProperties {
@@ -846,7 +481,6 @@ pub async fn update_session_task_management(
             None,
             None,
             None,
-            None,
             Some(payload.task_management),
         )
         .unwrap_or_else(|| Session {
@@ -857,9 +491,9 @@ pub async fn update_session_task_management(
             updated_at: 0,
             directory: None,
             model: None,
-            agent: Some("coding_agent".to_string()),
+            agent: Some("coding_agent_planning".to_string()),
             session_type: Some("coding".to_string()),
-            lsp: Some(serde_json::json!({"mode":"auto","enabled":[],"disabled":[]})),
+            auto_session_name: true,
             kill_processes_on_start: false,
             validator_enabled: false,
             force_multiple_tasks: false,
@@ -893,11 +527,12 @@ pub struct UpdateSessionRequest {
     pub model: Option<String>,
     pub agent: Option<String>,
     pub session_type: Option<String>,
-    pub lsp: Option<LspSessionConfig>,
     pub kill_processes_on_start: Option<bool>,
     pub validator_enabled: Option<bool>,
     pub force_multiple_tasks: Option<bool>,
     pub disable_permission_restrictions: Option<bool>,
+    #[serde(alias = "autoSessionName")]
+    pub auto_session_name: Option<bool>,
     pub task_management: Option<serde_json::Value>,
 }
 
@@ -961,10 +596,6 @@ pub async fn fork_session(
             .agent
             .or_else(|| original.as_ref().and_then(|s| s.agent.clone())),
         original.as_ref().and_then(|s| s.session_type.clone()),
-        original
-            .as_ref()
-            .and_then(|s| s.lsp.clone())
-            .and_then(|value| serde_json::from_value::<LspSessionConfig>(value).ok()),
         original
             .as_ref()
             .map(|session| session.kill_processes_on_start)
@@ -1217,6 +848,7 @@ pub async fn send_agent_message(
             tool_call.metadata.clone(),
         )
     });
+    sync_auto_session_name_from_agent_tool_call(&session_id, payload.tool_call.as_ref());
 
     match message.or(tool_message) {
         Some(message) => Json(SendAgentMessageResponse {
@@ -1243,6 +875,94 @@ pub async fn send_agent_message(
             event: None,
             error: Some("failed to store agent message".to_string()),
         }),
+    }
+}
+
+fn sync_auto_session_name_from_agent_tool_call(
+    session_id: &str,
+    tool_call: Option<&SendAgentToolCall>,
+) {
+    let Some(summary) = tool_call.and_then(last_task_summary_from_tool_call) else {
+        return;
+    };
+    let Some(current_session) = session_store().get_session(session_id) else {
+        return;
+    };
+    let default_name = current_session
+        .name
+        .as_deref()
+        .is_none_or(|name| name.trim().is_empty() || name.starts_with("Session-"));
+    if !current_session.auto_session_name && !default_name {
+        return;
+    }
+    let Some(session) = session_store().update_session(
+        session_id,
+        Some(summary),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    ) else {
+        return;
+    };
+    session_store().push_event(GlobalEvent::SessionUpdated {
+        properties: SessionUpdatedProperties {
+            session_id: session.id.clone(),
+            info: session,
+        },
+    });
+}
+
+fn last_task_summary_from_tool_call(tool_call: &SendAgentToolCall) -> Option<String> {
+    let mut summaries = Vec::new();
+    if let Some(output) = tool_call
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("output"))
+    {
+        collect_task_summaries(output, &mut summaries);
+    }
+    if summaries.is_empty() {
+        if let Some(output) = tool_call
+            .state
+            .get("metadata")
+            .and_then(|metadata| metadata.get("output"))
+            .or_else(|| tool_call.state.get("output"))
+        {
+            collect_task_summaries(output, &mut summaries);
+        }
+    }
+    if summaries.is_empty() {
+        collect_task_summaries(&tool_call.state, &mut summaries);
+    }
+    summaries.pop()
+}
+
+fn collect_task_summaries(value: &serde_json::Value, summaries: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(object) => {
+            if let Some(summary) = object
+                .get("task_summary")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                summaries.push(summary.to_string());
+            }
+            for child in object.values() {
+                collect_task_summaries(child, summaries);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_task_summaries(item, summaries);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1292,15 +1012,13 @@ fn agent_message_content(payload: &SendAgentMessageRequest) -> String {
     let mut content = frontend_safe_reply_message(&payload.reply_message);
 
     if !payload.media.is_empty() {
-        content.push_str("\n\nmedia:");
+        if !content.trim().is_empty() {
+            content.push_str("\n\n");
+        }
         for item in &payload.media {
-            content.push_str("\n- ");
+            content.push_str("[MEDIA:");
             content.push_str(&item.path);
-            if let Some(media_type) = item.media_type.as_deref() {
-                content.push_str(" (");
-                content.push_str(media_type);
-                content.push(')');
-            }
+            content.push_str(":MEDIA]\n");
         }
     }
 
@@ -2055,7 +1773,6 @@ fn reset_polling_task_after_run(session_id: &str) {
         None,
         None,
         None,
-        None,
         Some(serde_json::json!({ "status": "todo" })),
     );
 }
@@ -2128,16 +1845,16 @@ fn prompt_runtime_context(payload: &serde_json::Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
+/// 通过 router CLI 转发一次 prompt：gateway 仅做转发 + 状态收尾，
+/// runtime 行为全部经 router→runtime worker 子进程执行，事件经现有回调通道回报。
 fn run_mano_for_prompt(session_id: String, payload: serde_json::Value) {
     let content = prompt_text(&payload).unwrap_or_else(|| "Prompt submitted".to_string());
     let before_count = session_store().get_messages(&session_id).len();
     let session = session_store().get_session(&session_id);
-    let input = code_tools_suite::state_machine::session_management::SessionInput {
-        user_input: content,
-        file_input: Vec::new(),
-        agent: session.as_ref().and_then(|session| session.agent.clone()),
-        runtime_context: prompt_runtime_context(&payload),
-    };
+
+    let agent = prompt_agent_override(&payload)
+        .or_else(|| session.as_ref().and_then(|session| session.agent.clone()));
+    let runtime_context = prompt_runtime_context(&payload);
     let force_multiple_tasks = session
         .as_ref()
         .map(|session| session.force_multiple_tasks)
@@ -2145,13 +1862,20 @@ fn run_mano_for_prompt(session_id: String, payload: serde_json::Value) {
     let model_override = prompt_model_override(&payload)
         .or_else(|| session.as_ref().and_then(|session| session.model.clone()))
         .and_then(normalize_model_override);
-    let reasoning_effort = prompt_model_variant(&payload).or_else(|| {
-        session
-            .as_ref()
-            .and_then(|session| session.model_variant.clone())
-            .filter(|value| !value.trim().is_empty())
-    });
+    let agent_runtime_settings = agent
+        .as_deref()
+        .and_then(agent_runtime_settings)
+        .unwrap_or_default();
+    let reasoning_effort = prompt_model_variant(&payload)
+        .or(agent_runtime_settings.reasoning_effort)
+        .or_else(|| {
+            session
+                .as_ref()
+                .and_then(|session| session.model_variant.clone())
+                .filter(|value| !value.trim().is_empty())
+        });
     let acceleration_enabled = prompt_model_acceleration(&payload)
+        .or(agent_runtime_settings.acceleration_enabled)
         .or_else(|| {
             session
                 .as_ref()
@@ -2173,31 +1897,52 @@ fn run_mano_for_prompt(session_id: String, payload: serde_json::Value) {
         .map(load_config)
         .map(|config| config.command_run_stall_guard())
         .unwrap_or_else(|| TuraSessionConfig::default().command_run_stall_guard());
-    let result = with_gateway_runtime_env(|| {
-        with_force_multiple_tasks_env(force_multiple_tasks, || {
-            with_model_override_env(model_override.as_deref(), || {
-                with_model_options_env(reasoning_effort.as_deref(), acceleration_enabled, || {
-                    with_command_run_stall_guard_env(command_run_stall_guard, || {
-                        directory
-                            .map(PathBuf::from)
-                            .map(|directory| {
-                                code_tools_suite::mano::process_from_gateway_session_in_directory(
-                                    session_id.clone(),
-                                    input.clone(),
-                                    directory,
-                                )
-                            })
-                            .unwrap_or_else(|| {
-                                code_tools_suite::mano::process_from_gateway_session(
-                                    session_id.clone(),
-                                    input,
-                                )
-                            })
-                    })
-                })
-            })
-        })
+
+    // worker env 契约：取代旧的进程级 with_*_env 注入，由 router 注入 runtime worker 子进程。
+    let mut worker_env: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    if force_multiple_tasks {
+        worker_env.insert(
+            "TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS".to_string(),
+            "1".to_string(),
+        );
+    }
+    if let Some(reasoning) = reasoning_effort
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("default"))
+    {
+        worker_env.insert(
+            "TURA_SESSION_REASONING_EFFORT".to_string(),
+            reasoning.to_string(),
+        );
+    }
+    if acceleration_enabled {
+        worker_env.insert(
+            "TURA_SESSION_ACCELERATION_ENABLED".to_string(),
+            "1".to_string(),
+        );
+    }
+    worker_env.insert(
+        "TURA_COMMAND_RUN_STALL_CHECK_SECS".to_string(),
+        command_run_stall_guard.check_secs.to_string(),
+    );
+    worker_env.insert(
+        "TURA_COMMAND_RUN_STALL_IDENTICAL_CHECKS".to_string(),
+        command_run_stall_guard.identical_checks.to_string(),
+    );
+
+    let body = serde_json::json!({
+        "session_id": session_id,
+        "directory": directory,
+        "model": model_override,
+        "agent": agent,
+        "prompt": content,
+        "runtime_context": runtime_context,
+        "worker_env": worker_env,
     });
+
+    let result = forward_run_agent_to_router(&body);
 
     if session_store().is_cancelled(&session_id) {
         session_store().finish_todos(&session_id, false);
@@ -2206,8 +1951,7 @@ fn run_mano_for_prompt(session_id: String, payload: serde_json::Value) {
     }
 
     match result {
-        Ok(result) => {
-            session_store().replace_management(&session_id, result.session.clone());
+        Ok(()) => {
             session_store().update_session_status(&session_id, SessionStatusMano::Idle);
             session_store().finish_todos(&session_id, true);
             if let Some(message) = final_agent_message(&session_id, before_count) {
@@ -2218,13 +1962,10 @@ fn run_mano_for_prompt(session_id: String, payload: serde_json::Value) {
                     },
                 });
             } else {
-                let summary = result
-                    .session
-                    .session_log
-                    .last()
-                    .map(|entry| readable_session_log(entry))
-                    .unwrap_or_else(|| "MANO completed without a user-facing message.".to_string());
-                add_agent_fallback_message(&session_id, summary);
+                add_agent_fallback_message(
+                    &session_id,
+                    "MANO completed without a user-facing message.".to_string(),
+                );
             }
         }
         Err(error) => {
@@ -2235,6 +1976,64 @@ fn run_mano_for_prompt(session_id: String, payload: serde_json::Value) {
                 format!("MANO failed while processing this prompt: {error}"),
             );
         }
+    }
+}
+
+/// 阻塞式通过 router CLI 派发 runtime worker（在 spawn_blocking / std thread 内调用）。
+fn forward_run_agent_to_router(body: &serde_json::Value) -> Result<(), String> {
+    let root = repo_root_for_router()
+        .ok_or_else(|| "failed to locate repository root for router CLI".to_string())?;
+    let router = router_executable_candidates(&root)
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| "router binary not found in target/{release,debug}".to_string())?;
+    let mut command = ProcessCommand::new(&router);
+    command
+        .arg("run-agent")
+        .current_dir(&root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Ok(port) = std::env::var("PORT") {
+        command.env("TURA_GATEWAY_PORT", port);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|err| format!("failed to start router CLI {}: {err}", router.display()))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        let encoded = serde_json::to_vec(body)
+            .map_err(|err| format!("failed to encode router run-agent payload: {err}"))?;
+        stdin
+            .write_all(&encoded)
+            .map_err(|err| format!("failed to write router run-agent payload: {err}"))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|err| format!("router CLI run-agent failed: {err}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return Err(if stderr.is_empty() { stdout } else { stderr });
+    }
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|err| {
+        format!(
+            "router CLI run-agent returned invalid response: {err}; output={}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    })?;
+    if value
+        .get("ok")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true)
+    {
+        Ok(())
+    } else {
+        Err(value
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("router CLI run-agent returned failure")
+            .to_string())
     }
 }
 
@@ -2264,6 +2063,60 @@ fn prompt_model_variant(payload: &serde_json::Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
+#[derive(Default)]
+struct AgentRuntimeSettings {
+    reasoning_effort: Option<String>,
+    acceleration_enabled: Option<bool>,
+}
+
+fn agent_runtime_settings(agent_id: &str) -> Option<AgentRuntimeSettings> {
+    let root = repo_root_for_router()?;
+    let agent = tura_agents::store::load_agent(&root, agent_id)?;
+    let provider = agent.config.provider.as_object()?;
+    Some(AgentRuntimeSettings {
+        reasoning_effort: provider_string(
+            provider,
+            &[
+                "model_reasoning_effort",
+                "reasoning_effort",
+                "model_variant",
+            ],
+        ),
+        acceleration_enabled: provider_bool(provider, "model_acceleration_enabled").or_else(|| {
+            provider_string(provider, &["service_tier"])
+                .map(|value| value.eq_ignore_ascii_case("priority"))
+        }),
+    })
+}
+
+fn provider_string(
+    provider: &serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<String> {
+    keys.iter()
+        .filter_map(|key| provider.get(*key))
+        .filter_map(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("default"))
+        .map(ToString::to_string)
+        .next()
+}
+
+fn provider_bool(provider: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<bool> {
+    provider.get(key).and_then(serde_json::Value::as_bool)
+}
+
+fn prompt_agent_override(payload: &serde_json::Value) -> Option<String> {
+    payload
+        .get("agent")
+        .or_else(|| payload.get("agent_id"))
+        .or_else(|| payload.get("agentID"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
 fn prompt_model_acceleration(payload: &serde_json::Value) -> Option<bool> {
     payload
         .get("model_acceleration_enabled")
@@ -2287,112 +2140,6 @@ fn normalize_model_override(value: String) -> Option<String> {
         other => other,
     };
     Some(format!("{provider}/{model}"))
-}
-
-fn with_gateway_runtime_env<T>(run: impl FnOnce() -> T) -> T {
-    const URL_ENV: &str = "TURA_GATEWAY_URL";
-    let previous = std::env::var_os(URL_ENV);
-    if previous.is_none() {
-        let port = std::env::var("TURA_GATEWAY_PORT")
-            .or_else(|_| std::env::var("PORT"))
-            .unwrap_or_else(|_| "4096".to_string());
-        std::env::set_var(URL_ENV, format!("http://127.0.0.1:{port}"));
-    }
-    let result = run();
-    match previous {
-        Some(value) => std::env::set_var(URL_ENV, value),
-        None => std::env::remove_var(URL_ENV),
-    }
-    result
-}
-
-fn with_force_multiple_tasks_env<T>(enabled: bool, run: impl FnOnce() -> T) -> T {
-    const ENV_NAME: &str = "TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS";
-    let previous: Option<OsString> = std::env::var_os(ENV_NAME);
-    if enabled {
-        std::env::set_var(ENV_NAME, "1");
-    } else {
-        std::env::remove_var(ENV_NAME);
-    }
-    let result = run();
-    match previous {
-        Some(value) => std::env::set_var(ENV_NAME, value),
-        None => std::env::remove_var(ENV_NAME),
-    }
-    result
-}
-
-fn with_model_override_env<T>(model: Option<&str>, run: impl FnOnce() -> T) -> T {
-    const ENV_NAME: &str = "TURA_SESSION_MODEL_OVERRIDE";
-    let previous: Option<OsString> = std::env::var_os(ENV_NAME);
-    if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
-        std::env::set_var(ENV_NAME, model);
-    }
-    let result = run();
-    match previous {
-        Some(value) => std::env::set_var(ENV_NAME, value),
-        None => std::env::remove_var(ENV_NAME),
-    }
-    result
-}
-
-fn with_model_options_env<T>(
-    reasoning_effort: Option<&str>,
-    acceleration_enabled: bool,
-    run: impl FnOnce() -> T,
-) -> T {
-    const REASONING_ENV: &str = "TURA_SESSION_REASONING_EFFORT";
-    const ACCEL_ENV: &str = "TURA_SESSION_ACCELERATION_ENABLED";
-    let previous_reasoning: Option<OsString> = std::env::var_os(REASONING_ENV);
-    let previous_accel: Option<OsString> = std::env::var_os(ACCEL_ENV);
-
-    if let Some(reasoning_effort) = reasoning_effort.filter(|value| !value.trim().is_empty()) {
-        if reasoning_effort.trim().eq_ignore_ascii_case("default") {
-            std::env::remove_var(REASONING_ENV);
-        } else {
-            std::env::set_var(REASONING_ENV, reasoning_effort);
-        }
-    }
-    if acceleration_enabled {
-        std::env::set_var(ACCEL_ENV, "1");
-    } else {
-        std::env::remove_var(ACCEL_ENV);
-    }
-
-    let result = run();
-    match previous_reasoning {
-        Some(value) => std::env::set_var(REASONING_ENV, value),
-        None => std::env::remove_var(REASONING_ENV),
-    }
-    match previous_accel {
-        Some(value) => std::env::set_var(ACCEL_ENV, value),
-        None => std::env::remove_var(ACCEL_ENV),
-    }
-    result
-}
-
-fn with_command_run_stall_guard_env<T>(
-    config: CommandRunStallGuardConfig,
-    run: impl FnOnce() -> T,
-) -> T {
-    const CHECK_ENV: &str = "TURA_COMMAND_RUN_STALL_CHECK_SECS";
-    const IDENTICAL_ENV: &str = "TURA_COMMAND_RUN_STALL_IDENTICAL_CHECKS";
-    let previous_check: Option<OsString> = std::env::var_os(CHECK_ENV);
-    let previous_identical: Option<OsString> = std::env::var_os(IDENTICAL_ENV);
-
-    std::env::set_var(CHECK_ENV, config.check_secs.to_string());
-    std::env::set_var(IDENTICAL_ENV, config.identical_checks.to_string());
-
-    let result = run();
-    match previous_check {
-        Some(value) => std::env::set_var(CHECK_ENV, value),
-        None => std::env::remove_var(CHECK_ENV),
-    }
-    match previous_identical {
-        Some(value) => std::env::set_var(IDENTICAL_ENV, value),
-        None => std::env::remove_var(IDENTICAL_ENV),
-    }
-    result
 }
 
 fn final_agent_message(
@@ -2464,18 +2211,6 @@ fn is_runtime_markup_line(line: &str) -> bool {
         || (lower.starts_with("</invoke") && lower.ends_with('>'))
         || (lower.starts_with("<tool_call") && lower.ends_with('>'))
         || (lower.starts_with("</tool_call") && lower.ends_with('>'))
-}
-
-fn readable_session_log(entry: &str) -> String {
-    serde_json::from_str::<serde_json::Value>(entry)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("content")
-                .and_then(|content| content.as_str())
-                .map(frontend_safe_reply_message)
-        })
-        .unwrap_or_else(|| frontend_safe_reply_message(entry))
 }
 
 fn frontend_safe_reply_message(text: &str) -> String {
@@ -2702,7 +2437,6 @@ pub async fn tui_action(payload: Option<Json<serde_json::Value>>) -> Json<serde_
                         None,
                         None,
                         Some("coding".to_string()),
-                        None,
                         false,
                         false,
                         false,
@@ -2750,14 +2484,13 @@ pub async fn tui_action(payload: Option<Json<serde_json::Value>>) -> Json<serde_
 #[cfg(test)]
 mod tests {
     use super::{
-        active_lsp_languages, agent_message_metadata, api_message_from_store, filter_list_sessions,
-        first_prompt_part_id, frontend_safe_reply_message, frontend_safe_value,
-        multiple_tasks_todos, prompt_message_id, prompt_model_acceleration, prompt_model_variant,
-        prompt_text, with_model_override_env, workspace_key, SendAgentMessageRequest,
+        agent_message_content, agent_message_metadata, api_message_from_store,
+        filter_list_sessions, first_prompt_part_id, frontend_safe_reply_message,
+        frontend_safe_value, multiple_tasks_todos, prompt_message_id, prompt_model_acceleration,
+        prompt_model_variant, prompt_text, workspace_key, SendAgentMedia, SendAgentMessageRequest,
         SendAgentToolCall, SessionListParams,
     };
     use crate::api::types::{Session, SessionStatus};
-    use crate::session::manager::{LspMode, LspSessionConfig};
     use crate::session_store;
     use axum::{
         extract::{Path, Query},
@@ -2765,12 +2498,6 @@ mod tests {
         Json,
     };
     use std::fs;
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_test_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
 
     #[test]
     fn prompt_payload_keeps_frontend_message_and_part_ids() {
@@ -2813,24 +2540,6 @@ mod tests {
         assert_eq!(prompt_model_variant(&payload), None);
     }
 
-    #[test]
-    fn model_override_env_preserves_existing_value_when_prompt_has_no_override() {
-        let _guard = env_test_lock().lock().expect("env test lock");
-        const ENV_NAME: &str = "TURA_SESSION_MODEL_OVERRIDE";
-        let previous = std::env::var_os(ENV_NAME);
-        std::env::set_var(ENV_NAME, "openai/gpt-5.1");
-
-        with_model_override_env(None, || {
-            assert_eq!(std::env::var(ENV_NAME).as_deref(), Ok("openai/gpt-5.1"));
-        });
-
-        assert_eq!(std::env::var(ENV_NAME).as_deref(), Ok("openai/gpt-5.1"));
-        match previous {
-            Some(value) => std::env::set_var(ENV_NAME, value),
-            None => std::env::remove_var(ENV_NAME),
-        }
-    }
-
     fn test_session(
         id: &str,
         directory: &str,
@@ -2847,7 +2556,7 @@ mod tests {
             model: None,
             agent: None,
             session_type: Some("coding".to_string()),
-            lsp: None,
+            auto_session_name: true,
             kill_processes_on_start: false,
             validator_enabled: false,
             force_multiple_tasks: false,
@@ -2944,7 +2653,6 @@ mod tests {
             None,
             None,
             Some("coding".to_string()),
-            None,
             false,
             false,
             false,
@@ -2955,7 +2663,6 @@ mod tests {
         session_store()
             .update_session(
                 &session.id,
-                None,
                 None,
                 None,
                 None,
@@ -2996,13 +2703,13 @@ mod tests {
                 model: None,
                 agent: None,
                 session_type: Some("chat".to_string()),
-                lsp: None,
                 kill_processes_on_start: Some(false),
                 validator_enabled: Some(false),
                 force_multiple_tasks: Some(false),
                 model_variant: None,
                 model_acceleration_enabled: Some(false),
                 disable_permission_restrictions: Some(false),
+                auto_session_name: None,
                 task_management: Some(serde_json::json!({
                     "plan_summary": "Create Route Plan",
                     "task_summary": "Create route task"
@@ -3025,6 +2732,7 @@ mod tests {
         assert_eq!(value["task_management"]["start_condition"], "user_action");
         assert_eq!(value["plan_summary"], "Create Route Plan");
         assert_eq!(value["session_display_name"], "Create Route Plan");
+        assert_eq!(value["auto_session_name"], true);
         let object = value.as_object().expect("session JSON should be an object");
         assert_eq!(object.len(), 21);
 
@@ -3058,7 +2766,6 @@ mod tests {
             None,
             None,
             Some("chat".to_string()),
-            None,
             false,
             false,
             false,
@@ -3099,12 +2806,144 @@ mod tests {
         );
         assert_eq!(value["plan_summary"], "Dedicated Patch Route");
         assert_eq!(value["session_display_name"], "Dedicated Patch Route");
+        assert_eq!(value["auto_session_name"], true);
         let object = value.as_object().expect("session JSON should be an object");
         assert_eq!(object.len(), 21);
 
         let Json(fetched) = super::get_session(Path(session.id)).await;
         assert_eq!(fetched.task_management["status"], "question");
         assert_eq!(fetched.task_management["start_condition"], "scheduled_task");
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    async fn agent_tool_callback_updates_auto_session_name_from_last_task_summary() {
+        let directory = std::env::temp_dir()
+            .join(format!("auto-session-name-{}", uuid::Uuid::new_v4()))
+            .to_string_lossy()
+            .to_string();
+        let session = session_store().create_session(
+            Some(directory.clone()),
+            None,
+            None,
+            Some("coding".to_string()),
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+
+        let Json(response) = super::send_agent_message(
+            Path(session.id.clone()),
+            Json(super::SendAgentMessageRequest {
+                reply_message: String::new(),
+                new_learning: String::new(),
+                step_summary: None,
+                media: vec![],
+                runtime_id: Some("runtime-1".to_string()),
+                tool_call: Some(super::SendAgentToolCall {
+                    tool_name: "command_run".to_string(),
+                    call_id: "call-1".to_string(),
+                    state: serde_json::json!({
+                        "status": "completed",
+                        "metadata": {
+                            "output": {
+                                "results": [
+                                    { "output": { "task_status": { "task_summary": "First summary" } } },
+                                    { "output": { "status": { "task_summary": "Last summary" } } }
+                                ]
+                            }
+                        }
+                    }),
+                    metadata: None,
+                }),
+            }),
+        )
+        .await;
+
+        assert!(response.ok);
+        let Json(updated) = super::get_session(Path(session.id)).await;
+        assert_eq!(updated.name.as_deref(), Some("Last summary"));
+        assert_eq!(
+            updated.session_display_name.as_deref(),
+            Some("Last summary")
+        );
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    async fn agent_tool_callback_keeps_manual_session_name_when_auto_disabled() {
+        let directory = std::env::temp_dir()
+            .join(format!("manual-session-title-{}", uuid::Uuid::new_v4()))
+            .to_string_lossy()
+            .to_string();
+        let session = session_store().create_session(
+            Some(directory.clone()),
+            None,
+            None,
+            Some("coding".to_string()),
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        session_store()
+            .update_session_auto_session_name(&session.id, false)
+            .expect("session auto mode should update");
+        session_store()
+            .update_session(
+                &session.id,
+                Some("Manual title".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .expect("session title should update");
+
+        let Json(response) = super::send_agent_message(
+            Path(session.id.clone()),
+            Json(super::SendAgentMessageRequest {
+                reply_message: String::new(),
+                new_learning: String::new(),
+                step_summary: None,
+                media: vec![],
+                runtime_id: Some("runtime-1".to_string()),
+                tool_call: Some(super::SendAgentToolCall {
+                    tool_name: "command_run".to_string(),
+                    call_id: "call-1".to_string(),
+                    state: serde_json::json!({
+                        "status": "completed",
+                        "metadata": {
+                            "output": {
+                                "results": [{
+                                    "output": {
+                                        "status": { "task_summary": "Generated summary" }
+                                    }
+                                }]
+                            }
+                        }
+                    }),
+                    metadata: None,
+                }),
+            }),
+        )
+        .await;
+
+        assert!(response.ok);
+        let Json(updated) = super::get_session(Path(session.id)).await;
+        assert_eq!(updated.name.as_deref(), Some("Manual title"));
+        assert!(!updated.auto_session_name);
 
         let _ = fs::remove_dir_all(directory);
     }
@@ -3306,47 +3145,22 @@ mod tests {
     }
 
     #[test]
-    fn auto_lsp_languages_detect_go_without_defaulting_to_rust() {
-        let root = std::env::temp_dir().join(format!("tura-go-lsp-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(root.join("cmd")).expect("test directory should be created");
-        fs::write(root.join("go.mod"), "module example.com/tura\n")
-            .expect("go.mod should be written");
-        fs::write(
-            root.join("cmd").join("main.go"),
-            "package main\nfunc main() {}\n",
-        )
-        .expect("go file should be written");
+    fn agent_message_content_renders_media_as_rich_tokens() {
+        let content = agent_message_content(&SendAgentMessageRequest {
+            reply_message: "screens".to_string(),
+            new_learning: String::new(),
+            step_summary: None,
+            media: vec![SendAgentMedia {
+                path: r"C:\Users\liuliu\Documents\tura\shot.png".to_string(),
+                media_type: Some("image/png".to_string()),
+            }],
+            runtime_id: Some("runtime-1".to_string()),
+            tool_call: None,
+        });
 
-        let config = LspSessionConfig {
-            mode: LspMode::Auto,
-            enabled: Vec::new(),
-            disabled: Vec::new(),
-        };
-
-        let languages =
-            active_lsp_languages(root.to_str().expect("temp path should be utf8"), &config);
-        let _ = fs::remove_dir_all(&root);
-
-        assert_eq!(languages, vec!["go"]);
-    }
-
-    #[test]
-    fn auto_lsp_languages_respects_manual_overrides() {
-        let root =
-            std::env::temp_dir().join(format!("tura-lsp-overrides-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&root).expect("test directory should be created");
-        fs::write(root.join("main.go"), "package main\n").expect("go file should be written");
-
-        let config = LspSessionConfig {
-            mode: LspMode::Auto,
-            enabled: vec!["java".to_string()],
-            disabled: vec!["go".to_string()],
-        };
-
-        let languages =
-            active_lsp_languages(root.to_str().expect("temp path should be utf8"), &config);
-        let _ = fs::remove_dir_all(&root);
-
-        assert_eq!(languages, vec!["java"]);
+        assert_eq!(
+            content,
+            "screens\n\n[MEDIA:C:\\Users\\liuliu\\Documents\\tura\\shot.png:MEDIA]\n"
+        );
     }
 }

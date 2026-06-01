@@ -6,6 +6,7 @@ pub mod handler;
 pub mod media;
 pub mod mock;
 pub mod runtime;
+pub mod runtime_worker;
 pub mod session;
 pub mod simple_runtime;
 pub mod types;

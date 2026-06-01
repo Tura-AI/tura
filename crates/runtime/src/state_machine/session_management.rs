@@ -137,9 +137,6 @@ pub struct TaskStep {
     /// Condition that started this task.
     #[serde(default)]
     pub start_condition: StartCondition,
-    /// Short subtask name used by compact UI and status prompts.
-    #[serde(default)]
-    pub task_name: String,
     /// Current completion status.
     #[serde(default)]
     pub status: PlanStatus,
@@ -223,6 +220,9 @@ pub struct SessionManagement {
     pub session_id: SessionId,
     /// Natural-language session name.
     pub session_name: SessionName,
+    /// Whether the session name should follow the latest task summary.
+    #[serde(default = "default_auto_session_name")]
+    pub auto_session_name: bool,
     /// Absolute directory path of the session.
     pub session_directory: PathBuf,
     /// Whether this session uses Docker.
@@ -263,6 +263,10 @@ fn default_use_last_tool_call_response() -> bool {
     true
 }
 
+fn default_auto_session_name() -> bool {
+    true
+}
+
 impl SessionManagement {
     /// Creates a new session in `Created` state.
     #[expect(
@@ -282,6 +286,7 @@ impl SessionManagement {
         Self {
             session_id,
             session_name,
+            auto_session_name: true,
             session_directory,
             session_uses_docker,
             session_topic,

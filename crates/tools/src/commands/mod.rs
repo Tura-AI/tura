@@ -1,9 +1,11 @@
 pub mod apply_patch;
 pub mod bash;
+pub mod command_safety;
 pub mod compact_context;
 pub mod multiple_tasks;
 pub mod read_media;
 pub mod shell_command;
+pub mod task_status;
 pub mod web_discover;
 
 use crate::runtime::file_locks::Access;

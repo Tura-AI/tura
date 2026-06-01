@@ -11,6 +11,8 @@ export function settingsRoutes(): SettingsRoute[] {
     { id: "appearance", label: t("appearance") },
     { id: "providers", label: t("providers") },
     { id: "models", label: t("models") },
+    { id: "agents", label: t("agentSettings") },
+    { id: "personalization", label: t("personalization") },
   ];
 }
 

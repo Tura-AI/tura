@@ -1,6 +1,9 @@
 import { GatewayError } from "./errors";
 import type {
   Agent,
+  AgentUpsertRequest,
+  PersonaUpsertRequest,
+  StoredPersona,
   Command,
   CreateSessionRequest,
   CurrentProjectResponse,
@@ -46,6 +49,7 @@ import type {
   UsageByAgent,
   UsagePoint,
   AgentRuntimeUsage,
+  StoredAgent,
   VcsDiffResponse,
   VcsInfo,
   Workspace,
@@ -401,6 +405,48 @@ export class GatewayClient {
     return this.get("/agent");
   }
 
+  agent(agentId: string): Promise<StoredAgent> {
+    return this.get(`/agent/${encodeURIComponent(agentId)}`);
+  }
+
+  createAgent(payload: AgentUpsertRequest): Promise<StoredAgent> {
+    return this.post("/agent", payload);
+  }
+
+  updateAgent(
+    agentId: string,
+    payload: AgentUpsertRequest,
+  ): Promise<StoredAgent> {
+    return this.patch(`/agent/${encodeURIComponent(agentId)}`, payload);
+  }
+
+  deleteAgent(agentId: string): Promise<boolean> {
+    return this.delete(`/agent/${encodeURIComponent(agentId)}`);
+  }
+
+  personas(): Promise<StoredPersona[]> {
+    return this.get("/persona");
+  }
+
+  persona(personaId: string): Promise<StoredPersona> {
+    return this.get(`/persona/${encodeURIComponent(personaId)}`);
+  }
+
+  createPersona(payload: PersonaUpsertRequest): Promise<StoredPersona> {
+    return this.post("/persona", payload);
+  }
+
+  updatePersona(
+    personaId: string,
+    payload: PersonaUpsertRequest,
+  ): Promise<StoredPersona> {
+    return this.patch(`/persona/${encodeURIComponent(personaId)}`, payload);
+  }
+
+  deletePersona(personaId: string): Promise<boolean> {
+    return this.delete(`/persona/${encodeURIComponent(personaId)}`);
+  }
+
   commands(): Promise<Command[]> {
     return this.get("/command");
   }
@@ -662,7 +708,9 @@ function isValidGatewayUrl(value: string | undefined | null): value is string {
   if (!value?.trim()) return false;
   try {
     const url = new URL(value);
-    return (url.protocol === "http:" || url.protocol === "https:") && !!url.host;
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") && !!url.host
+    );
   } catch {
     return false;
   }

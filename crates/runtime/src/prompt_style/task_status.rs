@@ -1,6 +1,4 @@
-pub const TASK_STATUS: &str = r#"Task-management status.
-Use command_run only while workspace work remains.
-When the active task is complete and verified, call command_run with a task_status command whose status is done.
-When user feedback or more information is needed, call command_run with a task_status command whose status is question.
-If neither done nor question applies, continue the task with command_run instead of reporting status.
-Do not rename task_summary during execution once it already exists, unless the user clearly changed the task."#;
+/// Short reminder injected by the runtime loop when the model keeps doing
+/// workspace work without ever settling the task state. The full how-to and
+/// examples live in the `task_status` command prompt; this is only the nudge.
+pub const TASK_STATUS: &str = "Reminder: settle the task state with a task_status command. Do not keep re-running verification or read-only commands in place of marking `done` or `question`.";

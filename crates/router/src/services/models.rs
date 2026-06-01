@@ -29,16 +29,17 @@ pub struct WorkerEnvelope {
 #[derive(Debug, Clone)]
 pub struct WorkerHandle {
     pub worker_id: String,
-    pub service_name: String,
-    pub url: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct WorkerStatus {
-    pub worker_id: String,
+/// 声明式 worker 描述：可执行 + 启动参数 + env 契约。
+/// 不绑定任何具体服务；以「key→worker」复用、探活、自愈。
+#[derive(Debug, Clone)]
+pub struct WorkerSpec {
+    /// 复用维度的 key（session/agent 维度，非服务目录）。
+    pub key: String,
+    /// 用于 url/状态展示的逻辑名。
     pub service_name: String,
-    pub url: String,
-    pub alive: bool,
-    pub pid: Option<u32>,
-    pub executable_path: String,
+    pub executable: std::path::PathBuf,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
 }

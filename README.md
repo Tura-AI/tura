@@ -112,7 +112,7 @@ troubleshooting.
 The Rust workspace is defined in the root `Cargo.toml`.
 
 ```text
-crates/agents    package tura-agents       library tura_agents
+agents    package tura-agents       library tura_agents
 crates/gateway   package gateway           binary tura
 crates/provider  package tura-llm-rust     library tura_llm_rust
 crates/router    package tura_router       binary tura_router
@@ -161,14 +161,19 @@ answered by a model provider, and may call tools through the command layer.
 apps or CLI
   -> crates/gateway
   -> crates/runtime mano layer
-  -> crates/agents selected agent config
+  -> agents selected agent config
   -> crates/runtime manas loop
   -> crates/provider model call
-  -> crates/runtime tool-call normalization
+  -> crates/provider response normalization (text, tool calls,
+     ProviderToolCall, content-type fallback) — runtime has zero per-provider
+     branches
   -> crates/tools command_run
   -> crates/router command/lifecycle resolution when needed
   -> crates/tools command handler
   -> crates/runtime compact results and final response
+  -> crates/runtime (optional) child sub-session dispatch via
+     `tura_router run-agent` CLI subprocess for multi-agent concurrent/
+     recursive flows (no HTTP/URL)
   -> crates/gateway replayable events and UI state
 ```
 
@@ -242,7 +247,7 @@ cargo fmt -p code-tools-suite
 cargo check -p code-tools-suite
 ```
 
-### `crates/agents`
+### `agents`
 
 Agents owns model-facing agent definitions. Runtime loads agent configuration
 from this crate rather than hard-coding prompt text, provider defaults, or
@@ -344,6 +349,11 @@ Current important modules:
 - `src/commands/bash/`: Bash execution surface.
 - `src/commands/apply_patch/`: patch application command.
 - `src/commands/read_media/`: read-only local image/PDF/video inspection.
+- `src/commands/web_discover/`: network-backed web/media discovery and
+  downloads.
+- `src/commands/task_status/`: internal command-run status command.
+- `src/commands/command_safety.rs`: shell command danger detection before
+  process spawn.
 - `src/runtime/file_locks/`: shared and exclusive workspace locks.
 - `src/modes/code/`: code-mode prompt and policy.
 
@@ -366,6 +376,12 @@ context.
 Only a compact tool surface should be shown to the model by default. Command
 schemas validate inputs, while command prompts provide concise model-facing
 guidance.
+
+Command `policy.toml` files may expose bounded defaults under `[configurable]`
+using the shared inline shape `{ default = "...", enum = ["...", "..."] }`.
+`read_media` uses those defaults for media compression, PDF page count,
+directory expansion, document attachment size, and audio preview size;
+`web_discover` uses the same shape for search route fallback order.
 
 Useful checks:
 
@@ -493,7 +509,7 @@ Rules:
 
 Prompt text has separate owners:
 
-- Agent prompts: `crates/agents/src/<agent>/prompt.md`
+- Agent prompts: `agents/src/<agent>/prompt.md`
 - Runtime prompt fragments: `crates/runtime/src/prompt_style/`
 - The `command_run` visible tool description: `crates/tools/src/command_run/schema.json`,
   augmented at runtime by `crates/runtime/src/manas/tool_catalog.rs`
@@ -544,6 +560,9 @@ Additional command-run commands in this version:
 - `read_media`: reads local images, PDFs, and video metadata/frames and returns
   compact model-facing descriptions without retaining raw base64 in the next
   context.
+- `web_discover`: searches, fetches, and optionally downloads web/media
+  artifacts using policy-configured route fallback.
+- `task_status`: internal command-run status/progress command.
 - `multiple_tasks`: optional planning-mode command, injected only when the CLI
   enables multiple-task mode. It is not part of the default coding-agent tool
   surface.
@@ -696,8 +715,8 @@ are still in transition:
   event responsibilities.
 - Runtime keeps Mano/MANAS naming internally. Preserve that split while keeping
   public entrypoints thin and moving detailed behavior into owner modules.
-- Tools currently exposes command-run plus shell/bash/apply_patch/read_media commands.
-  It also contains mode-gated `compact_context` and `multiple_tasks` commands.
+- Tools currently exposes command-run plus shell/bash/apply_patch/read_media,
+  web_discover, task_status, compact_context, and multiple_tasks commands.
   New commands should be added under `crates/tools/src/commands/<name>` and
   registered through router metadata or the command-run capability gate.
 - Apps directories are present as product surfaces. Gateway remains the stable
@@ -711,7 +730,7 @@ are still in transition:
 - `ARCHITECTURE.md`: whole-project architecture and target boundaries.
 - `crates/gateway/ARCHITECTURE.md`: gateway API and session boundary.
 - `crates/runtime/ARCHITECTURE.md`: Mano/MANAS runtime architecture.
-- `crates/agents/ARCHITECTURE.md`: agent config and prompt ownership.
+- `agents/ARCHITECTURE.md`: agent config and prompt ownership.
 - `crates/provider/ARCHITECTURE.md`: provider routing/auth/model boundary.
 - `crates/tools/ARCHITECTURE.md`: command-run, policies, and file locks.
 - `crates/router/ARCHITECTURE.md`: router command registry and lifecycle.

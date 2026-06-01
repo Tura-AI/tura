@@ -2,7 +2,12 @@
 
 use crate::api::types::*;
 use crate::mock::global_store;
-use axum::{extract::Query, http::StatusCode, Json};
+use axum::{
+    body::Body,
+    extract::Query,
+    http::{header, Response, StatusCode},
+    Json,
+};
 use base64::Engine;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -253,6 +258,33 @@ pub async fn get_file_content(
             mime_type: None,
         })),
     }
+}
+
+pub async fn get_file_media(
+    Query(params): Query<FileContentQuery>,
+) -> Result<Response<Body>, (StatusCode, String)> {
+    let (_, path) = resolve_workspace_file_path(params.directory, &params.path, "file media")?;
+    let mime_type = media_mime_type(&path).ok_or_else(|| {
+        (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "File is not a supported media type".to_string(),
+        )
+    })?;
+    let bytes = std::fs::read(&path).map_err(|error| {
+        (
+            if error.kind() == std::io::ErrorKind::NotFound {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            },
+            error.to_string(),
+        )
+    })?;
+    Response::builder()
+        .header(header::CONTENT_TYPE, mime_type)
+        .header(header::CACHE_CONTROL, "private, max-age=60")
+        .body(Body::from(bytes))
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
 }
 
 pub async fn open_file(
@@ -597,6 +629,15 @@ fn workspace_root(directory: Option<String>) -> Option<PathBuf> {
 }
 
 fn safe_join(root: &Path, relative: &str) -> Option<PathBuf> {
+    let requested = PathBuf::from(relative);
+    if requested.is_absolute() {
+        let canonical_root = root.canonicalize().ok()?;
+        let canonical_requested = requested.canonicalize().ok()?;
+        return canonical_requested
+            .starts_with(&canonical_root)
+            .then_some(canonical_requested);
+    }
+
     let mut path = PathBuf::from(root);
     for component in Path::new(relative).components() {
         match component {
