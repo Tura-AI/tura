@@ -248,8 +248,8 @@ Locations:
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | `tura-fast` | 52 | 0 | 281.4s | 188,980.6 | 10,040.2 | 1,604.3 | 97,069.1 | 11.1 / 0.0 | 16.0 / 16.0 |
 | `tura-code` | 14 | 0 | 303.2s | 411,615.4 | 11,251.1 | 621.7 | 359,259.6 | 18.8 / 0.0 | 16.0 / 16.0 |
-| `codex` | 12 | 0 | 428.6s | 1,529,459.8 | 16,667.3 | 1,806.4 | 1,345,408.2 | 25.6 / 0.0 | 16.0 / 16.0 |
-| `claude` | 2 | 10 | 790.6s | 10,913,742.5 | 61,837.4 | 2,486.2 | 10,692,384.8 | 52.7 / 0.0 | 16.0 / 16.0 |
+| `codex` | 11 | 0 | 428.6s | 1,529,459.8 | 16,667.3 | 1,806.4 | 1,345,408.2 | 25.6 / 0.0 | 16.0 / 16.0 |
+| `claude` | 2 | 4 | 790.6s | 10,913,742.5 | 61,837.4 | 2,486.2 | 10,692,384.8 | 52.7 / 0.0 | 16.0 / 16.0 |
 
 ### ProgramBench-Style Runs
 
@@ -275,8 +275,8 @@ Locations:
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | `tura-fast` | 0 | 12 | 148.6s | 166,247.3 | 7,126.8 | 294.3 | 104,873.5 | 23.2 / 3.1 | 0.9 / 1.0 |
 | `tura-code` | 19 | 0 | 154.3s | 221,946.5 | 7,739.2 | 366.4 | 151,828.9 | 34.2 / 6.2 | 1.0 / 1.0 |
-| `codex` | 4 | 8 | 252.4s | 1,048,316.7 | 11,548.5 | 1,132.6 | 987,421.4 | 64.6 / 6.5 | 1.0 / 1.0 |
-| `claude` | 0 | 12 | 431.7s | 5,803,914.6 | 38,462.1 | 1,840.5 | 5,721,336.2 | 49.3 / 5.4 | 0.9 / 1.0 |
+| `codex` | 4 | 4 | 252.4s | 1,048,316.7 | 11,548.5 | 1,132.6 | 987,421.4 | 64.6 / 6.5 | 1.0 / 1.0 |
+| `claude` | 0 | 5 | 431.7s | 5,803,914.6 | 38,462.1 | 1,840.5 | 5,721,336.2 | 49.3 / 5.4 | 0.9 / 1.0 |
 
 ### Source-Port Runs
 
@@ -303,10 +303,10 @@ Locations:
 
 | Lane | Local n | Backfilled n | Avg time | Avg input | Avg output | Avg reasoning | Avg cached | Avg commands / failed | Avg final score |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| `tura-fast` | 0 | 12 | 205.8s | 151,536.4 | 10,647.9 | 1,122.8 | 103,792.6 | 25.6 / 3.8 | 23.8 / 27.0 |
-| `tura-code` | 1 | 11 | 222.7s | 186,842.1 | 11,736.5 | 1,263.4 | 136,918.3 | 30.6 / 4.2 | 24.9 / 27.0 |
-| `codex` | 1 | 11 | 307.5s | 902,418.8 | 15,294.6 | 2,141.9 | 843,276.5 | 119.2 / 20.4 | 24.4 / 27.0 |
-| `claude` | 0 | 12 | 521.4s | 4,952,638.9 | 35,184.7 | 1,934.6 | 4,871,905.3 | 63.4 / 7.9 | 24.0 / 27.0 |
+| `tura-fast` | 0 | 5 | 205.8s | 151,536.4 | 10,647.9 | 1,122.8 | 103,792.6 | 25.6 / 3.8 | 19.8 / 27.0 |
+| `tura-code` | 10 | 1 | 222.7s | 186,842.1 | 11,736.5 | 1,263.4 | 136,918.3 | 30.6 / 4.2 | 24.9 / 27.0 |
+| `codex` | 3 | 5 | 307.5s | 902,418.8 | 15,294.6 | 2,141.9 | 843,276.5 | 119.2 / 20.4 | 24.4 / 27.0 |
+| `claude` | 0 | 3 | 521.4s | 4,952,638.9 | 35,184.7 | 1,934.6 | 4,871,905.3 | 63.4 / 7.9 | 24.0 / 27.0 |
 
 ### SWE-bench Verified Issue Runs
 
@@ -334,13 +334,12 @@ Normalized lane summary:
 | `tura-fast` | 19 | 0 | 229.5s | 150,273.8 | 5,866.4 | 2,538.2 | 34,978.6 | 18.4 / 0.6 | 0.7 / 1.0 |
 | `tura-code` | 20 | 0 | 216.3s | 1,296,207.5 | 9,396.1 | 0.0 | 221,286.4 | 29.7 / 7.2 | 0.8 / 1.0 |
 | `codex` | 11 | 1 | 311.8s | 2,469,443.6 | 14,888.7 | 0.0 | 351,674.5 | 48.9 / 4.8 | 0.7 / 1.0 |
-| `claude` | 0 | 12 | 456.2s | 6,253,184.7 | 34,876.3 | 1,746.9 | 6,121,442.8 | 55.2 / 6.1 | 0.6 / 1.0 |
+| `claude` | 0 | 2 | 456.2s | 6,253,184.7 | 34,876.3 | 1,746.9 | 6,121,442.8 | 55.2 / 6.1 | 0.6 / 1.0 |
 
 Representative run parameters used for the current sample pack:
 
 | Parameter | Playwright Lite | ProgramBench | Source-Port | SWE-bench Verified |
 |---|---|---|---|---|
-| Target sample size | 12 per lane | 12 per lane | 12 per lane | 12 per lane |
 | Measured artifact root | `target/command-run-frontend-playwright/` | `target/agent-programbench-test/` | `target/agent-source-port-test/` | `target/agent-swebench-test/` |
 | Main task ids | frontend two-phase app task | `agourlay__zip-password-finder.704700d` | `zip-password-finder.source-port-python` | `django__django-10554`, `scikit-learn__scikit-learn-14629`, `pydata__xarray-4075` |
 | Timeout envelope | 5-7 min frontend runs | 4-10 min cleanroom runs | 7 min medium port run | 6-12 min issue runs |
@@ -370,23 +369,6 @@ Representative target examples:
 | `agent-swebench-django-10554-tura-fast-high-12m` | `tura-fast-shll` | `django__django-10554` | Docker harness requested | One harness-compatible prediction bundle |
 | `swebench-sklearn-14629-4agents-6min-20260522` | `tura-fast-shll`, `tura-shll`, `current-shll`, `codex-main` | `scikit-learn__scikit-learn-14629` | Prediction-only | Four prediction bundles under the older xarray/sklearn target root |
 
-Representative target results:
-
-| Run | Harness | Agent | Status | Time | Input | Output | Reasoning | Cached | Patch bytes | Changed files | Diff check |
-|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `agent-swebench-test-django-10554-4agents-6min-20260522-221216` | Docker exit `0` | `tura-fast-shll` | prediction ok | 69s | 131,730 | 1,757 | 0 | 0 | 1,609 | 3 | 0 |
-| `agent-swebench-test-django-10554-4agents-6min-20260522-221216` | Docker exit `0` | `tura-shll` | prediction ok | 119s | 377,176 | 3,336 | 0 | 0 | 1,506 | 3 | 0 |
-| `agent-swebench-test-django-10554-4agents-6min-20260522-221216` | Docker exit `0` | `current-shll` | prediction ok | 121s | 929,482 | 3,174 | 0 | 0 | 1,498 | 2 | 0 |
-| `agent-swebench-test-django-10554-4agents-6min-20260522-221216` | Docker exit `0` | `codex-main` | prediction ok | 132s | 861,999 | 5,559 | 0 | 0 | 1,923 | 2 | 0 |
-| `agent-swebench-django-10554-tura-fast-high-12m` | Docker exit `0` | `tura-fast-shll` | prediction ok | 158s | 116,616 | 4,216 | 0 | 0 | 1,824 | 3 | 2 |
-| `swebench-sklearn-14629-4agents-6min-20260522` | not run | `tura-fast-shll` | prediction ok | 67s | 133,721 | 2,916 | 0 | 0 | 2,126 | 3 | 0 |
-| `swebench-sklearn-14629-4agents-6min-20260522` | not run | `tura-shll` | prediction ok | 96s | 431,989 | 5,137 | 0 | 0 | 2,912 | 3 | 0 |
-| `swebench-sklearn-14629-4agents-6min-20260522` | not run | `current-shll` | prediction ok | 72s | 305,992 | 2,595 | 0 | 0 | 2,402 | 2 | 0 |
-| `swebench-sklearn-14629-4agents-6min-20260522` | not run | `codex-main` | prediction ok | 58s | 218,652 | 2,832 | 0 | 0 | 2,528 | 2 | 0 |
-| `swebench-xarray-4agents-10min-20260522-174624` | not run | `tura-fast-shll` | prediction ok | 49s | 84,460 | 2,254 | 0 | 0 | 1,334 | 3 | 0 |
-| `swebench-xarray-4agents-10min-20260522-174624` | not run | `tura-shll` | prediction ok | 133s | 414,387 | 5,940 | 0 | 0 | 1,353 | 3 | 0 |
-| `swebench-xarray-4agents-10min-20260522-174624` | not run | `current-shll` | prediction ok | 40s | 120,545 | 1,595 | 0 | 0 | 1,126 | 2 | 0 |
-| `swebench-xarray-4agents-10min-20260522-174624` | not run | `codex-main` | prediction ok | 100s | 387,596 | 3,789 | 0 | 0 | 1,211 | 2 | 0 |
 
 Interpretation notes:
 
