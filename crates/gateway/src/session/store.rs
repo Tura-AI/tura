@@ -4,19 +4,21 @@
 //! structure that wraps SessionManagement from mano.
 
 use crate::api::types::{GlobalEvent, Session as ApiSession, SessionStatus as ApiSessionStatus};
-use crate::session::config::{load_config, merge_config, sessions_dir, TuraSessionConfig};
+use crate::session::config::{load_config, merge_config, TuraSessionConfig};
 use crate::session::manager::{
     agent_for_session_type, default_use_last_tool_call_response_for_session,
     normalize_session_type, runtime_provider_for_session, SessionInfo, SessionManager,
     SessionStatus as SessionStatusMano,
 };
 use chrono::{DateTime, Utc};
-use code_tools_suite::state_machine::session_management::{
+use parking_lot::RwLock;
+use runtime::session_log_client::{SessionLogClient, SessionRecord, SessionSnapshot};
+use runtime::state_machine::session_management::{
     PlanStatus, PollInterval, SessionState, StartCondition, TaskStep,
 };
-use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -63,10 +65,9 @@ pub struct SessionStore {
     events: Arc<RwLock<Vec<GlobalEvent>>>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 struct PersistedSessionRecord {
     info: SessionInfo,
-    #[serde(default)]
     parent_id: Option<String>,
     messages: Vec<Message>,
     todos: Vec<serde_json::Value>,
@@ -137,27 +138,56 @@ impl SessionStore {
         let Some(directory) = directory else {
             return;
         };
-        let directory = PathBuf::from(directory);
-        let dir = sessions_dir(&directory);
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            return;
+        let client = match SessionLogClient::discover() {
+            Ok(client) => client,
+            Err(err) => {
+                tracing::warn!(directory, error = %err, "failed to discover session_log client");
+                return;
+            }
         };
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|value| value.to_str()) != Some("json") {
-                continue;
+        let mut page = 0;
+        const PAGE_SIZE: u64 = 500;
+        loop {
+            let (page_info, sessions) = match client.list_sessions(
+                directory.clone(),
+                page,
+                PAGE_SIZE,
+            ) {
+                Ok(result) => result,
+                Err(err) => {
+                    tracing::warn!(directory, error = %err, "failed to hydrate sessions from session_log");
+                    return;
+                }
+            };
+            for snapshot in sessions {
+                let records = match client.list_session_records(
+                    snapshot.session_id.clone(),
+                    0,
+                    10_000,
+                ) {
+                    Ok((_, records)) => records,
+                    Err(err) => {
+                        tracing::warn!(session_id = %snapshot.session_id, error = %err, "failed to hydrate session records from session_log");
+                        Vec::new()
+                    }
+                };
+                if let Err(err) = self.load_persisted_session(snapshot, records) {
+                    tracing::warn!(error = %err, "failed to load persisted session");
+                }
             }
-            if let Err(err) = self.load_persisted_session(&path) {
-                tracing::warn!(path = %path.display(), error = %err, "failed to load persisted session");
+            if (page_info.page + 1) * page_info.page_size >= page_info.total {
+                break;
             }
+            page += 1;
         }
     }
 
-    fn load_persisted_session(&self, path: &Path) -> Result<(), String> {
-        let content = std::fs::read_to_string(path).map_err(|err| err.to_string())?;
-        let mut record: PersistedSessionRecord =
-            serde_json::from_str(&content).map_err(|err| err.to_string())?;
+    fn load_persisted_session(
+        &self,
+        snapshot: SessionSnapshot,
+        records: Vec<SessionRecord>,
+    ) -> Result<(), String> {
+        let mut record = persisted_record_from_session_log(snapshot, records)?;
         record.info.message_count = record.messages.len();
         record.info.use_last_tool_call_response = default_use_last_tool_call_response_for_session(
             record.info.session_type.as_deref().unwrap_or("coding"),
@@ -201,9 +231,6 @@ impl SessionStore {
             .get(session_id)
             .cloned()
             .ok_or_else(|| "session not found".to_string())?;
-        let Some(directory) = info_directory(&info) else {
-            return Ok(());
-        };
         let messages = self
             .messages
             .read()
@@ -224,11 +251,21 @@ impl SessionStore {
             todos,
         };
 
-        let dir = sessions_dir(&directory);
-        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
-        let path = dir.join(format!("{session_id}.json"));
-        let content = serde_json::to_string_pretty(&record).map_err(|err| err.to_string())?;
-        std::fs::write(path, content).map_err(|err| err.to_string())
+        SessionLogClient::discover()
+            .map_err(|err| err.to_string())?
+            .upsert_session(
+                serde_json::to_value(&record.info).map_err(|err| err.to_string())?,
+                record.parent_id,
+                record
+                    .messages
+                    .into_iter()
+                    .map(serde_json::to_value)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|err| err.to_string())?,
+                record.todos,
+            )
+            .map_err(|err| err.to_string())?;
+        Ok(())
     }
 
     fn persist_active_config(&self, session: &ApiSession) {
@@ -245,7 +282,7 @@ impl SessionStore {
             session_type: session.session_type.clone(),
             kill_processes_on_start: Some(session.kill_processes_on_start),
             validator_enabled: Some(session.validator_enabled),
-            force_multiple_tasks: Some(session.force_multiple_tasks),
+            force_planning: Some(session.force_planning),
             model_variant: session.model_variant.clone(),
             model_acceleration_enabled: Some(session.model_acceleration_enabled),
             ..TuraSessionConfig::default()
@@ -347,6 +384,14 @@ impl SessionStore {
             .unwrap_or_default()
     }
 
+    pub fn take_user_commands_for_session(&self, session_id: &str) -> Vec<String> {
+        let root_id = self.root_session_id(session_id);
+        self.user_commands
+            .write()
+            .remove(&root_id)
+            .unwrap_or_default()
+    }
+
     pub fn register_child_session(
         &self,
         parent_session_id: &str,
@@ -435,7 +480,7 @@ impl SessionStore {
         session_type: Option<String>,
         kill_processes_on_start: bool,
         validator_enabled: bool,
-        force_multiple_tasks: bool,
+        force_planning: bool,
         model_variant: Option<String>,
         model_acceleration_enabled: bool,
         disable_permission_restrictions: bool,
@@ -449,7 +494,7 @@ impl SessionStore {
         let mut info = info;
         info.kill_processes_on_start = kill_processes_on_start;
         info.validator_enabled = validator_enabled;
-        info.force_multiple_tasks = force_multiple_tasks;
+        info.force_planning = force_planning;
         info.model_variant = model_variant.or(persisted_config.model_variant.clone());
         info.model_acceleration_enabled = model_acceleration_enabled;
         info.disable_permission_restrictions = disable_permission_restrictions;
@@ -485,7 +530,7 @@ impl SessionStore {
         session_type: Option<String>,
         kill_processes_on_start: Option<bool>,
         validator_enabled: Option<bool>,
-        force_multiple_tasks: Option<bool>,
+        force_planning: Option<bool>,
         disable_permission_restrictions: Option<bool>,
         task_management: Option<serde_json::Value>,
     ) -> Option<ApiSession> {
@@ -528,8 +573,8 @@ impl SessionStore {
         if let Some(validator_enabled) = validator_enabled {
             info.validator_enabled = validator_enabled;
         }
-        if let Some(force_multiple_tasks) = force_multiple_tasks {
-            info.force_multiple_tasks = force_multiple_tasks;
+        if let Some(force_planning) = force_planning {
+            info.force_planning = force_planning;
         }
         if let Some(disable_permission_restrictions) = disable_permission_restrictions {
             info.disable_permission_restrictions = disable_permission_restrictions;
@@ -1048,7 +1093,7 @@ impl SessionStore {
     pub fn replace_management(
         &self,
         session_id: &str,
-        management: code_tools_suite::state_machine::session_management::SessionManagement,
+        management: runtime::state_machine::session_management::SessionManagement,
     ) {
         if let Some(info) = self.sessions.write().get_mut(session_id) {
             info.management = management;
@@ -1154,7 +1199,7 @@ fn api_session_from_info(info: &SessionInfo, parent_id: Option<String>) -> ApiSe
         auto_session_name: info.management.auto_session_name,
         kill_processes_on_start: info.kill_processes_on_start,
         validator_enabled: info.validator_enabled,
-        force_multiple_tasks: info.force_multiple_tasks,
+        force_planning: info.force_planning,
         disable_permission_restrictions: info.disable_permission_restrictions,
         model_variant: info.model_variant.clone(),
         model_acceleration_enabled: info.model_acceleration_enabled,
@@ -1170,6 +1215,40 @@ fn api_session_from_info(info: &SessionInfo, parent_id: Option<String>) -> ApiSe
     }
 }
 
+fn persisted_record_from_session_log(
+    snapshot: SessionSnapshot,
+    records: Vec<SessionRecord>,
+) -> Result<PersistedSessionRecord, String> {
+    let mut info = serde_json::from_value::<SessionInfo>(snapshot.session.clone())
+        .or_else(|_| {
+            serde_json::from_value(snapshot.management.clone())
+                .map(|management| SessionInfo::from_management(&management))
+        })
+        .map_err(|err| format!("invalid session_log session snapshot: {err}"))?;
+    info.id = snapshot.session_id.clone();
+    info.created_at = snapshot.created_at;
+    info.updated_at = snapshot.updated_at;
+    if !snapshot.workspace.trim().is_empty() {
+        info.directory = Some(snapshot.workspace);
+    }
+    info.message_count = snapshot.message_count as usize;
+
+    let messages = records
+        .into_iter()
+        .map(|record| {
+            serde_json::from_value::<Message>(record.record)
+                .map_err(|err| format!("invalid session_log message record: {err}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(PersistedSessionRecord {
+        info,
+        parent_id: snapshot.parent_id,
+        messages,
+        todos: snapshot.todos,
+    })
+}
+
 fn ensure_first_task(info: &mut SessionInfo) -> &mut TaskStep {
     if info.management.task_plan.detailed_tasks.is_empty() {
         let summary = info
@@ -1178,10 +1257,10 @@ fn ensure_first_task(info: &mut SessionInfo) -> &mut TaskStep {
             .plan_summary
             .clone()
             .if_empty(|| info.management.session_name.clone());
-        let nonce_id = format!("{}:0", info.management.session_id);
+        let task_id = random_task_id();
         info.management.task_plan.detailed_tasks.push(TaskStep {
-            nonce_id,
-            step: 0,
+            task_id,
+            step: 1,
             sub_session_id: String::new(),
             start_at: Utc::now(),
             poll_interval: PollInterval::default(),
@@ -1235,8 +1314,44 @@ fn apply_task_management_patch(
         return Ok(());
     }
 
+    let task_id = string_field(object, &["task_id"]);
+    if task_id.is_none() && info.management.task_plan.detailed_tasks.len() > 1 {
+        return Err(
+            "task_management task patch requires task_id for multi-task sessions".to_string(),
+        );
+    }
+
     let (task_summary, updated_task_summary) = {
-        let task = ensure_first_task(info);
+        let task = match task_id.as_deref() {
+            Some(id) => {
+                let index = info
+                    .management
+                    .task_plan
+                    .detailed_tasks
+                    .iter()
+                    .position(|task| task.task_id == id);
+                match index {
+                    Some(index) => &mut info.management.task_plan.detailed_tasks[index],
+                    None => {
+                        let step = number_field(object, &["step"])
+                            .unwrap_or((info.management.task_plan.detailed_tasks.len() + 1) as u64);
+                        info.management.task_plan.detailed_tasks.push(TaskStep {
+                            task_id: id.to_string(),
+                            step,
+                            start_at: Utc::now(),
+                            start_condition: StartCondition::UserAction,
+                            ..TaskStep::default()
+                        });
+                        info.management
+                            .task_plan
+                            .detailed_tasks
+                            .last_mut()
+                            .expect("new task should exist")
+                    }
+                }
+            }
+            None => ensure_first_task(info),
+        };
         let updated_task_summary = apply_single_task_patch(task, object)?;
         (task.task_summary.clone(), updated_task_summary)
     };
@@ -1252,10 +1367,10 @@ fn apply_task_management_patch(
 }
 
 const TASK_MANAGEMENT_TASK_PATCH_FIELDS: &[&str] = &[
-    "nonce_id",
+    "task_id",
     "step",
     "task_summary",
-    "delivery",
+    "deliverable",
     "sub_session_id",
     "start_condition",
     "start_at",
@@ -1271,26 +1386,20 @@ fn apply_task_list_patch(
         let Some(object) = value.as_object() else {
             return Err("tasks entries must be objects".to_string());
         };
-        let nonce_id = string_field(object, &["nonce_id"]).unwrap_or_else(|| {
-            format!(
-                "{}:{}",
-                info.management.session_id,
-                info.management.task_plan.detailed_tasks.len()
-            )
-        });
+        let task_id = string_field(object, &["task_id"]).unwrap_or_else(random_task_id);
         let position = info
             .management
             .task_plan
             .detailed_tasks
             .iter()
-            .position(|task| task.nonce_id == nonce_id);
+            .position(|task| task.task_id == task_id);
         let index = match position {
             Some(index) => index,
             None => {
                 let step = number_field(object, &["step"])
-                    .unwrap_or(info.management.task_plan.detailed_tasks.len() as u64);
+                    .unwrap_or((info.management.task_plan.detailed_tasks.len() + 1) as u64);
                 info.management.task_plan.detailed_tasks.push(TaskStep {
-                    nonce_id: nonce_id.clone(),
+                    task_id: task_id.clone(),
                     step,
                     start_at: Utc::now(),
                     start_condition: StartCondition::UserAction,
@@ -1307,14 +1416,21 @@ fn apply_task_list_patch(
             }
         }
         if info.management.task_plan.detailed_tasks[index]
-            .nonce_id
+            .task_id
             .trim()
             .is_empty()
         {
-            info.management.task_plan.detailed_tasks[index].nonce_id = nonce_id;
+            info.management.task_plan.detailed_tasks[index].task_id = task_id;
         }
     }
+    renumber_task_steps(&mut info.management.task_plan.detailed_tasks);
     Ok(())
+}
+
+fn renumber_task_steps(tasks: &mut [TaskStep]) {
+    for (index, task) in tasks.iter_mut().enumerate() {
+        task.step = (index + 1) as u64;
+    }
 }
 
 fn apply_single_task_patch(
@@ -1322,8 +1438,8 @@ fn apply_single_task_patch(
     object: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<Option<String>, String> {
     let mut updated_task_summary = None;
-    if let Some(nonce_id) = string_field(object, &["nonce_id"]) {
-        task.nonce_id = nonce_id;
+    if let Some(task_id) = string_field(object, &["task_id"]) {
+        task.task_id = task_id;
     }
     if let Some(step) = number_field(object, &["step"]) {
         task.step = step;
@@ -1335,7 +1451,7 @@ fn apply_single_task_patch(
             task.step_task = summary;
         }
     }
-    if let Some(delivery) = string_field(object, &["delivery"]) {
+    if let Some(delivery) = string_field(object, &["deliverable"]) {
         task.step_deliverable_description = delivery;
     }
     if let Some(sub_session_id) = string_field(object, &["sub_session_id"]) {
@@ -1461,7 +1577,10 @@ fn parse_start_at(value: &serde_json::Value) -> Result<DateTime<Utc>, String> {
 }
 
 fn task_is_scheduler_eligible(task: &TaskStep, now: DateTime<Utc>) -> bool {
-    if matches!(task.status, PlanStatus::Done | PlanStatus::Archived) {
+    if matches!(
+        task.status,
+        PlanStatus::WaitingUser | PlanStatus::Done | PlanStatus::Archived
+    ) {
         return false;
     }
     match task.start_condition {
@@ -1505,15 +1624,6 @@ fn next_polling_start(
         next += step;
     }
     next
-}
-
-fn info_directory(info: &SessionInfo) -> Option<PathBuf> {
-    info.directory
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| Some(info.management.session_directory.clone()))
 }
 
 fn frontend_safe_value(value: Option<serde_json::Value>) -> Option<serde_json::Value> {
@@ -1646,6 +1756,10 @@ pub fn session_store() -> &'static SessionStore {
 
 fn new_message_id(now: i64) -> String {
     format!("msg-{now:013}-{}", Uuid::new_v4())
+}
+
+fn random_task_id() -> String {
+    Uuid::new_v4().simple().to_string()[..8].to_string()
 }
 
 #[cfg(test)]
@@ -2210,15 +2324,16 @@ mod tests {
             )
             .expect("session should update");
 
-        assert_eq!(
-            updated.task_management["nonce_id"],
-            serde_json::json!(format!("{}:0", session.id))
-        );
-        assert_eq!(updated.task_management["step"], serde_json::json!(0));
+        let task_id = updated.task_management["task_id"]
+            .as_str()
+            .expect("task_id should be present");
+        assert_eq!(task_id.len(), 8);
+        assert!(task_id.chars().all(|ch| ch.is_ascii_hexdigit()));
+        assert_eq!(updated.task_management["step"], serde_json::json!(1));
     }
 
     #[test]
-    fn multi_task_patch_matches_nonce_and_creates_defaulted_tasks() {
+    fn multi_task_patch_matches_task_id_and_creates_defaulted_tasks() {
         let store = SessionStore::new();
         let session = store.create_session(
             Some("C:/workspace".to_string()),
@@ -2248,16 +2363,16 @@ mod tests {
                     "plan_summary": "Multi task contract",
                     "tasks": [
                         {
-                            "nonce_id": "inspect",
-                            "step": 0,
+                            "task_id": "inspect",
+                            "step": 1,
                             "task_summary": "Inspect wiring",
-                            "delivery": "Find the files."
+                            "deliverable": "Find the files."
                         },
                         {
-                            "nonce_id": "verify",
-                            "step": 1,
+                            "task_id": "verify",
+                            "step": 2,
                             "task_summary": "Verify wiring",
-                            "delivery": "Delivery spelling.",
+                            "deliverable": "Delivery spelling.",
                             "status": "question"
                         }
                     ]
@@ -2287,7 +2402,7 @@ mod tests {
                 Some(serde_json::json!({
                     "tasks": [
                         {
-                            "nonce_id": "inspect",
+                            "task_id": "inspect",
                             "status": "done"
                         },
                         {
@@ -2302,13 +2417,17 @@ mod tests {
             .as_array()
             .expect("multi-task state should serialize as tasks array");
         assert_eq!(tasks.len(), 3);
-        assert_eq!(tasks[0]["nonce_id"], "inspect");
+        assert_eq!(tasks[0]["task_id"], "inspect");
         assert_eq!(tasks[0]["status"], "done");
-        assert_eq!(tasks[1]["nonce_id"], "verify");
+        assert_eq!(tasks[1]["task_id"], "verify");
         assert_eq!(tasks[1]["status"], "question");
-        assert_eq!(tasks[1]["delivery"], "Delivery spelling.");
-        assert_eq!(tasks[2]["nonce_id"], format!("{}:2", session.id));
-        assert_eq!(tasks[2]["step"], 2);
+        assert_eq!(tasks[1]["deliverable"], "Delivery spelling.");
+        let generated_task_id = tasks[2]["task_id"]
+            .as_str()
+            .expect("generated task_id should be present");
+        assert_eq!(generated_task_id.len(), 8);
+        assert!(generated_task_id.chars().all(|ch| ch.is_ascii_hexdigit()));
+        assert_eq!(tasks[2]["step"], 3);
         assert_eq!(tasks[2]["task_summary"], "Generated follow-up");
         assert!(tasks[2].get("status").is_none());
         assert_eq!(tasks[2]["start_condition"], "user_action");
@@ -2330,7 +2449,14 @@ mod tests {
             false,
         );
 
-        for status in ["todo", "doing", "question", "done", "archived"] {
+        for status in [
+            "todo",
+            "waiting_user",
+            "doing",
+            "question",
+            "done",
+            "archived",
+        ] {
             let updated = store
                 .update_session(
                     &session.id,

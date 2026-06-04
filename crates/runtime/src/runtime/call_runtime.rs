@@ -150,7 +150,7 @@ fn normalize_provider_messages(messages: Vec<serde_json::Value>) -> Vec<serde_js
             {
                 let mut item = serde_json::json!({
                     "role": "assistant",
-                    "content": message_content(&message),
+                    "content": message_content_value(&message),
                     "tool_calls": tool_calls,
                 });
                 if let Some(name) = message.get("name").and_then(serde_json::Value::as_str) {
@@ -168,7 +168,7 @@ fn normalize_provider_messages(messages: Vec<serde_json::Value>) -> Vec<serde_js
             {
                 let mut item = serde_json::json!({
                     "role": "tool",
-                    "content": message_content(&message),
+                    "content": message_content_value(&message),
                     "tool_call_id": tool_call_id,
                 });
                 if let Some(name) = message.get("name").and_then(serde_json::Value::as_str) {
@@ -178,14 +178,20 @@ fn normalize_provider_messages(messages: Vec<serde_json::Value>) -> Vec<serde_js
                 continue;
             }
         }
-        let content = message_content(&message);
-        if content.trim().is_empty() {
+        let content = message_content_value(&message);
+        if content_is_empty(&content) {
             continue;
         }
 
         let (role, content) = match role {
             "system" | "developer" | "user" | "assistant" | "tool" => (role, content),
-            other => ("user", format!("Runtime context ({other}):\n{content}")),
+            other => (
+                "user",
+                serde_json::Value::String(format!(
+                    "Runtime context ({other}):\n{}",
+                    message_content_text(&content)
+                )),
+            ),
         };
         normalized.push(serde_json::json!({
             "role": role,
@@ -195,14 +201,40 @@ fn normalize_provider_messages(messages: Vec<serde_json::Value>) -> Vec<serde_js
     normalized
 }
 
-fn message_content(message: &serde_json::Value) -> String {
-    if let Some(content) = message.get("content").and_then(serde_json::Value::as_str) {
-        return content.to_string();
+fn message_content_value(message: &serde_json::Value) -> serde_json::Value {
+    if let Some(content) = message.get("content") {
+        return content.clone();
     }
     if let Some(text) = message.get("text").and_then(serde_json::Value::as_str) {
-        return text.to_string();
+        return serde_json::Value::String(text.to_string());
     }
-    String::new()
+    serde_json::Value::String(String::new())
+}
+
+fn content_is_empty(content: &serde_json::Value) -> bool {
+    match content {
+        serde_json::Value::String(text) => text.trim().is_empty(),
+        serde_json::Value::Array(items) => items.is_empty(),
+        serde_json::Value::Null => true,
+        _ => false,
+    }
+}
+
+fn message_content_text(content: &serde_json::Value) -> String {
+    match content {
+        serde_json::Value::String(text) => text.to_string(),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .filter_map(|item| {
+                item.get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .or_else(|| item.get("content").and_then(serde_json::Value::as_str))
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        other if other.is_null() => String::new(),
+        other => other.to_string(),
+    }
 }
 
 fn session_reasoning_effort() -> Option<String> {
@@ -525,12 +557,68 @@ mod provider_message_tests {
     }
 
     #[test]
+    fn normalize_provider_messages_preserves_structured_media_content() {
+        let normalized = normalize_provider_messages(vec![serde_json::json!({
+            "role": "user",
+            "content": [
+                { "type": "input_text", "text": "inspect this" },
+                { "type": "input_image", "image_url": "data:image/png;base64,AAA" }
+            ]
+        })]);
+
+        assert_eq!(normalized.len(), 1);
+        assert_eq!(normalized[0]["role"], "user");
+        assert_eq!(normalized[0]["content"][0]["type"], "input_text");
+        assert_eq!(normalized[0]["content"][1]["type"], "input_image");
+    }
+
+    #[test]
     fn strip_thought_blocks_removes_visible_reasoning_text() {
         assert_eq!(
             strip_thought_blocks("<thought>hidden</thought>visible"),
             "visible"
         );
         assert_eq!(strip_thought_blocks("a<THOUGHT>hidden</THOUGHT>b"), "ab");
+    }
+}
+
+#[cfg(test)]
+mod streamed_command_run_tests {
+    use super::{
+        command_run_stream_events_from_provider_content, should_replay_final_response_command_run,
+    };
+
+    #[test]
+    fn final_response_command_run_replay_is_skipped_after_streamed_command_seen() {
+        assert!(!should_replay_final_response_command_run(true));
+        assert!(should_replay_final_response_command_run(false));
+    }
+
+    #[test]
+    fn final_response_command_run_events_still_extract_when_provider_did_not_stream() {
+        let content = serde_json::json!({
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "command_run",
+                    "arguments": {
+                        "commands": [{
+                            "command_type": "apply_patch",
+                            "command_line": "*** Begin Patch\n*** Add File: probe.txt\n+ok\n*** End Patch"
+                        }]
+                    }
+                }
+            }]
+        });
+
+        let events = command_run_stream_events_from_provider_content(&content);
+
+        assert_eq!(events.len(), 1);
+        let event = super::command_run_stream_event_command(events[0].clone())
+            .expect("command_run event should contain a command");
+        assert_eq!(event.tool_call_id, "call_command_run_0");
+        assert_eq!(event.command["command_type"], "apply_patch");
     }
 }
 
@@ -550,9 +638,15 @@ async fn call_runtime_streaming(
     let first_stream_output_at: Arc<Mutex<Option<DateTime<Utc>>>> = Arc::new(Mutex::new(None));
     let streamed_command_results: Arc<Mutex<Vec<serde_json::Value>>> =
         Arc::new(Mutex::new(Vec::new()));
+    let streamed_command_inputs: Arc<Mutex<Vec<serde_json::Value>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let streamed_command_events: Arc<Mutex<Vec<serde_json::Value>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let streamed_command_seen = Arc::new(AtomicBool::new(false));
     let last_streamed_command_result_at: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
     let streamed_command_run_cancelled = Arc::new(AtomicBool::new(false));
     let first_stream_output_for_sink = Arc::clone(&first_stream_output_at);
+    let streamed_command_seen_for_sink = Arc::clone(&streamed_command_seen);
     let sink: tura_llm_rust::ProviderStreamEventSink = Arc::new(move |event| {
         if matches!(
             event,
@@ -565,10 +659,18 @@ async fn call_runtime_streaming(
                 *first = Some(Utc::now());
             }
         }
+        if matches!(
+            event,
+            tura_llm_rust::ProviderStreamEvent::CommandRunCommandReady { .. }
+        ) {
+            streamed_command_seen_for_sink.store(true, Ordering::SeqCst);
+        }
         let _ = stream_tx.send(event);
     });
     let command_session_directory = session_directory.clone();
     let command_results_for_task = Arc::clone(&streamed_command_results);
+    let command_inputs_for_task = Arc::clone(&streamed_command_inputs);
+    let command_events_for_task = Arc::clone(&streamed_command_events);
     let last_command_result_for_task = Arc::clone(&last_streamed_command_result_at);
     let command_cancelled_for_task = Arc::clone(&streamed_command_run_cancelled);
     let gateway_session_id = runtime.session_id.clone();
@@ -588,10 +690,31 @@ async fn call_runtime_streaming(
         let mut streamed_commands = Vec::new();
         let mut live_item_index = 0usize;
         while let Ok(event) = stream_rx.recv() {
-            let Some(command) = command_run_stream_event_command(event) else {
+            let Some(command_event) = command_run_stream_event_command(event) else {
                 continue;
             };
+            let StreamedCommandEvent {
+                tool_call_id,
+                command_index,
+                command,
+            } = command_event;
             streamed_commands.push(command.clone());
+            command_inputs_for_task
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .push(command.clone());
+            emit_cli_live_command_run_started(&command, &tool_call_id, command_index);
+            command_events_for_task
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .push(streamed_command_event_record(
+                    "ready",
+                    &gateway_runtime_id,
+                    &tool_call_id,
+                    command_index,
+                    &command,
+                    None,
+                ));
             let mut live_results = results.clone();
             live_results.push(command_run_live_delta_result(&command, "", ""));
             runtime.block_on(publish_streamed_command_run_update(
@@ -682,6 +805,17 @@ async fn call_runtime_streaming(
                     .lock()
                     .unwrap_or_else(|err| err.into_inner()) = Some(Instant::now());
             }
+            for (offset, result) in completed.iter().enumerate() {
+                command_events_for_task
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner())
+                    .push(streamed_command_result_record(
+                        "completed",
+                        &gateway_runtime_id,
+                        results.len() + offset,
+                        result,
+                    ));
+            }
             results.extend(completed);
             runtime.block_on(publish_streamed_command_run_update(
                 &gateway_session_id,
@@ -712,6 +846,17 @@ async fn call_runtime_streaming(
             *last_command_result_for_task
                 .lock()
                 .unwrap_or_else(|err| err.into_inner()) = Some(Instant::now());
+        }
+        for (offset, result) in completed.iter().enumerate() {
+            command_events_for_task
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .push(streamed_command_result_record(
+                    "completed",
+                    &gateway_runtime_id,
+                    results.len() + offset,
+                    result,
+                ));
         }
         results.extend(completed);
         if !streamed_commands.is_empty() {
@@ -819,8 +964,18 @@ async fn call_runtime_streaming(
                         .lock()
                         .unwrap_or_else(|err| err.into_inner())
                         .clone();
+                    let commands = streamed_command_inputs
+                        .lock()
+                        .unwrap_or_else(|err| err.into_inner())
+                        .clone();
+                    let events = streamed_command_events
+                        .lock()
+                        .unwrap_or_else(|err| err.into_inner())
+                        .clone();
                     runtime.set_output(serde_json::json!({
                         "streamed_command_run_result": {
+                            "commands": commands.clone(),
+                            "command_events": events,
                             "results": results,
                             "early_finish_reason": "apply_patch_failed",
                             "cancelled": true,
@@ -828,7 +983,7 @@ async fn call_runtime_streaming(
                     }));
                     runtime.push_tool_call(ToolCallRecord {
                         tool_called_name: COMMAND_RUN_TOOL_NAME.to_string(),
-                        tool_called_input: serde_json::json!({}),
+                        tool_called_input: serde_json::json!({ "commands": commands }),
                         provider_metadata: None,
                         tool_received_at: finished_at,
                         tool_executed_at: finished_at,
@@ -859,54 +1014,6 @@ async fn call_runtime_streaming(
                     let _ = command_task.join();
                     return Ok(());
                 }
-                let should_finish_from_task_status_done = {
-                    let results = streamed_command_results
-                        .lock()
-                        .unwrap_or_else(|err| err.into_inner());
-                    command_run_results_contain_task_status_done(&results)
-                };
-                if should_finish_from_task_status_done {
-                    let finished_at = Utc::now();
-                    let results = streamed_command_results
-                        .lock()
-                        .unwrap_or_else(|err| err.into_inner())
-                        .clone();
-                    runtime.set_output(serde_json::json!({
-                        "provider_content": {
-                            "text": "command_run reported task_status done; advancing with completed command_run results."
-                        },
-                        "streamed_command_run_result": {
-                            "results": results,
-                            "early_finish_reason": "task_status_done",
-                        }
-                    }));
-                    runtime.push_tool_call(ToolCallRecord {
-                        tool_called_name: COMMAND_RUN_TOOL_NAME.to_string(),
-                        tool_called_input: serde_json::json!({}),
-                        provider_metadata: None,
-                        tool_received_at: finished_at,
-                        tool_executed_at: finished_at,
-                        tool_calldata_received_at: finished_at,
-                        tool_reported_success: false,
-                        agent_reported_success: false,
-                        agent_reported_helpful: false,
-                        agent_reported_summary: String::new(),
-                        validator_reported_success: None,
-                    });
-                    runtime
-                        .mark_first_token(
-                            first_stream_output_at
-                                .lock()
-                                .unwrap_or_else(|err| err.into_inner())
-                                .unwrap_or(finished_at),
-                        )
-                        .map_err(|e| format!("failed to mark first token: {}", e))?;
-                    runtime
-                        .finish_success(finished_at, None)
-                        .map_err(|e| format!("failed to finish runtime success: {}", e))?;
-                    provider_task.abort();
-                    return Ok(());
-                }
                 let should_finish_from_streamed_command_run = {
                     let has_results = !streamed_command_results
                         .lock()
@@ -926,11 +1033,21 @@ async fn call_runtime_streaming(
                         .lock()
                         .unwrap_or_else(|err| err.into_inner())
                         .clone();
+                    let commands = streamed_command_inputs
+                        .lock()
+                        .unwrap_or_else(|err| err.into_inner())
+                        .clone();
+                    let events = streamed_command_events
+                        .lock()
+                        .unwrap_or_else(|err| err.into_inner())
+                        .clone();
                     runtime.set_output(serde_json::json!({
                         "provider_content": {
                             "text": "Provider stream did not finish after streamed command_run completed; advancing with completed command_run results."
                         },
                         "streamed_command_run_result": {
+                            "commands": commands.clone(),
+                            "command_events": events,
                             "results": results,
                             "early_finish_reason": "post_command_run_stream_timeout",
                             "post_result_timeout_ms": post_command_result_timeout.as_millis(),
@@ -938,7 +1055,7 @@ async fn call_runtime_streaming(
                     }));
                     runtime.push_tool_call(ToolCallRecord {
                         tool_called_name: COMMAND_RUN_TOOL_NAME.to_string(),
-                        tool_called_input: serde_json::json!({}),
+                        tool_called_input: serde_json::json!({ "commands": commands }),
                         provider_metadata: None,
                         tool_received_at: finished_at,
                         tool_executed_at: finished_at,
@@ -967,23 +1084,29 @@ async fn call_runtime_streaming(
         }
     };
     let finished_at = Utc::now();
-    let already_streamed_command_results = !streamed_command_results
-        .lock()
-        .unwrap_or_else(|err| err.into_inner())
-        .is_empty();
-    if !already_streamed_command_results {
+    if should_replay_final_response_command_run(streamed_command_seen.load(Ordering::SeqCst)) {
         for event in command_run_stream_events_from_provider_content(&response.content) {
             let _ = final_response_stream_tx.send(event);
         }
     }
     drop(final_response_stream_tx);
     let streamed_command_results = command_task.join().unwrap_or_default();
+    let streamed_command_inputs = streamed_command_inputs
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .clone();
+    let streamed_command_events = streamed_command_events
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .clone();
 
     let mut runtime_output = response.content.clone();
     if !streamed_command_results.is_empty() {
         runtime_output = serde_json::json!({
             "provider_content": response.content.clone(),
             "streamed_command_run_result": {
+                "commands": streamed_command_inputs,
+                "command_events": streamed_command_events,
                 "results": streamed_command_results,
             }
         });
@@ -1026,23 +1149,6 @@ fn streamed_command_run_post_result_timeout() -> Duration {
     Duration::from_millis(millis.max(1))
 }
 
-fn command_run_results_contain_task_status_done(results: &[serde_json::Value]) -> bool {
-    results.iter().any(|item| {
-        item.get("success").and_then(serde_json::Value::as_bool) == Some(true)
-            && item
-                .get("command_type")
-                .or_else(|| item.get("command"))
-                .and_then(serde_json::Value::as_str)
-                == Some("task_status")
-            && item
-                .get("output")
-                .and_then(|output| output.get("task_status"))
-                .and_then(|status| status.get("status"))
-                .and_then(serde_json::Value::as_str)
-                == Some("done")
-    })
-}
-
 fn command_run_stream_events_from_provider_content(
     content: &serde_json::Value,
 ) -> Vec<tura_llm_rust::ProviderStreamEvent> {
@@ -1077,13 +1183,82 @@ fn command_run_stream_events_from_provider_content(
         .collect()
 }
 
+fn should_replay_final_response_command_run(streamed_command_seen: bool) -> bool {
+    !streamed_command_seen
+}
+
+struct StreamedCommandEvent {
+    tool_call_id: String,
+    command_index: usize,
+    command: serde_json::Value,
+}
+
 fn command_run_stream_event_command(
     event: tura_llm_rust::ProviderStreamEvent,
-) -> Option<serde_json::Value> {
+) -> Option<StreamedCommandEvent> {
     match event {
-        tura_llm_rust::ProviderStreamEvent::CommandRunCommandReady { command, .. } => Some(command),
+        tura_llm_rust::ProviderStreamEvent::CommandRunCommandReady {
+            tool_call_id,
+            command_index,
+            command,
+        } => Some(StreamedCommandEvent {
+            tool_call_id,
+            command_index,
+            command,
+        }),
         tura_llm_rust::ProviderStreamEvent::ProviderOutputStarted => None,
     }
+}
+
+fn streamed_command_event_record(
+    status: &str,
+    runtime_id: &str,
+    tool_call_id: &str,
+    command_index: usize,
+    command: &serde_json::Value,
+    result: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "status": status,
+        "runtime_id": runtime_id,
+        "provider_tool_call_id": tool_call_id,
+        "command_index": command_index,
+        "step": command.get("step").cloned().unwrap_or(serde_json::Value::Null),
+        "command_type": command
+            .get("command_type")
+            .or_else(|| command.get("command"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+        "command_line": command
+            .get("command_line")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+        "command": command,
+        "result": result.cloned().unwrap_or(serde_json::Value::Null),
+        "timestamp": Utc::now().to_rfc3339(),
+    })
+}
+
+fn streamed_command_result_record(
+    status: &str,
+    runtime_id: &str,
+    result_index: usize,
+    result: &serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "status": status,
+        "runtime_id": runtime_id,
+        "result_index": result_index,
+        "step": result.get("step").cloned().unwrap_or(serde_json::Value::Null),
+        "command_type": result
+            .get("command_type")
+            .or_else(|| result.get("command"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+        "success": result.get("success").cloned().unwrap_or(serde_json::Value::Null),
+        "result": result,
+        "timestamp": Utc::now().to_rfc3339(),
+    })
 }
 
 fn streamed_command_run_call_id(runtime_id: &str) -> String {
@@ -1270,7 +1445,7 @@ fn gateway_callback_base_url() -> String {
 }
 
 fn gateway_callback_session_id(session_id: &str) -> String {
-    if multiple_tasks_child_depth_from_env() > 0 {
+    if planning_child_depth_from_env() > 0 {
         if let Ok(parent_session_id) = std::env::var("TURA_PARENT_SESSION_ID") {
             let parent_session_id = parent_session_id.trim();
             if !parent_session_id.is_empty() {
@@ -1282,8 +1457,8 @@ fn gateway_callback_session_id(session_id: &str) -> String {
     session_id.to_string()
 }
 
-fn multiple_tasks_child_depth_from_env() -> usize {
-    std::env::var("TURA_MULTIPLE_TASKS_DEPTH")
+fn planning_child_depth_from_env() -> usize {
+    std::env::var("TURA_PLANNING_DEPTH")
         .or_else(|_| std::env::var("TURA_EXECUTE_TOOLS_DEPTH"))
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -1297,6 +1472,43 @@ fn emit_cli_live_command_run_results(results: &[serde_json::Value], item_index: 
     for event in cli_live_command_run_events(results, item_index) {
         println!("{event}");
     }
+    let _ = std::io::stdout().flush();
+}
+
+fn emit_cli_live_command_run_started(
+    command: &serde_json::Value,
+    provider_tool_call_id: &str,
+    command_index: usize,
+) {
+    if !env_flag("TURA_CLI_LIVE_JSONL") {
+        return;
+    }
+    let command_type = command
+        .get("command_type")
+        .or_else(|| command.get("command"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("command");
+    let item_type = if command_type == "apply_patch" {
+        "file_change"
+    } else {
+        "command_execution"
+    };
+    println!(
+        "{}",
+        serde_json::json!({
+            "type": "item.started",
+            "item": {
+                "id": format!("item_streamed_command_{provider_tool_call_id}_{command_index}"),
+                "type": item_type,
+                "command": command_type,
+                "command_line": command.get("command_line").cloned().unwrap_or(serde_json::Value::Null),
+                "step": command.get("step").cloned().unwrap_or(serde_json::Value::Null),
+                "provider_tool_call_id": provider_tool_call_id,
+                "command_index": command_index,
+                "status": "running",
+            }
+        })
+    );
     let _ = std::io::stdout().flush();
 }
 

@@ -19,6 +19,7 @@ const serviceTier = process.env.COMMAND_RUN_AGENT_SERVICE_TIER || "priority"
 const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm"
 const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx"
 const turaExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura.exe" : "tura")
+const gatewayExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "gateway.exe" : "gateway")
 const agents = parseAgents(process.env.COMMAND_RUN_AGENT_AGENTS || "codex-gpt55,deepseek-coder,qwen-coder,google-flash-lite")
 
 const defaultModels = {
@@ -69,6 +70,7 @@ function run(command, args, options = {}) {
   const started = performance.now()
   const result = spawnSync(command, args, {
     cwd: options.cwd || repoRoot,
+    input: options.input,
     text: true,
     encoding: "utf8",
     timeout: options.timeoutMs || timeoutMs,
@@ -410,11 +412,11 @@ if (!result.pass) process.exit(1);
 }
 
 function promptPhase1(port) {
-  return `Phase 1: Build a polished playable Snake game in this React workspace. You must edit files with command_run/apply_patch or shell commands; do not answer with a description only. For large file writes, prefer command_run apply_patch with valid Begin Patch/Delete File/Add File hunks instead of long inline node -e or raw PowerShell source. Edit src/App.jsx and src/styles.css. Keep a working React mount in src/App.jsx, for example createRoot(document.getElementById("root")).render(<App />); the page must not be blank. It must show Snake or 贪吃蛇, score, start/restart, responsive board, food, moving snake, keyboard arrows, collision/game-over, and no mobile horizontal overflow. Run npm install if needed. After the first visual implementation, run PORT=${port} npm run capture:arcade with command timeout_ms at least 120000, inspect artifacts/arcade-captures/manifest.json and the screenshots it lists, then fix visible layout or interaction bugs. Finally run PORT=${port} npm run verify:arcade with command timeout_ms at least 120000. In phase 1 it is acceptable if the evaluator still complains about missing Arcade/Tetris; make Snake itself real and playable.`
+  return `Phase 1: Build a polished playable Snake game in this current React workspace only. Do not read from, copy from, diff against, or inspect any other benchmark run directory, sibling agent workspace, old target artifact, previous solution, or path outside this workspace; all implementation work must be based only on the files and assets already present under the current working directory. You must edit files with command_run/apply_patch or shell commands; do not answer with a description only. For large file writes, prefer command_run apply_patch with valid Begin Patch/Delete File/Add File hunks instead of long inline node -e or raw PowerShell source. Edit src/App.jsx and src/styles.css. Keep a working React mount in src/App.jsx, for example createRoot(document.getElementById("root")).render(<App />); the page must not be blank. It must show Snake or 贪吃蛇, score, start/restart, responsive board, food, moving snake, keyboard arrows, collision/game-over, and no mobile horizontal overflow. Run npm install if needed. After the first visual implementation, run PORT=${port} npm run capture:arcade with command timeout_ms at least 120000, inspect artifacts/arcade-captures/manifest.json and the screenshots it lists, then fix visible layout or interaction bugs. Finally run PORT=${port} npm run verify:arcade with command timeout_ms at least 120000. In phase 1 it is acceptable if the evaluator still complains about missing Arcade/Tetris; make Snake itself real and playable.`
 }
 
 function promptPhase2(port) {
-  return `Phase 2: Continue by editing this workspace with command_run/apply_patch or shell commands; do not answer with a description only. For large file writes, prefer command_run apply_patch with valid Begin Patch/Delete File/Add File hunks instead of long inline node -e or raw PowerShell source. Keep a working React mount in src/App.jsx, for example createRoot(document.getElementById("root")).render(<App />); the page must not be blank. Keep the Snake game and add an Arcade entrance/home screen with two games: Snake and Tetris/俄罗斯方块. The Arcade entry must have visible buttons or tabs for Snake and Tetris. Implement a simple playable Tetris board with falling blocks or at least keyboard-controlled pieces, score/lines, restart, and responsive layout. Run PORT=${port} npm run capture:arcade with command timeout_ms at least 120000, inspect artifacts/arcade-captures/manifest.json and its screenshots, fix visible bugs, then run PORT=${port} npm run verify:arcade with command timeout_ms at least 120000 and fix all failures.`
+  return `Phase 2: Continue by editing this current workspace only with command_run/apply_patch or shell commands; do not answer with a description only. Do not read from, copy from, diff against, or inspect any other benchmark run directory, sibling agent workspace, old target artifact, previous solution, or path outside this workspace; all implementation work must be based only on the files and assets already present under the current working directory. For large file writes, prefer command_run apply_patch with valid Begin Patch/Delete File/Add File hunks instead of long inline node -e or raw PowerShell source. Keep a working React mount in src/App.jsx, for example createRoot(document.getElementById("root")).render(<App />); the page must not be blank. Keep the Snake game and add an Arcade entrance/home screen with two games: Snake and Tetris/俄罗斯方块. The Arcade entry must have visible buttons or tabs for Snake and Tetris. Implement a simple playable Tetris board with falling blocks or at least keyboard-controlled pieces, score/lines, restart, and responsive layout. Run PORT=${port} npm run capture:arcade with command timeout_ms at least 120000, inspect artifacts/arcade-captures/manifest.json and its screenshots, fix visible bugs, then run PORT=${port} npm run verify:arcade with command timeout_ms at least 120000 and fix all failures.`
 }
 
 function parseJsonl(text) {
@@ -443,18 +445,23 @@ function usageFromEvents(events) {
 }
 
 function readSessionLog(workspace, sessionId) {
-  const sessionPath = path.join(workspace, ".tura", "sessions", `${sessionId}.json`)
-  if (!fs.existsSync(sessionPath)) return { path: sessionPath, state: "missing", entries: [] }
+  const sessionPath = `session_log:${sessionId}`
   try {
-    const value = JSON.parse(fs.readFileSync(sessionPath, "utf8"))
-    const entries = value?.info?.management?.session_log
+    const result = run(gatewayExe, ["session-log"], {
+      input: JSON.stringify({ command: "get_session", session_id: sessionId }),
+      cwd: repoRoot,
+    })
+    if (result.status !== 0) return { path: sessionPath, state: "missing", entries: [] }
+    const response = JSON.parse(result.stdout)
+    const management = response?.session?.management
+    const entries = management?.session_log
       ?.map((entry) => {
         try { return JSON.parse(entry) } catch { return null }
       })
       .filter(Boolean) || []
     return {
       path: sessionPath,
-      state: value?.info?.management?.state || value?.info?.status || "unknown",
+      state: management?.state || response?.session?.status || "unknown",
       entries,
     }
   } catch {

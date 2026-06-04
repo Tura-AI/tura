@@ -1072,6 +1072,8 @@ impl CatalogModelConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CatalogModelDetail {
     pub id: String,
+    #[serde(default = "default_model_visible")]
+    pub visible: bool,
     #[serde(default)]
     pub name: String,
     #[serde(default)]
@@ -1094,6 +1096,10 @@ pub struct CatalogModelDetail {
     pub options: serde_json::Map<String, serde_json::Value>,
     #[serde(default)]
     pub status: Option<String>,
+}
+
+fn default_model_visible() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

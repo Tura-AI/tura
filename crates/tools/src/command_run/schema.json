@@ -10,7 +10,7 @@
         "type": "array",
         "minItems": 5,
         "maxItems": 15,
-        "description": "Executable command-line instructions. During task execution, complete all currently needed steps in one batch; prefer 5 or more commands. If the only remaining action is to send information to the user or ask for input, a single task_status command is enough.",
+        "description": "Executable command-line instructions. During task execution, complete all currently needed steps in one batch; prefer 5 or more commands. Include only commands whose inputs are already known when this batch is created. Independent read/search commands may share one step. Do not create test/probe commands that depend on output from earlier commands in the same batch. If the only remaining action is to send information to the user or ask for input, a single task_status command is enough.",
         "items": {
           "type": "object",
           "required": ["command_type", "command_line"],
@@ -28,7 +28,7 @@
               "type": "integer",
               "minimum": 1,
               "x-tura-optional": true,
-              "description": "Execution stage. Lower-numbered steps complete before higher-numbered steps. When using compact_context, it must be the final command in the highest step."
+              "description": "Execution order and dependency group. Commands in the same step may run together when they do not depend on each other's output. Use a later step only when that command depends on earlier known work or must run after edits. Duplicate or earlier step values are extended into later unique steps in input order. When using compact_context, it must be the final command in the highest step."
             }
           }
         }

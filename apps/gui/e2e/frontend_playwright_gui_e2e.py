@@ -214,9 +214,9 @@ class GuiE2EGatewayHandler(BaseHTTPRequestHandler):
                 "modelID": "gpt-5.5",
                 "parts": [
                     {
-                        "id": f"{session_id}-tool-multiple-tasks",
+                        "id": f"{session_id}-tool-planning",
                         "type": "tool",
-                        "tool": "multiple_tasks",
+                        "tool": "planning",
                         "state": {
                             "status": "completed",
                             "title": "Split ProgramBench reconstruction topology",

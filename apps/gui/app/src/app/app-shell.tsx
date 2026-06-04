@@ -148,7 +148,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
     if (
       editing &&
       editing.sessionId === sessionId &&
-      editing.nonce_id === taskNonceIdValue
+      editing.task_id === taskNonceIdValue
     ) {
       setState((previous) => ({
         ...previous,
@@ -165,13 +165,13 @@ export function AppShell(props: { view: AppShellViewModel }) {
       composerText,
       editingTask: {
         sessionId,
-        nonce_id: taskNonceIdValue,
+        task_id: taskNonceIdValue,
       },
     }));
   }
 
   function persistEditedTaskText(
-    editing: { sessionId: string; nonce_id?: string },
+    editing: { sessionId: string; task_id?: string },
     textValue: string,
   ) {
     const session = state().sessions.find(
@@ -182,16 +182,16 @@ export function AppShell(props: { view: AppShellViewModel }) {
       return;
     }
     const task = sessionTasks(session).find(
-      (item) => taskNonceId(item) === editing.nonce_id,
+      (item) => taskNonceId(item) === editing.task_id,
     );
     if (task && taskDisplayText(task).trim() === text) {
       return;
     }
-    const [summaryLine = "", ...deliveryLines] = text.split(/\r?\n/u);
+    const [summaryLine = "", ...deliverableLines] = text.split(/\r?\n/u);
     void updatePlanTicketTask(session, {
-      nonce_id: editing.nonce_id,
+      task_id: editing.task_id,
       task_summary: summaryLine.trim(),
-      delivery: deliveryLines.join("\n").trim(),
+      deliverable: deliverableLines.join("\n").trim(),
     });
   }
 
@@ -202,7 +202,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
       return undefined;
     }
     return sessionTasks(session).find(
-      (task) => taskNonceId(task) === editing.nonce_id,
+      (task) => taskNonceId(task) === editing.task_id,
     );
   }
 
@@ -214,11 +214,11 @@ export function AppShell(props: { view: AppShellViewModel }) {
     if (!text) {
       return task;
     }
-    const [summaryLine = "", ...deliveryLines] = text.split(/\r?\n/u);
+    const [summaryLine = "", ...deliverableLines] = text.split(/\r?\n/u);
     return {
       ...task,
       task_summary: summaryLine.trim(),
-      delivery: deliveryLines.join("\n").trim(),
+      deliverable: deliverableLines.join("\n").trim(),
     };
   }
 
@@ -226,7 +226,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
     const editing = state().editingTask;
     const editingThisTask =
       editing?.sessionId === session.id &&
-      editing.nonce_id === taskNonceId(task);
+      editing.task_id === taskNonceId(task);
     if (!editingThisTask) {
       await runPlanTaskNow(session, task);
       return;
@@ -234,9 +234,9 @@ export function AppShell(props: { view: AppShellViewModel }) {
     const nextTask = taskWithComposerText(task, state().composerText);
     if (taskDisplayText(nextTask).trim() !== taskDisplayText(task).trim()) {
       await updatePlanTicketTask(session, {
-        nonce_id: taskNonceId(task),
+        task_id: taskNonceId(task),
         task_summary: nextTask.task_summary,
-        delivery: nextTask.delivery,
+        deliverable: nextTask.deliverable,
       });
     }
     await runPlanTaskNow(session, nextTask);

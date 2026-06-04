@@ -143,18 +143,18 @@ function parseAgentList(value) {
     ["tura-shll", "tura-shll"],
     ["tura_shll", "tura-shll"],
     ["tura-shall", "tura-shll"],
-    ["tura-multiple-tasks", "tura-multiple-tasks-shll"],
-    ["tura_multiple_tasks", "tura-multiple-tasks-shll"],
-    ["tura-multiple-tasks-shll", "tura-multiple-tasks-shll"],
-    ["tura_multiple_tasks_shll", "tura-multiple-tasks-shll"],
-    ["tura-shll-multiple-tasks", "tura-multiple-tasks-shll"],
-    ["tura_shll_multiple_tasks", "tura-multiple-tasks-shll"],
-    ["tura-fast-multiple-tasks", "tura-fast-multiple-tasks-shll"],
-    ["tura_fast_multiple_tasks", "tura-fast-multiple-tasks-shll"],
-    ["tura-fast-multiple-tasks-shll", "tura-fast-multiple-tasks-shll"],
-    ["tura_fast_multiple_tasks_shll", "tura-fast-multiple-tasks-shll"],
-    ["tura-fast-shll-multiple-tasks", "tura-fast-multiple-tasks-shll"],
-    ["tura_fast_shll_multiple_tasks", "tura-fast-multiple-tasks-shll"],
+    ["tura-planning", "tura-planning-shll"],
+    ["tura_planning", "tura-planning-shll"],
+    ["tura-planning-shll", "tura-planning-shll"],
+    ["tura_planning_shll", "tura-planning-shll"],
+    ["tura-shll-planning", "tura-planning-shll"],
+    ["tura_shll_planning", "tura-planning-shll"],
+    ["tura-fast-planning", "tura-fast-planning-shll"],
+    ["tura_fast_planning", "tura-fast-planning-shll"],
+    ["tura-fast-planning-shll", "tura-fast-planning-shll"],
+    ["tura_fast_planning_shll", "tura-fast-planning-shll"],
+    ["tura-fast-shll-planning", "tura-fast-planning-shll"],
+    ["tura_fast_shll_planning", "tura-fast-planning-shll"],
     ["tura-bash", "tura-bash"],
     ["tura_bash", "tura-bash"],
     ["tura-bash-nonstrict", "tura-bash"],
@@ -212,8 +212,8 @@ function turaStrictJsonDisabled(id) {
   return id.endsWith("-nonstrict")
 }
 
-function turaMultipleTasksMode(id) {
-  return id.includes("multiple-tasks")
+function turaPlanningMode(id) {
+  return id.includes("planning")
 }
 
 function isCurrentAgent(id) {
@@ -4424,7 +4424,7 @@ async function runTuraAgent({ id = "tura", workspace, shellSurface = "shell_comm
       "exec",
       "--skip-git-repo-check",
       "--json",
-      ...(turaMultipleTasksMode(id) ? ["--multiple-tasks-mode"] : []),
+      ...(turaPlanningMode(id) ? ["--planning", "on"] : []),
       "-C",
       workspace,
       "-m",

@@ -59,6 +59,7 @@ const harnessBackend = process.env.COMMAND_RUN_AGENT_HARNESS_BACKEND || (process
 const harnessImage = process.env.COMMAND_RUN_AGENT_HARNESS_IMAGE || "tura-swebench-harness:latest"
 
 const turaExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura.exe" : "tura")
+const gatewayExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "gateway.exe" : "gateway")
 const codexCurrentExe = path.join(
   process.env.COMMAND_RUN_AGENT_CODEX_CURRENT_ROOT || path.join(homeDir, "Documents", "Codex"),
   "codex-rs",
@@ -401,25 +402,25 @@ function usageFromJsonl(stdout) {
 }
 
 function usageFromTuraSessions(workspace) {
-  const sessionsDir = path.join(workspace, ".tura", "sessions")
   const totals = { usage_events: 0, input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_input_tokens: 0, total_tokens: 0 }
-  if (!fs.existsSync(sessionsDir)) return totals
-  for (const file of listFiles(sessionsDir)) {
-    if (!file.endsWith(".json") && !file.endsWith(".jsonl")) continue
-    const content = fs.readFileSync(file, "utf8")
-    if (file.endsWith(".jsonl")) {
-      for (const event of parseJsonl(content)) {
-        if (event.type === "runtime_usage" && event.usage) addUsage(totals, event.usage)
-      }
-      continue
-    }
-    let session
-    try {
-      session = JSON.parse(content)
-    } catch {
-      continue
-    }
-    collectRuntimeUsage(session, totals)
+  const result = run(gatewayExe, ["session-log"], {
+    input: JSON.stringify({
+      command: "list_sessions",
+      workspace,
+      page: 0,
+      page_size: 500,
+    }),
+  })
+  if (result.status !== 0) return totals
+  let response
+  try {
+    response = JSON.parse(result.stdout)
+  } catch {
+    return totals
+  }
+  for (const snapshot of response?.sessions || []) {
+    collectRuntimeUsage(snapshot?.management, totals)
+    collectRuntimeUsage(snapshot?.session, totals)
   }
   return totals
 }

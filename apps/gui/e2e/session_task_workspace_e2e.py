@@ -38,10 +38,10 @@ def task(
     poll_interval: dict | None = None,
 ) -> dict:
     return {
-        "nonce_id": nonce or f"task-{now_ms()}",
+        "task_id": nonce or f"task-{now_ms()}",
         "summary": summary,
         "task_summary": summary,
-        "delivery": f"{summary} delivery",
+        "deliverable": f"{summary} deliverable",
         "task_status": status,
         "start_condition": start_condition,
         **({"start_at": start_at} if start_at else {}),
@@ -357,14 +357,14 @@ def merge_task_management(item: dict, patch: dict) -> dict:
     current = item.get("task_management") or item.get("taskManagement") or {}
     if not isinstance(current, dict):
         current = {}
-    nonce = patch.get("nonce_id") or patch.get("nonceId")
+    nonce = patch.get("task_id") or patch.get("taskId")
     if isinstance(current.get("tasks"), list) or nonce:
         tasks = list(current.get("tasks") or [])
-        index = next((i for i, task_item in enumerate(tasks) if (task_item.get("nonce_id") or task_item.get("nonceId")) == nonce), -1)
+        index = next((i for i, task_item in enumerate(tasks) if (task_item.get("task_id") or task_item.get("taskId")) == nonce), -1)
         if index >= 0:
             tasks[index] = {**tasks[index], **patch}
         else:
-            tasks.append({**patch, "nonce_id": nonce or f"{item['id']}:{len(tasks)}"})
+            tasks.append({**patch, "task_id": nonce or f"{item['id']}:{len(tasks)}"})
         return {**current, "tasks": tasks}
     return {**current, **patch}
 

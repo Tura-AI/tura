@@ -46,8 +46,8 @@ crates/provider/
     lib.rs
     mod.rs
     auth_registry.rs
-    content_type_fallback.rs   # provider 错误 → 不支持媒体类型 fallback（runtime 调本接口，不重复实现）
-    response_extraction.rs     # 归一化响应文本/工具调用抽取 + provider 能力探测
+    content_type_fallback.rs 
+    response_extraction.rs    
     tura_conf.rs
     tura_llm_conf.rs
     tura_llm.rs
@@ -103,6 +103,44 @@ Provider does not own:
 
 Runtime calls Provider for one model call. Gateway reads Provider settings,
 health, usage, and auth state through APIs.
+
+## Provider Call Logs
+
+Provider call logs are file-based diagnostics owned only by this crate. The
+default log root is project-root `log/provider/`; override it with `LOG_PATH`.
+Files are written under a local-day directory:
+
+```text
+log/provider/YYYY-MM-DD/HHMMSS_mmm_<call_id>.json
+```
+
+Each file is a JSON `llm_call` record from `src/logging.rs` with:
+
+```text
+type
+call_id
+success
+provider
+model
+base_url
+started_at / finished_at / duration_ms
+request.messages / request.params / request.response_format
+response
+metrics
+error / traceback
+```
+
+Use provider logs to inspect raw model-call request/response behavior,
+streaming normalization, provider-specific failures, usage extraction, and
+redaction issues. Do not use provider logs as durable session history; session,
+task, message, todo, and replay history belong in the `session_log` database.
+
+Fast PowerShell inspection examples:
+
+```powershell
+Get-ChildItem log\provider -Recurse -Filter *.json | Sort-Object LastWriteTime -Descending | Select-Object -First 10 FullName
+Get-Content log\provider\YYYY-MM-DD\HHMMSS_mmm_callid.json | ConvertFrom-Json | Select-Object provider,model,success,duration_ms,error
+```
 
 ## Existing Tura Mapping
 

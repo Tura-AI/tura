@@ -40,6 +40,10 @@ import type {
   ServiceStatusResponse,
   ShellResponse,
   Session,
+  SessionLogSnapshot,
+  SessionLogRecordsResponse,
+  SessionLogSessionsResponse,
+  SessionLogWorkspacesResponse,
   TaskManagement,
   Skill,
   TaskRun,
@@ -217,6 +221,24 @@ export class GatewayClient {
   sessions(
     input: { limit?: number; search?: string } = {},
   ): Promise<Session[]> {
+    if (!input.search) {
+      return this.sessionLogSessions({
+        page: 0,
+        page_size: input.limit ?? 100,
+      })
+        .then((response) => response.sessions.map(sessionFromLogSnapshot))
+        .catch(() =>
+          this.get(
+            "/session",
+            {
+              limit: input.limit,
+              includeChildren: true,
+            },
+            true,
+          ),
+        );
+    }
+
     return this.get(
       "/session",
       {
@@ -226,6 +248,36 @@ export class GatewayClient {
       },
       true,
     );
+  }
+
+  sessionLogWorkspaces(): Promise<SessionLogWorkspacesResponse> {
+    return this.get("/session-log/workspaces", undefined, true);
+  }
+
+  sessionLogSessions(input: {
+    workspace?: string;
+    page?: number;
+    page_size?: number;
+  }): Promise<SessionLogSessionsResponse> {
+    return this.get(
+      "/session-log/sessions",
+      {
+        workspace: input.workspace ?? this.directory,
+        page: input.page,
+        page_size: input.page_size,
+      },
+      true,
+    );
+  }
+
+  sessionLogRecords(
+    sessionId: string,
+    input: { page?: number; page_size?: number } = {},
+  ): Promise<SessionLogRecordsResponse> {
+    return this.get(`/session-log/${encodeURIComponent(sessionId)}/records`, {
+      page: input.page,
+      page_size: input.page_size,
+    });
   }
 
   createSession(payload: CreateSessionRequest = {}): Promise<Session> {
@@ -698,6 +750,33 @@ export function defaultGatewayUrl(): string {
       isValidGatewayUrl(value),
     ) || "http://127.0.0.1:4096"
   );
+}
+
+function sessionFromLogSnapshot(snapshot: SessionLogSnapshot): Session {
+  return {
+    id: snapshot.session_id,
+    name: snapshot.name,
+    parent_id: snapshot.parent_id,
+    directory: snapshot.workspace,
+    status: normalizeSessionStatus(snapshot.status),
+    message_count: snapshot.message_count,
+    created_at: snapshot.created_at,
+    updated_at: snapshot.updated_at,
+    task_management: snapshot.task_management as Session["task_management"],
+    plan_summary: readString(snapshot.task_management, "plan_summary"),
+  };
+}
+
+function normalizeSessionStatus(status?: string | null): Session["status"] {
+  return status === "busy" || status === "error" ? status : "idle";
+}
+
+function readString(value: unknown, key: string): string | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const item = (value as Record<string, unknown>)[key];
+  return typeof item === "string" ? item : null;
 }
 
 function normalizeBaseUrl(value: string): string {

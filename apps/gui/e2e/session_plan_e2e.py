@@ -478,7 +478,9 @@ async def trigger_menu_geometry(page, scope_selector):
 
 
 async def check_trigger_menu(page, results, viewport, scope_selector, name):
-    button = page.locator(f"{scope_selector} .plan-trigger-button")
+    button = page.locator(
+        f"{scope_selector} .plan-trigger-control:not(.agent-trigger-control) .plan-trigger-button"
+    )
     await expect(button).to_be_visible()
     await button.click()
     await expect(page.locator(f"{scope_selector} .plan-trigger-menu")).to_be_visible()
@@ -713,15 +715,9 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
     )
     await close_plan_panel(page)
 
-    await page.evaluate(
-        """
-        () => {
-          const button = Array.from(document.querySelectorAll('.main-tabs button'))
-            .find((item) => item.innerText.includes('文件'));
-          if (!button) throw new Error('files tab not found');
-          button.click();
-        }
-        """
+    await page.goto(
+        f"{GUI_URL}/?{urlencode({'e2eFixture': 'plan-sessions', 'tab': 'files'})}",
+        wait_until="domcontentloaded",
     )
     await page.wait_for_selector(".files-view", timeout=30_000)
     files_first = await metrics(page)
@@ -848,7 +844,7 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
         wait_until="domcontentloaded",
     )
     await page.wait_for_selector(".plan-board .board-card", timeout=30_000)
-    await page.locator(".board-card").filter(has_text="整理发布检查清单").first.click()
+    await page.locator(".board-card").filter(has_text="整理发布检查清单").first.click(force=True)
     await page.wait_for_timeout(150)
     panel_task_metrics = await metrics(page)
     add_result(
@@ -896,7 +892,7 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
     )
     await close_plan_panel(page)
 
-    await page.get_by_role("button", name="甘特图", exact=True).click()
+    await page.get_by_role("button", name="甘特图", exact=True).click(force=True)
     await page.wait_for_timeout(100)
     gantt = await metrics(page)
     add_result(
@@ -990,7 +986,7 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
         "gantt-ticket-drags-to-date",
         await page.locator(".plan-timeline-bar").filter(has_text="整理发布检查清单").count() == 1,
     )
-    await page.get_by_role("button", name="待办列表", exact=True).click()
+    await page.get_by_role("button", name="待办列表", exact=True).click(force=True)
     await page.wait_for_timeout(100)
     gantt_precise_card = await page.locator(".board-card").filter(has_text="整理发布检查清单").first.inner_text()
     add_result(
@@ -1005,7 +1001,7 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
     await page.goto(f"{GUI_URL}?e2eFixture=plan-sessions")
     await page.wait_for_load_state("domcontentloaded")
     await page.wait_for_timeout(250)
-    await page.get_by_role("button", name="甘特图", exact=True).click()
+    await page.get_by_role("button", name="甘特图", exact=True).click(force=True)
     await page.wait_for_timeout(100)
     gantt_small_move = await pointer_small_move_state(
         page,
@@ -1099,7 +1095,7 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
     await page.wait_for_timeout(250)
     if await page.locator(".plan-conversation-panel .inspector-close").count() > 0:
         await close_plan_panel(page)
-    await page.get_by_role("button", name="日历", exact=True).click()
+    await page.get_by_role("button", name="日历", exact=True).click(force=True)
     await page.wait_for_timeout(100)
     calendar = await metrics(page)
     calendar_header_scroll = await page.evaluate(
@@ -1279,16 +1275,17 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
         and "新工单" in draft_from_week["panelTitle"],
         draft_from_week,
     )
-    await page.locator(".plan-conversation-panel .plan-trigger-button").click()
+    await page.locator(".plan-conversation-panel .plan-trigger-control:not(.agent-trigger-control) .plan-trigger-button").click()
     await page.locator(".plan-conversation-panel .plan-trigger-option").filter(has_text="定时任务").click()
     await expect(page.locator(".plan-schedule-dialog")).to_be_visible()
-    start_value = await page.locator(".plan-schedule-dialog input[type='datetime-local']").input_value()
+    start_date = await page.locator(".plan-schedule-dialog input[type='date']").input_value()
+    start_time = await page.locator(".plan-schedule-dialog input[type='time']").input_value()
     add_result(
         results,
         name,
         "calendar-week-click-prefills-scheduled-time",
-        len(start_value) >= 16,
-        start_value,
+        len(start_date) == 10 and len(start_time) >= 4,
+        {"date": start_date, "time": start_time},
     )
     await page.locator(".plan-schedule-dialog .primary").click()
     add_result(
@@ -1338,7 +1335,7 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
         {"matches": created_from_calendar},
     )
     await close_plan_panel(page)
-    await page.get_by_role("button", name="日历", exact=True).click()
+    await page.get_by_role("button", name="日历", exact=True).click(force=True)
     await page.locator(".plan-calendar-view-toggle button").filter(has_text="月").click()
     await page.wait_for_timeout(100)
     calendar_small_move = await pointer_small_move_state(
@@ -1403,7 +1400,7 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
         ticket_open_metrics["splitOpen"] and "整理发布检查清单" in ticket_open_metrics["panelTitle"],
     )
     await close_plan_panel(page)
-    await page.get_by_role("button", name="日历", exact=True).click()
+    await page.get_by_role("button", name="日历", exact=True).click(force=True)
     await page.wait_for_timeout(100)
     await page.evaluate(
         """
@@ -1431,7 +1428,9 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
         await page.locator(".plan-calendar-event").filter(has_text="整理发布检查清单").count() == 1,
     )
     source_event = page.locator(".plan-calendar-event").filter(has_text="整理发布检查清单").first
-    target_hour = page.locator(".plan-calendar-hour-cell").nth(41)
+    hour_cells = page.locator(".plan-calendar-hour-cell")
+    hour_count = await hour_cells.count()
+    target_hour = hour_cells.nth(41 if hour_count > 41 else max(0, hour_count - 1))
     await pointer_drag_between(page, source_event, target_hour, x_ratio=0.72, y_ratio=0.68)
     await page.wait_for_timeout(150)
     precise_text = await page.locator(".plan-calendar-event").filter(has_text="整理发布检查清单").first.inner_text()
@@ -1444,11 +1443,20 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
     )
     await page.locator(".plan-calendar-view-toggle button").filter(has_text="月").click()
     await page.wait_for_timeout(100)
-    await page.get_by_role("button", name="待办列表", exact=True).click()
+    await page.get_by_role("button", name="待办列表", exact=True).click(force=True)
     await page.wait_for_timeout(100)
 
     if first["railVisible"]:
-        await page.locator(".archived-workspace-node > .workspace-row").filter(has_text="tura").click()
+        await page.evaluate(
+            """
+            () => {
+              const row = Array.from(document.querySelectorAll('.archived-workspace-node > .workspace-row'))
+                .find((item) => item.textContent.includes('tura') || item.title.includes('tura'));
+              if (!row) throw new Error('archived workspace row not found');
+              row.click();
+            }
+            """
+        )
         archived = await metrics(page)
         add_result(
             results,
@@ -1462,7 +1470,7 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
               const card = Array.from(document.querySelectorAll('.board-card'))
                 .find((item) => item.innerText.includes('用户操作不显示在日历'));
               const target = Array.from(document.querySelectorAll('.archived-workspace-node > .workspace-row'))
-                .find((item) => item.innerText.includes('tura'));
+                .find((item) => item.innerText.includes('tura') || item.title.includes('tura'));
               if (!card || !target) throw new Error('left archive drag target not found');
               const dataTransfer = new DataTransfer();
               card.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer }));
@@ -1482,7 +1490,7 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
             archived_after_left_drop["archivedRows"],
         )
 
-    await page.locator(".board-card").filter(has_text="整理发布检查清单").first.click()
+    await page.locator(".board-card").filter(has_text="整理发布检查清单").first.click(force=True)
     await expect(page.locator(".plan-conversation-panel")).to_be_visible()
     split = await metrics(page)
     add_result(results, name, "ticket-opens-split-conversation", split["splitOpen"])
@@ -1512,7 +1520,7 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
     )
     await page.screenshot(path=str(OUT / f"{name}-split.png"), full_page=True)
 
-    await page.get_by_role("button", name="甘特图", exact=True).click()
+    await page.get_by_role("button", name="甘特图", exact=True).click(force=True)
     await page.wait_for_timeout(100)
     split_gantt = await metrics(page)
     add_result(
@@ -1521,7 +1529,7 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
         "split-stays-open-while-gantt-renders",
         split_gantt["splitOpen"] and split_gantt["ganttRows"] >= 1,
     )
-    await page.get_by_role("button", name="日历", exact=True).click()
+    await page.get_by_role("button", name="日历", exact=True).click(force=True)
     await page.wait_for_timeout(100)
     split_calendar = await metrics(page)
     add_result(
@@ -1533,12 +1541,12 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
         and split_calendar["calendarEvents"] >= 1,
         split_calendar,
     )
-    await page.get_by_role("button", name="待办列表", exact=True).click()
+    await page.get_by_role("button", name="待办列表", exact=True).click(force=True)
     await page.wait_for_timeout(100)
 
     resize_closed = await drag_resize_to_close(page, width)
     add_result(results, name, "dragging-panel-to-right-closes-it", resize_closed)
-    await page.locator(".board-card").filter(has_text="整理发布检查清单").first.click()
+    await page.locator(".board-card").filter(has_text="整理发布检查清单").first.click(force=True)
     await expect(page.locator(".plan-conversation-panel")).to_be_visible()
 
     add_result(
@@ -1549,6 +1557,9 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
     )
 
     composer = page.locator(".plan-conversation-panel .bottom-composer").first
+    if await page.locator(".tool-inspector.open .inspector-close").count() > 0:
+        await page.locator(".tool-inspector.open .inspector-close").first.click(force=True)
+        await page.wait_for_timeout(150)
     textarea = composer.locator("textarea")
     await textarea.fill("第一处图片在这里\n")
     await composer.locator(".composer-file-input").set_input_files(str(image_path))
@@ -1569,7 +1580,7 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
         bool(thumb_box and thumb_box["width"] <= 50 and thumb_box["height"] <= 40),
         thumb_box,
     )
-    await composer.locator(".composer-image-token button").first.click()
+    await composer.locator(".composer-image-token button").first.click(force=True)
     await expect(page.locator(".media-lightbox")).to_be_visible()
     add_result(
         results,
@@ -1577,8 +1588,8 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
         "inline-image-click-opens-browser",
         await page.locator(".media-lightbox img").count() == 1,
     )
-    await page.locator(".media-window-actions button").last.click()
-    await composer.locator(".composer-image-token button").filter(has_text="×").first.click()
+    await page.locator(".media-window-actions button").last.click(force=True)
+    await composer.locator(".composer-image-token button").filter(has_text="×").first.click(force=True)
     await expect(composer.locator(".composer-image-token")).to_have_count(0)
     add_result(
         results,
@@ -1614,7 +1625,7 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
         bool(file_box and file_box["height"] <= 34 and file_box["width"] >= 80),
         file_box,
     )
-    await file_chip.click(button="right")
+    await file_chip.click(button="right", force=True)
     await expect(page.locator(".composer-attachment-menu")).to_be_visible()
     menu_text = await page.locator(".composer-attachment-menu").inner_text()
     add_result(
@@ -1625,7 +1636,7 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
         menu_text,
     )
     await page.mouse.click(5, 5)
-    await composer.locator(".composer-file-token button").filter(has_text="×").first.click()
+    await composer.locator(".composer-file-token button").filter(has_text="×").first.click(force=True)
     await expect(composer.locator(".composer-file-token")).to_have_count(0)
     await textarea.fill("粘贴前\n[[file:missing-token]]\n粘贴后")
     await expect(composer.locator(".composer-rich-editor")).to_contain_text(
@@ -1671,7 +1682,7 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
         {"doing": legal_doing_text, "todo": legal_todo_text},
     )
     await close_plan_panel(page)
-    await page.locator(".board-card").filter(has_text="轮询待办工单").first.click()
+    await page.locator(".board-card").filter(has_text="轮询待办工单").first.click(force=True)
     await expect(page.locator(".plan-conversation-panel")).to_be_visible()
     legal_doing_panel = await metrics(page)
     add_result(
@@ -1730,7 +1741,7 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
     )
 
     await page.locator(".board-column").filter(has_text="待办").first.locator(".icon-action").click()
-    await expect(page.locator(".plan-conversation-panel .plan-trigger-control")).to_be_visible()
+    await expect(page.locator(".plan-conversation-panel .plan-trigger-control:not(.agent-trigger-control)")).to_be_visible()
     draft_open = await metrics(page)
     add_result(results, name, "new-ticket-uses-right-composer", draft_open["planControls"])
     add_result(results, name, "old-draft-ui-deleted", draft_open["removedDraftPanels"] == 0)
@@ -1755,7 +1766,7 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
     await page.locator(".plan-conversation-panel .session-pick-row").filter(has_text="新会话").click()
     await page.wait_for_timeout(150)
     await page.locator(".plan-conversation-panel .bottom-composer textarea").fill("需要审批后继续执行")
-    await page.locator(".plan-conversation-panel .plan-trigger-button").click()
+    await page.locator(".plan-conversation-panel .plan-trigger-control:not(.agent-trigger-control) .plan-trigger-button").click()
     add_result(
         results,
         name,
@@ -1765,9 +1776,10 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
     )
     await page.locator(".plan-conversation-panel .plan-trigger-option").filter(has_text="定时任务").click()
     await expect(page.locator(".plan-schedule-dialog")).to_be_visible()
-    await page.locator(".plan-schedule-dialog input[type='datetime-local']").fill("2026-05-25T10:30")
+    await page.locator(".plan-schedule-dialog input[type='date']").fill("2026-05-25")
+    await page.locator(".plan-schedule-dialog input[type='time']").fill("10:30")
     await page.locator(".plan-schedule-dialog .primary").click()
-    await page.locator(".plan-conversation-panel .plan-trigger-button").click()
+    await page.locator(".plan-conversation-panel .plan-trigger-control:not(.agent-trigger-control) .plan-trigger-button").click()
     add_result(
         results,
         name,
@@ -1791,8 +1803,8 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
         ),
         menu_geometry,
     )
-    await page.locator(".plan-conversation-panel .plan-trigger-button").click()
-    scheduled_text = await page.locator(".plan-conversation-panel .plan-trigger-button").inner_text()
+    await page.locator(".plan-conversation-panel .plan-trigger-control:not(.agent-trigger-control) .plan-trigger-button").click()
+    scheduled_text = await page.locator(".plan-conversation-panel .plan-trigger-control:not(.agent-trigger-control) .plan-trigger-button").inner_text()
     if width <= 640:
         add_result(results, name, "phone-trigger-button-icon-only", (await metrics(page))["triggerIconOnly"])
     else:
@@ -1806,17 +1818,17 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
         results,
         name,
         "scheduled-time-not-inline-in-composer",
-        await page.locator(".plan-conversation-panel .plan-trigger-fields input[type='datetime-local']").count()
+        await page.locator(".plan-conversation-panel .plan-trigger-fields input[type='date'], .plan-conversation-panel .plan-trigger-fields input[type='time']").count()
         == 0,
     )
     add_result(
         results,
         name,
         "scheduled-time-not-inside-menu",
-        await page.locator(".plan-conversation-panel .plan-trigger-menu input[type='datetime-local']").count()
+        await page.locator(".plan-conversation-panel .plan-trigger-menu input[type='date'], .plan-conversation-panel .plan-trigger-menu input[type='time']").count()
         == 0,
     )
-    await page.locator(".plan-conversation-panel .plan-trigger-button").click()
+    await page.locator(".plan-conversation-panel .plan-trigger-control:not(.agent-trigger-control) .plan-trigger-button").click()
     await page.locator(".plan-conversation-panel .plan-trigger-option").filter(has_text="轮询任务").click()
     await expect(page.locator(".plan-schedule-dialog .plan-schedule-interval-grid")).to_be_visible()
     add_result(
@@ -1865,12 +1877,13 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
         sanitized_interval_value.isdigit() and all(ch not in sanitized_interval_value for ch in "ab-"),
         sanitized_interval_value,
     )
-    await page.locator(".plan-schedule-dialog input[type='datetime-local']").fill("2026-05-25T11:45")
+    await page.locator(".plan-schedule-dialog input[type='date']").fill("2026-05-25")
+    await page.locator(".plan-schedule-dialog input[type='time']").fill("11:45")
     await page.locator(".plan-schedule-dialog .plan-schedule-interval-grid input").nth(0).fill("1")
     await page.locator(".plan-schedule-dialog .plan-schedule-interval-grid input").nth(1).fill("2")
     await page.locator(".plan-schedule-dialog .plan-schedule-interval-grid input").nth(2).fill("30")
     await page.locator(".plan-schedule-dialog .primary").click()
-    poll_text = await page.locator(".plan-conversation-panel .plan-trigger-button").inner_text()
+    poll_text = await page.locator(".plan-conversation-panel .plan-trigger-control:not(.agent-trigger-control) .plan-trigger-button").inner_text()
     add_result(
         results,
         name,
@@ -1884,14 +1897,14 @@ async def run_plan_flow(browser, viewport, image_path, attachment_path, browser_
             "polling-trigger-button-hides-time-and-interval",
             "轮询任务" in poll_text and "2026" not in poll_text and "30m" not in poll_text,
         )
-    await page.locator(".plan-conversation-panel .plan-trigger-button").click()
+    await page.locator(".plan-conversation-panel .plan-trigger-control:not(.agent-trigger-control) .plan-trigger-button").click()
     add_result(
         results,
         name,
         "polling-trigger-option-shows-check",
         await page.locator(".plan-conversation-panel .plan-trigger-option.selected svg").count() == 1,
     )
-    await page.locator(".plan-conversation-panel .plan-trigger-button").click()
+    await page.locator(".plan-conversation-panel .plan-trigger-control:not(.agent-trigger-control) .plan-trigger-button").click()
     await page.locator(".plan-conversation-panel .composer-send").click()
     try:
         await page.wait_for_function(

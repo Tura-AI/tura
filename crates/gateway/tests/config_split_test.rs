@@ -79,7 +79,7 @@ async fn tura_config_reads_configured_provider_model_options_and_updates_one_tie
         "display_name": "Claude Code",
         "models": {
           "fast": [
-            { "id": "claude-sonnet-4-5", "name": "Claude Sonnet 4.5" }
+            { "id": "claude-sonnet-4-5", "name": "Claude Sonnet 4.5", "visible": false }
           ]
         }
       }
@@ -112,7 +112,7 @@ async fn tura_config_reads_configured_provider_model_options_and_updates_one_tie
             .as_array()
             .expect("options")
             .len(),
-        2
+        1
     );
     let option_providers = value["tiers"][0]["options"]
         .as_array()
@@ -121,7 +121,7 @@ async fn tura_config_reads_configured_provider_model_options_and_updates_one_tie
         .filter_map(|option| option.get("provider").and_then(Value::as_str))
         .collect::<Vec<_>>();
     assert!(option_providers.contains(&"codex"));
-    assert!(option_providers.contains(&"claude-code"));
+    assert!(!option_providers.contains(&"claude-code"));
 
     let update = serde_json::json!({
         "tier": "fast",

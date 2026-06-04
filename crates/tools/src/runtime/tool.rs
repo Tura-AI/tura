@@ -252,7 +252,7 @@ pub struct ToolRouter {
     bash: crate::commands::bash::BashHandler,
     apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
     compact_context: crate::commands::compact_context::CompactContextHandler,
-    multiple_tasks: crate::commands::multiple_tasks::MultipleTasksHandler,
+    planning: crate::commands::planning::PlanningHandler,
     read_media: crate::commands::read_media::ReadMediaHandler,
     web_discover: crate::commands::web_discover::WebDiscoverHandler,
 }
@@ -264,7 +264,7 @@ impl ToolRouter {
             bash: crate::commands::bash::BashHandler,
             apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
             compact_context: crate::commands::compact_context::CompactContextHandler,
-            multiple_tasks: crate::commands::multiple_tasks::MultipleTasksHandler,
+            planning: crate::commands::planning::PlanningHandler,
             read_media: crate::commands::read_media::ReadMediaHandler,
             web_discover: crate::commands::web_discover::WebDiscoverHandler,
         }
@@ -276,7 +276,7 @@ impl ToolRouter {
             "bash" => Some("bash"),
             "apply_patch" => Some("apply_patch"),
             "compact_context" => Some("compact_context"),
-            "multiple_tasks" if multiple_tasks_command_enabled() => Some("multiple_tasks"),
+            "planning" if planning_command_enabled() => Some("planning"),
             "read_media" => Some("read_media"),
             "web_discover" => Some("web_discover"),
             _ => None,
@@ -289,7 +289,7 @@ impl ToolRouter {
             "bash" => Some(&self.bash),
             "apply_patch" => Some(&self.apply_patch),
             "compact_context" => Some(&self.compact_context),
-            "multiple_tasks" if multiple_tasks_command_enabled() => Some(&self.multiple_tasks),
+            "planning" if planning_command_enabled() => Some(&self.planning),
             "read_media" => Some(&self.read_media),
             "web_discover" => Some(&self.web_discover),
             _ => None,
@@ -364,21 +364,18 @@ impl Default for ToolRouter {
     }
 }
 
-fn multiple_tasks_command_enabled() -> bool {
-    [
-        "TURA_FORCE_MULTIPLE_TASKS",
-        "TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS",
-    ]
-    .iter()
-    .any(|name| {
-        std::env::var(name)
-            .ok()
-            .map(|value| {
-                matches!(
-                    value.trim().to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
-            .unwrap_or(false)
-    })
+fn planning_command_enabled() -> bool {
+    ["TURA_FORCE_PLANNING", "TURA_FORCE_EXECUTE_TOOLS_PLANNING"]
+        .iter()
+        .any(|name| {
+            std::env::var(name)
+                .ok()
+                .map(|value| {
+                    matches!(
+                        value.trim().to_ascii_lowercase().as_str(),
+                        "1" | "true" | "yes" | "on"
+                    )
+                })
+                .unwrap_or(false)
+        })
 }

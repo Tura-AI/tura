@@ -1,6 +1,9 @@
 # Persona Crate Architecture
 
 `personas` owns persona identity, prompt resources, avatar media, and expression-to-media mapping. Agents bind to personas by `persona_name`; the router resolves the persona config and returns media metadata to the gateway/front-end.
+Personas do not own runtime diagnostics. Session/task history is queried
+through `session_log`; provider call diagnostics are files under
+`log/provider/` or `LOG_PATH`.
 
 ## Layout
 

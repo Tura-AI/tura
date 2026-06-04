@@ -10,7 +10,7 @@ pub const PROMPT: &str = include_str!("prompt.md");
 pub const SCHEMA: &str = include_str!("schema.json");
 
 /// Normalize a task_status command into its result output
-/// `{ "task_status": { "status", "task_summary" } }`.
+/// `{ "task_status": { ...provided fields... } }`.
 ///
 /// `inline_arguments` is the structured argument object (if the model sent the
 /// command as a function call), `command_line` is the freeform text form.
@@ -46,21 +46,26 @@ pub fn normalize_output(
         }
     }
     let task_summary = string_field(object, &["task_summary"]);
-    Ok(json!({
-        "task_status": {
-            "status": status,
-            "task_summary": task_summary,
-        }
-    }))
+    let mut task_status = serde_json::Map::new();
+    if let Some(status) = status {
+        task_status.insert("status".to_string(), Value::String(status));
+    }
+    if let Some(task_summary) = task_summary {
+        task_status.insert("task_summary".to_string(), Value::String(task_summary));
+    }
+    Ok(json!({ "task_status": task_status }))
 }
 
 fn parse_status_text(text: &str) -> Value {
-    let status = text
+    let Some(status) = text
         .split(|ch: char| ch.is_whitespace() || matches!(ch, ':' | '=' | ',' | ';'))
         .find_map(|part| {
             let part = part.trim().to_ascii_lowercase().replace('-', "_");
             matches!(part.as_str(), "question" | "done").then_some(part)
-        });
+        })
+    else {
+        return Value::Object(serde_json::Map::new());
+    };
     json!({ "status": status })
 }
 
@@ -90,6 +95,34 @@ mod tests {
     fn question_text_form_normalizes() {
         let out = normalize_output(None, "question").expect("ok");
         assert_eq!(out.pointer("/task_status/status").unwrap(), "question");
+    }
+
+    #[test]
+    fn summary_only_omits_status() {
+        let out = normalize_output(None, "{\"task_summary\":\"Rename task\"}").expect("ok");
+        assert!(out.pointer("/task_status/status").is_none());
+        assert_eq!(
+            out.pointer("/task_status/task_summary").unwrap(),
+            "Rename task"
+        );
+    }
+
+    #[test]
+    fn empty_input_omits_empty_fields() {
+        let out = normalize_output(None, "{}").expect("ok");
+        assert_eq!(out, json!({ "task_status": {} }));
+    }
+
+    #[test]
+    fn reply_text_fields_are_ignored() {
+        let out = normalize_output(
+            None,
+            "{\"status\":\"question\",\"reply_message\":\"Need API key.\",\"message\":\"Done.\"}",
+        )
+        .expect("ok");
+        assert_eq!(out.pointer("/task_status/status").unwrap(), "question");
+        assert!(out.pointer("/task_status/reply_message").is_none());
+        assert!(out.pointer("/task_status/message").is_none());
     }
 
     #[test]

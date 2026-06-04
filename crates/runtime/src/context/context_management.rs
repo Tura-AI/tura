@@ -1,6 +1,8 @@
 use chrono::Utc;
 use tracing::info;
 
+use crate::manas::prompt_messages::planning_objective_block;
+use crate::prompt_style::task_status;
 use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::state_machine::session_management::SessionManagement;
 
@@ -284,18 +286,14 @@ pub fn compact_session_context(
         .map(|snapshot| snapshot.render())
         .unwrap_or_else(|| "<WORKSPACE_SNAPSHOT>\n\n</WORKSPACE_SNAPSHOT>".to_string());
     let environment_context = environment_context_message(&session.session_directory);
-    session.push_log(
-        serde_json::json!({
+    let compact_record = serde_json::json!({
             "type": "context_compaction",
             "content": compact_text,
             "workspace_snapshot": workspace_snapshot,
             "environment_context": environment_context,
-            "task_management": session.task_management_json(),
             "timestamp": now.to_rfc3339(),
-        })
-        .to_string(),
-        now,
-    );
+    });
+    session.push_log(compact_record.to_string(), now);
     Ok(())
 }
 
@@ -314,7 +312,7 @@ fn build_messages_from_session_with_options(session: &SessionManagement) -> Vec<
         if value.get("type").and_then(|kind| kind.as_str()) == Some("context_compaction") {
             saw_context_compaction = true;
             messages.clear();
-            messages.extend(context_compaction_messages(&value));
+            messages.extend(context_compaction_messages(&value, session));
             continue;
         }
         messages.extend(immutable_context_messages_from_log_entry(value));
@@ -343,13 +341,25 @@ fn build_messages_from_session_with_options(session: &SessionManagement) -> Vec<
     messages
 }
 
-fn context_compaction_messages(value: &serde_json::Value) -> Vec<serde_json::Value> {
+fn context_compaction_messages(
+    value: &serde_json::Value,
+    session: &SessionManagement,
+) -> Vec<serde_json::Value> {
     let mut messages = Vec::new();
     if let Some(content) = value.get("content").and_then(serde_json::Value::as_str) {
         messages.push(serde_json::json!({
             "role": "user",
             "content": content,
         }));
+    }
+    if session.planning_enabled {
+        let objective = planning_objective_block(session);
+        if !objective.trim().is_empty() {
+            messages.push(serde_json::json!({
+                "role": "user",
+                "content": task_status::planning_objective_context(&objective),
+            }));
+        }
     }
     if let Some(snapshot) = value
         .get("workspace_snapshot")
@@ -367,15 +377,6 @@ fn context_compaction_messages(value: &serde_json::Value) -> Vec<serde_json::Val
         messages.push(serde_json::json!({
             "role": "user",
             "content": environment,
-        }));
-    }
-    if let Some(task_management) = value.get("task_management") {
-        messages.push(serde_json::json!({
-            "role": "user",
-            "content": format!(
-                "TASK_MANAGEMENT_STATE:\n{}",
-                serde_json::to_string(task_management).unwrap_or_default()
-            ),
         }));
     }
     messages
@@ -538,6 +539,14 @@ fn command_run_function_output_context_message(value: &serde_json::Value) -> ser
 }
 
 fn command_run_context_call_id(value: &serde_json::Value) -> String {
+    if let Some(id) = value
+        .get("provider_metadata")
+        .and_then(|metadata| metadata.get("id"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+    {
+        return id.to_string();
+    }
     let cache_id = value
         .get("context_cache")
         .and_then(|cache| cache.get("cache_id"))
@@ -1090,10 +1099,10 @@ fn compact_json_to_string(value: &serde_json::Value) -> String {
 mod tests {
     use super::{
         accumulate_message, accumulate_tool_result, accumulate_tool_result_with_feedback,
-        build_context, build_messages_from_session, command_run_function_output_for_context,
-        command_run_function_output_payload_for_context, command_run_summary_for_context,
-        command_run_truncate_text, compact_session_context, messages_with_runtime_context,
-        ContextInput,
+        accumulate_tool_result_with_provider_metadata, build_context, build_messages_from_session,
+        command_run_function_output_for_context, command_run_function_output_payload_for_context,
+        command_run_summary_for_context, command_run_truncate_text, compact_session_context,
+        messages_with_runtime_context, ContextInput,
     };
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
@@ -1103,6 +1112,9 @@ mod tests {
     use chrono::Utc;
     use serde_json::json;
     use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn session() -> SessionManagement {
         let now = Utc::now();
@@ -1117,6 +1129,7 @@ mod tests {
                 file_input: vec![],
                 agent: None,
                 runtime_context: None,
+                planning_mode_override: None,
             },
             "inspect".to_string(),
             now,
@@ -1218,12 +1231,12 @@ mod tests {
     }
 
     #[test]
-    fn compact_session_context_appends_task_management_state() {
+    fn compact_session_context_does_not_append_task_management_state() {
         let mut session = session();
         session.task_plan.plan_summary = "Inspect workspace".to_string();
         session.task_plan.detailed_tasks.push(TaskStep {
-            nonce_id: "nonce-compact".to_string(),
-            step: 0,
+            task_id: "compact-task".to_string(),
+            step: 1,
             task_summary: "Inspect workspace".to_string(),
             step_deliverable_description: "Find relevant files".to_string(),
             status: PlanStatus::Doing,
@@ -1238,19 +1251,62 @@ mod tests {
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default();
 
-        assert!(last.starts_with("TASK_MANAGEMENT_STATE:"));
-        assert!(last.contains("\"nonce_id\":\"nonce-compact\""));
-        assert!(last.contains("\"status\":\"doing\""));
-        assert!(!last.contains("\"tasks\""));
+        assert!(!last.starts_with("TASK_MANAGEMENT_STATE:"));
+        assert!(!last.contains("\"task_id\":\"compact-task\""));
+        assert!(!last.contains("\"status\":\"doing\""));
     }
 
     #[test]
-    fn compact_session_context_appends_multi_task_management_state() {
+    fn planning_compact_reinjects_objective_without_completion_audit_after_compact_message() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let mut session = session();
+        session.planning_enabled = true;
+        session.current_objective = "STATE MACHINE OBJECTIVE".to_string();
+        let now = Utc::now();
+        session.push_log(
+            serde_json::json!({
+                "type": "task_focus",
+                "task_id": "task-a",
+                "content": "STALE TASK FOCUS OBJECTIVE"
+            })
+            .to_string(),
+            now,
+        );
+
+        compact_session_context(&mut session, "compact handoff summary")
+            .expect("compact should succeed");
+        let messages = build_messages_from_session(&session);
+        let contents = messages
+            .iter()
+            .filter_map(|message| message.get("content").and_then(serde_json::Value::as_str))
+            .collect::<Vec<_>>();
+
+        assert_eq!(contents.first().copied(), Some("compact handoff summary"));
+        assert!(contents
+            .iter()
+            .any(|content| content.contains("Continue working toward the active thread goal.")));
+        assert!(contents
+            .iter()
+            .any(|content| content.contains("[current objective]:\nSTATE MACHINE OBJECTIVE")));
+        assert!(!contents
+            .iter()
+            .any(|content| content.contains("perform a completion audit")));
+        assert!(!contents
+            .iter()
+            .any(|content| content.contains("STALE TASK FOCUS OBJECTIVE")));
+        assert!(!contents
+            .iter()
+            .skip(1)
+            .any(|content| content.contains("compact handoff summary")));
+    }
+
+    #[test]
+    fn compact_session_context_does_not_append_multi_task_management_state() {
         let mut session = session();
         session.task_plan.plan_summary = "Release plan".to_string();
         session.task_plan.detailed_tasks.push(TaskStep {
-            nonce_id: "inspect".to_string(),
-            step: 0,
+            task_id: "inspect".to_string(),
+            step: 1,
             task_summary: "Inspect release blockers".to_string(),
             step_deliverable_description: "List blocking files".to_string(),
             sub_session_id: "sub-inspect".to_string(),
@@ -1265,8 +1321,8 @@ mod tests {
             ..TaskStep::default()
         });
         session.task_plan.detailed_tasks.push(TaskStep {
-            nonce_id: "verify".to_string(),
-            step: 1,
+            task_id: "verify".to_string(),
+            step: 2,
             task_summary: "Verify release checklist".to_string(),
             step_deliverable_description: "Passing regression output".to_string(),
             sub_session_id: "sub-verify".to_string(),
@@ -1289,33 +1345,10 @@ mod tests {
             .and_then(|message| message.get("content"))
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default();
-        let json_text = last
-            .strip_prefix("TASK_MANAGEMENT_STATE:\n")
-            .expect("task-management tail should be present");
-        let task_management: serde_json::Value =
-            serde_json::from_str(json_text).expect("task-management tail should be valid JSON");
-        let tasks = task_management["tasks"]
-            .as_array()
-            .expect("multi-task compact state should include tasks array");
 
-        assert_eq!(task_management["plan_summary"], "Release plan");
-        assert_eq!(tasks.len(), 2);
-        assert_eq!(tasks[0]["nonce_id"], "inspect");
-        assert_eq!(tasks[0]["step"], 0);
-        assert_eq!(tasks[0]["task_summary"], "Inspect release blockers");
-        assert_eq!(tasks[0]["delivery"], "List blocking files");
-        assert_eq!(tasks[0]["sub_session_id"], "sub-inspect");
-        assert_eq!(tasks[0]["poll_interval"]["m"], 15);
-        assert_eq!(tasks[0]["poll_interval"]["h"], 1);
-        assert_eq!(tasks[0]["poll_interval"]["s"], 5);
-        assert_eq!(tasks[0]["start_condition"], "scheduled_task");
-        assert_eq!(tasks[0]["status"], "question");
-        assert_eq!(tasks[1]["nonce_id"], "verify");
-        assert_eq!(tasks[1]["poll_interval"]["d"], 1);
-        assert_eq!(tasks[1]["poll_interval"]["h"], 2);
-        assert_eq!(tasks[1]["poll_interval"]["s"], 30);
-        assert_eq!(tasks[1]["start_condition"], "polling_task");
-        assert_eq!(tasks[1]["status"], "done");
+        assert!(!last.starts_with("TASK_MANAGEMENT_STATE:"));
+        assert!(!last.contains("\"plan_summary\":\"Release plan\""));
+        assert!(!last.contains("\"task_id\":\"inspect\""));
     }
 
     #[test]
@@ -1928,6 +1961,50 @@ mod tests {
             .messages
             .windows(2)
             .any(|pair| pair[0] == context_messages[0] && pair[1] == context_messages[1]));
+    }
+
+    #[test]
+    fn command_run_context_uses_provider_tool_use_id_when_available() {
+        let mut session = session();
+        accumulate_tool_result_with_provider_metadata(
+            &mut session,
+            "command_run",
+            json!({
+                "commands": [{
+                    "step": 1,
+                    "command_type": "shell_command",
+                    "command_line": "echo ok"
+                }]
+            }),
+            json!({
+                "results": [{
+                    "step": 1,
+                    "command": "shell_command",
+                    "success": true,
+                    "output": "Exit code: 0\nOutput:\nok"
+                }]
+            }),
+            true,
+            None,
+            Some(json!({ "id": "toolu_original_123" })),
+        )
+        .expect("tool result should be logged");
+
+        let output = build_context(ContextInput {
+            runtime: runtime(&session),
+            session,
+            additional_messages: vec![],
+        })
+        .expect("context should build");
+        let function_call = output
+            .messages
+            .iter()
+            .find(|message| {
+                message.get("type").and_then(|kind| kind.as_str()) == Some("function_call")
+            })
+            .expect("function_call context item should exist");
+
+        assert_eq!(function_call["call_id"], "toolu_original_123");
     }
 
     #[test]

@@ -22,6 +22,11 @@ const timeoutMs = Number(process.env.COMMAND_RUN_AGENT_TIMEOUT_MS || 20 * 60_000
 const agents = parseAgents(process.env.COMMAND_RUN_AGENT_AGENTS || "current-shll,codex-main,tura-fast-shll")
 const prepOnly = (process.env.COMMAND_RUN_AGENT_PREP_ONLY || "0") === "1"
 const smokeOnly = (process.env.COMMAND_RUN_AGENT_SMOKE_ONLY || "0") === "1"
+const skipTuraBuild = (process.env.COMMAND_RUN_AGENT_SKIP_TURA_BUILD || "0") === "1"
+const phaseMode = String(process.env.COMMAND_RUN_AGENT_PHASES || "all").trim().toLowerCase()
+const phase1Only = phaseMode === "phase1" || phaseMode === "first" || phaseMode === "1"
+const omitReasoning = (process.env.COMMAND_RUN_AGENT_OMIT_REASONING || "0") === "1"
+const modelMaxTokens = Number(process.env.COMMAND_RUN_AGENT_MODEL_MAX_TOKENS || 0)
 const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm"
 const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx"
 
@@ -187,6 +192,21 @@ function turaServiceTierConfigArgs() {
   const tier = String(serviceTier || "").trim()
   if (!tier || tier === "default" || tier === "none" || tier === "off") return []
   return tier === "priority" ? ["-p"] : []
+}
+
+function reasoningConfigArgs() {
+  if (omitReasoning) return []
+  return ["-c", `model_reasoning_effort="${reasoning}"`]
+}
+
+function turaReasoningArgs() {
+  if (omitReasoning) return []
+  return ["--model-reasoning-effort", reasoning]
+}
+
+function maxTokenConfigArgs() {
+  if (!Number.isFinite(modelMaxTokens) || modelMaxTokens <= 0) return []
+  return ["-c", `model_max_tokens=${modelMaxTokens}`, "-c", `max_tokens=${modelMaxTokens}`]
 }
 
 function killWorkspaceProcesses(workspace) {
@@ -883,7 +903,7 @@ function createHiddenEvaluator() {
 }
 
 function promptPhase1(port, shellSurface = "shell_command") {
-  return `Repair the React task board in this workspace so it matches the provided desktop, mobile, and modal references in visual quality and behavior. Fix filtering, search, task creation, completion, details, accessibility names, overflow, and responsive layout. The create dialog must have an accessible name like "Create task" or "Create work item", its submit button must be named "Create", and the success status must include "Task added". Keep the desktop hero between 150px and 340px tall, the mobile navigation no taller than 130px, the mobile heading no larger than 46px, and the page free of horizontal overflow.`
+  return `Repair the React task board in this current workspace only so it matches the provided desktop, mobile, and modal references in visual quality and behavior. Do not read from, copy from, diff against, or inspect any other benchmark run directory, sibling agent workspace, old target artifact, previous solution, or path outside this workspace; all implementation work must be based only on the files and reference assets already present under the current working directory. Fix filtering, search, task creation, completion, details, accessibility names, overflow, and responsive layout. The create dialog must have an accessible name like "Create task" or "Create work item", its submit button must be named "Create", and the success status must include "Task added". Keep the desktop hero between 150px and 340px tall, the mobile navigation no taller than 130px, the mobile heading no larger than 46px, and the page free of horizontal overflow.`
 }
 
 function promptSmoke(port, shellSurface = "shell_command") {
@@ -891,7 +911,7 @@ function promptSmoke(port, shellSurface = "shell_command") {
 }
 
 function promptPhase2(port, shellSurface = "shell_command") {
-  return `Extend the repaired task board with row selection, select all, bulk complete with audit logging, CSV export or preview for the filtered tasks, smooth card/create-task animation with reduced-motion support, keyboard-accessible labels, and no mobile horizontal overflow. Preserve the desktop hero height, compact mobile navigation, and modest mobile heading from the repaired layout.`
+  return `Extend the repaired task board in this current workspace only with row selection, select all, bulk complete with audit logging, CSV export or preview for the filtered tasks, smooth card/create-task animation with reduced-motion support, keyboard-accessible labels, and no mobile horizontal overflow. Do not read from, copy from, diff against, or inspect any other benchmark run directory, sibling agent workspace, old target artifact, previous solution, or path outside this workspace; all implementation work must be based only on the files and reference assets already present under the current working directory. Preserve the desktop hero height, compact mobile navigation, and modest mobile heading from the repaired layout.`
 }
 
 function parseJsonl(text) {
@@ -971,6 +991,23 @@ function countEvents(events) {
   return { turns, commands, failures }
 }
 
+function workspaceBoundaryViolations(events, workspace) {
+  const normalizedWorkspace = path.resolve(workspace).toLowerCase()
+  const violations = []
+  for (const event of events) {
+    const text = JSON.stringify(event)
+    if (!text.includes("command-run-frontend-playwright")) continue
+    const matches = text.match(/[A-Z]:\\\\[^"\\n\\r]+command-run-frontend-playwright[^"\\n\\r]+/gi) || []
+    for (const match of matches) {
+      const normalized = path.resolve(match.replace(/\\\\/g, path.sep)).toLowerCase()
+      if (!normalized.startsWith(normalizedWorkspace)) {
+        violations.push(match)
+      }
+    }
+  }
+  return [...new Set(violations)].slice(0, 20)
+}
+
 function startServer(workspace, port) {
   return spawn(npmCmd, ["run", "start", "--", "--port", String(port), "--strictPort"], {
     cwd: workspace,
@@ -1014,8 +1051,8 @@ async function runCurrentLike(agentId, exe, workspace, agentDir, agentPort) {
     "-m",
     model,
     "--dangerously-bypass-approvals-and-sandbox",
-    "-c",
-    `model_reasoning_effort="${reasoning}"`,
+    ...reasoningConfigArgs(),
+    ...maxTokenConfigArgs(),
     ...serviceTierConfigArgs(),
   ]
   const shellSurface = shellSurfaceForAgent(agentId)
@@ -1040,8 +1077,8 @@ async function runCurrentLike(agentId, exe, workspace, agentDir, agentPort) {
           "-m",
           model,
           "--dangerously-bypass-approvals-and-sandbox",
-          "-c",
-          `model_reasoning_effort="${reasoning}"`,
+          ...reasoningConfigArgs(),
+          ...maxTokenConfigArgs(),
           ...serviceTierConfigArgs(),
           threadId,
           promptPhase2(agentPort, shellSurface),
@@ -1072,8 +1109,8 @@ async function runTura(workspace, agentDir, agentPort, agentPrompt = "coding_age
     "-m",
     turaModel,
     ...turaServiceTierConfigArgs(),
-    "--model-reasoning-effort",
-    reasoning,
+    ...turaReasoningArgs(),
+    ...maxTokenConfigArgs(),
     "--cwd",
     workspace,
   ]
@@ -1095,8 +1132,8 @@ async function runTura(workspace, agentDir, agentPort, agentPrompt = "coding_age
     stderrPath: path.join(agentDir, "phase1.stderr.log"),
     statusPath: path.join(agentDir, "phase1.status.json"),
   })
-  const second = smokeOnly
-    ? emptyRun("smoke mode skipped phase2")
+  const second = smokeOnly || phase1Only
+    ? emptyRun(smokeOnly ? "smoke mode skipped phase2" : "phase1-only mode skipped phase2")
     : await runLive(turaExe, [...common, promptPhase2(agentPort, shellSurface)], {
         cwd: workspace,
         env,
@@ -1241,6 +1278,7 @@ async function runAgent(agentId, template, evaluator, index) {
     usage: usageFromRuns(agentId, result),
     usage_by_phase: usageDiagnostics(result),
     events: countEvents(events),
+    workspace_boundary_violations: workspaceBoundaryViolations(events, workspace),
     validation,
   }
   writeFile(path.join(agentDir, "agent-summary.json"), JSON.stringify(stats, null, 2))
@@ -1268,7 +1306,9 @@ async function main() {
   if (requireCodexCurrentExe()) assert(fs.existsSync(codexCurrentExe), `missing current exe ${codexCurrentExe}`)
   if (requireCodexMainExe()) assert(fs.existsSync(codexMainExe), `missing main exe ${codexMainExe}`)
   if (requireTuraExe()) {
-    runOk("cargo", ["build", "--workspace"], { cwd: repoRoot, timeoutMs: 5 * 60_000 })
+    if (!skipTuraBuild || !fs.existsSync(turaExe)) {
+      runOk("cargo", ["build", "--workspace"], { cwd: repoRoot, timeoutMs: 5 * 60_000 })
+    }
     assert(fs.existsSync(turaExe), `missing tura exe ${turaExe}`)
   }
   const results = await Promise.all(agents.map((agent, index) => {
@@ -1276,7 +1316,10 @@ async function main() {
     return runAgent(agent, template, evaluator, index)
   }))
   const summary = {
-    ok: results.every((result) => result.validation?.pass),
+    ok: results.every(
+      (result) =>
+        result.validation?.pass && (result.workspace_boundary_violations || []).length === 0,
+    ),
     run_id: runId,
     run_root: runRoot,
     model,
@@ -1284,6 +1327,7 @@ async function main() {
     reasoning,
     timeout_ms: timeoutMs,
     smoke_only: smokeOnly,
+    skip_tura_build: skipTuraBuild,
     agents,
     results,
   }

@@ -4,12 +4,11 @@ use std::path::PathBuf;
 use crate::state_machine::agent_management::AgentManagement;
 
 use super::constants::{
-    COMMAND_RUN_TOOL, DISABLE_EXECUTE_TOOLS_TOOL_ENV, DISABLE_MULTIPLE_TASKS_TOOL_ENV,
-    FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS_ENV, FORCE_MULTIPLE_TASKS_ENV, PROJECT_ROOT_ENV,
+    COMMAND_RUN_TOOL, DISABLE_EXECUTE_TOOLS_TOOL_ENV, DISABLE_PLANNING_TOOL_ENV, PROJECT_ROOT_ENV,
 };
 
 #[cfg(test)]
-use super::constants::MULTIPLE_TASKS_TOOL;
+use super::constants::PLANNING_TOOL;
 
 pub(super) fn load_agent_capabilities(
     agent: &AgentManagement,
@@ -38,8 +37,8 @@ pub(super) fn filter_tools_for_turn(
     tools: Vec<serde_json::Value>,
     is_final_turn: bool,
     force_no_tools: bool,
-    is_multiple_tasks_child: bool,
-    multiple_tasks_mode_enabled: bool,
+    is_planning_child: bool,
+    planning_mode_enabled: bool,
 ) -> Result<Vec<serde_json::Value>, String> {
     if force_no_tools {
         return Ok(Vec::new());
@@ -49,19 +48,19 @@ pub(super) fn filter_tools_for_turn(
         return Ok(Vec::new());
     }
 
-    let _ = (is_multiple_tasks_child, multiple_tasks_mode_enabled);
+    let _ = (is_planning_child, planning_mode_enabled);
     Ok(keep_command_run_only(tools))
 }
 
 #[cfg(test)]
-pub(super) fn require_multiple_tasks_tool_for_multiple_tasks_mode(
+pub(super) fn require_planning_tool_for_planning_mode(
     tools: Vec<serde_json::Value>,
 ) -> Result<Vec<serde_json::Value>, String> {
     if !tools
         .iter()
-        .any(|tool| tool_schema_name(tool) == Some(MULTIPLE_TASKS_TOOL))
+        .any(|tool| tool_schema_name(tool) == Some(PLANNING_TOOL))
     {
-        return Err("multiple-tasks mode requested but multiple_tasks is unavailable".to_string());
+        return Err("planning mode requested but planning is unavailable".to_string());
     }
 
     Ok(tools)
@@ -101,16 +100,12 @@ pub(super) fn env_flag(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub(super) fn multiple_tasks_env_enabled() -> bool {
-    env_flag(FORCE_MULTIPLE_TASKS_ENV) || env_flag(FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS_ENV)
+pub(super) fn planning_tool_disabled() -> bool {
+    env_flag(DISABLE_PLANNING_TOOL_ENV) || env_flag(DISABLE_EXECUTE_TOOLS_TOOL_ENV)
 }
 
-pub(super) fn multiple_tasks_tool_disabled() -> bool {
-    env_flag(DISABLE_MULTIPLE_TASKS_TOOL_ENV) || env_flag(DISABLE_EXECUTE_TOOLS_TOOL_ENV)
-}
-
-pub(super) fn multiple_tasks_child_depth() -> usize {
-    std::env::var("TURA_MULTIPLE_TASKS_DEPTH")
+pub(super) fn planning_child_depth() -> usize {
+    std::env::var("TURA_PLANNING_DEPTH")
         .or_else(|_| std::env::var("TURA_EXECUTE_TOOLS_DEPTH"))
         .ok()
         .and_then(|value| value.trim().parse::<usize>().ok())
@@ -198,7 +193,7 @@ pub(super) fn command_run_commands_for_agent(agent: &AgentManagement) -> BTreeSe
 }
 
 fn default_command_run_commands() -> BTreeSet<String> {
-    let mut commands = [
+    [
         "apply_patch",
         active_shell_command_name(),
         "read_media",
@@ -208,11 +203,7 @@ fn default_command_run_commands() -> BTreeSet<String> {
     ]
     .into_iter()
     .map(str::to_string)
-    .collect::<BTreeSet<_>>();
-    if multiple_tasks_env_enabled() {
-        commands.insert("multiple_tasks".to_string());
-    }
-    commands
+    .collect::<BTreeSet<_>>()
 }
 
 fn tool_interface_to_provider_schema_with_commands(
@@ -428,11 +419,11 @@ fn command_run_description_for_active_shell(
             compact_schema(code_tools::commands::task_status::SCHEMA),
         ));
     }
-    if multiple_tasks_env_enabled() && allowed_commands.contains("multiple_tasks") {
+    if allowed_commands.contains("planning") {
         command_lines.push(format!(
-            "- multiple_tasks: {} Schema: {}",
-            compact_prompt(code_tools::commands::multiple_tasks::PROMPT),
-            compact_schema(code_tools::commands::multiple_tasks::SCHEMA),
+            "- planning: {} Schema: {}",
+            compact_prompt(code_tools::commands::planning::PROMPT),
+            compact_schema(code_tools::commands::planning::SCHEMA),
         ));
     }
     format!(
@@ -451,7 +442,7 @@ fn command_list_for_description(commands: &BTreeSet<String>, active_shell: &str)
         "web_discover",
         "compact_context",
         "task_status",
-        "multiple_tasks",
+        "planning",
     ];
     order
         .into_iter()
@@ -463,14 +454,15 @@ fn command_list_for_description(commands: &BTreeSet<String>, active_shell: &str)
 fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
     let mut patterns = vec![
         "- Batch investigation: use early commands for the specific discovery, searches, and file reads needed to understand the failure surface.",
-        "- Keep related path listing, targeted search, and candidate file reads in the same command_run batch and same read-only step when they are independent.",
-        "- Parallel reads: put independent safe read-only commands in the same step when they do not depend on each other.",
-        "- Code repair loop: use early steps for needed discovery/reads, a later step for one multi-file `apply_patch`, and final steps in the same command_run for tests plus focused validation searches.",
+        "- Keep related path listing, targeted search, and candidate file reads in the same command_run batch; independent commands with no output dependency may share one step.",
+        "- Do not run test/probe invocations before you have read the relevant code and determined the actual CLI command set.",
+        "- Use steps to express execution order and dependency relationships. Commands in the same step may run together; later steps should depend on earlier steps only when their inputs are already known before the batch is created.",
+        "- Code repair loop: after discovery has produced enough facts, use one step for coordinated edits and later steps for already-known tests or focused validation.",
         "- Avoid embedding long generated source code or complex quoting directly in shell/bash command lines; for complex logic, invoke a script/interpreter from shell/bash rather than encoding the logic in shell syntax.",
-        "- Verification: run the relevant test or build command after edits in the same command_run when the edit target is already clear.",
+        "- Verification: run the relevant test or build command after edits in the same command_run only when the verification command is already known.",
         "- Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.",
         "- Context compaction: after a meaningful phase completes, or when context is near 200,000 tokens and feels crowded, put `compact_context` as the final command in the highest step with a concise handoff summary for the next turn.",
-        "- Example investigation batch: step 1 needed `rg --files`, targeted `rg -n`, and candidate file reads.",
+        "- Example investigation batch: step 1 groups independent `rg --files`, targeted `rg -n`, and candidate file reads.",
         "- Example repair batch: step 1 `apply_patch` across related files, step 2 write or update a focused test script when needed, step 3 run the narrow test and focused validation searches.",
         "- Example frontend batch: step 1 write or reuse the focused frontend test script, step 2 run that script and inspect generated textual outputs.",
     ];
@@ -489,7 +481,7 @@ fn current_apply_patch_command_format() -> String {
 
 fn current_shell_command_format(active: &str, shell_prompt: &str) -> String {
     let guidance = format!(
-        "Use for tests, builds, scripts, package tools, and host-shell behavior. Default timeout is 15 seconds; set timeout_ms explicitly for legitimate long-running one-shot commands. Put verification after edits in a later step. {} {}",
+        "Use for tests, builds, scripts, package tools, and host-shell behavior. Default timeout is 15 seconds; set timeout_ms explicitly for legitimate long-running one-shot commands. Put verification after edits in a later step only when that verification command is already known. {} {}",
         compact_prompt(shell_prompt),
         long_running_service_guidance(active),
     );
@@ -558,6 +550,41 @@ mod tests {
             .collect()
     }
 
+    fn command_run_agent_with_capabilities(capabilities: &[&str]) -> AgentManagement {
+        let now = Utc::now();
+        let mut agent = AgentManagement::new(
+            "agent-1".to_string(),
+            "coding_agent_planning".to_string(),
+            std::path::PathBuf::from("agents/src/coding_agent_planning"),
+            None,
+            true,
+            true,
+            ProviderConfig {
+                tura_llm_name: "flagship_thinking".to_string(),
+                stream: true,
+                temperature: 0.2,
+                max_tokens: 0,
+                tool_choice: ToolChoice::Auto,
+                time_out_ms: 120_000,
+            },
+            ValidatorConfig {
+                need_validator: false,
+                validator_name: None,
+            },
+            now,
+        );
+        for capability_name in capabilities {
+            agent.add_capability(
+                AgentCapabilityItem {
+                    capability_name: (*capability_name).to_string(),
+                    capability_directory: std::path::PathBuf::from("crates/tools/src"),
+                },
+                now,
+            );
+        }
+        agent
+    }
+
     fn command_run_interface() -> serde_json::Value {
         serde_json::json!({
             "name": COMMAND_RUN_TOOL,
@@ -597,16 +624,10 @@ mod tests {
             description.contains("task_status"),
             "description missing task_status command"
         );
-        // The dedicated command prompt (prompt.md) content is present, including
-        // the question/done guidance and the single usage example.
         assert!(
-            description.contains("task_status status `done`")
-                && description.contains("task_status status `question`"),
-            "description missing question/done guidance"
-        );
-        assert!(
-            description.contains("\"command_type\":\"task_status\""),
-            "description missing task_status usage example"
+            description
+                .contains("Reminder: settle the task state with the last task_status command."),
+            "description missing task_status reminder"
         );
         // The schema enum is injected too.
         assert!(
@@ -616,11 +637,33 @@ mod tests {
     }
 
     #[test]
+    fn planning_command_does_not_replace_task_status_prompt() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let mut commands = default_command_run_commands();
+        commands.insert("planning".to_string());
+        let schema = tool_interface_to_provider_schema_with_commands(
+            command_run_interface(),
+            Some(&commands),
+        );
+        let description = schema
+            .pointer("/function/description")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+
+        assert!(description.contains("task_status"));
+        assert!(description
+            .contains("Reminder: settle the task state with the last task_status command."));
+        assert!(!description.contains("Continue working toward the active thread goal."));
+        assert!(!description.contains("[current objective]:"));
+        assert!(!description.to_ascii_lowercase().contains("budget"));
+    }
+
+    #[test]
     fn default_non_final_turn_keeps_only_command_run() {
         let filtered = filter_tools_for_turn(
             vec![
                 tool(COMMAND_RUN_TOOL),
-                tool(MULTIPLE_TASKS_TOOL),
+                tool(PLANNING_TOOL),
                 tool("apply_diff"),
                 tool("web_search"),
             ],
@@ -635,11 +678,11 @@ mod tests {
     }
 
     #[test]
-    fn multiple_tasks_mode_still_keeps_only_command_run() {
+    fn planning_mode_still_keeps_only_command_run() {
         let filtered = filter_tools_for_turn(
             vec![
                 tool(COMMAND_RUN_TOOL),
-                tool(MULTIPLE_TASKS_TOOL),
+                tool(PLANNING_TOOL),
                 tool("apply_diff"),
             ],
             false,
@@ -650,6 +693,23 @@ mod tests {
         .expect("filter should succeed");
 
         assert_eq!(names(filtered), vec![COMMAND_RUN_TOOL]);
+    }
+
+    #[test]
+    fn planning_capability_adds_command_for_configured_agent_capabilities() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let agent = command_run_agent_with_capabilities(&[
+            "command_run",
+            "apply_patch",
+            "shell_command",
+            "task_status",
+            "planning",
+        ]);
+
+        let commands = command_run_commands_for_agent(&agent);
+
+        assert!(commands.contains("planning"));
+        assert!(commands.contains("task_status"));
     }
 
     #[test]
@@ -732,8 +792,6 @@ mod tests {
     #[test]
     fn command_run_provider_description_exposes_only_shell_command_surface() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::remove_var("TURA_FORCE_MULTIPLE_TASKS");
-        std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS");
         std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
 
         let schema = tool_interface_to_provider_schema(command_run_interface());
@@ -752,7 +810,7 @@ mod tests {
         assert!(description.contains("- web_discover:"));
         assert!(description.contains("- compact_context:"));
         assert!(description.contains("- task_status:"));
-        assert!(!description.contains("- multiple_tasks:"));
+        assert!(!description.contains("- planning:"));
         assert!(description.contains("\"command\":{\"type\":\"string\""));
         assert!(description.contains("\"workdir\":{\"type\":\"string\""));
         assert!(description.contains("\"timeout_ms\":{\"type\":\"number\""));
@@ -779,8 +837,6 @@ mod tests {
     #[test]
     fn command_run_provider_description_exposes_only_bash_surface() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::remove_var("TURA_FORCE_MULTIPLE_TASKS");
-        std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS");
         std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash");
 
         let schema = tool_interface_to_provider_schema(command_run_interface());
@@ -799,7 +855,7 @@ mod tests {
         assert!(description.contains("- web_discover:"));
         assert!(description.contains("- compact_context:"));
         assert!(description.contains("- task_status:"));
-        assert!(!description.contains("- multiple_tasks:"));
+        assert!(!description.contains("- planning:"));
         assert!(description.contains("\"command\":{\"type\":\"string\""));
         assert!(description.contains("\"workdir\":{\"type\":\"string\""));
         assert!(description.contains("\"timeout_ms\":{\"type\":\"number\""));
@@ -823,22 +879,25 @@ mod tests {
     }
 
     #[test]
-    fn command_run_provider_description_injects_multiple_tasks_only_when_enabled() {
+    fn command_run_provider_description_injects_planning_only_when_enabled() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
-        std::env::set_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS", "1");
+        let mut commands = default_command_run_commands();
+        commands.insert("planning".to_string());
 
-        let schema = tool_interface_to_provider_schema(command_run_interface());
+        let schema = tool_interface_to_provider_schema_with_commands(
+            command_run_interface(),
+            Some(&commands),
+        );
         let description = schema["function"]["description"]
             .as_str()
             .unwrap_or_default();
 
         assert!(description.contains(
-            "Available commands: apply_patch, shell_command, read_media, web_discover, compact_context, task_status, multiple_tasks."
+            "Available commands: apply_patch, shell_command, read_media, web_discover, compact_context, task_status, planning."
         ));
-        assert!(description.contains("- multiple_tasks:"));
+        assert!(description.contains("- planning:"));
 
-        std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS");
         std::env::remove_var("TURA_COMMAND_RUN_SHELL");
     }
 

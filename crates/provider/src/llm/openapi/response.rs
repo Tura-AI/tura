@@ -50,12 +50,7 @@ pub(crate) async fn codex_oauth_call(
 
     if let Ok(account_id) = std::env::var("OPENAI_ACCOUNT_ID") {
         if !account_id.trim().is_empty() {
-            let account_header = if header_profile == "official" {
-                "ChatGPT-Account-ID"
-            } else {
-                "ChatGPT-Account-Id"
-            };
-            request = request.header(account_header, account_id);
+            request = request.header("ChatGPT-Account-Id", account_id);
         }
     }
 
@@ -160,12 +155,7 @@ pub(crate) async fn responses_api_key_call(
 }
 
 fn codex_cli_user_agent() -> String {
-    format!(
-        "codex_cli_rs/{} ({}; {})",
-        env!("CARGO_PKG_VERSION"),
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    )
+    "codex_cli_rs/0.0.0 (Windows 10.0; x86_64)".to_string()
 }
 
 /// Per-provider behaviour of the shared Responses-API payload builder. Codex
@@ -257,8 +247,13 @@ fn build_responses_payload(
             .and_then(Value::as_str)
             .unwrap_or("user");
         let content_text = message_content_text(message.get("content")).unwrap_or_default();
-        let content = openai_responses_content_from_canonical(message.get("content"))
-            .unwrap_or_else(|| Value::String(content_text.clone()));
+        let content = if profile.provider == "codex" {
+            codex_responses_content_from_canonical(role, message.get("content"))
+                .unwrap_or_else(|| codex_text_content(role, content_text.clone()))
+        } else {
+            openai_responses_content_from_canonical(message.get("content"))
+                .unwrap_or_else(|| Value::String(content_text.clone()))
+        };
         input.push(json!({
             "role": codex_input_role(role),
             "content": content,
@@ -317,6 +312,48 @@ fn build_responses_payload(
     }
 
     payload
+}
+
+fn codex_responses_content_from_canonical(role: &str, content: Option<&Value>) -> Option<Value> {
+    match openai_responses_content_from_canonical(content)? {
+        Value::String(text) => Some(codex_text_content(role, text)),
+        Value::Array(items) => Some(Value::Array(
+            items
+                .into_iter()
+                .map(|item| codex_content_item_for_role(role, item))
+                .collect(),
+        )),
+        other => Some(other),
+    }
+}
+
+fn codex_content_item_for_role(role: &str, item: Value) -> Value {
+    let Some(kind) = item.get("type").and_then(Value::as_str) else {
+        return item;
+    };
+    let text = item
+        .get("text")
+        .and_then(Value::as_str)
+        .or_else(|| item.get("content").and_then(Value::as_str));
+    if matches!(kind, "input_text" | "text" | "output_text") {
+        if let Some(text) = text {
+            return codex_text_item(role, text.to_string());
+        }
+    }
+    item
+}
+
+fn codex_text_content(role: &str, text: String) -> Value {
+    Value::Array(vec![codex_text_item(role, text)])
+}
+
+fn codex_text_item(role: &str, text: String) -> Value {
+    let kind = if role == "assistant" {
+        "output_text"
+    } else {
+        "input_text"
+    };
+    json!({ "type": kind, "text": text })
 }
 
 async fn parse_codex_response_stream(

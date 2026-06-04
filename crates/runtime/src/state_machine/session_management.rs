@@ -72,6 +72,10 @@ pub struct SessionInput {
     /// Dynamic client/runtime context captured for the current user turn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_context: Option<String>,
+    /// Optional per-run planning override. None means keep the selected agent's
+    /// configured capabilities; Some(true) adds planning, Some(false) removes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planning_mode_override: Option<bool>,
 }
 
 /// Completion status for one task-plan item.
@@ -81,6 +85,7 @@ pub enum PlanStatus {
     #[serde(alias = "pending")]
     #[default]
     Todo,
+    WaitingUser,
     #[serde(alias = "in_progress")]
     Doing,
     Question,
@@ -119,9 +124,9 @@ pub struct PollInterval {
 /// One executable subtask in the session plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct TaskStep {
-    /// Stable task nonce. This is the primary key for task-management updates.
+    /// Stable task id. This is the primary key for task-management updates.
     #[serde(default)]
-    pub nonce_id: String,
+    pub task_id: String,
     /// Non-negative plan step number.
     #[serde(default)]
     pub step: u64,
@@ -243,6 +248,9 @@ pub struct SessionManagement {
     pub input: SessionInput,
     /// Summarized overall user goal.
     pub user_goal: UserGoal,
+    /// Current objective used for planning completion-audit reminders.
+    #[serde(default)]
+    pub current_objective: String,
     /// Planned subtasks.
     #[serde(default, deserialize_with = "deserialize_task_plan")]
     pub task_plan: TaskPlan,
@@ -257,6 +265,9 @@ pub struct SessionManagement {
     /// Whether command execution may bypass workspace permission restrictions.
     #[serde(default)]
     pub disable_permission_restrictions: bool,
+    /// Whether the active agent state for this run includes planning.
+    #[serde(default)]
+    pub planning_enabled: bool,
 }
 
 fn default_use_last_tool_call_response() -> bool {
@@ -295,6 +306,7 @@ impl SessionManagement {
             session_created_at: now,
             session_last_update_at: now,
             session_started_at: now,
+            current_objective: input.user_input.trim().to_string(),
             input,
             user_goal,
             task_plan: TaskPlan::default(),
@@ -302,6 +314,7 @@ impl SessionManagement {
             use_last_tool_call_response: true,
             is_child_session: false,
             disable_permission_restrictions: false,
+            planning_enabled: false,
         }
     }
 
@@ -325,6 +338,7 @@ impl SessionManagement {
     /// not the lifetime of the conversation. Reusing a session after switching
     /// back to it should keep its history but start the next run from `Created`.
     pub fn prepare_for_new_user_turn(&mut self, input: SessionInput, now: UtcDateTimeMs) {
+        self.current_objective = input.user_input.trim().to_string();
         self.input = input;
         if matches!(
             self.state,
@@ -360,10 +374,10 @@ impl SessionManagement {
             "tasks": self.task_plan.detailed_tasks.iter().enumerate().map(|(index, task)| {
                 let mut value = serde_json::json!({
                     "index": index + 1,
-                    "nonce_id": task.nonce_id,
+                    "task_id": task.task_id,
                     "step": task.step,
                     "task_summary": task.task_summary,
-                    "delivery": task.step_deliverable_description,
+                    "deliverable": task.step_deliverable_description,
                     "sub_session_id": task.sub_session_id,
                     "start_condition": task.start_condition,
                     "start_at": task.start_at,
@@ -390,11 +404,11 @@ impl SessionManagement {
                 .filter(|summary| !summary.trim().is_empty())
                 .unwrap_or(self.task_plan.plan_summary.as_str());
             let mut value = serde_json::json!({
-                "nonce_id": task.map(|task| task.nonce_id.as_str()).unwrap_or_default(),
+                "task_id": task.map(|task| task.task_id.as_str()).unwrap_or_default(),
                 "step": task.map(|task| task.step).unwrap_or_default(),
                 "plan_summary": self.task_plan.plan_summary,
                 "task_summary": task_summary,
-                "delivery": task.map(|task| task.step_deliverable_description.as_str()).unwrap_or_default(),
+                "deliverable": task.map(|task| task.step_deliverable_description.as_str()).unwrap_or_default(),
                 "sub_session_id": task.map(|task| task.sub_session_id.as_str()).unwrap_or_default(),
                 "start_condition": task.map(|task| task.start_condition).unwrap_or_default(),
                 "start_at": task.map(|task| task.start_at).unwrap_or(self.session_started_at),
@@ -412,10 +426,10 @@ impl SessionManagement {
             "plan_summary": self.task_plan.plan_summary,
             "tasks": self.task_plan.detailed_tasks.iter().map(|task| {
                 let mut value = serde_json::json!({
-                    "nonce_id": task.nonce_id,
+                    "task_id": task.task_id,
                     "step": task.step,
                     "task_summary": task.task_summary,
-                    "delivery": task.step_deliverable_description,
+                    "deliverable": task.step_deliverable_description,
                     "sub_session_id": task.sub_session_id,
                     "start_condition": task.start_condition,
                     "start_at": task.start_at,
@@ -471,6 +485,7 @@ mod tests {
                 file_input: vec![],
                 agent: None,
                 runtime_context: None,
+                planning_mode_override: None,
             },
             "goal".to_string(),
             now,
@@ -483,6 +498,7 @@ mod tests {
     fn completed_session_can_prepare_for_another_user_turn() {
         let now = Utc::now();
         let mut session = session_in_state(SessionState::Completed);
+        assert_eq!(session.current_objective, "first");
 
         session.prepare_for_new_user_turn(
             SessionInput {
@@ -490,13 +506,28 @@ mod tests {
                 file_input: vec![],
                 agent: None,
                 runtime_context: None,
+                planning_mode_override: None,
             },
             now,
         );
 
         assert_eq!(session.state, SessionState::Created);
         assert_eq!(session.input.user_input, "second");
+        assert_eq!(session.current_objective, "second");
         assert!(session.transition(SessionState::Running, now).is_ok());
+    }
+
+    #[test]
+    fn current_objective_serializes_as_session_state_field() {
+        let mut session = session_in_state(SessionState::Running);
+        session.current_objective = "focused objective".to_string();
+
+        let value = serde_json::to_value(&session).expect("session should serialize");
+        assert_eq!(value["current_objective"], "focused objective");
+
+        let decoded: SessionManagement =
+            serde_json::from_value(value).expect("session should deserialize");
+        assert_eq!(decoded.current_objective, "focused objective");
     }
 
     #[test]
@@ -504,8 +535,8 @@ mod tests {
         let mut session = session_in_state(SessionState::Running);
         session.task_plan.plan_summary = "Fix issue".to_string();
         session.task_plan.detailed_tasks.push(TaskStep {
-            nonce_id: "nonce-1".to_string(),
-            step: 0,
+            task_id: "task-1".to_string(),
+            step: 1,
             start_condition: super::StartCondition::SessionIdle,
             task_summary: "Fix issue".to_string(),
             step_deliverable_description: "Verified patch".to_string(),
@@ -516,8 +547,8 @@ mod tests {
         let value = session.task_management_json();
 
         assert!(value.is_object());
-        assert_eq!(value["nonce_id"], "nonce-1");
-        assert_eq!(value["step"], 0);
+        assert_eq!(value["task_id"], "task-1");
+        assert_eq!(value["step"], 1);
         assert_eq!(value["plan_summary"], "Fix issue");
         assert_eq!(value["task_summary"], "Fix issue");
         assert_eq!(value["start_condition"], "session_idle");
@@ -529,15 +560,15 @@ mod tests {
         let mut session = session_in_state(SessionState::Running);
         session.task_plan.plan_summary = "Release plan".to_string();
         session.task_plan.detailed_tasks.push(TaskStep {
-            nonce_id: "idle".to_string(),
-            step: 0,
+            task_id: "idle".to_string(),
+            step: 1,
             start_condition: super::StartCondition::SessionIdle,
             task_summary: "Wait for idle".to_string(),
             ..TaskStep::default()
         });
         session.task_plan.detailed_tasks.push(TaskStep {
-            nonce_id: "timer".to_string(),
-            step: 1,
+            task_id: "timer".to_string(),
+            step: 2,
             start_condition: super::StartCondition::ScheduledTask,
             task_summary: "Run later".to_string(),
             ..TaskStep::default()
@@ -558,6 +589,11 @@ mod tests {
             serde_json::from_str::<PlanStatus>("\"pending\"")
                 .expect("pending alias should deserialize"),
             PlanStatus::Todo
+        );
+        assert_eq!(
+            serde_json::from_str::<PlanStatus>("\"waiting_user\"")
+                .expect("waiting_user should deserialize"),
+            PlanStatus::WaitingUser
         );
         assert_eq!(
             serde_json::from_str::<PlanStatus>("\"in_progress\"")

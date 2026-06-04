@@ -16,3 +16,4 @@ uuid = { version = "1", features = ["v4", "serde"] }
 anyhow = "1"
 tura-agents = { path = "../../agents" }
 tura-persona = { path = "../../personas" }
+session_log = { path = "../session_log" }

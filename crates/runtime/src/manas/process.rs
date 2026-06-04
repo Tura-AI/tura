@@ -4,12 +4,11 @@ use super::gateway_events::{
     publish_gateway_agent_message, publish_runtime_failure_message, publish_runtime_usage_record,
 };
 use super::prompt_messages::{
-    messages_for_turn, push_task_continuity_message, push_task_status_nudge,
+    messages_for_turn, planning_current_task_text, push_no_tool_task_status_retry_message,
+    push_task_status_nudge,
 };
 use super::runtime_turn::execute_turn;
-use super::tool_catalog::{
-    command_run_commands_for_agent, multiple_tasks_child_depth, multiple_tasks_env_enabled,
-};
+use super::tool_catalog::{command_run_commands_for_agent, planning_child_depth};
 use super::tool_execution::execute_tool_calls;
 use super::validator_feedback::apply_validator_reliability_feedback;
 use chrono::Utc;
@@ -42,12 +41,12 @@ use crate::tool_router::execute_tool::ToolExecutionResult;
 #[cfg(test)]
 use super::agent_prompts::load_agent_prompt_messages;
 #[cfg(test)]
-use super::constants::MULTIPLE_TASKS_TOOL;
+use super::constants::PLANNING_TOOL;
 #[cfg(test)]
 use super::tool_arguments::{normalize_tool_arguments, normalize_tool_arguments_for_tool};
 #[cfg(test)]
 use super::tool_catalog::{
-    filter_tools_for_turn, remove_tool, require_multiple_tasks_tool_for_multiple_tasks_mode,
+    filter_tools_for_turn, remove_tool, require_planning_tool_for_planning_mode,
 };
 #[cfg(test)]
 use tura_llm_rust::provider_unsupported_content_type;
@@ -98,9 +97,8 @@ pub fn process_manas_internal(
     let mut turn = 0_u64;
     let mut provider_timeout_retries = 0_u8;
     let mut no_tool_retries = 0_u8;
-    let mut command_run_turns = 0_u64;
-    let mut last_task_done = false;
-    let mut final_answer_turn = false;
+    let mut terminal_task_status_seen = false;
+    let mut final_session_state = SessionState::Completed;
     let supports_task_status = agents
         .first()
         .map(command_run_commands_for_agent)
@@ -124,8 +122,8 @@ pub fn process_manas_internal(
             &messages_for_turn(&current_messages, session, &original_user_task),
             redis_url,
             turn == 1,
-            final_answer_turn,
-            final_answer_turn,
+            false,
+            false,
         ) {
             Ok(result) => result,
             Err(error) => {
@@ -142,6 +140,7 @@ pub fn process_manas_internal(
                 if env_flag("TURA_FAIL_ON_RUNTIME_ERROR") {
                     return Err(error);
                 }
+                final_session_state = SessionState::Failed;
                 break;
             }
         };
@@ -181,6 +180,7 @@ pub fn process_manas_internal(
                             "Provider/model does not support `{content_type}` media input for this request. Use an image-capable model or a route whose model metadata includes that input modality. Original provider error: {error_text}"
                         ),
                     );
+                    final_session_state = SessionState::Failed;
                     break;
                 }
                 let removed_media = provider_media_fallback(&error_text)
@@ -236,6 +236,7 @@ pub fn process_manas_internal(
                     "Provider runtime failed after 3 retries before completing the task: {error_text}"
                 ),
             );
+            final_session_state = SessionState::Failed;
             break;
         }
         if runtime.call_result_status == RuntimeCallResultStatus::Failed {
@@ -252,6 +253,7 @@ pub fn process_manas_internal(
             if env_flag("TURA_FAIL_ON_RUNTIME_ERROR") {
                 return Err(error_text);
             }
+            final_session_state = SessionState::Failed;
             break;
         }
 
@@ -276,21 +278,16 @@ pub fn process_manas_internal(
             }
             provider_timeout_retries = 0;
             no_tool_retries = 0;
-            if tool_calls
-                .iter()
-                .any(|tool_call| tool_call.tool_name == COMMAND_RUN_TOOL)
-            {
-                command_run_turns = command_run_turns.saturating_add(1);
-            }
             let mut tool_results =
                 execute_tool_calls(&tool_calls, agents.first(), session, &runtime, redis_url)?;
             apply_compact_context_results(session, &mut tool_results)?;
-            last_task_done = tool_results
+            let terminal_task_status = tool_results
                 .iter()
-                .any(|result| command_run_result_contains_terminal_task_status(&result.result));
+                .find_map(|result| command_run_result_terminal_task_status(&result.result));
+            terminal_task_status_seen = terminal_task_status.is_some();
 
             // Track consecutive command_run turns with no write/state command.
-            if command_run_turn_has_write_or_status(&tool_calls) || last_task_done {
+            if command_run_turn_has_write_or_status(&tool_calls) || terminal_task_status_seen {
                 no_write_command_run_turns = 0;
             } else if tool_calls
                 .iter()
@@ -317,40 +314,6 @@ pub fn process_manas_internal(
             }
             persist_session_checkpoint(session, "tool_results");
 
-            if should_end_after_task_status_done(session, last_task_done) {
-                info!(
-                    session_id = %session.session_id,
-                    turn = turn,
-                    "task_status done returned from command_run; requesting final assistant reply"
-                );
-                let context_output = build_context(ContextInput {
-                    session: session.clone(),
-                    runtime: runtime.clone(),
-                    additional_messages: Vec::new(),
-                })?;
-
-                current_messages = messages_with_initial_context_prefix(
-                    &initial_messages,
-                    context_output.messages,
-                    &original_user_task,
-                );
-                current_messages.push(serde_json::json!({
-                    "role": "system",
-                    "content": "The latest command_run task_status is done. Do not call tools now. Reply to the user naturally with the final user-facing answer in the user's language. Do not summarize internal tool plumbing unless it is directly relevant."
-                }));
-                final_answer_turn = true;
-                continue;
-            }
-
-            if multiple_tasks_env_enabled() && planned_tasks_all_completed(session) {
-                info!(
-                    session_id = %session.session_id,
-                    turn = turn,
-                    "all planned tasks delivered after tool results; ending session"
-                );
-                break;
-            }
-
             let context_output = build_context(ContextInput {
                 session: session.clone(),
                 runtime: runtime.clone(),
@@ -362,13 +325,27 @@ pub fn process_manas_internal(
                 context_output.messages,
                 &original_user_task,
             );
-            if let Some(next_task) = active_task_user_message(session) {
+            let next_task = if terminal_task_status.as_deref() == Some("done") {
+                active_todo_task_user_message(session)
+            } else {
+                active_task_user_message(session)
+            };
+            if let Some(next_task) = next_task {
+                record_task_focus_message_for_terminal_done(
+                    session,
+                    &next_task,
+                    terminal_task_status.as_deref() == Some("done"),
+                );
+                persist_session_checkpoint(session, "task_focus");
                 current_messages.push(next_task);
-            } else if planned_tasks_all_completed(session) && last_task_done {
-                current_messages.push(serde_json::json!({
-                    "role": "system",
-                    "content": "All planned tasks are marked delivered. Provide the final user-facing answer now."
-                }));
+            } else if matches!(terminal_task_status.as_deref(), Some("done" | "question")) {
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    status = terminal_task_status.as_deref().unwrap_or("unknown"),
+                    "terminal task_status returned and no next executable task exists; ending loop"
+                );
+                break;
             }
 
             // The model keeps running command_run without writing or settling
@@ -396,98 +373,21 @@ pub fn process_manas_internal(
                 context_output.messages,
                 &original_user_task,
             );
-            if supports_task_status {
-                push_task_continuity_message(&mut current_messages, session, &original_user_task);
-            }
-            if multiple_tasks_child_depth() > 0 {
+            if planning_child_depth() > 0 {
                 info!(
                     session_id = %session.session_id,
                     turn = turn,
-                    "multiple_tasks child turn completed without tool calls, ending child session without synthesized user receipt"
-                );
-                break;
-            }
-
-            let final_text = user_visible_runtime_text(&runtime.text)
-                .map(|text| text.trim().to_string())
-                .filter(|text| !text.is_empty());
-            if final_answer_turn {
-                if let Some(text) = final_text.as_deref() {
-                    publish_final_agent_text(session, &runtime, text);
-                }
-                info!(
-                    session_id = %session.session_id,
-                    turn = turn,
-                    "final assistant reply turn completed"
-                );
-                break;
-            }
-            if !multiple_tasks_env_enabled()
-                && final_text
-                    .as_deref()
-                    .is_some_and(text_looks_like_final_answer)
-            {
-                if let Some(text) = final_text.as_deref() {
-                    publish_final_agent_text(session, &runtime, text);
-                }
-                info!(
-                    session_id = %session.session_id,
-                    turn = turn,
-                    "assistant final text completed in normal mode"
-                );
-                break;
-            }
-
-            if multiple_tasks_env_enabled()
-                && command_run_turns > 0
-                && last_task_done
-                && !planned_tasks_incomplete(session)
-                && final_text
-                    .as_deref()
-                    .is_some_and(text_looks_like_final_answer)
-            {
-                if let Some(text) = final_text.as_deref() {
-                    publish_final_agent_text(session, &runtime, text);
-                }
-                info!(
-                    session_id = %session.session_id,
-                    turn = turn,
-                    "assistant final text completed after task delivery"
+                    "planning child turn completed without tool calls, ending child session without synthesized user receipt"
                 );
                 break;
             }
 
             if no_tool_retries < no_tool_retry_limit() {
                 no_tool_retries = no_tool_retries.saturating_add(1);
-                let prior_text = final_text.unwrap_or_else(|| {
-                    "The previous model turn returned no tool call.".to_string()
-                });
-                let multiple_tasks_delivery_missing = multiple_tasks_env_enabled()
-                    && command_run_turns > 0
-                    && planned_tasks_incomplete(session)
-                    && !last_task_done;
-                let completion_guard = if !supports_task_status {
-                    "If the task is complete and verified, provide the final user-facing answer now. If user feedback or more information is needed, ask a concise question. If work remains, continue the original task with command_run to inspect, edit, test, or write required files."
-                } else if multiple_tasks_delivery_missing {
-                    "The active planned task is not marked done. If it is complete and verified, call command_run with task_status status done now. If user input is needed, use task_status status question. Do not call command_run only to rerun verification or status. Use command_run for workspace work that remains."
-                } else if planned_tasks_incomplete(session) {
-                    "The planned task list is not complete. Continue the active planned task with command_run."
-                } else {
-                    "If the task is complete and verified, call command_run with task_status status done. If user feedback or more information is needed, call command_run with task_status status question. If work remains, continue the original task with command_run to inspect, edit, test, or write required files."
-                };
-                let retry_reason = if multiple_tasks_delivery_missing {
-                    "The previous text response did not update the multiple_tasks state."
-                } else {
-                    "The previous non-final model turn did not call a required tool, so no workspace action happened."
-                };
-                current_messages.push(serde_json::json!({
-                    "role": "system",
-                    "content": format!(
-                        "{retry_reason} {completion_guard}\n\nPrevious text-only response:\n{}",
-                        prior_text
-                    ),
-                }));
+                push_no_tool_task_status_retry_message(&mut current_messages, session);
                 if let Some(next_task) = active_task_user_message(session) {
+                    record_task_focus_message(session, &next_task);
+                    persist_session_checkpoint(session, "task_focus");
                     current_messages.push(next_task);
                 }
                 warn!(
@@ -509,11 +409,22 @@ pub fn process_manas_internal(
         }
     }
 
-    session.transition(SessionState::Completed, now)?;
-    persist_session_checkpoint(session, "completed");
+    session.transition(final_session_state, now)?;
+    persist_session_checkpoint(
+        session,
+        if final_session_state == SessionState::Failed {
+            "failed"
+        } else {
+            "completed"
+        },
+    );
 
     for agent in agents.iter_mut() {
-        agent.state = AgentState::Completed;
+        agent.state = if final_session_state == SessionState::Failed {
+            AgentState::Failed
+        } else {
+            AgentState::Completed
+        };
         agent.updated_at = Utc::now();
     }
 
@@ -560,16 +471,15 @@ fn command_run_turn_has_write_or_status(
     })
 }
 
-fn command_run_result_contains_terminal_task_status(result: &serde_json::Value) -> bool {
+fn command_run_result_terminal_task_status(result: &serde_json::Value) -> Option<String> {
     let result = result.get("streamed_command_run_result").unwrap_or(result);
     result
         .get("results")
         .and_then(|value| value.as_array())
-        .map(|items| items.iter().any(command_run_item_is_terminal_task_status))
-        .unwrap_or(false)
+        .and_then(|items| items.iter().find_map(command_run_item_terminal_task_status))
 }
 
-fn command_run_item_is_terminal_task_status(item: &serde_json::Value) -> bool {
+fn command_run_item_terminal_task_status(item: &serde_json::Value) -> Option<String> {
     let command_type = item
         .get("command_type")
         .or_else(|| item.get("command"))
@@ -579,28 +489,17 @@ fn command_run_item_is_terminal_task_status(item: &serde_json::Value) -> bool {
         .to_ascii_lowercase()
         .replace('-', "_");
     if command_type != TASK_STATUS_COMMAND {
-        return false;
+        return None;
     }
     if item.get("success").and_then(serde_json::Value::as_bool) == Some(false) {
-        return false;
+        return None;
     }
-    matches!(
-        item.get("output")
-            .and_then(|output| output.get("task_status"))
-            .and_then(|status| status.get("status"))
-            .and_then(serde_json::Value::as_str),
-        Some("done" | "question")
-    )
-}
-
-fn should_end_after_task_status_done(session: &SessionManagement, last_task_done: bool) -> bool {
-    if !last_task_done {
-        return false;
-    }
-    if multiple_tasks_env_enabled() {
-        return planned_tasks_all_completed(session);
-    }
-    true
+    item.get("output")
+        .and_then(|output| output.get("task_status"))
+        .and_then(|status| status.get("status"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|status| matches!(*status, "done" | "question"))
+        .map(ToString::to_string)
 }
 
 fn apply_compact_context_results(
@@ -721,21 +620,94 @@ fn command_run_result_error_value(result: &serde_json::Value) -> Option<String> 
 }
 
 fn active_task_user_message(session: &SessionManagement) -> Option<serde_json::Value> {
-    let (index, task) = session
+    task_user_message_by(session, task_is_executable)
+}
+
+fn active_todo_task_user_message(session: &SessionManagement) -> Option<serde_json::Value> {
+    task_user_message_by(session, task_is_user_action_todo)
+}
+
+fn task_user_message_by(
+    session: &SessionManagement,
+    predicate: fn(&crate::state_machine::session_management::TaskStep) -> bool,
+) -> Option<serde_json::Value> {
+    let (_index, task) = session
         .task_plan
         .detailed_tasks
         .iter()
         .enumerate()
-        .find(|(_, task)| task.status == TaskStatus::Doing)?;
+        .find(|(_, task)| predicate(task))?;
+    let current_task = planning_current_task_text(task);
     Some(serde_json::json!({
         "role": "user",
         "content": format!(
-            "Continue planned task {}.\nTask summary: {}\nDeliverable: {}\n\nUse command_run only for remaining workspace work. If this task is complete and verified, call command_run with task_status status done. If user feedback or more information is needed, call command_run with task_status status question. Do not rerun verification only to finish.",
-            index + 1,
-            task.task_summary,
-            task.step_deliverable_description
+            "[current objective]:\n{}\n\n{}",
+            session.current_objective.trim(),
+            current_task
         )
     }))
+}
+
+fn record_task_focus_message(session: &mut SessionManagement, message: &serde_json::Value) {
+    record_task_focus_message_for_terminal_done(session, message, false);
+}
+
+fn record_task_focus_message_for_terminal_done(
+    session: &mut SessionManagement,
+    message: &serde_json::Value,
+    only_todo: bool,
+) {
+    let Some(task) = session.task_plan.detailed_tasks.iter().find(|task| {
+        if only_todo {
+            task_is_user_action_todo(task)
+        } else {
+            task_is_executable(task)
+        }
+    }) else {
+        return;
+    };
+    let task_id = task.task_id.clone();
+    if session.session_log.iter().rev().any(|entry| {
+        serde_json::from_str::<serde_json::Value>(entry)
+            .ok()
+            .filter(|value| value.get("type").and_then(|kind| kind.as_str()) == Some("task_focus"))
+            .and_then(|value| {
+                value
+                    .get("task_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|seen| seen == task_id)
+            })
+            .unwrap_or(false)
+    }) {
+        return;
+    }
+    let now = Utc::now();
+    session.push_log(
+        serde_json::json!({
+            "type": "task_focus",
+            "task_id": task.task_id,
+            "step": task.step,
+            "task_summary": task.task_summary,
+            "deliverable": task.step_deliverable_description,
+            "content": message.get("content").cloned().unwrap_or(serde_json::Value::Null),
+            "timestamp": now.to_rfc3339(),
+        })
+        .to_string(),
+        now,
+    );
+}
+
+fn task_is_executable(task: &crate::state_machine::session_management::TaskStep) -> bool {
+    task.status == TaskStatus::Doing
+        || (task.status == TaskStatus::Todo
+            && task.start_condition
+                == crate::state_machine::session_management::StartCondition::UserAction)
+}
+
+fn task_is_user_action_todo(task: &crate::state_machine::session_management::TaskStep) -> bool {
+    task.status == TaskStatus::Todo
+        && task.start_condition
+            == crate::state_machine::session_management::StartCondition::UserAction
 }
 
 fn planned_tasks_incomplete(session: &SessionManagement) -> bool {
@@ -744,53 +716,6 @@ fn planned_tasks_incomplete(session: &SessionManagement) -> bool {
         .detailed_tasks
         .iter()
         .any(|task| task.status != TaskStatus::Done)
-}
-
-fn planned_tasks_all_completed(session: &SessionManagement) -> bool {
-    !session.task_plan.detailed_tasks.is_empty() && !planned_tasks_incomplete(session)
-}
-
-fn text_looks_like_final_answer(text: &str) -> bool {
-    let normalized = text.trim().to_ascii_lowercase();
-    if normalized.is_empty() {
-        return false;
-    }
-
-    let continuation_markers = [
-        "let me ",
-        "i need to ",
-        "i'll ",
-        "i will ",
-        "now i ",
-        "next ",
-        "then i'll ",
-        "then i will ",
-        "going to ",
-        "need to ",
-    ];
-    !continuation_markers
-        .iter()
-        .any(|marker| normalized.contains(marker))
-}
-
-fn publish_final_agent_text(
-    session: &SessionManagement,
-    runtime: &RuntimeManagement,
-    final_text: &str,
-) {
-    if let Err(error) = publish_gateway_agent_message(
-        &session.session_id,
-        &runtime.runtime_id,
-        final_text.to_string(),
-        String::new(),
-    ) {
-        warn!(
-            session_id = %session.session_id,
-            runtime_id = %runtime.runtime_id,
-            error = %error,
-            "failed to publish final assistant text to gateway"
-        );
-    }
 }
 
 fn persist_session_checkpoint(session: &SessionManagement, stage: &str) {
@@ -1019,10 +944,11 @@ mod tests {
         messages_with_initial_context_prefix, normalize_tool_arguments,
         normalize_tool_arguments_for_tool, provider_timeout_retry_wait,
         provider_unsupported_content_type, remove_tool,
-        replace_unsupported_content_type_in_messages,
-        require_multiple_tasks_tool_for_multiple_tasks_mode, runtime_failure_allows_retry,
-        runtime_failure_text, user_visible_runtime_text, COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL,
+        replace_unsupported_content_type_in_messages, require_planning_tool_for_planning_mode,
+        runtime_failure_allows_retry, runtime_failure_text, user_visible_runtime_text,
+        COMMAND_RUN_TOOL, PLANNING_TOOL,
     };
+    use crate::context::build_messages_from_session;
     use crate::runtime::types::ToolCallData;
     use crate::state_machine::agent_management::{
         AgentCapabilityItem, AgentManagement, AgentPromptItem, ProviderConfig, ToolChoice,
@@ -1031,9 +957,13 @@ mod tests {
     use crate::state_machine::runtime_management::{
         RuntimeCallResultStatus, RuntimeError, RuntimeManagement, RuntimeProviderConfig,
     };
+    use crate::state_machine::session_management::{
+        PlanStatus, SessionInput, SessionManagement, StartCondition, TaskStep,
+    };
     use chrono::Utc;
     use serde_json::json;
     use std::collections::HashSet;
+    use std::path::PathBuf;
 
     fn command_run_call(command_types: &[&str]) -> ToolCallData {
         ToolCallData {
@@ -1071,7 +1001,7 @@ mod tests {
     }
 
     #[test]
-    fn task_status_done_detection_accepts_streamed_command_run_results() {
+    fn task_status_detection_accepts_streamed_command_run_results() {
         let result = json!({
             "streamed_command_run_result": {
                 "results": [{
@@ -1086,9 +1016,152 @@ mod tests {
             }
         });
 
-        assert!(super::command_run_result_contains_terminal_task_status(
-            &result
-        ));
+        assert_eq!(
+            super::command_run_result_terminal_task_status(&result).as_deref(),
+            Some("done")
+        );
+
+        let question = json!({
+            "results": [{
+                "command_type": "task_status",
+                "output": {
+                    "task_status": {
+                        "status": "question",
+                        "content": "Need API key."
+                    }
+                }
+            }]
+        });
+        assert_eq!(
+            super::command_run_result_terminal_task_status(&question).as_deref(),
+            Some("question")
+        );
+    }
+
+    fn session_with_tasks(tasks: Vec<TaskStep>) -> SessionManagement {
+        let now = Utc::now();
+        let mut session = SessionManagement::new(
+            "sess-executable-task".to_string(),
+            "task routing".to_string(),
+            PathBuf::from("C:/workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "finish queued work".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "finish queued work".to_string(),
+            now,
+        );
+        session.task_plan.detailed_tasks = tasks;
+        session
+    }
+
+    fn task(step: u64, status: PlanStatus, start_condition: StartCondition) -> TaskStep {
+        TaskStep {
+            task_id: format!("task-{step}"),
+            step,
+            task_summary: format!("Task {step}"),
+            step_deliverable_description: format!("Deliverable {step}"),
+            status,
+            start_condition,
+            ..TaskStep::default()
+        }
+    }
+
+    #[test]
+    fn terminal_task_status_continues_when_gateway_added_task_is_executable() {
+        let session = session_with_tasks(vec![
+            task(1, PlanStatus::Done, StartCondition::UserAction),
+            task(2, PlanStatus::Todo, StartCondition::UserAction),
+        ]);
+
+        let message =
+            super::active_todo_task_user_message(&session).expect("todo task is executable");
+        assert!(message["content"].as_str().unwrap().contains("Task 2"));
+    }
+
+    #[test]
+    fn terminal_task_status_done_only_continues_for_todo_user_action_task() {
+        let session = session_with_tasks(vec![
+            task(1, PlanStatus::Done, StartCondition::UserAction),
+            task(2, PlanStatus::Doing, StartCondition::UserAction),
+        ]);
+
+        assert!(super::active_todo_task_user_message(&session).is_none());
+    }
+
+    #[test]
+    fn terminal_task_status_done_focuses_nearest_todo_not_existing_doing() {
+        let mut session = session_with_tasks(vec![
+            task(1, PlanStatus::Done, StartCondition::UserAction),
+            task(2, PlanStatus::Doing, StartCondition::UserAction),
+            task(3, PlanStatus::Todo, StartCondition::UserAction),
+        ]);
+        session.current_objective = "Original user objective".to_string();
+
+        let message =
+            super::active_todo_task_user_message(&session).expect("todo task should be selected");
+        super::record_task_focus_message_for_terminal_done(&mut session, &message, true);
+
+        let content = message["content"].as_str().unwrap();
+        assert!(content.contains("[current objective]:\nOriginal user objective"));
+        assert!(!content.contains("[current task]:"));
+        assert!(content.ends_with("\n\nTask 3"));
+        assert_eq!(session.current_objective, "Original user objective");
+        let focus_event = session
+            .session_log
+            .iter()
+            .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+            .find(|value| {
+                value.get("type").and_then(serde_json::Value::as_str) == Some("task_focus")
+            })
+            .expect("task focus should be recorded");
+        assert_eq!(focus_event["task_id"], "task-3");
+    }
+
+    #[test]
+    fn task_focus_is_audited_without_entering_model_context() {
+        let mut session = session_with_tasks(vec![
+            task(1, PlanStatus::Done, StartCondition::UserAction),
+            task(2, PlanStatus::Todo, StartCondition::UserAction),
+        ]);
+        let message = super::active_task_user_message(&session).expect("todo task is executable");
+
+        super::record_task_focus_message(&mut session, &message);
+        super::record_task_focus_message(&mut session, &message);
+
+        let focus_events = session
+            .session_log
+            .iter()
+            .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+            .filter(|value| {
+                value.get("type").and_then(serde_json::Value::as_str) == Some("task_focus")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(focus_events.len(), 1);
+        assert_eq!(focus_events[0]["task_id"], "task-2");
+        let context_messages = build_messages_from_session(&session);
+        assert!(!context_messages.iter().any(|value| {
+            value
+                .get("content")
+                .map(|content| content.to_string().contains("[current objective]"))
+                .unwrap_or(false)
+        }));
+    }
+
+    #[test]
+    fn terminal_task_status_ends_when_only_scheduled_or_completed_tasks_remain() {
+        let session = session_with_tasks(vec![
+            task(1, PlanStatus::Done, StartCondition::UserAction),
+            task(2, PlanStatus::Todo, StartCondition::ScheduledTask),
+        ]);
+
+        assert!(super::active_todo_task_user_message(&session).is_none());
+        assert!(super::active_task_user_message(&session).is_none());
     }
 
     #[test]
@@ -1226,7 +1299,7 @@ mod tests {
     }
 
     #[test]
-    fn multiple_tasks_mode_still_exposes_only_command_run() {
+    fn planning_mode_still_exposes_only_command_run() {
         let tools = vec![
             json!({
                 "type": "function",
@@ -1258,12 +1331,12 @@ mod tests {
             }),
             json!({
                 "type": "function",
-                "function": { "name": MULTIPLE_TASKS_TOOL, "parameters": { "type": "object" } }
+                "function": { "name": PLANNING_TOOL, "parameters": { "type": "object" } }
             }),
         ];
 
         let filtered = filter_tools_for_turn(tools, false, false, false, true)
-            .expect("multiple_tasks filtering should succeed");
+            .expect("planning filtering should succeed");
         let names = filtered
             .iter()
             .filter_map(|tool| tool["function"]["name"].as_str())
@@ -1277,11 +1350,11 @@ mod tests {
         assert!(!names.contains("delete_file"));
         assert!(!names.contains("apply_diff"));
         assert!(names.contains("command_run"));
-        assert!(!names.contains(MULTIPLE_TASKS_TOOL));
+        assert!(!names.contains(PLANNING_TOOL));
     }
 
     #[test]
-    fn multiple_tasks_mode_requires_multiple_tasks_command() {
+    fn planning_mode_requires_planning_command() {
         let tools = vec![
             json!({
                 "type": "function",
@@ -1301,14 +1374,14 @@ mod tests {
             }),
         ];
 
-        let error = require_multiple_tasks_tool_for_multiple_tasks_mode(tools)
-            .expect_err("multiple_tasks should be required");
+        let error = require_planning_tool_for_planning_mode(tools)
+            .expect_err("planning should be required");
 
-        assert!(error.contains("multiple-tasks mode requested but multiple_tasks is unavailable"));
+        assert!(error.contains("planning mode requested but planning is unavailable"));
     }
 
     #[test]
-    fn default_non_final_turn_keeps_development_tools_without_multiple_tasks() {
+    fn default_non_final_turn_keeps_development_tools_without_planning() {
         let tools = vec![
             json!({
                 "type": "function",
@@ -1332,7 +1405,7 @@ mod tests {
             }),
             json!({
                 "type": "function",
-                "function": { "name": MULTIPLE_TASKS_TOOL, "parameters": { "type": "object" } }
+                "function": { "name": PLANNING_TOOL, "parameters": { "type": "object" } }
             }),
         ];
 
@@ -1349,11 +1422,11 @@ mod tests {
         assert!(!names.contains("delete_file"));
         assert!(!names.contains("apply_diff"));
         assert!(names.contains("command_run"));
-        assert!(!names.contains(MULTIPLE_TASKS_TOOL));
+        assert!(!names.contains(PLANNING_TOOL));
     }
 
     #[test]
-    fn multiple_tasks_child_turn_keeps_development_tools_and_removes_multiple_tasks_command() {
+    fn planning_child_turn_keeps_development_tools_and_removes_planning_command() {
         let tools = vec![
             json!({
                 "type": "function",
@@ -1365,7 +1438,7 @@ mod tests {
             }),
             json!({
                 "type": "function",
-                "function": { "name": MULTIPLE_TASKS_TOOL, "parameters": { "type": "object" } }
+                "function": { "name": PLANNING_TOOL, "parameters": { "type": "object" } }
             }),
         ];
 
@@ -1379,7 +1452,7 @@ mod tests {
         assert_eq!(names.len(), 1);
         assert!(!names.contains("write_file"));
         assert!(names.contains("command_run"));
-        assert!(!names.contains(MULTIPLE_TASKS_TOOL));
+        assert!(!names.contains(PLANNING_TOOL));
     }
 
     #[test]
@@ -1387,7 +1460,7 @@ mod tests {
         let tools = vec![
             json!({
                 "type": "function",
-                "function": { "name": MULTIPLE_TASKS_TOOL, "parameters": { "type": "object" } }
+                "function": { "name": PLANNING_TOOL, "parameters": { "type": "object" } }
             }),
             json!({
                 "type": "function",
@@ -1395,7 +1468,7 @@ mod tests {
             }),
         ];
 
-        let filtered = remove_tool(tools, MULTIPLE_TASKS_TOOL);
+        let filtered = remove_tool(tools, PLANNING_TOOL);
         let names = filtered
             .iter()
             .filter_map(|tool| tool["function"]["name"].as_str())

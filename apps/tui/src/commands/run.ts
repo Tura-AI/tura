@@ -18,7 +18,7 @@ export interface RunOptions {
   sessionType?: string;
   modelVariant?: string;
   modelAccelerationEnabled?: boolean;
-  forceMultipleTasks?: boolean;
+  forcePlanning?: boolean;
   killProcessesOnStart?: boolean;
   validatorEnabled?: boolean;
   output: OutputMode;
@@ -51,7 +51,7 @@ export async function runPrompt(context: CliContext, options: RunOptions): Promi
         session_type: options.sessionType,
         model_variant: options.modelVariant,
         model_acceleration_enabled: options.modelAccelerationEnabled,
-        force_multiple_tasks: options.forceMultipleTasks,
+        force_planning: options.forcePlanning,
         kill_processes_on_start: options.killProcessesOnStart,
         validator_enabled: options.validatorEnabled,
       });

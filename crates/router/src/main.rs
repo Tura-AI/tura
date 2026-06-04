@@ -13,7 +13,7 @@ use services::manager::ServiceManager;
 use services::models::{CallContext, WorkerSpec};
 
 /// Maximum recursion depth for child sub-sessions (fork-bomb guard, T5.4).
-const MAX_MULTIPLE_TASKS_DEPTH: usize = 3;
+const MAX_PLANNING_DEPTH: usize = 3;
 /// Concurrent runtime-worker cap (fork-bomb guard, T5.4).
 const MAX_RUNTIME_WORKERS: usize = 16;
 
@@ -56,7 +56,7 @@ struct RunAgentRequest {
     depth: Option<usize>,
     #[serde(default)]
     runtime_context: Option<String>,
-    /// Worker env contract computed by the gateway (model / multiple_tasks /
+    /// Worker env contract computed by the gateway (model / planning /
     /// stall-guard / ...). The router injects it into the subprocess as-is.
     #[serde(default)]
     worker_env: std::collections::HashMap<String, String>,
@@ -213,6 +213,12 @@ fn registry_command_execute_cli() -> anyhow::Result<()> {
     print_json(&response)
 }
 
+fn session_log_cli() -> anyhow::Result<()> {
+    let raw = read_stdin()?;
+    let response = tura_router::session_log_forward::handle_session_log_json(&raw)?;
+    print_json(&response)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let command = std::env::args()
@@ -242,6 +248,7 @@ async fn main() -> anyhow::Result<()> {
         "registry-persona-delete" => registry_persona_delete_cli(),
         "registry-commands-list" => registry_commands_list_cli(),
         "registry-command-execute" => registry_command_execute_cli(),
+        "session-log" => session_log_cli(),
         _ => Err(anyhow::anyhow!("unknown router command: {command}")),
     }
 }
@@ -276,14 +283,14 @@ async fn dispatch_run_agent(state: &AppState, req: RunAgentRequest) -> (u16, Val
     // T5.4 recursion-depth and concurrency cap: prevent child-session fork
     // bombs; on breach, reject and report back to the parent session.
     let child_depth = req.depth.unwrap_or(0);
-    if child_depth > MAX_MULTIPLE_TASKS_DEPTH {
+    if child_depth > MAX_PLANNING_DEPTH {
         return (
             429,
             json!({
                 "ok": false,
                 "session_id": session_id,
                 "error": format!(
-                    "multiple_tasks depth {child_depth} exceeds limit {MAX_MULTIPLE_TASKS_DEPTH}"
+                    "planning depth {child_depth} exceeds limit {MAX_PLANNING_DEPTH}"
                 )
             }),
         );
@@ -340,11 +347,11 @@ async fn dispatch_run_agent(state: &AppState, req: RunAgentRequest) -> (u16, Val
     {
         env.push(("TURA_PARENT_SESSION_ID".to_string(), parent.to_string()));
         env.push((
-            "TURA_MULTIPLE_TASKS_DEPTH".to_string(),
+            "TURA_PLANNING_DEPTH".to_string(),
             req.depth.unwrap_or(1).to_string(),
         ));
     }
-    // Pass through the gateway-supplied env contract (multiple_tasks,
+    // Pass through the gateway-supplied env contract (planning,
     // reasoning, stall-guard, ...) verbatim.
     for (key, value) in &req.worker_env {
         env.push((key.clone(), value.clone()));

@@ -75,6 +75,58 @@ Run the TypeScript terminal client:
 See `docs/INSTALLATION.md` for platform notes, install flags, and
 troubleshooting.
 
+## Logs And Diagnostics
+
+### Session Log DB
+
+Session and task persistence is owned by the `session_log` database, not by
+workspace-local `.tura/sessions/*.json` files. Gateway and runtime both query
+and update this store through `runtime::session_log_client`.
+
+The local default database lives under `db/session_log/` and uses embedded
+PostgreSQL on port `55432`. Override it with:
+
+```text
+session_log_DATABASE_URL=postgres://...
+DATABASE_URL=postgres://...
+session_log_POSTGRES_PORT=55432
+```
+
+Query through the gateway/router command bridge:
+
+```powershell
+'{"command":"list_workspaces"}' | target\debug\gateway.exe session-log
+'{"command":"list_sessions","workspace":"C:/repo","page":0,"page_size":50}' | target\debug\gateway.exe session-log
+'{"command":"get_session","session_id":"session-id"}' | target\debug\gateway.exe session-log
+'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\gateway.exe session-log
+```
+
+The HTTP API exposes:
+
+```text
+GET /session-log/workspaces
+GET /session-log/sessions?workspace=C%3A%2Frepo&page=0&page_size=50
+GET /session-log/{sessionID}/records?page=0&page_size=100
+```
+
+Use `get_session` for the full persisted session snapshot, task-management
+state, and todos. Use `list_session_records` for message/event records.
+
+### Provider Call Logs
+
+Provider call logs are written by `crates/provider/src/logging.rs`. The default
+root is:
+
+```text
+log/provider/YYYY-MM-DD/HHMMSS_mmm_<call_id>.json
+```
+
+Set `LOG_PATH` to override the provider log root. Each log file is a JSON
+`llm_call` record with provider, model, base URL, request payload, normalized
+response, metrics/usage, duration, success flag, and error/traceback when
+present. Provider logs are for model-call diagnostics; session history belongs
+in `session_log`.
+
 ## Top-Level Layout
 
 ```text
@@ -90,6 +142,7 @@ troubleshooting.
     provider/
     router/
     runtime/
+    session_log/
     tools/
 
   db/
@@ -116,7 +169,8 @@ agents    package tura-agents       library tura_agents
 crates/gateway   package gateway           binary tura
 crates/provider  package tura-llm-rust     library tura_llm_rust
 crates/router    package tura_router       binary tura_router
-crates/runtime   package code-tools-suite  library code_tools_suite
+crates/runtime   package runtime  library runtime
+crates/session_log package session_log      library session_log
 crates/tools     package code-tools        library code_tools
 ```
 
@@ -199,7 +253,7 @@ Current important modules:
 - `src/web/`: static/web serving support.
 - `src/mock/`: mock stores used by tests.
 - `src/bin/tura.rs`: CLI entrypoint that runs a prompt through
-  `code_tools_suite::mano`.
+  `runtime::mano`.
 
 Gateway owns request/response shaping for apps and users. It does not own the
 agent loop, prompt assembly, shell execution, provider request details, file
@@ -243,8 +297,8 @@ files.
 Useful checks:
 
 ```powershell
-cargo fmt -p code-tools-suite
-cargo check -p code-tools-suite
+cargo fmt -p runtime
+cargo check -p runtime
 ```
 
 ### `agents`
@@ -563,9 +617,9 @@ Additional command-run commands in this version:
 - `web_discover`: searches, fetches, and optionally downloads web/media
   artifacts using policy-configured route fallback.
 - `task_status`: internal command-run status/progress command.
-- `multiple_tasks`: optional planning-mode command, injected only when the CLI
-  enables multiple-task mode. It is not part of the default coding-agent tool
-  surface.
+- `planning`: optional planning-mode command. The CLI uses one
+  override flag, `--planning auto|on|off`; `auto` follows the selected
+  agent config. It is not part of agent configs that omit the capability.
 
 `compact_context` is intentionally architectural, not just prompt text. It is
 what keeps long Tura sessions from repeatedly sending old tool-call history
@@ -603,7 +657,7 @@ cargo check
 cargo test
 cargo fmt
 cargo check -p gateway
-cargo check -p code-tools-suite
+cargo check -p runtime
 cargo check -p code-tools
 cargo check -p tura_router
 cargo check -p tura-llm-rust
@@ -645,7 +699,7 @@ benchmark scripts.
 Crate-native tests:
 
 ```powershell
-cargo test -p code-tools-suite
+cargo test -p runtime
 cargo test -p code-tools
 cargo test -p tura_router
 cargo test -p tura-llm-rust
@@ -662,7 +716,7 @@ crates/gateway/tests/e2e/command-run/
 
 crates/tools/tests/contracts/
   compact_context_contract.mjs
-  multiple_tasks_backend_contract.mjs
+  planning_backend_contract.mjs
 
 apps/tui/e2e/
   tui_gateway_cli_e2e.mjs
@@ -716,7 +770,7 @@ are still in transition:
 - Runtime keeps Mano/MANAS naming internally. Preserve that split while keeping
   public entrypoints thin and moving detailed behavior into owner modules.
 - Tools currently exposes command-run plus shell/bash/apply_patch/read_media,
-  web_discover, task_status, compact_context, and multiple_tasks commands.
+  web_discover, task_status, compact_context, and planning commands.
   New commands should be added under `crates/tools/src/commands/<name>` and
   registered through router metadata or the command-run capability gate.
 - Apps directories are present as product surfaces. Gateway remains the stable

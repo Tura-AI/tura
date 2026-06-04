@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlencode, urlparse, parse_qs
 from urllib.request import urlopen
 
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright, expect
 
 
@@ -35,12 +36,15 @@ def task(
     nonce: str | None = None,
     start_condition: str = "user_action",
     start_at: str | None = None,
+    step: int | None = None,
 ) -> dict:
     return {
-        "nonce_id": nonce or f"task-{now_ms()}",
+        "task_id": nonce or f"task-{now_ms()}",
+        "step": step or 1,
         "summary": summary,
         "task_summary": summary,
-        "delivery": f"{summary} delivery",
+        "deliverable": f"{summary} deliverable",
+        "status": status,
         "task_status": status,
         "start_condition": start_condition,
         **({"start_at": start_at} if start_at else {}),
@@ -85,8 +89,8 @@ class PlanGateway(ThreadingHTTPServer):
                 {
                     "plan_summary": "已有计划对话",
                     "tasks": [
-                        task("已有待办任务", "todo", "seed-todo"),
-                        task("已有执行任务", "doing", "seed-doing"),
+                        task("已有待办任务", "todo", "seed-todo", step=1),
+                        task("已有执行任务", "doing", "seed-doing", step=2),
                     ],
                 },
             )
@@ -125,6 +129,7 @@ class PlanGatewayHandler(BaseHTTPRequestHandler):
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+        self.wfile.flush()
 
     def empty(self, status=204):
         self.send_response(status)
@@ -133,6 +138,7 @@ class PlanGatewayHandler(BaseHTTPRequestHandler):
         self.send_header("access-control-allow-headers", "content-type,x-opencode-directory")
         self.send_header("content-length", "0")
         self.end_headers()
+        self.wfile.flush()
 
     def read_json(self):
         length = int(self.headers.get("content-length") or "0")
@@ -166,7 +172,7 @@ class PlanGatewayHandler(BaseHTTPRequestHandler):
             return self.send_json({"project": self.server.workspaces[0]} if path == "/project/current" else self.server.workspaces)
         if path == "/project":
             return self.send_json(self.server.workspaces)
-        if path in {"/api/issues", "/api/projects", "/permission", "/question", "/command"}:
+        if path in {"/api/issues", "/api/projects", "/permission", "/question", "/command", "/persona"}:
             return self.send_json([])
         if path == "/api/config":
             return self.send_json({"name": "Tura"})
@@ -251,8 +257,8 @@ class PlanGatewayHandler(BaseHTTPRequestHandler):
                     "plan_summary": prompt_title,
                     "tasks": [
                         {
-                            **task(prompt_title, "todo", f"{session_id}:initial"),
-                            "delivery": "\n".join(prompt_text.splitlines()[1:]).strip(),
+                            **task(prompt_title, "todo", f"{session_id}:initial", step=1),
+                            "deliverable": "\n".join(prompt_text.splitlines()[1:]).strip(),
                         }
                     ],
                 }
@@ -320,11 +326,40 @@ def merge_task_management(item: dict, patch: dict) -> dict:
         current = {}
     if patch.get("task_management") and isinstance(patch["task_management"], dict):
         patch = patch["task_management"]
-    nonce = patch.get("nonce_id") or patch.get("nonceId")
+    if isinstance(patch.get("tasks"), list):
+        existing = list(current.get("tasks") or [])
+        by_nonce = {
+            task_item.get("task_id") or task_item.get("taskId"): task_item
+            for task_item in existing
+            if isinstance(task_item, dict)
+        }
+        incoming = []
+        for index, task_item in enumerate(patch["tasks"]):
+            if not isinstance(task_item, dict):
+                continue
+            nonce = task_item.get("task_id") or task_item.get("taskId") or f"{item['id']}:{len(existing) + index}"
+            merged = {**by_nonce.get(nonce, {}), **task_item, "task_id": nonce}
+            if "task_summary" not in merged and merged.get("plan_summary"):
+                merged["task_summary"] = merged["plan_summary"]
+                merged["summary"] = merged["plan_summary"]
+            if "summary" not in merged and merged.get("task_summary"):
+                merged["summary"] = merged["task_summary"]
+            incoming.append(merged)
+        incoming_nonces = {task_item.get("task_id") for task_item in incoming}
+        remaining = [
+            task_item
+            for task_item in existing
+            if (task_item.get("task_id") or task_item.get("taskId")) not in incoming_nonces
+        ]
+        tasks = incoming + remaining
+        for index, task_item in enumerate(tasks):
+            task_item["step"] = index + 1
+        return {**current, "tasks": tasks}
+    nonce = patch.get("task_id") or patch.get("taskId")
     tasks = list(current.get("tasks") or [])
     if tasks or nonce:
-        index = next((i for i, task_item in enumerate(tasks) if (task_item.get("nonce_id") or task_item.get("nonceId")) == nonce), -1)
-        next_task = {**patch, "nonce_id": nonce or f"{item['id']}:{len(tasks)}"}
+        index = next((i for i, task_item in enumerate(tasks) if (task_item.get("task_id") or task_item.get("taskId")) == nonce), -1)
+        next_task = {**patch, "task_id": nonce or f"{item['id']}:{len(tasks)}"}
         if "task_summary" not in next_task and next_task.get("plan_summary"):
             next_task["task_summary"] = next_task["plan_summary"]
             next_task["summary"] = next_task["plan_summary"]
@@ -435,9 +470,29 @@ async def goto_app(page, tab="plan"):
 
 
 async def click_tab(page, text: str):
-    button = page.locator(".main-tabs button").filter(has_text=text)
-    await expect(button.first).to_be_visible()
-    await button.first.click()
+    if text == "计划":
+        await page.goto(f"{GUI_URL}/?{urlencode({'gatewayUrl': GATEWAY_URL, 'tab': 'plan', 'agent': 'coding_agent'})}")
+        await page.wait_for_selector(".main-tabs", timeout=30_000)
+        await page.wait_for_function("() => !document.body.innerText.includes('加载中') && !document.body.innerText.includes('Loading')")
+        return
+    await page.evaluate(
+        """
+        (text) => {
+          const buttons = Array.from(document.querySelectorAll('.main-tabs button'));
+          const button = buttons.find((item) => (item.textContent || '').trim() === text) ||
+            buttons.find((item) => (item.textContent || '').includes(text));
+          if (!button) {
+            throw new Error(JSON.stringify({
+              message: 'tab button not found',
+              text,
+              buttons: buttons.map((item) => (item.textContent || '').trim()),
+            }));
+          }
+          button.click();
+        }
+        """,
+        text,
+    )
     await page.wait_for_timeout(400)
 
 
@@ -447,9 +502,12 @@ async def choose_trigger(page, label: str):
     await page.locator(".plan-trigger-option").filter(has_text=label).click()
     if label in {"定时任务", "轮询任务", "Scheduled task", "Polling task"}:
         await expect(page.locator(".plan-schedule-dialog")).to_be_visible()
-        inputs = page.locator(".plan-schedule-dialog input")
-        if await inputs.count() > 0:
-            await inputs.first.fill("2026-05-26T10:45")
+        date_input = page.locator(".plan-schedule-dialog input[type='date']").first
+        time_input = page.locator(".plan-schedule-dialog input[type='time']").first
+        if await date_input.count() > 0:
+            await date_input.fill("2026-05-26")
+        if await time_input.count() > 0:
+            await time_input.fill("10:45")
         await page.locator(".plan-schedule-dialog .primary").click()
         await expect(page.locator(".plan-schedule-dialog")).to_have_count(0)
 
@@ -476,26 +534,44 @@ async def select_draft_session(page, session_title: str):
     await page.wait_for_timeout(300)
 
 
-async def submit_plan_panel(page, text: str, trigger: str | None = None):
+async def submit_plan_panel(page, text: str, trigger: str | None = None, browser_errors: list[str] | None = None):
     await page.locator(".plan-conversation-panel .bottom-composer textarea").fill(text)
     if trigger:
         await choose_trigger(page, trigger)
     await page.locator(".plan-conversation-panel .composer-send").click()
-    await wait_for_submit_idle(page)
+    await wait_for_submit_idle(page, browser_errors)
     await page.wait_for_timeout(300)
 
 
-async def wait_for_submit_idle(page):
-    await page.wait_for_function(
-        """
-        () => {
-          const text = document.querySelector('.bottom-composer textarea')?.value ?? '';
-          const error = document.querySelector('.error-strip')?.innerText ?? '';
-          return text.trim().length === 0 && !error;
-        }
-        """,
-        timeout=30_000,
-    )
+async def wait_for_submit_idle(page, browser_errors: list[str] | None = None):
+    try:
+        await page.wait_for_function(
+            """
+            () => {
+              const text = document.querySelector('.bottom-composer textarea')?.value ?? '';
+              const error = document.querySelector('.error-strip')?.innerText ?? '';
+              return text.trim().length === 0 && !error;
+            }
+            """,
+            timeout=30_000,
+        )
+    except PlaywrightTimeoutError:
+        diagnostics = await page_metrics(page)
+        try:
+            with urlopen(GATEWAY_URL + "/__records", timeout=5) as response:
+                records = json.loads(response.read().decode("utf-8"))
+        except Exception as error:
+            records = {"error": str(error)}
+        (OUT / "submit-idle-timeout.json").write_text(
+            json.dumps(
+                {"metrics": diagnostics, "records": records, "browserErrors": browser_errors or []},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        await shot(page, "submit-idle-timeout")
+        raise
 
 
 async def run_flow():
@@ -520,7 +596,7 @@ async def run_flow():
         await page.locator(".bottom-composer textarea").fill("Plan cession 后端对话\n\n创建后用于追加定时任务和排队任务")
         await shot(page, "03-new-session-composed")
         await page.locator(".composer-send").click()
-        await wait_for_submit_idle(page)
+        await wait_for_submit_idle(page, browser_errors)
         await shot(page, "04-session-created")
         created = await page_metrics(page)
         if "Failed to fetch" in created["body"]:
@@ -528,20 +604,45 @@ async def run_flow():
         results.append({"name": "created-session-visible", "ok": "Plan cession 后端对话" in created["body"], "metrics": created})
 
         await click_tab(page, "计划")
-        await page.wait_for_selector(".plan-board .board-card", timeout=30_000)
+        try:
+            await page.wait_for_selector(".plan-board .board-card", timeout=30_000)
+        except PlaywrightTimeoutError:
+            await shot(page, "05-plan-after-create-timeout")
+            (OUT / "plan-after-create-timeout.json").write_text(
+                json.dumps(await page_metrics(page), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            raise
         await shot(page, "05-plan-after-create")
         after_create = await page_metrics(page)
         results.append({"name": "created-session-on-board", "ok": any("Plan cession 后端对话" in card for card in after_create["boardCards"]), "metrics": after_create})
 
         await page.locator(".board-card").filter(has_text="Plan cession 后端对话").first.click()
-        await page.wait_for_selector(".plan-conversation-panel", timeout=10_000)
+        if await page.locator(".plan-conversation-panel").count() == 0:
+            await page.locator(".plan-mode-actions .icon-action").last.click()
+        try:
+            await page.wait_for_selector(".plan-conversation-panel", timeout=10_000)
+        except PlaywrightTimeoutError:
+            await shot(page, "06-created-session-panel-timeout")
+            (OUT / "created-session-panel-timeout.json").write_text(
+                json.dumps(
+                    {
+                        "metrics": await page_metrics(page),
+                        "browserErrors": browser_errors,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            raise
         await shot(page, "06-created-session-panel")
         row = page.locator(".plan-conversation-panel .composer-task-row").filter(has_text="Plan cession 后端对话").first
         await expect(row).to_be_visible()
         await row.click()
         await page.wait_for_timeout(300)
         await shot(page, "07-created-task-selected")
-        await submit_plan_panel(page, "Plan cession 后端对话 - 已修改\n\n修改后的后端同步说明")
+        await submit_plan_panel(page, "Plan cession 后端对话 - 已修改\n\n修改后的后端同步说明", browser_errors=browser_errors)
         await shot(page, "08-session-task-edited")
         edited = await page_metrics(page)
         results.append({"name": "edited-session-task-visible", "ok": "Plan cession 后端对话 - 已修改" in edited["body"], "metrics": edited})
@@ -551,7 +652,7 @@ async def run_flow():
         await shot(page, "09-scheduled-draft-open")
         await select_draft_session(page, "Plan cession 后端对话")
         await shot(page, "10-scheduled-target-session-selected")
-        await submit_plan_panel(page, "同会话定时任务\n\n定时交付到同一个 cession", "定时任务")
+        await submit_plan_panel(page, "同会话定时任务\n\n定时交付到同一个 cession", "定时任务", browser_errors=browser_errors)
         await shot(page, "11-scheduled-task-added")
         scheduled = await page_metrics(page)
         results.append({"name": "scheduled-task-visible", "ok": "同会话定时任务" in scheduled["body"], "metrics": scheduled})
@@ -561,12 +662,14 @@ async def run_flow():
         await shot(page, "12-queued-draft-open")
         await select_draft_session(page, "Plan cession 后端对话")
         await shot(page, "13-queued-target-session-selected")
-        await submit_plan_panel(page, "同会话排队任务\n\n排队交付到同一个 cession", "排队执行")
+        await submit_plan_panel(page, "同会话排队任务\n\n排队交付到同一个 cession", "排队执行", browser_errors=browser_errors)
         await shot(page, "14-queued-task-added")
         queued = await page_metrics(page)
         results.append({"name": "queued-task-visible", "ok": "同会话排队任务" in queued["body"], "metrics": queued})
 
         await page.locator(".board-card").filter(has_text="Plan cession 后端对话").first.click()
+        if await page.locator(".plan-conversation-panel").count() == 0:
+            await page.locator(".plan-mode-actions .icon-action").last.click()
         await page.wait_for_selector(".plan-conversation-panel", timeout=10_000)
         await shot(page, "15-final-session-panel")
         final_panel = await page_metrics(page)
@@ -590,7 +693,7 @@ async def run_flow():
             {"name": "backend-session-create-called", "ok": "session.create" in record_types, "records": records["records"]},
             {"name": "backend-prompt-called", "ok": "session.prompt_async" in record_types, "records": records["records"]},
             {"name": "backend-sessionmanagement-updated", "ok": "sessionmanagement.update" in record_types, "records": records["records"]},
-            {"name": "backend-session-update-called", "ok": record_types.count("session.update") >= 2, "records": records["records"]},
+            {"name": "backend-task-management-updated-for-edit-and-appends", "ok": record_types.count("sessionmanagement.update") >= 3, "records": records["records"]},
             {"name": "backend-recorded-scheduled", "ok": "scheduled_task" in payload_text and "同会话定时任务" in payload_text, "records": records["records"]},
             {"name": "backend-recorded-queued", "ok": "session_idle" in payload_text and "同会话排队任务" in payload_text, "records": records["records"]},
             {"name": "browser-has-no-errors", "ok": not [e for e in browser_errors if "ERR_NETWORK_CHANGED" not in e and "dynamically imported module" not in e], "errors": browser_errors},

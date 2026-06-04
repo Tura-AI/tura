@@ -32,6 +32,7 @@ export type AppShellViewModel = {
   createNamedWorkspace: (name: string) => Promise<void>;
   pickExistingWorkspaceDirectory: () => Promise<void>;
   submitPrompt: (options?: { queued?: boolean }) => Promise<void>;
+  abortSession: (sessionId: string) => Promise<void>;
   updatePlanTicketStatus: (
     session: Session,
     status: PlanStatus,
@@ -55,6 +56,10 @@ export type AppShellViewModel = {
         poll_interval: PollInterval;
       }
     >,
+  ) => Promise<void>;
+  reorderPlanTasks: (
+    session: Session,
+    tasks: TaskManagement[],
   ) => Promise<void>;
   updateEditingTaskFromComposer: () => Promise<boolean>;
   fileTree: Accessor<Record<string, FileInfo[]>>;

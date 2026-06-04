@@ -16,6 +16,7 @@ import {
   firstRunnableTask,
   localDateTimeToUtcIso,
   planSessionStatus,
+  reorderTasksInSession,
   sessionAttentionKey,
   sessionTasks,
   taskDisplayText,
@@ -25,7 +26,7 @@ import {
 } from "../features/plan/tasks";
 import { t } from "../i18n";
 import type { AppState } from "../state/global-store";
-import { sessionTitle } from "../state/global-store";
+import { sessionTitle, withSessionFallbackName } from "../state/global-store";
 import {
   providerIdFromAuthError,
   providerIdFromModel,
@@ -33,6 +34,7 @@ import {
 
 const PLAN_RUN_TIMEOUT_MS = 30_000;
 const PLAN_RUN_TIMEOUT_CODE = "GATEWAY_NO_RESPONSE_30S";
+const PLAN_INPUT_REQUIRED_CODE = "PLAN_INPUT_REQUIRED";
 
 function providerIssueIdFromError(
   error: unknown,
@@ -125,40 +127,120 @@ export function usePlanActions(options: PlanActionsOptions) {
     return key ? acknowledgedAttentionSessions().has(key) : false;
   }
 
+  function taskForSessionStatusPatch(
+    session: Session,
+  ): TaskManagement | undefined {
+    return (
+      sessionTasks(session).find((task) => task.status === "doing") ??
+      firstRunnableTask(session) ??
+      sessionTasks(session).find((task) => taskNonceId(task))
+    );
+  }
+
+  function feedbackComposerText(session: Session): string {
+    const taskText = sessionTasks(session)
+      .map(taskDisplayText)
+      .find((text) => text.trim().length > 0);
+    return taskText ?? sessionTitle(session);
+  }
+
+  async function openPlanSessionForInput(session: Session) {
+    await openPlanSession(session);
+    setState((previous) => ({
+      ...previous,
+      composerText: feedbackComposerText(session),
+      planNotice: {
+        message: "这个工单没有可执行任务，请先输入命令或者反馈。",
+        code: PLAN_INPUT_REQUIRED_CODE,
+      },
+      error: undefined,
+    }));
+  }
+
   async function updatePlanTicketStatus(session: Session, status: PlanStatus) {
     const currentStatus = planSessionStatus(session);
+    const targetTask = taskForSessionStatusPatch(session);
+    const targetTaskId = targetTask ? taskNonceId(targetTask) : undefined;
     if (status === "question") {
       await openPlanSession(session);
       return;
     }
+    if (
+      session.status === "busy" &&
+      (status === "todo" || status === "waiting_user" || status === "done")
+    ) {
+      await stopPlanTicketAtStatus(session, status, targetTaskId);
+      return;
+    }
     if (status === "doing") {
       if (currentStatus !== "todo" || !firstRunnableTask(session)) {
-        await openPlanSession(session);
-        setState((previous) => ({
-          ...previous,
-          composerText: firstRunnableTask(session)
-            ? taskDisplayText(firstRunnableTask(session)!)
-            : sessionTitle(session),
-        }));
+        await openPlanSessionForInput(session);
         return;
       }
       await startPlanTicketDoing(session);
       return;
     }
-    await updatePlanTicketTask(session, { status: status });
+    if (!targetTaskId) {
+      setState((previous) => ({
+        ...previous,
+        error: "Cannot update task status without task_id",
+      }));
+      return;
+    }
+    await updatePlanTicketTask(session, { task_id: targetTaskId, status });
+  }
+
+  async function stopPlanTicketAtStatus(
+    session: Session,
+    status: PlanStatus,
+    taskId: string | undefined,
+  ) {
+    setState((previous) => ({
+      ...previous,
+      submitting:
+        previous.selectedSessionId === session.id ? false : previous.submitting,
+      sessions: previous.sessions.map((item) =>
+        item.id === session.id ? { ...item, status: "idle" } : item,
+      ),
+      error: undefined,
+    }));
+    if (!e2eFixture) {
+      try {
+        await directoryClient().abort(session.id);
+      } catch (error) {
+        setState((previous) => ({ ...previous, error: errorMessage(error) }));
+        await refreshSessions();
+        return;
+      }
+    }
+    if (!taskId) {
+      setState((previous) => ({
+        ...previous,
+        error: "Cannot update task status without task_id",
+      }));
+      return;
+    }
+    await updatePlanTicketTask(
+      { ...session, status: "idle" },
+      { task_id: taskId, status },
+    );
   }
 
   async function startPlanTicketDoing(session: Session) {
     const task = firstRunnableTask(session);
+    const taskId = task ? taskNonceId(task) : undefined;
     if (!task) {
-      await openPlanSession(session);
+      await openPlanSessionForInput(session);
+      return;
+    }
+    if (!taskId) {
       setState((previous) => ({
         ...previous,
-        composerText: sessionTitle(session),
+        error: "Cannot run task without task_id",
       }));
       return;
     }
-    await updatePlanTicketTask(session, { status: "doing" });
+    await updatePlanTicketTask(session, { task_id: taskId, status: "doing" });
     if (e2eFixture) {
       return;
     }
@@ -176,6 +258,13 @@ export function usePlanActions(options: PlanActionsOptions) {
   async function runPlanTaskNow(session: Session, task: TaskManagement) {
     const text = taskDisplayText(task);
     const nonce = taskNonceId(task);
+    if (!nonce) {
+      setState((previous) => ({
+        ...previous,
+        error: "Cannot run task without task_id",
+      }));
+      return;
+    }
     const messageId = `plan-run:${session.id}:${nonce ?? Date.now()}`;
     const now = Date.now();
     const optimisticMessage: Message = {
@@ -216,8 +305,8 @@ export function usePlanActions(options: PlanActionsOptions) {
     }));
     if (e2eFixture) {
       await updatePlanTicketTask(session, {
-        nonce_id: nonce,
-        status: "archived",
+        task_id: nonce,
+        status: "doing",
       });
       const responseTime = Date.now();
       setState((previous) => ({
@@ -268,6 +357,10 @@ export function usePlanActions(options: PlanActionsOptions) {
       return;
     }
     try {
+      await updatePlanTicketTask(session, {
+        task_id: nonce,
+        status: "doing",
+      });
       await Promise.race([
         directoryClient().promptAsync(session.id, {
           parts: [{ type: "text", text }],
@@ -281,10 +374,6 @@ export function usePlanActions(options: PlanActionsOptions) {
           ),
         ),
       ]);
-      await updatePlanTicketTask(session, {
-        nonce_id: nonce,
-        status: "archived",
-      });
     } catch (error) {
       const timeout =
         error instanceof Error && error.message === PLAN_RUN_TIMEOUT_CODE;
@@ -342,7 +431,14 @@ export function usePlanActions(options: PlanActionsOptions) {
   ) {
     if (
       patch.status &&
-      !["todo", "doing", "question", "done", "archived"].includes(patch.status)
+      ![
+        "todo",
+        "waiting_user",
+        "doing",
+        "question",
+        "done",
+        "archived",
+      ].includes(patch.status)
     ) {
       setState((previous) => ({
         ...previous,
@@ -356,10 +452,10 @@ export function usePlanActions(options: PlanActionsOptions) {
         item.id === session.id ? applyTaskPatchToSession(item, patch) : item,
       ),
       taskPulse:
-        patch.nonce_id && isTaskTimingPatch(patch)
+        patch.task_id && isTaskTimingPatch(patch)
           ? {
               sessionId: session.id,
-              nonce_id: patch.nonce_id,
+              task_id: patch.task_id,
               token: Date.now(),
             }
           : previous.taskPulse,
@@ -387,6 +483,41 @@ export function usePlanActions(options: PlanActionsOptions) {
     }
   }
 
+  async function reorderPlanTasks(
+    session: Session,
+    orderedTasks: TaskManagement[],
+  ) {
+    const tasks = orderedTasks.map((task, index) => ({
+      ...task,
+      step: index + 1,
+    }));
+    setState((previous) => ({
+      ...previous,
+      sessions: previous.sessions.map((item) =>
+        item.id === session.id ? reorderTasksInSession(item, tasks) : item,
+      ),
+      error: undefined,
+    }));
+    if (e2eFixture) {
+      return;
+    }
+    try {
+      const updated = await directoryClient().updateSessionTaskManagement(
+        session.id,
+        { tasks },
+      );
+      setState((previous) => ({
+        ...previous,
+        sessions: previous.sessions.map((item) =>
+          item.id === session.id ? { ...item, ...updated } : item,
+        ),
+      }));
+    } catch (error) {
+      setState((previous) => ({ ...previous, error: errorMessage(error) }));
+      await refreshSessions();
+    }
+  }
+
   function mergeTaskUpdateResponse(
     current: Session,
     updated: Session,
@@ -398,7 +529,7 @@ export function usePlanActions(options: PlanActionsOptions) {
       }
     >,
   ): Session {
-    const nonce = patch.nonce_id;
+    const nonce = patch.task_id;
     if (!nonce) {
       return { ...current, ...updated };
     }
@@ -439,7 +570,7 @@ export function usePlanActions(options: PlanActionsOptions) {
 
   async function deletePlanTask(session: Session, task: TaskManagement) {
     await updatePlanTicketTask(session, {
-      nonce_id: taskNonceId(task),
+      task_id: taskNonceId(task),
       status: "archived",
     });
   }
@@ -470,7 +601,7 @@ export function usePlanActions(options: PlanActionsOptions) {
       summary || composerText.split("\n")[0]?.trim() || t("newTask");
     const patch = {
       ...task,
-      nonce_id: `${session.id}:${Date.now()}`,
+      task_id: `${session.id}:${Date.now()}`,
       status: "todo" as PlanStatus,
     };
     if (e2eFixture) {
@@ -498,10 +629,13 @@ export function usePlanActions(options: PlanActionsOptions) {
       }));
       return;
     }
-    const created = await directoryClient().createSession({
-      ...createSessionPayload(),
-      task_management: patch,
-    });
+    const created = withSessionFallbackName(
+      await directoryClient().createSession({
+        ...createSessionPayload(),
+        task_management: patch,
+      }),
+      title,
+    );
     setState((previous) => ({
       ...previous,
       sessions: [created, ...previous.sessions],
@@ -539,20 +673,20 @@ export function usePlanActions(options: PlanActionsOptions) {
       }));
       return true;
     }
-    const [summaryLine = "", ...deliveryLines] = text.split(/\r?\n/u);
+    const [summaryLine = "", ...deliverableLines] = text.split(/\r?\n/u);
     const pulseToken = Date.now();
     setState((previous) => ({
       ...previous,
       taskPulse: {
         sessionId: editing.sessionId,
-        nonce_id: editing.nonce_id,
+        task_id: editing.task_id,
         token: pulseToken,
       },
     }));
     await updatePlanTicketTask(session, {
-      nonce_id: editing.nonce_id,
+      task_id: editing.task_id,
       task_summary: summaryLine.trim(),
-      delivery: deliveryLines.join("\n").trim(),
+      deliverable: deliverableLines.join("\n").trim(),
     });
     setState((previous) => ({
       ...previous,
@@ -560,7 +694,7 @@ export function usePlanActions(options: PlanActionsOptions) {
       editingTask: undefined,
       taskPulse: {
         sessionId: editing.sessionId,
-        nonce_id: editing.nonce_id,
+        task_id: editing.task_id,
         token: pulseToken,
       },
       error: undefined,
@@ -588,8 +722,8 @@ export function usePlanActions(options: PlanActionsOptions) {
       ? `${existingSession.id}:${Date.now()}`
       : `plan-task:${Date.now()}`;
     const baseTaskState = {
-      nonce_id: nonceId,
-      step: existingSession ? sessionTasks(existingSession).length : 0,
+      task_id: nonceId,
+      step: existingSession ? sessionTasks(existingSession).length + 1 : 1,
       plan_summary: title,
       task_summary: title,
       ...(draftLane === "todo" ? {} : { status: draftLane }),
@@ -639,10 +773,13 @@ export function usePlanActions(options: PlanActionsOptions) {
           { tasks: [taskState] },
         );
       } else {
-        session = await directoryClient().createSession({
-          ...createSessionPayload(),
-          task_management: taskState,
-        });
+        session = withSessionFallbackName(
+          await directoryClient().createSession({
+            ...createSessionPayload(),
+            task_management: taskState,
+          }),
+          title,
+        );
       }
       setState((previous) => ({
         ...previous,
@@ -673,6 +810,7 @@ export function usePlanActions(options: PlanActionsOptions) {
     sessionAttentionAcknowledged,
     updatePlanTicketStatus,
     updatePlanTicketTask,
+    reorderPlanTasks,
     deletePlanTask,
     runPlanTaskNow,
     createSessionFromPlanTask,

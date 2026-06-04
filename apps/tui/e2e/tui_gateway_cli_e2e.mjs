@@ -67,11 +67,11 @@ function startGateway() {
     skill_folders: [],
   }
   const task = (id, title, status, offset = 0, directory = runRoot, _trigger = "user_action") => ({
-    nonce_id: `${id}:0`,
+    task_id: `${id}:0`,
     step: 0,
     plan_summary: title,
     task_summary: `执行任务：${title}`,
-    delivery: "tui session plan e2e",
+    deliverable: "tui session plan e2e",
     sub_session_id: "",
     start_at: new Date(Date.now() + offset).toISOString(),
     poll_interval: { m: 0, d: 0, h: 1, s: 0 },
@@ -320,7 +320,7 @@ function startGateway() {
         session_type: payload.session_type,
         model_variant: payload.model_variant ?? config.model_variant,
         model_acceleration_enabled: payload.model_acceleration_enabled ?? config.model_acceleration_enabled,
-        force_multiple_tasks: payload.force_multiple_tasks,
+        force_planning: payload.force_planning,
         plan_summary: planName,
         session_display_name: planName,
         task_management: payload.task_management ?? session.task_management,
@@ -834,14 +834,15 @@ async function main() {
       "--model-reasoning-effort",
       "high",
       "--no-model-acceleration",
-      "--force-multiple-tasks",
+      "--planning",
+      "on",
       "--timeout",
       "5",
     ])
     assert.equal(gateway.records.createSessions[0].model, "openai/gpt-test")
     assert.equal(gateway.records.createSessions[0].model_variant, "high")
     assert.equal(gateway.records.createSessions[0].model_acceleration_enabled, false)
-    assert.equal(gateway.records.createSessions[0].force_multiple_tasks, true)
+    assert.equal(gateway.records.createSessions[0].force_planning, true)
     assert.equal(gateway.records.prompts[0].model, "openai/gpt-test")
     assert.equal(gateway.records.prompts[0].variant, "high")
     assert.equal(gateway.records.prompts[0].model_variant, "high")

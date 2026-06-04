@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use chrono::Utc;
-use code_tools_suite::agent_router::{activate_agents_by_session_type, coding_agent_provider_name};
-use code_tools_suite::session::{activate_session_with_topic, create_session_with_directory};
-use code_tools_suite::state_machine::session_management::{FileInput, SessionInput};
+use runtime::agent_router::{activate_agents_by_session_type, coding_agent_provider_name};
+use runtime::session::{activate_session_with_topic, create_session_with_directory};
+use runtime::state_machine::session_management::{FileInput, SessionInput};
 
 #[test]
 fn default_agent_registry_loads_general_agent() {
@@ -18,6 +18,7 @@ fn default_agent_registry_loads_general_agent() {
         }],
         agent: None,
         runtime_context: None,
+        planning_mode_override: None,
     };
 
     let session = create_session_with_directory(PathBuf::from("sessions"), input.clone())
@@ -57,7 +58,7 @@ fn default_agent_registry_loads_general_agent() {
     assert!(!agents[0]
         .agent_capabilities
         .iter()
-        .any(|capability| capability.capability_name == "multiple_tasks"));
+        .any(|capability| capability.capability_name == "planning"));
     assert!(!agents[0]
         .agent_capabilities
         .iter()
@@ -72,6 +73,7 @@ fn coding_topic_registry_loads_coding_agent() {
         file_input: vec![],
         agent: None,
         runtime_context: None,
+        planning_mode_override: None,
     };
 
     let session = activate_session_with_topic(PathBuf::from("."), "coding", input)
@@ -101,10 +103,10 @@ fn coding_topic_registry_loads_coding_agent() {
         .agent_capabilities
         .iter()
         .any(|capability| capability.capability_name == "command_run"));
-    assert!(!agents[0]
+    assert!(agents[0]
         .agent_capabilities
         .iter()
-        .any(|capability| capability.capability_name == "multiple_tasks"));
+        .any(|capability| capability.capability_name == "planning"));
     assert!(!agents[0]
         .agent_capabilities
         .iter()
@@ -130,6 +132,7 @@ fn default_coding_agents_expose_expected_command_run_capabilities() {
                 "web_discover",
                 "compact_context",
                 "task_status",
+                "planning",
             ],
             vec![],
             "flagship_thinking",
@@ -145,7 +148,7 @@ fn default_coding_agents_expose_expected_command_run_capabilities() {
                 "compact_context",
                 "task_status",
             ],
-            vec!["multiple_tasks"],
+            vec!["planning"],
             "flagship_thinking",
         ),
         (
@@ -158,7 +161,7 @@ fn default_coding_agents_expose_expected_command_run_capabilities() {
                 "compact_context",
                 "task_status",
             ],
-            vec!["multiple_tasks", "read_media"],
+            vec!["planning", "read_media"],
             "fast",
         ),
     ] {
@@ -170,6 +173,7 @@ fn default_coding_agents_expose_expected_command_run_capabilities() {
                 file_input: vec![],
                 agent: Some(agent_name.to_string()),
                 runtime_context: None,
+                planning_mode_override: None,
             },
         )
         .expect("session should be created");

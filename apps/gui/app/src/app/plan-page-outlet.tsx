@@ -22,10 +22,12 @@ export function PlanPageOutlet(props: {
     | "createSessionFromPlanTask"
     | "deletePlanTask"
     | "openPlanSession"
+    | "abortSession"
     | "selectDraftSession"
     | "sessionAttentionAcknowledged"
     | "updatePlanTicketStatus"
     | "updatePlanTicketTask"
+    | "reorderPlanTasks"
   >;
   onEditTask: (
     session: Session,
@@ -54,10 +56,12 @@ export function PlanPageOutlet(props: {
     createSessionFromPlanTask,
     deletePlanTask,
     openPlanSession,
+    abortSession,
     selectDraftSession,
     sessionAttentionAcknowledged,
     updatePlanTicketStatus,
     updatePlanTicketTask,
+    reorderPlanTasks,
   } = props.view;
 
   return (
@@ -112,6 +116,7 @@ export function PlanPageOutlet(props: {
       onStatus={updatePlanTicketStatus}
       attentionAcknowledged={sessionAttentionAcknowledged}
       onTask={updatePlanTicketTask}
+      onReorderTasks={reorderPlanTasks}
       onEditTask={props.onEditTask}
       onDeleteTask={deletePlanTask}
       onRunTask={props.onRunTask}
@@ -124,6 +129,7 @@ export function PlanPageOutlet(props: {
         props.setState((previous) => ({ ...previous, composerImages }))
       }
       onSubmit={props.onSubmit}
+      onStop={(session) => void abortSession(session.id)}
       onAgent={(selectedAgent) =>
         props.onRuntimeSetting((previous) => ({
           ...previous,

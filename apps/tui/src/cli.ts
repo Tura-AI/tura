@@ -121,7 +121,7 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
   let sessionType: string | undefined;
   let modelVariant: string | undefined;
   let modelAccelerationEnabled: boolean | undefined;
-  let forceMultipleTasks: boolean | undefined;
+  let forcePlanning: boolean | undefined;
   let killProcessesOnStart: boolean | undefined;
   let validatorEnabled: boolean | undefined;
   let output: OutputMode = rootJson ? "json" : "text";
@@ -148,8 +148,8 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
     else if (arg === "--model-acceleration" || arg === "--accelerated") modelAccelerationEnabled = true;
     else if (arg === "--no-model-acceleration" || arg === "--no-accelerated") modelAccelerationEnabled = false;
     else if (arg === "-p" || arg === "--priority") modelAccelerationEnabled = true;
-    else if (arg === "--force-multiple-tasks") forceMultipleTasks = true;
-    else if (arg === "--no-force-multiple-tasks") forceMultipleTasks = false;
+    else if (arg === "--planning") forcePlanning = parsePlanningMode(args[++index]);
+    else if (arg.startsWith("--planning=")) forcePlanning = parsePlanningMode(arg.slice("--planning=".length));
     else if (arg === "--output") output = parseOutput(args[++index]);
     else if (arg === "--json") output = "json";
     else if (arg === "--stream") stream = true;
@@ -158,16 +158,16 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
     else if (arg === "--last-message-file") lastMessageFile = args[++index];
     else if (arg === "-c" || arg === "--config") {
       const overrides = runtimeOverridesFromAssignment(args[++index]);
-      ({ model, agent, sessionType, modelVariant, modelAccelerationEnabled, forceMultipleTasks, killProcessesOnStart, validatorEnabled } =
+      ({ model, agent, sessionType, modelVariant, modelAccelerationEnabled, forcePlanning, killProcessesOnStart, validatorEnabled } =
         applyRunOverrides(
-          { model, agent, sessionType, modelVariant, modelAccelerationEnabled, forceMultipleTasks, killProcessesOnStart, validatorEnabled },
+          { model, agent, sessionType, modelVariant, modelAccelerationEnabled, forcePlanning, killProcessesOnStart, validatorEnabled },
           overrides,
         ));
     } else if (arg.startsWith("--config=")) {
       const overrides = runtimeOverridesFromAssignment(arg.slice("--config=".length));
-      ({ model, agent, sessionType, modelVariant, modelAccelerationEnabled, forceMultipleTasks, killProcessesOnStart, validatorEnabled } =
+      ({ model, agent, sessionType, modelVariant, modelAccelerationEnabled, forcePlanning, killProcessesOnStart, validatorEnabled } =
         applyRunOverrides(
-          { model, agent, sessionType, modelVariant, modelAccelerationEnabled, forceMultipleTasks, killProcessesOnStart, validatorEnabled },
+          { model, agent, sessionType, modelVariant, modelAccelerationEnabled, forcePlanning, killProcessesOnStart, validatorEnabled },
           overrides,
         ));
     }
@@ -182,7 +182,7 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
     sessionType,
     modelVariant,
     modelAccelerationEnabled,
-    forceMultipleTasks,
+    forcePlanning,
     killProcessesOnStart,
     validatorEnabled,
     output,
@@ -216,6 +216,15 @@ function parseResume(args: string[], rootJson: boolean): Parameters<typeof resum
 function parseOutput(value: string): OutputMode {
   if (value === "text" || value === "json" || value === "ndjson") return value;
   throw new CliUsageError(`invalid output mode: ${value}`);
+}
+
+function parsePlanningMode(value: string | undefined): boolean | undefined {
+  if (!value) throw new CliUsageError("--planning requires auto, on, or off");
+  const normalized = value.trim().toLowerCase();
+  if (["auto", "default", "agent"].includes(normalized)) return undefined;
+  if (["on", "true", "1", "yes", "enabled"].includes(normalized)) return true;
+  if (["off", "false", "0", "no", "disabled"].includes(normalized)) return false;
+  throw new CliUsageError(`invalid --planning value: ${value}`);
 }
 
 function takeValue(args: string[], index: number): string {
@@ -277,8 +286,7 @@ Run options:
   --reasoning-effort LEVEL      alias for --model-variant
   --model-acceleration          enable priority/accelerated model routing
   --no-model-acceleration       disable priority/accelerated routing
-  --force-multiple-tasks        enable the multiple_tasks capability path
-  --no-force-multiple-tasks     disable forced multiple_tasks
+  --planning auto|on|off  planning override (default: auto)
   --output text|json|ndjson     output format
   --json                        alias for --output json
   --stream, --no-stream         stream gateway events or poll for completion

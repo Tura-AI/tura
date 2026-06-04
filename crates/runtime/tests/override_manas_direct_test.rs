@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
 use chrono::Utc;
-use code_tools_suite::agent_router::coding_agent_provider_name;
-use code_tools_suite::manas::{self, ManasOverrides};
-use code_tools_suite::state_machine::agent_management::{
+use runtime::agent_router::coding_agent_provider_name;
+use runtime::manas::{self, ManasOverrides};
+use runtime::state_machine::agent_management::{
     AgentManagement, ProviderConfig, ToolChoice, ValidatorConfig,
 };
-use code_tools_suite::state_machine::session_management::{SessionInput, SessionManagement};
+use runtime::state_machine::session_management::{SessionInput, SessionManagement};
 
 fn hardcoded_agents(_session: &SessionManagement) -> Result<Vec<AgentManagement>, String> {
     let now = Utc::now();
@@ -63,6 +63,7 @@ fn process_from_session_can_override_only_manas() {
             file_input: vec![],
             agent: None,
             runtime_context: None,
+            planning_mode_override: None,
         },
         "direct session input".to_string(),
         now,

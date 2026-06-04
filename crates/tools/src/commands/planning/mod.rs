@@ -1,4 +1,4 @@
-pub const COMMAND_NAME: &str = "multiple_tasks";
+pub const COMMAND_NAME: &str = "planning";
 pub const PROMPT: &str = include_str!("prompt.md");
 pub const POLICY: &str = include_str!("policy.toml");
 pub const SCHEMA: &str = include_str!("schema.json");
@@ -12,20 +12,17 @@ use serde_json::{json, Value};
 use std::path::Path;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct MultipleTask {
-    nonce_id: String,
+struct PlanningTask {
     #[serde(default)]
     step: Option<u64>,
     #[serde(default)]
     task_summary: String,
-    #[serde(default)]
-    delivery: String,
 }
 
-pub struct MultipleTasksHandler;
+pub struct PlanningHandler;
 
 #[async_trait::async_trait]
-impl ToolHandler for MultipleTasksHandler {
+impl ToolHandler for PlanningHandler {
     fn tool_name(&self) -> &'static str {
         COMMAND_NAME
     }
@@ -42,18 +39,18 @@ impl ToolHandler for MultipleTasksHandler {
         let input = match call.payload {
             ToolPayload::Function { arguments } => arguments,
             ToolPayload::Freeform { input } => {
-                parse_multiple_tasks_value(&input).map_err(ToolError::RespondToModel)?
+                parse_planning_value(&input).map_err(ToolError::RespondToModel)?
             }
         };
-        let output = normalize_multiple_tasks_output(input, &ctx.session_dir)
+        let output = normalize_planning_output(input, &ctx.session_dir)
             .map_err(ToolError::RespondToModel)?;
         Ok(FunctionToolOutput::from_value(output, Some(true)))
     }
 }
 
 pub fn execute(command_line: &str, session_dir: &Path) -> CommandResponse {
-    match parse_multiple_tasks_value(command_line)
-        .and_then(|value| normalize_multiple_tasks_output(value, session_dir))
+    match parse_planning_value(command_line)
+        .and_then(|value| normalize_planning_output(value, session_dir))
     {
         Ok(output) => CommandResponse {
             success: true,
@@ -75,7 +72,7 @@ pub fn execute(command_line: &str, session_dir: &Path) -> CommandResponse {
 }
 
 pub fn execute_value(value: Value, session_dir: &Path) -> CommandResponse {
-    match normalize_multiple_tasks_output(value, session_dir) {
+    match normalize_planning_output(value, session_dir) {
         Ok(output) => CommandResponse {
             success: true,
             exit_code: 0,
@@ -95,33 +92,33 @@ pub fn execute_value(value: Value, session_dir: &Path) -> CommandResponse {
     }
 }
 
-fn parse_multiple_tasks_value(text: &str) -> Result<Value, String> {
-    serde_json::from_str(text.trim()).map_err(|err| format!("invalid multiple_tasks JSON: {err}"))
+fn parse_planning_value(text: &str) -> Result<Value, String> {
+    serde_json::from_str(text.trim()).map_err(|err| format!("invalid planning JSON: {err}"))
 }
 
-fn normalize_multiple_tasks_output(value: Value, _session_dir: &Path) -> Result<Value, String> {
+fn normalize_planning_output(value: Value, _session_dir: &Path) -> Result<Value, String> {
     let tasks_value = normalize_provider_task_value(value)?;
-    let tasks: Vec<MultipleTask> = serde_json::from_value(tasks_value).map_err(|err| {
-        format!(
-            "multiple_tasks expects an array of objects with required nonce_id and optional step, task_summary, and delivery: {err}"
-        )
+    let tasks: Vec<PlanningTask> = serde_json::from_value(tasks_value).map_err(|err| {
+        format!("planning expects an array of objects with optional step and task_summary: {err}")
     })?;
     if tasks.len() < 2 {
-        return Err(
-            "multiple_tasks requires at least two independent tasks; skip it for single-goal work"
-                .to_string(),
-        );
+        return Err("planning requires at least two task entries".to_string());
     }
+    let mut previous_step: Option<u64> = None;
     let steps = tasks
         .into_iter()
         .enumerate()
         .map(|(index, task)| {
+            let requested_step = task.step.unwrap_or((index + 1) as u64).max(1);
+            let step = match previous_step {
+                Some(previous) if requested_step <= previous => previous + 1,
+                _ => requested_step,
+            };
+            previous_step = Some(step);
             json!({
                 "index": index + 1,
-                "nonce_id": task.nonce_id.trim(),
-                "step": task.step.unwrap_or(index as u64),
-                "task_summary": task.task_summary.trim(),
-                "delivery": task.delivery.trim()
+                "step": step,
+                "task_summary": task.task_summary.trim()
             })
         })
         .collect::<Vec<_>>();
@@ -145,10 +142,7 @@ fn normalize_provider_task_value(value: Value) -> Result<Value, String> {
             return normalize_provider_task_value(parse_provider_task_field(value)?);
         }
     }
-    if object.contains_key("nonce_id")
-        || object.contains_key("task_summary")
-        || object.contains_key("delivery")
-    {
+    if object.contains_key("task_summary") || object.contains_key("deliverable") {
         return Ok(Value::Array(vec![Value::Object(object.clone())]));
     }
     Ok(Value::Object(object.clone()))
@@ -174,7 +168,7 @@ fn parse_task_text(text: &str) -> Result<Value, String> {
     }
     parse_powershell_task_object(trimmed)
         .map(|object| Value::Array(vec![object]))
-        .ok_or_else(|| format!("invalid multiple_tasks JSON: expected task array, got {trimmed}"))
+        .ok_or_else(|| format!("invalid planning JSON: expected task array, got {trimmed}"))
 }
 
 fn parse_powershell_task_object(text: &str) -> Option<Value> {
@@ -201,39 +195,37 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn multiple_tasks_accepts_task_array() {
+    fn planning_accepts_task_array() {
         let output = execute(
-            r#"[{"nonce_id":"inspect","task_summary":"Inspect code","delivery":"Find files and criteria."},{"nonce_id":"patch","task_summary":"Patch code","delivery":"Edit files and run tests."}]"#,
+            r#"[{"task_summary":"Inspect code"},{"task_summary":"Patch code"}]"#,
             Path::new("."),
         );
 
         assert!(output.success, "{}", output.stderr);
         assert_eq!(output.output["steps"][0]["task_summary"], "Inspect code");
-        assert_eq!(
-            output.output["steps"][1]["delivery"],
-            "Edit files and run tests."
-        );
+        assert!(output.output["steps"][1].get("deliverable").is_none());
+        assert!(output.output["steps"][0].get("task_id").is_none());
     }
 
     #[test]
-    fn multiple_tasks_rejects_single_task() {
+    fn planning_rejects_single_task() {
         let output = execute(
             &json!([
-                {"nonce_id":"only","task_summary":"Only step","delivery":"One thing."}
+                {"task_summary":"Only step"}
             ])
             .to_string(),
             Path::new("."),
         );
 
         assert!(!output.success);
-        assert!(output.stderr.contains("at least two independent tasks"));
+        assert!(output.stderr.contains("at least two task entries"));
     }
 
     #[test]
-    fn multiple_tasks_accepts_command_line_json_wrapper() {
+    fn planning_accepts_command_line_json_wrapper() {
         let output = execute_value(
             json!({
-                "command_line": "[{\"nonce_id\":\"one\",\"task_summary\":\"One\",\"delivery\":\"First.\"},{\"nonce_id\":\"two\",\"task_summary\":\"Two\",\"delivery\":\"Second.\"}]"
+                "command_line": "[{\"task_summary\":\"One\"},{\"task_summary\":\"Two\"}]"
             }),
             Path::new("."),
         );
@@ -243,16 +235,37 @@ mod tests {
     }
 
     #[test]
-    fn multiple_tasks_accepts_gemini_items_powershell_wrapper() {
+    fn planning_accepts_gemini_items_powershell_wrapper() {
         let output = execute_value(
             json!({
-                "items": ["@{nonce_id=first; delivery=First deliverable.; task_summary=First task}"]
+                "items": ["@{task_summary=First task}"]
             }),
             Path::new("."),
         );
 
         assert!(!output.success);
-        assert!(output.stderr.contains("at least two independent tasks"));
-        assert!(output.stderr.contains("single-goal work"));
+        assert!(output.stderr.contains("at least two task entries"));
+    }
+
+    #[test]
+    fn planning_extends_duplicate_steps_in_input_order() {
+        let output = execute_value(
+            json!([
+                {"step":1,"task_summary":"A"},
+                {"step":2,"task_summary":"B"},
+                {"step":2,"task_summary":"C"},
+                {"step":3,"task_summary":"D"}
+            ]),
+            Path::new("."),
+        );
+
+        assert!(output.success, "{}", output.stderr);
+        let steps = output.output["steps"]
+            .as_array()
+            .expect("steps should be array")
+            .iter()
+            .map(|step| step["step"].as_u64().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(steps, vec![1, 2, 3, 4]);
     }
 }

@@ -11,15 +11,15 @@ dispatched by `crates/tools/src/commands`, not by the router.
 
 ## Layering
 
-- **Gateway** forwards HTTP, persists file-based sessions, owns provider OAuth
-  credential lifecycle, and launches the router. It runs no agent loop and holds
-  no in-process runtime.
+- **Gateway** forwards HTTP, persists UI/session state through `session_log`,
+  owns provider OAuth credential lifecycle, and launches the router. It runs no
+  agent loop and holds no in-process runtime.
 - **Router** owns the agent registry, CLI forwarding, and the lifecycle of
   runtime workers. `POST /run_agent` resolves an agent spec, builds the worker
   environment contract, and dispatches a runtime worker subprocess (the gateway
   binary re-invoked with `TURA_ROLE=runtime_worker`). Command alias resolution
   and handler dispatch are owned by `crates/tools`, not the router.
-- **Runtime** (`crates/runtime`, package `code-tools-suite`) activates
+- **Runtime** (`crates/runtime`, package `runtime`) activates
   `AgentManagement`, assembles agent prompts/tools, and runs the MANAS loop. It
   is a library executed inside a runtime worker, never spawned directly by the
   gateway.
@@ -42,3 +42,21 @@ for the external gateway boundary.
 | `tura_router run-agent` | Runtime worker spawning a child sub-session | stdin/stdout JSON |
 
 Both modes share the same `dispatch_run_agent` core.
+
+## Session Log Bridge
+
+Router also exposes the `session-log` CLI bridge used by runtime and gateway
+helpers. It forwards JSON commands to `crates/session_log`; it does not own the
+database schema.
+
+Examples:
+
+```powershell
+'{"command":"list_workspaces"}' | target\debug\tura_router.exe session-log
+'{"command":"list_sessions","workspace":"C:/repo","page":0,"page_size":50}' | target\debug\tura_router.exe session-log
+'{"command":"get_session","session_id":"session-id"}' | target\debug\tura_router.exe session-log
+'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\tura_router.exe session-log
+```
+
+Gateway exposes the same bridge as `target\debug\gateway.exe session-log` and
+adds HTTP routes under `/session-log/*`.

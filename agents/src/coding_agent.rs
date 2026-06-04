@@ -42,6 +42,7 @@ impl CodingAgent {
             "web_discover".to_string(),
             "compact_context".to_string(),
             "task_status".to_string(),
+            "planning".to_string(),
         ]
     }
 

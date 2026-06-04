@@ -12,6 +12,7 @@ import ChevronDown from "lucide-solid/icons/chevron-down";
 import Columns3 from "lucide-solid/icons/columns-3";
 import MoreHorizontal from "lucide-solid/icons/ellipsis";
 import FileIcon from "lucide-solid/icons/file";
+import GripVertical from "lucide-solid/icons/grip-vertical";
 import ImageIcon from "lucide-solid/icons/image";
 import LayoutList from "lucide-solid/icons/layout-list";
 import Play from "lucide-solid/icons/play";
@@ -51,6 +52,7 @@ import {
   sortedSessionTasks,
   taskDisplayText,
   taskNonceId,
+  taskPlanStatus,
   taskStartCondition,
   taskSummaryText,
 } from "../../features/plan/tasks";
@@ -117,22 +119,57 @@ export function PlanTicketMeta(props: { session: Session }) {
 
 export function PlanComposerTaskList(props: {
   session: Session;
-  selected_nonce_id?: string;
+  selected_task_id?: string;
   pulseNonceId?: string;
   pulseToken?: number;
   onEdit: (task: TaskManagement, value: string) => void;
   onDelete: (task: TaskManagement) => void;
   onRun: (task: TaskManagement) => void;
   onCreateSession: (task: TaskManagement) => void;
+  onReorder: (tasks: TaskManagement[]) => void;
 }) {
   const [menuNonce, setMenuNonce] = createSignal<string>();
+  const [dragNonce, setDragNonce] = createSignal<string>();
+  const [dragGhost, setDragGhost] = createSignal<ComposerTaskDragState>();
+  const [dropIndicator, setDropIndicator] = createSignal<TaskDropIndicator>();
+  const [suppressedEditNonce, setSuppressedEditNonce] = createSignal<string>();
   const tasks = createMemo(() => sortedSessionTasks(props.session));
-  const queuedTasks = createMemo(() =>
-    tasks().filter((task) => !isTimedStartCondition(taskStartCondition(task))),
-  );
-  const timedTasks = createMemo(() =>
-    tasks().filter((task) => isTimedStartCondition(taskStartCondition(task))),
-  );
+  function reorderTaskTo(
+    sourceNonce: string,
+    targetNonce: string,
+    edge: TaskDropIndicator["edge"],
+  ) {
+    if (sourceNonce === targetNonce) {
+      return;
+    }
+    const current = tasks();
+    const sourceIndex = current.findIndex(
+      (task) => taskNonceId(task) === sourceNonce,
+    );
+    const targetIndex = current.findIndex(
+      (task) => taskNonceId(task) === targetNonce,
+    );
+    if (sourceIndex < 0 || targetIndex < 0) {
+      return;
+    }
+    const next = [...current];
+    const [source] = next.splice(sourceIndex, 1);
+    const targetIndexAfterRemoval =
+      sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+    const insertIndex =
+      edge === "after" ? targetIndexAfterRemoval + 1 : targetIndexAfterRemoval;
+    next.splice(insertIndex, 0, source);
+    props.onReorder(next);
+  }
+  function finishDrag(sourceNonce: string, moved: boolean) {
+    setDragNonce(undefined);
+    setDragGhost(undefined);
+    setDropIndicator(undefined);
+    if (moved) {
+      setSuppressedEditNonce(sourceNonce);
+      window.setTimeout(() => setSuppressedEditNonce(undefined), 0);
+    }
+  }
   createEffect(() => {
     if (!menuNonce()) {
       return;
@@ -153,67 +190,53 @@ export function PlanComposerTaskList(props: {
   return (
     <Show when={tasks().length > 0}>
       <section class="composer-task-list" aria-label={t("taskManagement")}>
-        <For each={queuedTasks()}>
-          {(task, index) => {
-            const rowKey = () => taskNonceId(task) ?? `queued:${index()}`;
-            return (
-              <PlanTaskRow
-                pulseId={rowKey()}
-                task={task}
-                pulseToken={
-                  props.pulseNonceId === taskNonceId(task)
-                    ? props.pulseToken
-                    : undefined
-                }
-                selected={Boolean(
-                  props.selected_nonce_id &&
-                  props.selected_nonce_id === taskNonceId(task),
-                )}
-                menuOpen={menuNonce() === rowKey()}
-                onMenu={() =>
-                  setMenuNonce(menuNonce() === rowKey() ? undefined : rowKey())
-                }
-                onEdit={() => props.onEdit(task, taskDisplayText(task))}
-                onDelete={() => {
-                  setMenuNonce(undefined);
-                  props.onDelete(task);
-                }}
-                onRun={() => {
-                  setMenuNonce(undefined);
-                  props.onRun(task);
-                }}
-                onCreateSession={() => {
-                  setMenuNonce(undefined);
-                  props.onCreateSession(task);
-                }}
-              />
-            );
-          }}
-        </For>
-        <Show when={queuedTasks().length > 0 && timedTasks().length > 0}>
-          <div class="composer-task-divider" aria-hidden="true" />
+        <Show when={dragGhost()}>
+          {(ghost) => (
+            <div
+              class="plan-drag-ghost composer-task-drag-ghost"
+              style={{
+                left: `${ghost().x}px`,
+                top: `${ghost().y}px`,
+                width: `${ghost().width}px`,
+                height: `${ghost().height}px`,
+              }}
+              innerHTML={ghost().html}
+              aria-hidden="true"
+            />
+          )}
         </Show>
-        <For each={timedTasks()}>
+        <For each={tasks()}>
           {(task, index) => {
-            const rowKey = () => taskNonceId(task) ?? `timed:${index()}`;
+            const rowKey = () => taskNonceId(task) ?? `task:${index()}`;
+            const indicator = () =>
+              dropIndicator()?.nonce === taskNonceId(task)
+                ? dropIndicator()?.edge
+                : undefined;
             return (
               <PlanTaskRow
                 pulseId={rowKey()}
                 task={task}
+                dragging={dragNonce() === taskNonceId(task)}
+                dropIndicator={indicator()}
                 pulseToken={
                   props.pulseNonceId === taskNonceId(task)
                     ? props.pulseToken
                     : undefined
                 }
                 selected={Boolean(
-                  props.selected_nonce_id &&
-                  props.selected_nonce_id === taskNonceId(task),
+                  props.selected_task_id &&
+                  props.selected_task_id === taskNonceId(task),
                 )}
                 menuOpen={menuNonce() === rowKey()}
                 onMenu={() =>
                   setMenuNonce(menuNonce() === rowKey() ? undefined : rowKey())
                 }
-                onEdit={() => props.onEdit(task, taskDisplayText(task))}
+                onEdit={() => {
+                  if (suppressedEditNonce() === taskNonceId(task)) {
+                    return;
+                  }
+                  props.onEdit(task, taskDisplayText(task));
+                }}
                 onDelete={() => {
                   setMenuNonce(undefined);
                   props.onDelete(task);
@@ -225,6 +248,22 @@ export function PlanComposerTaskList(props: {
                 onCreateSession={() => {
                   setMenuNonce(undefined);
                   props.onCreateSession(task);
+                }}
+                onPointerDragStart={(event) => {
+                  const nonce = taskNonceId(task);
+                  if (!nonce) {
+                    return;
+                  }
+                  beginComposerTaskPointerDrag({
+                    event,
+                    sourceNonce: nonce,
+                    setDragNonce,
+                    setDragGhost,
+                    setDropIndicator,
+                    onDrop: (drop) =>
+                      reorderTaskTo(nonce, drop.nonce, drop.edge),
+                    onFinish: (moved) => finishDrag(nonce, moved),
+                  });
                 }}
               />
             );
@@ -233,6 +272,113 @@ export function PlanComposerTaskList(props: {
       </section>
     </Show>
   );
+}
+
+type ComposerTaskDragState = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  html: string;
+};
+
+type TaskDropIndicator = {
+  nonce: string;
+  edge: "before" | "after";
+};
+
+function beginComposerTaskPointerDrag(options: {
+  event: PointerEvent;
+  sourceNonce: string;
+  setDragNonce: (value?: string) => void;
+  setDragGhost: (value?: ComposerTaskDragState) => void;
+  setDropIndicator: (value?: TaskDropIndicator) => void;
+  onDrop: (drop: TaskDropIndicator) => void;
+  onFinish: (moved: boolean) => void;
+}) {
+  if (options.event.button !== 0) {
+    return;
+  }
+  const target = options.event.target as HTMLElement | null;
+  if (target?.closest(".composer-task-more, .composer-task-menu")) {
+    return;
+  }
+  const sourceElement = options.event.currentTarget as HTMLElement | null;
+  const sourceRect = sourceElement?.getBoundingClientRect();
+  if (!sourceElement || !sourceRect) {
+    return;
+  }
+  const startX = options.event.clientX;
+  const startY = options.event.clientY;
+  const offsetX = startX - sourceRect.left;
+  const offsetY = startY - sourceRect.top;
+  const sourceHtml = sourceElement.innerHTML;
+  const dragThreshold = 8;
+  let moved = false;
+  let latestDrop: TaskDropIndicator | undefined;
+
+  const updateDropIndicator = (point: { x: number; y: number }) => {
+    const element = document.elementFromPoint(point.x, point.y) as
+      | HTMLElement
+      | undefined;
+    const row = element?.closest<HTMLElement>(".composer-task-row-wrap");
+    const nonce = row?.dataset.taskNonce;
+    if (!row || !nonce || nonce === options.sourceNonce) {
+      latestDrop = undefined;
+      options.setDropIndicator(undefined);
+      return;
+    }
+    const rect = row.getBoundingClientRect();
+    latestDrop = {
+      nonce,
+      edge: point.y > rect.top + rect.height / 2 ? "after" : "before",
+    };
+    options.setDropIndicator(latestDrop);
+  };
+
+  const updateGhost = (x: number, y: number) => {
+    options.setDragGhost({
+      x: Math.round(x - offsetX),
+      y: Math.round(y - offsetY),
+      width: Math.round(sourceRect.width),
+      height: Math.round(sourceRect.height),
+      html: sourceHtml,
+    });
+  };
+
+  const onMove = (move: PointerEvent | MouseEvent) => {
+    if (
+      !moved &&
+      Math.hypot(move.clientX - startX, move.clientY - startY) >= dragThreshold
+    ) {
+      moved = true;
+      options.setDragNonce(options.sourceNonce);
+      sourceElement.classList.add("plan-source-dragging");
+    }
+    if (!moved) {
+      return;
+    }
+    move.preventDefault();
+    updateGhost(move.clientX, move.clientY);
+    updateDropIndicator({ x: move.clientX, y: move.clientY });
+  };
+
+  const onUp = () => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseup", onUp);
+    sourceElement.classList.remove("plan-source-dragging");
+    if (moved && latestDrop) {
+      options.onDrop(latestDrop);
+    }
+    options.onFinish(moved);
+  };
+
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp, { once: true });
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mouseup", onUp, { once: true });
 }
 
 export function PlanConversationFeedbackNotice(props: {
@@ -349,6 +495,8 @@ function TaskMediaToken(props: { type: "image" | "file"; id: string }) {
 export function PlanTaskRow(props: {
   pulseId: string;
   task: TaskManagement;
+  dragging?: boolean;
+  dropIndicator?: TaskDropIndicator["edge"];
   pulseToken?: number;
   selected: boolean;
   menuOpen: boolean;
@@ -357,6 +505,7 @@ export function PlanTaskRow(props: {
   onDelete: () => void;
   onRun: () => void;
   onCreateSession: () => void;
+  onPointerDragStart: (event: PointerEvent) => void;
 }) {
   let moreButton: HTMLButtonElement | undefined;
   const [menuRect, setMenuRect] = createSignal({ left: 0, top: 0 });
@@ -364,6 +513,11 @@ export function PlanTaskRow(props: {
   let textPulseTimer: number | undefined;
   let lastPulseToken: number | undefined;
   const summaryText = createMemo(() => taskSummaryText(props.task));
+  const status = createMemo(() => taskPlanStatus(props.task));
+  const activeStatus = createMemo(() => {
+    const value = status();
+    return value === "doing" || value === "question" ? value : undefined;
+  });
   const taskPulseSignature = createMemo(
     () => `${summaryText()}\n${taskDisplayText(props.task)}`,
   );
@@ -425,14 +579,46 @@ export function PlanTaskRow(props: {
     }
   });
   return (
-    <div class="composer-task-row-wrap">
+    <div
+      class={classNames(
+        "composer-task-row-wrap",
+        props.dragging && "dragging",
+        props.dropIndicator === "before" && "drop-before",
+        props.dropIndicator === "after" && "drop-after",
+      )}
+      data-task-nonce={taskNonceId(props.task)}
+      onPointerDown={props.onPointerDragStart}
+    >
+      <span class="composer-task-drag-handle" aria-hidden="true">
+        <GripVertical size={14} />
+      </span>
       <button
         type="button"
         class={classNames("composer-task-row", props.selected && "selected")}
         onClick={props.onEdit}
       >
-        <span class={classNames(textPulse() && "task-text-pulse")}>
-          <TaskRowText text={summaryText()} />
+        <span
+          class={classNames(
+            "composer-task-title",
+            activeStatus() && "has-status",
+            textPulse() && "task-text-pulse",
+          )}
+        >
+          <Show when={activeStatus()}>
+            {(status) => (
+              <span
+                class={classNames(
+                  "plan-status-indicator",
+                  "composer-task-status",
+                  `status-${status()}`,
+                )}
+                aria-hidden="true"
+              />
+            )}
+          </Show>
+          <span class="composer-task-title-text">
+            <TaskRowText text={summaryText()} />
+          </span>
         </span>
         <small
           class={classNames(

@@ -7,8 +7,8 @@ execution flow, context compaction, and final response behavior.
 The Cargo package name should stay compatible with Tura:
 
 ```text
-package = code-tools-suite
-library = code_tools_suite
+package = runtime
+library = runtime
 ```
 
 ## Layout
@@ -134,6 +134,20 @@ loops, prompt assembly, tool filtering, or JSON parsing there.
 
 Session bootstrap and gateway session loading stay in focused modules.
 
+Runtime gateway-session persistence goes through `crates/session_log`, not
+workspace-local JSON files. `mano/gateway_session.rs` uses
+`SessionLogClient::get_session` to resume an existing gateway session and
+`SessionLogClient::upsert_session` to persist the initial runtime session
+snapshot. Resumed sessions must match the requested workspace to avoid
+cross-workspace reuse of a repeated session id.
+
+Useful session-log queries while debugging runtime resume behavior:
+
+```powershell
+'{"command":"get_session","session_id":"session-id"}' | target\debug\gateway.exe session-log
+'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\gateway.exe session-log
+```
+
 ## MANAS Layer
 
 `manas/process.rs` owns the runtime loop:
@@ -225,11 +239,11 @@ SessionManagement::task_management_json()
 Single-task mode serializes `task_management` as one object with:
 
 ```text
-nonce_id
+task_id
 step
 plan_summary
 task_summary
-delivery
+deliverable
 sub_session_id
 start_at
 poll_interval
@@ -246,11 +260,11 @@ The runtime may create the first single task from this state update. After a
 task summary already exists, rename attempts are rejected and reported back in
 the tool result unless the user clearly changed the task.
 
-`multiple_tasks` is also routed through `command_run` and only appears when
+`planning` is also routed through `command_run` and only appears when
 multi-task mode is enabled. Its schema is an array of tasks with required
-`nonce_id` and optional `step`, `task_summary`, and `delivery`. It rejects
-single-goal input and runtime rejects planning updates after a plan state
-machine already exists.
+`task_summary` and `deliverable`. It rejects single-goal input. When a plan
+state machine already exists, runtime replaces the active task with the ordered
+incoming tasks and preserves queued tasks omitted from the update.
 
 Compact context writes the current `task_management_json()` into the compaction
 log and rebuilds the next turn with a `TASK_MANAGEMENT_STATE` user-context
@@ -351,7 +365,7 @@ out of each provider's wire format.
 ## Child Sub-Session Dispatch
 
 When the manas loop produces a `TaskStep` carrying `step_agent_name` (from a
-`multiple_tasks` tool result with `child_agent_names`), runtime spawns a child
+`planning` tool result with `child_agent_names`), runtime spawns a child
 sub-session through `manas::child_dispatch`. Dispatch always uses the router
 CLI subprocess (`tura_router run-agent`) over stdin/stdout JSON — never an
 HTTP/URL call. This holds the project rule:
@@ -367,7 +381,7 @@ HTTP/URL call. This holds the project rule:
   own router-CLI subprocess); collects summaries.
 
 The router CLI mirrors the HTTP handler exactly (same `dispatch_run_agent`
-core), so child-session depth/concurrency caps (`MAX_MULTIPLE_TASKS_DEPTH`,
+core), so child-session depth/concurrency caps (`MAX_PLANNING_DEPTH`,
 `MAX_RUNTIME_WORKERS`) apply uniformly.
 
 ## Final Response
@@ -381,6 +395,6 @@ clear answer.
 Use:
 
 ```text
-cargo fmt -p code-tools-suite
-cargo check -p code-tools-suite
+cargo fmt -p runtime
+cargo check -p runtime
 ```

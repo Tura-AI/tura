@@ -53,6 +53,10 @@
     {
       "capability_name": "task_status",
       "capability_directory": "crates/tools/src"
+    },
+    {
+      "capability_name": "planning",
+      "capability_directory": "crates/tools/src"
     }
   ],
   "validator": {

@@ -50,7 +50,9 @@ import {
   activeSession,
   initialAppState,
   sessionDirectory,
+  sessionHasDisplayName,
   systemThemeMode,
+  withSessionFallbackName,
   type AppState,
   type MainTab,
   type SettingsSection,
@@ -158,8 +160,19 @@ function mergeSessions(remoteSessions: Session[], localSessions: Session[]) {
     byId.set(session.id, session);
   }
   for (const session of localSessions) {
-    if (!byId.has(session.id)) {
+    const remote = byId.get(session.id);
+    if (!remote) {
       byId.set(session.id, session);
+    } else if (
+      !sessionHasDisplayName(remote) &&
+      sessionHasDisplayName(session)
+    ) {
+      byId.set(session.id, {
+        ...remote,
+        name: session.name,
+        session_display_name: session.session_display_name,
+        plan_summary: session.plan_summary,
+      });
     }
   }
   return [...byId.values()].sort(
@@ -630,8 +643,9 @@ export function App() {
     let sessionId = issue.session_id ?? issue.active_task?.session_id;
     try {
       if (!sessionId) {
-        const session = await directoryClient().createSession(
-          createSessionPayload(),
+        const session = withSessionFallbackName(
+          await directoryClient().createSession(createSessionPayload()),
+          issue.title,
         );
         sessionId = session.id;
         setState((previous) => ({
@@ -806,6 +820,7 @@ export function App() {
     sessionAttentionAcknowledged,
     updatePlanTicketStatus,
     updatePlanTicketTask,
+    reorderPlanTasks,
     deletePlanTask,
     runPlanTaskNow,
     createSessionFromPlanTask,
@@ -852,21 +867,14 @@ export function App() {
         return;
       }
       let sessionId = state().selectedSessionId;
+      let createdSession: Session | undefined;
       if (!sessionId) {
-        const session = await directoryClient().createSession(
-          createSessionPayload(),
+        const session = withSessionFallbackName(
+          await directoryClient().createSession(createSessionPayload()),
+          content,
         );
         sessionId = session.id;
-        setState((previous) => ({
-          ...previous,
-          sessions: [
-            session,
-            ...previous.sessions.filter((item) => item.id !== session.id),
-          ],
-          selectedSessionId: session.id,
-          activeTab: "conversation",
-          previousMainTab: "conversation",
-        }));
+        createdSession = session;
       }
       optimisticSessionId = sessionId;
       optimisticId = `prompt:${sessionId}:${Date.now()}`;
@@ -891,9 +899,18 @@ export function App() {
       setState((previous) => ({
         ...previous,
         selectedSessionId: sessionId,
-        sessions: previous.sessions.map((session) =>
-          session.id === sessionId ? { ...session, status: "busy" } : session,
-        ),
+        sessions: createdSession
+          ? [
+              { ...createdSession, status: "busy" },
+              ...previous.sessions.filter(
+                (session) => session.id !== sessionId,
+              ),
+            ]
+          : previous.sessions.map((session) =>
+              session.id === sessionId
+                ? { ...session, status: "busy" }
+                : session,
+            ),
         messagesBySession: {
           ...previous.messagesBySession,
           [sessionId]: [
@@ -917,9 +934,19 @@ export function App() {
           ),
         ),
       ]);
+      setState((previous) => ({
+        ...previous,
+        selectedSessionId: sessionId,
+        composerText: "",
+        composerImages: [],
+        activeTab: "conversation",
+        previousMainTab: "conversation",
+        planNotice: undefined,
+      }));
       await openSession(sessionId, { forceRefreshMessages: true });
       setState((previous) => ({
         ...previous,
+        selectedSessionId: sessionId,
         composerText: "",
         composerImages: [],
         activeTab: "conversation",
@@ -978,6 +1005,27 @@ export function App() {
     }
   }
 
+  async function abortSession(sessionId: string) {
+    setState((previous) => ({
+      ...previous,
+      submitting: false,
+      sessions: previous.sessions.map((session) =>
+        session.id === sessionId ? { ...session, status: "idle" } : session,
+      ),
+      error: undefined,
+    }));
+    if (e2eFixture) {
+      return;
+    }
+    try {
+      await directoryClient().abort(sessionId);
+      await refreshSessions();
+    } catch (error) {
+      setState((previous) => ({ ...previous, error: errorMessage(error) }));
+      await refreshSessions();
+    }
+  }
+
   async function submitQueuedPrompt(
     content: string,
     forcedStartCondition?: StartCondition,
@@ -990,7 +1038,7 @@ export function App() {
             state().planDraftStartAt || defaultLocalStartAt(),
           ) ?? localDateTimeToUtcIso(defaultLocalStartAt()))
         : undefined;
-    const [summaryLine = "", ...deliveryLines] = content.split(/\r?\n/u);
+    const [summaryLine = "", ...deliverableLines] = content.split(/\r?\n/u);
     const title = summaryLine.trim() || t("newTask");
     const timingPatch = timedTaskPatch(
       startCondition,
@@ -1006,12 +1054,12 @@ export function App() {
       ? `${currentSession.id}:${Date.now()}`
       : `queued-task:${Date.now()}`;
     const taskState = {
-      nonce_id: nonceId,
-      step: currentSession ? sessionTasks(currentSession).length : 0,
+      task_id: nonceId,
+      step: currentSession ? sessionTasks(currentSession).length + 1 : 1,
       status: "todo" as PlanStatus,
       plan_summary: title,
       task_summary: title,
-      delivery: deliveryLines.join("\n").trim(),
+      deliverable: deliverableLines.join("\n").trim(),
       ...timingPatch,
     };
     if (e2eFixture) {
@@ -1058,10 +1106,13 @@ export function App() {
       ? await directoryClient().updateSessionTaskManagement(currentSession.id, {
           tasks: [taskState],
         })
-      : await directoryClient().createSession({
-          ...createSessionPayload(),
-          task_management: taskState,
-        });
+      : withSessionFallbackName(
+          await directoryClient().createSession({
+            ...createSessionPayload(),
+            task_management: taskState,
+          }),
+          title,
+        );
     setState((previous) => ({
       ...previous,
       sessions: [
@@ -1485,6 +1536,7 @@ export function App() {
           pickExistingWorkspaceDirectory,
           setState,
           submitPrompt,
+          abortSession,
           updatePlanTicketStatus,
           sessionAttentionAcknowledged,
           deletePlanTask,
@@ -1494,6 +1546,7 @@ export function App() {
           createPlanTicket,
           createSessionFromPlanTask,
           updatePlanTicketTask,
+          reorderPlanTasks,
           updateEditingTaskFromComposer,
           fileTree,
           fileLoadingPath,

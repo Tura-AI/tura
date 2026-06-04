@@ -235,7 +235,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn coding_agent_preset_includes_development_tools_without_multiple_tasks_and_send_message() {
+    fn coding_agent_preset_includes_development_tools_with_planning_without_send_message() {
         let session = SessionManagement::new(
             "test-session".to_string(),
             "test-session".to_string(),
@@ -247,6 +247,7 @@ mod tests {
                 file_input: Vec::new(),
                 agent: None,
                 runtime_context: None,
+                planning_mode_override: None,
             },
             "test".to_string(),
             Utc::now(),
@@ -285,8 +286,8 @@ mod tests {
             "coding_agent should keep delete_file behind command_run"
         );
         assert!(
-            !actual.contains("multiple_tasks"),
-            "multiple_tasks is env-gated"
+            actual.contains("planning"),
+            "planning coding_agent should expose planning for task dispatch"
         );
         assert!(
             !actual.contains("send_message_to_user"),

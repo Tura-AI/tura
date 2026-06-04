@@ -629,7 +629,7 @@ async function inspectTuraSourceContract() {
     commandRunSchema: path.join(turaRoot, "crates", "tools", "src", "command_run", "schema.json"),
     shellPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "shell_command", "prompt.md"),
     applyPatchPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "apply_patch", "prompt.md"),
-    multipleTasksPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "multiple_tasks", "prompt.md"),
+    planningPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "planning", "prompt.md"),
     compactContextPrompt: path.join(turaRoot, "crates", "tools", "src", "commands", "compact_context", "prompt.md"),
     fileLocksPolicy: path.join(turaRoot, "crates", "tools", "src", "runtime", "file_locks", "policy.toml"),
     fileLocksModule: path.join(turaRoot, "crates", "tools", "src", "runtime", "file_locks", "mod.rs"),
@@ -668,11 +668,11 @@ async function inspectTuraSourceContract() {
       /fn run_command_run_step/.test(handler) &&
       /workspace_write/.test(fileLocks) &&
       /pub fn execute/.test(commandsModule) &&
-      /pub mod multiple_tasks/.test(commandsModule) &&
+      /pub mod planning/.test(commandsModule) &&
       /pub mod compact_context/.test(commandsModule) &&
       /"apply_patch"\s*=>\s*apply_patch::execute/.test(commandsModuleText) &&
       /"compact_context"\s*=>\s*compact_context::execute/.test(commandsModuleText) &&
-      /"multiple_tasks"[^=]*=>\s*\{\s*multiple_tasks::execute/.test(commandsModuleText) &&
+      /"planning"[^=]*=>\s*\{\s*planning::execute/.test(commandsModuleText) &&
       /"bash"\s*=>\s*bash::execute/.test(commandsModuleText) &&
       /"shell_command"\s*=>\s*shell_command::execute/.test(commandsModuleText) &&
       /unsupported command_run command/.test(commandsModule) &&
@@ -691,7 +691,7 @@ async function inspectTuraSourceContract() {
     has_exact_internal_command_dispatch:
       /"apply_patch"\s*=>\s*apply_patch::execute/.test(commandsModuleText) &&
       /"compact_context"\s*=>\s*compact_context::execute/.test(commandsModuleText) &&
-      /"multiple_tasks"[^=]*=>\s*\{\s*multiple_tasks::execute/.test(commandsModuleText) &&
+      /"planning"[^=]*=>\s*\{\s*planning::execute/.test(commandsModuleText) &&
       /"bash"\s*=>\s*bash::execute/.test(commandsModuleText) &&
       /"shell_command"\s*=>\s*shell_command::execute/.test(commandsModuleText) &&
       /unsupported command_run command/.test(commandsModule),

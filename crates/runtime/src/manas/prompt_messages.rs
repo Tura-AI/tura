@@ -1,7 +1,7 @@
-use crate::prompt_style::{
-    compact_context, task_continuity, task_status, user_new_command, PromptBuilder,
+use crate::prompt_style::{compact_context, task_status, user_new_command, PromptBuilder};
+use crate::state_machine::session_management::{
+    PlanStatus, SessionManagement, StartCondition, TaskStep,
 };
-use crate::state_machine::session_management::SessionManagement;
 
 pub(super) fn messages_for_turn(
     current_messages: &[serde_json::Value],
@@ -182,8 +182,76 @@ pub(super) fn user_new_command_message(session_id: &str) -> Option<String> {
 }
 
 pub(super) fn fetch_user_commands(session_id: &str) -> Vec<String> {
-    let _ = session_id;
-    Vec::new()
+    if std::env::var("TURA_DISABLE_GATEWAY_CALLBACKS")
+        .ok()
+        .as_deref()
+        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+    {
+        return Vec::new();
+    }
+    let endpoint = format!(
+        "{}/session/{}/user-commands",
+        gateway_base_url(),
+        url_escape(session_id)
+    );
+    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        return Vec::new();
+    };
+    runtime
+        .block_on(async move {
+            let response = reqwest::Client::new()
+                .get(endpoint)
+                .timeout(std::time::Duration::from_secs(2))
+                .send()
+                .await
+                .ok()?;
+            if !response.status().is_success() {
+                return None;
+            }
+            let value = response.json::<serde_json::Value>().await.ok()?;
+            Some(
+                value
+                    .get("commands")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|item| item.as_str())
+                    .map(str::trim)
+                    .filter(|item| !item.is_empty())
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .unwrap_or_default()
+}
+
+fn gateway_base_url() -> String {
+    std::env::var("TURA_GATEWAY_URL")
+        .or_else(|_| std::env::var("GATEWAY_BASE_URL"))
+        .unwrap_or_else(|_| {
+            let port = std::env::var("TURA_GATEWAY_PORT")
+                .ok()
+                .and_then(|value| value.parse::<u16>().ok())
+                .unwrap_or(4096);
+            format!("http://127.0.0.1:{port}")
+        })
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn url_escape(value: &str) -> String {
+    value
+        .bytes()
+        .flat_map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                vec![byte as char]
+            }
+            _ => format!("%{byte:02X}").chars().collect(),
+        })
+        .collect()
 }
 
 /// Inject the short task_status reminder when the model keeps doing workspace
@@ -196,63 +264,126 @@ pub(super) fn push_task_status_nudge(messages: &mut Vec<serde_json::Value>) {
     }));
 }
 
-pub(super) fn push_task_continuity_message(
+pub(super) fn push_no_tool_task_status_retry_message(
     messages: &mut Vec<serde_json::Value>,
     session: &SessionManagement,
-    original_user_task: &str,
 ) {
-    let continuity_task =
-        compacted_continuity_task(session).unwrap_or_else(|| original_user_task.to_string());
-    let builder = PromptBuilder::new()
-        .part(task_continuity::TASK_CONTINUITY)
-        .part(task_status::TASK_STATUS)
-        .section("original_user_task", continuity_task);
-
+    let content = PromptBuilder::new()
+        .part(task_status::planning_objective_context(&planning_objective_block(
+            session,
+        )))
+        .part("If user feedback, missing information, permissions, credentials, or keys are required, call command_run with task_status status question. If the task is complete and verified, call command_run with task_status status done. If work remains, continue with command_run.")
+        .render();
     messages.push(serde_json::json!({
         "role": "system",
-        "content": builder.render(),
+        "content": content,
     }));
 }
 
-fn compacted_continuity_task(session: &SessionManagement) -> Option<String> {
+pub(crate) fn planning_objective_block(session: &SessionManagement) -> String {
+    let overall = session.current_objective.trim();
+    let Some((_index, task)) = current_planning_task(session) else {
+        return format!("[current objective]:\n{overall}");
+    };
+    format!(
+        "[current objective]:\n{}\n\n{}",
+        overall,
+        planning_current_task_text(task)
+    )
+}
+
+pub(super) fn planning_current_task_text(task: &TaskStep) -> String {
+    task.task_summary.trim().to_string()
+}
+
+fn current_planning_task(session: &SessionManagement) -> Option<(usize, &TaskStep)> {
     session
-        .session_log
+        .task_plan
+        .detailed_tasks
         .iter()
-        .rev()
-        .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
-        .find(|value| {
-            value.get("type").and_then(serde_json::Value::as_str) == Some("context_compaction")
-        })
-        .and_then(|value| {
-            value
-                .get("content")
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|text| !text.is_empty())
-                .map(|text| {
-                    format!(
-                        "The original task has been compacted. Continue from this context checkpoint instead of reinserting the pre-compaction prompt:\n{text}"
-                    )
-                })
+        .enumerate()
+        .find(|(_, task)| {
+            task.status == PlanStatus::Doing
+                || (task.status == PlanStatus::Todo
+                    && task.start_condition == StartCondition::UserAction)
         })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{messages_for_turn, push_task_continuity_message};
-    use crate::state_machine::session_management::{SessionInput, SessionManagement};
+    use super::{
+        messages_for_turn, planning_objective_block, push_no_tool_task_status_retry_message,
+    };
+    use crate::state_machine::session_management::{
+        PlanStatus, SessionInput, SessionManagement, StartCondition, TaskStep,
+    };
     use chrono::Utc;
     use std::path::PathBuf;
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+    fn test_session(user_input: &str) -> SessionManagement {
+        let now = Utc::now();
+        SessionManagement::new(
+            "sess-prompt-messages".to_string(),
+            "prompt messages".to_string(),
+            PathBuf::from("C:/workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: user_input.to_string(),
+                file_input: Vec::new(),
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            user_input.to_string(),
+            now,
+        )
+    }
+
     #[test]
-    fn task_continuity_uses_compacted_task_after_context_compaction() {
+    fn planning_objective_block_without_task_only_includes_overall_objective() {
+        let mut session = test_session("ship the feature");
+        session.current_objective = "ship the feature".to_string();
+
+        let content = planning_objective_block(&session);
+
+        assert_eq!(content, "[current objective]:\nship the feature");
+        assert!(!content.contains("[current task]:"));
+    }
+
+    #[test]
+    fn planning_objective_block_with_task_includes_overall_and_current_task() {
+        let mut session = test_session("ship the feature");
+        session.current_objective = "ship the feature".to_string();
+        session.task_plan.detailed_tasks.push(TaskStep {
+            task_id: "task-1".to_string(),
+            step: 1,
+            task_summary: "Patch parser".to_string(),
+            step_deliverable_description: "Parser accepts fixture flags.".to_string(),
+            status: PlanStatus::Doing,
+            start_condition: StartCondition::UserAction,
+            ..TaskStep::default()
+        });
+
+        let content = planning_objective_block(&session);
+
+        assert_eq!(
+            content,
+            "[current objective]:\nship the feature\n\nPatch parser"
+        );
+        assert!(!content.contains("[current task]:"));
+        assert!(!content.contains("Deliverable:"));
+    }
+
+    #[test]
+    fn no_tool_retry_injects_objective_context_without_original_user_task() {
         let now = Utc::now();
         let mut session = SessionManagement::new(
-            "sess-compact-continuity".to_string(),
-            "compact continuity".to_string(),
+            "sess-no-tool-retry".to_string(),
+            "no tool retry".to_string(),
             PathBuf::from("C:/workspace"),
             false,
             "coding".to_string(),
@@ -261,34 +392,33 @@ mod tests {
                 file_input: Vec::new(),
                 agent: None,
                 runtime_context: None,
+                planning_mode_override: None,
             },
             "ORIGINAL HUGE PROMPT".to_string(),
             now,
         );
-        session.push_log(
-            serde_json::json!({
-                "type": "context_compaction",
-                "content": "compact handoff",
-            })
-            .to_string(),
-            now,
-        );
+        session.current_objective = "STATE MACHINE OBJECTIVE".to_string();
 
         let mut messages = Vec::new();
-        push_task_continuity_message(&mut messages, &session, &session.input.user_input);
+        push_no_tool_task_status_retry_message(&mut messages, &session);
         let content = messages[0]["content"]
             .as_str()
             .expect("prompt message content should be a string");
-        assert!(content.contains("compact handoff"));
-        assert!(!content.contains("ORIGINAL HUGE PROMPTORIGINAL HUGE PROMPT"));
+
+        assert!(content.contains("Continue working toward the active thread goal."));
+        assert!(content.contains("[current objective]:\nSTATE MACHINE OBJECTIVE"));
+        assert!(content.contains("task_status status question"));
+        assert!(content.contains("task_status status done"));
+        assert!(content.contains("continue with command_run"));
+        assert!(!content.contains("original_user_task:"));
     }
 
     #[test]
-    fn task_continuity_injects_task_status_guidance_by_default() {
+    fn no_tool_retry_injects_current_task_when_present() {
         let now = Utc::now();
-        let session = SessionManagement::new(
-            "sess-task-status-guidance".to_string(),
-            "task status guidance".to_string(),
+        let mut session = SessionManagement::new(
+            "sess-no-tool-task".to_string(),
+            "no tool task".to_string(),
             PathBuf::from("C:/workspace"),
             false,
             "coding".to_string(),
@@ -297,20 +427,29 @@ mod tests {
                 file_input: vec![],
                 agent: None,
                 runtime_context: None,
+                planning_mode_override: None,
             },
             "fix the task".to_string(),
             now,
         );
+        session.current_objective = "fix the task".to_string();
+        session.task_plan.detailed_tasks.push(TaskStep {
+            task_id: "task-1".to_string(),
+            step: 1,
+            task_summary: "Patch parser".to_string(),
+            status: PlanStatus::Doing,
+            start_condition: StartCondition::UserAction,
+            ..TaskStep::default()
+        });
 
         let mut messages = Vec::new();
-        push_task_continuity_message(&mut messages, &session, &session.input.user_input);
+        push_no_tool_task_status_retry_message(&mut messages, &session);
         let content = messages[0]["content"]
             .as_str()
             .expect("prompt message content should be a string");
 
-        assert!(content.contains("task_status"));
-        assert!(content.contains("settle the task state"));
-        assert!(content.contains("`done`") && content.contains("`question`"));
+        assert!(content.contains("[current objective]:\nfix the task\n\nPatch parser"));
+        assert!(!content.contains("original_user_task:"));
     }
 
     #[test]
@@ -329,6 +468,7 @@ mod tests {
                 file_input: vec![],
                 agent: None,
                 runtime_context: None,
+                planning_mode_override: None,
             },
             "fix the task".to_string(),
             now,
@@ -369,6 +509,7 @@ mod tests {
                 file_input: vec![],
                 agent: None,
                 runtime_context: None,
+                planning_mode_override: None,
             },
             "remember the image".to_string(),
             now,
@@ -414,6 +555,7 @@ mod tests {
                 file_input: vec![],
                 agent: None,
                 runtime_context: None,
+                planning_mode_override: None,
             },
             "remember the audio".to_string(),
             now,
@@ -460,6 +602,7 @@ mod tests {
                 file_input: vec![],
                 agent: None,
                 runtime_context: None,
+                planning_mode_override: None,
             },
             "continue the long task".to_string(),
             now,

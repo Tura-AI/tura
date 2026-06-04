@@ -18,7 +18,7 @@ export interface SessionConfig {
   context_message_limit?: number;
   kill_processes_on_start?: boolean;
   validator_enabled?: boolean;
-  force_multiple_tasks?: boolean;
+  force_planning?: boolean;
   command_run_stall_guard_profile?: string | null;
   command_run_stall_guard_check_secs?: number;
   command_run_stall_guard_identical_checks?: number;

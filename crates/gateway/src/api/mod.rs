@@ -9,4 +9,5 @@ pub mod project;
 pub mod provider;
 pub mod pty;
 pub mod session;
+pub mod session_log;
 pub mod types;

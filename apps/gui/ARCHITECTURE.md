@@ -158,6 +158,26 @@ The Multica-compatible API must support:
 The GUI stores only short-lived auth state and submitted token strings before
 they are sent to gateway. Durable secrets belong to gateway.
 
+## Session Log And Provider Diagnostics
+
+The GUI queries session history only through gateway APIs. It must not read
+`.tura/sessions`, `db/session_log`, provider logs, or backend config files
+directly.
+
+Session-log API:
+
+```text
+GET /session-log/workspaces
+GET /session-log/sessions?workspace=<workspace>&page=0&page_size=50
+GET /session-log/{sessionID}/records?page=0&page_size=100
+```
+
+The gateway SDK exposes these as `sessionLogWorkspaces`,
+`sessionLogSessions`, and `sessionLogRecords`. Provider call logs remain
+backend diagnostics under `log/provider/YYYY-MM-DD/*.json`; GUI views should
+request summarized provider status/usage through gateway/provider APIs instead
+of opening those files.
+
 ## Core Tura Endpoint Map
 
 The existing coding workbench keeps using these gateway routes:

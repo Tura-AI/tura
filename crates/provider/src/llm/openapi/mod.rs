@@ -611,7 +611,9 @@ mod tests {
         let addr = listener.local_addr().expect("local addr");
         let endpoint = format!("http://{addr}/backend-api/codex/responses");
         let previous_endpoint = std::env::var_os("OPENAI_CODEX_ENDPOINT");
+        let previous_account_id = std::env::var_os("OPENAI_ACCOUNT_ID");
         std::env::set_var("OPENAI_CODEX_ENDPOINT", &endpoint);
+        std::env::set_var("OPENAI_ACCOUNT_ID", "acct-probe");
         let (tx, rx) = mpsc::channel();
 
         std::thread::spawn(move || {
@@ -641,7 +643,8 @@ mod tests {
                             buffer[body_start..body_start + content_length].to_vec(),
                         )
                         .expect("utf8 body");
-                        tx.send(body).expect("send request body");
+                        tx.send(format!("{headers}\n\n{body}"))
+                            .expect("send request");
                         break;
                     }
                 }
@@ -676,13 +679,29 @@ mod tests {
             Some(value) => std::env::set_var("OPENAI_CODEX_ENDPOINT", value),
             None => std::env::remove_var("OPENAI_CODEX_ENDPOINT"),
         }
+        match previous_account_id {
+            Some(value) => std::env::set_var("OPENAI_ACCOUNT_ID", value),
+            None => std::env::remove_var("OPENAI_ACCOUNT_ID"),
+        }
 
         result.expect("codex oauth call");
-        let body: serde_json::Value =
-            serde_json::from_str(&rx.recv().expect("request body")).expect("json body");
+        let request = rx.recv().expect("request");
+        let (headers, body_text) = request.split_once("\n\n").expect("headers and body");
+        assert_eq!(header_value(headers, "originator"), Some("codex_cli_rs"));
+        assert_eq!(
+            header_value(headers, "User-Agent"),
+            Some("codex_cli_rs/0.0.0 (Windows 10.0; x86_64)")
+        );
+        assert_eq!(
+            header_value(headers, "ChatGPT-Account-Id"),
+            Some("acct-probe")
+        );
+        let body: serde_json::Value = serde_json::from_str(body_text).expect("json body");
         assert!(body.get("reasoning_effort").is_none());
         assert_eq!(body["reasoning"]["effort"], "high");
         assert_eq!(body["service_tier"], "priority");
+        assert_eq!(body["input"][0]["content"][0]["type"], "input_text");
+        assert_eq!(body["input"][0]["content"][0]["text"], "ping");
     }
 
     #[tokio::test]
@@ -839,14 +858,23 @@ mod tests {
         assert_eq!(payload["input"][0]["role"], "system");
         assert_eq!(
             payload["input"][0]["content"],
-            "You are Tura an agent based on gpt-5.1-codex from LLM provider: openai."
+            json!([{ "type": "input_text", "text": "You are Tura an agent based on gpt-5.1-codex from LLM provider: openai." }])
         );
         assert_eq!(payload["input"][1]["role"], "user");
-        assert_eq!(payload["input"][1]["content"], "task");
+        assert_eq!(
+            payload["input"][1]["content"],
+            json!([{ "type": "input_text", "text": "task" }])
+        );
         assert_eq!(payload["input"][2]["role"], "system");
-        assert_eq!(payload["input"][2]["content"], "dynamic runtime state");
+        assert_eq!(
+            payload["input"][2]["content"],
+            json!([{ "type": "input_text", "text": "dynamic runtime state" }])
+        );
         assert_eq!(payload["input"][3]["role"], "assistant");
-        assert_eq!(payload["input"][3]["content"], "progress");
+        assert_eq!(
+            payload["input"][3]["content"],
+            json!([{ "type": "output_text", "text": "progress" }])
+        );
         assert_eq!(payload["tool_choice"], "auto");
     }
 
@@ -896,6 +924,13 @@ mod tests {
                 .and_then(serde_json::Value::as_bool),
             Some(true)
         );
+    }
+
+    fn header_value<'a>(headers: &'a str, name: &str) -> Option<&'a str> {
+        headers.lines().find_map(|line| {
+            let (candidate, value) = line.split_once(':')?;
+            candidate.eq_ignore_ascii_case(name).then_some(value.trim())
+        })
     }
 
     #[test]

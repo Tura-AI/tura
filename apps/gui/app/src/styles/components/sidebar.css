@@ -203,6 +203,10 @@ button.section-title:focus-visible {
   padding-left: calc(var(--space-3) + (var(--file-depth, 0) * 2ch));
 }
 
+.workspace-children .session-row {
+  padding-left: calc(var(--space-3) + (var(--session-depth, 0) * 2ch));
+}
+
 .session-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;

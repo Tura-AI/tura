@@ -18,8 +18,26 @@ providers. Focused command-run CLI E2E scripts live under
 - `command_run_background_services_business_test.mjs` checks that Tura agents start multiple persistent local services in the background, probe readiness, and clean them up across `shell_command` and `bash` command surfaces.
 - `command_run_tui_snake_playwright_business_test.mjs` runs the TUI snake Playwright benchmark.
 - `agent_swebench_business_test.mjs` compares Tura and Codex agents on explicit SWE-bench Verified issue ids using issue statements only, with priority `gpt-5.5` low-reasoning defaults and per-agent patch/log capture.
+- `agent_programbench_business_test.mjs` compares Tura and Codex agents on one ProgramBench cleanroom reconstruction task. It pulls the `task_cleanroom` Docker image, copies `/workspace`, tells the agent not to use the internet, requires a full source reconstruction with matching behavior, packages `submission.tar.gz`, and can optionally run `programbench eval`.
 - Historical generated records from the previous layout now live under
   `target/command-run-codex-two-way-records/`.
+
+## Session And Provider Logs
+
+Business benchmark scripts must not read `.tura/sessions/*.json`. Tura session
+history is stored in `session_log` and can be queried through the gateway
+bridge:
+
+```powershell
+'{"command":"list_sessions","workspace":"C:/repo","page":0,"page_size":50}' | target\debug\gateway.exe session-log
+'{"command":"get_session","session_id":"session-id"}' | target\debug\gateway.exe session-log
+'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\gateway.exe session-log
+```
+
+Provider call logs are model-call diagnostics only. They live under
+`log/provider/YYYY-MM-DD/*.json` unless `LOG_PATH` is set. Use them for raw
+provider request/response, usage, latency, and error inspection; use
+`session_log` for per-session task/message/turn history.
 
 ## Run
 
@@ -63,6 +81,47 @@ $env:COMMAND_RUN_AGENT_SERVICE_TIER='priority'
 $env:COMMAND_RUN_AGENT_SWEBENCH_INSTANCE_IDS='pydata__xarray-4075'
 node .\tests\business\command-run-agent-benchmarks\agent_swebench_business_test.mjs
 ```
+
+Run a ProgramBench Tura planning-agent solve attempt:
+
+```powershell
+$env:COMMAND_RUN_AGENT_PROGRAMBENCH_ROOT='C:\Users\liuliu\Documents\programbench'
+$env:COMMAND_RUN_AGENT_PROGRAMBENCH_INSTANCE_ID='agourlay__zip-password-finder.704700d'
+$env:COMMAND_RUN_AGENT_AGENTS='tura-planning-shll'
+$env:COMMAND_RUN_AGENT_CODEX_MODEL='gpt-5.5'
+$env:COMMAND_RUN_AGENT_TURA_MODEL='openai/gpt-5.5'
+$env:COMMAND_RUN_AGENT_REASONING_EFFORT='low'
+$env:COMMAND_RUN_AGENT_SERVICE_TIER='priority'
+$env:COMMAND_RUN_AGENT_TIMEOUT_MS='240000'
+node .\tests\business\command-run-agent-benchmarks\agent_programbench_business_test.mjs
+```
+
+To explicitly override the `planning` command surface for Tura, use the
+single `COMMAND_RUN_AGENT_TURA_PLANNING` setting with `auto`, `on`, or
+`off`. `auto` is the default and follows the selected agent config. The summary
+records both the configured agent capabilities and the effective planning
+mode, but the agent prompt still requires solving the cleanroom reconstruction
+task rather than stopping after dispatch/callback plumbing:
+
+```powershell
+$env:COMMAND_RUN_AGENT_AGENTS='tura-planning-shll'
+$env:COMMAND_RUN_AGENT_TURA_PLANNING='on'
+node .\tests\business\command-run-agent-benchmarks\agent_programbench_business_test.mjs
+```
+
+For a 10-minute Tura-vs-Codex comparison:
+
+```powershell
+$env:COMMAND_RUN_AGENT_AGENTS='tura-planning-shll,codex-main'
+$env:COMMAND_RUN_AGENT_TIMEOUT_MS='600000'
+$env:COMMAND_RUN_AGENT_CODEX_MAIN_ROOT='C:\Users\liuliu\Documents\codex-main'
+node .\tests\business\command-run-agent-benchmarks\agent_programbench_business_test.mjs
+```
+
+ProgramBench requires Docker for real cleanroom inference. If Docker is not
+available and you only need to test runner plumbing, set
+`COMMAND_RUN_AGENT_PROGRAMBENCH_ALLOW_LOCAL_FIXTURE=1`; summaries will record
+that this is not a valid ProgramBench cleanroom run.
 
 `COMMAND_RUN_AGENT_SWEBENCH_INSTANCE_IDS` is required. Pass a comma-separated
 list or JSON array of issue ids. The runner infers the repo list from those ids,

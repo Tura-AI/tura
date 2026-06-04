@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { applyGatewayEvent } from "./event-reducer";
 import type { AppState } from "./global-store";
-import { initialAppState } from "./global-store";
+import { initialAppState, sessionTitle } from "./global-store";
 
 describe("applyGatewayEvent", () => {
   test("upserts sessions and messages", () => {
@@ -157,6 +157,40 @@ describe("applyGatewayEvent", () => {
       },
     });
 
+    expect(state.sessions[0]?.status).toBe("busy");
+  });
+
+  test("keeps local fallback name when gateway event has no session name", () => {
+    let state: AppState = {
+      ...initialAppState("http://127.0.0.1:4096"),
+      sessions: [
+        {
+          id: "s1",
+          name: "用户输入生成的临时会话名",
+          session_display_name: "用户输入生成的临时会话名",
+          status: "idle",
+        },
+      ],
+    };
+
+    state = applyGatewayEvent(state, {
+      payload: {
+        type: "session.updated",
+        properties: {
+          sessionID: "s1",
+          info: {
+            id: "s1",
+            name: "",
+            session_display_name: "",
+            plan_summary: "",
+            status: "busy",
+            time: { created: 1, updated: 3 },
+          },
+        },
+      },
+    });
+
+    expect(sessionTitle(state.sessions[0]!)).toBe("用户输入生成的临时会话名");
     expect(state.sessions[0]?.status).toBe("busy");
   });
 

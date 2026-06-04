@@ -9,7 +9,7 @@
 //! It talks to the real API and is therefore gated:
 //!
 //! ```text
-//! TURA_CLAUDE_CODE_E2E=1 cargo test -p code-tools-suite --test claude_code_live_e2e -- --nocapture
+//! TURA_CLAUDE_CODE_E2E=1 cargo test -p runtime --test claude_code_live_e2e -- --nocapture
 //! ```
 //!
 //! Credentials are read from the process env first, then from the provider
@@ -20,8 +20,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use code_tools_suite::mano;
-use code_tools_suite::state_machine::session_management::{SessionInput, SessionState};
+use runtime::mano;
+use runtime::state_machine::session_management::{SessionInput, SessionState};
 use serde_json::{json, Value};
 
 const ROUTES: &[&str] = &[
@@ -71,6 +71,7 @@ fn claude_code_gateway_session_tool_calling_e2e() {
             file_input: vec![],
             agent: None,
             runtime_context: None,
+                planning_mode_override: None,
         },
         workspace.clone(),
     )

@@ -495,7 +495,7 @@ impl ProductStore {
                 email: "local@tura.dev".to_string(),
                 name: "Local User".to_string(),
                 avatar_url: None,
-                language: "zh-CN".to_string(),
+                language: "en".to_string(),
                 timezone: "Europe/Paris".to_string(),
                 onboarded_at: Some(now),
             }),

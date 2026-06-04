@@ -21,6 +21,8 @@ export function taskStateLabel(status: PlanStatus): string {
       return t("done");
     case "archived":
       return t("archived");
+    case "waiting_user":
+      return t("waitingUser");
     case "todo":
     default:
       return t("todo");
@@ -40,27 +42,21 @@ export function sessionTasks(session: Session): TaskManagement[] {
 }
 
 export function sortedSessionTasks(session: Session): TaskManagement[] {
-  const visible = sessionTasks(session).filter(
-    (task) =>
-      taskPlanStatus(task) !== "archived" && taskHasVisibleContent(task),
-  );
-  const queued = visible
-    .filter((task) => !isTimedStartCondition(taskStartCondition(task)))
+  return sessionTasks(session)
+    .filter(taskIsVisibleInFrontend)
     .sort(compareTaskStep);
-  const timed = visible
-    .filter((task) => isTimedStartCondition(taskStartCondition(task)))
-    .sort((left, right) => {
-      const leftTime = new Date(taskStartAt(left) ?? 0).getTime();
-      const rightTime = new Date(taskStartAt(right) ?? 0).getTime();
-      return leftTime - rightTime || compareTaskStep(left, right);
-    });
-  return [...queued, ...timed];
 }
 
 export function hasVisibleSessionTasks(session: Session): boolean {
-  return sessionTasks(session).some(
-    (task) =>
-      taskPlanStatus(task) !== "archived" && taskHasVisibleContent(task),
+  return sessionTasks(session).some(taskIsVisibleInFrontend);
+}
+
+export function taskIsVisibleInFrontend(task: TaskManagement): boolean {
+  const status = taskPlanStatus(task);
+  return (
+    status !== "done" &&
+    status !== "archived" &&
+    taskHasVisibleContent(task)
   );
 }
 
@@ -80,7 +76,7 @@ export function compareTaskStep(
 }
 
 export function taskNonceId(task: TaskManagement): string | undefined {
-  return task.nonce_id;
+  return task.task_id;
 }
 
 export function taskPlanStatus(task: TaskManagement): PlanStatus | undefined {
@@ -126,21 +122,34 @@ export function taskPollInterval(task: TaskManagement): PollInterval {
 
 export function taskDisplayText(task: TaskManagement): string {
   const summary = (task.task_summary ?? "").trim();
-  const delivery = (task.delivery ?? "").trim();
-  return [summary, delivery].filter(Boolean).join("\n\n");
+  const deliverable = (task.deliverable ?? "").trim();
+  return [summary, deliverable].filter(Boolean).join("\n\n");
 }
 
 export function firstRunnableTask(
   session: Session,
 ): TaskManagement | undefined {
   return sortedSessionTasks(session).find((task) =>
-    taskDisplayText(task).trim(),
+    isRunnableTask(task),
+  );
+}
+
+export function isRunnableTask(task: TaskManagement): boolean {
+  const status = taskPlanStatus(task);
+  return (
+    taskDisplayText(task).trim().length > 0 &&
+    (status === undefined ||
+      status === "todo" ||
+      status === "waiting_user" ||
+      status === "doing")
   );
 }
 
 export function taskSummaryText(task: TaskManagement): string {
   return (
-    (task.task_summary ?? task.delivery ?? "")
+    (task.task_summary ??
+      task.deliverable ??
+      "")
       .trim()
       .split(/\r?\n/u)[0]
       ?.trim() ?? ""
@@ -211,7 +220,7 @@ export function applyTaskPatchToSession(
   patch: Partial<TaskManagement>,
 ): Session {
   const current = sessionTaskState(session);
-  const nonce = patch.nonce_id;
+  const nonce = patch.task_id;
   if (Array.isArray(current.tasks)) {
     const tasks = sessionTasks(session);
     const index = nonce
@@ -226,7 +235,7 @@ export function applyTaskPatchToSession(
           )
         : [
             ...tasks,
-            { ...patch, nonce_id: nonce ?? `${session.id}:${tasks.length}` },
+            { ...patch, task_id: nonce ?? `${session.id}:${tasks.length}` },
           ];
     const nextManagement = { ...current, tasks: nextTasks };
     return {
@@ -258,11 +267,14 @@ export function appendTaskToSession(
     : taskHasVisibleContent(current)
       ? [current]
       : [];
-  const nonce = task.nonce_id ?? `${session.id}:${existingTasks.length}`;
+  const nonce = taskNonceId(task) ?? `${session.id}:${existingTasks.length}`;
   const nextTask = {
     ...task,
-    nonce_id: nonce,
-    step: typeof task.step === "number" ? task.step : existingTasks.length,
+    task_id: nonce,
+    step:
+      typeof task.step === "number" && task.step > 0
+        ? task.step
+        : existingTasks.length + 1,
   };
   const index = existingTasks.findIndex((item) => taskNonceId(item) === nonce);
   const nextTasks =
@@ -280,22 +292,44 @@ export function appendTaskToSession(
   };
 }
 
+export function reorderTasksInSession(
+  session: Session,
+  orderedTasks: TaskManagement[],
+): Session {
+  const current = sessionTaskState(session);
+  const nextTasks = orderedTasks.map((task, index) => ({
+    ...task,
+    step: index + 1,
+  }));
+  return {
+    ...session,
+    task_management: {
+      ...current,
+      tasks: nextTasks,
+    },
+  };
+}
+
 export function planSessionStatus(session: Session): PlanStatus {
-  const task = sessionTaskState(session);
-  const status = task.status;
-  if (
-    status === "archived" ||
-    status === "done" ||
-    status === "question" ||
-    status === "doing"
-  ) {
-    return status;
-  }
   if (session.status === "busy") {
     return "doing";
   }
-  if (status === "todo") {
-    return "todo";
+  const task = sessionTaskState(session);
+  if (task.status === "archived") {
+    return "archived";
+  }
+  const tasks = sessionTasks(session);
+  if (session.status === "idle") {
+    if (tasks.some((task) => taskPlanStatus(task) === "question")) {
+      return "question";
+    }
+    const visibleTasks = tasks.filter(taskHasVisibleContent);
+    if (
+      visibleTasks.length > 0 &&
+      visibleTasks.every((task) => taskPlanStatus(task) === "done")
+    ) {
+      return "done";
+    }
   }
   return "todo";
 }
@@ -313,6 +347,7 @@ export function planStoredPlanStatus(session: Session): PlanStatus | undefined {
   const status = task.status;
   if (
     status === "todo" ||
+    status === "waiting_user" ||
     status === "doing" ||
     status === "question" ||
     status === "done" ||

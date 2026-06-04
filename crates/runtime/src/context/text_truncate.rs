@@ -20,12 +20,21 @@ pub(super) fn truncate_text_to_token_budget(text: &str, max_tokens: usize) -> St
 
 pub(super) fn environment_context_message(cwd: &std::path::Path) -> String {
     format!(
-        "<environment_context>\n  <cwd>{}</cwd>\n  <shell>{}</shell>\n  <current_date>{}</current_date>\n  <timezone>{}</timezone>\n</environment_context>",
+        "<environment_context>\n  <cwd>{}</cwd>\n  <shell>{}</shell>\n  <current_date>{}</current_date>\n  <timezone>{}</timezone>\n  <system_language>{}</system_language>\n</environment_context>",
         cwd.display(),
         context_shell_name(),
         chrono::Local::now().format("%Y-%m-%d"),
-        std::env::var("TZ").unwrap_or_else(|_| "Europe/Paris".to_string())
+        std::env::var("TZ").unwrap_or_else(|_| "Europe/Paris".to_string()),
+        session_language()
     )
+}
+
+fn session_language() -> String {
+    std::env::var("TURA_SESSION_LANGUAGE")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "en".to_string())
 }
 
 fn context_shell_name() -> &'static str {

@@ -30,10 +30,12 @@ tower-http = { version = "0.6", features = ["cors", "fs"] }
 tokio-stream = "0.1"
 
 # Internal
-code-tools-suite = { path = "../runtime" }
+runtime = { path = "../runtime" }
 tura-llm-rust = { workspace = true }
 tura-agents = { path = "../../agents" }
 tura-persona = { path = "../../personas" }
+tura-router = { workspace = true }
+session_log = { workspace = true }
 
 [[bin]]
 name = "tura"

@@ -19,6 +19,11 @@ const codexExe = path.join(
 )
 const model = process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "gpt-5.5"
 const reasoning = process.env.COMMAND_RUN_AGENT_REASONING_EFFORT || "low"
+const agents = String(process.env.COMMAND_RUN_MEDIA_RECALL_AGENTS || "current,tura")
+  .split(",")
+  .map((item) => item.trim().toLowerCase())
+  .filter(Boolean)
+const skipTuraBuild = (process.env.COMMAND_RUN_AGENT_SKIP_TURA_BUILD || "0") === "1"
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -267,10 +272,20 @@ function runCurrent(imagePath) {
 function main() {
   fs.mkdirSync(runRoot, { recursive: true })
   const imagePath = writeFixture()
-  runOk("cargo", ["build", "-p", "gateway", "--bin", "tura"], { cwd: repoRoot, timeoutMs: 240_000 })
-  assert(fs.existsSync(turaExe), `missing tura exe: ${turaExe}`)
-  assert(fs.existsSync(codexExe), `missing current codex exe: ${codexExe}`)
-  const results = [runCurrent(imagePath), runTura(imagePath)]
+  if (agents.includes("tura")) {
+    if (!skipTuraBuild || !fs.existsSync(turaExe)) {
+      runOk("cargo", ["build", "-p", "gateway", "--bin", "tura"], { cwd: repoRoot, timeoutMs: 240_000 })
+    }
+    assert(fs.existsSync(turaExe), `missing tura exe: ${turaExe}`)
+  }
+  if (agents.includes("current")) {
+    assert(fs.existsSync(codexExe), `missing current codex exe: ${codexExe}`)
+  }
+  const results = [
+    ...(agents.includes("current") ? [runCurrent(imagePath)] : []),
+    ...(agents.includes("tura") ? [runTura(imagePath)] : []),
+  ]
+  assert(results.length > 0, "COMMAND_RUN_MEDIA_RECALL_AGENTS selected no supported agents")
   const expectMediaUnsupported = process.env.COMMAND_RUN_AGENT_EXPECT_MEDIA_UNSUPPORTED === "1"
   const ok = results.every((result) => {
     if (expectMediaUnsupported && result.id === "tura") {
@@ -284,6 +299,8 @@ function main() {
     image_path: imagePath,
     model,
     reasoning,
+    agents,
+    skip_tura_build: skipTuraBuild,
     results,
   }
   fs.writeFileSync(path.join(runRoot, "summary.json"), JSON.stringify(summary, null, 2))

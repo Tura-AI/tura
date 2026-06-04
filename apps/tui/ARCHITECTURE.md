@@ -34,6 +34,32 @@ model/session selectors, permission prompts, useful exit messages, and
 deterministic automation output. All durable state and backend work still goes
 through gateway HTTP and SSE calls.
 
+## Session Log And Provider Diagnostics
+
+The CLI/TUI queries historical sessions through gateway APIs or the gateway
+CLI bridge. It must not read `.tura/sessions`, `db/session_log`, provider logs,
+or backend config files directly.
+
+HTTP session-log routes:
+
+```text
+GET /session-log/workspaces
+GET /session-log/sessions?workspace=<workspace>&page=0&page_size=50
+GET /session-log/{sessionID}/records?page=0&page_size=100
+```
+
+Raw CLI bridge for scripts:
+
+```powershell
+'{"command":"get_session","session_id":"session-id"}' | target\debug\gateway.exe session-log
+'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\gateway.exe session-log
+```
+
+Provider call logs are backend diagnostics under
+`log/provider/YYYY-MM-DD/*.json` or `LOG_PATH`; CLI/TUI commands should surface
+provider status/usage from gateway/provider APIs unless a developer explicitly
+asks for local diagnostic files.
+
 ## Package And Directory Strategy
 
 Keep CLI and TUI in one TypeScript package under `apps/tui` for the first

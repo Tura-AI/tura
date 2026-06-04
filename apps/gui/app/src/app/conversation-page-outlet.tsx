@@ -44,6 +44,8 @@ export function ConversationPageOutlet(props: {
     | "createSessionFromPlanTask"
     | "deletePlanTask"
     | "pickExistingWorkspaceDirectory"
+    | "reorderPlanTasks"
+    | "abortSession"
     | "updatePlanTicketTask"
     | "useWorkspaceDirectory"
   >;
@@ -75,6 +77,8 @@ export function ConversationPageOutlet(props: {
     createSessionFromPlanTask,
     deletePlanTask,
     pickExistingWorkspaceDirectory,
+    reorderPlanTasks,
+    abortSession,
     updatePlanTicketTask,
     useWorkspaceDirectory,
   } = props.view;
@@ -153,7 +157,9 @@ export function ConversationPageOutlet(props: {
           onComposerText={setComposerText}
           onComposerImages={setComposerImages}
           onSubmit={props.onSubmit}
+          onStop={() => abortSession(session.id)}
           onQueueSubmit={props.onQueueSubmit}
+          running={session.status !== "idle"}
           leftRailOpen={props.leftRailOpen}
           leftRailWidth={props.leftRailWidth}
           onRequestCollapseLeftRail={props.onRequestCollapseLeftRail}
@@ -195,7 +201,7 @@ export function ConversationPageOutlet(props: {
                           defaultLocalStartAt(),
                       ) ?? localDateTimeToUtcIso(defaultLocalStartAt());
                     void updatePlanTicketTask(selectedSession()!, {
-                      nonce_id: taskNonceId(task),
+                      task_id: taskNonceId(task),
                       status: "todo",
                       ...timedTaskPatch(
                         start_condition,
@@ -208,14 +214,14 @@ export function ConversationPageOutlet(props: {
                     const start_at = localDateTimeToUtcIso(value);
                     if (start_at) {
                       void updatePlanTicketTask(selectedSession()!, {
-                        nonce_id: taskNonceId(props.selectedEditingTask()!),
+                        task_id: taskNonceId(props.selectedEditingTask()!),
                         start_at,
                       });
                     }
                   }}
                   onPollInterval={(poll_interval) =>
                     updatePlanTicketTask(selectedSession()!, {
-                      nonce_id: taskNonceId(props.selectedEditingTask()!),
+                      task_id: taskNonceId(props.selectedEditingTask()!),
                       poll_interval,
                     })
                   }
@@ -255,16 +261,14 @@ export function ConversationPageOutlet(props: {
             selectedSession() && hasVisibleSessionTasks(selectedSession()!) ? (
               <PlanComposerTaskList
                 session={selectedSession()!}
-                selected_nonce_id={props.state().editingTask?.nonce_id}
+                selected_task_id={props.state().editingTask?.task_id}
                 pulseNonceId={
-                  props.state().taskPulse?.sessionId ===
-                  selectedSession()!.id
-                    ? props.state().taskPulse?.nonce_id
+                  props.state().taskPulse?.sessionId === selectedSession()!.id
+                    ? props.state().taskPulse?.task_id
                     : undefined
                 }
                 pulseToken={
-                  props.state().taskPulse?.sessionId ===
-                  selectedSession()!.id
+                  props.state().taskPulse?.sessionId === selectedSession()!.id
                     ? props.state().taskPulse?.token
                     : undefined
                 }
@@ -275,14 +279,13 @@ export function ConversationPageOutlet(props: {
                     composerText,
                   )
                 }
-                onDelete={(task) =>
-                  deletePlanTask(selectedSession()!, task)
-                }
-                onRun={(task) =>
-                  props.onRunTask(selectedSession()!, task)
-                }
+                onDelete={(task) => deletePlanTask(selectedSession()!, task)}
+                onRun={(task) => props.onRunTask(selectedSession()!, task)}
                 onCreateSession={(task) =>
                   createSessionFromPlanTask(selectedSession()!, task)
+                }
+                onReorder={(tasks) =>
+                  reorderPlanTasks(selectedSession()!, tasks)
                 }
               />
             ) : undefined

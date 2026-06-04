@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use chrono::Utc;
-use code_tools_suite::state_machine::session_management::{
+use runtime::state_machine::session_management::{
     SessionInput, SessionManagement, StartCondition, TaskStep,
 };
 
@@ -19,13 +19,14 @@ fn task_management_json_exposes_start_condition_for_gateway_and_gui() {
             file_input: Vec::new(),
             agent: None,
             runtime_context: None,
+            planning_mode_override: None,
         },
         "ship contract".to_string(),
         now,
     );
     session.task_plan.plan_summary = "Contract plan".to_string();
     session.task_plan.detailed_tasks.push(TaskStep {
-        nonce_id: "idle-task".to_string(),
+        task_id: "idle-task".to_string(),
         step: 0,
         task_summary: "Queued work".to_string(),
         start_condition: StartCondition::SessionIdle,

@@ -8,6 +8,47 @@ as independent long-running services.
 Project root is the repository root. All paths in docs and config should be
 relative to the project root.
 
+## Operational Logs
+
+### Session Log
+
+Durable session, task-management, message, todo, and workspace session history
+is stored in `crates/session_log` backed by PostgreSQL. The default local
+database directory is `db/session_log/`; embedded PostgreSQL listens on
+`session_log_POSTGRES_PORT` or `55432`. `session_log_DATABASE_URL` or
+`DATABASE_URL` overrides the embedded database.
+
+Gateway and runtime must not write session state directly to
+`.tura/sessions/*.json`. Gateway persists `SessionInfo`, messages, todos, and
+parent links through `SessionLogClient::upsert_session`. Runtime resumes
+gateway sessions through `SessionLogClient::get_session`, scoped by workspace.
+
+Developer query commands:
+
+```powershell
+'{"command":"list_workspaces"}' | target\debug\gateway.exe session-log
+'{"command":"list_sessions","workspace":"C:/repo","page":0,"page_size":50}' | target\debug\gateway.exe session-log
+'{"command":"get_session","session_id":"session-id"}' | target\debug\gateway.exe session-log
+'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\gateway.exe session-log
+```
+
+HTTP query endpoints:
+
+```text
+GET /session-log/workspaces
+GET /session-log/sessions?workspace=C%3A%2Frepo&page=0&page_size=50
+GET /session-log/{sessionID}/records?page=0&page_size=100
+```
+
+### Provider Call Logs
+
+Provider call logs are written only by `crates/provider` under
+`log/provider/YYYY-MM-DD/HHMMSS_mmm_<call_id>.json` by default. `LOG_PATH`
+overrides the provider log root. The file payload is a JSON `llm_call` record
+containing provider, model, base URL, request, normalized response, metrics,
+duration, success, and error/traceback fields. Do not store provider requests
+inside session-log records except as normalized runtime/session events.
+
 ## Repository Layout
 
 ```text
@@ -23,6 +64,7 @@ relative to the project root.
     provider/
     router/
     runtime/
+    session_log/
     tools/
 
   db/
@@ -48,7 +90,8 @@ stay compatible.
 
 ```text
 crates/gateway     -> package gateway
-crates/runtime     -> package code-tools-suite, library code_tools_suite
+crates/runtime     -> package runtime, library runtime
+crates/session_log -> package session_log, library session_log
 agents      -> package tura-agents, library tura_agents
 crates/provider    -> package tura-llm-rust, library tura_llm_rust
 crates/tools       -> package code-tools
@@ -106,10 +149,10 @@ session data, owns the provider OAuth credential lifecycle, launches the router,
 and streams backend events back to the frontend.
 
 Gateway owns frontend-facing API routes, payload validation, session/thread/turn
-APIs, UI persistence (file-based sessions), event streaming, permission request
-forwarding, provider config projection, OAuth credential lifecycle, process/PTY
-adapters, workspace config, router launch, and `POST /run_agent` forwarding to
-the router.
+APIs, UI/session persistence through `session_log`, event streaming, permission
+request forwarding, provider config projection, OAuth credential lifecycle,
+process/PTY adapters, workspace config, router launch, and `POST /run_agent`
+forwarding to the router.
 
 Gateway does not own agent loops, an in-process runtime, provider request
 formatting, tool execution, shell sandboxing, file locks, command registration,
@@ -200,7 +243,7 @@ Tools owns:
 - Audit records.
 - Output truncation and display-ready normalization.
 - `shell_command`, `apply_patch`, `read_media`, and future commands.
-- mode-gated commands such as `compact_context` and `multiple_tasks`.
+- mode-gated commands such as `compact_context` and `planning`.
 - `task_status` as an internal command inside `command_run`, not as a separate
   top-level model-visible tool.
 
@@ -235,7 +278,7 @@ Router owns:
 - CLI forwarding rules (`POST /run_tool`: resolve a tool binary, forward stdio).
 - Runtime-worker dispatch via `POST /run_agent`: agent resolution, worker
   environment contract assembly, and worker subprocess lifecycle.
-- Runtime-worker concurrency guards (multiple-tasks depth and active-worker
+- Runtime-worker concurrency guards (planning depth and active-worker
   limits, returning `429` on breach).
 - Worker status monitoring via `/services/status`.
 - Health checks that do not depend on port allocation.
@@ -418,7 +461,7 @@ crates/tools/
         schema.json
         prompt.md
         policy.toml
-      multiple_tasks/
+      planning/
         mod.rs
         schema.json
         prompt.md
@@ -467,7 +510,7 @@ crates/tools/
     web_discover_live_provider_check.rs
     contracts/
       compact_context_contract.mjs
-      multiple_tasks_backend_contract.mjs
+      planning_backend_contract.mjs
 ```
 
 Command files:
@@ -532,7 +575,7 @@ Built-in command families:
 - `web_discover`
 - `task_status`
 - `compact_context`
-- `multiple_tasks`
+- `planning`
 
 This version exposes console shell commands (`shell_command`, `powershell:*`,
 `bash:*`, `shell:*`), `apply_patch`, read-only local media inspection,
@@ -694,7 +737,7 @@ Core Rust build targets should use package names:
 ```text
 cargo build -p tura_router
 cargo build -p gateway
-cargo build -p code-tools-suite
+cargo build -p runtime
 cargo build -p code-tools
 ```
 
@@ -721,8 +764,8 @@ Direct package checks should use the same package names as the build targets.
 ## Focused Build Rules
 
 - `crates/gateway/**`: `cargo fmt -p gateway`, `cargo check -p gateway`.
-- `crates/runtime/**`: `cargo fmt -p code-tools-suite`,
-  `cargo check -p code-tools-suite`.
+- `crates/runtime/**`: `cargo fmt -p runtime`,
+  `cargo check -p runtime`.
 - `agents/**`: `cargo fmt -p tura-agents`,
   `cargo check -p tura-agents`, plus affected agent interface checks.
 - `crates/provider/**`: `cargo fmt -p tura-llm-rust`,

@@ -139,6 +139,34 @@ Gateway does not own:
 Those belong to `crates/runtime`, `crates/provider`, `crates/tools`,
 `crates/router`, and `apps/gui`.
 
+## Session Log Access
+
+Gateway is the frontend-facing owner of session-log query surfaces. Runtime and
+gateway persist session/task state through `runtime::session_log_client`, which
+forwards to `crates/session_log`. Do not reintroduce direct
+`.tura/sessions/*.json` reads or writes.
+
+Gateway exposes session-log HTTP routes:
+
+```text
+GET /session-log/workspaces
+GET /session-log/sessions?workspace=<workspace>&page=0&page_size=50
+GET /session-log/{sessionID}/records?page=0&page_size=100
+```
+
+The gateway binary also exposes the raw router/session-log bridge:
+
+```powershell
+'{"command":"list_workspaces"}' | target\debug\gateway.exe session-log
+'{"command":"list_sessions","workspace":"C:/repo","page":0,"page_size":50}' | target\debug\gateway.exe session-log
+'{"command":"get_session","session_id":"session-id"}' | target\debug\gateway.exe session-log
+'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\gateway.exe session-log
+```
+
+Use `get_session` when debugging the persisted `SessionInfo`, `management`,
+`task_management`, and todos. Use `list_session_records` when debugging
+message/event history.
+
 ## Persistence Model
 
 To recreate Multica's functionality, gateway needs durable product state.
@@ -390,9 +418,9 @@ polling_task
 ```
 
 Single-task `task_management` is an object. Object patches apply to the active
-single task and may set the task `nonce_id`. Multi-task updates that need
-nonce-specific matching use `task_management.tasks[]`; array entries match by
-`nonce_id` and create missing tasks using supplied fields plus defaults.
+single task and may set the task `task_id`. Multi-task updates that need
+task-specific matching use `task_management.tasks[]`; array entries match by
+`task_id` and create missing tasks using supplied fields plus defaults.
 
 Current patch validation behavior is intentionally compatibility-preserving:
 invalid task-management patches are logged and ignored, prior state is kept,

@@ -521,9 +521,6 @@ fn collect_symbols(root: &Path, directory: &Path, query: &str, results: &mut Vec
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if should_skip_path(&path) {
-            continue;
-        }
         if path.is_dir() {
             collect_symbols(root, &path, query, results);
             continue;
@@ -554,17 +551,6 @@ fn collect_symbols(root: &Path, directory: &Path, query: &str, results: &mut Vec
             }
         }
     }
-}
-
-fn should_skip_path(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|value| value.to_str())
-        .is_some_and(|name| {
-            matches!(
-                name,
-                ".git" | "target" | "node_modules" | "dist" | "build" | ".tura"
-            )
-        })
 }
 
 fn is_symbol_source_file(path: &Path) -> bool {

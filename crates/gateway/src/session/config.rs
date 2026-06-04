@@ -26,7 +26,7 @@ pub struct TuraSessionConfig {
     pub context_message_limit: Option<usize>,
     pub kill_processes_on_start: Option<bool>,
     pub validator_enabled: Option<bool>,
-    pub force_multiple_tasks: Option<bool>,
+    pub force_planning: Option<bool>,
     pub command_run_stall_guard_profile: Option<String>,
     pub command_run_stall_guard_check_secs: Option<u64>,
     pub command_run_stall_guard_identical_checks: Option<u8>,
@@ -47,7 +47,7 @@ impl Default for TuraSessionConfig {
             context_message_limit: None,
             kill_processes_on_start: None,
             validator_enabled: None,
-            force_multiple_tasks: None,
+            force_planning: None,
             command_run_stall_guard_profile: None,
             command_run_stall_guard_check_secs: None,
             command_run_stall_guard_identical_checks: None,
@@ -91,8 +91,8 @@ impl TuraSessionConfig {
         if next.validator_enabled.is_some() {
             self.validator_enabled = next.validator_enabled;
         }
-        if next.force_multiple_tasks.is_some() {
-            self.force_multiple_tasks = next.force_multiple_tasks;
+        if next.force_planning.is_some() {
+            self.force_planning = next.force_planning;
         }
         if next.command_run_stall_guard_profile.is_some() {
             self.command_run_stall_guard_profile = next.command_run_stall_guard_profile;
@@ -184,10 +184,6 @@ pub fn tura_dir(directory: impl AsRef<Path>) -> PathBuf {
     directory.as_ref().join(TURA_DIR)
 }
 
-pub fn sessions_dir(directory: impl AsRef<Path>) -> PathBuf {
-    tura_dir(directory).join("sessions")
-}
-
 pub fn config_path(directory: impl AsRef<Path>) -> PathBuf {
     tura_dir(directory).join(CONFIG_FILE)
 }
@@ -269,8 +265,8 @@ fn parse_config(content: &str) -> TuraSessionConfig {
         validator_enabled: values
             .get("validator_enabled")
             .and_then(|value| parse_bool(value)),
-        force_multiple_tasks: values
-            .get("force_multiple_tasks")
+        force_planning: values
+            .get("force_planning")
             .and_then(|value| parse_bool(value)),
         command_run_stall_guard_profile: values.get("command_run_stall_guard_profile").cloned(),
         command_run_stall_guard_check_secs: values
@@ -319,8 +315,8 @@ fn serialize_config(config: &TuraSessionConfig) -> String {
     if let Some(value) = config.validator_enabled {
         lines.push(format!("validator_enabled={value}"));
     }
-    if let Some(value) = config.force_multiple_tasks {
-        lines.push(format!("force_multiple_tasks={value}"));
+    if let Some(value) = config.force_planning {
+        lines.push(format!("force_planning={value}"));
     }
     push_line(
         &mut lines,

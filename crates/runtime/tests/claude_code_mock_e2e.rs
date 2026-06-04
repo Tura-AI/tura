@@ -16,12 +16,11 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use code_tools_suite::mano;
-use code_tools_suite::state_machine::session_management::{SessionInput, SessionState};
+use runtime::mano;
+use runtime::state_machine::session_management::{SessionInput, SessionState};
 use serde_json::{json, Value};
 
 const ROUTES: &[&str] = &[
@@ -59,6 +58,7 @@ fn claude_code_gateway_session_tool_calling_mock_e2e() {
             file_input: vec![],
             agent: None,
             runtime_context: None,
+            planning_mode_override: None,
         },
         workspace.clone(),
     )
@@ -75,6 +75,14 @@ fn claude_code_gateway_session_tool_calling_mock_e2e() {
 
     // Tool calling round-tripped through the state machine and executed.
     let tool_results = tool_results(&result.session.session_log);
+    assert!(
+        tool_results
+            .iter()
+            .any(|result| result.get("tool_name").and_then(Value::as_str) == Some("command_run")),
+        "missing tool result for command_run; tool_results={tool_results:#?}; session_log={:#?}; requests={:#?}",
+        result.session.session_log,
+        provider.requests.lock().expect("requests lock")
+    );
     assert_tool_success(&tool_results, "command_run");
 
     // The final assistant turn completed normally.
@@ -187,19 +195,17 @@ impl MockAnthropic {
         let listener = TcpListener::bind("127.0.0.1:0").expect("mock should bind");
         let addr = listener.local_addr().expect("mock address");
         let requests = Arc::new(Mutex::new(Vec::new()));
-        let counter = Arc::new(AtomicUsize::new(0));
         let thread_requests = Arc::clone(&requests);
-        let thread_counter = Arc::clone(&counter);
         thread::spawn(move || {
             for stream in listener.incoming().flatten() {
-                handle_connection(stream, &thread_counter, &thread_requests);
+                handle_connection(stream, &thread_requests);
             }
         });
         Self { addr, requests }
     }
 }
 
-fn handle_connection(stream: TcpStream, counter: &AtomicUsize, requests: &Arc<Mutex<Vec<Value>>>) {
+fn handle_connection(stream: TcpStream, requests: &Arc<Mutex<Vec<Value>>>) {
     let mut reader = BufReader::new(stream);
     let mut content_length = 0usize;
     loop {
@@ -217,57 +223,83 @@ fn handle_connection(stream: TcpStream, counter: &AtomicUsize, requests: &Arc<Mu
     let _ = reader.read_exact(&mut body);
     let request = serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| json!({}));
 
-    let index = counter.fetch_add(1, Ordering::SeqCst);
     requests.lock().expect("requests lock").push(request);
 
-    let response = anthropic_response(index);
-    let response_text = serde_json::to_string(&response).expect("response serialize");
+    let response_text = anthropic_stream_response(
+        requests
+            .lock()
+            .expect("requests lock")
+            .last()
+            .expect("request should be recorded"),
+    );
     let stream = reader.get_mut();
     let _ = write!(
         stream,
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         response_text.len(),
         response_text
     );
     let _ = stream.flush();
 }
 
-/// Native Anthropic Messages responses: a forced `tool_use` first, then a plain
-/// text completion.
-fn anthropic_response(index: usize) -> Value {
-    if index == 0 {
-        json!({
-            "id": "msg_tool_use",
-            "type": "message",
-            "role": "assistant",
-            "model": "claude-opus-4-8",
-            "content": [{
-                "type": "tool_use",
-                "id": "toolu_pwd",
-                "name": "command_run",
-                "input": {
-                    "commands": [{
-                        "step": 1,
-                        "command": "shell_command",
-                        "command_line": json!({"command": "pwd", "timeout_ms": 20000}).to_string()
-                    }],
-                    "step_summary": "Run pwd via command_run as requested."
-                }
-            }],
-            "stop_reason": "tool_use",
-            "usage": { "input_tokens": 24, "output_tokens": 12 }
-        })
+/// Native Anthropic Messages SSE: issue `tool_use` until a tool_result is
+/// present, then produce final text.
+fn anthropic_stream_response(request: &Value) -> String {
+    if request_has_tool_result(request) {
+        return sse_lines([
+            json!({"type":"message_start","message":{"id":"msg_final","type":"message","role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":30}}}),
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"claude-code mock e2e completed."}}),
+            json!({"type":"content_block_stop","index":0}),
+            json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":8}}),
+            json!({"type":"message_stop"}),
+        ]);
     } else {
-        json!({
-            "id": "msg_final",
-            "type": "message",
-            "role": "assistant",
-            "model": "claude-opus-4-8",
-            "content": [{ "type": "text", "text": "claude-code mock e2e completed." }],
-            "stop_reason": "end_turn",
-            "usage": { "input_tokens": 30, "output_tokens": 8 }
-        })
+        let input = json!({
+            "commands": [{
+                "step": 1,
+                "command_type": "shell_command",
+                "command_line": json!({"command": "pwd", "timeout_ms": 20000}).to_string()
+            }],
+            "step_summary": "Run pwd via command_run as requested."
+        });
+        return sse_lines([
+            json!({"type":"message_start","message":{"id":"msg_tool_use","type":"message","role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":24}}}),
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_pwd","name":"command_run","input":{}}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":input.to_string()}}),
+            json!({"type":"content_block_stop","index":0}),
+            json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":12}}),
+            json!({"type":"message_stop"}),
+        ]);
     }
+}
+
+fn sse_lines<const N: usize>(events: [Value; N]) -> String {
+    let mut output = String::new();
+    for event in events {
+        output.push_str("data: ");
+        output.push_str(&serde_json::to_string(&event).expect("event should serialize"));
+        output.push_str("\n\n");
+    }
+    output
+}
+
+fn request_has_tool_result(request: &Value) -> bool {
+    request
+        .get("messages")
+        .and_then(Value::as_array)
+        .is_some_and(|messages| {
+            messages.iter().any(|message| {
+                message
+                    .get("content")
+                    .and_then(Value::as_array)
+                    .is_some_and(|content| {
+                        content.iter().any(|item| {
+                            item.get("type").and_then(Value::as_str) == Some("tool_result")
+                        })
+                    })
+            })
+        })
 }
 
 fn write_llm_config(workspace: &Path, addr: SocketAddr) -> PathBuf {

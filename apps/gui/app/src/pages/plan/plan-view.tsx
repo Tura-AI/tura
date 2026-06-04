@@ -31,6 +31,7 @@ import {
   type PlanMode,
   type SettingsSection,
 } from "../../state/global-store";
+import { rootSessions } from "../../state/session-tree";
 
 import {
   PlanDragGhost,
@@ -101,6 +102,7 @@ export function PlanView(props: {
       }
     >,
   ) => void;
+  onReorderTasks: (session: Session, tasks: TaskManagement[]) => void;
   onEditTask: (
     session: Session,
     task: TaskManagement,
@@ -113,6 +115,7 @@ export function PlanView(props: {
   onComposerText: (text: string) => void;
   onComposerImages: (images: ComposerImage[]) => void;
   onSubmit: () => void;
+  onStop: (session: Session) => void;
   onAgent: (agentId: string) => void;
   onOpenSettings: (section: SettingsSection) => void;
   onOpenProviderSettings?: (providerId?: string) => void;
@@ -133,8 +136,10 @@ export function PlanView(props: {
   );
   const visibleSessions = createMemo(() => {
     const query = props.state.issueSearch.trim().toLowerCase();
-    const sessions = workspaceSessions().filter(
-      (session) => planSessionStatus(session) !== "archived",
+    const sessions = rootSessions(
+      workspaceSessions().filter(
+        (session) => planSessionStatus(session) !== "archived",
+      ),
     );
     if (!query) {
       return sessions;
@@ -164,7 +169,7 @@ export function PlanView(props: {
       return undefined;
     }
     return sessionTasks(preview).find(
-      (task) => taskNonceId(task) === editing.nonce_id,
+      (task) => taskNonceId(task) === editing.task_id,
     );
   });
   const composerTask = createMemo(() => {
@@ -195,11 +200,11 @@ export function PlanView(props: {
     if (!text) {
       return task;
     }
-    const [summaryLine = "", ...deliveryLines] = text.split(/\r?\n/u);
+    const [summaryLine = "", ...deliverableLines] = text.split(/\r?\n/u);
     return {
       ...task,
       task_summary: summaryLine.trim(),
-      delivery: deliveryLines.join("\n").trim(),
+      deliverable: deliverableLines.join("\n").trim(),
     };
   }
   const [panelWidth, setPanelWidth] = createSignal(430);
@@ -407,7 +412,7 @@ export function PlanView(props: {
               <PlanGanttView
                 sessions={visibleSessions()}
                 selectedSessionId={props.state.planPreviewSessionId}
-                selectedTaskNonceId={props.state.editingTask?.nonce_id}
+                selectedTaskNonceId={props.state.editingTask?.task_id}
                 onOpenSession={props.onOpenSession}
                 onEditTask={(session, task) => {
                   props.onOpenSession(session);
@@ -415,7 +420,7 @@ export function PlanView(props: {
                 }}
                 onSchedule={(session, task, startAt) =>
                   props.onTask(session, {
-                    nonce_id: taskNonceId(task),
+                    task_id: taskNonceId(task),
                     start_at: startAt,
                   })
                 }
@@ -489,6 +494,12 @@ export function PlanView(props: {
             onComposerText={props.onComposerText}
             onComposerImages={props.onComposerImages}
             onSubmit={submitComposer}
+            onStop={() =>
+              props.previewSession && props.onStop(props.previewSession)
+            }
+            running={Boolean(
+              props.previewSession && props.previewSession.status !== "idle",
+            )}
             submitDisabled={
               Boolean(props.state.planDraftLane) &&
               props.state.composerText.trim().length === 0
@@ -497,7 +508,7 @@ export function PlanView(props: {
               props.state.planDraftLane ? (
                 <div class="plan-composer-tools">
                   <PlanDraftSessionPicker
-                    sessions={workspaceSessions()}
+                    sessions={rootSessions(workspaceSessions())}
                     selectedSessionId={props.state.planDraftSessionId}
                     onSession={props.onDraftSession}
                   />
@@ -544,7 +555,7 @@ export function PlanView(props: {
                         utcIsoToLocalDateTime(taskStartAt(currentTask)),
                       );
                       props.onTask(props.previewSession!, {
-                        nonce_id: composerTaskNonce(),
+                        task_id: composerTaskNonce(),
                         status: "todo",
                         ...timedTaskPatch(
                           startCondition,
@@ -557,14 +568,14 @@ export function PlanView(props: {
                       const start_at = localDateTimeToUtcIso(value);
                       if (start_at) {
                         props.onTask(props.previewSession!, {
-                          nonce_id: composerTaskNonce(),
+                          task_id: composerTaskNonce(),
                           start_at,
                         });
                       }
                     }}
                     onPollInterval={(poll_interval) =>
                       props.onTask(props.previewSession!, {
-                        nonce_id: composerTaskNonce(),
+                        task_id: composerTaskNonce(),
                         poll_interval,
                       })
                     }
@@ -579,10 +590,10 @@ export function PlanView(props: {
               hasVisibleSessionTasks(props.previewSession) ? (
                 <PlanComposerTaskList
                   session={props.previewSession}
-                  selected_nonce_id={props.state.editingTask?.nonce_id}
+                  selected_task_id={props.state.editingTask?.task_id}
                   pulseNonceId={
                     props.state.taskPulse?.sessionId === props.previewSession.id
-                      ? props.state.taskPulse.nonce_id
+                      ? props.state.taskPulse.task_id
                       : undefined
                   }
                   pulseToken={
@@ -599,6 +610,9 @@ export function PlanView(props: {
                   onRun={(task) => props.onRunTask(props.previewSession!, task)}
                   onCreateSession={(task) =>
                     props.onCreateSessionFromTask(props.previewSession!, task)
+                  }
+                  onReorder={(tasks) =>
+                    props.onReorderTasks(props.previewSession!, tasks)
                   }
                 />
               ) : undefined
@@ -675,7 +689,10 @@ export function PlanBoard(props: {
         }
         const column = element?.closest<HTMLElement>("[data-plan-status]");
         const status = column?.dataset.planStatus as PlanStatus | undefined;
-        if (status && ["todo", "doing", "question", "done"].includes(status)) {
+        if (
+          status &&
+          ["todo", "doing", "question", "done"].includes(status)
+        ) {
           props.onStatus(session, status);
           return true;
         }
@@ -734,6 +751,15 @@ export function PlanBoard(props: {
                           beginBoardDrag(event, session)
                         }
                         onMouseDown={(event) => beginBoardDrag(event, session)}
+                        onPointerUp={(event) => {
+                          if (
+                            !event.currentTarget.classList.contains(
+                              "plan-source-dragging",
+                            )
+                          ) {
+                            props.onOpenSession(session);
+                          }
+                        }}
                         onDragStart={(event) => {
                           event.dataTransfer?.setData(
                             "text/session-id",

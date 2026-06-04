@@ -7,7 +7,7 @@ export interface RuntimeConfigOverrides {
   sessionType?: string;
   modelVariant?: string;
   modelAccelerationEnabled?: boolean;
-  forceMultipleTasks?: boolean;
+  forcePlanning?: boolean;
   killProcessesOnStart?: boolean;
   validatorEnabled?: boolean;
 }
@@ -66,8 +66,9 @@ function assignSessionConfigValue(patch: Partial<SessionConfig>, key: string, va
     patch.command_run_stall_guard_check_secs = numberValue(value, key);
   } else if (canonical === "command_run_stall_guard_identical_checks") {
     patch.command_run_stall_guard_identical_checks = numberValue(value, key);
-  } else if (canonical === "force_multiple_tasks") {
-    patch.force_multiple_tasks = booleanValue(value, key);
+  } else if (canonical === "planning") {
+    const parsed = planningValue(value, key);
+    if (parsed !== undefined) patch.force_planning = parsed;
   } else if (canonical === "kill_processes_on_start") {
     patch.kill_processes_on_start = booleanValue(value, key);
   } else if (canonical === "validator_enabled") {
@@ -85,7 +86,7 @@ function assignRuntimeConfigValue(overrides: RuntimeConfigOverrides, key: string
   else if (canonical === "model_variant") overrides.modelVariant = stringValue(value);
   else if (canonical === "model_acceleration_enabled") overrides.modelAccelerationEnabled = booleanValue(value, key);
   else if (canonical === "service_tier") overrides.modelAccelerationEnabled = serviceTierAcceleration(value);
-  else if (canonical === "force_multiple_tasks") overrides.forceMultipleTasks = booleanValue(value, key);
+  else if (canonical === "planning") overrides.forcePlanning = planningValue(value, key);
   else if (canonical === "kill_processes_on_start") overrides.killProcessesOnStart = booleanValue(value, key);
   else if (canonical === "validator_enabled") overrides.validatorEnabled = booleanValue(value, key);
 }
@@ -117,6 +118,12 @@ function booleanValue(value: unknown, key: string): boolean {
   if (["true", "1", "yes", "on", "enabled", "priority"].includes(normalized)) return true;
   if (["false", "0", "no", "off", "disabled", "auto", "default", "standard"].includes(normalized)) return false;
   throw new CliUsageError(`${key} requires a boolean-like value`);
+}
+
+function planningValue(value: unknown, key: string): boolean | undefined {
+  const normalized = String(value).trim().toLowerCase();
+  if (["auto", "default", "agent"].includes(normalized)) return undefined;
+  return booleanValue(value, key);
 }
 
 function serviceTierAcceleration(value: unknown): boolean {

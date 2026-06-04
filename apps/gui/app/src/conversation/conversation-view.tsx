@@ -73,12 +73,14 @@ export function ConversationView(props: {
   onComposerText: (text: string) => void;
   onComposerImages: (images: ComposerImage[]) => void;
   onSubmit: () => void;
+  onStop?: () => void;
   onQueueSubmit?: () => void;
   compact?: boolean;
   composerToolbar?: JSX.Element;
   composerTaskList?: JSX.Element;
   conversationNotice?: JSX.Element;
   submitDisabled?: boolean;
+  running?: boolean;
   onToolOpen?: (part: MessagePart, parts: MessagePart[]) => void;
   compactInspector?: boolean;
   leftRailOpen?: boolean;
@@ -427,9 +429,11 @@ export function ConversationView(props: {
           onText={props.onComposerText}
           onImages={props.onComposerImages}
           onSubmit={props.onSubmit}
+          onStop={props.onStop}
           onQueueSubmit={props.onQueueSubmit}
           toolbar={props.composerToolbar}
           submitDisabled={props.submitDisabled}
+          running={props.running}
         />
       </div>
       <Show when={!props.compact || props.compactInspector}>
@@ -927,17 +931,14 @@ function Transcript(props: {
         }
       | undefined;
     for (const block of transcriptEl.querySelectorAll<HTMLElement>(
-      "[data-agent-text-block]",
+      "[data-agent-avatar-anchor], [data-agent-text-block]",
     )) {
       const rect = block.getBoundingClientRect();
       const blockTop = rect.top - transcriptRect.top + viewportTop;
       const blockBottom = blockTop + rect.height;
       const visibleHeight =
         Math.min(blockBottom, viewportBottom) - Math.max(blockTop, viewportTop);
-      if (
-        rect.height < AGENT_AVATAR_SIZE ||
-        visibleHeight < AGENT_AVATAR_SIZE
-      ) {
+      if (visibleHeight <= 0) {
         continue;
       }
       if (!selected || blockBottom > selected.bottom) {
@@ -1308,6 +1309,7 @@ function MessageCell(props: {
                   !hasSummary() &&
                   "assistant-thinking-anchor",
               )}
+              data-agent-avatar-anchor
               data-agent-text-block={
                 hasSummary() || isAgentWorking() ? "" : undefined
               }

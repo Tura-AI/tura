@@ -19,14 +19,18 @@
 //! into the OpenAI-shaped `tool_calls` content the runtime state machine
 //! consumes.
 
+use std::collections::BTreeMap;
+use std::time::Instant;
+
 use serde_json::{json, Map, Value};
 
+use crate::streaming::{next_provider_stream_chunk, read_provider_response_body};
 use crate::tura_llm::{
     CallMetrics, CallOptions, ProviderResponse, ProviderStreamEvent, ProviderStreamEventSink,
     TuraError,
 };
 use crate::utils::{
-    anthropic_blocks_from_canonical, anthropic_tool_result_content_from_canonical,
+    anthropic_blocks_from_canonical, anthropic_tool_result_content_from_canonical, deep_merge_json,
     emit_command_run_stream_events_from_content, extract_xml_tool_calls,
     normalize_command_run_tool_input, strip_json_fence, strip_xml_tool_calls, to_anthropic_tools,
 };
@@ -57,7 +61,11 @@ pub async fn call_with_stream_events(
     stream_events: Option<ProviderStreamEventSink>,
 ) -> Result<ProviderResponse, TuraError> {
     let oauth = is_oauth_subscription_token(access_token);
-    let payload = build_payload(model, messages, options, oauth);
+    let mut payload = build_payload(model, messages, options, oauth);
+    let should_stream = stream_events.is_some() || options.stream.unwrap_or(false);
+    if should_stream {
+        payload["stream"] = Value::Bool(true);
+    }
 
     let client = reqwest::Client::builder()
         .build()
@@ -78,10 +86,6 @@ pub async fn call_with_stream_events(
         request.header("x-api-key", access_token)
     };
 
-    if let Some(sink) = stream_events.as_ref() {
-        sink(ProviderStreamEvent::ProviderOutputStarted);
-    }
-
     let resp = request.send().await.map_err(|err| TuraError::Network {
         message: err.to_string(),
     })?;
@@ -91,9 +95,15 @@ pub async fn call_with_stream_events(
         .get("request-id")
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
-    let body = resp.text().await.map_err(|err| TuraError::Network {
-        message: err.to_string(),
-    })?;
+    if should_stream && status.is_success() {
+        let mut response = parse_anthropic_stream(resp, stream_events).await?;
+        if let Some(metrics) = response.metrics.as_mut() {
+            metrics.provider_request_id = req_id;
+        }
+        return Ok(response);
+    }
+
+    let body = read_provider_response_body(resp.text()).await?;
     if !status.is_success() {
         return Err(TuraError::HttpStatus {
             status: status.as_u16(),
@@ -116,6 +126,255 @@ pub async fn call_with_stream_events(
     })
 }
 
+async fn parse_anthropic_stream(
+    resp: reqwest::Response,
+    stream_events: Option<ProviderStreamEventSink>,
+) -> Result<ProviderResponse, TuraError> {
+    let mut stream = resp.bytes_stream();
+    let mut pending = String::new();
+    let mut state = AnthropicStreamState::default();
+    let mut saw_output = false;
+    let mut last_output_at = Instant::now();
+
+    while let Some(chunk) =
+        next_provider_stream_chunk(&mut stream, saw_output, last_output_at).await?
+    {
+        let chunk = chunk.map_err(|err| TuraError::Network {
+            message: err.to_string(),
+        })?;
+        pending.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(line_end) = pending.find('\n') {
+            let line = pending[..line_end].trim_end_matches('\r').to_string();
+            pending.drain(..=line_end);
+            if process_anthropic_sse_line(&line, &mut state, stream_events.as_ref())? {
+                saw_output = true;
+                last_output_at = Instant::now();
+            }
+        }
+    }
+
+    if !pending.trim().is_empty() {
+        let _ = process_anthropic_sse_line(&pending, &mut state, stream_events.as_ref())?;
+    }
+
+    let data = state.into_message();
+    let content = normalize_response_content(&data);
+    let metrics = extract_metrics(&data);
+
+    Ok(ProviderResponse {
+        content,
+        raw: data,
+        metrics: Some(metrics),
+    })
+}
+
+#[derive(Default)]
+struct AnthropicStreamState {
+    message: Map<String, Value>,
+    content: BTreeMap<usize, Value>,
+    tool_input_buffers: BTreeMap<usize, String>,
+    saw_output_started: bool,
+}
+
+fn process_anthropic_sse_line(
+    line: &str,
+    state: &mut AnthropicStreamState,
+    stream_events: Option<&ProviderStreamEventSink>,
+) -> Result<bool, TuraError> {
+    let line = line.trim_start();
+    let Some(data) = line.strip_prefix("data:") else {
+        return Ok(false);
+    };
+    let data = data.trim();
+    if data.is_empty() || data == "[DONE]" {
+        return Ok(false);
+    }
+
+    let value: Value = serde_json::from_str(data).map_err(TuraError::Json)?;
+    Ok(state.push_event(&value, stream_events))
+}
+
+impl AnthropicStreamState {
+    fn push_event(
+        &mut self,
+        event: &Value,
+        stream_events: Option<&ProviderStreamEventSink>,
+    ) -> bool {
+        let mut output_started = false;
+        match event.get("type").and_then(Value::as_str) {
+            Some("message_start") => {
+                if let Some(message) = event.get("message").and_then(Value::as_object) {
+                    self.message = message.clone();
+                }
+            }
+            Some("content_block_start") => {
+                if let (Some(index), Some(block)) = (
+                    event.get("index").and_then(Value::as_u64),
+                    event.get("content_block"),
+                ) {
+                    self.content.insert(index as usize, block.clone());
+                    output_started = true;
+                }
+            }
+            Some("content_block_delta") => {
+                if let Some(index) = event.get("index").and_then(Value::as_u64) {
+                    if let Some(delta) = event.get("delta") {
+                        self.apply_delta(index as usize, delta);
+                        output_started = true;
+                    }
+                }
+            }
+            Some("content_block_stop") => {
+                if let Some(index) = event.get("index").and_then(Value::as_u64) {
+                    self.finish_block(index as usize, stream_events);
+                }
+            }
+            Some("message_delta") => {
+                if let Some(delta) = event.get("delta").and_then(Value::as_object) {
+                    for (key, value) in delta {
+                        self.message.insert(key.clone(), value.clone());
+                    }
+                }
+                if let Some(usage) = event.get("usage") {
+                    merge_usage(&mut self.message, usage);
+                }
+            }
+            _ => {}
+        }
+
+        if output_started && !self.saw_output_started {
+            self.saw_output_started = true;
+            if let Some(sink) = stream_events {
+                sink(ProviderStreamEvent::ProviderOutputStarted);
+            }
+        }
+        output_started
+    }
+
+    fn apply_delta(&mut self, index: usize, delta: &Value) {
+        match delta.get("type").and_then(Value::as_str) {
+            Some("text_delta") => {
+                if let Some(text) = delta.get("text").and_then(Value::as_str) {
+                    let block = self
+                        .content
+                        .entry(index)
+                        .or_insert_with(|| json!({ "type": "text", "text": "" }));
+                    append_string_field(block, "text", text);
+                }
+            }
+            Some("input_json_delta") => {
+                if let Some(partial) = delta.get("partial_json").and_then(Value::as_str) {
+                    self.tool_input_buffers
+                        .entry(index)
+                        .or_default()
+                        .push_str(partial);
+                }
+            }
+            Some("thinking_delta") => {
+                if let Some(text) = delta.get("thinking").and_then(Value::as_str) {
+                    let block = self
+                        .content
+                        .entry(index)
+                        .or_insert_with(|| json!({ "type": "thinking", "thinking": "" }));
+                    append_string_field(block, "thinking", text);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn finish_block(&mut self, index: usize, stream_events: Option<&ProviderStreamEventSink>) {
+        let Some(block) = self.content.get_mut(&index) else {
+            return;
+        };
+        if let Some(buffer) = self.tool_input_buffers.remove(&index) {
+            if let Ok(input) = serde_json::from_str::<Value>(&buffer) {
+                block["input"] = input;
+            }
+        }
+        for event in command_run_events_from_anthropic_tool_block(block) {
+            if let Some(sink) = stream_events {
+                sink(event);
+            }
+        }
+    }
+
+    fn into_message(self) -> Value {
+        let mut message = self.message;
+        if !message.contains_key("type") {
+            message.insert("type".to_string(), Value::String("message".to_string()));
+        }
+        if !message.contains_key("role") {
+            message.insert("role".to_string(), Value::String("assistant".to_string()));
+        }
+        message.insert(
+            "content".to_string(),
+            Value::Array(self.content.into_values().collect()),
+        );
+        Value::Object(message)
+    }
+}
+
+fn append_string_field(block: &mut Value, field: &str, text: &str) {
+    if let Some(object) = block.as_object_mut() {
+        let current = object
+            .entry(field.to_string())
+            .or_insert_with(|| Value::String(String::new()));
+        if let Some(value) = current.as_str() {
+            *current = Value::String(format!("{value}{text}"));
+        }
+    }
+}
+
+fn merge_usage(message: &mut Map<String, Value>, usage_delta: &Value) {
+    let usage = message
+        .entry("usage".to_string())
+        .or_insert_with(|| json!({}));
+    let Some(target) = usage.as_object_mut() else {
+        return;
+    };
+    if let Some(source) = usage_delta.as_object() {
+        for (key, value) in source {
+            target.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+fn command_run_events_from_anthropic_tool_block(block: &Value) -> Vec<ProviderStreamEvent> {
+    if block.get("type").and_then(Value::as_str) != Some("tool_use") {
+        return Vec::new();
+    }
+    let name = block.get("name").and_then(Value::as_str).unwrap_or("");
+    if name != "command_run" {
+        return Vec::new();
+    }
+    let input = normalize_command_run_tool_input(
+        name,
+        block.get("input").cloned().unwrap_or_else(|| json!({})),
+    );
+    let Some(commands) = input.get("commands").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let tool_call_id = block
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("tool_use")
+        .to_string();
+    commands
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(
+            |(command_index, command)| ProviderStreamEvent::CommandRunCommandReady {
+                tool_call_id: tool_call_id.clone(),
+                command_index,
+                command,
+            },
+        )
+        .collect()
+}
+
 /// Build the native Anthropic Messages payload from OpenAI-shaped inputs.
 fn build_payload(model: &str, messages: &[Value], options: &CallOptions, oauth: bool) -> Value {
     let (system, converted) = convert_messages(messages, oauth);
@@ -129,7 +388,7 @@ fn build_payload(model: &str, messages: &[Value], options: &CallOptions, oauth: 
     let mut payload = Map::new();
     payload.insert("model".to_string(), Value::String(model.to_string()));
     payload.insert("max_tokens".to_string(), Value::from(max_tokens));
-    if !system.trim().is_empty() {
+    if !system.is_empty() {
         // Anthropic's OAuth (Claude subscription) channel rejects large,
         // *uncached* requests with a `rate_limit_error` (HTTP 429) even when
         // plenty of quota remains — small requests slip under the threshold,
@@ -138,7 +397,7 @@ fn build_payload(model: &str, messages: &[Value], options: &CallOptions, oauth: 
         // breakpoint (`cache_control: ephemeral`). Replicate that shape so big
         // prompts are accepted. Verified by ablation: the cache breakpoint is
         // the single decisive factor (betas/stream/temperature are irrelevant).
-        payload.insert("system".to_string(), Value::Array(system_blocks(&system)));
+        payload.insert("system".to_string(), Value::Array(system));
     }
     payload.insert("messages".to_string(), Value::Array(converted));
     payload.insert("stream".to_string(), Value::Bool(false));
@@ -171,34 +430,51 @@ fn build_payload(model: &str, messages: &[Value], options: &CallOptions, oauth: 
         payload.insert("stop_sequences".to_string(), stop);
     }
 
-    Value::Object(payload)
+    let mut payload = Value::Object(payload);
+    if let Some(extra_body) = &options.extra_body {
+        deep_merge_json(&mut payload, extra_body.clone());
+    }
+    payload
 }
 
-/// Split the system prompt into typed Anthropic blocks with a prompt-cache
-/// breakpoint, mirroring the real `claude-code` CLI. The leading
-/// [`CLAUDE_CODE_SYSTEM_PROMPT`] prefix is emitted as its own block carrying
-/// `cache_control: ephemeral`; any remaining content follows as a plain block.
-/// Without this breakpoint the OAuth channel 429s on large prompts.
-fn system_blocks(system: &str) -> Vec<Value> {
+/// Build typed Anthropic system blocks with a prompt-cache breakpoint,
+/// mirroring the real `claude-code` CLI's system position.
+fn oauth_system_prefix_block() -> Value {
     let cache = json!({ "type": "ephemeral" });
-    if let Some(rest) = system.strip_prefix(CLAUDE_CODE_SYSTEM_PROMPT) {
-        let mut blocks = vec![json!({
-            "type": "text",
-            "text": CLAUDE_CODE_SYSTEM_PROMPT,
-            "cache_control": cache,
-        })];
-        let rest = rest.trim_start_matches(['\n', '\r']);
-        if !rest.trim().is_empty() {
-            blocks.push(json!({ "type": "text", "text": rest }));
+    json!({
+        "type": "text",
+        "text": CLAUDE_CODE_SYSTEM_PROMPT,
+        "cache_control": cache,
+    })
+}
+
+fn system_blocks_from_content(content: Option<&Value>) -> Vec<Value> {
+    match content {
+        Some(Value::Array(items)) => {
+            let mut blocks = Vec::new();
+            for item in items {
+                if item.get("type").and_then(Value::as_str) == Some("text")
+                    && item.get("text").and_then(Value::as_str).is_some()
+                {
+                    blocks.push(item.clone());
+                } else if let Some(text) = item
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .or_else(|| item.get("content").and_then(Value::as_str))
+                    .filter(|text| !text.trim().is_empty())
+                {
+                    blocks.push(json!({ "type": "text", "text": text }));
+                }
+            }
+            blocks
         }
-        blocks
-    } else {
-        // No recognized prefix (e.g. non-OAuth path): cache the whole block.
-        vec![json!({
-            "type": "text",
-            "text": system,
-            "cache_control": cache,
-        })]
+        Some(Value::String(text)) if !text.trim().is_empty() => {
+            vec![json!({ "type": "text", "text": text })]
+        }
+        Some(other) if !other.is_null() => {
+            vec![json!({ "type": "text", "text": other.to_string() })]
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -206,11 +482,11 @@ fn system_blocks(system: &str) -> Vec<Value> {
 /// string plus a list of `messages` with typed content blocks. Adjacent
 /// same-role messages are merged so the result always alternates roles, which
 /// Anthropic requires.
-fn convert_messages(messages: &[Value], oauth: bool) -> (String, Vec<Value>) {
+fn convert_messages(messages: &[Value], oauth: bool) -> (Vec<Value>, Vec<Value>) {
     let mut system = if oauth {
-        CLAUDE_CODE_SYSTEM_PROMPT.to_string()
+        vec![oauth_system_prefix_block()]
     } else {
-        String::new()
+        Vec::new()
     };
     let mut blocks: Vec<(String, Vec<Value>)> = Vec::new();
 
@@ -245,14 +521,7 @@ fn convert_messages(messages: &[Value], oauth: bool) -> (String, Vec<Value>) {
 
         match role {
             "system" | "developer" => {
-                if let Some(text) = message_text(message.get("content")) {
-                    if !text.trim().is_empty() {
-                        if !system.is_empty() {
-                            system.push_str("\n\n");
-                        }
-                        system.push_str(&text);
-                    }
-                }
+                system.extend(system_blocks_from_content(message.get("content")));
             }
             "tool" => {
                 push("user", chat_tool_result_block(message));
@@ -441,6 +710,7 @@ fn normalize_response_content(data: &Value) -> Value {
                         "id": id,
                         "type": "function",
                         "function": { "name": name, "arguments": input },
+                        "provider_metadata": { "id": id },
                     }));
                 }
                 _ => {}
@@ -515,6 +785,7 @@ fn message_text(content: Option<&Value>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn oauth_token_detected_by_prefix() {
@@ -549,6 +820,108 @@ mod tests {
         let metrics = extract_metrics(&data);
         assert!(!metrics.cache_hit);
         assert_eq!(metrics.cache_triggered_at_input_tokens, None);
+    }
+
+    #[test]
+    fn anthropic_stream_collects_text_and_usage() {
+        let mut state = AnthropicStreamState::default();
+        process_anthropic_sse_line(
+            r#"data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","usage":{"input_tokens":3}}}"#,
+            &mut state,
+            None,
+        )
+        .unwrap();
+        process_anthropic_sse_line(
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            &mut state,
+            None,
+        )
+        .unwrap();
+        process_anthropic_sse_line(
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}"#,
+            &mut state,
+            None,
+        )
+        .unwrap();
+        process_anthropic_sse_line(
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}"#,
+            &mut state,
+            None,
+        )
+        .unwrap();
+
+        let data = state.into_message();
+        assert_eq!(
+            normalize_response_content(&data),
+            Value::String("hello".to_string())
+        );
+        let metrics = extract_metrics(&data);
+        assert_eq!(metrics.usage.input_tokens, Some(3));
+        assert_eq!(metrics.usage.output_tokens, Some(2));
+        assert_eq!(metrics.finish_reason.as_deref(), Some("end_turn"));
+    }
+
+    #[test]
+    fn anthropic_stream_emits_command_run_when_tool_block_stops() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let sink: ProviderStreamEventSink = Arc::new(move |event| {
+            captured.lock().unwrap().push(event);
+        });
+        let mut state = AnthropicStreamState::default();
+
+        process_anthropic_sse_line(
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"command_run","input":{}}}"#,
+            &mut state,
+            Some(&sink),
+        )
+        .unwrap();
+        process_anthropic_sse_line(
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"commands\":[{\"command_type\":\"exec\",\"command_line\":\""}}"#,
+            &mut state,
+            Some(&sink),
+        )
+        .unwrap();
+        process_anthropic_sse_line(
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"echo ok\"}]}"}}"#,
+            &mut state,
+            Some(&sink),
+        )
+        .unwrap();
+        process_anthropic_sse_line(
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            &mut state,
+            Some(&sink),
+        )
+        .unwrap();
+
+        let captured = events.lock().unwrap();
+        assert!(matches!(
+            captured.first(),
+            Some(ProviderStreamEvent::ProviderOutputStarted)
+        ));
+        let ready = captured
+            .iter()
+            .find_map(|event| match event {
+                ProviderStreamEvent::CommandRunCommandReady {
+                    tool_call_id,
+                    command_index,
+                    command,
+                } => Some((tool_call_id, command_index, command)),
+                ProviderStreamEvent::ProviderOutputStarted => None,
+            })
+            .expect("command_run ready event");
+        assert_eq!(ready.0, "toolu_1");
+        assert_eq!(*ready.1, 0);
+        assert_eq!(ready.2["command_line"], "echo ok");
+
+        let data = state.into_message();
+        assert_eq!(
+            data["content"][0]["input"]["commands"][0]["command_line"],
+            "echo ok"
+        );
+        let content = normalize_response_content(&data);
+        assert_eq!(content["tool_calls"][0]["function"]["name"], "command_run");
     }
 
     #[test]
@@ -587,6 +960,29 @@ mod tests {
             .join("\n\n");
         assert!(merged.contains("Be terse."));
         assert_eq!(payload["messages"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn native_anthropic_system_blocks_keep_position_and_cache_control() {
+        let messages = vec![
+            json!({
+                "role": "system",
+                "content": [{
+                    "type": "text",
+                    "text": "Native cached instructions",
+                    "cache_control": {"type": "ephemeral"}
+                }]
+            }),
+            json!({ "role": "user", "content": "hi" }),
+        ];
+
+        let payload = build_payload("claude-opus-4-8", &messages, &CallOptions::default(), false);
+        let blocks = payload["system"].as_array().unwrap();
+
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[0]["text"], "Native cached instructions");
+        assert_eq!(blocks[0]["cache_control"]["type"], "ephemeral");
+        assert_eq!(payload["messages"][0]["role"], "user");
     }
 
     #[test]
@@ -688,6 +1084,25 @@ mod tests {
         assert_eq!(payload["tools"][0]["input_schema"]["type"], "object");
         assert_eq!(payload["tool_choice"]["type"], "tool");
         assert_eq!(payload["tool_choice"]["name"], "grep");
+    }
+
+    #[test]
+    fn extra_body_preserves_native_claude_code_request_fields() {
+        let mut options = CallOptions::default();
+        options.extra_body = Some(json!({
+            "betas": ["context-management-2025-06-27"],
+            "context_management": {"edits": [{"type": "clear_thinking_20251015", "keep": "all"}]},
+            "output_config": {"effort": "medium"},
+            "speed": "fast"
+        }));
+        let messages = vec![json!({ "role": "user", "content": "hi" })];
+
+        let payload = build_payload("claude-opus-4-8", &messages, &options, true);
+
+        assert_eq!(payload["betas"][0], "context-management-2025-06-27");
+        assert_eq!(payload["context_management"]["edits"][0]["keep"], "all");
+        assert_eq!(payload["output_config"]["effort"], "medium");
+        assert_eq!(payload["speed"], "fast");
     }
 
     #[test]

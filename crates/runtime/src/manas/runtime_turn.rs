@@ -10,11 +10,10 @@ use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::state_machine::session_management::SessionManagement;
 
 use super::agent_prompts::load_agent_system_prompt_messages;
-use super::constants::{COMMAND_RUN_TOOL, MULTIPLE_TASKS_TOOL};
+use super::constants::{COMMAND_RUN_TOOL, PLANNING_TOOL};
 use super::tool_catalog::{
     command_run_commands_for_agent, filter_tools_for_turn, load_agent_capabilities,
-    multiple_tasks_child_depth, multiple_tasks_env_enabled, multiple_tasks_tool_disabled,
-    tool_schema_name,
+    planning_child_depth, planning_tool_disabled, tool_schema_name,
 };
 
 pub(super) fn execute_turn(
@@ -30,24 +29,26 @@ pub(super) fn execute_turn(
         .first()
         .ok_or_else(|| "no agent available".to_string())?;
 
+    let agent_commands = command_run_commands_for_agent(agent);
+    let planning_enabled = agent_commands.contains(PLANNING_TOOL);
     let mut tools = load_agent_capabilities(agent)?;
-    if multiple_tasks_tool_disabled() {
-        tools.retain(|tool| tool_schema_name(tool) != Some(MULTIPLE_TASKS_TOOL));
+    if planning_tool_disabled() {
+        tools.retain(|tool| tool_schema_name(tool) != Some(PLANNING_TOOL));
     }
     tools = filter_tools_for_turn(
         tools,
         is_final_turn,
         force_no_tools,
-        multiple_tasks_child_depth() > 0,
-        multiple_tasks_env_enabled(),
+        planning_child_depth() > 0,
+        planning_enabled,
     )?;
     let mut allowed_tool_names: std::collections::HashSet<String> = tools
         .iter()
         .filter_map(tool_schema_name)
         .map(ToString::to_string)
         .collect();
-    if multiple_tasks_env_enabled() && !multiple_tasks_tool_disabled() {
-        allowed_tool_names.insert(MULTIPLE_TASKS_TOOL.to_string());
+    if planning_enabled && !planning_tool_disabled() {
+        allowed_tool_names.insert(PLANNING_TOOL.to_string());
     }
     tools = move_command_run_to_end(tools);
     if debug_runtime_enabled() {
@@ -124,7 +125,7 @@ pub(super) fn execute_turn(
                 max_tokens: agent.provider.max_tokens,
                 tool_choice: tool_choice_for_turn(&allowed_tool_names, is_final_turn),
                 session_directory: session.session_directory.clone(),
-                allowed_command_run_commands: Some(command_run_commands_for_agent(agent)),
+                allowed_command_run_commands: Some(agent_commands),
             },
             settings,
             config,
@@ -160,7 +161,7 @@ fn session_language() -> String {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "zh-CN".to_string())
+        .unwrap_or_else(|| "en".to_string())
 }
 
 fn session_user_name() -> String {

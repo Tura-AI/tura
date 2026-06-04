@@ -132,9 +132,6 @@ fn collect_entries(root: &Path, dir: &Path, depth: usize, snapshot: &mut Workspa
 
     for entry in read_dir.flatten() {
         let path = entry.path();
-        if should_skip_path(&path) {
-            continue;
-        }
         let Ok(metadata) = entry.metadata() else {
             continue;
         };
@@ -189,95 +186,6 @@ fn file_suffix(path: &Path) -> String {
         .and_then(|extension| extension.to_str())
         .map(|extension| format!(".{extension}"))
         .unwrap_or_else(|| "(none)".to_string())
-}
-
-fn should_skip_path(path: &Path) -> bool {
-    if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-        let lower = name.to_ascii_lowercase();
-        if matches!(
-            lower.as_str(),
-            ".git"
-                | ".hg"
-                | ".svn"
-                | ".idea"
-                | ".vscode"
-                | ".pytest_cache"
-                | ".mypy_cache"
-                | ".ruff_cache"
-                | ".tox"
-                | ".nox"
-                | ".cache"
-                | ".parcel-cache"
-                | ".next"
-                | ".nuxt"
-                | ".turbo"
-                | ".venv"
-                | "venv"
-                | "env"
-                | "node_modules"
-                | "bower_components"
-                | "vendor"
-                | "target"
-                | "dist"
-                | "build"
-                | "out"
-                | "coverage"
-                | ".coverage"
-                | "__pycache__"
-                | ".gradle"
-                | ".cargo"
-                | ".pnpm-store"
-                | "tmp"
-                | "temp"
-        ) {
-            return true;
-        }
-
-        if lower.ends_with('~')
-            || lower.ends_with(".tmp")
-            || lower.ends_with(".temp")
-            || lower.ends_with(".log")
-            || lower.ends_with(".bak")
-            || lower.ends_with(".swp")
-            || lower.ends_with(".swo")
-            || lower.ends_with(".class")
-            || lower.ends_with(".o")
-            || lower.ends_with(".obj")
-            || lower.ends_with(".dll")
-            || lower.ends_with(".exe")
-            || lower.ends_with(".so")
-            || lower.ends_with(".dylib")
-            || lower.ends_with(".rlib")
-            || lower.ends_with(".pdb")
-        {
-            return true;
-        }
-    }
-
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            matches!(
-                extension.to_ascii_lowercase().as_str(),
-                "pyc"
-                    | "pyo"
-                    | "pyd"
-                    | "png"
-                    | "jpg"
-                    | "jpeg"
-                    | "gif"
-                    | "webp"
-                    | "ico"
-                    | "pdf"
-                    | "zip"
-                    | "tar"
-                    | "gz"
-                    | "7z"
-                    | "rar"
-                    | "wasm"
-                    | "map"
-            )
-        })
 }
 
 fn render_snapshot_lines(
@@ -502,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_snapshot_skips_common_generated_and_dependency_paths() {
+    fn workspace_snapshot_includes_generated_dependency_and_binary_paths() {
         let temp = TempDir::new().expect("tempdir");
         fs::write(temp.path().join("Cargo.lock"), "keep\n").expect("write lock");
         fs::write(temp.path().join("app.py"), "keep\n").expect("write source");
@@ -540,12 +448,15 @@ mod tests {
 
         assert!(rendered.contains("Cargo.lock"));
         assert!(rendered.contains("app.py"));
-        assert!(!rendered.contains(".git/"));
-        assert!(!rendered.contains("node_modules/"));
-        assert!(!rendered.contains("target/"));
-        assert!(!rendered.contains("__pycache__/"));
-        assert!(!rendered.contains(".pyc"));
-        assert!(!rendered.contains(".log"));
+        assert!(rendered.contains(".git/"));
+        assert!(rendered.contains(".git/config"));
+        assert!(rendered.contains("node_modules/"));
+        assert!(rendered.contains("node_modules/pkg/index.js"));
+        assert!(rendered.contains("target/"));
+        assert!(rendered.contains("target/debug/build.log"));
+        assert!(rendered.contains("__pycache__/"));
+        assert!(rendered.contains(".pyc"));
+        assert!(rendered.contains(".log"));
     }
 
     #[test]

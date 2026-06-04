@@ -198,6 +198,7 @@
               "attachment": true,
               "family": "claude",
               "id": "claude-opus-4-7",
+              "visible": false,
               "limit": {
                 "context": 1000000,
                 "input": 1000000,
@@ -752,6 +753,7 @@
               "attachment": true,
               "family": "claude",
               "id": "anthropic.claude-opus-4-7",
+              "visible": false,
               "limit": {
                 "context": 1000000,
                 "input": 1000000,
@@ -876,6 +878,7 @@
               "attachment": true,
               "family": "claude",
               "id": "claude-opus-4-8",
+              "visible": false,
               "limit": {
                 "context": 1000000,
                 "input": 1000000,
@@ -904,6 +907,7 @@
               "attachment": true,
               "family": "claude",
               "id": "claude-opus-4-7",
+              "visible": false,
               "limit": {
                 "context": 1000000,
                 "input": 1000000,
@@ -2708,6 +2712,7 @@
               "attachment": true,
               "family": "claude",
               "id": "claude-opus-4-7",
+              "visible": false,
               "limit": {
                 "context": 1000000,
                 "input": 1000000,
@@ -3922,7 +3927,7 @@
       "status": "connected",
       "token_env": "CLAUDE_CODE_OAUTH_TOKEN",
       "type": "oauth",
-      "updated_at": "2026-06-01T08:16:13.184740500+00:00"
+      "updated_at": "2026-06-01T15:09:18.558946200+00:00"
     },
     "codex": {
       "account_env": "OPENAI_ACCOUNT_ID",

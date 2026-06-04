@@ -10,6 +10,7 @@ use crate::manas::{process_manas_internal, ManasInput};
 use crate::mano::gateway_session::{load_persisted_gateway_session, persist_gateway_session};
 use crate::mano::session_bootstrap::create_session_with_topic;
 use crate::mano::{ManoOverrides, ManoProcessResult};
+use crate::state_machine::agent_management::{AgentCapabilityItem, AgentManagement};
 use crate::state_machine::session_management::{SessionInput, SessionManagement};
 use std::path::PathBuf;
 
@@ -88,6 +89,8 @@ fn orchestrate_with_config_and_session(
             return Err(format!("failed to activate agents: {}", e));
         }
     };
+    apply_planning_capability_override(&mut agents, &session);
+    session.planning_enabled = agents.first().is_some_and(agent_has_planning_capability);
 
     if let Err(e) = initialize_agent_state_machine(&mut agents, &session) {
         error!(error = %e, "failed to initialize agent state machine");
@@ -133,6 +136,47 @@ fn orchestrate_with_config_and_session(
         session: manas_result.session,
         agents: manas_result.agents,
     })
+}
+
+fn apply_planning_capability_override(agents: &mut [AgentManagement], session: &SessionManagement) {
+    let Some(enabled) = session.input.planning_mode_override else {
+        return;
+    };
+    let Some(agent) = agents.first_mut() else {
+        return;
+    };
+    if enabled {
+        if !agent_has_planning_capability(agent) {
+            let capability_directory = agent
+                .agent_capabilities
+                .iter()
+                .find(|capability| capability.capability_name == "command_run")
+                .or_else(|| agent.agent_capabilities.first())
+                .map(|capability| capability.capability_directory.clone())
+                .unwrap_or_else(|| {
+                    session
+                        .session_directory
+                        .join("crates")
+                        .join("tools")
+                        .join("src")
+                });
+            agent.agent_capabilities.push(AgentCapabilityItem {
+                capability_name: "planning".to_string(),
+                capability_directory,
+            });
+        }
+    } else {
+        agent
+            .agent_capabilities
+            .retain(|capability| capability.capability_name != "planning");
+    }
+}
+
+fn agent_has_planning_capability(agent: &AgentManagement) -> bool {
+    agent
+        .agent_capabilities
+        .iter()
+        .any(|capability| capability.capability_name == "planning")
 }
 
 fn initial_messages_for_session(
@@ -200,12 +244,21 @@ fn permissions_instructions() -> &'static str {
 
 fn environment_context_message(cwd: &std::path::Path) -> String {
     format!(
-        "<environment_context>\n  <cwd>{}</cwd>\n  <shell>{}</shell>\n  <current_date>{}</current_date>\n  <timezone>{}</timezone>\n</environment_context>",
+        "<environment_context>\n  <cwd>{}</cwd>\n  <shell>{}</shell>\n  <current_date>{}</current_date>\n  <timezone>{}</timezone>\n  <system_language>{}</system_language>\n</environment_context>",
         cwd.display(),
         context_shell_name(),
         chrono::Local::now().format("%Y-%m-%d"),
-        std::env::var("TZ").unwrap_or_else(|_| "Europe/Paris".to_string())
+        std::env::var("TZ").unwrap_or_else(|_| "Europe/Paris".to_string()),
+        session_language()
     )
+}
+
+fn session_language() -> String {
+    std::env::var("TURA_SESSION_LANGUAGE")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "en".to_string())
 }
 
 fn context_shell_name() -> &'static str {
@@ -286,7 +339,7 @@ pub fn process_from_user_internal(
     input: SessionInput,
     overrides: ManoOverrides,
 ) -> Result<ManoProcessResult, String> {
-    let session = match overrides.session_factory {
+    let mut session = match overrides.session_factory {
         Some(session_factory) => session_factory(input)?,
         None => create_session_with_topic(input, None)?,
     };
@@ -295,6 +348,8 @@ pub fn process_from_user_internal(
         Some(manas_entry) => manas_entry(&session)?,
         None => {
             let mut agts = activate_agents_by_session_type(&session)?;
+            apply_planning_capability_override(&mut agts, &session);
+            session.planning_enabled = agts.first().is_some_and(agent_has_planning_capability);
             initialize_agent_state_machine(&mut agts, &session)?;
             agts
         }
@@ -312,20 +367,78 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn gateway_bootstrap_loads_persisted_session_before_creating_new_session() {
+    fn planning_override_removes_planning_from_started_agent_state() {
+        let input = SessionInput {
+            user_input: "inspect".to_string(),
+            file_input: Vec::new(),
+            agent: Some("coding_agent_planning".to_string()),
+            runtime_context: None,
+            planning_mode_override: Some(false),
+        };
+        let mut session = SessionManagement::new(
+            "planning-off".to_string(),
+            "planning-off".to_string(),
+            std::env::current_dir().expect("current dir should resolve"),
+            false,
+            "coding".to_string(),
+            input,
+            "inspect".to_string(),
+            Utc::now(),
+        );
+        let mut agents = activate_agents_by_session_type(&session).expect("agents should activate");
+
+        apply_planning_capability_override(&mut agents, &session);
+        session.planning_enabled = agents.first().is_some_and(agent_has_planning_capability);
+
+        assert!(!session.planning_enabled);
+        assert!(!agent_has_planning_capability(&agents[0]));
+    }
+
+    #[test]
+    fn planning_override_adds_planning_to_started_agent_state() {
+        let input = SessionInput {
+            user_input: "inspect".to_string(),
+            file_input: Vec::new(),
+            agent: Some("general".to_string()),
+            runtime_context: None,
+            planning_mode_override: Some(true),
+        };
+        let mut session = SessionManagement::new(
+            "planning-on".to_string(),
+            "planning-on".to_string(),
+            std::env::current_dir().expect("current dir should resolve"),
+            false,
+            "general".to_string(),
+            input,
+            "inspect".to_string(),
+            Utc::now(),
+        );
+        let mut agents = activate_agents_by_session_type(&session).expect("agents should activate");
+
+        apply_planning_capability_override(&mut agents, &session);
+        session.planning_enabled = agents.first().is_some_and(agent_has_planning_capability);
+
+        assert!(session.planning_enabled);
+        assert!(agent_has_planning_capability(&agents[0]));
+    }
+
+    #[test]
+    fn gateway_bootstrap_loads_session_log_session_before_creating_new_session() {
         let root = std::env::temp_dir().join(format!(
             "tura-gateway-bootstrap-{}",
             Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ));
-        let session_id = "sess-existing".to_string();
-        let sessions_dir = root.join(".tura").join("sessions");
-        fs::create_dir_all(&sessions_dir).expect("test session dir");
+        let session_id = format!(
+            "sess-existing-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
 
         let old_input = SessionInput {
             user_input: "old prompt".to_string(),
             file_input: Vec::new(),
             agent: None,
             runtime_context: None,
+            planning_mode_override: None,
         };
         let mut persisted = SessionManagement::new(
             session_id.clone(),
@@ -338,25 +451,14 @@ mod tests {
             Utc::now(),
         );
         persisted.push_log("persisted-session-loaded", Utc::now());
-
-        let record = serde_json::json!({
-            "info": {
-                "management": persisted,
-            },
-            "messages": [],
-            "todos": [],
-        });
-        fs::write(
-            sessions_dir.join(format!("{session_id}.json")),
-            serde_json::to_string_pretty(&record).expect("record json"),
-        )
-        .expect("write persisted session");
+        persist_gateway_session(&persisted).expect("persist session_log session");
 
         let next_input = SessionInput {
             user_input: "fix bug in the existing workspace".to_string(),
             file_input: Vec::new(),
             agent: None,
             runtime_context: None,
+            planning_mode_override: None,
         };
         let session = bootstrap_orchestration_session(
             next_input.clone(),
@@ -377,7 +479,79 @@ mod tests {
             .iter()
             .any(|entry| entry == "persisted-session-loaded"));
 
-        let _ = fs::remove_dir_all(session.session_directory);
+        let _ = std::fs::remove_dir_all(session.session_directory);
+    }
+
+    #[test]
+    fn gateway_persistence_writes_session_log_records() {
+        let root = std::env::temp_dir().join(format!(
+            "tura-session-log-records-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        fs::create_dir_all(&root).expect("test workspace should be created");
+        let session_id = format!(
+            "persist-records-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let mut session = SessionManagement::new(
+            session_id.clone(),
+            "persist records".to_string(),
+            root,
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "persist records".to_string(),
+                file_input: Vec::new(),
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "persist records".to_string(),
+            Utc::now(),
+        );
+        accumulate_message(
+            &mut session,
+            "user",
+            serde_json::Value::String("persist records".to_string()),
+        )
+        .expect("user message should accumulate");
+        session.push_log(
+            serde_json::json!({
+                "type": "tool_result",
+                "tool_name": "command_run",
+                "input": {"commands": [{"command_type": "shell_command", "command_line": "pwd"}]},
+                "output": {"results": [{"command_type": "shell_command", "success": true}]},
+                "success": true,
+                "timestamp": Utc::now().to_rfc3339(),
+            })
+            .to_string(),
+            Utc::now(),
+        );
+        session.push_log(
+            serde_json::json!({
+                "type": "runtime_usage",
+                "usage": {"input_tokens": 1, "output_tokens": 2},
+                "timestamp": Utc::now().to_rfc3339(),
+            })
+            .to_string(),
+            Utc::now(),
+        );
+
+        persist_gateway_session(&session).expect("session should persist");
+
+        let (_page, records) = crate::session_log_client::SessionLogClient::discover()
+            .expect("session_log client should be available")
+            .list_session_records(session_id, 0, 50)
+            .expect("records should load");
+        assert_eq!(records.len(), session.session_log.len());
+        assert!(records.iter().any(|record| {
+            record.role == "tool"
+                && record.record["type"] == "tool_result"
+                && record.record["tool_name"] == "command_run"
+        }));
+        assert!(records
+            .iter()
+            .any(|record| record.role == "runtime" && record.record["type"] == "runtime_usage"));
     }
 
     #[test]
@@ -392,6 +566,7 @@ mod tests {
             file_input: Vec::new(),
             agent: None,
             runtime_context: None,
+            planning_mode_override: None,
         };
         let mut session = SessionManagement::new(
             "resume-image-session".to_string(),
@@ -435,6 +610,7 @@ mod tests {
                 file_input: Vec::new(),
                 agent: None,
                 runtime_context: None,
+                planning_mode_override: None,
             },
             Utc::now(),
         );
@@ -465,6 +641,7 @@ mod tests {
             file_input: Vec::new(),
             agent: None,
             runtime_context: None,
+                planning_mode_override: None,
         };
         let mut session = SessionManagement::new(
             "inline-image-session".to_string(),
@@ -525,6 +702,7 @@ mod tests {
             file_input: Vec::new(),
             agent: None,
             runtime_context: None,
+            planning_mode_override: None,
         };
         let mut session = SessionManagement::new(
             "snapshot-session".to_string(),

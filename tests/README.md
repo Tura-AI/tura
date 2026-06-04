@@ -24,3 +24,18 @@ can take minutes, consume provider quota, and write large run outputs under
 
 Historical generated command-run records from the old layout now live under
 `target/command-run-codex-two-way-records/`.
+
+## Inspecting Logs In Tests
+
+Tests and benchmark scripts should query Tura session history through
+`session_log`, not by reading `.tura/sessions/*.json`.
+
+```powershell
+'{"command":"get_session","session_id":"session-id"}' | target\debug\gateway.exe session-log
+'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\gateway.exe session-log
+```
+
+Provider-call diagnostics are separate files under
+`log/provider/YYYY-MM-DD/*.json` by default, or under `LOG_PATH` when that
+environment variable is set. Use provider logs for model request/response
+debugging and session_log for session/task/message assertions.

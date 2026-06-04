@@ -514,6 +514,7 @@ pub(super) fn publish_task_plan_todos(session: &SessionManagement) {
         .map(|(index, task)| {
             let status = match task.status {
                 crate::state_machine::session_management::TaskStatus::Todo => "todo",
+                crate::state_machine::session_management::TaskStatus::WaitingUser => "waiting_user",
                 crate::state_machine::session_management::TaskStatus::Doing => "doing",
                 crate::state_machine::session_management::TaskStatus::Question => "question",
                 crate::state_machine::session_management::TaskStatus::Done => "done",
@@ -576,7 +577,7 @@ pub(super) fn gateway_callback_base_url() -> String {
 }
 
 fn gateway_callback_session_id(session_id: &str) -> String {
-    if multiple_tasks_child_depth_from_env() > 0 {
+    if planning_child_depth_from_env() > 0 {
         if let Ok(parent_session_id) = std::env::var("TURA_PARENT_SESSION_ID") {
             let parent_session_id = parent_session_id.trim();
             if !parent_session_id.is_empty() {
@@ -588,8 +589,8 @@ fn gateway_callback_session_id(session_id: &str) -> String {
     session_id.to_string()
 }
 
-fn multiple_tasks_child_depth_from_env() -> usize {
-    std::env::var("TURA_MULTIPLE_TASKS_DEPTH")
+fn planning_child_depth_from_env() -> usize {
+    std::env::var("TURA_PLANNING_DEPTH")
         .or_else(|_| std::env::var("TURA_EXECUTE_TOOLS_DEPTH"))
         .ok()
         .and_then(|value| value.parse::<usize>().ok())

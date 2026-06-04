@@ -99,6 +99,11 @@ pub fn to_anthropic_tools(tools: &[Value]) -> Vec<Value> {
                 return None;
             };
             if obj.get("type").and_then(Value::as_str) != Some("function") {
+                if obj.get("name").and_then(Value::as_str).is_some()
+                    && obj.get("input_schema").is_some()
+                {
+                    return Some(Value::Object(obj.clone()));
+                }
                 return None;
             }
             let Value::Object(function) = obj.get("function")? else {
@@ -216,6 +221,22 @@ mod tests {
             tools[0]["input_schema"]["properties"]["msg"]["type"],
             "string"
         );
+    }
+
+    #[test]
+    fn anthropic_tools_preserve_native_anthropic_tool_schema() {
+        let tools = to_anthropic_tools(&[json!({
+            "name": "Read",
+            "description": "Read a file",
+            "input_schema": {"type": "object", "properties": {"file_path": {"type": "string"}}},
+            "cache_control": {"type": "ephemeral"},
+            "eager_input_streaming": true
+        })]);
+
+        assert_eq!(tools[0]["name"], "Read");
+        assert_eq!(tools[0]["input_schema"]["type"], "object");
+        assert_eq!(tools[0]["cache_control"]["type"], "ephemeral");
+        assert_eq!(tools[0]["eager_input_streaming"], true);
     }
 
     #[test]

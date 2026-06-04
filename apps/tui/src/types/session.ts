@@ -21,10 +21,10 @@ export interface PollInterval {
 }
 
 export interface TaskManagement {
-  nonce_id?: string;
+  task_id?: string;
   step?: number;
   task_summary?: string;
-  delivery?: string;
+  deliverable?: string;
   sub_session_id?: string;
   start_at?: string | number;
   poll_interval?: PollInterval;
@@ -47,7 +47,7 @@ export interface Session {
   auto_session_name?: boolean;
   kill_processes_on_start?: boolean;
   validator_enabled?: boolean;
-  force_multiple_tasks?: boolean;
+  force_planning?: boolean;
   model_variant?: string | null;
   model_acceleration_enabled?: boolean;
   status?: SessionStatusValue;
@@ -113,7 +113,7 @@ export interface CreateSessionRequest {
   model_acceleration_enabled?: boolean;
   kill_processes_on_start?: boolean;
   validator_enabled?: boolean;
-  force_multiple_tasks?: boolean;
+  force_planning?: boolean;
   auto_session_name?: boolean;
   task_management?: TaskManagement;
 }

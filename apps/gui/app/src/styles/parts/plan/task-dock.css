@@ -46,10 +46,10 @@
 .composer-task-list {
   position: relative;
   display: grid;
-  gap: var(--space-1);
+  gap: 0;
   max-height: 158px;
   overflow: auto;
-  padding: var(--space-2);
+  padding: calc(var(--space-3) / 2) var(--space-3);
   border: 0;
   background: transparent;
   box-shadow: none;
@@ -115,6 +115,76 @@
 
 .composer-task-row-wrap {
   position: relative;
+  padding: 3px 0;
+  border-top: 1px solid var(--line);
+  touch-action: none;
+}
+
+.composer-task-row-wrap:first-child {
+  border-top: 0;
+}
+
+.composer-task-row-wrap.dragging {
+  opacity: 0;
+}
+
+.composer-task-row-wrap.drop-before::before,
+.composer-task-row-wrap.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 4;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
+  pointer-events: none;
+}
+
+.composer-task-row-wrap.drop-before::before {
+  top: 0;
+}
+
+.composer-task-row-wrap.drop-after::after {
+  bottom: 0;
+}
+
+.composer-task-drag-handle {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  display: grid;
+  width: 22px;
+  height: 28px;
+  place-items: center;
+  color: var(--muted);
+  transform: translateY(-50%);
+}
+
+.composer-task-drag-ghost {
+  display: grid;
+  align-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--paper);
+  box-shadow: 0 10px 28px rgb(28 28 24 / 12%);
+  color: var(--ink);
+  overflow: hidden;
+}
+
+.composer-task-drag-ghost .composer-task-row-wrap {
+  border-top: 0;
+}
+
+.composer-task-drag-ghost .composer-task-row {
+  min-height: 100%;
+  background: var(--paper);
+}
+
+.composer-task-drag-ghost .composer-task-more {
+  display: none;
 }
 
 .composer-task-row,
@@ -131,11 +201,13 @@
   color: var(--ink);
   font-size: var(--font-ui);
   text-align: left;
+  cursor: default;
   container-type: inline-size;
 }
 
 .composer-task-row {
   width: 100%;
+  padding-left: 24px;
   padding-right: 34px;
 }
 
@@ -151,6 +223,7 @@
   border-radius: var(--radius-small);
   background: transparent;
   color: var(--muted);
+  cursor: default;
   transform: translateY(-50%);
 }
 
@@ -200,6 +273,23 @@
 
 .composer-task-row.selected {
   box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.composer-task-title {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+}
+
+.composer-task-status {
+  width: 14px;
+  height: 14px;
+}
+
+.composer-task-title-text {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .composer-task-row span,

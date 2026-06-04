@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use code_tools_suite::agent_router::activate_agents_by_session_type;
-use code_tools_suite::manas::load_agent_system_prompt_messages;
-use code_tools_suite::session::activate_session_with_topic;
-use code_tools_suite::state_machine::session_management::SessionInput;
+use runtime::agent_router::activate_agents_by_session_type;
+use runtime::manas::load_agent_system_prompt_messages;
+use runtime::session::activate_session_with_topic;
+use runtime::state_machine::session_management::SessionInput;
 
 #[test]
 fn coding_agents_inject_persona_style_then_agent_prompt() {
@@ -51,6 +51,7 @@ fn coding_agents_inject_persona_style_then_agent_prompt() {
                 file_input: vec![],
                 agent: Some(agent_name.to_string()),
                 runtime_context: None,
+                planning_mode_override: None,
             },
         )
         .expect("session should be created");

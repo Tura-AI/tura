@@ -672,7 +672,7 @@ const mode = process.argv[2] || "desktop";
 const port = Number(process.env.PORT || 4173);
 const outDir = new URL("../artifacts/", import.meta.url);
 fs.mkdirSync(fileURLToPath(outDir), { recursive: true });
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: false });
 const page = await browser.newPage({
   viewport: mode === "mobile" ? { width: 390, height: 844 } : { width: 1440, height: 980 },
   deviceScaleFactor: 1,
@@ -851,7 +851,7 @@ function stopServer(child) {
 const server = startServer();
 try {
   await waitForServer(server);
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: false });
   const page = await browser.newPage({ viewport: { width: 1440, height: 980 }, deviceScaleFactor: 1 });
   await page.goto(\`http://127.0.0.1:\${port}\`, { waitUntil: "networkidle" });
   const title = await page.locator("h1").textContent();
@@ -869,7 +869,7 @@ try {
 function inspectScript() {
   return `import { chromium } from "playwright";
 const port = Number(process.env.PORT || 4173);
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: false });
 const page = await browser.newPage({ viewport: { width: 1440, height: 980 } });
 await page.goto(\`http://127.0.0.1:\${port}\`, { waitUntil: "networkidle" });
 const data = await page.evaluate(() => ({
@@ -888,7 +888,7 @@ await browser.close();
 function a11yScript() {
   return `import { chromium } from "playwright";
 const port = Number(process.env.PORT || 4173);
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: false });
 const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
 await page.goto(\`http://127.0.0.1:\${port}\`, { waitUntil: "networkidle" });
 const result = await page.evaluate(() => ({
@@ -905,7 +905,7 @@ await browser.close();
 function probeScript() {
   return `import { chromium } from "playwright";
 const port = Number(process.env.PORT || 4173);
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: false });
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 await page.goto(\`http://127.0.0.1:\${port}\`, { waitUntil: "networkidle" });
 await page.getByRole("button", { name: /active/i }).click();
@@ -994,7 +994,7 @@ const workspace = process.argv[2];
 const port = Number(process.argv[3]);
 const require = createRequire(workspace + "/package.json");
 const { chromium } = require("playwright");
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: false });
 const failures = [];
 const score = { visual: 0, interaction: 0, phase2: 0, programbench: 0 };
 
@@ -1149,7 +1149,7 @@ function createReferenceScreenshots(template) {
   for (const kind of ["desktop", "mobile", "modal"]) {
     writeFile(path.join(ref, `${kind}.html`), referenceScreenshotHtml(kind))
   }
-  writeFile(path.join(template, "tools", "make_reference.mjs"), `import { chromium } from "playwright";\nimport path from "node:path";\nconst browser = await chromium.launch({ headless: true });\nfor (const kind of ["desktop","mobile","modal"]) {\n  const page = await browser.newPage({ viewport: kind === "mobile" ? { width: 390, height: 844 } : { width: 1440, height: 980 } });\n  await page.goto("file://" + path.resolve("reference", kind + ".html"));\n  await page.screenshot({ path: path.resolve("reference", kind + ".png"), fullPage: true });\n  await page.close();\n}\nawait browser.close();\n`)
+  writeFile(path.join(template, "tools", "make_reference.mjs"), `import { chromium } from "playwright";\nimport path from "node:path";\nconst browser = await chromium.launch({ headless: false });\nfor (const kind of ["desktop","mobile","modal"]) {\n  const page = await browser.newPage({ viewport: kind === "mobile" ? { width: 390, height: 844 } : { width: 1440, height: 980 } });\n  await page.goto("file://" + path.resolve("reference", kind + ".html"));\n  await page.screenshot({ path: path.resolve("reference", kind + ".png"), fullPage: true });\n  await page.close();\n}\nawait browser.close();\n`)
   runOk(npmCmd, ["install"], { cwd: template, timeoutMs: 180_000, shell: process.platform === "win32" })
   runOk(npxCmd, ["playwright", "install", "chromium"], { cwd: template, timeoutMs: 240_000, shell: process.platform === "win32" })
   runOk("node", ["tools/make_reference.mjs"], { cwd: template, timeoutMs: 120_000 })
@@ -1165,7 +1165,7 @@ function createHiddenEvaluator() {
 }
 
 function promptPhase1(port, shellSurface = "shell_command") {
-  return `Repair the React task board in this workspace so it matches the provided desktop, mobile, and modal references in visual quality and behavior. Fix filtering, search, task creation, completion, details, accessibility names, overflow, and responsive layout. The create dialog must have an accessible name like "Create task" or "Create work item", its submit button must be named "Create", and the success status must include "Task added". Keep the desktop hero between 150px and 340px tall, the mobile navigation no taller than 130px, the mobile heading no larger than 46px, and the page free of horizontal overflow. Also complete the programbench-mini rebuild: implement the Rust calculator CLI, produce the required report, docs, submission archive, and eval JSON artifacts.`
+  return `Repair the React task board in this current workspace only so it matches the provided desktop, mobile, and modal references in visual quality and behavior. Do not read from, copy from, diff against, or inspect any other benchmark run directory, sibling agent workspace, old target artifact, previous solution, or path outside this workspace; all implementation work must be based only on the files and reference assets already present under the current working directory. Fix filtering, search, task creation, completion, details, accessibility names, overflow, and responsive layout. The create dialog must have an accessible name like "Create task" or "Create work item", its submit button must be named "Create", and the success status must include "Task added". Keep the desktop hero between 150px and 340px tall, the mobile navigation no taller than 130px, the mobile heading no larger than 46px, and the page free of horizontal overflow. Also complete the programbench-mini rebuild: implement the Rust calculator CLI, produce the required report, docs, submission archive, and eval JSON artifacts.`
 }
 
 function promptSmoke(port, shellSurface = "shell_command") {
@@ -1173,7 +1173,7 @@ function promptSmoke(port, shellSurface = "shell_command") {
 }
 
 function promptPhase2(port, shellSurface = "shell_command") {
-  return `Extend the repaired task board with row selection, select all, bulk complete with audit logging, CSV export or preview for the filtered tasks, smooth card/create-task animation with reduced-motion support, keyboard-accessible labels, and no mobile horizontal overflow. Preserve the desktop hero height, compact mobile navigation, and modest mobile heading from the repaired layout. Preserve the completed programbench-mini executable, docs, report, submission archive, and eval JSON artifacts.`
+  return `Extend the repaired task board in this current workspace only with row selection, select all, bulk complete with audit logging, CSV export or preview for the filtered tasks, smooth card/create-task animation with reduced-motion support, keyboard-accessible labels, and no mobile horizontal overflow. Do not read from, copy from, diff against, or inspect any other benchmark run directory, sibling agent workspace, old target artifact, previous solution, or path outside this workspace; all implementation work must be based only on the files and reference assets already present under the current working directory. Preserve the desktop hero height, compact mobile navigation, and modest mobile heading from the repaired layout. Preserve the completed programbench-mini executable, docs, report, submission archive, and eval JSON artifacts.`
 }
 
 function parseJsonl(text) {
@@ -1754,7 +1754,7 @@ async function runTuraViaWebTerminal(workspace, agentDir, agentPort, agentPrompt
   }
   const bridge = await startRealTuiBridge(workspace, gatewayUrl, agentDir, env)
   const { chromium } = tuiRequire("playwright")
-  const browser = await chromium.launch({ headless: true })
+  const browser = await chromium.launch({ headless: false })
   const page = await browser.newPage({ viewport: { width: 1200, height: 860 } })
   let stopWatchdog = () => {}
   try {

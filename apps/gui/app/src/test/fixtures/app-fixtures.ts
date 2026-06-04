@@ -801,9 +801,11 @@ function fixtureGatewaySessions(now: number, directory: string): Session[] {
     offset: number,
     startCondition: StartCondition = "user_action",
     sessionDirectory = directory,
+    parentId?: string,
   ): Session => ({
     id,
     name: title,
+    parent_id: parentId,
     directory: sessionDirectory,
     model: FIXTURE_MODEL,
     agent: "coding_agent",
@@ -816,10 +818,10 @@ function fixtureGatewaySessions(now: number, directory: string): Session[] {
     plan_summary: title,
     session_display_name: title,
     task_management: {
-      nonce_id: `${id}:0`,
-      step: 0,
+      task_id: `${id}:0`,
+      step: 1,
       task_summary: title,
-      delivery: "session ticket e2e",
+      deliverable: "session ticket e2e",
       sub_session_id: "",
       status,
       ...(startCondition === "scheduled_task" ||
@@ -888,12 +890,39 @@ function fixtureGatewaySessions(now: number, directory: string): Session[] {
       17_200_000,
       "scheduled_task",
     ),
+    makeSessionRecord(
+      "session-child-010",
+      "子会话：检查接口字段",
+      "doing",
+      90_000,
+      "user_action",
+      directory,
+      "session-doing-002",
+    ),
+    makeSessionRecord(
+      "session-child-011",
+      "子会话：复核侧栏缩进",
+      "todo",
+      120_000,
+      "user_action",
+      directory,
+      "session-doing-002",
+    ),
+    makeSessionRecord(
+      "session-grandchild-012",
+      "孙会话：验证自动展开",
+      "question",
+      60_000,
+      "user_action",
+      directory,
+      "session-child-010",
+    ),
   ];
   const longSession = sessions.find(
     (session) => session.id === "session-long-scroll-009",
   );
   if (longSession?.task_management) {
-    longSession.task_management.delivery =
+    longSession.task_management.deliverable =
       "这条 mock 数据专门用来测试全屏侧边栏滚动条。它的标题很长，正文也很长，用户可以切到文件浏览器或会话页，在移动端宽度打开侧边栏，确认滚动条是否贴在画面的最右侧，而不是贴近内容列。".repeat(
         8,
       );
@@ -905,19 +934,19 @@ function fixtureGatewaySessions(now: number, directory: string): Session[] {
     multiTaskSession.task_management.tasks = [
       {
         ...multiTaskSession.task_management,
-        nonce_id: "session-doing-002:0",
-        step: 0,
+        task_id: "session-doing-002:0",
+        step: 1,
         status: "todo",
         task_summary: "实现拖拽状态切换",
         start_at: new Date(now + 3_700_000).toISOString(),
         poll_interval: { m: 0, d: 0, h: 1, s: 0 },
       },
       {
-        nonce_id: "session-doing-002:1",
-        step: 1,
+        task_id: "session-doing-002:1",
+        step: 2,
         status: "todo",
         task_summary: "同步拖拽后的计划时间",
-        delivery: "仅更新当前 task，不影响同一 session 下的其他计划",
+        deliverable: "仅更新当前 task，不影响同一 session 下的其他计划",
         sub_session_id: "",
         start_at: new Date(now + 5_400_000).toISOString(),
       },

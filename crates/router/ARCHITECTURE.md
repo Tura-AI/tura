@@ -81,16 +81,33 @@ The router:
    re-invoked with `TURA_ROLE=runtime_worker`).
 3. Builds the worker environment contract: `TURA_ROLE`, `TURA_GATEWAY_URL`,
    `TURA_SESSION_MODEL_OVERRIDE`, `TURA_PARENT_SESSION_ID`,
-   `TURA_MULTIPLE_TASKS_DEPTH`, plus any caller-supplied session-config env
+   `TURA_PLANNING_DEPTH`, plus any caller-supplied session-config env
    merged from the request `worker_env`.
 4. Enforces concurrency guards before dispatch: child depth must not exceed
-   `MAX_MULTIPLE_TASKS_DEPTH`, and active runtime workers must not exceed
+   `MAX_PLANNING_DEPTH`, and active runtime workers must not exceed
    `MAX_RUNTIME_WORKERS`. Either breach returns `429 Too Many Requests`.
 5. Ensures the worker is live and forwards the call over the worker NDJSON
    protocol.
 
 The worker owns its own session state and reports progress back to the gateway
 through callbacks; the router does not replay or merge agent state.
+
+## Session Log Bridge
+
+The `session-log` CLI subcommand is a narrow bridge to `crates/session_log`.
+Router does not own session-log schema, storage, hydration, or filtering. It
+only accepts a JSON `SessionLogCommand` on stdin and writes a
+`SessionLogResponse` on stdout.
+
+Use it when no gateway HTTP server is running:
+
+```powershell
+'{"command":"get_session","session_id":"session-id"}' | target\debug\tura_router.exe session-log
+'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\tura_router.exe session-log
+```
+
+Runtime and gateway helpers normally use `runtime::session_log_client`, which
+calls this bridge in-process through `tura_router::session_log_forward`.
 
 ### Internal-only CLI channel (runtime ↔ router)
 

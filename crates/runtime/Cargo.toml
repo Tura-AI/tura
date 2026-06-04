@@ -1,12 +1,12 @@
 [package]
-name = "code-tools-suite"
+name = "runtime"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
 [lib]
-name = "code_tools_suite"
+name = "runtime"
 path = "src/lib.rs"
 
 [[test]]
@@ -46,6 +46,7 @@ name = "mock_router_for_test"
 path = "src/bin/mock_router_for_test.rs"
 
 [dependencies]
+anyhow.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -56,9 +57,12 @@ redis.workspace = true
 futures.workspace = true
 tura-llm-rust = { workspace = true }
 tura-agents = { workspace = true }
+tura-router = { workspace = true }
 code-tools = { path = "../tools" }
 reqwest.workspace = true
 sysinfo = "0.30"
+session_log = { workspace = true }
+uuid.workspace = true
 
 [dev-dependencies]
 tokio-test = "0.4"

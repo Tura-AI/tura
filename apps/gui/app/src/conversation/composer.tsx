@@ -3,6 +3,7 @@ import ArrowUp from "lucide-solid/icons/arrow-up";
 import ExternalLink from "lucide-solid/icons/external-link";
 import FolderOpen from "lucide-solid/icons/folder-open";
 import Plus from "lucide-solid/icons/plus";
+import Square from "lucide-solid/icons/square";
 import {
   For,
   type JSX,
@@ -25,9 +26,11 @@ export function Composer(props: {
   onText: (text: string) => void;
   onImages: (images: ComposerImage[]) => void;
   onSubmit: () => void;
+  onStop?: () => void;
   onQueueSubmit?: () => void;
   toolbar?: JSX.Element;
   submitDisabled?: boolean;
+  running?: boolean;
 }) {
   let fileInput: HTMLInputElement | undefined;
   let textarea: HTMLTextAreaElement | undefined;
@@ -59,11 +62,15 @@ export function Composer(props: {
   const submitBlocked = createMemo(
     () =>
       props.submitting ||
-      props.submitDisabled ||
+      (!props.running && props.submitDisabled) ||
       (!props.text.trim() && props.images.length === 0),
   );
 
   function submitFromControl() {
+    if (props.running) {
+      void props.onStop?.();
+      return;
+    }
     if (submitBlocked()) {
       return;
     }
@@ -80,6 +87,9 @@ export function Composer(props: {
       return;
     }
     event.preventDefault();
+    if (props.running) {
+      return;
+    }
     if (submitBlocked()) {
       return;
     }
@@ -94,7 +104,9 @@ export function Composer(props: {
   }
 
   const sendButtonTitle = createMemo(() =>
-    t("sendButtonHint", { modifier: shortcutModifierLabel() }),
+    props.running
+      ? t("stop")
+      : t("sendButtonHint", { modifier: shortcutModifierLabel() }),
   );
 
   createEffect(() => {
@@ -411,7 +423,7 @@ export function Composer(props: {
           class="composer-send"
           type="button"
           title={sendButtonTitle()}
-          disabled={submitBlocked()}
+          disabled={props.running ? !props.onStop : submitBlocked()}
           onPointerDown={(event) => {
             if (event.button !== 0) {
               return;
@@ -424,7 +436,12 @@ export function Composer(props: {
             submitFromControl();
           }}
         >
-          <ArrowUp size={16} strokeWidth={1.8} />
+          <Show
+            when={props.running}
+            fallback={<ArrowUp size={16} strokeWidth={1.8} />}
+          >
+            <Square size={13} strokeWidth={2} fill="currentColor" />
+          </Show>
         </button>
       </div>
       <Show when={previewImageId() !== undefined}>

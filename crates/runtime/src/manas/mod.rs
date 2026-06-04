@@ -6,7 +6,7 @@ mod final_response;
 mod gateway_events;
 mod permission_gate;
 mod process;
-mod prompt_messages;
+pub(crate) mod prompt_messages;
 mod runtime_turn;
 mod tool_arguments;
 mod tool_catalog;

@@ -61,7 +61,9 @@ pub async fn list_providers() -> Json<ProviderListResponse> {
             .into_iter()
             .map(|model| (model.id.clone(), model))
             .collect::<HashMap<_, _>>();
-        models.insert(default_model.id.clone(), default_model.clone());
+        if model_visible_for_picker(settings.as_deref(), &provider.id, &default_model.id) {
+            models.insert(default_model.id.clone(), default_model.clone());
+        }
 
         defaults.insert(provider.id.clone(), default_model.id);
         if provider.enabled {
@@ -106,6 +108,9 @@ fn provider_list_for_route(
 
     for provider in &route.providers {
         let model_id = normalize_model_id(&provider.provider, &provider.model);
+        if !model_visible_for_picker(Some(settings), &provider.provider, &model_id) {
+            continue;
+        }
         let index = match indexes.get(&provider.provider).copied() {
             Some(index) => index,
             None => {
@@ -135,7 +140,7 @@ fn provider_list_for_route(
         );
     }
 
-    for (provider_id, models) in provider_model_catalog() {
+    for (provider_id, models) in provider_model_catalog(Some(settings)) {
         let index = match indexes.get(&provider_id).copied() {
             Some(index) => index,
             None => {
@@ -169,6 +174,13 @@ fn provider_list_for_route(
     }
 
     for (provider_id, model_ids) in configured_model_catalog(settings) {
+        let model_ids = model_ids
+            .into_iter()
+            .filter(|model_id| model_visible_for_picker(Some(settings), &provider_id, model_id))
+            .collect::<Vec<_>>();
+        if model_ids.is_empty() {
+            continue;
+        }
         let index = match indexes.get(provider_id.as_str()).copied() {
             Some(index) => index,
             None => {
@@ -231,6 +243,9 @@ fn provider_list_for_route(
         .collect::<std::collections::HashSet<_>>();
 
     for (provider_id, model_id) in browser_login_provider_defaults() {
+        if !model_visible_for_picker(Some(settings), provider_id, model_id) {
+            continue;
+        }
         if indexes.contains_key(provider_id) {
             if store_connected.contains(provider_id)
                 && !connected.iter().any(|id| id == provider_id)
@@ -321,7 +336,14 @@ fn configured_model_for_provider(
     let route = settings
         .routes()
         .flat_map(|route| route.providers.iter())
-        .find(|provider| provider.provider == provider_id)?;
+        .find(|provider| {
+            provider.provider == provider_id
+                && model_visible_for_picker(
+                    Some(settings),
+                    provider_id,
+                    &normalize_model_id(provider_id, &provider.model),
+                )
+        })?;
 
     Some(sdk_model_from_settings(
         Some(settings),
@@ -341,6 +363,7 @@ fn configured_models_for_provider(
         .remove(provider_id)
         .unwrap_or_default()
         .into_iter()
+        .filter(|model_id| model_visible_for_picker(Some(settings), provider_id, model_id))
         .map(|model_id| sdk_model_from_settings(Some(settings), provider_id, &model_id))
         .collect()
 }
@@ -552,28 +575,61 @@ fn browser_login_provider_defaults() -> [(&'static str, &'static str); 4] {
     ]
 }
 
-fn provider_model_catalog() -> Vec<(String, Vec<String>)> {
+fn provider_model_catalog(
+    settings: Option<&tura_llm_rust::Settings>,
+) -> Vec<(String, Vec<String>)> {
     tura_llm_rust::provider_auth_registry()
         .iter()
         .filter(|entry| !entry.supported_models.is_empty())
-        .map(|entry| {
-            (
-                entry.provider_id.to_string(),
-                entry
-                    .supported_models
-                    .iter()
-                    .map(|model| model.to_string())
-                    .collect(),
-            )
+        .filter_map(|entry| {
+            let models = entry
+                .supported_models
+                .iter()
+                .filter(|model| model_visible_for_picker(settings, entry.provider_id, model))
+                .map(|model| model.to_string())
+                .collect::<Vec<_>>();
+            if models.is_empty() {
+                return None;
+            }
+            Some((entry.provider_id.to_string(), models))
         })
         .collect()
 }
 
+fn model_visible_for_picker(
+    settings: Option<&tura_llm_rust::Settings>,
+    provider_id: &str,
+    model_id: &str,
+) -> bool {
+    if looks_like_claude_model(provider_id, model_id) {
+        return false;
+    }
+    let Some(settings) = settings else {
+        return true;
+    };
+    catalog_model_detail(settings, provider_id, model_id).is_none_or(|detail| detail.visible)
+}
+
+fn looks_like_claude_model(provider_id: &str, model_id: &str) -> bool {
+    let provider_id = provider_id.trim().to_ascii_lowercase();
+    let model_id = model_id.trim().to_ascii_lowercase();
+    provider_id == "claude-code"
+        || model_id == "claude"
+        || model_id.starts_with("claude-")
+        || model_id.starts_with("anthropic.claude-")
+        || model_id.contains("/claude-")
+}
+
 fn model_supported_by_provider(provider_id: &str, model_id: &str) -> bool {
-    provider_model_catalog()
-        .into_iter()
-        .find(|(id, _)| id == provider_id)
-        .map(|(_, models)| models.iter().any(|candidate| candidate == model_id))
+    tura_llm_rust::provider_auth_registry()
+        .iter()
+        .find(|entry| entry.provider_id == provider_id)
+        .map(|entry| {
+            entry
+                .supported_models
+                .iter()
+                .any(|candidate| candidate == &model_id)
+        })
         .unwrap_or(false)
 }
 
@@ -3585,6 +3641,37 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("mcp")
         );
+    }
+
+    #[tokio::test]
+    async fn provider_list_hides_claude_models_from_picker_catalog() {
+        let _guard = ENV_LOCK.lock().await;
+        let settings = tura_llm_rust::Settings::default()
+            .await
+            .expect("load settings");
+        let route = settings
+            .route_by_name("flagship_thinking")
+            .expect("flagship_thinking route should be configured");
+        let response = provider_list_for_route(settings.as_ref(), route);
+
+        for (provider_id, model_id) in &response.default {
+            assert!(
+                !looks_like_claude_model(provider_id, model_id),
+                "hidden Claude model leaked into provider default: {provider_id}/{model_id}"
+            );
+        }
+        for provider in &response.all {
+            for model in provider.models.values() {
+                let id = model.id.to_ascii_lowercase();
+                let family = model.family.to_ascii_lowercase();
+                assert!(
+                    !id.contains("claude") && family != "claude",
+                    "hidden Claude model leaked into provider picker: {}/{}",
+                    provider.id,
+                    model.id
+                );
+            }
+        }
     }
 
     #[tokio::test]

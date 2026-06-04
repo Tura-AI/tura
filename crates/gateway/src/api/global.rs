@@ -172,9 +172,14 @@ fn current_tier_selection(root: &Value, tier: &str) -> Option<TuraConfigSelectio
         .get("providers")?
         .as_array()?
         .first()?;
+    let provider_id = provider.get("provider")?.as_str()?;
+    let model_id = provider.get("model")?.as_str()?;
+    if is_hidden_model(root, provider_id, tier, model_id) {
+        return None;
+    }
     Some(TuraConfigSelection {
-        provider: provider.get("provider")?.as_str()?.to_string(),
-        model: provider.get("model")?.as_str()?.to_string(),
+        provider: provider_id.to_string(),
+        model: model_id.to_string(),
     })
 }
 
@@ -206,6 +211,9 @@ fn configured_key_options(root: &Value, tier: &str) -> Vec<TuraConfigOption> {
             let Some(model_id) = model_id(model) else {
                 continue;
             };
+            if model_is_hidden(model) || looks_like_claude_model(model) {
+                continue;
+            }
             options.push(TuraConfigOption {
                 provider: provider_id.to_string(),
                 provider_name: provider_name.clone(),
@@ -220,6 +228,48 @@ fn configured_key_options(root: &Value, tier: &str) -> Vec<TuraConfigOption> {
         }
     }
     options
+}
+
+fn is_hidden_model(root: &Value, provider_id: &str, tier: &str, selected_model_id: &str) -> bool {
+    let Some(models) = root
+        .pointer("/model_catalog/providers")
+        .and_then(Value::as_object)
+        .and_then(|providers| providers.get(provider_id))
+        .and_then(|provider| provider.get("models"))
+        .and_then(|models| models.get(tier))
+        .and_then(Value::as_array)
+    else {
+        return looks_like_claude_id(selected_model_id);
+    };
+    models
+        .iter()
+        .find(|model| model_id(model).is_some_and(|id| id == selected_model_id))
+        .map(|model| model_is_hidden(model) || looks_like_claude_model(model))
+        .unwrap_or_else(|| looks_like_claude_id(selected_model_id))
+}
+
+fn model_is_hidden(model: &Value) -> bool {
+    model
+        .get("visible")
+        .and_then(Value::as_bool)
+        .is_some_and(|visible| !visible)
+}
+
+fn looks_like_claude_model(model: &Value) -> bool {
+    let fields = [
+        model_id(model),
+        model.get("name").and_then(Value::as_str),
+        model.get("family").and_then(Value::as_str),
+    ];
+    fields.into_iter().flatten().any(looks_like_claude_id)
+}
+
+fn looks_like_claude_id(value: &str) -> bool {
+    let value = value.trim().to_ascii_lowercase();
+    value == "claude"
+        || value.starts_with("claude-")
+        || value.starts_with("anthropic.claude-")
+        || value.contains("/claude-")
 }
 
 fn model_id(model: &Value) -> Option<&str> {

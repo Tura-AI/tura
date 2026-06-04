@@ -2,7 +2,7 @@ pub mod apply_patch;
 pub mod bash;
 pub mod command_safety;
 pub mod compact_context;
-pub mod multiple_tasks;
+pub mod planning;
 pub mod read_media;
 pub mod shell_command;
 pub mod task_status;
@@ -32,9 +32,7 @@ pub fn execute(
         "apply_patch" => apply_patch::execute(command_line, session_dir),
         "bash" => bash::execute(command_line, session_dir, timeout_secs),
         "compact_context" => compact_context::execute(command_line, session_dir),
-        "multiple_tasks" if multiple_tasks_command_enabled() => {
-            multiple_tasks::execute(command_line, session_dir)
-        }
+        "planning" if planning_command_enabled() => planning::execute(command_line, session_dir),
         "read_media" => read_media::execute(command_line, session_dir),
         "shell_command" => shell_command::execute(command_line, session_dir, timeout_secs),
         "web_discover" => web_discover::execute(command_line, session_dir, timeout_secs),
@@ -53,7 +51,7 @@ pub fn access(command: &str, command_line: &str, session_dir: &Path) -> Access {
     match canonical_command(command).as_str() {
         "apply_patch" => apply_patch::access(command_line, session_dir),
         "compact_context" => Access::default(),
-        "multiple_tasks" if multiple_tasks_command_enabled() => Access::default(),
+        "planning" if planning_command_enabled() => Access::default(),
         "read_media" => read_media::access(command_line, session_dir),
         "web_discover" => web_discover::access(command_line, session_dir),
         "shell_command" | "bash" if shell_command::looks_read_only(command_line) => {
@@ -76,8 +74,8 @@ pub fn display_command(
     if canonical_command(command) == "apply_patch" {
         return "apply_patch".to_string();
     }
-    if canonical_command(command) == "multiple_tasks" && multiple_tasks_command_enabled() {
-        return "multiple_tasks".to_string();
+    if canonical_command(command) == "planning" && planning_command_enabled() {
+        return "planning".to_string();
     }
     if canonical_command(command) == "compact_context" {
         return "compact_context".to_string();
@@ -105,7 +103,7 @@ pub fn canonical_command(name: &str) -> String {
         "compact_context" | "compact" | "compact_message" | "context_compaction" => {
             "compact_context".to_string()
         }
-        "multiple_tasks" => "multiple_tasks".to_string(),
+        "planning" => "planning".to_string(),
         "read_media" | "view_media" | "inspect_media" => "read_media".to_string(),
         "web_discover" | "web_search" | "web_fetch" | "discover_web" | "search_web" => {
             "web_discover".to_string()
@@ -128,21 +126,18 @@ pub fn active_shell_command_name() -> &'static str {
     }
 }
 
-fn multiple_tasks_command_enabled() -> bool {
-    [
-        "TURA_FORCE_MULTIPLE_TASKS",
-        "TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS",
-    ]
-    .iter()
-    .any(|name| {
-        std::env::var(name)
-            .ok()
-            .map(|value| {
-                matches!(
-                    value.trim().to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
-            .unwrap_or(false)
-    })
+fn planning_command_enabled() -> bool {
+    ["TURA_FORCE_PLANNING", "TURA_FORCE_EXECUTE_TOOLS_PLANNING"]
+        .iter()
+        .any(|name| {
+            std::env::var(name)
+                .ok()
+                .map(|value| {
+                    matches!(
+                        value.trim().to_ascii_lowercase().as_str(),
+                        "1" | "true" | "yes" | "on"
+                    )
+                })
+                .unwrap_or(false)
+        })
 }

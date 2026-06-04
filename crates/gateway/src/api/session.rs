@@ -21,7 +21,7 @@ use std::path::{Path as StdPath, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::time::Duration;
 
-use code_tools_suite::state_machine::session_management::StartCondition;
+use runtime::state_machine::session_management::StartCondition;
 
 // ============================================================================
 // Session List & Create
@@ -155,7 +155,7 @@ pub async fn get_session(Path(session_id): Path<String>) -> Json<Session> {
                 auto_session_name: true,
                 kill_processes_on_start: false,
                 validator_enabled: false,
-                force_multiple_tasks: false,
+                force_planning: false,
                 disable_permission_restrictions: false,
                 model_variant: None,
                 model_acceleration_enabled: false,
@@ -188,9 +188,9 @@ pub async fn create_session(
         .validator_enabled
         .or(persisted_config.validator_enabled)
         .unwrap_or(false);
-    let force_multiple_tasks = payload
-        .force_multiple_tasks
-        .or(persisted_config.force_multiple_tasks)
+    let force_planning = payload
+        .force_planning
+        .or(persisted_config.force_planning)
         .unwrap_or(false);
     let model_variant = payload.model_variant.or(persisted_config.model_variant);
     let model_acceleration_enabled = payload
@@ -231,7 +231,7 @@ pub async fn create_session(
         Some(requested_session_type),
         kill_processes_on_start,
         validator_enabled,
-        force_multiple_tasks,
+        force_planning,
         model_variant,
         model_acceleration_enabled,
         disable_permission_restrictions,
@@ -276,7 +276,7 @@ pub struct CreateSessionRequest {
     pub session_type: Option<String>,
     pub kill_processes_on_start: Option<bool>,
     pub validator_enabled: Option<bool>,
-    pub force_multiple_tasks: Option<bool>,
+    pub force_planning: Option<bool>,
     pub model_variant: Option<String>,
     pub model_acceleration_enabled: Option<bool>,
     pub disable_permission_restrictions: Option<bool>,
@@ -429,7 +429,7 @@ pub async fn update_session(
             payload.session_type,
             None,
             payload.validator_enabled,
-            payload.force_multiple_tasks,
+            payload.force_planning,
             payload.disable_permission_restrictions,
             payload.task_management,
         )
@@ -446,7 +446,7 @@ pub async fn update_session(
             auto_session_name: true,
             kill_processes_on_start: false,
             validator_enabled: false,
-            force_multiple_tasks: false,
+            force_planning: false,
             model_variant: None,
             model_acceleration_enabled: false,
             disable_permission_restrictions: false,
@@ -497,7 +497,7 @@ pub async fn update_session_task_management(
             auto_session_name: true,
             kill_processes_on_start: false,
             validator_enabled: false,
-            force_multiple_tasks: false,
+            force_planning: false,
             model_variant: None,
             model_acceleration_enabled: false,
             disable_permission_restrictions: false,
@@ -530,7 +530,7 @@ pub struct UpdateSessionRequest {
     pub session_type: Option<String>,
     pub kill_processes_on_start: Option<bool>,
     pub validator_enabled: Option<bool>,
-    pub force_multiple_tasks: Option<bool>,
+    pub force_planning: Option<bool>,
     pub disable_permission_restrictions: Option<bool>,
     #[serde(alias = "autoSessionName")]
     pub auto_session_name: Option<bool>,
@@ -607,7 +607,7 @@ pub async fn fork_session(
             .unwrap_or(false),
         original
             .as_ref()
-            .map(|session| session.force_multiple_tasks)
+            .map(|session| session.force_planning)
             .unwrap_or(false),
         original
             .as_ref()
@@ -689,7 +689,7 @@ pub async fn session_children(Path(session_id): Path<String>) -> Json<Vec<Sessio
 pub async fn session_user_commands(Path(session_id): Path<String>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "session_id": session_id,
-        "commands": session_store().user_commands_for_session(&session_id),
+        "commands": session_store().take_user_commands_for_session(&session_id),
     }))
 }
 
@@ -838,7 +838,7 @@ pub async fn send_agent_message(
         )
     };
     let tool_message = payload.tool_call.as_ref().and_then(|tool_call| {
-        if let Some(todos) = multiple_tasks_todos(tool_call) {
+        if let Some(todos) = planning_todos(tool_call) {
             session_store().set_todos(&session_id, todos);
         }
         session_store().add_tool_message(
@@ -1045,8 +1045,8 @@ fn agent_message_metadata(payload: &SendAgentMessageRequest) -> Option<serde_jso
     Some(serde_json::Value::Object(metadata))
 }
 
-fn multiple_tasks_todos(tool_call: &SendAgentToolCall) -> Option<Vec<serde_json::Value>> {
-    if tool_call.tool_name != "multiple_tasks" {
+fn planning_todos(tool_call: &SendAgentToolCall) -> Option<Vec<serde_json::Value>> {
+    if tool_call.tool_name != "planning" {
         return None;
     }
 
@@ -1063,8 +1063,8 @@ fn multiple_tasks_todos(tool_call: &SendAgentToolCall) -> Option<Vec<serde_json:
         .state
         .get("status")
         .and_then(|value| value.as_str());
-    let output_steps = multiple_tasks_output_steps(tool_call);
-    let running_step = if status == Some("running") {
+    let output_steps = planning_output_steps(tool_call);
+    let running_index = if status == Some("running") {
         steps
             .iter()
             .enumerate()
@@ -1074,8 +1074,8 @@ fn multiple_tasks_todos(tool_call: &SendAgentToolCall) -> Option<Vec<serde_json:
                     item.get("index").and_then(|value| value.as_u64()) == Some(number as u64)
                 })
             })
-            .map(|(index, step)| multiple_tasks_step_value(step, index + 1))
-            .min()
+            .map(|(index, _)| index)
+            .next()
     } else {
         None
     };
@@ -1086,7 +1086,6 @@ fn multiple_tasks_todos(tool_call: &SendAgentToolCall) -> Option<Vec<serde_json:
             .enumerate()
             .map(|(index, step)| {
                 let number = index + 1;
-                let step_value = multiple_tasks_step_value(step, number);
                 let output_step = output_steps.iter().find(|item| {
                     item.get("index").and_then(|value| value.as_u64()) == Some(number as u64)
                 });
@@ -1097,7 +1096,7 @@ fn multiple_tasks_todos(tool_call: &SendAgentToolCall) -> Option<Vec<serde_json:
                         "completed"
                     }
                     Some(_) => "cancelled",
-                    None if status == Some("running") && Some(step_value) == running_step => {
+                    None if status == Some("running") && Some(index) == running_index => {
                         "in_progress"
                     }
                     None if status == Some("pending") => "pending",
@@ -1115,14 +1114,7 @@ fn multiple_tasks_todos(tool_call: &SendAgentToolCall) -> Option<Vec<serde_json:
     )
 }
 
-fn multiple_tasks_step_value(step: &serde_json::Value, fallback: usize) -> usize {
-    step.get("step")
-        .and_then(|value| value.as_u64())
-        .and_then(|value| usize::try_from(value).ok())
-        .unwrap_or(fallback)
-}
-
-fn multiple_tasks_output_steps(tool_call: &SendAgentToolCall) -> Vec<serde_json::Value> {
+fn planning_output_steps(tool_call: &SendAgentToolCall) -> Vec<serde_json::Value> {
     let raw = tool_call
         .metadata
         .as_ref()
@@ -1648,7 +1640,7 @@ pub async fn prompt_async(
     session_store().set_todos(
         &session_id,
         vec![serde_json::json!({
-            "id": format!("{session_id}:multiple_tasks"),
+            "id": format!("{session_id}:planning"),
             "content": "规划执行步骤",
             "status": "in_progress",
             "priority": "medium",
@@ -1856,9 +1848,9 @@ fn run_mano_for_prompt(session_id: String, payload: serde_json::Value) {
     let agent = prompt_agent_override(&payload)
         .or_else(|| session.as_ref().and_then(|session| session.agent.clone()));
     let runtime_context = prompt_runtime_context(&payload);
-    let force_multiple_tasks = session
+    let force_planning = session
         .as_ref()
-        .map(|session| session.force_multiple_tasks)
+        .map(|session| session.force_planning)
         .unwrap_or(false);
     let model_override = prompt_model_override(&payload)
         .or_else(|| session.as_ref().and_then(|session| session.model.clone()))
@@ -1909,12 +1901,6 @@ fn run_mano_for_prompt(session_id: String, payload: serde_json::Value) {
     // worker env 契约：取代旧的进程级 with_*_env 注入，由 router 注入 runtime worker 子进程。
     let mut worker_env: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
-    if force_multiple_tasks {
-        worker_env.insert(
-            "TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS".to_string(),
-            "1".to_string(),
-        );
-    }
     if let Some(reasoning) = reasoning_effort
         .as_deref()
         .map(str::trim)
@@ -1954,6 +1940,7 @@ fn run_mano_for_prompt(session_id: String, payload: serde_json::Value) {
         "agent": agent,
         "prompt": content,
         "runtime_context": runtime_context,
+        "planning_mode_override": force_planning.then_some(true),
         "worker_env": worker_env,
     });
 
@@ -2501,7 +2488,7 @@ mod tests {
     use super::{
         agent_message_content, agent_message_metadata, api_message_from_store,
         filter_list_sessions, first_prompt_part_id, frontend_safe_reply_message,
-        frontend_safe_value, multiple_tasks_todos, prompt_message_id, prompt_model_acceleration,
+        frontend_safe_value, planning_todos, prompt_message_id, prompt_model_acceleration,
         prompt_model_variant, prompt_text, workspace_key, SendAgentMedia, SendAgentMessageRequest,
         SendAgentToolCall, SessionListParams,
     };
@@ -2574,7 +2561,7 @@ mod tests {
             auto_session_name: true,
             kill_processes_on_start: false,
             validator_enabled: false,
-            force_multiple_tasks: false,
+            force_planning: false,
             model_variant: None,
             model_acceleration_enabled: false,
             disable_permission_restrictions: false,
@@ -2720,7 +2707,7 @@ mod tests {
                 session_type: Some("chat".to_string()),
                 kill_processes_on_start: Some(false),
                 validator_enabled: Some(false),
-                force_multiple_tasks: Some(false),
+                force_planning: Some(false),
                 model_variant: None,
                 model_acceleration_enabled: Some(false),
                 disable_permission_restrictions: Some(false),
@@ -2964,9 +2951,9 @@ mod tests {
     }
 
     #[test]
-    fn multiple_tasks_tool_call_derives_todos_from_steps_and_output() {
+    fn planning_tool_call_derives_todos_from_steps_and_output() {
         let tool_call = SendAgentToolCall {
-            tool_name: "multiple_tasks".to_string(),
+            tool_name: "planning".to_string(),
             call_id: "call-1".to_string(),
             state: serde_json::json!({
                 "status": "completed",
@@ -2988,7 +2975,7 @@ mod tests {
             metadata: None,
         };
 
-        let todos = multiple_tasks_todos(&tool_call).expect("multiple_tasks should produce todos");
+        let todos = planning_todos(&tool_call).expect("planning should produce todos");
         assert_eq!(todos[0]["content"], "Inspect wiring");
         assert_eq!(todos[0]["status"], "completed");
         assert_eq!(todos[1]["content"], "Patch the flow");
@@ -2996,9 +2983,9 @@ mod tests {
     }
 
     #[test]
-    fn multiple_tasks_running_call_marks_next_step_in_progress() {
+    fn planning_running_call_marks_next_step_in_progress() {
         let tool_call = SendAgentToolCall {
-            tool_name: "multiple_tasks".to_string(),
+            tool_name: "planning".to_string(),
             call_id: "call-1".to_string(),
             state: serde_json::json!({
                 "status": "running",
@@ -3012,15 +2999,15 @@ mod tests {
             metadata: None,
         };
 
-        let todos = multiple_tasks_todos(&tool_call).expect("multiple_tasks should produce todos");
+        let todos = planning_todos(&tool_call).expect("planning should produce todos");
         assert_eq!(todos[0]["status"], "in_progress");
         assert_eq!(todos[1]["status"], "pending");
     }
 
     #[test]
-    fn multiple_tasks_running_call_marks_same_step_group_in_progress() {
+    fn planning_running_call_extends_duplicate_steps_to_unique_order() {
         let tool_call = SendAgentToolCall {
-            tool_name: "multiple_tasks".to_string(),
+            tool_name: "planning".to_string(),
             call_id: "call-1".to_string(),
             state: serde_json::json!({
                 "status": "running",
@@ -3035,9 +3022,9 @@ mod tests {
             metadata: None,
         };
 
-        let todos = multiple_tasks_todos(&tool_call).expect("multiple_tasks should produce todos");
+        let todos = planning_todos(&tool_call).expect("planning should produce todos");
         assert_eq!(todos[0]["status"], "in_progress");
-        assert_eq!(todos[1]["status"], "in_progress");
+        assert_eq!(todos[1]["status"], "pending");
         assert_eq!(todos[2]["status"], "pending");
     }
 

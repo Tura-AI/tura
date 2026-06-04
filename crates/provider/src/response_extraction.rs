@@ -61,7 +61,7 @@ pub fn extract_tool_calls(content: &Value) -> Vec<ProviderToolCall> {
                     calls.push(ProviderToolCall {
                         tool_name: name.to_string(),
                         arguments: parse_arguments(arguments),
-                        provider_metadata: None,
+                        provider_metadata: call.get("provider_metadata").cloned(),
                     });
                 }
             }
@@ -158,4 +158,35 @@ pub fn openai_compatible_usage_stream_supported(provider: &str, base_url: &str) 
         || base_url.contains("api.minimax.io")
         || base_url.contains("dashscope")
         || base_url.contains("openrouter.ai")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_tool_calls;
+    use serde_json::json;
+
+    #[test]
+    fn extract_tool_calls_preserves_provider_metadata() {
+        let calls = extract_tool_calls(&json!({
+            "tool_calls": [{
+                "id": "toolu_1",
+                "type": "function",
+                "function": {
+                    "name": "command_run",
+                    "arguments": {"commands": []}
+                },
+                "provider_metadata": {"id": "toolu_1"}
+            }]
+        }));
+
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0]
+                .provider_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("id"))
+                .and_then(serde_json::Value::as_str),
+            Some("toolu_1")
+        );
+    }
 }

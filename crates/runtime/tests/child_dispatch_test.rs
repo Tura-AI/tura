@@ -13,7 +13,7 @@
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use code_tools_suite::manas::child_dispatch::{
+use runtime::manas::child_dispatch::{
     dispatch_child_agent, dispatch_child_agents_concurrent, ChildAgentRequest,
 };
 
@@ -135,7 +135,7 @@ fn recursive_dispatch_2_levels_returns_one_summary() {
 trait CloneSummary {
     fn clone_summary(&self) -> String;
 }
-impl CloneSummary for code_tools_suite::manas::child_dispatch::ChildAgentSummary {
+impl CloneSummary for runtime::manas::child_dispatch::ChildAgentSummary {
     fn clone_summary(&self) -> String {
         format!("{}::{}", self.agent, self.summary)
     }

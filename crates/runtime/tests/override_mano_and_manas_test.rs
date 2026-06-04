@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
 use chrono::Utc;
-use code_tools_suite::agent_router::coding_agent_provider_name;
-use code_tools_suite::mano::{self, ManoOverrides};
-use code_tools_suite::state_machine::agent_management::{
+use runtime::agent_router::coding_agent_provider_name;
+use runtime::mano::{self, ManoOverrides};
+use runtime::state_machine::agent_management::{
     AgentManagement, ProviderConfig, ToolChoice, ValidatorConfig,
 };
-use code_tools_suite::state_machine::session_management::{SessionInput, SessionManagement};
+use runtime::state_machine::session_management::{SessionInput, SessionManagement};
 
 fn hardcoded_session(_input: SessionInput) -> Result<SessionManagement, String> {
     let now = Utc::now();
@@ -21,6 +21,7 @@ fn hardcoded_session(_input: SessionInput) -> Result<SessionManagement, String> 
             file_input: vec![],
             agent: None,
             runtime_context: None,
+            planning_mode_override: None,
         },
         "hardcoded user goal".to_string(),
         now,
@@ -76,6 +77,7 @@ fn process_from_user_can_override_mano_and_manas_together() {
             file_input: vec![],
             agent: None,
             runtime_context: None,
+            planning_mode_override: None,
         },
         ManoOverrides {
             session_factory: Some(hardcoded_session),

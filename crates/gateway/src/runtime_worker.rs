@@ -10,7 +10,7 @@
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
-use code_tools_suite::state_machine::session_management::SessionInput;
+use runtime::state_machine::session_management::SessionInput;
 use serde_json::{json, Value};
 
 /// 进入 runtime worker 循环：阻塞读 stdin、写 stdout，直到对端关闭。
@@ -86,6 +86,7 @@ fn handle_call(payload: &Value) -> Value {
         .get("runtime_context")
         .and_then(Value::as_str)
         .map(str::to_string);
+    let planning_mode_override = call.get("planning_mode_override").and_then(Value::as_bool);
     let agent_spec = call.get("agent_spec").cloned();
 
     if prompt.trim().is_empty() {
@@ -97,6 +98,7 @@ fn handle_call(payload: &Value) -> Value {
         file_input: Vec::new(),
         agent,
         runtime_context,
+        planning_mode_override,
     };
 
     if let Some(agent_spec) = agent_spec {
@@ -104,7 +106,7 @@ fn handle_call(payload: &Value) -> Value {
     } else {
         std::env::remove_var("TURA_ROUTER_AGENT_SPEC");
     }
-    match code_tools_suite::mano::process_from_gateway_session_in_directory(
+    match runtime::mano::process_from_gateway_session_in_directory(
         session_id.clone(),
         input,
         directory,

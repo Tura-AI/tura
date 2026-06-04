@@ -19,6 +19,7 @@ import {
   sessionUpdatedAt,
   type MainTab,
 } from "../state/global-store";
+import { isRootSession } from "../state/session-tree";
 
 import { planSessionStatus } from "../features/plan/tasks";
 import { PlanStatusIndicator } from "../pages/plan/plan-view";
@@ -110,7 +111,10 @@ export function WorkspaceTree(props: {
   const archivedWorkspaces = createMemo(() => {
     const groups = new Map<string, { project: Project; sessions: Session[] }>();
     for (const session of props.sessions) {
-      if (planSessionStatus(session) !== "archived") {
+      if (
+        planSessionStatus(session) !== "archived" ||
+        !isRootSession(session)
+      ) {
         continue;
       }
       const directory = sessionDirectory(session);

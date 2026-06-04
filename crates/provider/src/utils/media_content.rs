@@ -131,6 +131,9 @@ pub fn anthropic_blocks_from_canonical(content: Option<&Value>) -> Option<Vec<Va
             let mut blocks = Vec::new();
             for item in items {
                 match item.get("type").and_then(Value::as_str) {
+                    Some("image" | "document" | "search_result" | "tool_reference") => {
+                        blocks.push(item.clone());
+                    }
                     Some("input_text") | Some("text") => {
                         if let Some(text) = item
                             .get("text")
@@ -286,6 +289,28 @@ mod tests {
         let content = json!([
             { "type": "input_text", "text": "see image" },
             { "type": "input_image", "image_url": "data:image/png;base64,AAA" }
+        ]);
+
+        let blocks = anthropic_blocks_from_canonical(Some(&content)).unwrap();
+
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[1]["type"], "image");
+        assert_eq!(blocks[1]["source"]["media_type"], "image/png");
+        assert_eq!(blocks[1]["source"]["data"], "AAA");
+    }
+
+    #[test]
+    fn anthropic_blocks_preserve_native_anthropic_media_blocks() {
+        let content = json!([
+            { "type": "text", "text": "see native image" },
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "AAA"
+                }
+            }
         ]);
 
         let blocks = anthropic_blocks_from_canonical(Some(&content)).unwrap();

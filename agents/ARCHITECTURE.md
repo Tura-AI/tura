@@ -3,6 +3,9 @@
 `agents` is the canonical home for agent definitions. Runtime code loads
 agents from here; it should not hard-code provider defaults, prompt text, or
 command lists inside the MANO/MANAS loop.
+Agents do not own diagnostics storage. Session/task history is queried through
+`session_log`; provider-call diagnostics are queried from provider logs under
+`log/provider/` or `LOG_PATH`.
 
 The Cargo package and library names stay compatible with Tura:
 
@@ -98,7 +101,7 @@ Recommended coding-agent config:
 }
 ```
 
-Additional command groups such as LSP, web, media, or multiple-tasks are intentionally
+Additional command groups such as LSP, web, media, or planning are intentionally
 disabled for this version.
 
 ## Runtime Loading

@@ -3,6 +3,9 @@
 `crates/memory` documents the intended memory and recall boundary. In the
 current tree this directory is documentation-only: it has no `Cargo.toml`, no
 `src/`, and is not a workspace member.
+Memory does not own session/task history or provider diagnostics. Session
+history is queried through `session_log`; provider call diagnostics are files
+under `log/provider/` or `LOG_PATH`.
 
 ## Layout
 

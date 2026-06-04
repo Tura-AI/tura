@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use code_tools_suite::mano;
-use code_tools_suite::state_machine::session_management::{SessionInput, SessionState};
+use runtime::mano;
+use runtime::state_machine::session_management::{SessionInput, SessionState};
 use serde_json::{json, Value};
 
 const ROUTES: &[&str] = &[
@@ -41,6 +41,7 @@ fn coding_agent_can_call_command_run_tool_e2e() {
             file_input: vec![],
             agent: None,
             runtime_context: None,
+                planning_mode_override: None,
         },
         workspace.clone(),
     )
@@ -133,6 +134,7 @@ fn coding_agent_executes_command_run_command_before_stream_finishes() {
             file_input: vec![],
             agent: None,
             runtime_context: None,
+                planning_mode_override: None,
         },
         workspace.clone(),
     )

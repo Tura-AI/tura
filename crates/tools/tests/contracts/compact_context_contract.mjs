@@ -41,7 +41,7 @@ run("cargo", ["test", "-p", "code-tools", "compact_context", "--", "--nocapture"
 run("cargo", [
   "test",
   "-p",
-  "code-tools-suite",
+  "runtime",
   "compact_session_context_replaces_prior_tool_context",
   "--",
   "--nocapture",
@@ -49,7 +49,7 @@ run("cargo", [
 run("cargo", [
   "test",
   "-p",
-  "code-tools-suite",
+  "runtime",
   "messages_for_turn_injects_compact_context_prompt_at_default_220k_threshold",
   "--",
   "--nocapture",

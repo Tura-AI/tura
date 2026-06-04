@@ -2,6 +2,9 @@
 
 `scripts/` owns setup, startup, package environments, auto-install manifests,
 and persistent reusable CLI workflows used by router/tools commands.
+Scripts may print diagnostic commands, but they must not create another
+session store. Session/task history is queried through `session_log`; provider
+call logs live under `log/provider/` or `LOG_PATH`.
 
 ## Layout
 

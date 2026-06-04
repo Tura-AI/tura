@@ -41,12 +41,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-command-run-rob
 | `command_run` keeps runtime reporting fields needed for current-compatible batching | `command_run_tool_keeps_runtime_reporting_fields` |
 | Legacy step payloads normalize into `commands` | `command_run_legacy_steps_are_normalized_to_commands` |
 
-## Step Scheduling, Locks, And Parallelism
+## Step Scheduling And Locks
 
 | Current behavior | Tura coverage |
 | --- | --- |
 | Missing step values default to original 1-based order | `pass_missing_steps_default_to_original_order` |
-| Same-step read commands may run without write barriers | `pass_mutating_commands_are_barriers_between_read_batches` |
+| Duplicate step values are extended into later unique ordered steps | `pass_same_step_commands_are_extended_to_unique_order` |
 | Mutating commands become barriers inside a step | `pass_mutating_commands_are_barriers_between_read_batches` |
 | Handler mutability gates execution through the router | `pass_internal_command_rebuilds_tool_call_and_dispatches_router_handler`, `pass_mutating_commands_are_barriers_between_read_batches` |
 | Pre-tool hooks can block execution before runtime starts | `fail_pre_tool_hook_blocks_tool_before_runtime` |

@@ -69,7 +69,7 @@ def real_tool_prompt() -> str:
             "parallel subtasks with ordered integration barriers, then produce a runnable artifact, submission archive, eval JSON, and documentation. "
             "Use the real ProgramBench shape: instance testorg__calculator.abc1234, run directory programbench-run/testorg__calculator.abc1234/, "
             "submission.tar.gz, and test results for branch 33128f6b8600. "
-            "Use multiple_tasks when available to split at least four tasks: source fixture reconstruction, CLI implementation, "
+            "Use planning when available to split at least four tasks: source fixture reconstruction, CLI implementation, "
             "documentation, and verification. Preserve command_run queue semantics and do not add any custom locking logic. "
             "Then run the prepared helper exactly as: "
             f"node apps/gui/e2e/agent_playwright_complex_task.mjs {PROMPT_NONCE}. "

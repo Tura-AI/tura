@@ -282,10 +282,11 @@ async fn execute_async_args(args: CommandRunArgs, session_dir: std::path::PathBu
 async fn execute_async(args: CommandRunArgs, ctx: ToolContext) -> CommandRunOutput {
     let mut by_step: BTreeMap<u64, Vec<CommandItem>> = BTreeMap::new();
     let CommandRunArgs {
-        commands,
+        mut commands,
         allowed_commands,
         ..
     } = args;
+    normalize_command_steps(&mut commands);
     for command in commands {
         by_step
             .entry(command.effective_step())
@@ -313,6 +314,19 @@ async fn execute_async(args: CommandRunArgs, ctx: ToolContext) -> CommandRunOutp
         results,
         cancelled: cancelled.then_some(true),
         cancel_reason,
+    }
+}
+
+fn normalize_command_steps(commands: &mut [CommandItem]) {
+    let mut previous_step: Option<u64> = None;
+    for command in commands {
+        let requested_step = command.effective_step();
+        let step = match previous_step {
+            Some(previous) if requested_step <= previous => previous + 1,
+            _ => requested_step,
+        };
+        command.step = Some(step);
+        previous_step = Some(step);
     }
 }
 
@@ -411,8 +425,22 @@ async fn run_command_run_item(
             "unsupported command_run command".to_string(),
         );
     }
-    if crate::commands::canonical_command(&command.command) == "task_status" {
+    let canonical_command = crate::commands::canonical_command(&command.command);
+    if canonical_command == "task_status" {
         return command_run_task_status_result(command);
+    }
+    if canonical_command == "planning"
+        && allowed_commands.is_some_and(|commands| commands.contains("planning"))
+    {
+        let response = crate::commands::planning::execute(&command.command_line, &ctx.session_dir);
+        return CommandRunItemResult {
+            index: command.index,
+            step: command.effective_step(),
+            command_type: "planning".to_string(),
+            success: response.success,
+            output: Some(response.output),
+            error: (!response.success).then_some(response.stderr),
+        };
     }
     let command_name = match router.resolve_command_tool_name(&command.command) {
         Some(name) => name.to_string(),
@@ -507,8 +535,8 @@ fn build_tool_call(command_name: &str, command: &CommandItem) -> Result<ToolCall
         "compact_context" => ToolPayload::Function {
             arguments: normalize_compact_context_arguments(command)?,
         },
-        "multiple_tasks" => ToolPayload::Function {
-            arguments: normalize_multiple_tasks_arguments(command)?,
+        "planning" => ToolPayload::Function {
+            arguments: normalize_planning_arguments(command)?,
         },
         "read_media" => ToolPayload::Function {
             arguments: normalize_json_or_cli_command_arguments(command, "read_media")?,
@@ -610,7 +638,7 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
             "shell_command"
                 | "bash"
                 | "apply_patch"
-                | "multiple_tasks"
+                | "planning"
                 | "read_media"
                 | "web_discover"
                 | "task_status"
@@ -676,13 +704,13 @@ fn validate_compact_context_position(commands: &[CommandItem]) -> Result<(), Str
     Ok(())
 }
 
-fn normalize_multiple_tasks_arguments(command: &CommandItem) -> Result<Value, String> {
+fn normalize_planning_arguments(command: &CommandItem) -> Result<Value, String> {
     let trimmed = command.command_line.trim();
     if trimmed.is_empty() {
-        return Err("multiple_tasks command_line must be a JSON array".to_string());
+        return Err("planning command_line must be a JSON array".to_string());
     }
     let value: Value = serde_json::from_str(trimmed)
-        .map_err(|err| format!("invalid multiple_tasks command_line JSON: {err}"))?;
+        .map_err(|err| format!("invalid planning command_line JSON: {err}"))?;
     Ok(value)
 }
 
@@ -1037,7 +1065,7 @@ fn error_payload(message: String) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_shell_command_arguments, parse_args};
+    use super::{normalize_command_steps, normalize_shell_command_arguments, parse_args};
     use serde_json::json;
     use serde_json::Value;
 
@@ -1053,6 +1081,28 @@ mod tests {
 
         assert_eq!(args.commands[0].effective_step(), 1);
         assert_eq!(args.commands[1].effective_step(), 2);
+    }
+
+    #[test]
+    fn normalize_duplicate_steps_extends_in_input_order() {
+        let mut args = parse_args(&json!({
+            "commands": [
+                { "command": "shell_command", "command_line": "echo a", "step": 1 },
+                { "command": "shell_command", "command_line": "echo b", "step": 2 },
+                { "command": "shell_command", "command_line": "echo c", "step": 2 },
+                { "command": "shell_command", "command_line": "echo d", "step": 3 }
+            ]
+        }))
+        .expect("parse args");
+
+        normalize_command_steps(&mut args.commands);
+
+        let steps = args
+            .commands
+            .iter()
+            .map(|command| command.effective_step())
+            .collect::<Vec<_>>();
+        assert_eq!(steps, vec![1, 2, 3, 4]);
     }
 
     #[test]

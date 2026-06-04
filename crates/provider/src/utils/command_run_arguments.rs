@@ -21,10 +21,31 @@ fn normalize_command_run_input(input: Value) -> Value {
     if let Some(commands) = object.remove("commands") {
         let mut normalized: Vec<Value> = match commands {
             Value::Array(items) => items.into_iter().map(normalize_command_value).collect(),
-            Value::String(text) => command_run_commands_from_text(&text)
-                .into_iter()
-                .map(normalize_command_value)
-                .collect(),
+            Value::String(text) => {
+                if let Some(value) = command_json_fragment(&text) {
+                    command_run_commands_from_json_value(value)
+                } else if commands_text_contains_complete_xml_command(&text) {
+                    command_run_commands_from_text(&text)
+                        .into_iter()
+                        .map(normalize_command_value)
+                        .collect()
+                } else if contains_command_shape(&object) {
+                    if !object.contains_key("command_line") {
+                        if let Some(command_line) =
+                            partial_xml_parameter_value(&text, "command_line")
+                                .or_else(|| partial_xml_parameter_value(&text, "cmd"))
+                        {
+                            object.insert("command_line".to_string(), Value::String(command_line));
+                        }
+                    }
+                    return json!({ "commands": [normalize_command_value(Value::Object(object))] });
+                } else {
+                    command_run_commands_from_text(&text)
+                        .into_iter()
+                        .map(normalize_command_value)
+                        .collect()
+                }
+            }
             Value::Object(_) => vec![normalize_command_value(commands)],
             other => vec![other],
         };
@@ -40,6 +61,42 @@ fn normalize_command_run_input(input: Value) -> Value {
     }
 
     Value::Object(object)
+}
+
+fn partial_xml_parameter_value(text: &str, wanted_name: &str) -> Option<String> {
+    let needle = format!("name=\"{wanted_name}\"");
+    let start = text.find(&needle)?;
+    let after_name = &text[start + needle.len()..];
+    let value_start = after_name.find('>')? + 1;
+    let value = after_name[value_start..].trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn commands_text_contains_complete_xml_command(text: &str) -> bool {
+    let params = xml_parameters(text.trim());
+    params
+        .get("command_line")
+        .or_else(|| params.get("cmd"))
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn command_run_commands_from_json_value(value: Value) -> Vec<Value> {
+    match value {
+        Value::Array(items) => items.into_iter().map(normalize_command_value).collect(),
+        Value::Object(object) => {
+            if let Some(commands) = object.get("commands").and_then(Value::as_array) {
+                commands
+                    .iter()
+                    .cloned()
+                    .map(normalize_command_value)
+                    .collect()
+            } else {
+                vec![normalize_command_value(Value::Object(object))]
+            }
+        }
+        other => vec![other],
+    }
 }
 
 fn inherit_command_fields(command: &mut Value, parent: &Map<String, Value>) {
@@ -218,5 +275,41 @@ mod tests {
             command["command_line"],
             "command_line\">{\"cmd\":\"cat package.json\"}"
         );
+    }
+
+    #[test]
+    fn command_run_input_prefers_top_level_command_over_partial_commands_xml() {
+        let input = json!({
+            "command_type": "shell_command",
+            "command_line": "Get-Content probe.txt",
+            "commands": "\n<parameter name=\"command_type\">apply_patch",
+            "step": 2
+        });
+
+        let normalized = normalize_command_run_tool_input("command_run", input);
+        let command = &normalized["commands"][0];
+
+        assert_eq!(normalized["commands"].as_array().unwrap().len(), 1);
+        assert_eq!(command["command_type"], "shell_command");
+        assert_eq!(command["command_line"], "Get-Content probe.txt");
+        assert_eq!(command["step"], 2);
+    }
+
+    #[test]
+    fn command_run_input_recovers_unclosed_xml_command_line_when_no_parent_line() {
+        let input = json!({
+            "command_type": "apply_patch",
+            "commands": "\n<parameter name=\"command_line\">*** Begin Patch\n*** Add File: probe.txt\n+ok\n*** End Patch\n",
+            "step": 1
+        });
+
+        let normalized = normalize_command_run_tool_input("command_run", input);
+        let command = &normalized["commands"][0];
+
+        assert_eq!(command["command_type"], "apply_patch");
+        assert!(command["command_line"]
+            .as_str()
+            .unwrap()
+            .starts_with("*** Begin Patch"));
     }
 }

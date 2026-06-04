@@ -10,16 +10,13 @@ import { t } from "../../i18n";
 import { NameDialog } from "../../pages/new-session";
 import { SessionRowMeta } from "../../pages/plan/plan-view";
 import { classNames } from "../../state/format";
+import { sessionTitle, type MainTab } from "../../state/global-store";
 import {
-  sessionTitle,
-  sessionUpdatedAt,
-  type MainTab,
-} from "../../state/global-store";
-import {
-  normalizeTimeMs,
-  sessionHoverTitle,
-  shortSessionTitle,
-} from "../../utils/app-format";
+  hiddenRootSessionCount,
+  rootSessions,
+  visibleSessionTreeRows,
+} from "../../state/session-tree";
+import { sessionHoverTitle, shortSessionTitle } from "../../utils/app-format";
 import { FileTreeRows } from "./file-tree-rows";
 
 export function WorkspaceChildren(props: {
@@ -47,19 +44,17 @@ export function WorkspaceChildren(props: {
   const [expandedSessions, setExpandedSessions] = createSignal(false);
   const [renaming, setRenaming] = createSignal<Session>();
   const visibleSessions = createMemo(() =>
-    expandedSessions() ? props.sessions : props.sessions.slice(0, 5),
+    visibleSessionTreeRows(props.sessions, props.selectedSessionId, {
+      expandedRoots: expandedSessions(),
+    }),
   );
   const hiddenSessionCount = createMemo(() =>
-    Math.max(0, props.sessions.length - 5),
+    expandedSessions()
+      ? 0
+      : hiddenRootSessionCount(props.sessions, props.selectedSessionId),
   );
   const rootFiles = createMemo(() => props.fileTree[""] ?? props.files);
-  const sortedPlanSessions = createMemo(() =>
-    [...props.sessions].sort(
-      (left, right) =>
-        normalizeTimeMs(sessionUpdatedAt(right) ?? 0) -
-        normalizeTimeMs(sessionUpdatedAt(left) ?? 0),
-    ),
-  );
+  const sortedPlanSessions = createMemo(() => rootSessions(props.sessions));
   return (
     <div class="workspace-children">
       <Switch>
@@ -84,11 +79,12 @@ export function WorkspaceChildren(props: {
             each={visibleSessions()}
             fallback={<div class="rail-empty">{t("noSessions")}</div>}
           >
-            {(session) => (
+            {(row) => (
               <SessionButton
-                session={session}
-                selected={props.selectedSessionId === session.id}
-                attentionAcknowledged={props.attentionAcknowledged(session)}
+                session={row.session}
+                depth={row.depth}
+                selected={props.selectedSessionId === row.session.id}
+                attentionAcknowledged={props.attentionAcknowledged(row.session)}
                 onSession={props.onSession}
                 onRename={setRenaming}
               />
@@ -141,6 +137,7 @@ export function WorkspaceChildren(props: {
 
 function SessionButton(props: {
   session: Session;
+  depth?: number;
   selected: boolean;
   attentionAcknowledged: boolean;
   onSession: (session: Session) => void;
@@ -153,7 +150,7 @@ function SessionButton(props: {
         "session-row",
         props.selected && "selected",
       )}
-      style={{ "--depth": 1 }}
+      style={{ "--depth": 1, "--session-depth": props.depth ?? 0 }}
       onClick={() => props.onSession(props.session)}
       title={sessionHoverTitle(props.session)}
     >

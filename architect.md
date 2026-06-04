@@ -73,7 +73,7 @@ process handle or PID, write stdout/stderr logs, poll readiness and process
 exit together, fail immediately with exit code/log tail if the service exits
 before readiness, and clean up only the started process tree on timeout.
 
-`multiple_tasks` uses array input with required `nonce_id` and optional
+`planning` uses array input with required `nonce_id` and optional
 `step`, `task_summary`, and `delivery`. Runtime rejects updates when a plan already
 exists unless the task has clearly changed, and the current implementation
 returns an error to the model result.
@@ -150,7 +150,7 @@ Every session returned by gateway must include:
   "name": "release checklist",
   "directory": "C:/workspace",
   "status": "idle",
-  "force_multiple_tasks": false,
+  "force_planning": false,
   "task_management": {},
   "plan_summary": "release checklist",
   "session_display_name": "release checklist"
@@ -200,8 +200,8 @@ session object.
 ### Multi-Task Planning
 
 When multi-task mode is enabled, the dynamic command-run text exposes
-`multiple_tasks` only as the planning mechanism for the most complex 10% of
-requests. The `multiple_tasks` command input is an array:
+`planning` only as the planning mechanism for the most complex 10% of
+requests. The `planning` command input is an array:
 
 ```json
 [
@@ -282,7 +282,7 @@ Recent local runs prove the main path is connected:
 - `programbench-tura-full`: `ok:true`, `25/25`, including ProgramBench
   reconstruction, release executable, docs/submission/eval artifacts, and
   frontend validation.
-- `multiple-tasks-backend-topology-full`: `ok:true`, `16/16`, two turns,
+- `planning-backend-topology-full`: `ok:true`, `16/16`, two turns,
   seventeen command-run commands, zero command failures.
 - `tui-full-web-terminal-screenshots`: `ok:true`, `16/16`.
 

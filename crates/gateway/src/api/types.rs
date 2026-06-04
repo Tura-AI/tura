@@ -89,7 +89,7 @@ pub struct Session {
     #[serde(default)]
     pub validator_enabled: bool,
     #[serde(default)]
-    pub force_multiple_tasks: bool,
+    pub force_planning: bool,
     pub model_variant: Option<String>,
     #[serde(default)]
     pub model_acceleration_enabled: bool,

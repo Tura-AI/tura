@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
-use code_tools_suite::state_machine::session_management::SessionInput;
+use runtime::state_machine::session_management::SessionInput;
 use serde_json::{json, Value};
 
 fn main() {
@@ -31,11 +31,6 @@ fn run() -> Result<i32, String> {
     if config.priority {
         std::env::set_var("TURA_SESSION_ACCELERATION_ENABLED", "1");
     }
-    if config.multiple_tasks_mode {
-        std::env::set_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS", "1");
-    } else {
-        std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS");
-    }
     if let Some(max_tokens) = config.max_tokens {
         std::env::set_var("TURA_SESSION_MAX_TOKENS", max_tokens.to_string());
     }
@@ -60,13 +55,14 @@ fn run() -> Result<i32, String> {
             .flush()
             .map_err(|err| format!("failed to flush stdout: {err}"))?;
     }
-    let result = code_tools_suite::mano::process_from_gateway_session_in_directory(
+    let result = runtime::mano::process_from_gateway_session_in_directory(
         session_id.clone(),
         SessionInput {
             user_input: prompt,
             file_input: Vec::new(),
             agent: config.agent.clone(),
             runtime_context: None,
+            planning_mode_override: config.planning_mode,
         },
         config.cwd.clone(),
     )?;
@@ -119,13 +115,12 @@ Options:
       --output-last-message PATH  write the final assistant message to PATH
       --model-reasoning-effort LEVEL
                                   reasoning effort override
-      --force-multiple-tasks      enable the multiple_tasks command surface
-      --multiple-tasks-mode       alias for --force-multiple-tasks
-      --enable-multiple-tasks     alias for --force-multiple-tasks
+      --planning MODE       planning override: auto, on, or off
+                                  (default: auto, follows selected agent config)
   -c, --config KEY=VALUE          runtime override:
                                   model_reasoning_effort, max_tokens,
                                   model_max_tokens,
-                                  force_multiple_tasks=true
+                                  planning=auto|on|off
       --skip-git-repo-check       accepted for compatibility
       --dangerously-bypass-approvals-and-sandbox
                                   accepted for compatibility
@@ -148,7 +143,7 @@ struct CliConfig {
     model: Option<String>,
     reasoning_effort: Option<String>,
     priority: bool,
-    multiple_tasks_mode: bool,
+    planning_mode: Option<bool>,
     max_tokens: Option<u64>,
     agent: Option<String>,
     session_id: Option<String>,
@@ -168,7 +163,7 @@ impl CliConfig {
             model: None,
             reasoning_effort: None,
             priority: false,
-            multiple_tasks_mode: false,
+            planning_mode: None,
             max_tokens: None,
             agent: None,
             session_id: None,
@@ -197,6 +192,11 @@ impl CliConfig {
                 index += 1;
                 continue;
             }
+            if let Some(value) = arg.strip_prefix("--planning=") {
+                config.planning_mode = parse_planning_mode(value)?;
+                index += 1;
+                continue;
+            }
             match arg {
                 "--skip-git-repo-check" | "--dangerously-bypass-approvals-and-sandbox" => {
                     index += 1;
@@ -205,13 +205,9 @@ impl CliConfig {
                     config.json = true;
                     index += 1;
                 }
-                "--multiple-tasks-mode" | "--enable-multiple-tasks" | "--force-multiple-tasks" => {
-                    config.multiple_tasks_mode = true;
-                    index += 1;
-                }
-                "--no-force-multiple-tasks" => {
-                    config.multiple_tasks_mode = false;
-                    index += 1;
+                "--planning" => {
+                    config.planning_mode = parse_planning_mode(&take_value(&args, index)?)?;
+                    index += 2;
                 }
                 "-p" | "--priority" => {
                     config.priority = true;
@@ -298,8 +294,10 @@ fn apply_config_arg(config: &mut CliConfig, value: &str) {
             }
         }
         "service_tier" if value.eq_ignore_ascii_case("priority") => config.priority = true,
-        "force_multiple_tasks" | "multiple_tasks_mode" if is_truthy(value) => {
-            config.multiple_tasks_mode = true
+        "planning" => {
+            if let Ok(mode) = parse_planning_mode(value) {
+                config.planning_mode = mode;
+            }
         }
         _ => {}
     }
@@ -310,6 +308,29 @@ fn is_truthy(value: &str) -> bool {
         value.trim().to_ascii_lowercase().as_str(),
         "1" | "true" | "yes" | "on" | "enabled" | "priority"
     )
+}
+
+fn is_falsy(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "0" | "false" | "no" | "off" | "disabled"
+    )
+}
+
+fn parse_planning_mode(value: &str) -> Result<Option<bool>, String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized == "auto" || normalized == "default" || normalized == "agent" {
+        return Ok(None);
+    }
+    if is_truthy(&normalized) {
+        return Ok(Some(true));
+    }
+    if is_falsy(&normalized) {
+        return Ok(Some(false));
+    }
+    Err(format!(
+        "invalid --planning value: {value}; expected auto, on, or off"
+    ))
 }
 
 fn normalize_model(model: &str) -> String {
@@ -323,15 +344,31 @@ fn normalize_model(model: &str) -> String {
 fn project_root_from_exe() -> String {
     std::env::current_exe()
         .ok()
-        .and_then(|path| {
-            path.parent()
-                .and_then(|debug| debug.parent())
-                .map(|target| target.to_path_buf())
+        .as_deref()
+        .and_then(find_project_root_from)
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .as_deref()
+                .and_then(find_project_root_from)
         })
-        .and_then(|target| target.parent().map(|root| root.to_path_buf()))
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
         .display()
         .to_string()
+}
+
+fn find_project_root_from(path: &Path) -> Option<PathBuf> {
+    let start = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
+    start
+        .ancestors()
+        .find(|candidate| {
+            candidate.join("agents").join("src").is_dir() && candidate.join("crates").is_dir()
+        })
+        .map(Path::to_path_buf)
 }
 
 fn write_jsonl(
@@ -728,4 +765,89 @@ fn emit_jsonl(value: &Value) -> Result<(), String> {
         serde_json::to_string(value).map_err(|err| format!("failed to encode jsonl: {err}"))?
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn planning_mode_is_unspecified_without_cli_override() {
+        let config = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--agent-id".to_string(),
+            "coding_agent_planning".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse cli");
+
+        assert_eq!(config.planning_mode, None);
+    }
+
+    #[test]
+    fn planning_mode_respects_explicit_cli_on_and_off() {
+        let enabled = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--planning".to_string(),
+            "on".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse enabled cli");
+        let disabled = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--planning=off".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse disabled cli");
+
+        assert_eq!(enabled.planning_mode, Some(true));
+        assert_eq!(disabled.planning_mode, Some(false));
+    }
+
+    #[test]
+    fn old_planning_cli_aliases_are_not_supported() {
+        for old_arg in [
+            "--force-planning",
+            "--planning-mode",
+            "--enable-planning",
+            "--no-force-planning",
+        ] {
+            let error = CliConfig::parse(vec![
+                "exec".to_string(),
+                old_arg.to_string(),
+                "inspect".to_string(),
+            ])
+            .expect_err("old planning alias should be rejected");
+            assert!(error.contains("unsupported tura option"));
+        }
+    }
+
+    #[test]
+    fn planning_config_arg_can_set_auto_on_or_off() {
+        let automatic = CliConfig::parse(vec![
+            "exec".to_string(),
+            "-c".to_string(),
+            "planning=auto".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse auto config");
+        let enabled = CliConfig::parse(vec![
+            "exec".to_string(),
+            "-c".to_string(),
+            "planning=on".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse enabled config");
+        let disabled = CliConfig::parse(vec![
+            "exec".to_string(),
+            "-c".to_string(),
+            "planning=off".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse disabled config");
+
+        assert_eq!(automatic.planning_mode, None);
+        assert_eq!(enabled.planning_mode, Some(true));
+        assert_eq!(disabled.planning_mode, Some(false));
+    }
 }

@@ -8,6 +8,7 @@ pub mod mano;
 pub mod prompt_style;
 pub mod runtime;
 pub mod session;
+pub mod session_log_client;
 pub mod state_machine;
 pub mod tool_router;
 

@@ -4,7 +4,7 @@
 //! session state machine (SessionManagement, SessionState, etc.)
 
 use chrono::Utc;
-use code_tools_suite::state_machine::session_management::{
+use runtime::state_machine::session_management::{
     SessionId, SessionInput, SessionManagement, SessionState, UserGoal,
 };
 use std::path::PathBuf;
@@ -17,7 +17,7 @@ pub const CODING_AGENT_FAST_NAME: &str = "coding_agent_fast";
 pub const CODING_AGENT_INSTANT_NAME: &str = "coding_agent_instant";
 
 pub fn coding_agent_provider() -> String {
-    code_tools_suite::agent_router::coding_agent_provider_name()
+    runtime::agent_router::coding_agent_provider_name()
 }
 
 pub struct SessionManager;
@@ -52,6 +52,7 @@ impl SessionManager {
             file_input: vec![],
             agent: agent.clone(),
             runtime_context: None,
+            planning_mode_override: None,
         };
 
         let session_topic = session_topic_for_session_type(&session_type);
@@ -78,7 +79,7 @@ impl SessionManager {
             session_type: Some(session_type),
             kill_processes_on_start: false,
             validator_enabled: false,
-            force_multiple_tasks: false,
+            force_planning: false,
             model_variant: Some(DEFAULT_SESSION_REASONING_EFFORT.to_string()),
             model_acceleration_enabled: true,
             disable_permission_restrictions: false,
@@ -134,7 +135,7 @@ pub struct SessionInfo {
     pub kill_processes_on_start: bool,
     pub validator_enabled: bool,
     #[serde(default)]
-    pub force_multiple_tasks: bool,
+    pub force_planning: bool,
     #[serde(default)]
     pub model_variant: Option<String>,
     #[serde(default)]
@@ -164,7 +165,7 @@ impl SessionInfo {
             session_type: Some("coding".to_string()),
             kill_processes_on_start: false,
             validator_enabled: false,
-            force_multiple_tasks: false,
+            force_planning: false,
             model_variant: Some(DEFAULT_SESSION_REASONING_EFFORT.to_string()),
             model_acceleration_enabled: true,
             disable_permission_restrictions: management.disable_permission_restrictions,

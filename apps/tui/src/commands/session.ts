@@ -144,7 +144,7 @@ function parseTaskPatch(args: string[], seed: TaskManagement = {}): TaskManageme
   const status = takeOption(args, "--status");
   const planName = takeOption(args, "--plan-summary");
   const taskSummary = takeOption(args, "--task-summary");
-  const delivery = takeOption(args, "--delivery");
+  const deliverable = takeOption(args, "--deliverable");
   const trigger = takeOption(args, "--start-condition");
   const scheduleTime = takeOption(args, "--start-at");
   const subSessionId = takeOption(args, "--sub-session-id");
@@ -160,7 +160,7 @@ function parseTaskPatch(args: string[], seed: TaskManagement = {}): TaskManageme
   }
   if (planName) patch.plan_summary = planName;
   if (taskSummary) patch.task_summary = taskSummary;
-  if (delivery) patch.delivery = delivery;
+  if (deliverable) patch.deliverable = deliverable;
   if (scheduleTime) patch.start_at = parseStartAt(scheduleTime);
   if (subSessionId) patch.sub_session_id = subSessionId;
   if (step) {

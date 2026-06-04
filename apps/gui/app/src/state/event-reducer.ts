@@ -6,7 +6,11 @@ import type {
   TodoItem,
 } from "@tura/gateway-sdk";
 import type { AppState } from "./global-store";
-import { messageSessionId, sessionUpdatedAt } from "./global-store";
+import {
+  messageSessionId,
+  sessionHasDisplayName,
+  sessionUpdatedAt,
+} from "./global-store";
 
 export function applyGatewayEvent(
   state: AppState,
@@ -296,8 +300,20 @@ export function upsertSession(
   sessions: Session[],
   session: Session,
 ): Session[] {
+  const existing = sessions.find((item) => item.id === session.id);
+  const nextSession =
+    existing &&
+    !sessionHasDisplayName(session) &&
+    sessionHasDisplayName(existing)
+      ? {
+          ...session,
+          name: existing.name,
+          session_display_name: existing.session_display_name,
+          plan_summary: existing.plan_summary,
+        }
+      : session;
   const without = sessions.filter((item) => item.id !== session.id);
-  return [...without, session].sort(
+  return [...without, nextSession].sort(
     (left, right) => sessionUpdatedAt(right) - sessionUpdatedAt(left),
   );
 }
@@ -308,7 +324,8 @@ export function upsertMessage(
 ): Message[] {
   const without = messages.filter(
     (item) =>
-      item.id !== message.id && !isOptimisticDuplicateUserMessage(item, message),
+      item.id !== message.id &&
+      !isOptimisticDuplicateUserMessage(item, message),
   );
   return [...without, message].sort((left, right) => {
     const leftTime = left.time?.created ?? left.created_at ?? 0;

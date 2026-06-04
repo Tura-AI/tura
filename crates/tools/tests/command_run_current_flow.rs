@@ -1085,37 +1085,39 @@ fn pass_top_level_task_status_argument_is_not_model_visible() {
 }
 
 #[test]
-fn pass_multiple_tasks_command_routes_through_command_run() {
+fn pass_planning_command_routes_through_command_run() {
     let _guard = env_lock_blocking();
-    std::env::set_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS", "1");
-    let root = temp_workspace("multiple-tasks");
+    std::env::set_var("TURA_FORCE_EXECUTE_TOOLS_PLANNING", "1");
+    let root = temp_workspace("planning");
 
     let output = command_run::execute(
         &json!({
             "commands": [
                 {
-                    "command": "multiple_tasks",
-                    "command_line": "[{\"nonce_id\":\"inspect\",\"step\":1,\"task_summary\":\"Inspect files\",\"delivery\":\"Read relevant files and identify edits.\"},{\"nonce_id\":\"apply\",\"step\":1,\"task_summary\":\"Apply changes\",\"delivery\":\"Patch files and verify behavior.\"}]"
+                    "command": "planning",
+                    "command_line": "[{\"step\":1,\"task_summary\":\"Inspect files\"},{\"step\":1,\"task_summary\":\"Apply changes\"}]"
                 }
             ]
         }),
         &root,
     );
 
-    std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS");
+    std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_PLANNING");
 
     assert_eq!(output["results"][0]["success"], true);
-    assert_eq!(output["results"][0]["command_type"], "multiple_tasks");
+    assert_eq!(output["results"][0]["command_type"], "planning");
     assert_eq!(
         output["results"][0]["output"]["steps"][0]["task_summary"],
         "Inspect files"
     );
     assert_eq!(output["results"][0]["output"]["steps"][0]["step"], 1);
-    assert_eq!(
-        output["results"][0]["output"]["steps"][0]["delivery"],
-        "Read relevant files and identify edits."
-    );
-    assert_eq!(output["results"][0]["output"]["steps"][1]["step"], 1);
+    assert!(output["results"][0]["output"]["steps"][0]
+        .get("deliverable")
+        .is_none());
+    assert!(output["results"][0]["output"]["steps"][0]
+        .get("task_id")
+        .is_none());
+    assert_eq!(output["results"][0]["output"]["steps"][1]["step"], 2);
 }
 
 #[test]
@@ -1184,10 +1186,7 @@ fn pass_task_status_accepts_no_required_arguments() {
 
     assert_eq!(output["results"][0]["command_type"], "task_status");
     assert_eq!(output["results"][0]["success"], true);
-    assert_eq!(
-        output["results"][0]["output"],
-        json!({ "task_status": { "status": null, "task_summary": null } })
-    );
+    assert_eq!(output["results"][0]["output"], json!({ "task_status": {} }));
 }
 
 #[test]
@@ -1215,18 +1214,18 @@ fn fail_task_status_rejects_status_outside_question_or_done() {
 }
 
 #[test]
-fn fail_multiple_tasks_command_is_unavailable_by_default() {
+fn fail_planning_command_is_unavailable_by_default() {
     let _guard = env_lock_blocking();
-    std::env::remove_var("TURA_FORCE_MULTIPLE_TASKS");
-    std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_MULTIPLE_TASKS");
-    let root = temp_workspace("multiple-tasks-disabled");
+    std::env::remove_var("TURA_FORCE_PLANNING");
+    std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_PLANNING");
+    let root = temp_workspace("planning-disabled");
 
     let output = command_run::execute(
         &json!({
             "commands": [
                 {
-                    "command": "multiple_tasks",
-                    "command_line": "[{\"nonce_id\":\"inspect\",\"task_summary\":\"Inspect files\",\"delivery\":\"Read relevant files and identify edits.\"},{\"nonce_id\":\"apply\",\"task_summary\":\"Apply changes\",\"delivery\":\"Patch files and verify behavior.\"}]"
+                    "command": "planning",
+                    "command_line": "[{\"task_summary\":\"Inspect files\"},{\"task_summary\":\"Apply changes\"}]"
                 }
             ]
         }),
@@ -1965,22 +1964,21 @@ fn pass_mutating_commands_are_barriers_between_read_batches() {
 }
 
 #[test]
-fn pass_read_only_commands_in_same_step_run_concurrently() {
+fn pass_same_step_commands_are_extended_to_unique_order() {
     let _guard = env_lock_blocking();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
-    let root = temp_workspace("parallel-read-step");
+    let root = temp_workspace("unique-read-step");
     fs::write(root.join("state.txt"), "ready\n").unwrap();
     let command_a = if cfg!(windows) {
-        "Test-Path state.txt; Start-Sleep -Milliseconds 900; Write-Output read-a"
+        "Test-Path state.txt; Write-Output read-a"
     } else {
-        "pwd; sleep 0.9; echo read-a"
+        "pwd; echo read-a"
     };
     let command_b = if cfg!(windows) {
-        "Test-Path state.txt; Start-Sleep -Milliseconds 900; Write-Output read-b"
+        "Test-Path state.txt; Write-Output read-b"
     } else {
-        "pwd; sleep 0.9; echo read-b"
+        "pwd; echo read-b"
     };
-    let started = Instant::now();
 
     let output = command_run::execute(
         &json!({
@@ -1994,11 +1992,8 @@ fn pass_read_only_commands_in_same_step_run_concurrently() {
 
     assert_eq!(output["results"][0]["success"], true);
     assert_eq!(output["results"][1]["success"], true);
-    assert!(
-        started.elapsed() < Duration::from_millis(2300),
-        "same-step read-only commands should run in parallel, elapsed {:?}",
-        started.elapsed()
-    );
+    assert_eq!(output["results"][0]["step"], 1);
+    assert_eq!(output["results"][1]["step"], 2);
 }
 
 #[test]

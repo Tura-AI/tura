@@ -44,7 +44,13 @@ export type TuraConfigUpdate = {
 };
 
 export type SessionStatus = "idle" | "busy" | "error";
-export type PlanStatus = "todo" | "doing" | "question" | "done" | "archived";
+export type PlanStatus =
+  | "todo"
+  | "waiting_user"
+  | "doing"
+  | "question"
+  | "done"
+  | "archived";
 export type StartCondition =
   | "session_idle"
   | "user_action"
@@ -59,10 +65,10 @@ export type PollInterval = {
 };
 
 export type TaskManagement = {
-  nonce_id?: string;
+  task_id?: string;
   step?: number;
   task_summary?: string;
-  delivery?: string;
+  deliverable?: string;
   sub_session_id?: string;
   start_condition?: StartCondition;
   start_at?: string | number;
@@ -87,13 +93,62 @@ export type Session = {
   updated_at?: number;
   kill_processes_on_start?: boolean;
   validator_enabled?: boolean;
-  force_multiple_tasks?: boolean;
+  force_planning?: boolean;
   model_variant?: string | null;
   model_acceleration_enabled?: boolean;
   disable_permission_restrictions?: boolean;
   task_management?: TaskManagement;
   plan_summary?: string | null;
   session_display_name?: string | null;
+};
+
+export type SessionLogPage = {
+  page: number;
+  page_size: number;
+  total: number;
+};
+
+export type SessionLogWorkspace = {
+  directory: string;
+  session_count: number;
+  last_updated_at: number;
+};
+
+export type SessionLogSnapshot = {
+  session_id: string;
+  workspace: string;
+  name?: string | null;
+  parent_id?: string | null;
+  created_at: number;
+  updated_at: number;
+  state?: string | null;
+  status?: string | null;
+  message_count: number;
+  task_management: unknown;
+  management: unknown;
+};
+
+export type SessionLogRecord = {
+  session_id: string;
+  message_id: string;
+  role: string;
+  created_at: number;
+  updated_at: number;
+  record: unknown;
+};
+
+export type SessionLogWorkspacesResponse = {
+  workspaces: SessionLogWorkspace[];
+};
+
+export type SessionLogSessionsResponse = {
+  page: SessionLogPage;
+  sessions: SessionLogSnapshot[];
+};
+
+export type SessionLogRecordsResponse = {
+  page: SessionLogPage;
+  records: SessionLogRecord[];
 };
 
 export type MessageRole = "user" | "assistant" | "system";
@@ -751,7 +806,7 @@ export type CreateSessionRequest = {
   session_type?: string;
   kill_processes_on_start?: boolean;
   validator_enabled?: boolean;
-  force_multiple_tasks?: boolean;
+  force_planning?: boolean;
   model_variant?: string;
   model_acceleration_enabled?: boolean;
   disable_permission_restrictions?: boolean;

@@ -63,8 +63,8 @@ pub async fn execute_tool(input: ExecuteToolInput) -> Result<ToolExecutionResult
             result: output_value,
         });
     }
-    if input.tool_name == "multiple_tasks" {
-        let output_value = code_tools::commands::multiple_tasks::execute_value(
+    if input.tool_name == "planning" {
+        let output_value = code_tools::commands::planning::execute_value(
             input.arguments.clone(),
             &input.session_directory,
         );
@@ -131,7 +131,7 @@ fn tool_output_error(output: &serde_json::Value) -> Option<String> {
 
 fn canonical_tool_file_name(tool_name: &str) -> &str {
     match tool_name {
-        "multiple_tasks" => "commands/multiple_tasks",
+        "planning" => "commands/planning",
         _ => tool_name,
     }
 }

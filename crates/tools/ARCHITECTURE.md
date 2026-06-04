@@ -3,6 +3,9 @@
 `crates/tools` owns the model-visible tool layer, command handlers, validation,
 policy, sandbox, file locks, and tool output normalization. It does not own the
 command registry or managed process lifecycle; those live in `crates/router`.
+It also does not own durable session history or provider-call logs: session and
+task history lives in `crates/session_log`, while provider diagnostics live
+under `log/provider/` or `LOG_PATH`.
 
 The Cargo package name should stay compatible with Tura:
 
@@ -70,7 +73,7 @@ crates/tools/
         schema.json
         prompt.md
         policy.toml
-      multiple_tasks/
+      planning/
         mod.rs
         schema.json
         prompt.md
@@ -123,7 +126,7 @@ crates/tools/
       Dockerfile
     contracts/
       compact_context_contract.mjs
-      multiple_tasks_backend_contract.mjs
+      planning_backend_contract.mjs
 ```
 
 The target command implementation layout is
@@ -206,11 +209,11 @@ Examples:
 - `web_discover` -> router command id -> tools handler
 - `compact_context` -> command-run lifecycle handler
 - `task_status` -> internal command-run status command
-- `multiple_tasks` -> optional planning/multiple-task state handler
+- `planning` -> optional planning/multiple-task state handler
 
 Only `shell_command`, `bash`, `apply_patch`, read-only `read_media`,
 `web_discover`, `compact_context`, and internal `task_status` are enabled for
-normal command-run coding-agent sessions in this version. `multiple_tasks` is
+normal command-run coding-agent sessions in this version. `planning` is
 injected only by the explicit multiple-task runtime mode.
 
 `command_run/` must not contain a command registry. New command registration
@@ -229,8 +232,8 @@ Rules:
   The handler normalizes missing steps to the command's original 1-based
   position.
 - Every command executes with a positive step after normalization.
-- Same-step read-only commands may run concurrently as a single
-  **macro_command batch** (see naming below).
+- Duplicate or earlier step values are normalized to the next later unique
+  step in input order.
 - Later steps wait for earlier steps.
 - Mutating commands acquire file locks.
 - Partial results may be emitted after each step group.
