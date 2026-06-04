@@ -113,7 +113,7 @@ function main() {
     "-m",
     model,
     "--agent-id",
-    "coding_agent_fast",
+    "fast",
     "--dangerously-bypass-approvals-and-sandbox",
     ...(process.env.COMMAND_RUN_AGENT_CODEX_SERVICE_TIER === "auto" ? [] : ["-p"]),
     "--model-reasoning-effort",
@@ -166,3 +166,4 @@ function main() {
 }
 
 main()
+

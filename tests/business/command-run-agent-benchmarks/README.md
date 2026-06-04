@@ -17,6 +17,7 @@ providers. Focused command-run CLI E2E scripts live under
 - `command_run_frontend_playwright_lite_business_test.mjs` runs a smaller Playwright-heavy frontend benchmark.
 - `command_run_background_services_business_test.mjs` checks that Tura agents start multiple persistent local services in the background, probe readiness, and clean them up across `shell_command` and `bash` command surfaces.
 - `command_run_tui_snake_playwright_business_test.mjs` runs the TUI snake Playwright benchmark.
+- `../tui_real_gateway_business_test.mjs` runs the TUI functional business flow against the real gateway binary rather than a mock gateway.
 - `agent_swebench_business_test.mjs` compares Tura and Codex agents on explicit SWE-bench Verified issue ids using issue statements only, with priority `gpt-5.5` low-reasoning defaults and per-agent patch/log capture.
 - `agent_programbench_business_test.mjs` compares Tura and Codex agents on one ProgramBench cleanroom reconstruction task. It pulls the `task_cleanroom` Docker image, copies `/workspace`, tells the agent not to use the internet, requires a full source reconstruction with matching behavior, packages `submission.tar.gz`, and can optionally run `programbench eval`.
 - Historical generated records from the previous layout now live under

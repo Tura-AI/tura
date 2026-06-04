@@ -49,6 +49,16 @@ export interface ProviderAuthStatus {
   last_error_category?: string | null;
 }
 
+export interface ProviderAuthUpsert {
+  type: string;
+  key?: string | null;
+  access?: string | null;
+  refresh?: string | null;
+  expires?: number | null;
+  accountId?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
 export interface ProviderAuthMethod {
   type: string;
   kind?: string;

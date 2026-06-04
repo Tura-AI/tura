@@ -93,7 +93,11 @@ mod tests {
 
     #[tokio::test]
     async fn bundled_config_exposes_six_model_tiers() {
-        let _guard = env_lock();
+        static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+        let _guard = LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
         let previous_provider = std::env::var_os("TURA_PROVIDER_CONFIG");
         let previous = std::env::var_os("TURALLM_CONFIG");
         std::env::remove_var("TURA_PROVIDER_CONFIG");

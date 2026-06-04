@@ -1,5 +1,6 @@
 import { CliUsageError } from "../types/common.js";
 import type { SessionConfig } from "../types/config.js";
+import { t } from "../i18n.js";
 
 export interface RuntimeConfigOverrides {
   model?: string;
@@ -7,14 +8,13 @@ export interface RuntimeConfigOverrides {
   sessionType?: string;
   modelVariant?: string;
   modelAccelerationEnabled?: boolean;
-  forcePlanning?: boolean;
   killProcessesOnStart?: boolean;
   validatorEnabled?: boolean;
 }
 
 export function parseConfigAssignment(entry: string): [string, unknown] {
   const [key, ...rest] = entry.split("=");
-  if (!key || rest.length === 0) throw new CliUsageError(`invalid config assignment: ${entry}`);
+  if (!key || rest.length === 0) throw new CliUsageError(t("invalidConfigAssignment", { entry }));
   return [key.trim(), parseConfigValue(rest.join("="))];
 }
 
@@ -66,15 +66,24 @@ function assignSessionConfigValue(patch: Partial<SessionConfig>, key: string, va
     patch.command_run_stall_guard_check_secs = numberValue(value, key);
   } else if (canonical === "command_run_stall_guard_identical_checks") {
     patch.command_run_stall_guard_identical_checks = numberValue(value, key);
-  } else if (canonical === "planning") {
-    const parsed = planningValue(value, key);
-    if (parsed !== undefined) patch.force_planning = parsed;
   } else if (canonical === "kill_processes_on_start") {
     patch.kill_processes_on_start = booleanValue(value, key);
   } else if (canonical === "validator_enabled") {
     patch.validator_enabled = booleanValue(value, key);
+  } else if (canonical === "model") {
+    patch.model = stringValue(value);
+  } else if (canonical === "active_model") {
+    patch.active_model = stringValue(value);
+  } else if (canonical === "active_provider") {
+    patch.active_provider = stringValue(value);
+  } else if (canonical === "session_type") {
+    patch.session_type = stringValue(value);
+  } else if (canonical === "language") {
+    patch.language = stringValue(value);
+  } else if (canonical === "command_run_stall_guard_profile") {
+    patch.command_run_stall_guard_profile = stringValue(value);
   } else {
-    (patch as Record<string, unknown>)[canonical] = value;
+    throw new CliUsageError(t("unsupportedSessionConfigKey", { key }));
   }
 }
 
@@ -86,7 +95,6 @@ function assignRuntimeConfigValue(overrides: RuntimeConfigOverrides, key: string
   else if (canonical === "model_variant") overrides.modelVariant = stringValue(value);
   else if (canonical === "model_acceleration_enabled") overrides.modelAccelerationEnabled = booleanValue(value, key);
   else if (canonical === "service_tier") overrides.modelAccelerationEnabled = serviceTierAcceleration(value);
-  else if (canonical === "planning") overrides.forcePlanning = planningValue(value, key);
   else if (canonical === "kill_processes_on_start") overrides.killProcessesOnStart = booleanValue(value, key);
   else if (canonical === "validator_enabled") overrides.validatorEnabled = booleanValue(value, key);
 }
@@ -107,7 +115,7 @@ function stringValue(value: unknown): string {
 
 function numberValue(value: unknown, key: string): number {
   const number = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(number)) throw new CliUsageError(`${key} requires a numeric value`);
+  if (!Number.isFinite(number)) throw new CliUsageError(t("valueRequiresNumber", { key }));
   return number;
 }
 
@@ -117,13 +125,7 @@ function booleanValue(value: unknown, key: string): boolean {
   const normalized = String(value).trim().toLowerCase();
   if (["true", "1", "yes", "on", "enabled", "priority"].includes(normalized)) return true;
   if (["false", "0", "no", "off", "disabled", "auto", "default", "standard"].includes(normalized)) return false;
-  throw new CliUsageError(`${key} requires a boolean-like value`);
-}
-
-function planningValue(value: unknown, key: string): boolean | undefined {
-  const normalized = String(value).trim().toLowerCase();
-  if (["auto", "default", "agent"].includes(normalized)) return undefined;
-  return booleanValue(value, key);
+  throw new CliUsageError(t("valueRequiresBoolean", { key }));
 }
 
 function serviceTierAcceleration(value: unknown): boolean {

@@ -16,44 +16,39 @@ scripts/
   start.sh
 
   installers/
-    apps.toml
+    media.toml
     playwright.toml
-    powershell_modules.toml
-    node.toml
-    python.toml
-    system.toml
 
   packages/
-    __stdlib__/
-      manifest.toml
-      entry.py
-    requests/
-      manifest.toml
-      entry.py
-    pandas/
-      manifest.toml
-      entry.py
     playwright_node/
       manifest.toml
-
-  persistent/
-    <workflow_id>/
+    python/
+      ...
+    read_media/
+      entry.py
       manifest.toml
-      script.py
-      params.schema.json
-      README.md
 ```
 
-Legacy package directories such as `scripts/requests` can be supported during
-migration, but the documented target is `scripts/packages/<package>`.
+There is no active top-level `scripts/persistent/` directory in the current
+tree. Add persistent reusable workflows only when a router/tools command has a
+real reuse case and a documented output contract.
 
 ## Install Scripts
 
 Install scripts should:
 
-- Verify Git, Rust, Cargo, Bun, Node, Python, and the platform shell.
+- Detect installed versions and verify minimum versions where the project has
+  one, such as Node.js 20+ and Python 3.10+.
+- Automatically install Rust/Cargo through rustup when possible; if company
+  policy, network, or permissions block installation, print rustup guidance.
+- Automatically install other toolchains when possible:
+  - Windows: `winget`.
+  - Linux: `apt-get`, `dnf`, `yum`, `pacman`, or `apk`.
+  - macOS: Homebrew.
+- Install or verify Git, Node/npm, Python, Bun, ffmpeg, native build tools, and
+  the platform shell.
 - Install `apps/tui` dependencies from `package-lock.json`.
-- Install `apps/gui` dependencies when Bun is available.
+- Install and build `apps/gui` when Bun is available.
 - Run `cargo fetch`.
 - Build `gateway` binaries `tura` and `gateway`.
 - Build `tura_router`.
@@ -63,8 +58,12 @@ Install scripts should:
   repository root or a tracked package directory.
 - Export `PYTHONPATH` and `LIBCLANG_PATH` for the current script invocation
   when local fallback packages are installed.
-- Install Playwright Chromium unless explicitly skipped.
-- Respect a skip-tool-install flag.
+- Install Playwright Chromium unless explicitly skipped, then verify a headless
+  Chromium launch with Playwright. Verification failures must print platform
+  guidance for proxy, endpoint security, sudo/system-library, and browser-cache
+  issues.
+- Respect skip flags for frontend, Playwright, Python fallback packages, and
+  Rust build work. Check-only mode must verify without installing.
 - Avoid writing generated logs or screenshots into tracked paths.
 - Fail with actionable messages when required system toolchains are missing.
 
@@ -84,10 +83,13 @@ Start scripts should:
 - Support a gateway-server mode for the TypeScript CLI/TUI:
   `cargo run -p gateway --bin gateway`.
 - Support a TUI-client mode that runs `node apps/tui/dist/index.js ...`.
+- Support a GUI dev-server mode that runs `bun run dev` from `apps/gui`.
 - Start the router binary when CLI forwarding or managed lifecycle is needed,
   for example
   `cargo run -p tura_router -- forward <command> [args...]`.
 - Pass router/gateway/frontend overrides when a local UI flow needs them.
+- For GUI startup, set `VITE_TURA_GATEWAY_URL` from `TURA_GATEWAY_URL` when
+  present, otherwise from the selected gateway port.
 - Avoid introducing independent service startup paths.
 - Let router pull up and monitor managed local services/processes.
 - Print CLI endpoints, UI URLs, and health status when applicable.
@@ -97,6 +99,20 @@ Supported first-party start entrypoints:
 ```text
 scripts/start.ps1       Windows PowerShell
 scripts/start.sh        Linux/macOS POSIX shell
+```
+
+Supported first-party start modes:
+
+```text
+scripts/start.ps1 "Prompt"                  Rust CLI exec
+scripts/start.ps1 -Gateway -Port 4096       gateway HTTP server
+scripts/start.ps1 -Tui --help               TypeScript CLI/TUI
+scripts/start.ps1 -Gui                      GUI Vite dev server
+
+scripts/start.sh "Prompt"                   Rust CLI exec
+scripts/start.sh --gateway --port 4096      gateway HTTP server
+scripts/start.sh --tui --help               TypeScript CLI/TUI
+scripts/start.sh --gui                      GUI Vite dev server
 ```
 
 ## Auto Install Manifests
@@ -115,10 +131,16 @@ automatically:
 
 The model should not invent installer commands when a manifest exists.
 
-`scripts/installers/playwright.toml` declares the Playwright/Chromium setup used
-by frontend-debugging E2E flows. Browser installation remains an installer
-concern so command handlers can ask for a known capability instead of embedding
-ad hoc setup commands in prompts or test fixtures.
+Current installer manifests:
+
+- `scripts/installers/media.toml`: media tool support, including ffmpeg
+  verification.
+- `scripts/installers/playwright.toml`: Playwright/Chromium setup and headless
+  Chromium verification for frontend-debugging E2E flows.
+
+Browser installation remains an installer concern so command handlers can ask
+for a known capability instead of embedding ad hoc setup commands in prompts or
+test fixtures.
 
 ## Package Environments
 
@@ -134,14 +156,23 @@ Each package environment manifest defines:
 
 Router/tools should route `py:<package>` commands through this layer.
 
-`scripts/packages/playwright_node/manifest.toml` is the Node package environment
-for Playwright-based browser checks. It provides the stable dependency boundary
-for command-run sessions that need screenshots, DOM inspection, or local
-frontend smoke tests.
+Current package environments:
+
+- `scripts/packages/playwright_node/manifest.toml`: Node package environment
+  for Playwright-based browser checks.
+- `scripts/packages/read_media/manifest.toml`: Python entrypoint metadata for
+  media reading.
+- `scripts/packages/python/`: local fallback Python packages installed by
+  setup scripts when the global environment is missing optional media
+  dependencies.
+
+The Playwright package environment provides the stable dependency boundary for
+command-run sessions that need screenshots, DOM inspection, or local frontend
+smoke tests.
 
 ## Persistent Scripts
 
-Persistent scripts are reusable CLI workflows stored under
+Persistent scripts, when added, are reusable CLI workflows stored under
 `scripts/persistent/<workflow_id>`.
 
 Each persistent script needs:

@@ -1,11 +1,3 @@
-export interface GlobalConfig {
-  language?: string | null;
-  theme?: string | null;
-  model?: string | null;
-  agent?: string | null;
-  skill_folders?: string[];
-}
-
 export interface SessionConfig {
   language?: string | null;
   model?: string | null;
@@ -18,7 +10,6 @@ export interface SessionConfig {
   context_message_limit?: number;
   kill_processes_on_start?: boolean;
   validator_enabled?: boolean;
-  force_planning?: boolean;
   command_run_stall_guard_profile?: string | null;
   command_run_stall_guard_check_secs?: number;
   command_run_stall_guard_identical_checks?: number;

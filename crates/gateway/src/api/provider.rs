@@ -2095,10 +2095,19 @@ pub async fn oauth_callback(
     Json(complete_oauth_callback(provider_id, payload).await)
 }
 
-pub async fn oauth_callback_info(Path(provider_id): Path<String>) -> Html<String> {
-    Html(format!(
-        "{} OAuth callback expects a POST from the GUI. Paste the copied code/token into the provider dialog instead of opening this URL directly.",
-        provider_display_name(&provider_id)
+pub async fn oauth_callback_info(
+    Path(provider_id): Path<String>,
+    Query(params): Query<OAuthRedirectCallbackParams>,
+) -> Html<String> {
+    if params.has_callback_payload() {
+        return finish_oauth_redirect_callback(params, Some(provider_id)).await;
+    }
+    Html(oauth_callback_html(
+        false,
+        &format!(
+            "{} OAuth callback is waiting for the provider redirect.",
+            provider_display_name(&provider_id)
+        ),
     ))
 }
 
@@ -2503,6 +2512,23 @@ async fn complete_pending_device_oauth(provider_id: &str) -> bool {
 pub async fn oauth_redirect_callback(
     Query(params): Query<OAuthRedirectCallbackParams>,
 ) -> impl IntoResponse {
+    finish_oauth_redirect_callback(params, None).await
+}
+
+async fn finish_oauth_redirect_callback(
+    params: OAuthRedirectCallbackParams,
+    expected_provider_id: Option<String>,
+) -> Html<String> {
+    if let Some(error) = params
+        .error
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return Html(oauth_callback_html(
+            false,
+            &format!("OAuth provider returned an error: {error}"),
+        ));
+    }
     let Some(code) = params
         .code
         .as_deref()
@@ -2523,6 +2549,15 @@ pub async fn oauth_redirect_callback(
             "OAuth state expired or was not found",
         ));
     };
+    if expected_provider_id
+        .as_deref()
+        .is_some_and(|expected| expected != provider_id)
+    {
+        return Html(oauth_callback_html(
+            false,
+            "OAuth callback provider did not match the pending login",
+        ));
+    }
     if pending.method != "oauth_pkce" {
         return Html(oauth_callback_html(
             false,
@@ -2591,6 +2626,22 @@ pub struct OAuthRedirectCallbackParams {
     pub code: Option<String>,
     pub state: Option<String>,
     pub error: Option<String>,
+}
+
+impl OAuthRedirectCallbackParams {
+    fn has_callback_payload(&self) -> bool {
+        self.code
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+            || self
+                .state
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+            || self
+                .error
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -3456,7 +3507,7 @@ fn provider_key_value_for_env(provider_id: &str, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::extract::Path;
+    use axum::extract::{Path, Query};
     use std::io::{Read, Write};
     use tokio::sync::Mutex;
 
@@ -3786,6 +3837,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gateway_oauth_callback_get_completes_all_pkce_logins() {
+        let _guard = ENV_LOCK.lock().await;
+        for case in [
+            PkceCallbackCase {
+                provider_id: "codex",
+                token_url_env: "OPENAI_OAUTH_TOKEN_URL",
+                token_env: "OPENAI_API_KEY",
+                refresh_env: "OPENAI_REFRESH_TOKEN",
+                extra_env: &[],
+            },
+            PkceCallbackCase {
+                provider_id: "claude-code",
+                token_url_env: "ANTHROPIC_OAUTH_TOKEN_URL",
+                token_env: "CLAUDE_CODE_OAUTH_TOKEN",
+                refresh_env: "CLAUDE_CODE_REFRESH_TOKEN",
+                extra_env: &[],
+            },
+            PkceCallbackCase {
+                provider_id: "google",
+                token_url_env: "GOOGLE_OAUTH_TOKEN_URL",
+                token_env: "GOOGLE_API_KEY",
+                refresh_env: "GOOGLE_REFRESH_TOKEN",
+                extra_env: &[
+                    ("GOOGLE_OAUTH_CLIENT_ID", "google-client"),
+                    ("GOOGLE_OAUTH_CLIENT_SECRET", "google-secret"),
+                ],
+            },
+        ] {
+            run_pkce_callback_case(case).await;
+        }
+    }
+
+    #[tokio::test]
     async fn provider_auth_status_refreshes_expired_openai_oauth_before_reporting() {
         let _guard = ENV_LOCK.lock().await;
         let temp_dir = std::env::temp_dir().join(format!(
@@ -4032,6 +4116,79 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
+    struct PkceCallbackCase {
+        provider_id: &'static str,
+        token_url_env: &'static str,
+        token_env: &'static str,
+        refresh_env: &'static str,
+        extra_env: &'static [(&'static str, &'static str)],
+    }
+
+    async fn run_pkce_callback_case(case: PkceCallbackCase) {
+        clear_openai_refresh_test_env();
+        let temp_dir = std::env::temp_dir().join(format!(
+            "tura-{}-oauth-callback-get-test-{}",
+            case.provider_id,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).expect("temp dir");
+        let env_path = temp_dir.join(".env");
+        let config_path = temp_dir.join("provider_config.json");
+        std::fs::write(&env_path, "").expect("env");
+        std::fs::write(&config_path, r#"{"provider_auth":{}}"#).expect("config");
+
+        let access: &'static str =
+            Box::leak(format!("{}-callback-access", case.provider_id).into_boxed_str());
+        let refresh: &'static str =
+            Box::leak(format!("{}-callback-refresh", case.provider_id).into_boxed_str());
+        let body: &'static str = Box::leak(
+            format!(
+                r#"{{"access_token":"{access}","refresh_token":"{refresh}","expires_in":3600}}"#
+            )
+            .into_boxed_str(),
+        );
+        let (addr, server) =
+            spawn_oauth_code_token_server("callback-code", "callback-verifier", body);
+        set_env("TURA_ENV_PATH", env_path.to_string_lossy().as_ref());
+        set_env("TURALLM_CONFIG", config_path.to_string_lossy().as_ref());
+        set_env(case.token_url_env, &format!("http://{addr}/oauth/token"));
+        for (key, value) in case.extra_env {
+            set_env(key, value);
+        }
+        global_store().set_oauth_state(
+            case.provider_id,
+            "oauth_pkce".to_string(),
+            None,
+            "http://localhost:1455/auth/callback".to_string(),
+            Some("callback-state".to_string()),
+            Some("callback-verifier".to_string()),
+        );
+
+        let html = oauth_callback_info(
+            Path(case.provider_id.to_string()),
+            Query(OAuthRedirectCallbackParams {
+                code: Some("callback-code".to_string()),
+                state: Some("callback-state".to_string()),
+                error: None,
+            }),
+        )
+        .await;
+
+        assert!(
+            html.0.contains("OAuth connected"),
+            "{} callback failed: {}",
+            case.provider_id,
+            html.0
+        );
+        assert_eq!(std::env::var(case.token_env).as_deref(), Ok(access));
+        assert_eq!(std::env::var(case.refresh_env).as_deref(), Ok(refresh));
+        server.join().expect("token server should finish");
+        clear_openai_refresh_test_env();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
     fn spawn_openai_token_server(
         expected_refresh_token: &'static str,
         token_body: &'static str,
@@ -4057,6 +4214,37 @@ mod tests {
             stream
                 .write_all(response.as_bytes())
                 .expect("write refresh response");
+        });
+        (addr, server)
+    }
+
+    fn spawn_oauth_code_token_server(
+        expected_code: &'static str,
+        expected_verifier: &'static str,
+        token_body: &'static str,
+    ) -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind token server");
+        let addr = listener.local_addr().expect("token server addr");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept callback request");
+            let request = read_http_request(&mut stream);
+            let (_, body) = request
+                .split_once("\r\n\r\n")
+                .expect("callback request should include body separator");
+            assert!(body.contains("grant_type=authorization_code"), "{body}");
+            assert!(body.contains(&format!("code={expected_code}")), "{body}");
+            assert!(
+                body.contains(&format!("code_verifier={expected_verifier}")),
+                "{body}"
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                token_body.len(),
+                token_body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write callback response");
         });
         (addr, server)
     }

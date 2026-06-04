@@ -57,8 +57,9 @@ inside session-log records except as normalized runtime/session events.
     gui/
     tui/
 
+  agents/
+
   crates/
-    agents/
     gateway/
     memory/        # docs-only boundary placeholder; not a Cargo member yet
     provider/
@@ -77,7 +78,6 @@ inside session-log records except as normalized runtime/session events.
     installers/
     packages/
 
-  sessions/
   target/
   tests/
 ```
@@ -191,23 +191,23 @@ the router or gateway over HTTP/URL. See `crates/runtime/src/manas/child_dispatc
 Agents are configured under `agents`.
 
 Agents own identity, default prompts, provider defaults, command selections,
-planning/multiple-task defaults, and generated/static agent interfaces.
+planning/multiple-task defaults, and static or dynamic agent configuration.
 Runtime loads agent config from this crate instead of hard-coding agent
 defaults.
 
 Current agent-owned files live under:
 
 ```text
-agents/src/<agent_name>/
+agents/src/<agent_id>/
   agent_config.json
-  persona.md
-  communication_style.md
   prompt.md
 ```
 
-Agent-specific prompt text must stay in agent prompt resources
-(`persona.md`, `communication_style.md`, `prompt.md`); runtime prompt fragments
-and command prompts are injected separately by their owning crates.
+Agent-specific prompt text stays in `prompt.md`. Persona text and
+communication style live in `personas/src/<persona_id>/prompt` for built-ins
+or `personas/<persona_id>/prompt` for dynamic personas, and agents bind them
+through `agent_persona` in `agent_config.json`. Runtime prompt fragments and
+command prompts are injected separately by their owning crates.
 
 ### `crates/provider`
 
@@ -375,21 +375,25 @@ agents/
   src/
     lib.rs
     coding_agent.rs
-    coding_agent/
+    store.rs
+    thinking-planning/
       agent_config.json
-      persona.md
-      communication_style.md
       prompt.md
-    coding_agent_fast/
+    thinking/
       agent_config.json
-      persona.md
-      communication_style.md
+      prompt.md
+    fast/
+      agent_config.json
+      prompt.md
+    fast-text-only/
+      agent_config.json
       prompt.md
 ```
 
-Agent config should define agent id/version, provider route/model defaults,
-reasoning effort, service tier, tool choice, stream defaults, enabled command
-ids, planning defaults, and final response policy.
+Agent config should define agent id, provider route defaults, stream/tool
+choice defaults, enabled command ids, persona bindings, planning defaults, and
+validator/final-response policy. The loader scans only `agents/src/<agent_id>`;
+legacy root-level `agents/<agent_id>` directories are not read.
 
 Default coding-agent behavior:
 
@@ -687,14 +691,17 @@ checks. Runtime and tools should call it through explicit clients or commands.
 
 ## Adding A Command
 
-1. Create `crates/tools/commands/<name>/`.
-2. Add `handler.rs`, `schema.json`, `prompt.md`, `policy.toml`, and tests.
-3. Register command aliases, CLI forwarding metadata, and lifecycle metadata in
-   `crates/router`.
-4. Add router forwarding and lifecycle tests.
-5. Enable it in the target agent config under `agents`.
-6. If it needs memory, add an explicit memory client/command path.
-7. Run focused tools and runtime checks.
+1. Create `crates/tools/src/commands/<name>/`.
+2. Add Rust handler code, `schema.json`, `prompt.md`, `policy.toml`, and tests.
+3. Export the module from `crates/tools/src/commands/mod.rs`.
+4. Add `ToolRouter` dispatch when the command should be callable as a direct
+   routed tool.
+5. Add router aliases, CLI forwarding metadata, and lifecycle metadata in
+   `crates/router` only when the command needs router discovery or a managed
+   process.
+6. Enable it in the target `agents/src/<agent_id>/agent_config.json`.
+7. If it needs memory, add an explicit memory client/command path.
+8. Run focused tools and runtime checks.
 
 ## Adding CLI Routing
 
@@ -742,15 +749,18 @@ cargo build -p code-tools
 ```
 
 The installer/package manifest tree also includes Playwright support for
-frontend debugging workflows:
+frontend debugging workflows and media support:
 
 ```text
+scripts/installers/media.toml
 scripts/installers/playwright.toml
 scripts/packages/playwright_node/manifest.toml
+scripts/packages/read_media/manifest.toml
 ```
 
 These manifests make Node Playwright and Chromium available to command-run
-sessions without putting generated browser artifacts into source control.
+sessions, and keep media-reading entrypoints separate from source-control
+generated artifacts.
 
 The normal local path is CLI-driven. Router may start managed local services as
 needed, but those services are not addressed through fixed ports:

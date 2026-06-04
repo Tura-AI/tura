@@ -5,10 +5,13 @@ export interface CliContext {
   cwd: string;
   json: boolean;
   color: ColorMode;
+  display: DisplayMode;
+  language?: "zh-CN" | "en";
   verbose: boolean;
 }
 
 export type ColorMode = "auto" | "always" | "never";
+export type DisplayMode = "auto" | "plain" | "rich";
 
 export type OutputMode = "text" | "json" | "ndjson";
 

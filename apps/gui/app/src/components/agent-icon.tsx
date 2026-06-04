@@ -19,10 +19,13 @@ export function agentIconEmoji(agent?: Agent, agentId?: string): string {
     return configured;
   }
   const id = agent?.name ?? agentId;
-  if (id === "coding_agent_planning") {
+  if (id === "thinking") {
+    return "🧠";
+  }
+  if (id === "thinking-planning") {
     return "🧭";
   }
-  if (id === "coding_agent_fast") {
+  if (id === "fast") {
     return "🚀";
   }
   return "⚡";

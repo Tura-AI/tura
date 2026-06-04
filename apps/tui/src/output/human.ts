@@ -1,7 +1,8 @@
 import type { NormalizedEvent } from "../types/event.js";
 import type { ColorMode } from "../types/common.js";
-import type { Message, RunResult, Session, TodoItem } from "../types/session.js";
-import { messageText, sessionTaskStatus, sessionTitle } from "../types/session.js";
+import type { Message, RunResult, Session } from "../types/session.js";
+import { messageText, sessionTitle } from "../types/session.js";
+import { t } from "../i18n.js";
 
 const codes = {
   reset: "\x1b[0m",
@@ -24,6 +25,29 @@ export function style(text: string, code: keyof typeof codes, enabled = true): s
   return enabled ? `${codes[code]}${text}${codes.reset}` : text;
 }
 
+export interface TableColumn<T> {
+  header: string;
+  value: (row: T) => unknown;
+}
+
+export function formatTable<T>(rows: T[], columns: Array<TableColumn<T>>): string {
+  const values = rows.map((row) => columns.map((column) => printable(column.value(row))));
+  const widths = columns.map((column, index) =>
+    Math.max(column.header.length, ...values.map((row) => row[index]?.length ?? 0)),
+  );
+  const header = columns.map((column, index) => column.header.padEnd(widths[index])).join("  ");
+  const divider = widths.map((width) => "-".repeat(width)).join("  ");
+  const body = values.map((row) => row.map((value, index) => value.padEnd(widths[index])).join("  "));
+  return [header, divider, ...body].join("\n");
+}
+
+function printable(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
+}
+
 export class HumanOutput {
   private color: boolean;
   private seenMessages = new Set<string>();
@@ -35,22 +59,22 @@ export class HumanOutput {
 
   header(session: Session, cwd: string): void {
     this.err(`${style("tura", "magenta", this.color)} ${style(session.id, "dim", this.color)}`);
-    this.err(`${style("workdir:", "bold", this.color)} ${cwd}`);
+    this.err(`${style(`${t("cwd")}:`, "bold", this.color)} ${cwd}`);
     if (session.model || session.agent) {
-      this.err(`${style("runtime:", "bold", this.color)} ${[session.agent, session.model].filter(Boolean).join(" / ")}`);
+      this.err(`${style(`${t("runtime")}:`, "bold", this.color)} ${[session.agent, session.model].filter(Boolean).join(" / ")}`);
     }
     this.err("--------");
   }
 
   event(event: NormalizedEvent): void {
     if (event.type === "session.status" && event.status) {
-      this.err(`${style("status:", "bold", this.color)} ${event.status}`);
+      this.err(`${style(`${t("status")}:`, "bold", this.color)} ${event.status}`);
       return;
     }
     if (event.type === "message.updated" && event.messageID && !this.seenMessages.has(event.messageID)) {
       this.seenMessages.add(event.messageID);
       if (event.text?.trim()) {
-        this.err(`${style("assistant", "magenta", this.color)}\n${event.text.trim()}`);
+        this.err(`${style(t("assistant"), "magenta", this.color)}\n${event.text.trim()}`);
       }
       return;
     }
@@ -59,7 +83,7 @@ export class HumanOutput {
       const partKey = event.partID ?? event.messageID ?? "assistant";
       if (!this.streamingParts.has(partKey)) {
         this.streamingParts.add(partKey);
-        this.err(`${style("assistant", "magenta", this.color)}`);
+        this.err(`${style(t("assistant"), "magenta", this.color)}`);
       }
       process.stderr.write(event.text);
       if (event.text.endsWith("\n")) process.stderr.write("");
@@ -70,11 +94,11 @@ export class HumanOutput {
       return;
     }
     if (event.type === "permission.asked" && event.permission) {
-      this.err(`${style("permission required:", "yellow", this.color)} ${event.permission.permission} (${event.permission.id})`);
+      this.err(`${style(`${t("permissions")}:`, "yellow", this.color)} ${event.permission.permission} (${event.permission.id})`);
       return;
     }
     if (event.type === "question.asked" && event.question) {
-      this.err(`${style("question:", "yellow", this.color)} ${event.question.question} (${event.question.id})`);
+      this.err(`${style(`${t("question")}:`, "yellow", this.color)} ${event.question.question} (${event.question.id})`);
     }
   }
 
@@ -82,32 +106,29 @@ export class HumanOutput {
     if (result.finalText.trim()) {
       process.stdout.write(`${result.finalText.trim()}\n`);
     }
-    this.err(`\n${style("session:", "bold", this.color)} ${result.sessionID}`);
-    this.err(`resume with: ${style(`tura resume ${result.sessionID}`, "cyan", this.color)}`);
+    this.err(`\n${style(`${t("session")}:`, "bold", this.color)} ${result.sessionID}`);
+    this.err(t("sessionResumeHint", { command: style(`tura resume ${result.sessionID}`, "cyan", this.color) }));
   }
 
   listSessions(sessions: Session[]): void {
     if (sessions.length === 0) {
-      this.err("No sessions found.");
+      this.err(t("noSessions"));
       return;
     }
-    for (const session of sessions) {
-      const status = session.status ?? "idle";
-      this.out(`${session.id}\t${status}\t${sessionTaskStatus(session)}\t${sessionTitle(session)}`);
-    }
+    this.out(formatTable(sessions, [
+      { header: t("id"), value: (session) => session.id },
+      { header: t("status"), value: (session) => session.status ?? t("sessionIdle") },
+      { header: t("messages"), value: (session) => session.message_count ?? "" },
+      { header: t("title"), value: sessionTitle },
+    ]));
   }
 
   showMessages(messages: Message[]): void {
     for (const message of messages) {
       const text = messageText(message).trim();
       if (!text) continue;
-      this.out(`${style(message.role, message.role === "assistant" ? "magenta" : "cyan", this.color)}\n${text}\n`);
-    }
-  }
-
-  listTodos(todos: TodoItem[]): void {
-    for (const todo of todos) {
-      this.out(`${todo.status ?? "pending"}\t${todo.content ?? todo.title ?? todo.id ?? ""}`);
+      const role = message.role === "assistant" ? t("assistant") : message.role === "user" ? t("user") : t("system");
+      this.out(`${style(role, message.role === "assistant" ? "magenta" : "cyan", this.color)}\n${text}\n`);
     }
   }
 

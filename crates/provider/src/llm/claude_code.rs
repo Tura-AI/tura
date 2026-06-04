@@ -830,25 +830,25 @@ mod tests {
             &mut state,
             None,
         )
-        .unwrap();
+        .expect("process message_start");
         process_anthropic_sse_line(
             r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
             &mut state,
             None,
         )
-        .unwrap();
+        .expect("process content_block_start");
         process_anthropic_sse_line(
             r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}"#,
             &mut state,
             None,
         )
-        .unwrap();
+        .expect("process text_delta");
         process_anthropic_sse_line(
             r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}"#,
             &mut state,
             None,
         )
-        .unwrap();
+        .expect("process message_delta");
 
         let data = state.into_message();
         assert_eq!(
@@ -866,7 +866,7 @@ mod tests {
         let events = Arc::new(Mutex::new(Vec::new()));
         let captured = events.clone();
         let sink: ProviderStreamEventSink = Arc::new(move |event| {
-            captured.lock().unwrap().push(event);
+            captured.lock().expect("capture stream event").push(event);
         });
         let mut state = AnthropicStreamState::default();
 
@@ -875,27 +875,27 @@ mod tests {
             &mut state,
             Some(&sink),
         )
-        .unwrap();
+        .expect("process tool block start");
         process_anthropic_sse_line(
             r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"commands\":[{\"command_type\":\"exec\",\"command_line\":\""}}"#,
             &mut state,
             Some(&sink),
         )
-        .unwrap();
+        .expect("process first tool input delta");
         process_anthropic_sse_line(
             r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"echo ok\"}]}"}}"#,
             &mut state,
             Some(&sink),
         )
-        .unwrap();
+        .expect("process second tool input delta");
         process_anthropic_sse_line(
             r#"data: {"type":"content_block_stop","index":0}"#,
             &mut state,
             Some(&sink),
         )
-        .unwrap();
+        .expect("process tool block stop");
 
-        let captured = events.lock().unwrap();
+        let captured = events.lock().expect("captured stream events");
         assert!(matches!(
             captured.first(),
             Some(ProviderStreamEvent::ProviderOutputStarted)
@@ -930,7 +930,7 @@ mod tests {
         let payload = build_payload("claude-opus-4-8", &messages, &CallOptions::default(), true);
         // System is emitted as typed blocks; the prefix block carries the
         // prompt-cache breakpoint required to avoid OAuth 429s on big prompts.
-        let blocks = payload["system"].as_array().unwrap();
+        let blocks = payload["system"].as_array().expect("system blocks");
         assert_eq!(blocks[0]["text"], CLAUDE_CODE_SYSTEM_PROMPT);
         assert_eq!(blocks[0]["cache_control"]["type"], "ephemeral");
     }
@@ -950,7 +950,7 @@ mod tests {
             json!({ "role": "user", "content": "hi" }),
         ];
         let payload = build_payload("claude-opus-4-8", &messages, &CallOptions::default(), true);
-        let blocks = payload["system"].as_array().unwrap();
+        let blocks = payload["system"].as_array().expect("system blocks");
         assert_eq!(blocks[0]["text"], CLAUDE_CODE_SYSTEM_PROMPT);
         assert_eq!(blocks[0]["cache_control"]["type"], "ephemeral");
         let merged: String = blocks
@@ -959,7 +959,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n\n");
         assert!(merged.contains("Be terse."));
-        assert_eq!(payload["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(payload["messages"].as_array().expect("messages").len(), 1);
     }
 
     #[test]
@@ -977,7 +977,7 @@ mod tests {
         ];
 
         let payload = build_payload("claude-opus-4-8", &messages, &CallOptions::default(), false);
-        let blocks = payload["system"].as_array().unwrap();
+        let blocks = payload["system"].as_array().expect("system blocks");
 
         assert_eq!(blocks[0]["type"], "text");
         assert_eq!(blocks[0]["text"], "Native cached instructions");
@@ -1063,21 +1063,26 @@ mod tests {
             json!({ "role": "user", "content": "two" }),
         ];
         let payload = build_payload("claude-opus-4-8", &messages, &CallOptions::default(), true);
-        assert_eq!(payload["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(payload["messages"].as_array().expect("messages").len(), 1);
         assert_eq!(
-            payload["messages"][0]["content"].as_array().unwrap().len(),
+            payload["messages"][0]["content"]
+                .as_array()
+                .expect("message content")
+                .len(),
             2
         );
     }
 
     #[test]
     fn tools_and_tool_choice_convert() {
-        let mut options = CallOptions::default();
-        options.tools = Some(vec![json!({
-            "type": "function",
-            "function": { "name": "grep", "description": "search", "parameters": {"type":"object"} }
-        })]);
-        options.tool_choice = Some(json!({ "type": "function", "function": { "name": "grep" } }));
+        let options = CallOptions {
+            tools: Some(vec![json!({
+                "type": "function",
+                "function": { "name": "grep", "description": "search", "parameters": {"type":"object"} }
+            })]),
+            tool_choice: Some(json!({ "type": "function", "function": { "name": "grep" } })),
+            ..Default::default()
+        };
         let messages = vec![json!({ "role": "user", "content": "hi" })];
         let payload = build_payload("claude-opus-4-8", &messages, &options, true);
         assert_eq!(payload["tools"][0]["name"], "grep");
@@ -1088,13 +1093,15 @@ mod tests {
 
     #[test]
     fn extra_body_preserves_native_claude_code_request_fields() {
-        let mut options = CallOptions::default();
-        options.extra_body = Some(json!({
-            "betas": ["context-management-2025-06-27"],
-            "context_management": {"edits": [{"type": "clear_thinking_20251015", "keep": "all"}]},
-            "output_config": {"effort": "medium"},
-            "speed": "fast"
-        }));
+        let options = CallOptions {
+            extra_body: Some(json!({
+                "betas": ["context-management-2025-06-27"],
+                "context_management": {"edits": [{"type": "clear_thinking_20251015", "keep": "all"}]},
+                "output_config": {"effort": "medium"},
+                "speed": "fast"
+            })),
+            ..Default::default()
+        };
         let messages = vec![json!({ "role": "user", "content": "hi" })];
 
         let payload = build_payload("claude-opus-4-8", &messages, &options, true);
@@ -1107,10 +1114,12 @@ mod tests {
 
     #[test]
     fn thinking_enabled_omits_temperature() {
-        let mut options = CallOptions::default();
-        options.reasoning_effort = Some("low".to_string());
-        options.temperature = Some(0.0);
-        options.max_tokens = Some(8192);
+        let options = CallOptions {
+            reasoning_effort: Some("low".to_string()),
+            temperature: Some(0.0),
+            max_tokens: Some(8192),
+            ..Default::default()
+        };
         let messages = vec![json!({ "role": "user", "content": "hi" })];
         let payload = build_payload("claude-opus-4-8", &messages, &options, true);
         assert_eq!(payload["thinking"]["type"], "enabled");
@@ -1120,9 +1129,11 @@ mod tests {
 
     #[test]
     fn thinking_skipped_when_budget_exceeds_max_tokens() {
-        let mut options = CallOptions::default();
-        options.reasoning_effort = Some("high".to_string());
-        options.max_tokens = Some(2048);
+        let options = CallOptions {
+            reasoning_effort: Some("high".to_string()),
+            max_tokens: Some(2048),
+            ..Default::default()
+        };
         let messages = vec![json!({ "role": "user", "content": "hi" })];
         let payload = build_payload("claude-opus-4-8", &messages, &options, true);
         assert!(payload.get("thinking").is_none());

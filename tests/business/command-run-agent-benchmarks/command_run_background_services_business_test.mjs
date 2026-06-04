@@ -45,7 +45,7 @@ function assert(condition, message) {
 }
 
 function agentPrompt(agentId) {
-  return agentId.includes("fast") ? "coding_agent_fast" : "coding_agent"
+  return agentId.includes("fast") ? "fast" : "coding_agent"
 }
 
 function shellSurface(agentId) {
@@ -317,3 +317,4 @@ main().catch((error) => {
   console.error(error.stack || error.message || String(error))
   process.exit(1)
 })
+

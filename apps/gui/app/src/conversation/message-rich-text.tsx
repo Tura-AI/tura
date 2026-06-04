@@ -20,6 +20,7 @@ type RichNode =
       children: RichNode[];
     }
   | { kind: "media"; path: string }
+  | { kind: "local-path"; path: string }
   | { kind: "emoji"; mode: "sticker" | "react"; value: string };
 
 type RichGroup =
@@ -87,6 +88,9 @@ function RichNodeView(props: { node: RichNode }) {
   if (props.node.kind === "media") {
     return <MediaNode path={props.node.path} />;
   }
+  if (props.node.kind === "local-path") {
+    return <LocalPathLink path={props.node.path} />;
+  }
   if (props.node.kind === "emoji") {
     return (
       <span class={`rich-emoji rich-${props.node.mode}`}>
@@ -95,6 +99,42 @@ function RichNodeView(props: { node: RichNode }) {
     );
   }
   return <RichElement node={props.node} />;
+}
+
+function LocalPathLink(props: { path: string }) {
+  const [opening, setOpening] = createSignal(false);
+  async function openLocation(event: MouseEvent) {
+    event.preventDefault();
+    if (opening()) {
+      return;
+    }
+    setOpening(true);
+    try {
+      const query = new URLSearchParams({ path: props.path });
+      const response = await fetch(
+        `${gatewayBaseUrl()}/file/open-location?${query.toString()}`,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+    } catch (error) {
+      console.error("Failed to open local path location", error);
+    } finally {
+      setOpening(false);
+    }
+  }
+  return (
+    <button
+      type="button"
+      class="rich-local-path"
+      title={props.path}
+      disabled={opening()}
+      onClick={openLocation}
+    >
+      {props.path}
+    </button>
+  );
 }
 
 function RichElement(props: { node: Extract<RichNode, { kind: "element" }> }) {
@@ -321,7 +361,7 @@ function parseHtmlFragment(source: string): RichNode[] {
 
 function readDomNode(node: Node): RichNode[] {
   if (node.nodeType === Node.TEXT_NODE) {
-    return [{ kind: "text", text: node.textContent ?? "" }];
+    return splitLocalPathText(node.textContent ?? "");
   }
   if (node.nodeType !== Node.ELEMENT_NODE) {
     return [];
@@ -346,11 +386,24 @@ function readDomNode(node: Node): RichNode[] {
     case "a": {
       const href = element.getAttribute("href") ?? "";
       return isSafeUrl(href)
-        ? [{ kind: "element", tag: "link", href, children }]
+        ? [
+            {
+              kind: "element",
+              tag: "link",
+              href,
+              children: [{ kind: "text", text: element.textContent ?? "" }],
+            },
+          ]
         : children;
     }
     case "code":
-      return [{ kind: "element", tag: "code", children }];
+      return [
+        {
+          kind: "element",
+          tag: "code",
+          children: [{ kind: "text", text: element.textContent ?? "" }],
+        },
+      ];
     case "span":
       return element.classList.contains("tg-spoiler")
         ? [{ kind: "element", tag: "spoiler", children }]
@@ -393,6 +446,40 @@ function compactTextNodes(nodes: RichNode[]): RichNode[] {
   );
 }
 
+const LOCAL_PATH_PATTERN =
+  /(?:[A-Za-z]:[\\/][^\s<>"'`]+|\\\\[^\\/\s<>"'`]+\\[^\\/\s<>"'`]+(?:\\[^\s<>"'`]+)*|\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+|\.{1,2}[\\/][^\s<>"'`]+)/gu;
+const TRAILING_PATH_PUNCTUATION = /[),.;:!?]+$/u;
+
+function splitLocalPathText(text: string): RichNode[] {
+  const nodes: RichNode[] = [];
+  let cursor = 0;
+  for (const match of text.matchAll(LOCAL_PATH_PATTERN)) {
+    const raw = match[0];
+    const index = match.index ?? 0;
+    const path = raw.replace(TRAILING_PATH_PUNCTUATION, "");
+    if (!path || !isLocalPath(path)) {
+      continue;
+    }
+    if (index > cursor) {
+      nodes.push({ kind: "text", text: text.slice(cursor, index) });
+    }
+    nodes.push({ kind: "local-path", path });
+    const trailing = raw.slice(path.length);
+    if (trailing) {
+      nodes.push({ kind: "text", text: trailing });
+    }
+    cursor = index + raw.length;
+  }
+  if (cursor < text.length) {
+    nodes.push({ kind: "text", text: text.slice(cursor) });
+  }
+  return nodes.length > 0 ? nodes : [{ kind: "text", text }];
+}
+
+function isLocalPath(value: string): boolean {
+  return /^(?:[A-Za-z]:[\\/]|\\\\|\/|\.{1,2}[\\/])/u.test(value);
+}
+
 function plainText(nodes: RichNode[]): string {
   return nodes
     .map((node) => {
@@ -402,7 +489,10 @@ function plainText(nodes: RichNode[]): string {
       if (node.kind === "element") {
         return plainText(node.children);
       }
-      return node.kind === "emoji" ? node.value : `[MEDIA:${node.path}:MEDIA]`;
+      if (node.kind === "emoji") {
+        return node.value;
+      }
+      return node.kind === "media" ? `[MEDIA:${node.path}:MEDIA]` : node.path;
     })
     .join("");
 }

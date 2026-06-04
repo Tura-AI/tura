@@ -66,7 +66,6 @@ export function normalizeEvent(raw: GatewayEventEnvelope): NormalizedEvent {
   let text: string | undefined;
   let status: string | undefined;
   let tool: string | undefined;
-  let todos: unknown[] | undefined;
   let permission: PermissionRequest | undefined;
   let question: QuestionRequest | undefined;
 
@@ -98,10 +97,6 @@ export function normalizeEvent(raw: GatewayEventEnvelope): NormalizedEvent {
           ? String((statusValue as { type?: unknown }).type)
           : undefined;
   }
-  if (payload?.type === "todo.updated") {
-    const properties = payload.properties as { todos?: unknown[] } | undefined;
-    todos = Array.isArray(properties?.todos) ? properties.todos : undefined;
-  }
   if (payload?.type === "permission.asked" || payload?.type === "permission.replied") {
     permission = readRequest<PermissionRequest>(payload.properties, ["permission", "request"]);
   }
@@ -117,7 +112,6 @@ export function normalizeEvent(raw: GatewayEventEnvelope): NormalizedEvent {
     status,
     text,
     tool,
-    todos,
     permission,
     question,
     raw,

@@ -1,4 +1,5 @@
 import { CliUsageError } from "../types/common.js";
+import { t } from "../i18n.js";
 
 const COMMANDS = [
   "run",
@@ -6,9 +7,13 @@ const COMMANDS = [
   "session",
   "config",
   "provider",
-  "permission",
+  "agent",
+  "persona",
+  "project",
+  "file",
   "command",
-  "status",
+  "inspect",
+  "gateway",
   "completion",
 ];
 
@@ -26,5 +31,5 @@ export function completionCommand(args: string[]): void {
     for (const command of COMMANDS) process.stdout.write(`complete -c tura -f -a ${command}\n`);
     return;
   }
-  throw new CliUsageError(`unsupported shell: ${shell}`);
+  throw new CliUsageError(t("shellUnsupported", { shell }));
 }

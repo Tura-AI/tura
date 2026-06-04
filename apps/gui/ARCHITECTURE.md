@@ -33,14 +33,25 @@ The first screen must be a usable workbench/dashboard, never a marketing page.
 - Do not hide Multica features behind placeholder text. Every route described
   here must map to a real gateway contract before code implementation.
 
-## Existing Directory Assumption
+## Current Directory Layout
 
 `apps/gui` currently has this high-level shape:
 
 ```text
 apps/gui/
+  README.md
+  package.json
+  bun.lock
+  turbo.json
   app/
+    package.json
+    vite.config.ts
+    index.html
+    src/
   sdk/
+    gateway/
+      package.json
+      src/
   ARCHITECTURE.md
 ```
 
@@ -141,9 +152,14 @@ needs execution, the GUI asks gateway to create/update an agent task or session.
 
 Default gateway URL resolution:
 
-1. explicit app setting
-2. `TURA_GATEWAY_URL`
-3. `http://127.0.0.1:4096`
+1. `?gatewayUrl=<url>` query parameter.
+2. `localStorage["tura.gatewayUrl"]`.
+3. `VITE_TURA_GATEWAY_URL`.
+4. `http://127.0.0.1:4096`.
+
+`TURA_GATEWAY_URL` is a shell/runtime convenience variable. Browser code does
+not read it directly; start scripts translate it to `VITE_TURA_GATEWAY_URL`
+when launching the Vite dev server.
 
 The Multica-compatible API must support:
 
@@ -716,6 +732,14 @@ Quality gates for GUI work are:
 - `bun run format:check`
 - `bun run typecheck`
 - `bun run build`
+
+Run them from `apps/gui`, or from the repository root with:
+
+```text
+bun run --cwd apps/gui format:check
+bun run --cwd apps/gui typecheck
+bun run --cwd apps/gui build
+```
 
 ## Domain Requirements
 

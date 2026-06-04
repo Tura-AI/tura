@@ -14,13 +14,11 @@ test("reducer hydrates durable gateway state", () => {
     type: "hydrate",
     session,
     messages: [],
-    todos: [{ id: "todo-1", content: "Plan", status: "pending" }],
     permissions: [],
     sessions: [session],
   });
 
   assert.equal(state.session?.id, "sess-1");
-  assert.equal(state.todos.length, 1);
   assert.equal(state.sessions.length, 1);
 });
 
@@ -29,7 +27,6 @@ test("reducer ignores events for another workspace", () => {
     type: "hydrate",
     session,
     messages: [],
-    todos: [],
     permissions: [],
   });
 
@@ -60,7 +57,6 @@ test("reducer applies message and part replay events idempotently", () => {
     type: "hydrate",
     session,
     messages: [],
-    todos: [],
     permissions: [],
   });
 
@@ -135,7 +131,6 @@ test("reducer keeps streaming deltas that arrive before full message hydration",
     type: "hydrate",
     session,
     messages: [],
-    todos: [],
     permissions: [],
   });
 
@@ -181,7 +176,6 @@ test("reducer updates permission and question requests from events", () => {
     type: "hydrate",
     session,
     messages: [],
-    todos: [],
     permissions: [],
   });
 
@@ -234,12 +228,11 @@ test("reducer updates permission and question requests from events", () => {
   assert.equal(state.questions.length, 0);
 });
 
-test("reducer keeps session plan fields from gateway events", () => {
+test("reducer keeps session metadata from gateway events", () => {
   let state = reducer(initialState("C:/repo"), {
     type: "hydrate",
     session,
     messages: [],
-    todos: [],
     permissions: [],
     sessions: [session],
   });
@@ -254,17 +247,14 @@ test("reducer keeps session plan fields from gateway events", () => {
           sessionID: "sess-1",
           info: {
             ...session,
-            plan_summary: "Plan Name",
-            task_management: {
-              plan_summary: "Plan Name",
-              task_summary: "Task Name",
-              status: "done",            },
+            session_display_name: "Updated Session",
+            agent: "fast",
           },
         },
       },
     },
   });
 
-  assert.equal(state.session?.plan_summary, "Plan Name");
-  assert.equal(state.session?.task_management?.status, "done");
+  assert.equal(state.session?.session_display_name, "Updated Session");
+  assert.equal(state.session?.agent, "fast");
 });

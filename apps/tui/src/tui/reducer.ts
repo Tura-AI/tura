@@ -1,21 +1,24 @@
 import type { GatewayEventEnvelope } from "../types/event.js";
-import type { Message, MessagePart, Session, TodoItem } from "../types/session.js";
+import type { Message, MessagePart, Session } from "../types/session.js";
 import { normalizeEvent } from "../gateway/events.js";
 import { sameDirectory } from "../gateway/directory.js";
 import { messageSortValue, partMessageID, sessionStatusText, sessionUpdatedAt } from "../types/session.js";
 import type { PermissionRequest, QuestionRequest } from "../types/permission.js";
 import type { ProviderAuthMethodsResponse, ProviderAuthStatus, ProviderListResponse } from "../types/provider.js";
 import type { SessionConfig } from "../types/config.js";
+import type { StoredAgent } from "../types/agent.js";
+import type { StoredPersona } from "../types/gateway.js";
 
 export interface AppState {
   cwd: string;
   session?: Session;
   sessions: Session[];
   messages: Message[];
-  todos: TodoItem[];
   permissions: PermissionRequest[];
   questions: QuestionRequest[];
   providers?: ProviderListResponse;
+  agents: StoredAgent[];
+  personas: StoredPersona[];
   authMethods?: ProviderAuthMethodsResponse;
   authStatuses: Record<string, ProviderAuthStatus>;
   sessionConfig?: SessionConfig;
@@ -27,11 +30,10 @@ export interface AppState {
   modelsOpen: boolean;
   authOpen: boolean;
   settingsOpen: boolean;
-  planOpen: boolean;
-  diffOpen: boolean;
-  diffText: string;
+  personasOpen: boolean;
   selectedSessionIndex: number;
   selectedModelIndex: number;
+  selectedPersonaIndex: number;
 }
 
 export type AppAction =
@@ -39,9 +41,10 @@ export type AppAction =
       type: "hydrate";
       session: Session;
       messages: Message[];
-      todos: TodoItem[];
       permissions: PermissionRequest[];
       providers?: ProviderListResponse;
+      agents?: StoredAgent[];
+      personas?: StoredPersona[];
       sessions?: Session[];
       authMethods?: ProviderAuthMethodsResponse;
       authStatuses?: Record<string, ProviderAuthStatus>;
@@ -53,29 +56,31 @@ export type AppAction =
   | { type: "status"; value: AppState["status"] }
   | { type: "permissions"; value: PermissionRequest[] }
   | { type: "questions"; value: QuestionRequest[] }
-  | { type: "todos"; value: TodoItem[] }
   | { type: "sessions"; value: Session[]; open?: boolean }
   | { type: "auth"; methods?: ProviderAuthMethodsResponse; statuses?: Record<string, ProviderAuthStatus>; open?: boolean }
+  | { type: "agents"; value: StoredAgent[] }
   | { type: "session-config"; value: SessionConfig; open?: boolean }
+  | { type: "personas"; value: StoredPersona[]; open?: boolean }
   | { type: "select-session"; delta: number }
   | { type: "select-model"; delta: number }
+  | { type: "select-persona"; delta: number }
   | { type: "toggle-help" }
   | { type: "toggle-sessions" }
   | { type: "toggle-models" }
   | { type: "toggle-auth" }
   | { type: "toggle-settings" }
-  | { type: "close-panels" }
-  | { type: "toggle-plan" }
-  | { type: "diff"; open: boolean; text?: string };
+  | { type: "toggle-personas" }
+  | { type: "close-panels" };
 
 export function initialState(cwd: string): AppState {
   return {
     cwd,
     sessions: [],
     messages: [],
-    todos: [],
     permissions: [],
     questions: [],
+    agents: [],
+    personas: [],
     authStatuses: {},
     status: "idle",
     composer: "",
@@ -84,11 +89,10 @@ export function initialState(cwd: string): AppState {
     modelsOpen: false,
     authOpen: false,
     settingsOpen: false,
-    planOpen: false,
-    diffOpen: false,
-    diffText: "",
+    personasOpen: false,
     selectedSessionIndex: 0,
     selectedModelIndex: 0,
+    selectedPersonaIndex: 0,
   };
 }
 
@@ -99,15 +103,17 @@ export function reducer(state: AppState, action: AppAction): AppState {
       session: action.session,
       sessions: action.sessions ?? state.sessions,
       messages: action.messages,
-      todos: action.todos,
       permissions: action.permissions,
       questions: state.questions,
       providers: action.providers,
+      agents: action.agents ?? state.agents,
+      personas: action.personas ?? state.personas,
       authMethods: action.authMethods ?? state.authMethods,
       authStatuses: action.authStatuses ?? state.authStatuses,
       sessionConfig: action.sessionConfig ?? state.sessionConfig,
       status: action.session.status ?? "idle",
       selectedSessionIndex: selectedSessionIndex(action.sessions ?? state.sessions, action.session.id),
+      selectedPersonaIndex: selectedPersonaIndex(action.personas ?? state.personas, action.agents ?? state.agents, action.session ?? state.session, action.sessionConfig ?? state.sessionConfig),
     };
   }
   if (action.type === "event") {
@@ -176,10 +182,6 @@ export function reducer(state: AppState, action: AppAction): AppState {
       const sessionID = readString(properties, "sessionID") ?? readString(properties, "session_id");
       if (sessionID) return { ...state, sessions: state.sessions.filter((session) => session.id !== sessionID) };
     }
-    if (action.event.payload?.type === "todo.updated") {
-      const todos = normalized.todos as TodoItem[] | undefined;
-      if (todos) return { ...state, todos };
-    }
     if (action.event.payload?.type === "permission.asked" && normalized.permission) {
       return { ...state, permissions: upsertById(state.permissions, normalized.permission) };
     }
@@ -199,7 +201,6 @@ export function reducer(state: AppState, action: AppAction): AppState {
   if (action.type === "status") return { ...state, status: action.value };
   if (action.type === "permissions") return { ...state, permissions: action.value };
   if (action.type === "questions") return { ...state, questions: action.value };
-  if (action.type === "todos") return { ...state, todos: action.value };
   if (action.type === "sessions") {
     return {
       ...state,
@@ -216,10 +217,11 @@ export function reducer(state: AppState, action: AppAction): AppState {
       authOpen: action.open ?? state.authOpen,
       sessionsOpen: false,
       modelsOpen: false,
-      planOpen: false,
       settingsOpen: false,
+      personasOpen: false,
     };
   }
+  if (action.type === "agents") return { ...state, agents: action.value };
   if (action.type === "session-config") {
     return {
       ...state,
@@ -227,8 +229,20 @@ export function reducer(state: AppState, action: AppAction): AppState {
       settingsOpen: action.open ?? state.settingsOpen,
       sessionsOpen: false,
       modelsOpen: false,
-      planOpen: false,
       authOpen: false,
+      personasOpen: false,
+    };
+  }
+  if (action.type === "personas") {
+    return {
+      ...state,
+      personas: action.value,
+      personasOpen: action.open ?? state.personasOpen,
+      sessionsOpen: false,
+      modelsOpen: false,
+      authOpen: false,
+      settingsOpen: false,
+      selectedPersonaIndex: selectedPersonaIndex(action.value, state.agents, state.session, state.sessionConfig),
     };
   }
   if (action.type === "select-session") {
@@ -237,14 +251,16 @@ export function reducer(state: AppState, action: AppAction): AppState {
   if (action.type === "select-model") {
     return { ...state, selectedModelIndex: clampIndex(state.selectedModelIndex + action.delta, modelCount(state.providers)) };
   }
+  if (action.type === "select-persona") {
+    return { ...state, selectedPersonaIndex: clampIndex(state.selectedPersonaIndex + action.delta, state.personas.length) };
+  }
   if (action.type === "toggle-help") return { ...state, help: !state.help };
-  if (action.type === "toggle-sessions") return { ...state, sessionsOpen: !state.sessionsOpen, modelsOpen: false, planOpen: false, authOpen: false, settingsOpen: false };
-  if (action.type === "toggle-models") return { ...state, modelsOpen: !state.modelsOpen, sessionsOpen: false, planOpen: false, authOpen: false, settingsOpen: false };
-  if (action.type === "toggle-auth") return { ...state, authOpen: !state.authOpen, sessionsOpen: false, modelsOpen: false, planOpen: false, settingsOpen: false };
-  if (action.type === "toggle-settings") return { ...state, settingsOpen: !state.settingsOpen, sessionsOpen: false, modelsOpen: false, planOpen: false, authOpen: false };
-  if (action.type === "close-panels") return { ...state, sessionsOpen: false, modelsOpen: false, planOpen: false, authOpen: false, settingsOpen: false, diffOpen: false, help: false };
-  if (action.type === "toggle-plan") return { ...state, planOpen: !state.planOpen, sessionsOpen: false, modelsOpen: false, authOpen: false, settingsOpen: false };
-  if (action.type === "diff") return { ...state, diffOpen: action.open, diffText: action.text ?? state.diffText };
+  if (action.type === "toggle-sessions") return { ...state, sessionsOpen: !state.sessionsOpen, modelsOpen: false, authOpen: false, settingsOpen: false, personasOpen: false };
+  if (action.type === "toggle-models") return { ...state, modelsOpen: !state.modelsOpen, sessionsOpen: false, authOpen: false, settingsOpen: false, personasOpen: false };
+  if (action.type === "toggle-auth") return { ...state, authOpen: !state.authOpen, sessionsOpen: false, modelsOpen: false, settingsOpen: false, personasOpen: false };
+  if (action.type === "toggle-settings") return { ...state, settingsOpen: !state.settingsOpen, sessionsOpen: false, modelsOpen: false, authOpen: false, personasOpen: false };
+  if (action.type === "toggle-personas") return { ...state, personasOpen: !state.personasOpen, sessionsOpen: false, modelsOpen: false, authOpen: false, settingsOpen: false };
+  if (action.type === "close-panels") return { ...state, sessionsOpen: false, modelsOpen: false, authOpen: false, settingsOpen: false, personasOpen: false, help: false };
   return state;
 }
 
@@ -353,6 +369,33 @@ function upsertById<T extends { id: string }>(items: T[], item: T): T[] {
 function selectedSessionIndex(sessions: Session[], sessionID: string | undefined): number {
   const index = sessions.findIndex((session) => session.id === sessionID);
   return index >= 0 ? index : 0;
+}
+
+function selectedPersonaIndex(personas: StoredPersona[], agents: StoredAgent[], session: Session | undefined, config: SessionConfig | undefined): number {
+  const active = activePersonaID(agents, session, config);
+  if (!active) return 0;
+  const index = personas.findIndex((persona) => personaID(persona) === active);
+  return index >= 0 ? index : 0;
+}
+
+function personaID(persona: StoredPersona): string | undefined {
+  const configName = persona.config?.persona_name;
+  return persona.summary?.id ?? (typeof configName === "string" ? configName : undefined);
+}
+
+function activePersonaID(agents: StoredAgent[], session: Session | undefined, config: SessionConfig | undefined): string | undefined {
+  const agentID = session?.agent ?? config?.active_agent;
+  const agent = agents.find((item) => storedAgentID(item) === agentID);
+  const first = Array.isArray(agent?.config?.agent_persona) ? agent?.config?.agent_persona[0] : undefined;
+  if (!first || typeof first !== "object" || Array.isArray(first)) return undefined;
+  const name = (first as Record<string, unknown>).persona_name;
+  if (typeof name === "string" && name.trim()) return name.trim();
+  const runtimePersonas = (agent as unknown as { options?: { personas?: StoredPersona[] } }).options?.personas;
+  return runtimePersonas?.[0] ? personaID(runtimePersonas[0]) : undefined;
+}
+
+function storedAgentID(agent: StoredAgent): string | undefined {
+  return agent.summary?.id ?? (agent as unknown as { name?: string }).name;
 }
 
 function clampIndex(index: number, length: number): number {

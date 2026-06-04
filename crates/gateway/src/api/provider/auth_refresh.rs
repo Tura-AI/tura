@@ -27,8 +27,8 @@ pub(super) async fn refresh_provider_auth_if_needed(
         .as_deref()
         .and_then(config_value)
         .is_some_and(|value| !value.trim().is_empty());
-    if !matches!(status.login.as_deref(), Some("oauth"))
-        && !(provider_id == "claude-code" && has_refresh_token)
+    if !(matches!(status.login.as_deref(), Some("oauth"))
+        || provider_id == "claude-code" && has_refresh_token)
     {
         return Ok(false);
     }

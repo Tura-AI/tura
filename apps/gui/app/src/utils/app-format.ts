@@ -1,4 +1,5 @@
 import {
+  type PathResponse,
   type FileInfo,
   type PollInterval,
   type Session,
@@ -81,6 +82,24 @@ export function shortPathLabel(path?: string | null): string | undefined {
 
 export function shortWorkspaceLabel(path?: string | null): string {
   return shortPathLabel(path) ?? t("noWorkspace");
+}
+
+export function defaultWorkspaceDirectory(
+  paths?: Partial<PathResponse>,
+): string {
+  const existing = [paths?.directory, paths?.worktree]
+    .map((value) => value?.trim())
+    .find((value): value is string => Boolean(value));
+  if (existing) {
+    return existing;
+  }
+  const home = paths?.home?.trim();
+  if (!home) {
+    return "tura workspace";
+  }
+  const separator = home.includes("\\") ? "\\" : "/";
+  const root = home.replace(/[\\/]+$/u, "");
+  return `${root}${separator}Documents${separator}tura workspace`;
 }
 
 export function fixtureFiles(

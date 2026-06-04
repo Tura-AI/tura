@@ -1339,7 +1339,7 @@ async function runCurrentLike(agentId, exe, workspace, agentDir, agentPort, shel
   return { first, second, threadId, error: first.error || second.error || null }
 }
 
-async function runTura(workspace, agentDir, agentPort, agentPrompt = "coding_agent_fast", shellSurface = "shell_command") {
+async function runTura(workspace, agentDir, agentPort, agentPrompt = "fast", shellSurface = "shell_command") {
   runOk("cargo", ["build", "-p", "gateway", "--bin", "tura"], { cwd: repoRoot, timeoutMs: 240_000 })
   const sessionId = `frontend-${Date.now()}`
   const common = [
@@ -1729,7 +1729,7 @@ function startTuiWatchdog(page, bridge, gateway, agentDir) {
   }
 }
 
-async function runTuraViaWebTerminal(workspace, agentDir, agentPort, agentPrompt = "coding_agent_fast", shellSurface = "shell_command") {
+async function runTuraViaWebTerminal(workspace, agentDir, agentPort, agentPrompt = "fast", shellSurface = "shell_command") {
   const gatewayExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "gateway.exe" : "gateway")
   if (!fs.existsSync(gatewayExe)) {
     runOk("cargo", ["build", "-p", "gateway", "--bin", "gateway"], { cwd: repoRoot, timeoutMs: 240_000 })
@@ -1926,13 +1926,13 @@ async function runAgent(agentId, template, evaluator, index) {
     } else if (kind === "codex-main-bash") {
       result = await runCurrentLike(agentId, codexMainExe, workspace, agentDir, agentPort, shellSurface)
     } else if (kind === "tura-fast-shll" || kind === "tura-fast-bash") {
-      result = await runTura(workspace, agentDir, agentPort, "coding_agent_fast", shellSurface)
+      result = await runTura(workspace, agentDir, agentPort, "fast", shellSurface)
     } else if (kind === "tura-shll") {
       result = await runTura(workspace, agentDir, agentPort, "coding_agent", shellSurface)
     } else if (kind === "tura-bash") {
       result = await runTura(workspace, agentDir, agentPort, "coding_agent", shellSurface)
     } else if (kind === "tui-fast-shll") {
-      result = await runTuraViaWebTerminal(workspace, agentDir, agentPort, "coding_agent_fast", shellSurface)
+      result = await runTuraViaWebTerminal(workspace, agentDir, agentPort, "fast", shellSurface)
     } else if (kind === "tui-shll") {
       result = await runTuraViaWebTerminal(workspace, agentDir, agentPort, "coding_agent", shellSurface)
     } else if (kind === "claude-code") {
@@ -2016,3 +2016,4 @@ async function main() {
 }
 
 await main()
+

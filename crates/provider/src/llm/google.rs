@@ -402,7 +402,7 @@ mod tests {
         let contents = build_contents(&messages);
 
         // System is lifted to systemInstruction, not folded into contents.
-        assert_eq!(contents.as_array().unwrap().len(), 2);
+        assert_eq!(contents.as_array().expect("contents").len(), 2);
         assert_eq!(contents[0]["role"], "model");
         assert_eq!(contents[0]["parts"][0]["text"], "ok");
         assert_eq!(contents[1]["role"], "user");
@@ -418,23 +418,23 @@ mod tests {
         assert!(build_tool_config(Some(&json!("auto"))).is_none());
         assert_eq!(
             build_tool_config(Some(&json!("required")))
-                .unwrap()
+                .expect("required tool config")
                 .pointer("/functionCallingConfig/mode")
-                .unwrap(),
+                .expect("function calling mode"),
             "ANY"
         );
         assert_eq!(
             build_tool_config(Some(&json!("none")))
-                .unwrap()
+                .expect("none tool config")
                 .pointer("/functionCallingConfig/mode")
-                .unwrap(),
+                .expect("function calling mode"),
             "NONE"
         );
         let forced = build_tool_config(Some(&json!({
             "type": "function",
             "function": { "name": "echo_answer" }
         })))
-        .unwrap();
+        .expect("forced tool config");
         assert_eq!(forced["functionCallingConfig"]["mode"], "ANY");
         assert_eq!(
             forced["functionCallingConfig"]["allowedFunctionNames"][0],
@@ -528,7 +528,7 @@ mod tests {
         ]);
 
         assert_eq!(contents[1]["role"], "user");
-        assert_eq!(contents[1]["parts"].as_array().unwrap().len(), 2);
+        assert_eq!(contents[1]["parts"].as_array().expect("parts").len(), 2);
         assert_eq!(contents[1]["parts"][0]["functionResponse"]["name"], "first");
         assert_eq!(
             contents[1]["parts"][1]["functionResponse"]["name"],

@@ -200,7 +200,7 @@ function isTuraAgent(id) {
 }
 
 function turaCliAgentName(id) {
-  return id.includes("fast") ? "coding_agent_fast" : "coding_agent"
+  return id.includes("fast") ? "fast" : "coding_agent"
 }
 
 function turaModelForAgent(id) {
@@ -386,31 +386,52 @@ function spawnLogged(command, args, options = {}) {
 }
 
 async function runTuraRobustnessPreflight() {
-  const script = path.join(repoRoot, "scripts", "test-command-run-robustness.ps1")
-  const command = process.platform === "win32" ? "powershell" : "pwsh"
-  const result = await spawnLogged(
-    command,
-    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-NoBuild"],
-    {
+  const tests = [
+    ["-p", "code-tools", "--test", "command_run_current_flow", "--", "--nocapture"],
+    [
+      "-p",
+      "code-tools-suite",
+      "--lib",
+      "tool_router::execute_tool::tests::tool_output_success_follows_current_style_command_run_results",
+      "--",
+      "--nocapture",
+    ],
+    ["-p", "tura-llm-rust", "command_run_streaming", "--lib", "--", "--nocapture"],
+    ["-p", "tura-llm-rust", "codex_event_tool_calls", "--lib", "--", "--nocapture"],
+  ]
+  const stdoutLogs = []
+  const stderrLogs = []
+  let durationMs = 0
+  let firstOutputMs = null
+  for (const [index, args] of tests.entries()) {
+    const stdoutPath = path.join(runRoot, `robustness-preflight-${index + 1}.stdout.log`)
+    const stderrPath = path.join(runRoot, `robustness-preflight-${index + 1}.stderr.log`)
+    const result = await spawnLogged("cargo", ["test", ...args], {
       cwd: repoRoot,
       echo: true,
       timeoutMs: numberEnv("COMMAND_RUN_AGENT_ROBUSTNESS_TIMEOUT_MS", 180_000),
-      stdoutPath: path.join(runRoot, "robustness-preflight.stdout.log"),
-      stderrPath: path.join(runRoot, "robustness-preflight.stderr.log"),
-    },
-  )
-  if (result.status !== 0) {
-    throw new Error(
-      `Tura command_run robustness preflight failed with status ${result.status}. See ${path.join(runRoot, "robustness-preflight.stdout.log")} and ${path.join(runRoot, "robustness-preflight.stderr.log")}`,
-    )
+      stdoutPath,
+      stderrPath,
+    })
+    stdoutLogs.push(stdoutPath)
+    stderrLogs.push(stderrPath)
+    durationMs += result.durationMs
+    firstOutputMs ??= result.firstOutputMs
+    if (result.status !== 0) {
+      throw new Error(
+        `Tura command_run robustness preflight failed with status ${result.status}. See ${stdoutPath} and ${stderrPath}`,
+      )
+    }
   }
   return {
     ok: true,
-    status: result.status,
-    duration_ms: result.durationMs,
-    first_output_ms: result.firstOutputMs,
-    stdout_log: path.join(runRoot, "robustness-preflight.stdout.log"),
-    stderr_log: path.join(runRoot, "robustness-preflight.stderr.log"),
+    status: 0,
+    duration_ms: durationMs,
+    first_output_ms: firstOutputMs,
+    stdout_log: stdoutLogs[0],
+    stderr_log: stderrLogs[0],
+    stdout_logs: stdoutLogs,
+    stderr_logs: stderrLogs,
   }
 }
 
@@ -4943,4 +4964,5 @@ main().catch(async (error) => {
   console.error(error.stack || error.message)
   process.exit(1)
 })
+
 

@@ -1,11 +1,13 @@
 import asyncio
 import json
 import os
+import struct
 import threading
 import time
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import urlopen
 
 from playwright.async_api import async_playwright, expect
@@ -20,6 +22,68 @@ OUT = Path(
         ROOT / "apps" / "gui" / "test-results" / "snake-playwright-interaction",
     )
 )
+ARTIFACTS = OUT / "artifacts"
+ENTRY_FILE = ROOT / "target" / "snake-playwright-entry" / "src" / "App.jsx"
+RELATIVE_ENTRY_DIR = f".\\{ENTRY_FILE.parent.relative_to(ROOT)}"
+SNAKE_DESKTOP_IMAGE = ARTIFACTS / "snake-desktop.png"
+SNAKE_MOBILE_IMAGE = ARTIFACTS / "snake-mobile.png"
+SNAKE_OPEN_LINK = f"{GATEWAY_URL}/open/snake-demo"
+SNAKE_ENTRY_LINK = f"{GATEWAY_URL}/open/entry-file"
+
+
+def png_chunk(kind: bytes, data: bytes) -> bytes:
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+
+def snake_screenshot_png(width: int, height: int, board_size: int) -> bytes:
+    pixels = bytearray()
+    for y in range(height):
+        for x in range(width):
+            if y < 24:
+                color = (31, 41, 55)
+            elif x < 12 or y < 36 or x >= width - 12 or y >= height - 12:
+                color = (229, 231, 235)
+            else:
+                cell = max(8, min((width - 24) // board_size, (height - 48) // board_size))
+                board_x = (width - cell * board_size) // 2
+                board_y = 44
+                if board_x <= x < board_x + cell * board_size and board_y <= y < board_y + cell * board_size:
+                    col = (x - board_x) // cell
+                    row = (y - board_y) // cell
+                    color = (245, 250, 246) if (row + col) % 2 == 0 else (226, 244, 231)
+                    if (row, col) in {(3, 3), (3, 4), (3, 5), (4, 5)}:
+                        color = (34, 139, 74)
+                    if (row, col) == (7, 8):
+                        color = (220, 38, 38)
+                else:
+                    color = (248, 250, 252)
+            pixels.extend(color)
+    row_size = width * 3
+    raw = b"".join(b"\x00" + bytes(pixels[y * row_size : (y + 1) * row_size]) for y in range(height))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + png_chunk(b"IDAT", zlib.compress(raw))
+        + png_chunk(b"IEND", b"")
+    )
+
+
+def ensure_artifacts():
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    ENTRY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SNAKE_DESKTOP_IMAGE.write_bytes(snake_screenshot_png(640, 420, 12))
+    SNAKE_MOBILE_IMAGE.write_bytes(snake_screenshot_png(320, 560, 12))
+    ENTRY_FILE.write_text(
+        "\n".join(
+            [
+                "export function SnakeGame() {",
+                '  return <main data-testid="snake-entry">Playable Snake board</main>;',
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
 
 def ready(url: str) -> bool:
@@ -56,6 +120,18 @@ class SnakeGatewayHandler(BaseHTTPRequestHandler):
         self.send_header("content-type", content_type)
         self.end_headers()
 
+    def send_bytes(self, payload: bytes, status=200, content_type="application/octet-stream"):
+        self.send_response(status)
+        self.send_header("access-control-allow-origin", "*")
+        self.send_header("content-type", content_type)
+        self.send_header("content-length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def send_html(self, body: str, status=200):
+        self.send_default_headers(status, "text/html; charset=utf-8")
+        self.wfile.write(body.encode("utf-8"))
+
     def json(self, payload, status=200):
         self.send_default_headers(status)
         self.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
@@ -71,8 +147,26 @@ class SnakeGatewayHandler(BaseHTTPRequestHandler):
         self.send_default_headers(204)
 
     def do_GET(self):
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         self.server.requests.append({"method": "GET", "path": path})
+        if path == "/open/snake-demo":
+            return self.send_html(
+                "<!doctype html><title>Snake Demo</title><h1>Snake demo open link</h1>"
+                "<p>SNAKE_OPEN_LINK_OK</p>"
+            )
+        if path == "/open/entry-file":
+            return self.send_html(
+                "<!doctype html><title>Snake Entry File</title><h1>src/App.jsx</h1>"
+                f"<pre>{ENTRY_FILE.read_text(encoding='utf-8')}</pre>"
+            )
+        if path == "/file/media":
+            requested = parse_qs(parsed.query).get("path", [""])[0]
+            media_path = Path(requested)
+            if media_path.exists() and media_path.is_file():
+                content_type = "image/png" if media_path.suffix.lower() == ".png" else "application/octet-stream"
+                return self.send_bytes(media_path.read_bytes(), content_type=content_type)
+            return self.json({"error": "media not found", "path": requested}, 404)
         if path == "/event":
             self.send_default_headers(200, "text/event-stream")
             self.wfile.write(b'data: {"payload":{"type":"server.connected","properties":{}}}\n\n')
@@ -98,12 +192,12 @@ class SnakeGatewayHandler(BaseHTTPRequestHandler):
         if path in {"/api/issues", "/api/projects", "/permission", "/question", "/command", "/file", "/persona"}:
             return self.json([])
         if path == "/config":
-            return self.json({"model": "codex/gpt-5.5", "agent": "coding_agent_planning", "theme": "light"})
+            return self.json({"model": "codex/gpt-5.5", "agent": "thinking-planning", "theme": "light"})
         if path == "/session/config":
             return self.json(
                 {
                     "model": "codex/gpt-5.5",
-                    "active_agent": "coding_agent_planning",
+                    "active_agent": "thinking-planning",
                     "model_acceleration_enabled": True,
                 }
             )
@@ -148,6 +242,30 @@ class SnakeGatewayHandler(BaseHTTPRequestHandler):
                                 }
                             ],
                         },
+                        {
+                            "tier": "fast",
+                            "current": {"provider": "codex", "model": "gpt-5.5-mini"},
+                            "options": [
+                                {
+                                    "provider": "codex",
+                                    "provider_name": "Codex Subscription",
+                                    "model": "gpt-5.5-mini",
+                                    "model_name": "gpt-5.5-mini",
+                                }
+                            ],
+                        },
+                        {
+                            "tier": "instant",
+                            "current": {"provider": "codex", "model": "gpt-5.5-mini"},
+                            "options": [
+                                {
+                                    "provider": "codex",
+                                    "provider_name": "Codex Subscription",
+                                    "model": "gpt-5.5-mini",
+                                    "model_name": "gpt-5.5-mini",
+                                }
+                            ],
+                        },
                     ]
                 }
             )
@@ -159,16 +277,32 @@ class SnakeGatewayHandler(BaseHTTPRequestHandler):
             return self.json(
                 [
                     {
-                        "name": "coding_agent_planning",
-                        "description": "Planning coding agent",
+                        "name": "thinking",
+                        "description": "Thinking agent",
                         "mode": "primary",
                         "native": True,
                         "hidden": False,
                         "capabilities": ["command_run", "apply_patch", "shell_command"],
                     },
                     {
-                        "name": "coding_agent_fast",
-                        "description": "Fast coding agent",
+                        "name": "thinking-planning",
+                        "description": "Thinking planning agent",
+                        "mode": "primary",
+                        "native": True,
+                        "hidden": False,
+                        "capabilities": ["command_run", "apply_patch", "shell_command"],
+                    },
+                    {
+                        "name": "fast",
+                        "description": "Fast agent",
+                        "mode": "primary",
+                        "native": True,
+                        "hidden": False,
+                        "capabilities": ["command_run", "shell_command"],
+                    },
+                    {
+                        "name": "fast-text-only",
+                        "description": "Fast text-only agent",
                         "mode": "primary",
                         "native": True,
                         "hidden": False,
@@ -183,7 +317,7 @@ class SnakeGatewayHandler(BaseHTTPRequestHandler):
                     "summary": {
                         "id": agent_id,
                         "name": agent_id,
-                        "description": "Mock configurable coding agent",
+                        "description": "Mock configurable agent",
                         "capabilities": ["command_run", "apply_patch", "shell_command"],
                     },
                     "config": {
@@ -229,7 +363,7 @@ class SnakeGatewayHandler(BaseHTTPRequestHandler):
                 "session_display_name": f"Snake Playwright {now}",
                 "directory": str(ROOT),
                 "model": "codex/gpt-5.5",
-                "agent": "coding_agent_planning",
+                "agent": "thinking-planning",
                 "status": "idle",
                 "message_count": 0,
                 "time": {"created": now, "updated": now},
@@ -249,6 +383,9 @@ class SnakeGatewayHandler(BaseHTTPRequestHandler):
             )
             self.complete_snake_task(session_id, prompt)
             return self.json({})
+        if path == "/file/open-location":
+            requested = parse_qs(urlparse(self.path).query).get("path", [""])[0]
+            return self.json({"path": requested, "opened": True})
         return self.json({})
 
     def do_PATCH(self):
@@ -263,6 +400,7 @@ class SnakeGatewayHandler(BaseHTTPRequestHandler):
         return {"id": "local", "name": "tura", "worktree": str(ROOT), "directory": str(ROOT)}
 
     def complete_snake_task(self, session_id: str, prompt: str):
+        ensure_artifacts()
         now = int(time.time() * 1000)
         self.server.statuses[session_id] = {
             "status": {"type": "busy"},
@@ -318,12 +456,54 @@ class SnakeGatewayHandler(BaseHTTPRequestHandler):
                         now - 5000,
                         now - 1000,
                     ),
+                    tool_part(
+                        session_id,
+                        assistant_id,
+                        "attach-screenshots",
+                        "read_media",
+                        "Attach screenshots for the user",
+                        f"read_media {SNAKE_DESKTOP_IMAGE} {SNAKE_MOBILE_IMAGE}",
+                        f"Attached screenshots for the user:\n{SNAKE_DESKTOP_IMAGE}\n{SNAKE_MOBILE_IMAGE}",
+                        now - 980,
+                        now - 760,
+                    ),
+                    tool_part(
+                        session_id,
+                        assistant_id,
+                        "open-snake-link",
+                        "shell_command",
+                        "Open playable Snake link",
+                        f"open {SNAKE_OPEN_LINK}",
+                        "Opened Snake demo link and observed SNAKE_OPEN_LINK_OK.",
+                        now - 740,
+                        now - 520,
+                    ),
+                    tool_part(
+                        session_id,
+                        assistant_id,
+                        "read-entry-file",
+                        "shell_command",
+                        "Read entry file",
+                        f"Get-Content {ENTRY_FILE}",
+                        ENTRY_FILE.read_text(encoding="utf-8"),
+                        now - 500,
+                        now - 260,
+                    ),
                     {
                         "id": f"{session_id}-final",
                         "sessionID": session_id,
                         "messageID": assistant_id,
                         "type": "text",
-                        "text": "完成了 <b>Snake</b> / 贪吃蛇的 playable UI，并用 Playwright 截了 desktop/mobile。<code>keyboard probe</code> 已确认方向键能改变状态。",
+                        "text": (
+                            "完成了 <b>Snake</b> / 贪吃蛇的 playable UI，并用 Playwright 截了 desktop/mobile。"
+                            "<code>keyboard probe</code> 已确认方向键能改变状态。\n"
+                            f"截图：\n[MEDIA:{SNAKE_DESKTOP_IMAGE}:MEDIA]\n[MEDIA:{SNAKE_MOBILE_IMAGE}:MEDIA]\n"
+                            f"打开链接：<a href='{SNAKE_OPEN_LINK}'>Snake demo open link</a>\n"
+                            f"入口文件：<a href='{SNAKE_ENTRY_LINK}'>src/App.jsx</a>\n"
+                            f"本地入口目录：{ENTRY_FILE.parent}\n"
+                            f"相对入口目录：{RELATIVE_ENTRY_DIR}\n"
+                            f"<code>{ENTRY_FILE}</code>"
+                        ),
                         "metadata": None,
                         "callID": None,
                         "tool": None,
@@ -416,6 +596,7 @@ def start_gateway():
 
 async def run_round():
     OUT.mkdir(parents=True, exist_ok=True)
+    ensure_artifacts()
     gateway = start_gateway()
     screenshots = []
     try:
@@ -436,7 +617,7 @@ async def run_round():
                     "gatewayUrl": GATEWAY_URL,
                     "tab": "conversation",
                     "newSession": "true",
-                    "agent": "coding_agent_planning",
+                    "agent": "thinking-planning",
                     "model": "codex/gpt-5.5",
                 }
             )
@@ -445,7 +626,10 @@ async def run_round():
             await expect(composer.locator(".composer-rich-editor")).to_be_visible(timeout=20000)
             screenshots.append(await shot(page, "01-new-session-ready"))
 
-            prompt = "写一个可玩的贪吃蛇 Snake 前端，并用 Playwright 截 desktop/mobile 图，检查方向键交互。"
+            prompt = (
+                "写一个可玩的贪吃蛇 Snake 前端，并用 Playwright 截 desktop/mobile 图，检查方向键交互。"
+                "完成后请把截图发给用户、给一个可以打开的预览链接，并把入口文件 src/App.jsx 发给用户。"
+            )
             await composer.locator(".composer-rich-editor").click()
             await page.keyboard.type(prompt)
             await page.wait_for_function(
@@ -516,6 +700,53 @@ async def run_round():
                 )
                 raise
             screenshots.append(await shot(page, "04-agent-result"))
+            await expect(page.locator(".rich-gallery-item img")).to_have_count(2, timeout=20000)
+            await page.wait_for_function(
+                """
+                () => [...document.querySelectorAll('.rich-gallery-item img')]
+                  .length === 2 &&
+                  [...document.querySelectorAll('.rich-gallery-item img')]
+                    .every((img) => img.complete && img.naturalWidth > 0)
+                """,
+                timeout=20000,
+            )
+            await expect(page.get_by_role("link", name="Snake demo open link")).to_be_visible()
+            await expect(page.get_by_role("link", name="src/App.jsx")).to_be_visible()
+            local_path_button = page.locator(".rich-local-path").filter(has_text=str(ENTRY_FILE.parent))
+            await expect(local_path_button).to_be_visible()
+            relative_path_button = page.locator(".rich-local-path").filter(has_text=RELATIVE_ENTRY_DIR)
+            await expect(relative_path_button).to_be_visible()
+            screenshots.append(await shot(page, "04b-media-and-links"))
+
+            await page.locator(".rich-gallery-item").first.click()
+            await expect(page.locator(".media-lightbox-image")).to_be_visible(timeout=10000)
+            screenshots.append(await shot(page, "04c-media-lightbox"))
+            await page.locator(".media-window-actions button").last.click()
+            await expect(page.locator(".media-lightbox-image")).to_have_count(0)
+
+            async with page.expect_popup() as demo_popup_info:
+                await page.get_by_role("link", name="Snake demo open link").click()
+            demo_popup = await demo_popup_info.value
+            await demo_popup.wait_for_load_state("domcontentloaded")
+            demo_body = await demo_popup.locator("body").inner_text()
+            await demo_popup.close()
+
+            async with page.expect_popup() as entry_popup_info:
+                await page.get_by_role("link", name="src/App.jsx").click()
+            entry_popup = await entry_popup_info.value
+            await entry_popup.wait_for_load_state("domcontentloaded")
+            entry_body = await entry_popup.locator("body").inner_text()
+            await entry_popup.close()
+
+            async with page.expect_response(lambda response: "/file/open-location" in response.url) as local_open_info:
+                await local_path_button.click()
+            local_open_response = await local_open_info.value
+            local_open_payload = await local_open_response.json()
+            async with page.expect_response(lambda response: "/file/open-location" in response.url) as relative_open_info:
+                await relative_path_button.click()
+            relative_open_response = await relative_open_info.value
+            relative_open_payload = await relative_open_response.json()
+
             await page.locator(".run-summary").click()
             await page.wait_for_timeout(400)
             await page.get_by_text("node tools/snake_playwright.mjs").click()
@@ -530,6 +761,24 @@ async def run_round():
                   inspector: document.querySelector('.tool-inspector')?.innerText ?? '',
                   richBold: document.querySelectorAll('.rich-text b').length,
                   richCode: document.querySelectorAll('.rich-text code').length,
+                  richImages: [...document.querySelectorAll('.rich-gallery-item img')].map((img) => ({
+                    src: img.getAttribute('src') || '',
+                    complete: img.complete,
+                    naturalWidth: img.naturalWidth,
+                    naturalHeight: img.naturalHeight,
+                    objectFit: getComputedStyle(img).objectFit,
+                  })),
+                  openLinks: [...document.querySelectorAll('.rich-text a')].map((a) => ({
+                    text: a.innerText,
+                    href: a.href,
+                    target: a.target,
+                  })),
+                  localPathLinks: [...document.querySelectorAll('.rich-local-path')].map((button) => ({
+                    text: button.innerText,
+                    title: button.getAttribute('title') || '',
+                    disabled: button.disabled,
+                  })),
+                  entryFileVisible: document.body.innerText.includes('src/App.jsx') && document.body.innerText.includes('target\\\\snake-playwright-entry\\\\src\\\\App.jsx'),
                   overflowX: Math.max(
                     document.documentElement.scrollWidth - document.documentElement.clientWidth,
                     document.body.scrollWidth - window.innerWidth
@@ -539,14 +788,66 @@ async def run_round():
                 """
             )
             failures = []
-            if "3 条命令" not in metrics["runSummary"] and "3 commands" not in metrics["runSummary"]:
+            if "6 条命令" not in metrics["runSummary"] and "6 commands" not in metrics["runSummary"]:
                 failures.append("run-summary-count")
             if "node tools/snake_playwright.mjs" not in metrics["inspector"]:
                 failures.append("inspector-playwright-step")
             if "desktop.png ok" not in metrics["inspector"]:
                 failures.append("inspector-screenshot-output")
+            normalized_inspector = metrics["inspector"].replace("/", "\\")
+            agent_tool_evidence = {
+                "screenshotTool": "snake-desktop.png" in metrics["inspector"] and "snake-mobile.png" in metrics["inspector"],
+                "openLinkTool": f"open {SNAKE_OPEN_LINK}" in metrics["inspector"],
+                "entryFileTool": (
+                    "Get-Content" in metrics["inspector"]
+                    and "snake-playwright-entry" in normalized_inspector
+                    and "src\\App.jsx" in normalized_inspector
+                ),
+            }
+            if not agent_tool_evidence["screenshotTool"]:
+                failures.append("agent-screenshot-tool-call")
+            if not agent_tool_evidence["openLinkTool"]:
+                failures.append("agent-open-link-tool-call")
+            if not agent_tool_evidence["entryFileTool"]:
+                failures.append("agent-entry-file-tool-call")
             if metrics["richBold"] < 1 or metrics["richCode"] < 1:
                 failures.append("rich-text-format")
+            if len(metrics["richImages"]) != 2 or any(not image["complete"] or image["naturalWidth"] < 1 for image in metrics["richImages"]):
+                failures.append("rich-media-images")
+            if any(image["objectFit"] != "contain" for image in metrics["richImages"]):
+                failures.append("rich-media-object-fit")
+            if not any(link["text"] == "Snake demo open link" and link["target"] == "_blank" for link in metrics["openLinks"]):
+                failures.append("open-link-render")
+            if not any(link["text"] == "src/App.jsx" and link["target"] == "_blank" for link in metrics["openLinks"]):
+                failures.append("entry-file-link-render")
+            if not any(str(ENTRY_FILE.parent) in link["text"] and str(ENTRY_FILE.parent) == link["title"] for link in metrics["localPathLinks"]):
+                failures.append("local-directory-link-render")
+            if not any(RELATIVE_ENTRY_DIR in link["text"] and RELATIVE_ENTRY_DIR == link["title"] for link in metrics["localPathLinks"]):
+                failures.append("relative-directory-link-render")
+            if "SNAKE_OPEN_LINK_OK" not in demo_body:
+                failures.append("open-link-popup")
+            if "SnakeGame" not in entry_body or "src/App.jsx" not in entry_body:
+                failures.append("entry-file-popup")
+            if not local_open_response.ok:
+                failures.append("local-directory-open-response")
+            if local_open_payload.get("path") != str(ENTRY_FILE.parent) or not local_open_payload.get("opened"):
+                failures.append("local-directory-open-payload")
+            if not relative_open_response.ok:
+                failures.append("relative-directory-open-response")
+            if relative_open_payload.get("path") != RELATIVE_ENTRY_DIR or not relative_open_payload.get("opened"):
+                failures.append("relative-directory-open-payload")
+            opened_paths = [request["path"] for request in gateway.requests if request["method"] == "GET"]
+            posted_paths = [request["path"] for request in gateway.requests if request["method"] == "POST"]
+            if "/open/snake-demo" not in opened_paths:
+                failures.append("open-link-gateway-request")
+            if "/open/entry-file" not in opened_paths:
+                failures.append("entry-file-gateway-request")
+            if "/file/open-location" not in posted_paths:
+                failures.append("local-directory-gateway-request")
+            if posted_paths.count("/file/open-location") < 2:
+                failures.append("relative-directory-gateway-request")
+            if not metrics["entryFileVisible"]:
+                failures.append("entry-file-visible")
             if metrics["overflowX"] > 1:
                 failures.append("horizontal-overflow")
             if metrics["errors"]:
@@ -557,8 +858,20 @@ async def run_round():
                 "out": str(OUT),
                 "screenshots": screenshots,
                 "metrics": metrics,
+                "agentToolEvidence": agent_tool_evidence,
+                "openedPaths": opened_paths,
+                "postedPaths": posted_paths,
                 "pageErrors": page_errors,
                 "failures": failures,
+                "userFacingArtifacts": {
+                    "screenshots": {
+                        "desktop": str(SNAKE_DESKTOP_IMAGE),
+                        "mobile": str(SNAKE_MOBILE_IMAGE),
+                    },
+                    "openLink": SNAKE_OPEN_LINK,
+                    "entryFile": str(ENTRY_FILE),
+                    "entryFileLink": SNAKE_ENTRY_LINK,
+                },
             }
             (OUT / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
             await browser.close()
@@ -596,3 +909,4 @@ if __name__ == "__main__":
     if not ready(GUI_URL):
         raise SystemExit(f"GUI is not ready at {GUI_URL}")
     asyncio.run(asyncio.wait_for(run_round(), timeout=180))
+

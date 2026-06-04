@@ -97,7 +97,6 @@ pub fn process_manas_internal(
     let mut turn = 0_u64;
     let mut provider_timeout_retries = 0_u8;
     let mut no_tool_retries = 0_u8;
-    let mut terminal_task_status_seen = false;
     let mut final_session_state = SessionState::Completed;
     let supports_task_status = agents
         .first()
@@ -284,7 +283,7 @@ pub fn process_manas_internal(
             let terminal_task_status = tool_results
                 .iter()
                 .find_map(|result| command_run_result_terminal_task_status(&result.result));
-            terminal_task_status_seen = terminal_task_status.is_some();
+            let terminal_task_status_seen = terminal_task_status.is_some();
 
             // Track consecutive command_run turns with no write/state command.
             if command_run_turn_has_write_or_status(&tool_calls) || terminal_task_status_seen {
@@ -339,6 +338,25 @@ pub fn process_manas_internal(
                 persist_session_checkpoint(session, "task_focus");
                 current_messages.push(next_task);
             } else if matches!(terminal_task_status.as_deref(), Some("done" | "question")) {
+                if let Some(content) = terminal_task_status_final_message(
+                    session,
+                    terminal_task_status.as_deref().unwrap_or("done"),
+                    &original_user_task,
+                ) {
+                    if let Err(error) = publish_gateway_agent_message(
+                        &session.session_id,
+                        &runtime.runtime_id,
+                        content,
+                        String::new(),
+                    ) {
+                        warn!(
+                            session_id = %session.session_id,
+                            runtime_id = %runtime.runtime_id,
+                            error = %error,
+                            "failed to publish terminal task_status assistant message"
+                        );
+                    }
+                }
                 info!(
                     session_id = %session.session_id,
                     turn = turn,
@@ -500,6 +518,67 @@ fn command_run_item_terminal_task_status(item: &serde_json::Value) -> Option<Str
         .and_then(serde_json::Value::as_str)
         .filter(|status| matches!(*status, "done" | "question"))
         .map(ToString::to_string)
+}
+
+fn terminal_task_status_final_message(
+    session: &SessionManagement,
+    status: &str,
+    original_user_task: &str,
+) -> Option<String> {
+    if status == "done" {
+        if let Some(exact) = requested_exact_reply(original_user_task) {
+            return Some(exact);
+        }
+    }
+    let summary = session
+        .task_plan
+        .detailed_tasks
+        .iter()
+        .rev()
+        .find_map(|task| non_empty_text(&task.task_summary))
+        .or_else(|| non_empty_text(&session.task_plan.plan_summary))
+        .or_else(|| non_empty_text(original_user_task))?;
+    let prefix = if status == "question" { "Question" } else { "Done" };
+    Some(format!("{prefix}: {summary}"))
+}
+
+fn requested_exact_reply(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    for marker in [
+        "reply with exactly",
+        "reply exactly",
+        "respond with exactly",
+        "respond exactly",
+        "只回复这一行，不要解释：",
+        "只回复这一行，不要解释:",
+        "只回复：",
+        "只回复:",
+    ] {
+        if let Some(index) = trimmed.to_ascii_lowercase().find(marker) {
+            let marker_len = marker.len();
+            let source = &trimmed[index + marker_len..];
+            let candidate = source
+                .trim_start_matches(|ch: char| ch.is_whitespace() || matches!(ch, ':' | '：' | '"' | '\'' | '`'))
+                .split(" and no extra")
+                .next()
+                .unwrap_or(source)
+                .trim()
+                .trim_matches(|ch: char| matches!(ch, '"' | '\'' | '`' | '.' | '。'))
+                .trim();
+            if !candidate.is_empty() {
+                return Some(candidate.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn non_empty_text(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 fn apply_compact_context_results(
@@ -708,14 +787,6 @@ fn task_is_user_action_todo(task: &crate::state_machine::session_management::Tas
     task.status == TaskStatus::Todo
         && task.start_condition
             == crate::state_machine::session_management::StartCondition::UserAction
-}
-
-fn planned_tasks_incomplete(session: &SessionManagement) -> bool {
-    session
-        .task_plan
-        .detailed_tasks
-        .iter()
-        .any(|task| task.status != TaskStatus::Done)
 }
 
 fn persist_session_checkpoint(session: &SessionManagement, stage: &str) {
@@ -1081,7 +1152,10 @@ mod tests {
 
         let message =
             super::active_todo_task_user_message(&session).expect("todo task is executable");
-        assert!(message["content"].as_str().unwrap().contains("Task 2"));
+        assert!(message["content"]
+            .as_str()
+            .expect("message content")
+            .contains("Task 2"));
     }
 
     #[test]
@@ -1107,7 +1181,7 @@ mod tests {
             super::active_todo_task_user_message(&session).expect("todo task should be selected");
         super::record_task_focus_message_for_terminal_done(&mut session, &message, true);
 
-        let content = message["content"].as_str().unwrap();
+        let content = message["content"].as_str().expect("message content");
         assert!(content.contains("[current objective]:\nOriginal user objective"));
         assert!(!content.contains("[current task]:"));
         assert!(content.ends_with("\n\nTask 3"));
@@ -1162,6 +1236,49 @@ mod tests {
 
         assert!(super::active_todo_task_user_message(&session).is_none());
         assert!(super::active_task_user_message(&session).is_none());
+    }
+
+    #[test]
+    fn exact_reply_prompt_becomes_terminal_task_status_message() {
+        let session = session_with_tasks(vec![task(
+            1,
+            PlanStatus::Done,
+            StartCondition::UserAction,
+        )]);
+
+        assert_eq!(
+            super::terminal_task_status_final_message(
+                &session,
+                "done",
+                "TUI real business test: reply with exactly TUI_BUSINESS_OK and no extra text."
+            )
+            .as_deref(),
+            Some("TUI_BUSINESS_OK")
+        );
+        assert_eq!(
+            super::terminal_task_status_final_message(
+                &session,
+                "done",
+                "只回复这一行，不要解释：TUI_WEB_OK"
+            )
+            .as_deref(),
+            Some("TUI_WEB_OK")
+        );
+    }
+
+    #[test]
+    fn terminal_task_status_message_falls_back_to_task_summary() {
+        let session = session_with_tasks(vec![task(
+            1,
+            PlanStatus::Done,
+            StartCondition::UserAction,
+        )]);
+
+        assert_eq!(
+            super::terminal_task_status_final_message(&session, "done", "finish queued work")
+                .as_deref(),
+            Some("Done: Task 1")
+        );
     }
 
     #[test]

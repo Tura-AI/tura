@@ -109,7 +109,7 @@ Options:
   -C, --cwd PATH                  workspace directory for the session
   -m, --model MODEL               model override; bare names become openai/MODEL
   -p, --priority                  enable priority model routing for this model
-  -a, --agent-id ID               agent id loaded from agents/ or built-ins
+  -a, --agent-id ID               agent id loaded from agents/src/
       --session-id ID             reuse a deterministic session id
       --json                      emit JSONL events instead of final text only
       --output-last-message PATH  write the final assistant message to PATH
@@ -776,7 +776,7 @@ mod tests {
         let config = CliConfig::parse(vec![
             "exec".to_string(),
             "--agent-id".to_string(),
-            "coding_agent_planning".to_string(),
+            "thinking-planning".to_string(),
             "inspect".to_string(),
         ])
         .expect("parse cli");

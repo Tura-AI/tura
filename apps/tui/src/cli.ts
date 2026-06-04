@@ -1,17 +1,23 @@
 import { resolveGatewayUrl, resolveCwd } from "./gateway/directory.js";
-import { CliUsageError, type CliContext, type ColorMode, type OutputMode } from "./types/common.js";
+import { CliUsageError, type CliContext, type ColorMode, type DisplayMode, type OutputMode } from "./types/common.js";
 import { runPrompt } from "./commands/run.js";
 import { resumeCommand } from "./commands/resume.js";
 import { sessionCommand } from "./commands/session.js";
 import { configCommand } from "./commands/config.js";
 import { providerCommand } from "./commands/provider.js";
-import { permissionCommand } from "./commands/permission.js";
-import { commandCommand } from "./commands/command.js";
 import { agentCommand } from "./commands/agent.js";
-import { statusCommand } from "./commands/status.js";
 import { completionCommand } from "./commands/completion.js";
+import { projectCommand } from "./commands/project.js";
+import { fileCommand } from "./commands/file.js";
+import { personaCommand } from "./commands/persona.js";
+import { commandRegistryCommand } from "./commands/command-registry.js";
+import { gatewayCommand } from "./commands/gateway.js";
+import { inspectCommand } from "./commands/inspect.js";
 import { runTui } from "./tui/app.js";
 import { runtimeOverridesFromAssignment, type RuntimeConfigOverrides } from "./commands/config-values.js";
+import { formatHelp } from "./output/help.js";
+import { parseLanguage, setLanguage, t, type Language } from "./i18n.js";
+import { helpPage, type HelpTopic } from "./i18n-help.js";
 
 export async function main(argv: string[]): Promise<void> {
   const { context, args } = parseGlobal(argv);
@@ -47,19 +53,25 @@ export async function main(argv: string[]): Promise<void> {
       if (command === "session") return printSessionHelp();
       if (command === "config") return printConfigHelp();
       if (command === "provider") return printProviderHelp();
-      if (command === "permission") return printPermissionHelp();
-      if (command === "command") return printCommandHelp();
       if (command === "agent") return printAgentHelp();
-      if (command === "status") return printStatusHelp();
+      if (command === "persona") return printPersonaHelp();
+      if (command === "project") return printProjectHelp();
+      if (command === "file") return printFileHelp();
+      if (command === "command") return printCommandHelp();
+      if (command === "inspect") return printInspectHelp();
+      if (command === "gateway") return printGatewayHelp();
       if (command === "completion") return printCompletionHelp();
     }
     if (command === "session") return sessionCommand(context, args);
     if (command === "config") return configCommand(context, args);
     if (command === "provider") return providerCommand(context, args);
-    if (command === "permission") return permissionCommand(context, args);
-    if (command === "command") return commandCommand(context, args);
     if (command === "agent") return agentCommand(context, args);
-    if (command === "status") return statusCommand(context);
+    if (command === "persona") return personaCommand(context, args);
+    if (command === "project") return projectCommand(context, args);
+    if (command === "file") return fileCommand(context, args);
+    if (command === "command") return commandRegistryCommand(context, args);
+    if (command === "inspect") return inspectCommand(context, args);
+    if (command === "gateway") return gatewayCommand(context, args);
     if (command === "completion") return completionCommand(args);
     await runTui(context, [command, ...args].join(" "));
   } catch (error) {
@@ -78,6 +90,8 @@ function parseGlobal(argv: string[]): { context: CliContext; args: string[] } {
   let gatewayUrl: string | undefined;
   let cwd: string | undefined;
   let color: ColorMode = "auto";
+  let display: DisplayMode = "auto";
+  let language: Language | undefined;
   let json = false;
   let verbose = false;
   for (let index = 0; index < args.length; index += 1) {
@@ -100,14 +114,38 @@ function parseGlobal(argv: string[]): { context: CliContext; args: string[] } {
     else if (arg.startsWith("--color=")) {
       color = arg.slice("--color=".length) as ColorMode;
       args.splice(index--, 1);
+    } else if (arg === "--plain") {
+      display = "plain";
+      color = "never";
+      args.splice(index--, 1);
+    } else if (arg === "--rich") {
+      display = "rich";
+      args.splice(index--, 1);
+    } else if (arg === "--lang" || arg === "--language") {
+      const parsed = parseLanguage(takeValue(args, index--));
+      if (!parsed) throw new CliUsageError(t("unsupportedLanguage"));
+      language = parsed;
+    } else if (arg.startsWith("--lang=")) {
+      const parsed = parseLanguage(arg.slice("--lang=".length));
+      if (!parsed) throw new CliUsageError(t("unsupportedLanguage"));
+      language = parsed;
+      args.splice(index--, 1);
+    } else if (arg.startsWith("--language=")) {
+      const parsed = parseLanguage(arg.slice("--language=".length));
+      if (!parsed) throw new CliUsageError(t("unsupportedLanguage"));
+      language = parsed;
+      args.splice(index--, 1);
     }
   }
+  setLanguage(language);
   return {
     context: {
       gatewayUrl: resolveGatewayUrl(gatewayUrl),
       cwd: resolveCwd(cwd),
       json,
       color,
+      display,
+      language,
       verbose,
     },
     args,
@@ -121,7 +159,6 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
   let sessionType: string | undefined;
   let modelVariant: string | undefined;
   let modelAccelerationEnabled: boolean | undefined;
-  let forcePlanning: boolean | undefined;
   let killProcessesOnStart: boolean | undefined;
   let validatorEnabled: boolean | undefined;
   let output: OutputMode = rootJson ? "json" : "text";
@@ -148,8 +185,6 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
     else if (arg === "--model-acceleration" || arg === "--accelerated") modelAccelerationEnabled = true;
     else if (arg === "--no-model-acceleration" || arg === "--no-accelerated") modelAccelerationEnabled = false;
     else if (arg === "-p" || arg === "--priority") modelAccelerationEnabled = true;
-    else if (arg === "--planning") forcePlanning = parsePlanningMode(args[++index]);
-    else if (arg.startsWith("--planning=")) forcePlanning = parsePlanningMode(arg.slice("--planning=".length));
     else if (arg === "--output") output = parseOutput(args[++index]);
     else if (arg === "--json") output = "json";
     else if (arg === "--stream") stream = true;
@@ -158,22 +193,22 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
     else if (arg === "--last-message-file") lastMessageFile = args[++index];
     else if (arg === "-c" || arg === "--config") {
       const overrides = runtimeOverridesFromAssignment(args[++index]);
-      ({ model, agent, sessionType, modelVariant, modelAccelerationEnabled, forcePlanning, killProcessesOnStart, validatorEnabled } =
+      ({ model, agent, sessionType, modelVariant, modelAccelerationEnabled, killProcessesOnStart, validatorEnabled } =
         applyRunOverrides(
-          { model, agent, sessionType, modelVariant, modelAccelerationEnabled, forcePlanning, killProcessesOnStart, validatorEnabled },
+          { model, agent, sessionType, modelVariant, modelAccelerationEnabled, killProcessesOnStart, validatorEnabled },
           overrides,
         ));
     } else if (arg.startsWith("--config=")) {
       const overrides = runtimeOverridesFromAssignment(arg.slice("--config=".length));
-      ({ model, agent, sessionType, modelVariant, modelAccelerationEnabled, forcePlanning, killProcessesOnStart, validatorEnabled } =
+      ({ model, agent, sessionType, modelVariant, modelAccelerationEnabled, killProcessesOnStart, validatorEnabled } =
         applyRunOverrides(
-          { model, agent, sessionType, modelVariant, modelAccelerationEnabled, forcePlanning, killProcessesOnStart, validatorEnabled },
+          { model, agent, sessionType, modelVariant, modelAccelerationEnabled, killProcessesOnStart, validatorEnabled },
           overrides,
         ));
     }
     else prompt.push(arg);
   }
-  if (!prompt.join(" ").trim()) throw new CliUsageError("run requires a prompt");
+  if (!prompt.join(" ").trim()) throw new CliUsageError(t("runRequiresPrompt"));
   return {
     prompt: prompt.join(" "),
     sessionID,
@@ -182,7 +217,6 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
     sessionType,
     modelVariant,
     modelAccelerationEnabled,
-    forcePlanning,
     killProcessesOnStart,
     validatorEnabled,
     output,
@@ -215,172 +249,72 @@ function parseResume(args: string[], rootJson: boolean): Parameters<typeof resum
 
 function parseOutput(value: string): OutputMode {
   if (value === "text" || value === "json" || value === "ndjson") return value;
-  throw new CliUsageError(`invalid output mode: ${value}`);
-}
-
-function parsePlanningMode(value: string | undefined): boolean | undefined {
-  if (!value) throw new CliUsageError("--planning requires auto, on, or off");
-  const normalized = value.trim().toLowerCase();
-  if (["auto", "default", "agent"].includes(normalized)) return undefined;
-  if (["on", "true", "1", "yes", "enabled"].includes(normalized)) return true;
-  if (["off", "false", "0", "no", "disabled"].includes(normalized)) return false;
-  throw new CliUsageError(`invalid --planning value: ${value}`);
+  throw new CliUsageError(t("invalidOutputMode", { value }));
 }
 
 function takeValue(args: string[], index: number): string {
   const value = args[index + 1];
-  if (!value) throw new CliUsageError(`${args[index]} requires a value`);
+  if (!value) throw new CliUsageError(t("valueRequiresValue", { name: args[index] }));
   args.splice(index, 2);
   return value;
 }
 
 function printHelp(): void {
-  process.stdout.write(`Tura terminal client
-
-Usage:
-  tura [OPTIONS]                         open the interactive TUI
-  tura [OPTIONS] run [PROMPT...]         run a non-interactive prompt
-  tura [OPTIONS] resume SESSION_ID       show or continue a session
-  tura [OPTIONS] <command> --help        show command-specific help
-
-Commands:
-  run           send a prompt through the gateway and stream the answer
-  resume        show an existing session or append a follow-up prompt
-  session       list, show, or delete sessions
-  config        read or update workspace session config
-  provider      list providers and inspect auth state
-  permission    list and answer pending permission requests
-  command       list or execute gateway slash commands
-  agent         list, read, write, or delete agents under agents/
-  status        print gateway, workspace, provider, and service status
-  completion    generate shell completion for bash, zsh, or fish
-
-Options:
-  --gateway-url URL   Gateway base URL.
-                      Defaults to TURA_GATEWAY_URL or http://127.0.0.1:4096
-  --cwd PATH          Workspace directory sent to gateway
-  --json              JSON output where supported
-  --color MODE        auto, always, or never
-  --verbose           Print gateway requests to stderr
-
-Examples:
-  tura run "Inspect the workspace and summarize the architecture"
-  tura run --model openai/gpt-5 --output ndjson "Fix the failing test"
-  tura resume --last "Continue from the previous result"
-  tura session list --json
-`);
+  printHelpTopic("main");
 }
 
 function printRunHelp(): void {
-  process.stdout.write(`Usage:
-  tura [OPTIONS] run [PROMPT...] [RUN_OPTIONS]
-
-Run options:
-  --session ID                  append the prompt to an existing session
-  -m, --model PROVIDER/MODEL    request-scoped model override
-  -p, --priority                enable priority model routing for this model
-  -a, --agent-id ID             request-scoped agent id loaded from agents/ or built-ins
-  --session-type TYPE           session type passed to gateway
-  --model-variant LEVEL         reasoning/model variant override
-  --model-reasoning-effort LEVEL alias for --model-variant
-  --reasoning-effort LEVEL      alias for --model-variant
-  --model-acceleration          enable priority/accelerated model routing
-  --no-model-acceleration       disable priority/accelerated routing
-  --planning auto|on|off  planning override (default: auto)
-  --output text|json|ndjson     output format
-  --json                        alias for --output json
-  --stream, --no-stream         stream gateway events or poll for completion
-  --timeout SEC                 timeout before aborting the turn (default 600)
-  --last-message-file PATH      write the final assistant message to PATH
-  -c, --config KEY=VALUE        runtime override, for example model=gpt-5
-`);
+  printHelpTopic("run");
 }
 
 function printResumeHelp(): void {
-  process.stdout.write(`Usage:
-  tura [OPTIONS] resume SESSION_ID [PROMPT...]
-  tura [OPTIONS] resume --last [PROMPT...]
-
-Options:
-  --last                    select the most recently updated session
-  --output text|json|ndjson output mode when sending a follow-up prompt
-  --json                    alias for --output json
-`);
+  printHelpTopic("resume");
 }
 
 function printSessionHelp(): void {
-  process.stdout.write(`Usage:
-  tura [OPTIONS] session list [--all] [--json]
-  tura [OPTIONS] session plan [--all] [--archived] [--status STATUS] [--json]
-  tura [OPTIONS] session show SESSION_ID [--json]
-  tura [OPTIONS] session set-status SESSION_ID todo|doing|question|done|archived
-  tura [OPTIONS] session update SESSION_ID [--status STATUS] [--plan-summary TEXT] [--task-summary TEXT]
-  tura [OPTIONS] session create-ticket SUMMARY [--session SESSION_ID] [--status STATUS]
-  tura [OPTIONS] session delete SESSION_ID
-
-Plan options:
-  --start-condition session_idle|user_action|scheduled_task|polling_task
-  --start-at LOCAL_OR_ISO_TIME
-  --poll m=0,d=0,h=1,s=0
-  --step N
-`);
+  printHelpTopic("session");
 }
 
 function printConfigHelp(): void {
-  process.stdout.write(`Usage:
-  tura [OPTIONS] config get [KEY]
-  tura [OPTIONS] config set KEY=VALUE...
-
-Config is read and written through gateway session config for the selected cwd.
-`);
+  printHelpTopic("config");
 }
 
 function printProviderHelp(): void {
-  process.stdout.write(`Usage:
-  tura [OPTIONS] provider list [--json]
-  tura [OPTIONS] provider status [PROVIDER]
-  tura [OPTIONS] provider logout PROVIDER
-`);
-}
-
-function printPermissionHelp(): void {
-  process.stdout.write(`Usage:
-  tura [OPTIONS] permission list [--json]
-  tura [OPTIONS] permission reply REQUEST_ID --approve
-  tura [OPTIONS] permission reply REQUEST_ID --deny
-`);
-}
-
-function printCommandHelp(): void {
-  process.stdout.write(`Usage:
-  tura [OPTIONS] command list [--json]
-  tura [OPTIONS] command run NAME [ARGS...]
-`);
+  printHelpTopic("provider");
 }
 
 function printAgentHelp(): void {
-  process.stdout.write(`Usage:
-  tura [OPTIONS] agent list [--json]
-  tura [OPTIONS] agent show AGENT_ID [--json]
-  tura [OPTIONS] agent create AGENT_ID [--config JSON_OR_PATH] [--prompt TEXT|--prompt-file PATH]
-  tura [OPTIONS] agent update AGENT_ID [--config JSON_OR_PATH] [--prompt TEXT|--prompt-file PATH]
-  tura [OPTIONS] agent delete AGENT_ID
-
-Agents are read and written through gateway /agent and dynamic agents live under agents/.
-Start a session with: tura run -a AGENT_ID -m PROVIDER/MODEL -p "prompt"
-`);
-}
-
-function printStatusHelp(): void {
-  process.stdout.write(`Usage:
-  tura [OPTIONS] status [--json]
-`);
+  printHelpTopic("agent");
 }
 
 function printCompletionHelp(): void {
-  process.stdout.write(`Usage:
-  tura completion bash
-  tura completion zsh
-  tura completion fish
-`);
+  printHelpTopic("completion");
+}
+
+function printPersonaHelp(): void {
+  printHelpTopic("persona");
+}
+
+function printProjectHelp(): void {
+  printHelpTopic("project");
+}
+
+function printFileHelp(): void {
+  printHelpTopic("file");
+}
+
+function printCommandHelp(): void {
+  printHelpTopic("command");
+}
+
+function printInspectHelp(): void {
+  printHelpTopic("inspect");
+}
+
+function printGatewayHelp(): void {
+  printHelpTopic("gateway");
+}
+
+function printHelpTopic(topic: HelpTopic): void {
+  process.stdout.write(formatHelp(helpPage(topic)));
 }

@@ -17,7 +17,6 @@ export type GatewayEventPayload =
   | { type: "message.removed"; properties: { session_id?: string; message_id?: string } }
   | { type: "message.part.delta"; properties: Record<string, unknown> }
   | { type: "message.part.updated"; properties: Record<string, unknown> }
-  | { type: "todo.updated"; properties: Record<string, unknown> }
   | { type: "permission.asked"; properties: Record<string, unknown> }
   | { type: "permission.replied"; properties: Record<string, unknown> }
   | { type: "question.asked"; properties: Record<string, unknown> }
@@ -34,7 +33,6 @@ export interface NormalizedEvent {
   status?: string;
   text?: string;
   tool?: string;
-  todos?: unknown[];
   permission?: PermissionRequest;
   question?: QuestionRequest;
   raw: GatewayEventEnvelope;

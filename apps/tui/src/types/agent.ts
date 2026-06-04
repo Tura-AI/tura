@@ -17,11 +17,20 @@ export interface AgentConfig {
   agent_directory?: string;
   parent_agent_id?: string | null;
   report_to_user?: boolean;
-  provider?: unknown;
+  provider?: AgentProviderConfig | unknown;
   agent_persona?: unknown[];
   agent_prompt?: unknown[];
   agent_capabilities?: unknown[];
   validator?: unknown;
+  [key: string]: unknown;
+}
+
+export interface AgentProviderConfig {
+  tura_llm_name?: string;
+  model_reasoning_effort?: string;
+  model_acceleration_enabled?: boolean;
+  service_tier?: string;
+  [key: string]: unknown;
 }
 
 export interface StoredAgent {

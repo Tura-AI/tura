@@ -115,7 +115,7 @@ class GuiE2EGatewayHandler(BaseHTTPRequestHandler):
             return self.json(
                 [
                     {"name": "coding_agent", "description": "Coding session agent", "mode": "primary", "native": True, "hidden": False},
-                    {"name": "coding_agent_fast", "description": "Fast coding session agent", "mode": "primary", "native": True, "hidden": False},
+                    {"name": "fast", "description": "Fast coding session agent", "mode": "primary", "native": True, "hidden": False},
                 ]
             )
         if path == "/session":
@@ -584,3 +584,4 @@ if __name__ == "__main__":
         OUT.mkdir(parents=True, exist_ok=True)
         (OUT / "exception.txt").write_text(traceback.format_exc(), encoding="utf-8")
         raise
+

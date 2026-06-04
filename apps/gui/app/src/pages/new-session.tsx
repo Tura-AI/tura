@@ -23,7 +23,11 @@ import { t } from "../i18n";
 import { classNames } from "../state/format";
 import { type AppState, type ComposerImage } from "../state/global-store";
 
-import { samePath, shortWorkspaceLabel } from "../utils/app-format";
+import {
+  defaultWorkspaceDirectory,
+  samePath,
+  shortWorkspaceLabel,
+} from "../utils/app-format";
 import { PlanComposerControls } from "./plan/plan-composer";
 export function ConversationEmptyView(props: {
   state: AppState;
@@ -88,6 +92,7 @@ export function ConversationEmptyView(props: {
                 onWorkspace={props.onWorkspace}
                 onCreateWorkspace={() => setNaming(true)}
                 onPickDirectory={props.onPickDirectory}
+                defaultDirectory={defaultWorkspaceDirectory(props.state.paths)}
               />
               <PlanComposerControls
                 startCondition={props.state.planDraftStartCondition}
@@ -122,6 +127,7 @@ export function NewSessionWorkspacePicker(props: {
   projects: Project[];
   directory?: string;
   query: string;
+  defaultDirectory: string;
   onQuery: (value: string) => void;
   onWorkspace: (directory: string) => void;
   onCreateWorkspace: () => void;
@@ -214,19 +220,15 @@ export function NewSessionWorkspacePicker(props: {
             <button type="button" onClick={pickDirectory}>
               <span>{t("existingDirectory")}</span>
             </button>
-            <Show when={props.directory}>
-              {(directory) => (
-                <button
-                  type="button"
-                  onClick={() => {
-                    props.onWorkspace(directory());
-                    setOpen(false);
-                  }}
-                >
-                  <span>{t("defaultWorkspace")}</span>
-                </button>
-              )}
-            </Show>
+            <button
+              type="button"
+              onClick={() => {
+                props.onWorkspace(props.defaultDirectory);
+                setOpen(false);
+              }}
+            >
+              <span>{t("defaultWorkspace")}</span>
+            </button>
           </div>
         </div>
       </Show>

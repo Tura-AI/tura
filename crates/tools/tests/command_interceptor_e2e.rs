@@ -6,9 +6,9 @@
 //! (verified by checking that their destructive side effect never happened),
 //! while safe commands must still run for real (verified by their side effect).
 //!
-//! Designed to run on Linux inside the Docker harness under
-//! `tests/docker/` (see `scripts/run_interceptor_e2e_docker.sh`). The whole file
-//! is gated to Unix so it only executes where a real `bash` is present.
+//! Designed to run on Linux inside the Docker harness under `tests/docker/`.
+//! The whole file is gated to Unix so it only executes where a real `bash` is
+//! present.
 #![cfg(unix)]
 
 use code_tools::command_run;

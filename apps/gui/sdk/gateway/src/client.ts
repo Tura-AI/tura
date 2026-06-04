@@ -2,7 +2,6 @@ import { GatewayError } from "./errors";
 import type {
   Agent,
   AgentUpsertRequest,
-  PersonaUpsertRequest,
   StoredPersona,
   Command,
   CreateSessionRequest,
@@ -15,14 +14,12 @@ import type {
   Message,
   MessageListItem,
   PathResponse,
-  PermissionRequest,
-  PluginInfo,
-  ProductAgent,
   ProviderAuthActionResponse,
   ProviderAuthInput,
   ProviderAuthMethod,
   ProviderAuthStatusResponse,
   ProductConfig,
+  ProductAgent,
   ProductIssue,
   ProductIssueInput,
   ProductProject,
@@ -31,33 +28,18 @@ import type {
   PromptAsyncRequest,
   OAuthAuthorizeResponse,
   OAuthCallbackInput,
-  PtyCreateRequest,
-  PtyResponse,
   ProviderListResponse,
-  QuestionRequest,
-  RuntimeDevice,
-  SendMessageResponse,
   ServiceStatusResponse,
-  ShellResponse,
   Session,
   SessionLogSnapshot,
   SessionLogRecordsResponse,
   SessionLogSessionsResponse,
   SessionLogWorkspacesResponse,
   TaskManagement,
-  Skill,
-  TaskRun,
   TuraConfigResponse,
   TuraConfigUpdate,
-  TodoItem,
-  UsageByAgent,
-  UsagePoint,
-  AgentRuntimeUsage,
   StoredAgent,
-  VcsDiffResponse,
-  VcsInfo,
   Workspace,
-  InboxItem,
 } from "./types";
 
 export type GatewayClientOptions = {
@@ -116,18 +98,6 @@ export class GatewayClient {
     });
   }
 
-  guiConfig(): Promise<string> {
-    return this.text("/gui_config");
-  }
-
-  putGuiConfig(content: string): Promise<string> {
-    return this.text("/gui_config", {
-      method: "PUT",
-      body: content,
-      headers: { "content-type": "text/plain; charset=utf-8" },
-    });
-  }
-
   productConfig(): Promise<ProductConfig> {
     return this.get("/api/config");
   }
@@ -180,30 +150,6 @@ export class GatewayClient {
 
   productAgents(): Promise<ProductAgent[]> {
     return this.get("/api/agents");
-  }
-
-  runtimes(): Promise<RuntimeDevice[]> {
-    return this.get("/api/runtimes");
-  }
-
-  inbox(): Promise<InboxItem[]> {
-    return this.get("/api/inbox");
-  }
-
-  taskSnapshot(): Promise<TaskRun[]> {
-    return this.get("/api/agent-task-snapshot");
-  }
-
-  usageDaily(): Promise<UsagePoint[]> {
-    return this.get("/api/dashboard/usage/daily");
-  }
-
-  usageByAgent(): Promise<UsageByAgent[]> {
-    return this.get("/api/dashboard/usage/by-agent");
-  }
-
-  agentRuntimeUsage(): Promise<AgentRuntimeUsage[]> {
-    return this.get("/api/dashboard/usage/agent-runtime");
   }
 
   paths(): Promise<PathResponse> {
@@ -289,10 +235,6 @@ export class GatewayClient {
     );
   }
 
-  session(sessionId: string): Promise<Session> {
-    return this.get(`/session/${encodeURIComponent(sessionId)}`);
-  }
-
   updateSession(
     sessionId: string,
     payload: Partial<Session>,
@@ -310,10 +252,6 @@ export class GatewayClient {
     );
   }
 
-  deleteSession(sessionId: string): Promise<boolean> {
-    return this.delete(`/session/${encodeURIComponent(sessionId)}`);
-  }
-
   async messages(sessionId: string): Promise<Message[]> {
     const items = await this.get<MessageListItem[]>(
       `/session/${encodeURIComponent(sessionId)}/message`,
@@ -321,19 +259,6 @@ export class GatewayClient {
     return items
       .map(normalizeMessageListItem)
       .filter((message): message is Message => !!message?.id);
-  }
-
-  async sendMessage(
-    sessionId: string,
-    content: string,
-  ): Promise<SendMessageResponse> {
-    const response = await this.post<Message | SendMessageResponse>(
-      `/session/${encodeURIComponent(sessionId)}/message`,
-      {
-        content,
-      },
-    );
-    return "message" in response ? response : { message: response };
   }
 
   async promptAsync(
@@ -352,40 +277,6 @@ export class GatewayClient {
 
   async abort(sessionId: string): Promise<void> {
     await this.post(`/session/${encodeURIComponent(sessionId)}/abort`, {});
-  }
-
-  todos(sessionId: string): Promise<TodoItem[]> {
-    return this.get(`/session/${encodeURIComponent(sessionId)}/todo`);
-  }
-
-  permissions(): Promise<PermissionRequest[]> {
-    return this.get("/permission");
-  }
-
-  replyPermission(
-    requestId: string,
-    approve: boolean,
-  ): Promise<{ success: boolean }> {
-    return this.post(`/permission/${encodeURIComponent(requestId)}/reply`, {
-      approve,
-    });
-  }
-
-  questions(): Promise<QuestionRequest[]> {
-    return this.get("/question");
-  }
-
-  replyQuestion(
-    requestId: string,
-    response: string,
-  ): Promise<{ success: boolean }> {
-    return this.post(`/question/${encodeURIComponent(requestId)}/reply`, {
-      response,
-    });
-  }
-
-  rejectQuestion(requestId: string): Promise<boolean> {
-    return this.post(`/question/${encodeURIComponent(requestId)}/reject`, {});
   }
 
   providers(): Promise<ProviderListResponse> {
@@ -422,13 +313,6 @@ export class GatewayClient {
   ): Promise<ProviderAuthActionResponse> {
     return this.post(
       `/provider/${encodeURIComponent(providerId)}/auth/validate`,
-      {},
-    );
-  }
-
-  providerAuthRefresh(providerId: string): Promise<ProviderAuthActionResponse> {
-    return this.post(
-      `/provider/${encodeURIComponent(providerId)}/auth/refresh`,
       {},
     );
   }
@@ -480,25 +364,6 @@ export class GatewayClient {
     return this.get("/persona");
   }
 
-  persona(personaId: string): Promise<StoredPersona> {
-    return this.get(`/persona/${encodeURIComponent(personaId)}`);
-  }
-
-  createPersona(payload: PersonaUpsertRequest): Promise<StoredPersona> {
-    return this.post("/persona", payload);
-  }
-
-  updatePersona(
-    personaId: string,
-    payload: PersonaUpsertRequest,
-  ): Promise<StoredPersona> {
-    return this.patch(`/persona/${encodeURIComponent(personaId)}`, payload);
-  }
-
-  deletePersona(personaId: string): Promise<boolean> {
-    return this.delete(`/persona/${encodeURIComponent(personaId)}`);
-  }
-
   commands(): Promise<Command[]> {
     return this.get("/command");
   }
@@ -508,24 +373,6 @@ export class GatewayClient {
     args: string[] = [],
   ): Promise<{ output: string }> {
     return this.post("/command", { command, args });
-  }
-
-  vcs(): Promise<VcsInfo> {
-    return this.get("/vcs");
-  }
-
-  diff(): Promise<VcsDiffResponse> {
-    return this.get("/vcs/diff");
-  }
-
-  sessionDiff(sessionId: string): Promise<VcsDiffResponse["files"]> {
-    return this.get(`/session/${encodeURIComponent(sessionId)}/diff`);
-  }
-
-  sessionShell(sessionId: string, input: string): Promise<ShellResponse> {
-    return this.post(`/session/${encodeURIComponent(sessionId)}/shell`, {
-      input,
-    });
   }
 
   files(path = ""): Promise<FileInfo[]> {
@@ -544,28 +391,8 @@ export class GatewayClient {
     return this.post("/file/open-location", {}, { path }, true);
   }
 
-  ptys(): Promise<PtyResponse[]> {
-    return this.get("/pty", undefined, true);
-  }
-
-  createPty(payload: PtyCreateRequest = {}): Promise<PtyResponse> {
-    return this.post("/pty", payload, undefined, true);
-  }
-
-  deletePty(ptyId: string): Promise<boolean> {
-    return this.delete(`/pty/${encodeURIComponent(ptyId)}`);
-  }
-
   serviceStatus(): Promise<ServiceStatusResponse> {
     return this.get("/service/status");
-  }
-
-  skills(): Promise<Skill[]> {
-    return this.get("/skill");
-  }
-
-  plugins(): Promise<PluginInfo[]> {
-    return this.get("/plugin");
   }
 
   workspaceConfig(): Promise<Record<string, unknown>> {

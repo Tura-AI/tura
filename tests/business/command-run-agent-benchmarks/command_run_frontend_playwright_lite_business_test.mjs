@@ -1096,7 +1096,7 @@ async function runCurrentLike(agentId, exe, workspace, agentDir, agentPort) {
   return { first, second, threadId, error: first.error || second.error || null }
 }
 
-async function runTura(workspace, agentDir, agentPort, agentPrompt = "coding_agent_fast", shellSurface = "shell_command") {
+async function runTura(workspace, agentDir, agentPort, agentPrompt = "fast", shellSurface = "shell_command") {
   const sessionId = `frontend-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const common = [
     "exec",
@@ -1248,7 +1248,7 @@ async function runAgent(agentId, template, evaluator, index) {
     } else if (kind === "codex-main") {
       result = await runCurrentLike(agentId, codexMainExe, workspace, agentDir, agentPort)
     } else if (kind === "tura-fast-shll" || kind === "tura-fast-bash") {
-      result = await runTura(workspace, agentDir, agentPort, "coding_agent_fast", shellSurface)
+      result = await runTura(workspace, agentDir, agentPort, "fast", shellSurface)
     } else if (kind === "tura-shll" || kind === "tura-bash") {
       result = await runTura(workspace, agentDir, agentPort, "coding_agent", shellSurface)
     } else if (kind === "claude-code") {
@@ -1339,3 +1339,4 @@ async function main() {
 }
 
 await main()
+

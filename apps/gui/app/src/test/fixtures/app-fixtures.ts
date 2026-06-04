@@ -32,8 +32,30 @@ const FIXTURE_FILE_ROOT = "C:\\Users\\liuliu\\Documents\\tura";
 const FIXTURE_MODEL = "openai/gpt-5.5";
 const FIXTURE_AGENTS: Agent[] = [
   {
-    name: "coding_agent_planning",
-    description: "Planning and implementation agent",
+    name: "thinking",
+    description: "Thinking agent",
+    mode: "primary",
+    native: true,
+    hidden: false,
+    model: null,
+    options: {
+      icon_emoji: "🧠",
+      capabilities: ["command_run", "apply_patch", "shell_command"],
+      provider: { tura_llm_name: "flagship_thinking" },
+      avatar: {
+        persona_id: "tura",
+        role: "tura",
+        display_mode: "static",
+        pixel_size: 20,
+        threshold: 150,
+        scale: 100,
+      },
+    },
+    permission: { allow: [], deny: [] },
+  },
+  {
+    name: "thinking-planning",
+    description: "Thinking planning agent",
     mode: "primary",
     native: true,
     hidden: false,
@@ -54,8 +76,8 @@ const FIXTURE_AGENTS: Agent[] = [
     permission: { allow: [], deny: [] },
   },
   {
-    name: "coding_agent_fast",
-    description: "Fast coding agent",
+    name: "fast",
+    description: "Fast agent",
     mode: "primary",
     native: true,
     hidden: false,
@@ -76,8 +98,8 @@ const FIXTURE_AGENTS: Agent[] = [
     permission: { allow: [], deny: [] },
   },
   {
-    name: "coding_agent_instant",
-    description: "Instant coding agent",
+    name: "fast-text-only",
+    description: "Fast text-only agent",
     mode: "primary",
     native: true,
     hidden: false,

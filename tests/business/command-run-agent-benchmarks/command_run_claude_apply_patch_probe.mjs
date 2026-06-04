@@ -38,7 +38,7 @@ function runTura(prompt, label) {
       "--session-id",
       sessionId,
       "--agent-id",
-      "coding_agent_fast",
+      "fast",
       "-m",
       model,
       "-p",
@@ -245,3 +245,4 @@ const summary = {
 fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2))
 console.log(JSON.stringify(summary, null, 2))
 process.exit(summary.ok ? 0 : 1)
+

@@ -131,6 +131,13 @@
   white-space: nowrap;
 }
 
+@media (max-width: 640px) {
+  .plan-panel-fullscreen .plan-panel-topbar {
+    min-height: calc(var(--rail-open-button-size) + var(--space-4));
+    padding-left: calc(var(--rail-open-button-size) + var(--space-5));
+  }
+}
+
 .plan-panel-resize::after {
   background: var(--line);
 }

@@ -32,7 +32,7 @@ crates/runtime/
       mod.rs
       process.rs
       agent_prompts.rs
-      child_dispatch.rs        # 子 session 派发：经 router CLI 子进程拉起子 agent
+      child_dispatch.rs        # child session dispatch through router CLI subprocesses
       constants.rs
       prompt_messages.rs
       runtime_turn.rs
@@ -43,7 +43,7 @@ crates/runtime/
       final_response.rs
       change_tracker.rs
       permission_gate.rs
-      validator_feedback.rs    # 校验器可靠性反馈 → alaya 注册表
+      validator_feedback.rs    # validator reliability feedback for the registry layer
 
     session/
       activate_session.rs
@@ -281,9 +281,9 @@ Runtime loads agents from `agents`.
 
 Preferred order:
 
-1. `agents/<agent>/interface/I<agent>.json`.
-2. Generated Rust definitions from `agents`.
-3. Test override loader.
+1. `agents/src/<agent_id>/agent_config.json`.
+2. Optional `agents/src/<agent_id>/prompt.md`.
+3. Test override loader when a runtime test injects agent config directly.
 
 Provider defaults and command lists come from agent config.
 

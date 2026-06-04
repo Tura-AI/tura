@@ -274,7 +274,8 @@ mod tests {
             { "type": "input_image", "image_url": "data:image/jpeg;base64,AAA" }
         ]);
 
-        let converted = openai_chat_content_from_canonical(Some(&content)).unwrap();
+        let converted =
+            openai_chat_content_from_canonical(Some(&content)).expect("openai chat content");
 
         assert_eq!(converted[0]["type"], "text");
         assert_eq!(converted[1]["type"], "image_url");
@@ -291,7 +292,7 @@ mod tests {
             { "type": "input_image", "image_url": "data:image/png;base64,AAA" }
         ]);
 
-        let blocks = anthropic_blocks_from_canonical(Some(&content)).unwrap();
+        let blocks = anthropic_blocks_from_canonical(Some(&content)).expect("anthropic blocks");
 
         assert_eq!(blocks[0]["type"], "text");
         assert_eq!(blocks[1]["type"], "image");
@@ -313,7 +314,7 @@ mod tests {
             }
         ]);
 
-        let blocks = anthropic_blocks_from_canonical(Some(&content)).unwrap();
+        let blocks = anthropic_blocks_from_canonical(Some(&content)).expect("anthropic blocks");
 
         assert_eq!(blocks[0]["type"], "text");
         assert_eq!(blocks[1]["type"], "image");
@@ -328,7 +329,8 @@ mod tests {
             { "type": "input_image", "image_url": "data:image/jpeg;base64,AAA" }
         ]);
 
-        let converted = openai_responses_content_from_canonical(Some(&content)).unwrap();
+        let converted = openai_responses_content_from_canonical(Some(&content))
+            .expect("openai responses content");
 
         assert_eq!(converted[0]["type"], "input_text");
         assert_eq!(converted[1]["type"], "input_image");
@@ -342,7 +344,7 @@ mod tests {
             { "type": "input_image", "image_url": "data:image/png;base64,AAA" }
         ]);
 
-        let parts = google_parts_from_canonical(Some(&content)).unwrap();
+        let parts = google_parts_from_canonical(Some(&content)).expect("google parts");
 
         assert_eq!(parts[0]["text"], "see image");
         assert_eq!(parts[1]["inlineData"]["mimeType"], "image/png");

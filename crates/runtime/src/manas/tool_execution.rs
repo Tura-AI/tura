@@ -1051,8 +1051,20 @@ mod tests {
                     == Some("task_topology_applied")
             })
             .expect("planning topology should be audited");
-        assert_eq!(topology_event["current_tasks"].as_array().unwrap().len(), 3);
-        assert_eq!(topology_event["input_steps"].as_array().unwrap().len(), 3);
+        assert_eq!(
+            topology_event["current_tasks"]
+                .as_array()
+                .expect("current tasks")
+                .len(),
+            3
+        );
+        assert_eq!(
+            topology_event["input_steps"]
+                .as_array()
+                .expect("input steps")
+                .len(),
+            3
+        );
     }
 
     #[test]

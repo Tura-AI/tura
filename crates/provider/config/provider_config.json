@@ -198,7 +198,6 @@
               "attachment": true,
               "family": "claude",
               "id": "claude-opus-4-7",
-              "visible": false,
               "limit": {
                 "context": 1000000,
                 "input": 1000000,
@@ -221,7 +220,8 @@
               "release_date": "2026-04-16",
               "status": null,
               "temperature": true,
-              "tool_call": true
+              "tool_call": true,
+              "visible": false
             }
           ],
           "instant": [],
@@ -753,7 +753,6 @@
               "attachment": true,
               "family": "claude",
               "id": "anthropic.claude-opus-4-7",
-              "visible": false,
               "limit": {
                 "context": 1000000,
                 "input": 1000000,
@@ -776,7 +775,8 @@
               "release_date": "2026-04-16",
               "status": null,
               "temperature": true,
-              "tool_call": true
+              "tool_call": true,
+              "visible": false
             }
           ],
           "instant": [],
@@ -878,7 +878,6 @@
               "attachment": true,
               "family": "claude",
               "id": "claude-opus-4-8",
-              "visible": false,
               "limit": {
                 "context": 1000000,
                 "input": 1000000,
@@ -901,13 +900,13 @@
               "release_date": "2026-05-01",
               "status": null,
               "temperature": true,
-              "tool_call": true
+              "tool_call": true,
+              "visible": false
             },
             {
               "attachment": true,
               "family": "claude",
               "id": "claude-opus-4-7",
-              "visible": false,
               "limit": {
                 "context": 1000000,
                 "input": 1000000,
@@ -930,7 +929,8 @@
               "release_date": "2026-04-16",
               "status": null,
               "temperature": true,
-              "tool_call": true
+              "tool_call": true,
+              "visible": false
             }
           ],
           "instant": [],
@@ -2712,7 +2712,6 @@
               "attachment": true,
               "family": "claude",
               "id": "claude-opus-4-7",
-              "visible": false,
               "limit": {
                 "context": 1000000,
                 "input": 1000000,
@@ -2735,7 +2734,8 @@
               "release_date": "2026-04-16",
               "status": null,
               "temperature": true,
-              "tool_call": true
+              "tool_call": true,
+              "visible": false
             }
           ],
           "instant": [

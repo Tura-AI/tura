@@ -3,8 +3,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const DYNAMIC_AGENTS_DIR: &str = "agents";
-pub const STATIC_AGENTS_DIR: &str = "agents/src";
+pub const AGENTS_DIR: &str = "agents/src";
 pub const AGENT_CONFIG_FILE: &str = "agent_config.json";
 pub const AGENT_PROMPT_FILE: &str = "prompt.md";
 
@@ -67,19 +66,18 @@ fn default_report_to_user() -> bool {
 
 pub fn discover_agents(project_root: &Path) -> Vec<StoredAgent> {
     let mut agents = BTreeMap::<String, StoredAgent>::new();
-    for (source, root) in agent_roots(project_root) {
-        let Ok(entries) = fs::read_dir(&root) else {
+    let root = project_root.join(AGENTS_DIR);
+    let Ok(entries) = fs::read_dir(&root) else {
+        return Vec::new();
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
             continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            if let Some(agent) = load_agent_at(project_root, &path, source) {
-                let key = agent.summary.id.to_ascii_lowercase();
-                agents.entry(key).or_insert(agent);
-            }
+        }
+        if let Some(agent) = load_agent_at(project_root, &path) {
+            let key = agent.summary.id.to_ascii_lowercase();
+            agents.entry(key).or_insert(agent);
         }
     }
     agents.into_values().collect()
@@ -110,7 +108,7 @@ pub fn dynamic_agent_path(project_root: &Path, agent_id: &str) -> Result<PathBuf
     {
         return Err(format!("invalid agent id: {agent_id}"));
     }
-    Ok(project_root.join(DYNAMIC_AGENTS_DIR).join(id))
+    Ok(project_root.join(AGENTS_DIR).join(id))
 }
 
 pub fn save_dynamic_agent(
@@ -151,7 +149,7 @@ pub fn save_dynamic_agent(
             )
         })?;
     }
-    load_agent_at(project_root, &agent_dir, AgentSource::Dynamic)
+    load_agent_at(project_root, &agent_dir)
         .ok_or_else(|| format!("failed to reload agent {}", config.agent_name))
 }
 
@@ -232,18 +230,7 @@ pub fn project_root_from_env_or_cwd() -> PathBuf {
     current
 }
 
-fn agent_roots(project_root: &Path) -> [(AgentSource, PathBuf); 2] {
-    [
-        (AgentSource::Dynamic, project_root.join(DYNAMIC_AGENTS_DIR)),
-        (AgentSource::Static, project_root.join(STATIC_AGENTS_DIR)),
-    ]
-}
-
-fn load_agent_at(
-    project_root: &Path,
-    directory: &Path,
-    source: AgentSource,
-) -> Option<StoredAgent> {
+fn load_agent_at(project_root: &Path, directory: &Path) -> Option<StoredAgent> {
     let config_path = directory.join(AGENT_CONFIG_FILE);
     if !config_path.exists() {
         return None;
@@ -251,6 +238,11 @@ fn load_agent_at(
     let content = fs::read_to_string(&config_path).ok()?;
     let config: AgentConfig = serde_json::from_str(&content).ok()?;
     let prompt = fs::read_to_string(directory.join(AGENT_PROMPT_FILE)).ok();
+    let source = if config.default_config {
+        AgentSource::Static
+    } else {
+        AgentSource::Dynamic
+    };
     let summary = summary_from_config(project_root, directory, source, &config);
     Some(StoredAgent {
         summary,

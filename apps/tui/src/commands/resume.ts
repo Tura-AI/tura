@@ -2,6 +2,7 @@ import { GatewayClient } from "../gateway/client.js";
 import { CliUsageError, type CliContext, type OutputMode } from "../types/common.js";
 import { sessionUpdatedAt } from "../types/session.js";
 import { runPrompt } from "./run.js";
+import { t } from "../i18n.js";
 
 export interface ResumeOptions {
   sessionID?: string;
@@ -13,7 +14,7 @@ export interface ResumeOptions {
 export async function resumeCommand(context: CliContext, options: ResumeOptions): Promise<void> {
   const client = new GatewayClient({ baseUrl: context.gatewayUrl, directory: context.cwd, verbose: context.verbose });
   const sessionID = options.sessionID ?? (options.last ? await newestSessionID(client) : undefined);
-  if (!sessionID) throw new CliUsageError("resume requires SESSION_ID or --last");
+  if (!sessionID) throw new CliUsageError(t("resumeRequiresSession"));
   if (options.prompt?.trim()) {
     await runPrompt(context, {
       prompt: options.prompt,

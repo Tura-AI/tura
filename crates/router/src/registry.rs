@@ -1,8 +1,7 @@
-//! Router 注册表：agent 定义解析（spec 下发）。
+//! Router registry for resolving agent, command, and persona specs.
 //!
-//! 注册表为内存态，启动时从静态定义装载——不引入数据库、不要求固定端口。
-//! 边界：router 持有 agent 元数据与解析，agent loop 仍归 runtime。
-//! agent 与 command 注册管理归 router；runtime 只消费 router 下发的 spec。
+//! The registry is in-memory and loaded from static definitions at startup.
+//! Runtime code consumes resolved specs; router owns metadata lookup.
 
 pub mod agent;
 pub mod command;
@@ -16,7 +15,7 @@ pub use agent::AgentSpec;
 pub use command::CommandRegistry;
 pub use persona::PersonaRegistry;
 
-/// 注册表集合，挂在 router AppState 上。
+/// Registry bundle attached to router AppState.
 #[derive(Clone, Debug, Default)]
 pub struct Registry {
     pub agents: AgentRegistry,
@@ -28,14 +27,13 @@ impl Registry {
     pub fn from_static() -> Self {
         Self {
             agents: AgentRegistry::from_static(),
-            commands: CommandRegistry::default(),
+            commands: CommandRegistry,
             personas: PersonaRegistry::from_static(),
         }
     }
 }
 
-/// 从注册表解析二进制 target（替代写死的发行目录路径）。
-/// 优先发行目录，回退 debug 目录。
+/// Resolve a binary target from release first, then debug.
 pub fn resolve_binary_target(repo_root: &Path, binary_name: &str) -> Option<PathBuf> {
     let file_name = if cfg!(windows) {
         format!("{binary_name}.exe")

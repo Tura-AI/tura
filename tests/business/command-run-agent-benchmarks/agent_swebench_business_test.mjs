@@ -1153,7 +1153,7 @@ async function runAgentOnTask(agentRun, task, prepared = null) {
     if (prepared?.error) throw new Error(prepared.error)
     if (agentId === "current-shll") result = await runCurrentLike(agentId, codexCurrentExe, workspace, agentDir, prompt)
     else if (agentId === "codex-main") result = await runCurrentLike(agentId, codexMainExe, workspace, agentDir, prompt)
-    else if (agentId === "tura-fast-shll") result = await runTura(agentId, workspace, agentDir, prompt, "coding_agent_fast")
+    else if (agentId === "tura-fast-shll") result = await runTura(agentId, workspace, agentDir, prompt, "fast")
     else if (agentId === "tura-shll") result = await runTura(agentId, workspace, agentDir, prompt, "coding_agent")
     else throw new Error(`unsupported agent ${agentId}`)
   } catch (err) {
@@ -1298,3 +1298,4 @@ async function main() {
 }
 
 await main()
+

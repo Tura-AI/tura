@@ -81,7 +81,7 @@ fn coding_topic_registry_loads_coding_agent() {
     let agents = activate_agents_by_session_type(&session).expect("agent registry should load");
 
     assert_eq!(agents.len(), 1);
-    assert_eq!(agents[0].agent_name, "coding_agent_planning");
+    assert_eq!(agents[0].agent_name, "thinking-planning");
     assert_eq!(
         agents[0].provider.tura_llm_name,
         coding_agent_provider_name()
@@ -123,7 +123,7 @@ fn default_coding_agents_expose_expected_command_run_capabilities() {
 
     for (agent_name, expected, forbidden, provider) in [
         (
-            "coding_agent_planning",
+            "thinking-planning",
             vec![
                 "command_run",
                 "apply_patch",
@@ -138,7 +138,7 @@ fn default_coding_agents_expose_expected_command_run_capabilities() {
             "flagship_thinking",
         ),
         (
-            "coding_agent_fast",
+            "fast",
             vec![
                 "command_run",
                 "apply_patch",
@@ -152,7 +152,7 @@ fn default_coding_agents_expose_expected_command_run_capabilities() {
             "flagship_thinking",
         ),
         (
-            "coding_agent_instant",
+            "fast-text-only",
             vec![
                 "command_run",
                 "apply_patch",

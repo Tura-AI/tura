@@ -11,7 +11,7 @@
 //!     --test responses_tier_live_smoke -- --nocapture
 //! ```
 //!
-//! Credentials are read from the process env, then `crates/provider/.env`.
+//! Credentials are read from the process env, then the project root `.env`.
 //! Providers without a key are SKIPped (e.g. qwen if `QWEN_API_KEY` is absent).
 //! qwen deliberately uses the *international* DashScope endpoint.
 

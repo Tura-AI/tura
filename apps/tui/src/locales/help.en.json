@@ -1,0 +1,182 @@
+{
+  "main": {
+    "title": "Tura terminal client",
+    "usage": [
+      "tura [OPTIONS]                         open the interactive TUI",
+      "tura [OPTIONS] run [PROMPT...]         run a non-interactive prompt",
+      "tura [OPTIONS] <command> --help        show command-specific help"
+    ],
+    "commands": [
+      { "name": "run", "summary": "send a prompt through the gateway and stream the answer" },
+      { "name": "resume", "summary": "show an existing session or append a follow-up prompt" },
+      { "name": "session", "summary": "list or show sessions" },
+      { "name": "config", "summary": "read or update workspace session config" },
+      { "name": "provider", "summary": "list providers and inspect auth state" },
+      { "name": "agent", "summary": "list, read, create, update, or tier agents" },
+      { "name": "persona", "summary": "list, read, create, update, or delete personas" },
+      { "name": "project", "summary": "inspect or create gateway workspaces" },
+      { "name": "file", "summary": "list, read, open, or reveal workspace files" },
+      { "name": "command", "summary": "list or execute gateway commands" },
+      { "name": "inspect", "summary": "show gateway service, path, and session-log state" },
+      { "name": "gateway", "summary": "call any gateway HTTP endpoint directly" },
+      { "name": "completion", "summary": "generate shell completion for bash, zsh, or fish" }
+    ],
+    "options": [
+      { "flags": "--gateway-url URL", "summary": "Gateway base URL; defaults to TURA_GATEWAY_URL or http://127.0.0.1:4096" },
+      { "flags": "--cwd PATH", "summary": "Workspace directory sent to gateway" },
+      { "flags": "--json", "summary": "JSON output where supported" },
+      { "flags": "--color MODE", "summary": "auto, always, or never" },
+      { "flags": "--lang zh-CN|en", "summary": "display language" },
+      { "flags": "--plain", "summary": "force L1 plain/safe rendering" },
+      { "flags": "--rich", "summary": "force L3 rich/modern rendering" },
+      { "flags": "--verbose", "summary": "Print gateway requests to stderr" }
+    ],
+    "sections": [
+      {
+        "title": "Examples",
+        "lines": [
+          "tura run \"Inspect the workspace and summarize the architecture\"",
+          "tura run --model openai/gpt-5 --output ndjson \"Fix the failing test\"",
+          "tura session list --json",
+          "tura provider list --json"
+        ]
+      }
+    ]
+  },
+  "run": {
+    "title": "Run a prompt",
+    "usage": ["tura [OPTIONS] run [PROMPT...] [RUN_OPTIONS]"],
+    "options": [
+      { "flags": "--session ID", "summary": "append the prompt to an existing session" },
+      { "flags": "-m, --model PROVIDER/MODEL", "summary": "request-scoped model override" },
+      { "flags": "-p, --priority", "summary": "enable priority model routing for this model" },
+      { "flags": "-a, --agent-id ID", "summary": "request-scoped agent id" },
+      { "flags": "--session-type TYPE", "summary": "session type passed to gateway" },
+      { "flags": "--model-variant LEVEL", "summary": "reasoning/model variant override" },
+      { "flags": "--model-acceleration", "summary": "enable priority/accelerated routing" },
+      { "flags": "--no-model-acceleration", "summary": "disable priority/accelerated routing" },
+      { "flags": "--output text|json|ndjson", "summary": "output format" },
+      { "flags": "--stream, --no-stream", "summary": "stream gateway events or poll for completion" },
+      { "flags": "--timeout SEC", "summary": "timeout before aborting the turn (default 600)" },
+      { "flags": "-c, --config KEY=VALUE", "summary": "runtime override, for example model=gpt-5" }
+    ]
+  },
+  "resume": {
+    "title": "Resume a session",
+    "usage": ["tura [OPTIONS] resume SESSION_ID [PROMPT...]", "tura [OPTIONS] resume --last [PROMPT...]"],
+    "options": [
+      { "flags": "--last", "summary": "select the most recently updated session" },
+      { "flags": "--output text|json|ndjson", "summary": "output mode when sending a follow-up prompt" },
+      { "flags": "--json", "summary": "alias for --output json" }
+    ]
+  },
+  "session": {
+    "title": "Sessions",
+    "usage": [
+      "tura [OPTIONS] session list [--all] [--json]",
+      "tura [OPTIONS] session show SESSION_ID [--json]",
+      "tura [OPTIONS] session update SESSION_ID --data JSON [--json]",
+      "tura [OPTIONS] session task-management SESSION_ID --data JSON [--json]",
+      "tura [OPTIONS] session abort SESSION_ID [--json]"
+    ]
+  },
+  "config": {
+    "title": "Config",
+    "usage": [
+      "tura [OPTIONS] config get [KEY]",
+      "tura [OPTIONS] config set KEY=VALUE...",
+      "tura [OPTIONS] config model-tiers [--json]",
+      "tura [OPTIONS] config model-tier TIER [--json]",
+      "tura [OPTIONS] config model-tier TIER PROVIDER/MODEL"
+    ],
+    "sections": [
+      {
+        "title": "Notes",
+        "lines": ["Session config uses /session/config; model tiers use the shared GUI /model_config provider_config.json."]
+      }
+    ]
+  },
+  "provider": {
+    "title": "Providers",
+    "usage": [
+      "tura [OPTIONS] provider list [--json]",
+      "tura [OPTIONS] provider status [PROVIDER]",
+      "tura [OPTIONS] provider login PROVIDER [--method N] [--no-open]",
+      "tura [OPTIONS] provider set-auth PROVIDER --key KEY [--type api]",
+      "tura [OPTIONS] provider set-auth PROVIDER --auth JSON_OR_PATH",
+      "tura [OPTIONS] provider logout PROVIDER"
+    ]
+  },
+  "agent": {
+    "title": "Agents",
+    "usage": [
+      "tura [OPTIONS] agent list [--json]",
+      "tura [OPTIONS] agent show AGENT_ID [--json]",
+      "tura [OPTIONS] agent create AGENT_ID [--config JSON_OR_PATH] [--prompt TEXT|--prompt-file PATH]",
+      "tura [OPTIONS] agent update AGENT_ID [--config JSON_OR_PATH] [--prompt TEXT|--prompt-file PATH]",
+      "tura [OPTIONS] agent delete AGENT_ID [--json]",
+      "tura [OPTIONS] agent tier AGENT_ID [TIER] [--reasoning LEVEL] [--priority|--no-priority]"
+    ],
+    "sections": [
+      { "title": "Example", "lines": ["tura run -a AGENT_ID -m PROVIDER/MODEL -p \"prompt\""] }
+    ]
+  },
+  "completion": {
+    "title": "Shell completion",
+    "usage": ["tura completion bash", "tura completion zsh", "tura completion fish"]
+  },
+  "persona": {
+    "title": "Personas",
+    "usage": [
+      "tura [OPTIONS] persona list [--json]",
+      "tura [OPTIONS] persona show PERSONA_ID [--json]",
+      "tura [OPTIONS] persona create PERSONA_ID [--config JSON_OR_PATH] [--persona TEXT|--persona-file PATH]",
+      "tura [OPTIONS] persona update PERSONA_ID [--config JSON_OR_PATH] [--communication-style TEXT|--communication-style-file PATH]",
+      "tura [OPTIONS] persona delete PERSONA_ID [--json]"
+    ]
+  },
+  "project": {
+    "title": "Projects",
+    "usage": [
+      "tura [OPTIONS] project current [--json]",
+      "tura [OPTIONS] project list [--json]",
+      "tura [OPTIONS] project create [NAME] [--json]",
+      "tura [OPTIONS] project default [--json]",
+      "tura [OPTIONS] project select-local [--title TEXT] [--json]"
+    ]
+  },
+  "file": {
+    "title": "Files",
+    "usage": [
+      "tura [OPTIONS] file list [PATH] [--json]",
+      "tura [OPTIONS] file read PATH [--json]",
+      "tura [OPTIONS] file open PATH [--json]",
+      "tura [OPTIONS] file reveal PATH [--json]"
+    ]
+  },
+  "command": {
+    "title": "Command registry",
+    "usage": ["tura [OPTIONS] command list [--json]", "tura [OPTIONS] command run COMMAND [ARGS...] [--json]"]
+  },
+  "inspect": {
+    "title": "Inspect gateway state",
+    "usage": [
+      "tura [OPTIONS] inspect status [--json]",
+      "tura [OPTIONS] inspect paths [--json]",
+      "tura [OPTIONS] inspect logs workspaces [--json]",
+      "tura [OPTIONS] inspect logs sessions [--json]",
+      "tura [OPTIONS] inspect logs records SESSION_ID"
+    ]
+  },
+  "gateway": {
+    "title": "Raw gateway HTTP",
+    "usage": [
+      "tura [OPTIONS] gateway GET /global/health",
+      "tura [OPTIONS] gateway POST /command --data '{\"command\":\"name\",\"args\":[]}'",
+      "tura [OPTIONS] gateway PATCH /session/SESSION_ID --data '{\"name\":\"New name\"}'"
+    ],
+    "options": [
+      { "flags": "-d, --data JSON", "summary": "JSON request body for POST, PATCH, PUT, and DELETE" }
+    ]
+  }
+}

@@ -1,33 +1,48 @@
+# Local secrets and machine-specific config
 .env
 .env.*
 !.env.example
+.cargo/*
+!.cargo/config.toml
+.tura/
 
+# Rust build output
 target/
-storage/
-sessions/
-scripts/packages/python/
+
+# JavaScript and TypeScript dependency/build output
 node_modules/
+**/node_modules/
 **/dist/
+**/.vite/
 *.tsbuildinfo
 /package-lock.json
 
+# Python fallback dependencies and caches
+scripts/packages/python/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Local databases, downloaded binaries, and storage
+storage/
+sessions/
+db/session_log/
+db/qdrant/qdrant.exe
+
+# Logs, benchmark output, screenshots, and temporary run artifacts
 log/
 crates/provider/log/
-tests/command-run-codex-two-way/records/runs/
-tests/command-run-codex-two-way/records/summaries/
-db/qdrant/qdrant.exe
-db/session_log/
-.tura/
 artifacts/
 tmp/
+.tmp-*/
 apps/**/test-results/
-**/__pycache__/
-*.pyc
+tests/command-run-codex-two-way/records/runs/
+tests/command-run-codex-two-way/records/summaries/
 priority-param-probe-results.json
-
 *.log
 *.tmp
 
+# Editors and OS metadata
 .idea/
 .vscode/
 .DS_Store

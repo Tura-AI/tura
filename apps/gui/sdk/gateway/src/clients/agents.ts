@@ -18,13 +18,5 @@ export function agentsClient(client: GatewayClient) {
 export function personasClient(client: GatewayClient) {
   return {
     list: () => client.personas(),
-    get: (personaId: string) => client.persona(personaId),
-    create: (payload: Parameters<GatewayClient["createPersona"]>[0]) =>
-      client.createPersona(payload),
-    update: (
-      personaId: string,
-      payload: Parameters<GatewayClient["updatePersona"]>[1],
-    ) => client.updatePersona(personaId, payload),
-    delete: (personaId: string) => client.deletePersona(personaId),
   };
 }

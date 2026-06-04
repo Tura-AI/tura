@@ -1,9 +1,9 @@
 //! Project API handlers
 
-use crate::api::{misc::select_directory, types::*};
+use crate::api::{directory_picker::select_directory, types::*};
 use crate::mock::global_store;
 use axum::{
-    extract::{Path, Query},
+    extract::Query,
     http::{HeaderMap, StatusCode},
     Json,
 };
@@ -41,58 +41,6 @@ pub async fn get_current_project(
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ProjectDirectoryParams {
     pub directory: Option<String>,
-}
-
-// ============================================================================
-// Project CRUD
-// ============================================================================
-
-pub async fn get_project(Path(project_id): Path<String>) -> Json<Project> {
-    global_store()
-        .get_project(&project_id)
-        .map(Json)
-        .unwrap_or_else(|| {
-            Json(Project {
-                id: project_id,
-                worktree: String::new(),
-                vcs: None,
-                name: None,
-                icon: None,
-                time: ProjectTime {
-                    created: 0,
-                    updated: 0,
-                    initialized: None,
-                },
-            })
-        })
-}
-
-pub async fn update_project(
-    Path(project_id): Path<String>,
-    Json(_payload): Json<ProjectUpdateRequest>,
-) -> Json<Project> {
-    // Mock update - in real impl would update the project
-    let project = global_store()
-        .get_project(&project_id)
-        .unwrap_or_else(|| Project {
-            id: project_id,
-            worktree: String::new(),
-            vcs: None,
-            name: None,
-            icon: None,
-            time: ProjectTime {
-                created: 0,
-                updated: 0,
-                initialized: None,
-            },
-        });
-    Json(project)
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ProjectUpdateRequest {
-    pub name: Option<String>,
-    pub icon: Option<ProjectIcon>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -144,72 +92,6 @@ pub async fn select_local_workspace(
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct DirectoryWorkspaceRequest {
     pub title: Option<String>,
-}
-
-// ============================================================================
-// Project Git Init
-// ============================================================================
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct GitInitQuery {
-    pub directory: Option<String>,
-    pub workspace: Option<String>,
-}
-
-pub async fn git_init_project(Query(_params): Query<GitInitQuery>) -> Json<Project> {
-    Json(Project {
-        id: "mock-project".to_string(),
-        worktree: String::new(),
-        vcs: Some("git".to_string()),
-        name: None,
-        icon: None,
-        time: ProjectTime {
-            created: chrono::Utc::now().timestamp_millis(),
-            updated: chrono::Utc::now().timestamp_millis(),
-            initialized: Some(chrono::Utc::now().timestamp_millis()),
-        },
-    })
-}
-
-// ============================================================================
-// Experimental Worktree
-// ============================================================================
-
-pub async fn create_worktree(Query(params): Query<GitInitQuery>) -> Json<WorktreeResponse> {
-    let source = params
-        .directory
-        .unwrap_or_else(|| "/tmp/mock-worktree".to_string());
-    let branch = format!("workspace-{}", chrono::Utc::now().timestamp_millis());
-    let directory = format!(
-        "{}-{}",
-        source.trim_end_matches(['/', '\\']),
-        branch.replace(['/', '\\', ':'], "-")
-    );
-
-    global_store().add_project(directory.clone(), Some(branch.clone()));
-
-    Json(WorktreeResponse {
-        name: branch.clone(),
-        branch,
-        directory,
-    })
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct WorktreeCreateRequest {
-    pub directory: Option<String>,
-    pub name: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct WorktreeResponse {
-    pub name: String,
-    pub branch: String,
-    pub directory: String,
-}
-
-pub async fn reset_worktree() -> Json<bool> {
-    Json(true)
 }
 
 fn same_directory(left: &str, right: &str) -> bool {

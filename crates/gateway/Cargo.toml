@@ -26,16 +26,12 @@ axum = { version = "0.8", features = ["ws"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 
-# For SSE
-tokio-stream = "0.1"
-
 # Internal
 runtime = { path = "../runtime" }
 tura-llm-rust = { workspace = true }
 tura-agents = { path = "../../agents" }
 tura-persona = { path = "../../personas" }
 tura-router = { workspace = true }
-session_log = { workspace = true }
 
 [[bin]]
 name = "tura"

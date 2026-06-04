@@ -344,7 +344,7 @@ Tests: unit tests live in `command_safety.rs`; `tests/command_interceptor_e2e.rs
 (Unix-gated) drives the real `command_run` entry point and *actually executes*
 commands inside the Linux Docker harness under `tests/docker/`, asserting that
 dangerous commands' destructive side effects never happen while safe commands
-still run. Run with `scripts/run_interceptor_e2e_docker.{sh,ps1}`.
+still run.
 
 ## File Locks
 
@@ -369,10 +369,56 @@ Rules:
 
 1. Add `crates/tools/src/commands/<name>/`.
 2. Add handler, schema, prompt, policy, and tests.
-3. Register command aliases, CLI forwarding metadata, and lifecycle metadata in
-   `crates/router`.
-4. Enable the command in `agents`.
-5. Add focused tests.
+3. Export the module from `crates/tools/src/commands/mod.rs`.
+4. Add a `ToolHandler` implementation when the command should be callable as a
+   direct routed tool.
+5. Add the handler field and dispatch branches in
+   `crates/tools/src/runtime/tool.rs`.
+6. Add compatibility execution/access/display branches in
+   `crates/tools/src/commands/mod.rs` when `command_run` should support the
+   command by name.
+7. Register command aliases, CLI forwarding metadata, and lifecycle metadata in
+   `crates/router` only when the command needs router-level CLI discovery or a
+   managed process.
+8. Enable the command in the relevant `agents/src/<agent_id>/agent_config.json`
+   `agent_capabilities` list.
+9. Add focused tests.
+
+Manual command directory shape:
+
+```text
+crates/tools/src/commands/<name>/
+  mod.rs
+  schema.json
+  prompt.md
+  policy.toml
+  src/
+    <helper>.rs
+  tests/
+    mod.rs
+```
+
+Small commands may keep all Rust code in `mod.rs`. Larger commands should use a
+private `src/` module tree, following `shell_command`, `read_media`, and
+`web_discover`.
+
+The current always-present command directories are:
+
+```text
+apply_patch
+bash
+compact_context
+planning
+read_media
+shell_command
+task_status
+web_discover
+```
+
+`planning` is compiled but only exposed when `TURA_FORCE_PLANNING` or
+`TURA_FORCE_EXECUTE_TOOLS_PLANNING` is enabled. `task_status` is an internal
+command-run status command and is not currently dispatched by `ToolRouter` as a
+direct tool.
 
 ## Router Integration
 

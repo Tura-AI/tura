@@ -21,9 +21,6 @@ pub struct Store {
     pub messages: Arc<RwLock<HashMap<String, Vec<Message>>>>,
     pub projects: Arc<RwLock<HashMap<String, Project>>>,
     pub providers: Arc<RwLock<HashMap<String, Provider>>>,
-    pub permissions: Arc<RwLock<HashMap<String, PermissionRequest>>>,
-    pub permission_replies: Arc<RwLock<HashMap<String, bool>>>,
-    pub questions: Arc<RwLock<HashMap<String, QuestionRequest>>>,
     pub config: Arc<RwLock<Config>>,
     pub current_directory: Arc<RwLock<Option<String>>>,
     pub outbound_actions: Arc<RwLock<Vec<OutboundAction>>>,
@@ -44,9 +41,6 @@ impl Store {
             messages: Arc::new(RwLock::new(HashMap::new())),
             projects: Arc::new(RwLock::new(HashMap::new())),
             providers: Arc::new(RwLock::new(HashMap::new())),
-            permissions: Arc::new(RwLock::new(HashMap::new())),
-            permission_replies: Arc::new(RwLock::new(HashMap::new())),
-            questions: Arc::new(RwLock::new(HashMap::new())),
             config: Arc::new(RwLock::new(Config::default())),
             current_directory: Arc::new(RwLock::new(None)),
             outbound_actions: Arc::new(RwLock::new(Vec::new())),
@@ -433,82 +427,6 @@ impl Store {
 
     pub fn consume_oauth_completed(&self, provider_id: &str) -> Option<ProviderAuth> {
         self.completed_oauth.write().remove(provider_id)
-    }
-
-    // ========================================================================
-    // Permission Operations
-    // ========================================================================
-
-    pub fn create_permission(
-        &self,
-        session_id: String,
-        permission: String,
-        args: HashMap<String, serde_json::Value>,
-    ) -> PermissionRequest {
-        let id = Uuid::new_v4().to_string();
-        let request = PermissionRequest {
-            id: id.clone(),
-            session_id,
-            permission,
-            args,
-        };
-        self.permissions.write().insert(id, request.clone());
-        request
-    }
-
-    pub fn reply_permission(&self, request_id: &str, approve: bool) -> bool {
-        let existed = self.permissions.write().remove(request_id).is_some();
-        if existed {
-            self.permission_replies
-                .write()
-                .insert(request_id.to_string(), approve);
-        }
-        existed
-    }
-
-    pub fn permission_reply(&self, request_id: &str) -> Option<bool> {
-        self.permission_replies.read().get(request_id).copied()
-    }
-
-    pub fn list_permissions(&self, session_id: &str) -> Vec<PermissionRequest> {
-        self.permissions
-            .read()
-            .values()
-            .filter(|p| p.session_id == session_id)
-            .cloned()
-            .collect()
-    }
-
-    // ========================================================================
-    // Question Operations
-    // ========================================================================
-
-    pub fn create_question(
-        &self,
-        session_id: String,
-        question: String,
-        metadata: HashMap<String, serde_json::Value>,
-    ) -> QuestionRequest {
-        let id = Uuid::new_v4().to_string();
-        let request = QuestionRequest {
-            id: id.clone(),
-            session_id,
-            question,
-            metadata,
-        };
-        self.questions.write().insert(id, request.clone());
-        request
-    }
-
-    pub fn reply_question(&self, request_id: &str, _response: &str) -> bool {
-        self.questions.write().remove(request_id);
-        // In real implementation, would send the response to the agent
-        true
-    }
-
-    pub fn reject_question(&self, request_id: &str) -> bool {
-        self.questions.write().remove(request_id);
-        true
     }
 
     // ========================================================================

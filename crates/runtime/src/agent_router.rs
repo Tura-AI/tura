@@ -12,7 +12,7 @@ use tura_agents::coding_agent::{CodingAgent, CodingAgentProviderConfig, CodingAg
 
 const PROJECT_ROOT_ENV: &str = "TURA_PROJECT_ROOT";
 const DEFAULT_PERSONA_NAME: &str = "tura";
-const DEFAULT_CODING_AGENT_NAME: &str = "coding_agent_planning";
+const DEFAULT_CODING_AGENT_NAME: &str = "thinking-planning";
 
 pub use activate_agent::{
     activate_agent, build_agent_with_capabilities, load_agent_capabilities_config,
@@ -76,11 +76,19 @@ fn create_agent_by_name(
         return Ok(agent);
     }
     match agent_name {
-        "coding_agent_planning" | "coding_agent" | "coding" => {
+        "thinking-planning" | "coding_agent_planning" | "coding_agent" | "coding" => {
             create_coding_agent(project_directory, capabilities_directory, prompts_directory)
         }
-        "coding_agent_fast" | "coding_agent_instant" => {
+        "thinking" | "fast" | "fast-text-only" | "coding_agent_fast" | "coding_agent_instant" => {
+            let canonical_name = match agent_name {
+                "coding_agent_fast" => "fast",
+                "coding_agent_instant" => "fast-text-only",
+                other => other,
+            };
             if let Some(agent) = load_agent_from_registry(project_directory, agent_name)? {
+                Ok(agent)
+            } else if let Some(agent) = load_agent_from_registry(project_directory, canonical_name)?
+            {
                 Ok(agent)
             } else {
                 let mut agent = create_coding_agent(
@@ -88,9 +96,14 @@ fn create_agent_by_name(
                     capabilities_directory,
                     prompts_directory,
                 )?;
-                agent.agent_id = generate_agent_id(agent_name);
-                agent.agent_name = agent_name.to_string();
-                if agent_name == "coding_agent_instant" {
+                agent.agent_id = generate_agent_id(canonical_name);
+                agent.agent_name = canonical_name.to_string();
+                if canonical_name == "thinking" {
+                    agent
+                        .agent_capabilities
+                        .retain(|capability| capability.capability_name != "planning");
+                }
+                if canonical_name == "fast-text-only" {
                     agent.provider.tura_llm_name = "fast".to_string();
                     agent
                         .agent_capabilities

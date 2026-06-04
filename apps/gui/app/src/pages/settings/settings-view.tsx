@@ -77,9 +77,19 @@ const PROVIDER_DOMAIN_LABELS: Record<string, TextKey> = {
   productivity: "domainProductivity",
   search: "domainSearch",
 };
-const AGENT_MODEL_TIERS = ["thinking", "flagship_thinking"] as const;
+const AGENT_MODEL_TIERS = [
+  "flagship_thinking",
+  "thinking",
+  "fast",
+  "instant",
+] as const;
 const AGENT_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
-const MODEL_SETTINGS_TIERS = ["flagship_thinking", "thinking"];
+const MODEL_SETTINGS_TIERS = [
+  "flagship_thinking",
+  "thinking",
+  "fast",
+  "instant",
+];
 const LANGUAGE_OPTIONS = [
   { id: "zh-CN", label: "简体中文" },
   { id: "en", label: "English" },
@@ -1075,7 +1085,9 @@ function agentModelTier(agent?: Agent, stored?: StoredAgent): string {
 function normalizeAgentModelTier(
   value: string | undefined,
 ): (typeof AGENT_MODEL_TIERS)[number] {
-  return value === "flagship_thinking" ? "flagship_thinking" : "thinking";
+  return AGENT_MODEL_TIERS.includes(value as (typeof AGENT_MODEL_TIERS)[number])
+    ? (value as (typeof AGENT_MODEL_TIERS)[number])
+    : "thinking";
 }
 
 function agentReasoningEffort(agent?: Agent, stored?: StoredAgent): string {

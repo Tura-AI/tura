@@ -22,6 +22,12 @@ benchmarks that spawn real agents and compare Tura with Codex variants. These
 can take minutes, consume provider quota, and write large run outputs under
 `target/`.
 
+`tests/business/tui_real_gateway_business_test.mjs` is the TUI business flow
+coverage. It starts the real `target/debug/gateway(.exe)` and runs the TUI CLI
+and three web-terminal profiles against that gateway. It does not use a mock
+gateway; set `TUI_BUSINESS_LIVE_PROMPT=1` when you also want the business run to
+spend provider quota and require a real model reply.
+
 Historical generated command-run records from the old layout now live under
 `target/command-run-codex-two-way-records/`.
 

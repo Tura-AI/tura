@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from playwright.async_api import async_playwright, expect
@@ -37,6 +38,7 @@ def start_server() -> subprocess.Popen | None:
         return None
     OUT.mkdir(parents=True, exist_ok=True)
     bun = "bun.exe" if os.name == "nt" else "bun"
+    parsed = urlparse(GUI_URL)
     return subprocess.Popen(
         [
             bun,
@@ -47,7 +49,7 @@ def start_server() -> subprocess.Popen | None:
             "--host",
             "127.0.0.1",
             "--port",
-            "5183",
+            str(parsed.port or 5183),
             "--strictPort",
         ],
         cwd=ROOT,
@@ -100,16 +102,16 @@ async def main() -> None:
             await expect(page.get_by_role("button", name="模型配置")).to_be_visible()
             await expect(page.get_by_role("button", name="智能体配置")).to_be_visible()
             agent_options = page.locator(".agent-trigger-option")
-            await expect(agent_options).to_have_count(3)
+            await expect(agent_options).to_have_count(4)
             assert "/" in await agent_options.nth(0).inner_text()
             await page.screenshot(path=OUT / "01-agent-menu.png", full_page=True)
             checks.append({"name": "composer-agent-menu-visible", "ok": True})
 
             await page.get_by_role(
-                "button", name="coding_agent_fast", exact=False
+                "button", name="Fast openai/gpt-", exact=False
             ).click()
             await expect(page.locator(".agent-trigger-button")).to_contain_text(
-                "coding_agent_fast"
+                "Fast"
             )
             checks.append({"name": "composer-agent-selects", "ok": True})
 
@@ -119,10 +121,10 @@ async def main() -> None:
             )
             await page.locator('[data-section="models"]').click()
             await expect(page.get_by_role("heading", name="模型配置")).to_be_visible()
-            await expect(page.locator(".model-config-panel .field-row")).to_have_count(2)
+            await expect(page.locator(".model-config-panel .field-row")).to_have_count(4)
             model_text = await page.locator(".model-config-panel").inner_text()
-            assert "快速" not in model_text
-            assert "即时" not in model_text
+            assert "快速" in model_text
+            assert "即时" in model_text
             assert "embedding" not in model_text.lower()
             labels = page.locator(".model-tier-label small")
             for index in range(await labels.count()):
@@ -136,16 +138,19 @@ async def main() -> None:
             await expect(page.get_by_role("button", name="新智能体")).to_have_count(0)
             await expect(page.get_by_role("button", name="删除")).to_have_count(0)
             await expect(
-                page.get_by_role("button", name="coding_agent_planning", exact=False)
+                page.get_by_role("button", name="Thinking 旗舰推理", exact=True)
             ).to_be_visible()
             await expect(
-                page.get_by_role("button", name="coding_agent_fast", exact=False)
+                page.get_by_role("button", name="Thinking Planning 旗舰推理", exact=True)
             ).to_be_visible()
             await expect(
-                page.get_by_role("button", name="coding_agent_instant", exact=False)
+                page.get_by_role("button", name="Fast 推理", exact=True)
+            ).to_be_visible()
+            await expect(
+                page.get_by_role("button", name="Fast Text Only 推理", exact=True)
             ).to_be_visible()
             await page.get_by_role(
-                "button", name="coding_agent_instant", exact=False
+                "button", name="Fast Text Only 推理", exact=True
             ).click()
             await page.locator(".agent-editor .field-row").filter(
                 has_text="模型"
@@ -192,7 +197,7 @@ async def main() -> None:
             await mobile.locator('[data-section="agents"]').evaluate("el => el.click()")
             await expect(mobile.get_by_role("heading", name="智能体配置")).to_be_visible()
             await expect(
-                mobile.get_by_role("button", name="coding_agent_fast", exact=False)
+                mobile.locator(".agent-pick-row").filter(has_text="Fast").first
             ).to_be_visible()
             await mobile.screenshot(path=OUT / "05-agent-settings-mobile.png", full_page=True)
             checks.append({"name": "mobile-agent-settings-visible", "ok": True})
@@ -223,3 +228,4 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+

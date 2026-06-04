@@ -34,13 +34,7 @@ dotenvy.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 reqwest.workspace = true
-async-trait.workspace = true
-bytes.workspace = true
 futures-util.workspace = true
-tower.workspace = true
-http.workspace = true
-anyhow.workspace = true
-once_cell.workspace = true
 regex.workspace = true
 
 [dev-dependencies]

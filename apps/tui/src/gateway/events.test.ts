@@ -42,7 +42,7 @@ test("normalizeEvent extracts message and session status fields", () => {
   assert.equal(status.status, "busy");
 });
 
-test("normalizeEvent extracts part updates and todos", () => {
+test("normalizeEvent extracts part updates", () => {
   const part = normalizeEvent({
     payload: {
       type: "message.part.updated",
@@ -65,16 +65,6 @@ test("normalizeEvent extracts part updates and todos", () => {
   assert.equal(part.partID, "part-1");
   assert.equal(part.tool, "runtime");
   assert.equal(part.status, "completed");
-
-  const todos = normalizeEvent({
-    payload: {
-      type: "todo.updated",
-      properties: { sessionID: "sess-1", todos: [{ id: "todo-1", status: "in_progress" }] },
-    },
-  });
-
-  assert.equal(todos.sessionID, "sess-1");
-  assert.deepEqual(todos.todos, [{ id: "todo-1", status: "in_progress" }]);
 });
 
 test("normalizeEvent accepts camel and snake fields for streaming deltas", () => {

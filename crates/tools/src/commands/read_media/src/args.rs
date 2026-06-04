@@ -18,17 +18,17 @@ pub(super) fn parse_args_value(value: Value) -> Result<ReadMediaArgs, String> {
         return parse_cli_args(text);
     }
     if value.is_array() {
-        return args_from_parts(
-            string_list(&value, &[]),
-            true,
-            policy.max_text_chars,
-            policy.max_visuals,
-            policy.max_side,
-            policy.max_files,
-            policy.pdf_default_pages,
-            policy.document_attachment_bytes,
-            policy.audio_preview_bytes,
-        );
+        return args_from_parts(ReadMediaArgParts {
+            paths: string_list(&value, &[]),
+            include_text: true,
+            max_text_chars: policy.max_text_chars,
+            max_visuals: policy.max_visuals,
+            max_side: policy.max_side,
+            max_files: policy.max_files,
+            pdf_max_pages: policy.pdf_default_pages,
+            document_attachment_bytes: policy.document_attachment_bytes,
+            audio_preview_bytes: policy.audio_preview_bytes,
+        });
     }
     if let Some(cli) = string_value(
         &value,
@@ -43,22 +43,22 @@ pub(super) fn parse_args_value(value: Value) -> Result<ReadMediaArgs, String> {
     ) {
         return parse_cli_args(&cli);
     }
-    args_from_parts(
-        string_list(
+    args_from_parts(ReadMediaArgParts {
+        paths: string_list(
             &value,
             &["paths", "path", "files", "file", "media", "media_paths"],
         ),
-        bool_value(&value, &["include_text", "includeText", "text"]).unwrap_or(true),
-        u64_value(&value, &["max_text_chars", "maxTextChars"])
+        include_text: bool_value(&value, &["include_text", "includeText", "text"]).unwrap_or(true),
+        max_text_chars: u64_value(&value, &["max_text_chars", "maxTextChars"])
             .map(|value| value.clamp(1_000, 80_000) as usize)
             .unwrap_or(policy.max_text_chars),
-        u64_value(&value, &["max_visuals", "maxVisuals", "visuals"])
+        max_visuals: u64_value(&value, &["max_visuals", "maxVisuals", "visuals"])
             .map(|value| value.min(MAX_VISUALS as u64) as usize)
             .unwrap_or(policy.max_visuals),
-        u64_value(&value, &["max_side", "maxSide"])
+        max_side: u64_value(&value, &["max_side", "maxSide"])
             .map(|value| value.clamp(128, 1024) as u32)
             .unwrap_or(policy.max_side),
-        u64_value(
+        max_files: u64_value(
             &value,
             &[
                 "max_files",
@@ -69,13 +69,13 @@ pub(super) fn parse_args_value(value: Value) -> Result<ReadMediaArgs, String> {
         )
         .map(|value| value.clamp(1, 100) as usize)
         .unwrap_or(policy.max_files),
-        u64_value(
+        pdf_max_pages: u64_value(
             &value,
             &["pdf_max_pages", "pdfMaxPages", "pdf_pages", "pdfPages"],
         )
         .map(|value| value.clamp(1, 50) as usize)
         .unwrap_or(policy.pdf_default_pages),
-        u64_value(
+        document_attachment_bytes: u64_value(
             &value,
             &[
                 "document_attachment_bytes",
@@ -86,7 +86,7 @@ pub(super) fn parse_args_value(value: Value) -> Result<ReadMediaArgs, String> {
         )
         .map(|value| value.clamp(100_000, 5_000_000))
         .unwrap_or(policy.document_attachment_bytes),
-        u64_value(
+        audio_preview_bytes: u64_value(
             &value,
             &[
                 "audio_preview_bytes",
@@ -97,7 +97,7 @@ pub(super) fn parse_args_value(value: Value) -> Result<ReadMediaArgs, String> {
         )
         .map(|value| value.clamp(100_000, 5_000_000))
         .unwrap_or(policy.audio_preview_bytes),
-    )
+    })
 }
 
 fn parse_cli_args(input: &str) -> Result<ReadMediaArgs, String> {
@@ -183,7 +183,7 @@ fn parse_cli_args(input: &str) -> Result<ReadMediaArgs, String> {
         index += 1;
     }
 
-    args_from_parts(
+    args_from_parts(ReadMediaArgParts {
         paths,
         include_text,
         max_text_chars,
@@ -193,10 +193,10 @@ fn parse_cli_args(input: &str) -> Result<ReadMediaArgs, String> {
         pdf_max_pages,
         document_attachment_bytes,
         audio_preview_bytes,
-    )
+    })
 }
 
-fn args_from_parts(
+struct ReadMediaArgParts {
     paths: Vec<String>,
     include_text: bool,
     max_text_chars: usize,
@@ -206,20 +206,22 @@ fn args_from_parts(
     pdf_max_pages: usize,
     document_attachment_bytes: u64,
     audio_preview_bytes: u64,
-) -> Result<ReadMediaArgs, String> {
-    if paths.is_empty() {
+}
+
+fn args_from_parts(parts: ReadMediaArgParts) -> Result<ReadMediaArgs, String> {
+    if parts.paths.is_empty() {
         return Err("read_media requires at least one path".to_string());
     }
     Ok(ReadMediaArgs {
-        paths,
-        include_text,
-        max_text_chars,
-        max_visuals,
-        max_side,
-        max_files,
-        pdf_max_pages,
-        document_attachment_bytes,
-        audio_preview_bytes,
+        paths: parts.paths,
+        include_text: parts.include_text,
+        max_text_chars: parts.max_text_chars,
+        max_visuals: parts.max_visuals,
+        max_side: parts.max_side,
+        max_files: parts.max_files,
+        pdf_max_pages: parts.pdf_max_pages,
+        document_attachment_bytes: parts.document_attachment_bytes,
+        audio_preview_bytes: parts.audio_preview_bytes,
     })
 }
 

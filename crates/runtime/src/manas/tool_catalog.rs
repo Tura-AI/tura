@@ -554,8 +554,8 @@ mod tests {
         let now = Utc::now();
         let mut agent = AgentManagement::new(
             "agent-1".to_string(),
-            "coding_agent_planning".to_string(),
-            std::path::PathBuf::from("agents/src/coding_agent_planning"),
+            "thinking-planning".to_string(),
+            std::path::PathBuf::from("agents/src/thinking-planning"),
             None,
             true,
             true,

@@ -950,14 +950,14 @@ async function runAgent(agentId, task, index) {
   if (!prep.error) {
     const prompt = programbenchPrompt(task)
     if (agentId === "codex-main") result = await runCodexMain(prep.workspace, agentDir, prompt)
-    else if (agentId === "tura-fast-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "coding_agent_fast")
-    else if (agentId === "tura-fast-planning-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "coding_agent_fast")
-    else if (agentId === "tura-planning-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "coding_agent_planning")
+    else if (agentId === "tura-fast-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "fast")
+    else if (agentId === "tura-fast-planning-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "fast")
+    else if (agentId === "tura-planning-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "thinking-planning")
     else throw new Error(`unsupported agent ${agentId}`)
   }
   const agentPrompt =
-    agentId === "tura-fast-shll" || agentId === "tura-fast-planning-shll" ? "coding_agent_fast" :
-    agentId === "tura-planning-shll" ? "coding_agent_planning" :
+    agentId === "tura-fast-shll" || agentId === "tura-fast-planning-shll" ? "fast" :
+    agentId === "tura-planning-shll" ? "thinking-planning" :
     null
   const patch = prep.error ? { patch_path: "", patch_bytes: 0, changed_files: 0, git_status: "" } : collectPatch(prep.workspace, agentDir)
   const submission = prep.error ? null : packageSubmission(prep.workspace, agentDir, task)
@@ -1027,3 +1027,4 @@ async function main() {
 }
 
 await main()
+

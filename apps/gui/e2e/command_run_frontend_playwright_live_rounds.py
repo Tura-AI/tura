@@ -34,7 +34,7 @@ OUT = Path(
         ROOT / "apps" / "gui" / "test-results" / "command-run-live-rounds",
     )
 )
-AGENT_ID = os.environ.get("TURA_LIVE_AGENT", "coding_agent_planning")
+AGENT_ID = os.environ.get("TURA_LIVE_AGENT", "thinking-planning")
 MODEL_TIER = os.environ.get("TURA_LIVE_MODEL_TIER", "flagship_thinking")
 MODEL_PROVIDER = os.environ.get("TURA_LIVE_MODEL_PROVIDER", "codex")
 MODEL_NAME = os.environ.get("TURA_LIVE_MODEL_NAME", "gpt-5.5")
@@ -112,7 +112,7 @@ def patch_session_config() -> dict:
 
 
 def png_fixture(path: Path) -> None:
-    png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+    png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4////fwAJ+wP9KobjigAAAABJRU5ErkJggg=="
     path.write_bytes(base64.b64decode(png))
 
 
@@ -245,12 +245,18 @@ async def wait_for_agent_result(session_id: str, page, round_dir: Path) -> dict:
     timeline = []
     while time.monotonic() < deadline:
         approve_pending_permissions()
-        statuses = api("GET", "/session/status")
+        sessions = api("GET", "/session")
+        session = next(
+            (
+                item
+                for item in sessions
+                if isinstance(item, dict) and item.get("id") == session_id
+            ),
+            {},
+        ) if isinstance(sessions, list) else {}
         messages = api("GET", f"/session/{session_id}/message")
         message_text = json.dumps(messages, ensure_ascii=False)[:20000]
-        session_status = {}
-        if isinstance(statuses, dict):
-            session_status = statuses.get(session_id) or {}
+        session_status = session if isinstance(session, dict) else {}
         status_text = json.dumps(session_status, ensure_ascii=False).lower()
         busy = 1 if "busy" in status_text else 0
         def message_role(item):
@@ -286,7 +292,7 @@ async def wait_for_agent_result(session_id: str, page, round_dir: Path) -> dict:
             next_shot = time.monotonic() + 20
         if assistant_count > 0 and tool_count > 0 and busy == 0:
             await page.wait_for_timeout(1500)
-            return {"messages": messages, "statuses": statuses, **last}
+            return {"messages": messages, "session": session, **last}
         if assistant_count > 0 and tool_count > 0 and shot_index == 4:
             summary = page.locator(".run-summary").last
             if await summary.count() > 0:
@@ -334,11 +340,14 @@ async def page_metrics(page) -> dict:
 
 async def exercise_settings(page, round_dir: Path):
     await goto(page, "settings")
-    await expect(page.locator(".page-title")).to_contain_text("设置")
+    await expect(page.locator(".settings-stack").first).to_be_visible(timeout=45000)
+    await expect(page.locator(".settings-stack .loading-bar")).to_have_count(0, timeout=45000)
     await screenshot(page, round_dir, "01-settings-open")
     await page.locator('[data-section="models"]').click()
     await expect(page.get_by_role("heading", name="模型配置")).to_be_visible(timeout=10000)
-    await expect(page.locator(".model-config-panel .field-row")).to_have_count(2, timeout=45000)
+    await expect(page.locator(".model-config-panel .field-row").first).to_be_visible(timeout=45000)
+    model_rows = await page.locator(".model-config-panel .field-row").count()
+    assert model_rows >= 2, model_rows
     await screenshot(page, round_dir, "02-model-settings")
     await page.locator('[data-section="agents"]').click()
     await expect(page.get_by_role("heading", name="智能体配置")).to_be_visible(timeout=10000)
@@ -534,3 +543,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+

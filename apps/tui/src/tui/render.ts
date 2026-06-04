@@ -1,7 +1,8 @@
 import type { AppState } from "./reducer.js";
 import type { MessagePart } from "../types/session.js";
-import { messageText, sessionPlanSummary, sessionStartAt, sessionStartCondition, sessionPlanStatus, sessionTitle } from "../types/session.js";
+import { messageText, sessionTitle } from "../types/session.js";
 import { t } from "../i18n.js";
+import { detectTerminalCapabilities, type TerminalCapabilities } from "./capabilities.js";
 
 const clear = "\x1b[2J\x1b[H";
 const reset = "\x1b[0m";
@@ -18,8 +19,12 @@ const yellow = "\x1b[33m";
 const red = "\x1b[31m";
 const ansiControlPattern = /^(?:\x1b\[[0-9;]*m|\x1b\]8;;[^\x1b]*\x1b\\)/;
 const ansiControlGlobalPattern = /(?:\x1b\[[0-9;]*m|\x1b\]8;;[^\x1b]*\x1b\\)/g;
+const osc8FullPattern = /\x1b\]8;;[^\x1b]*\x1b\\[\s\S]*?\x1b\]8;;\x1b\\/g;
+let activeCapabilities: TerminalCapabilities = detectTerminalCapabilities();
 
-export function render(state: AppState): string {
+export function render(state: AppState, capabilities: TerminalCapabilities = detectTerminalCapabilities()): string {
+  activeCapabilities = capabilities;
+  if (capabilities.level === "plain") return renderPlain(state);
   const rows = process.stdout.rows || 30;
   const cols = process.stdout.columns || 100;
   const lines: string[] = [];
@@ -36,21 +41,14 @@ export function render(state: AppState): string {
     lines.push(...authLines(state, cols, rows - 7));
   } else if (state.settingsOpen) {
     lines.push(...settingsLines(state, cols, rows - 7));
-  } else if (state.planOpen) {
-    lines.push(...planLines(state, cols, rows - 7));
+  } else if (state.personasOpen) {
+    lines.push(...personaLines(state, cols, rows - 7));
   } else if (state.modelsOpen) {
     lines.push(...modelLines(state, rows - 7));
-  } else if (state.diffOpen) {
-    lines.push(`${bold}${t("diff")}${reset}`);
-    lines.push(...wrap(state.diffText || t("noDiff"), cols).slice(0, rows - 7));
   } else {
     lines.push(...transcriptLines(state, cols, rows - 9));
   }
 
-  if (state.todos.length) {
-    lines.push(rule(cols));
-    lines.push(...state.todos.slice(0, 4).map((todo) => `${todoMark(todo.status)} ${truncate(todo.content ?? todo.title ?? todo.id ?? "", cols - 4)}`));
-  }
   if (state.permissions.length) {
     lines.push(rule(cols));
     for (const permission of state.permissions.slice(0, 3)) {
@@ -66,8 +64,37 @@ export function render(state: AppState): string {
   if (state.notice) lines.push(...noticeLines(state.notice, cols));
   lines.push(rule(cols));
   lines.push(...composerLines(state.composer, cols));
-  lines.push(`${dim}${t("enterSend")}  ${t("newline")}  ${t("closePanel")}  /auth  /settings  /sessions  /models  /quit${reset}`);
+  lines.push(`${dim}${t("enterSend")}  ${t("newline")}  ${t("closePanel")}  /auth  /settings  /personas  /sessions  /models  /quit${reset}`);
   return fit(lines, rows, cols).join("\n");
+}
+
+function renderPlain(state: AppState): string {
+  const cols = process.stdout.columns || 100;
+  const lines: string[] = [];
+  lines.push(`Tura ${statusLabel(state.status)} ${truncate(stripAnsi(state.cwd), cols - 12)}`);
+  lines.push(state.session ? `${sessionTitle(state.session)} ${truncate(state.session.id, 12)}` : t("noSessionSelected"));
+  lines.push(`${t("panel")}: ${plainPanel(state)}  ${t("cwd")}: ${truncate(state.cwd, Math.max(20, cols - 14))}`);
+  lines.push(rule(cols));
+  if (state.help) lines.push(...helpLines());
+  else if (state.sessionsOpen) lines.push(...sessionLines(state, cols, 20));
+  else if (state.authOpen) lines.push(...authLines(state, cols, 20));
+  else if (state.settingsOpen) lines.push(...settingsLines(state, cols, 20));
+  else if (state.personasOpen) lines.push(...personaLines(state, cols, 20));
+  else if (state.modelsOpen) lines.push(...modelLines(state, 20));
+  else lines.push(...transcriptLines(state, cols, 20));
+  if (state.notice) lines.push(...noticeLines(state.notice, cols));
+  lines.push(rule(cols));
+  lines.push(...composerLines(state.composer, cols));
+  return stripAnsi(lines.map((line) => truncateAnsi(line, cols)).join("\n"));
+}
+
+function plainPanel(state: AppState): string {
+  if (state.authOpen) return t("auth");
+  if (state.settingsOpen) return t("settings");
+  if (state.personasOpen) return t("personas");
+  if (state.sessionsOpen) return t("sessions");
+  if (state.modelsOpen) return t("models");
+  return t("chat");
 }
 
 function topBar(state: AppState, cols: number): string {
@@ -75,7 +102,6 @@ function topBar(state: AppState, cols: number): string {
   const activity = [
     state.permissions.length ? `${yellow}${state.permissions.length} ${t("permissions")}${reset}` : undefined,
     state.questions.length ? `${yellow}${state.questions.length} ${t("question")}${reset}` : undefined,
-    state.todos.length ? `${cyan}${state.todos.length} ${t("todo")}${reset}` : undefined,
   ].filter(Boolean).join("  ");
   const right = truncate(activity || state.cwd, Math.max(10, cols - visibleTextWidth(title) - 3));
   return `${title} ${dim}${right}${reset}`;
@@ -85,6 +111,7 @@ function sessionBar(state: AppState, cols: number): string {
   if (!state.session) return `${yellow}${t("noSessionSelected")}${reset}`;
   const runtime = [
     state.session.agent ?? state.sessionConfig?.active_agent,
+    activePersonaID(state),
     state.session.model ?? state.sessionConfig?.model ?? state.sessionConfig?.active_model,
     state.session.model_variant ?? state.sessionConfig?.model_variant,
     state.session.model_acceleration_enabled ?? state.sessionConfig?.model_acceleration_enabled ? t("priority") : undefined,
@@ -94,19 +121,17 @@ function sessionBar(state: AppState, cols: number): string {
 }
 
 function commandBar(state: AppState, cols: number): string {
-  const panel = state.authOpen ? "auth" : state.settingsOpen ? "settings" : state.sessionsOpen ? "sessions" : state.modelsOpen ? "models" : state.planOpen ? "plan" : state.diffOpen ? "diff" : "chat";
-  const authSummary = providerSummary(state);
-  const text = `${dim}${t("panel")}:${reset} ${cyan}${panelLabel(panel)}${reset}  ${dim}${t("gateway")}:${reset} ${authSummary}  ${dim}${t("cwd")}:${reset} ${truncate(state.cwd, 40)}`;
+  const panel = state.authOpen ? "auth" : state.settingsOpen ? "settings" : state.personasOpen ? "personas" : state.sessionsOpen ? "sessions" : state.modelsOpen ? "models" : "chat";
+  const text = `${dim}${t("panel")}:${reset} ${cyan}${panelLabel(panel)}${reset}  ${agentPersonaSummary(state)}  ${dim}${t("cwd")}:${reset} ${truncate(state.cwd, 40)}`;
   return truncate(text, cols + 32);
 }
 
-function panelLabel(panel: "auth" | "settings" | "sessions" | "models" | "plan" | "diff" | "chat"): string {
+function panelLabel(panel: "auth" | "settings" | "personas" | "sessions" | "models" | "chat"): string {
   if (panel === "auth") return t("auth");
   if (panel === "settings") return t("settings");
+  if (panel === "personas") return t("personas");
   if (panel === "sessions") return t("sessions");
   if (panel === "models") return t("models");
-  if (panel === "plan") return t("plan");
-  if (panel === "diff") return t("diff");
   return t("chat");
 }
 
@@ -114,7 +139,7 @@ function transcriptLines(state: AppState, cols: number, maxLines: number): strin
   const lines: string[] = [];
   for (const message of state.messages.slice(-24)) {
     const text = displayMessageText(message.role, messageText(message));
-    const label = message.role === "assistant" ? `${green}${t("assistant")}:${reset}` : message.role === "user" ? `${cyan}${t("user")}:${reset}` : `${dim}${message.role}:${reset}`;
+    const label = roleLabel(message.role);
     const partLines = message.parts.flatMap(partTranscriptLines);
     if (!text && partLines.length === 0) continue;
     const textLines = text ? wrapAnsi(renderRichText(text), Math.max(20, cols - 14)) : [];
@@ -129,6 +154,12 @@ function transcriptLines(state: AppState, cols: number, maxLines: number): strin
   return lines.slice(Math.max(0, lines.length - maxLines));
 }
 
+function roleLabel(role: string): string {
+  if (role === "assistant") return `${green}${t("assistant")}:${reset}`;
+  if (role === "user") return `${cyan}${t("user")}:${reset}`;
+  return `${dim}${t("system")}:${reset}`;
+}
+
 function sessionLines(state: AppState, cols: number, maxLines: number): string[] {
   const lines = [`${bold}${t("sessions")}${reset}`, `${dim}${t("selectSessions")}  ${t("enterResume")}  ${t("createSession")}  /resume <id> ${t("directSwitch")}${reset}`];
   if (!state.sessions.length) {
@@ -138,7 +169,7 @@ function sessionLines(state: AppState, cols: number, maxLines: number): string[]
   for (const [index, session] of state.sessions.entries()) {
     const selected = index === state.selectedSessionIndex ? `${cyan}>${reset}` : " ";
     const current = session.id === state.session?.id ? `${green}${t("active")}${reset}` : session.status ?? t("sessionIdle");
-    const meta = `${sessionPlanStatus(session)} ${current} ${formatTime(sessionStartAt(session))}`;
+    const meta = `${current} ${formatTime(session.updated_at ?? session.created_at)}`;
     lines.push(`${selected} ${truncate(session.id, 8)} ${pad(meta, 22)} ${truncate(sessionTitle(session), Math.max(12, cols - 34))}`);
   }
   return lines.slice(0, maxLines);
@@ -177,16 +208,17 @@ function authLines(state: AppState, cols: number, maxLines: number): string[] {
 }
 
 function settingsLines(state: AppState, cols: number, maxLines: number): string[] {
-  const lines = [`${bold}${t("sessionSettings")}${reset}`, `${dim}${t("configGet")}  ${t("configSet")}  /model provider/model  /agent ${t("agent")}${reset}`];
+  const lines = [`${bold}${t("sessionSettings")}${reset}`, `${dim}${t("configGet")}  ${t("configSet")}  /model provider/model  /agent ${t("agent")}  /persona ${t("persona")}${reset}`];
   const config = state.sessionConfig;
   if (!config) {
     lines.push(t("noSessionConfig"));
     return lines;
   }
-  const rows = [
+  const rows: Array<[string, unknown]> = [
     [t("model"), config.model ?? config.active_model],
     [t("provider"), config.active_provider],
     [t("agent"), config.active_agent],
+    [t("persona"), activePersonaID(state)],
     [t("variant"), config.model_variant],
     [t("priority"), config.model_acceleration_enabled],
     [t("session"), config.session_type],
@@ -194,32 +226,26 @@ function settingsLines(state: AppState, cols: number, maxLines: number): string[
     [t("validator"), config.validator_enabled],
     [t("stallGuard"), config.command_run_stall_guard_profile],
   ];
-  for (const [key, value] of rows) {
-    if (value === undefined || value === null || value === "") continue;
-    lines.push(`${pad(String(key), 14)} ${truncate(String(value), cols - 18)}`);
-  }
+  lines.push(...alignedRows(rows, cols));
   return lines.slice(0, maxLines);
 }
 
-function planLines(state: AppState, cols: number, maxLines: number): string[] {
-  const lines = [`${bold}${t("plan")}${reset}`, `${dim}${t("taskPlanHint")}${reset}`];
-  const visible = state.sessions.filter((session) => sessionPlanStatus(session) !== "archived");
-  const lanes = [
-    ["todo", t("todo")],
-    ["doing", t("doing")],
-    ["question", t("question")],
-    ["done", t("done")],
-  ] as const;
-  for (const [status, label] of lanes) {
-    const lane = visible.filter((session) => sessionPlanStatus(session) === status);
-    lines.push(`${bold}${label}${reset} ${dim}${lane.length}${reset}`);
-    for (const session of lane.slice(0, 6)) {
-      const title = truncate(sessionPlanSummary(session), Math.max(10, cols - 34));
-      lines.push(`  ${truncate(session.id, 8)} ${title} ${dim}${shortCondition(sessionStartCondition(session))} ${formatTime(sessionStartAt(session))}${reset}`);
-    }
+function personaLines(state: AppState, cols: number, maxLines: number): string[] {
+  const lines = [`${bold}${t("personas")}${reset}`, `${dim}${t("selectPersonas")}${reset}`];
+  if (!state.personas.length) {
+    lines.push(t("noPersonas"));
+    return lines;
   }
-  const archived = state.sessions.filter((session) => sessionPlanStatus(session) === "archived").length;
-  if (archived > 0) lines.push(`${dim}${t("archived")} ${archived}${reset}`);
+  const active = activePersonaID(state);
+  for (const [index, persona] of state.personas.entries()) {
+    const id = personaID(persona) ?? t("unknown");
+    const selected = index === state.selectedPersonaIndex ? `${cyan}>${reset}` : " ";
+    const marker = id === active ? `${green}${t("active")}${reset}` : persona.summary?.source ?? "";
+    const description = persona.summary?.description ?? stringField(persona.config, "description") ?? "";
+    lines.push(`${selected} ${pad(id, 18)} ${pad(marker, 12)} ${truncate(description, Math.max(12, cols - 36))}`);
+    const style = typeof persona.communication_style === "string" ? persona.communication_style.trim() : "";
+    if (style) lines.push(`  ${dim}${truncate(style.replace(/\s+/g, " "), Math.max(20, cols - 4))}${reset}`);
+  }
   return lines.slice(0, maxLines);
 }
 
@@ -253,17 +279,11 @@ function helpLines(): string[] {
     `/settings                   ${t("helpSettings")}`,
     `/model <provider/model>     ${t("helpModel")}`,
     `/agent <name>               ${t("agent")}`,
+    `/personas                   ${t("personas")}`,
+    `/persona <name>             ${t("applyPersona")}`,
     `/sessions                   ${t("helpSessions")}`,
-    `/plan                       ${t("helpPlan")}`,
-    `/task <state> [id]          ${t("helpTask")}`,
-    `/ticket <summary>           ${t("createTicket")}`,
     `/models                     ${t("helpModels")}`,
-    `/permissions                ${t("permissions")}`,
-    `/approve <id> /deny <id>    ${t("helpApprove")}`,
-    `/command <name> [args...]   ${t("helpCommand")}`,
     `/abort                      ${t("helpAbort")}`,
-    `/diff                       ${t("helpDiff")}`,
-    `/status                     ${t("helpStatus")}`,
     `${t("configGet")}            ${t("helpConfigGet")}`,
     `${t("configSet")}...     ${t("helpConfigSet")}`,
     `/quit                       ${t("helpQuit")}`,
@@ -361,7 +381,8 @@ function displayMessageText(role: string, value: string): string {
   let text = cleanMessageText(value);
   if (!text) return "";
   const payloadSummary = summarizePayloadText(text);
-  if (payloadSummary) return payloadSummary;
+  if (payloadSummary) return "";
+  if (/completed without a user-facing message/i.test(text)) return "";
   if (role === "user") {
     const first = text.split(/\r?\n/).find((line) => line.trim()) ?? text;
     return truncate(first.trim(), 140);
@@ -384,11 +405,33 @@ function cleanMessageText(value: string): string {
 
 function renderRichText(source: string): string {
   if (!source) return "";
+  if (activeCapabilities.richText === "none") return plainRichText(source);
+  if (activeCapabilities.richText === "basicMarkdown") return basicRichText(source);
   const tokenized = source.replace(/\[(MEDIA):([\s\S]*?):MEDIA\]|\[EMOJI:(sticker|react):([\s\S]*?):EMOJI\]/gu, (_match, media, path, mode, emoji) => {
     if (media) return renderMediaToken(String(path).trim());
-    return mode === "react" ? `${dim}[${t("react")}: ${String(emoji).trim()}]${reset}` : String(emoji).trim();
+    return mode === "react" ? `${dim}[EMOJI:react:${String(emoji).trim()}:EMOJI]${reset}` : String(emoji).trim();
   });
-  return renderHtmlSubset(tokenized);
+  return renderInlineMarkdown(renderMarkdownTables(renderHtmlSubset(tokenized)));
+}
+
+function plainRichText(source: string): string {
+  return renderMarkdownTables(decodeHtml(
+    stripUnsupportedHtml(
+      source
+        .replace(/<a\s+href=['"]((?:https?:\/\/|file:\/\/)[^'"]+)['"][^>]*>([\s\S]*?)<\/a>/giu, (_match, href, body) => `${stripHtml(String(body))} (${href})`)
+        .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/gu, "$1 ($2)")
+        .replace(/\[MEDIA:([\s\S]*?):MEDIA\]/gu, "[MEDIA:$1:MEDIA]")
+        .replace(/\[EMOJI:(sticker|react):([\s\S]*?):EMOJI\]/gu, (_match, mode, emoji) => `[EMOJI:${mode}:${emojiFallbackName(String(emoji).trim())}:EMOJI]`),
+    ),
+  ));
+}
+
+function basicRichText(source: string): string {
+  const tokenized = source.replace(/\[(MEDIA):([\s\S]*?):MEDIA\]|\[EMOJI:(sticker|react):([\s\S]*?):EMOJI\]/gu, (_match, media, path, _mode, emoji) => {
+    if (media) return `[MEDIA:${String(path).trim()}:MEDIA]`;
+    return String(emoji).trim();
+  });
+  return renderInlineMarkdown(renderMarkdownTables(renderHtmlSubset(tokenized)));
 }
 
 function renderHtmlSubset(source: string): string {
@@ -400,7 +443,7 @@ function renderHtmlSubset(source: string): string {
   output = output.replace(/<blockquote>([\s\S]*?)<\/blockquote>/giu, (_match, body) =>
     decodeHtml(stripHtml(body))
       .split(/\r?\n/)
-      .map((line) => `${dim}│ ${line}${reset}`)
+      .map((line) => `${dim}${activeCapabilities.unicode ? "│" : ">"} ${line}${reset}`)
       .join("\n"),
   );
   const replacements: Array<[RegExp, (body: string, attr?: string) => string]> = [
@@ -410,7 +453,7 @@ function renderHtmlSubset(source: string): string {
     [/<(?:s|del)>([\s\S]*?)<\/(?:s|del)>/giu, (body) => `${strike}${renderHtmlSubset(body)}${reset}`],
     [/<code>([\s\S]*?)<\/code>/giu, (body) => `${cyan}${decodeHtml(stripHtml(body))}${reset}`],
     [/<span\s+class=['"]tg-spoiler['"]>([\s\S]*?)<\/span>/giu, (body) => `${inverse}${decodeHtml(stripHtml(body))}${reset}`],
-    [/<a\s+href=['"](https?:\/\/[^'"]+)['"][^>]*>([\s\S]*?)<\/a>/giu, (body, href) => `${terminalLink(href ?? "", `${underline}${renderHtmlSubset(body)}${reset}`)} ${dim}(${href})${reset}`],
+    [/<a\s+href=['"]((?:https?:\/\/|file:\/\/)[^'"]+)['"][^>]*>([\s\S]*?)<\/a>/giu, (body, href) => renderLinkTarget(href ?? "", renderHtmlSubset(body))],
   ];
   let changed = true;
   while (changed) {
@@ -434,13 +477,121 @@ function renderCodeBlock(value: string): string {
     .join("\n");
 }
 
+function renderMarkdownTables(source: string): string {
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  const output: string[] = [];
+  for (let index = 0; index < lines.length;) {
+    if (isMarkdownTableStart(lines, index)) {
+      const table: string[][] = [tableCells(lines[index])];
+      index += 2;
+      while (index < lines.length && /^\s*\|.*\|\s*$/u.test(lines[index])) {
+        table.push(tableCells(lines[index]));
+        index += 1;
+      }
+      output.push(...formatMarkdownTable(table));
+      continue;
+    }
+    output.push(lines[index]);
+    index += 1;
+  }
+  return output.join("\n");
+}
+
+function isMarkdownTableStart(lines: string[], index: number): boolean {
+  return index + 1 < lines.length &&
+    /^\s*\|.*\|\s*$/u.test(lines[index]) &&
+    /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/u.test(lines[index + 1]);
+}
+
+function tableCells(line: string): string[] {
+  return line.trim().replace(/^\|/u, "").replace(/\|$/u, "").split("|").map((cell) => cell.trim());
+}
+
+function formatMarkdownTable(rows: string[][]): string[] {
+  const width = Math.max(...rows.map((row) => row.length));
+  const normalized = rows.map((row) => Array.from({ length: width }, (_item, index) => row[index] ?? ""));
+  const widths = Array.from({ length: width }, (_item, column) =>
+    Math.min(48, Math.max(3, ...normalized.map((row) => visibleTextWidth(row[column])))),
+  );
+  return normalized.map((row, index) => {
+    const cells = row.map((cell, column) => pad(truncate(cell, widths[column]), widths[column]));
+    const text = ` ${cells.join("  ")} `;
+    return index === 0 ? `${bold}${text}${reset}` : text;
+  });
+}
+
+function renderInlineMarkdown(source: string): string {
+  const linked = source.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/gu, (_match, label, href) =>
+    renderLinkTarget(String(href), String(label)),
+  );
+  return linkLocalPathsPreservingOsc(linked);
+}
+
 function renderMediaToken(path: string): string {
-  const label = `[${t("media")}: ${path}]`;
-  return isSafeUrl(path) ? terminalLink(path, `${dim}${label}${reset}`) : `${dim}${label}${reset}`;
+  const label = `[MEDIA:${path}:MEDIA]`;
+  return isLinkTarget(path) ? terminalLink(linkTargetUrl(path), `${dim}${label}${reset}`) : `${dim}${label}${reset}`;
+}
+
+function emojiFallbackName(value: string): string {
+  const known: Record<string, string> = {
+    "👍": "thumbs_up",
+    "👎": "thumbs_down",
+    "😂": "face_with_tears_of_joy",
+    "😀": "grinning_face",
+    "🙂": "slightly_smiling_face",
+    "😊": "smiling_face",
+    "❤️": "red_heart",
+    "✅": "check_mark",
+    "❌": "cross_mark",
+    "🔥": "fire",
+    "🚀": "rocket",
+  };
+  if (known[value]) return known[value];
+  const fallback = Array.from(value)
+    .map((char) => `u+${char.codePointAt(0)?.toString(16) ?? "unknown"}`)
+    .join("_");
+  return fallback || "unknown";
+}
+
+function renderLinkTarget(target: string, label: string): string {
+  if (!isLinkTarget(target)) return `${label} (${target})`;
+  const visible = `${underline}${label}${reset}`;
+  return `${terminalLink(linkTargetUrl(target), visible)} ${dim}(${target})${reset}`;
+}
+
+const LOCAL_PATH_PATTERN =
+  /(?:[A-Za-z]:[\\/][^\s<>"'`]+|\\\\[^\\/\s<>"'`]+\\[^\\/\s<>"'`]+(?:\\[^\s<>"'`]+)*|\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+|\.{1,2}[\\/][^\s<>"'`]+)/gu;
+const TRAILING_PATH_PUNCTUATION = /[),.;:!?]+$/u;
+
+function linkLocalPaths(source: string): string {
+  return source.replace(LOCAL_PATH_PATTERN, (raw, offset: number) => {
+    if (/^[A-Za-z]:[\\/]/u.test(raw) && offset > 0 && /[A-Za-z0-9]/u.test(source[offset - 1])) return raw;
+    const path = raw.replace(TRAILING_PATH_PUNCTUATION, "");
+    const trailing = raw.slice(path.length);
+    if (!isLocalPath(path)) return raw;
+    return `${terminalLink(linkTargetUrl(path), `${underline}${path}${reset}`)}${trailing}`;
+  });
+}
+
+function linkLocalPathsPreservingOsc(source: string): string {
+  let cursor = 0;
+  let output = "";
+  for (const match of source.matchAll(osc8FullPattern)) {
+    const index = match.index ?? 0;
+    output += linkLocalPaths(source.slice(cursor, index));
+    output += match[0];
+    cursor = index + match[0].length;
+  }
+  output += linkLocalPaths(source.slice(cursor));
+  return output;
+}
+
+function isLocalPath(value: string): boolean {
+  return /^(?:[A-Za-z]:[\\/]|\\\\|\/|\.{1,2}[\\/])/u.test(value);
 }
 
 function terminalLink(url: string, label: string): string {
-  if (!isSafeUrl(url)) return label;
+  if (!isLinkTarget(url) || !activeCapabilities.osc8) return label;
   return `\x1b]8;;${url}\x1b\\${label}\x1b]8;;\x1b\\`;
 }
 
@@ -452,8 +603,19 @@ function stripUnsupportedHtml(value: string): string {
   return value.replace(/<br\s*\/?>/giu, "\n").replace(/<\/?(?:p|div)>/giu, "\n").replace(/<\/?[^>]+>/gu, "");
 }
 
-function isSafeUrl(value: string): boolean {
-  return /^https?:\/\//iu.test(value);
+function isLinkTarget(value: string): boolean {
+  return /^(?:https?:\/\/|file:\/\/)/iu.test(value) || isLocalPath(value);
+}
+
+function linkTargetUrl(value: string): string {
+  if (/^(?:https?:\/\/|file:\/\/)/iu.test(value)) return value;
+  return localPathUrl(value);
+}
+
+function localPathUrl(value: string): string {
+  const normalized = value.replace(/\\/g, "/");
+  const withSlash = /^[A-Za-z]:\//u.test(normalized) ? `/${normalized}` : normalized;
+  return `file://${encodeURI(withSlash)}`;
 }
 
 function decodeHtml(value: string): string {
@@ -562,7 +724,8 @@ function fit(lines: string[], rows: number, cols: number): string[] {
 }
 
 function truncate(text: string, width: number): string {
-  return text.length > width ? `${text.slice(0, Math.max(0, width - 1))}…` : text;
+  const ellipsis = activeCapabilities.unicode ? "…" : "...";
+  return text.length > width ? `${text.slice(0, Math.max(0, width - ellipsis.length))}${ellipsis}` : text;
 }
 
 function truncateAnsi(text: string, width: number): string {
@@ -578,7 +741,7 @@ function truncateAnsi(text: string, width: number): string {
         continue;
       }
     }
-    if (visible >= Math.max(0, width - 1)) return `${output}…${reset}`;
+    if (visible >= Math.max(0, width - 1)) return `${output}${activeCapabilities.unicode ? "…" : "..."}${reset}`;
     output += char;
     visible += 1;
   }
@@ -586,28 +749,70 @@ function truncateAnsi(text: string, width: number): string {
 }
 
 function rule(cols: number): string {
-  return "─".repeat(cols);
+  return (activeCapabilities.unicode ? "─" : "-").repeat(cols);
 }
 
 function pad(text: string, width: number): string {
   return text.length >= width ? truncate(text, width) : `${text}${" ".repeat(width - text.length)}`;
 }
 
+function alignedRows(rows: Array<[unknown, unknown]>, cols: number): string[] {
+  const visibleRows = rows
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([key, value]) => [String(key), String(value)] as const);
+  const keyWidth = Math.min(22, Math.max(8, ...visibleRows.map(([key]) => visibleTextWidth(key))));
+  return visibleRows.map(([key, value]) => `${pad(key, keyWidth)}  ${truncate(value, Math.max(12, cols - keyWidth - 3))}`);
+}
+
+function personaID(persona: AppState["personas"][number]): string | undefined {
+  const configName = persona.config?.persona_name;
+  return persona.summary?.id ?? (typeof configName === "string" ? configName : undefined);
+}
+
+function activePersonaID(state: AppState): string | undefined {
+  const agentID = state.session?.agent ?? state.sessionConfig?.active_agent;
+  const agent = state.agents.find((item) => storedAgentID(item) === agentID);
+  const first = Array.isArray(agent?.config?.agent_persona) ? agent?.config?.agent_persona[0] : undefined;
+  if (first && typeof first === "object" && !Array.isArray(first)) {
+    const name = (first as Record<string, unknown>).persona_name;
+    if (typeof name === "string" && name.trim()) return name.trim();
+  }
+  const runtimePersonas = (agent as unknown as { options?: { personas?: AppState["personas"] } } | undefined)?.options?.personas;
+  return runtimePersonas?.[0] ? personaID(runtimePersonas[0]) : undefined;
+}
+
+function storedAgentID(agent: AppState["agents"][number]): string | undefined {
+  return agent.summary?.id ?? (agent as unknown as { name?: string }).name;
+}
+
+function stringField(value: Record<string, unknown> | undefined, key: string): string | undefined {
+  const item = value?.[key];
+  return typeof item === "string" ? item : undefined;
+}
+
 function visibleTextWidth(text: string): number {
   return text.replace(ansiControlGlobalPattern, "").length;
 }
 
-function providerSummary(state: AppState): string {
-  const providers = state.providers?.all ?? [];
-  if (!providers.length) return `${dim}${t("unknown")}${reset}`;
-  const connected = providers.filter((provider) => state.authStatuses[provider.id]?.authenticated || state.providers?.connected.includes(provider.id));
-  return connected.length ? `${green}${connected.length}/${providers.length} ${t("connected")}${reset}` : `${yellow}${t("loginNeeded")}${reset}`;
+function stripAnsi(text: string): string {
+  return text.replace(ansiControlGlobalPattern, "");
+}
+
+function agentPersonaSummary(state: AppState): string {
+  const agent = state.session?.agent ?? state.sessionConfig?.active_agent;
+  const persona = activePersonaID(state);
+  const parts = [
+    `${dim}${t("agent")}:${reset} ${agent ? `${green}${agent}${reset}` : `${yellow}${t("unknown")}${reset}`}`,
+    `${dim}${t("persona")}:${reset} ${persona ? `${green}${persona}${reset}` : `${dim}-${reset}`}`,
+  ];
+  return parts.join("  ");
 }
 
 function statusDot(status: string): string {
-  if (status === "busy") return `${yellow}●${reset}`;
-  if (status === "error") return `${red}●${reset}`;
-  return `${green}●${reset}`;
+  const dot = activeCapabilities.unicode ? "●" : "*";
+  if (status === "busy") return `${yellow}${dot}${reset}`;
+  if (status === "error") return `${red}${activeCapabilities.unicode ? dot : "!"}${reset}`;
+  return `${green}${dot}${reset}`;
 }
 
 function statusLabel(status: string): string {
@@ -615,20 +820,6 @@ function statusLabel(status: string): string {
   if (status === "error") return t("error");
   if (status === "idle") return t("sessionIdle");
   return status;
-}
-
-function todoMark(status?: string): string {
-  if (status === "completed") return `${green}✓${reset}`;
-  if (status === "in_progress") return `${cyan}→${reset}`;
-  if (status === "cancelled") return `${red}×${reset}`;
-  return `${dim}•${reset}`;
-}
-
-function shortCondition(value: string): string {
-  if (value === "scheduled_task") return t("scheduledTask");
-  if (value === "polling_task") return t("pollingTask");
-  if (value === "session_idle") return t("sessionIdle");
-  return t("userAction");
 }
 
 function formatTime(value: string | number | undefined): string {

@@ -388,19 +388,6 @@ pub struct FileContentResponse {
     pub mime_type: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileStatusResponse {
-    pub files: Vec<FileStatus>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileStatus {
-    pub path: String,
-    pub added: i32,
-    pub removed: i32,
-    pub status: String,
-}
-
 // ============================================================================
 // Provider / Auth Types
 // ============================================================================
@@ -486,63 +473,6 @@ pub struct ProviderAuth {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderAuthResponse {
-    pub success: bool,
-}
-
-// ============================================================================
-// Permission Types
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PermissionRequest {
-    pub id: String,
-    pub session_id: String,
-    pub permission: String,
-    pub args: HashMap<String, serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PermissionCreateRequest {
-    pub permission: String,
-    #[serde(default)]
-    pub args: HashMap<String, serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PermissionReplyRequest {
-    pub approve: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PermissionReplyResponse {
-    pub success: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PermissionStatusResponse {
-    pub responded: bool,
-    pub approve: Option<bool>,
-}
-
-// ============================================================================
-// Question Types
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuestionRequest {
-    pub id: String,
-    pub session_id: String,
-    pub question: String,
-    pub metadata: HashMap<String, serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuestionReplyRequest {
-    pub response: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuestionReplyResponse {
     pub success: bool,
 }
 
@@ -670,121 +600,6 @@ pub enum SyncEvent {
 }
 
 // ============================================================================
-// PTY Types
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PtyCreateRequest {
-    pub command: Option<String>,
-    pub args: Option<Vec<String>>,
-    pub cwd: Option<String>,
-    pub title: Option<String>,
-    pub env: Option<std::collections::HashMap<String, String>>,
-    pub rows: Option<u16>,
-    pub cols: Option<u16>,
-    pub shell: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PtyResponse {
-    pub id: String,
-    pub pty_id: String,
-    pub title: String,
-    pub command: String,
-    pub args: Vec<String>,
-    pub cwd: String,
-    pub status: String,
-    pub pid: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PtyUpdateRequest {
-    pub title: Option<String>,
-    pub size: Option<PtySize>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PtySize {
-    pub rows: u16,
-    pub cols: u16,
-}
-
-// ============================================================================
-// MCP Types
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MCPServer {
-    pub name: String,
-    pub status: MCPStatus,
-    pub tools: Vec<McpTool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "status")]
-pub enum MCPStatus {
-    #[serde(rename = "connected")]
-    Connected,
-    #[serde(rename = "disabled")]
-    Disabled,
-    #[serde(rename = "failed")]
-    Failed { error: String },
-    #[serde(rename = "needs_auth")]
-    NeedsAuth,
-    #[serde(rename = "needs_client_registration")]
-    NeedsClientRegistration { error: String },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct McpTool {
-    pub name: String,
-    pub description: Option<String>,
-    pub input_schema: serde_json::Value,
-}
-
-// ============================================================================
-// VCS Types
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VcsInfo {
-    pub branch: String,
-    pub default_branch: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VcsDiffResponse {
-    pub files: Vec<FileDiff>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileDiff {
-    pub old_file_name: String,
-    pub new_file_name: String,
-    pub hunks: Vec<DiffHunk>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiffHunk {
-    pub old_start: u32,
-    pub old_lines: u32,
-    pub new_start: u32,
-    pub new_lines: u32,
-    pub lines: Vec<String>,
-}
-
-// ============================================================================
-// Skill Types
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Skill {
-    pub name: String,
-    pub description: String,
-    pub path: String,
-}
-
-// ============================================================================
 // Path Types
 // ============================================================================
 
@@ -843,18 +658,6 @@ pub struct Command {
     pub template: Option<String>,
     pub subtask: bool,
     pub hints: Vec<String>,
-}
-
-// ============================================================================
-// Log Types
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LogRequest {
-    pub service: String,
-    pub level: String,
-    pub message: String,
-    pub extra: Option<HashMap<String, serde_json::Value>>,
 }
 
 // ============================================================================

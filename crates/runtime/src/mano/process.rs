@@ -371,7 +371,7 @@ mod tests {
         let input = SessionInput {
             user_input: "inspect".to_string(),
             file_input: Vec::new(),
-            agent: Some("coding_agent_planning".to_string()),
+            agent: Some("thinking-planning".to_string()),
             runtime_context: None,
             planning_mode_override: Some(false),
         };

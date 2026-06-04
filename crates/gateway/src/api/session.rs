@@ -441,7 +441,7 @@ pub async fn update_session(
             updated_at: 0,
             directory: None,
             model: None,
-            agent: Some("coding_agent_planning".to_string()),
+            agent: Some("thinking-planning".to_string()),
             session_type: Some("coding".to_string()),
             auto_session_name: true,
             kill_processes_on_start: false,
@@ -492,7 +492,7 @@ pub async fn update_session_task_management(
             updated_at: 0,
             directory: None,
             model: None,
-            agent: Some("coding_agent_planning".to_string()),
+            agent: Some("thinking-planning".to_string()),
             session_type: Some("coding".to_string()),
             auto_session_name: true,
             kill_processes_on_start: false,
@@ -1202,53 +1202,6 @@ pub async fn get_message_part(
 }
 
 // ============================================================================
-// Session Permissions
-// ============================================================================
-
-pub async fn list_permissions(Path(session_id): Path<String>) -> Json<Vec<PermissionRequest>> {
-    Json(global_store().list_permissions(&session_id))
-}
-
-pub async fn create_permission(
-    Path(session_id): Path<String>,
-    Json(payload): Json<PermissionCreateRequest>,
-) -> Json<PermissionRequest> {
-    Json(global_store().create_permission(session_id, payload.permission, payload.args))
-}
-
-pub async fn reply_permission(
-    Path(request_id): Path<String>,
-    Json(payload): Json<PermissionReplyRequest>,
-) -> Json<PermissionReplyResponse> {
-    Json(PermissionReplyResponse {
-        success: global_store().reply_permission(&request_id, payload.approve),
-    })
-}
-
-pub async fn get_permission_reply(
-    Path(permission_id): Path<String>,
-) -> Json<PermissionStatusResponse> {
-    let approve = global_store().permission_reply(&permission_id);
-    Json(PermissionStatusResponse {
-        responded: approve.is_some(),
-        approve,
-    })
-}
-
-pub async fn list_session_permission_by_id(
-    Path((session_id, permission_id)): Path<(String, String)>,
-) -> Json<PermissionRequest> {
-    let permissions = global_store().list_permissions(&session_id);
-    let found = permissions.into_iter().find(|p| p.id == permission_id);
-    Json(found.unwrap_or_else(|| PermissionRequest {
-        id: permission_id,
-        session_id,
-        permission: "not_found".to_string(),
-        args: std::collections::HashMap::new(),
-    }))
-}
-
-// ============================================================================
 // Session Commands
 // ============================================================================
 
@@ -1296,19 +1249,6 @@ pub async fn update_todos(
     Json(payload): Json<Vec<serde_json::Value>>,
 ) -> Json<Vec<serde_json::Value>> {
     Json(session_store().set_todos(&session_id, payload))
-}
-
-// ============================================================================
-// Session Diff
-// ============================================================================
-
-pub async fn get_session_diff(Path(session_id): Path<String>) -> Json<Vec<FileDiff>> {
-    let directory = session_store()
-        .get_session(&session_id)
-        .and_then(|session| session.directory);
-    Json(crate::api::misc::git_diff_for_directory(
-        directory.as_deref(),
-    ))
 }
 
 // ============================================================================
@@ -1964,10 +1904,7 @@ fn run_mano_for_prompt(session_id: String, payload: serde_json::Value) {
                     },
                 });
             } else {
-                add_agent_fallback_message(
-                    &session_id,
-                    "MANO completed without a user-facing message.".to_string(),
-                );
+                add_agent_fallback_message(&session_id, user_facing_completion_fallback(&content));
             }
         }
         Err(error) => {
@@ -2308,6 +2245,54 @@ fn add_agent_fallback_message(session_id: &str, content: String) {
     }
 }
 
+fn user_facing_completion_fallback(prompt: &str) -> String {
+    if let Some(exact) = requested_exact_reply(prompt) {
+        return exact;
+    }
+    let summary = prompt
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("The request completed.");
+    format!("Done: {summary}")
+}
+
+fn requested_exact_reply(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    for marker in [
+        "reply with exactly",
+        "reply exactly",
+        "respond with exactly",
+        "respond exactly",
+        "只回复这一行，不要解释：",
+        "只回复这一行，不要解释:",
+        "只回复：",
+        "只回复:",
+    ] {
+        if let Some(index) = lower.find(marker) {
+            let source = &trimmed[index + marker.len()..];
+            let candidate = source
+                .trim_start_matches(|ch: char| {
+                    ch.is_whitespace() || matches!(ch, ':' | '：' | '"' | '\'' | '`')
+                })
+                .split(" and no extra")
+                .next()
+                .unwrap_or(source)
+                .trim()
+                .trim_matches(|ch: char| matches!(ch, '"' | '\'' | '`' | '.' | '。'))
+                .trim();
+            if !candidate.is_empty() {
+                return Some(candidate.to_string());
+            }
+        }
+    }
+    None
+}
+
 pub(crate) fn api_message_from_store(message: crate::session::store::Message) -> Message {
     Message {
         id: message.id,
@@ -2489,8 +2474,8 @@ mod tests {
         agent_message_content, agent_message_metadata, api_message_from_store,
         filter_list_sessions, first_prompt_part_id, frontend_safe_reply_message,
         frontend_safe_value, planning_todos, prompt_message_id, prompt_model_acceleration,
-        prompt_model_variant, prompt_text, workspace_key, SendAgentMedia, SendAgentMessageRequest,
-        SendAgentToolCall, SessionListParams,
+        prompt_model_variant, prompt_text, user_facing_completion_fallback, workspace_key,
+        SendAgentMedia, SendAgentMessageRequest, SendAgentToolCall, SessionListParams,
     };
     use crate::api::types::{Session, SessionStatus};
     use crate::session_store;
@@ -2540,6 +2525,24 @@ mod tests {
         });
 
         assert_eq!(prompt_model_variant(&payload), None);
+    }
+
+    #[test]
+    fn completion_fallback_preserves_exact_reply_requests() {
+        assert_eq!(
+            user_facing_completion_fallback(
+                "TUI real business test: reply with exactly TUI_BUSINESS_OK and no extra text."
+            ),
+            "TUI_BUSINESS_OK"
+        );
+        assert_eq!(
+            user_facing_completion_fallback("只回复这一行，不要解释：TUI_WEB_OK"),
+            "TUI_WEB_OK"
+        );
+        assert_eq!(
+            user_facing_completion_fallback("Summarize the repository"),
+            "Done: Summarize the repository"
+        );
     }
 
     fn test_session(

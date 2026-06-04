@@ -51,16 +51,13 @@ tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
-thiserror.workspace = true
 chrono.workspace = true
 redis.workspace = true
-futures.workspace = true
 tura-llm-rust = { workspace = true }
 tura-agents = { workspace = true }
 tura-router = { workspace = true }
 code-tools = { path = "../tools" }
 reqwest.workspace = true
-sysinfo = "0.30"
 session_log = { workspace = true }
 uuid.workspace = true
 

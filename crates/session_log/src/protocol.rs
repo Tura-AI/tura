@@ -115,7 +115,7 @@ pub enum SessionLogResponse {
         sessions: Vec<SessionSnapshot>,
     },
     Session {
-        session: Option<SessionSnapshot>,
+        session: Option<Box<SessionSnapshot>>,
     },
     Records {
         page: Page,

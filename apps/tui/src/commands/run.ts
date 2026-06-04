@@ -3,8 +3,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient } from "../gateway/client.js";
 import { sameDirectory } from "../gateway/directory.js";
 import { normalizeEvent } from "../gateway/events.js";
-import { GatewayUnavailableError, PermissionDeniedError, TimeoutError, type CliContext, type OutputMode } from "../types/common.js";
-import type { PromptPayload, RunResult, Session } from "../types/session.js";
+import { GatewayUnavailableError, TimeoutError, type CliContext, type OutputMode } from "../types/common.js";
+import { hasUserFacingAssistantText, type PromptPayload, type RunResult, type Session } from "../types/session.js";
 import { buildRunResult, writeLastMessage } from "../output/final-result.js";
 import { HumanOutput } from "../output/human.js";
 import { printRunJson } from "../output/json.js";
@@ -18,7 +18,6 @@ export interface RunOptions {
   sessionType?: string;
   modelVariant?: string;
   modelAccelerationEnabled?: boolean;
-  forcePlanning?: boolean;
   killProcessesOnStart?: boolean;
   validatorEnabled?: boolean;
   output: OutputMode;
@@ -37,11 +36,6 @@ export async function runPrompt(context: CliContext, options: RunOptions): Promi
     throw new GatewayUnavailableError(error instanceof Error ? error.message : String(error));
   }
 
-  if (options.model) {
-    const validation = await client.validateModel(options.model);
-    if (!validation.ok) throw new Error(validation.message);
-  }
-
   const session = options.sessionID
     ? await client.getSession(options.sessionID)
     : await client.createSession({
@@ -51,7 +45,6 @@ export async function runPrompt(context: CliContext, options: RunOptions): Promi
         session_type: options.sessionType,
         model_variant: options.modelVariant,
         model_acceleration_enabled: options.modelAccelerationEnabled,
-        force_planning: options.forcePlanning,
         kill_processes_on_start: options.killProcessesOnStart,
         validator_enabled: options.validatorEnabled,
       });
@@ -135,7 +128,6 @@ async function waitWithEvents(
       }
       const completed = await completionResult(client, session.id, initialCount);
       if (completed) return completed;
-      await failOnPermissions(client, session.id);
     }
   } finally {
     controller.abort();
@@ -150,7 +142,6 @@ async function waitByPolling(client: GatewayClient, session: Session, initialCou
   while (Date.now() < deadline) {
     const completed = await completionResult(client, session.id, initialCount);
     if (completed) return completed;
-    await failOnPermissions(client, session.id);
     await delay(1000);
   }
   await client.abort(session.id).catch(() => undefined);
@@ -158,21 +149,10 @@ async function waitByPolling(client: GatewayClient, session: Session, initialCou
 }
 
 async function completionResult(client: GatewayClient, sessionID: string, initialCount: number): Promise<RunResult | undefined> {
-  const [status, messages] = await Promise.all([client.sessionStatus(sessionID), client.listMessages(sessionID)]);
-  if (status === "error") {
-    return buildRunResult(sessionID, messages, "failed");
-  }
-  const hasNewAssistant = messages.slice(initialCount).some((message) => message.role === "assistant");
-  if (status === "idle" && hasNewAssistant) {
+  const messages = await client.listMessages(sessionID);
+  const hasNewAssistant = hasUserFacingAssistantText(messages, initialCount);
+  if (hasNewAssistant) {
     return buildRunResult(sessionID, messages, "completed");
   }
   return undefined;
-}
-
-async function failOnPermissions(client: GatewayClient, sessionID: string): Promise<void> {
-  const permissions = await client.listPermissions().catch(() => []);
-  const pending = permissions.find((permission) => (permission.session_id ?? permission.sessionID) === sessionID);
-  if (pending) {
-    throw new PermissionDeniedError(`permission required: ${pending.permission} (${pending.id})`);
-  }
 }

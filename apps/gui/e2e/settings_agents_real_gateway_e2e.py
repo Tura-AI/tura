@@ -17,7 +17,7 @@ GUI_URL = os.environ.get("TURA_GUI_URL", "http://127.0.0.1:5185")
 GATEWAY_URL = os.environ.get("TURA_GATEWAY_URL", "http://127.0.0.1:5295")
 OUT = GUI / "test-results" / "agent-settings-real-gateway"
 CONFIG_PATH = ROOT / ".tura" / "config.conf"
-AGENT_UNDER_TEST = "coding_agent_fast"
+AGENT_UNDER_TEST = "fast"
 
 
 def ready(url: str) -> bool:
@@ -206,6 +206,17 @@ async def wait_for_config_key(key: str) -> dict:
     return gateway_request("GET", scoped_config_path())
 
 
+async def wait_for_agent_provider(agent_id: str, expected: dict) -> dict:
+    latest = read_agent(agent_id)
+    for _ in range(40):
+        provider = latest.get("config", {}).get("provider", {})
+        if all(provider.get(key) == value for key, value in expected.items()):
+            return latest
+        await asyncio.sleep(0.25)
+        latest = read_agent(agent_id)
+    return latest
+
+
 async def choose_first_alternate_model(page, tier_name: str) -> dict | None:
     model_config = gateway_request("GET", "/model_config")
     tier = tier_by_name(model_config, tier_name)
@@ -280,6 +291,21 @@ async def main() -> None:
                 and "Download the Solid Devtools" not in message.text
                 else None,
             )
+            agent_patch_payloads: list[dict] = []
+
+            def capture_agent_patch(request):
+                if request.method == "PATCH" and f"/agent/{AGENT_UNDER_TEST}" in request.url:
+                    try:
+                        payload = request.post_data_json
+                        agent_patch_payloads.append(
+                            payload.get("config", {}).get("provider", {})
+                            if isinstance(payload, dict)
+                            else {"raw": payload}
+                        )
+                    except Exception:
+                        agent_patch_payloads.append({"raw": request.post_data})
+
+            page.on("request", capture_agent_patch)
 
             query = urlencode({"gatewayUrl": GATEWAY_URL})
             conversation_query = urlencode(
@@ -294,23 +320,23 @@ async def main() -> None:
             await expect(page.get_by_role("button", name="智能体配置")).to_be_visible()
             agent_options = page.locator(".agent-trigger-option")
             option_count = await agent_options.count()
-            assert option_count >= 3
-            assert option_count <= 5
+            assert option_count >= 4
+            assert option_count <= 6
             first_option_text = await agent_options.nth(0).inner_text()
             assert "/" in first_option_text
             await page.screenshot(path=OUT / "02-agent-menu.png", full_page=True)
 
             await page.get_by_role(
-                "button", name="coding_agent_instant", exact=False
+                "button", name="Fast Text Only", exact=False
             ).click()
             await expect(page.locator(".agent-trigger-button")).to_contain_text(
-                "coding_agent_instant"
+                "Fast Text Only"
             )
-            config = await wait_for_config_value("active_agent", "coding_agent_instant")
+            config = await wait_for_config_value("active_agent", "fast-text-only")
             checks.append(
                 {
                     "name": "agent-menu-persists-active-agent",
-                    "ok": config.get("active_agent") == "coding_agent_instant",
+                    "ok": config.get("active_agent") == "fast-text-only",
                 }
             )
 
@@ -318,10 +344,10 @@ async def main() -> None:
             await page.get_by_role("button", name="模型配置").click()
             await expect(page.get_by_role("heading", name="模型配置")).to_be_visible()
             rows = page.locator(".model-config-panel .field-row")
-            await expect(rows).to_have_count(2)
+            await expect(rows).to_have_count(4)
             model_text = await page.locator(".model-config-panel").inner_text()
-            assert "快速" not in model_text
-            assert "即时" not in model_text
+            assert "快速" in model_text
+            assert "即时" in model_text
             assert "embedding" not in model_text.lower()
             labels = page.locator(".model-tier-label small")
             for index in range(await labels.count()):
@@ -338,9 +364,7 @@ async def main() -> None:
             await expect(page.locator("#agent-settings-id")).to_have_count(0)
             await expect(page.get_by_role("button", name="新智能体")).to_have_count(0)
             await expect(page.get_by_role("button", name="删除")).to_have_count(0)
-            await page.get_by_role(
-                "button", name=AGENT_UNDER_TEST, exact=False
-            ).click()
+            await page.locator(".agent-pick-row").filter(has_text="Fast").first.click()
             await expect(page.get_by_text("能力")).to_be_visible()
             await page.locator(".agent-editor .field-row").filter(
                 has_text="模型"
@@ -357,12 +381,29 @@ async def main() -> None:
             await page.locator(".appearance-select-menu").get_by_role(
                 "button", name="高", exact=True
             ).click()
+            await expect(
+                page.locator(".agent-editor .field-row")
+                .filter(has_text="思考强度")
+                .locator(".appearance-select-button")
+            ).to_contain_text("高")
             await page.locator(".agent-priority-segmented").get_by_role(
                 "button", name="开启"
             ).click()
+            await expect(
+                page.locator(".agent-priority-segmented")
+                .get_by_role("button", name="开启")
+            ).to_have_class("selected")
             await page.get_by_role("button", name="保存").click()
             await expect(page.get_by_text("已保存")).to_be_visible()
-            updated_agent = read_agent(AGENT_UNDER_TEST)
+            updated_agent = await wait_for_agent_provider(
+                AGENT_UNDER_TEST,
+                {
+                    "tura_llm_name": "flagship_thinking",
+                    "model_reasoning_effort": "high",
+                    "model_acceleration_enabled": True,
+                    "service_tier": "priority",
+                },
+            )
             agent_provider = updated_agent.get("config", {}).get("provider", {})
             agent_tier = agent_provider.get("tura_llm_name")
             checks.append(
@@ -377,6 +418,10 @@ async def main() -> None:
                     "ok": agent_provider.get("model_reasoning_effort") == "high"
                     and agent_provider.get("model_acceleration_enabled") is True
                     and agent_provider.get("service_tier") == "priority",
+                    "details": {
+                        "saved_provider": agent_provider,
+                        "patch_payloads": agent_patch_payloads,
+                    },
                 }
             )
             await page.screenshot(path=OUT / "04-agent-settings.png", full_page=True)
@@ -407,13 +452,13 @@ async def main() -> None:
 
             await page.goto(f"{GUI_URL}/?{conversation_query}", wait_until="domcontentloaded")
             await expect(page.locator(".agent-trigger-button")).to_contain_text(
-                "coding_agent_instant",
+                "Fast Text Only",
                 timeout=15000,
             )
             await page.locator(".agent-trigger-button").click()
             await expect(
                 page.locator(".agent-trigger-option.selected")
-            ).to_contain_text("coding_agent_instant")
+            ).to_contain_text("Fast Text Only")
             await page.screenshot(path=OUT / "06-reloaded-agent-selection.png", full_page=True)
             checks.append({"name": "reload-keeps-selected-agent", "ok": True})
 
@@ -454,3 +499,4 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+

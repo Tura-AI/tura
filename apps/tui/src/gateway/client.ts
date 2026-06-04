@@ -1,16 +1,32 @@
-import type { TuraCommand } from "../types/command.js";
 import type { AgentUpsertRequest, StoredAgent } from "../types/agent.js";
-import type { GlobalConfig, SessionConfig } from "../types/config.js";
+import type { SessionConfig } from "../types/config.js";
 import type { GatewayEventEnvelope } from "../types/event.js";
-import type { PermissionReplyResponse, PermissionRequest, QuestionRequest } from "../types/permission.js";
+import type {
+  CurrentProjectResponse,
+  ExecuteCommandResponse,
+  FileContentResponse,
+  FileInfo,
+  FileOpenResponse,
+  GatewayCommand,
+  GatewayPathResponse,
+  Project,
+  ServiceStatusResponse,
+  SessionLogSession,
+  SessionLogWorkspace,
+  PersonaUpsertRequest,
+  StoredPersona,
+  TuraConfigResponse,
+  TuraConfigUpdate,
+} from "../types/gateway.js";
 import type {
   OAuthAuthorizeResponse,
   ProviderAuthMethodsResponse,
   ProviderAuthStatus,
+  ProviderAuthUpsert,
   ProviderListResponse,
 } from "../types/provider.js";
-import type { CreateSessionRequest, Message, MessageEnvelope, PromptPayload, Session, TodoItem } from "../types/session.js";
-import { normalizeMessage, sessionStatusText } from "../types/session.js";
+import type { CreateSessionRequest, Message, MessageEnvelope, PromptPayload, Session } from "../types/session.js";
+import { normalizeMessage } from "../types/session.js";
 import { directoryHeader } from "./directory.js";
 import { GatewayHttpError } from "./errors.js";
 import { parseSse } from "./events.js";
@@ -21,6 +37,8 @@ export interface GatewayClientOptions {
   verbose?: boolean;
   timeoutMs?: number;
 }
+
+export type GatewayHttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 export class GatewayClient {
   readonly baseUrl: string;
@@ -43,20 +61,56 @@ export class GatewayClient {
     await this.get("/project/current", { directory: this.directory }).catch(() => undefined);
   }
 
-  async getGlobalConfig(): Promise<GlobalConfig> {
-    return this.get("/config");
-  }
-
-  async patchGlobalConfig(payload: Partial<GlobalConfig>): Promise<GlobalConfig> {
-    return this.patch("/config", payload);
-  }
-
   async getSessionConfig(): Promise<SessionConfig> {
     return this.get("/session/config", { directory: this.directory });
   }
 
   async patchSessionConfig(payload: SessionConfig): Promise<SessionConfig> {
     return this.patch("/session/config", payload, { directory: this.directory });
+  }
+
+  async modelConfig(): Promise<TuraConfigResponse> {
+    return this.get("/model_config");
+  }
+
+  async putModelConfig(payload: TuraConfigUpdate): Promise<TuraConfigResponse> {
+    return this.put("/model_config", payload);
+  }
+
+  async listProjects(): Promise<Project[]> {
+    return this.get("/project");
+  }
+
+  async currentProject(): Promise<CurrentProjectResponse> {
+    return this.get("/project/current", { directory: this.directory });
+  }
+
+  async createWorkspace(name?: string): Promise<Project> {
+    return this.post("/project/workspace/create", { name });
+  }
+
+  async useDefaultWorkspace(): Promise<Project> {
+    return this.post("/project/workspace/default", {});
+  }
+
+  async selectLocalWorkspace(title?: string): Promise<Project | null> {
+    return this.post("/project/workspace/select-local", { title });
+  }
+
+  async listFiles(path = ""): Promise<FileInfo[]> {
+    return this.get("/file", { directory: this.directory, path });
+  }
+
+  async getFileContent(path: string): Promise<FileContentResponse> {
+    return this.get("/file/content", { directory: this.directory, path });
+  }
+
+  async openFile(path: string): Promise<FileOpenResponse> {
+    return this.post("/file/open", {}, { directory: this.directory, path });
+  }
+
+  async openFileLocation(path: string): Promise<FileOpenResponse> {
+    return this.post("/file/open-location", {}, { directory: this.directory, path });
   }
 
   async listSessions(options: { all?: boolean; includeChildren?: boolean; limit?: number } = {}): Promise<Session[]> {
@@ -72,24 +126,10 @@ export class GatewayClient {
   }
 
   async getSession(sessionID: string): Promise<Session> {
-    return this.get(`/session/${encodeURIComponent(sessionID)}`);
-  }
-
-  async updateSession(sessionID: string, payload: Partial<Session>): Promise<Session> {
-    return this.patch(`/session/${encodeURIComponent(sessionID)}`, payload);
-  }
-
-  async deleteSession(sessionID: string): Promise<boolean> {
-    return this.delete(`/session/${encodeURIComponent(sessionID)}`);
-  }
-
-  async sessionStatuses(): Promise<Record<string, unknown>> {
-    return this.get("/session/status");
-  }
-
-  async sessionStatus(sessionID: string): Promise<"idle" | "busy" | "error"> {
-    const statuses = await this.sessionStatuses();
-    return sessionStatusText(statuses[sessionID]);
+    const sessions = await this.listSessions({ all: true, includeChildren: true });
+    const session = sessions.find((item) => item.id === sessionID);
+    if (!session) throw new Error(`session not found: ${sessionID}`);
+    return session;
   }
 
   async listMessages(sessionID: string): Promise<Message[]> {
@@ -97,40 +137,32 @@ export class GatewayClient {
     return response.map(normalizeMessage);
   }
 
+  async listSessionLogWorkspaces(): Promise<SessionLogWorkspace[]> {
+    return this.get("/session-log/workspaces");
+  }
+
+  async listSessionLogSessions(): Promise<SessionLogSession[]> {
+    return this.get("/session-log/sessions", { directory: this.directory });
+  }
+
+  async listSessionLogRecords(sessionID: string): Promise<unknown[]> {
+    return this.get(`/session-log/${encodeURIComponent(sessionID)}/records`);
+  }
+
   async sendPromptAsync(sessionID: string, payload: PromptPayload): Promise<void> {
     await this.post(`/session/${encodeURIComponent(sessionID)}/prompt_async`, payload);
   }
 
-  async sendMessage(sessionID: string, content: string): Promise<Message> {
-    return this.post(`/session/${encodeURIComponent(sessionID)}/message`, { content });
+  async updateSession(sessionID: string, payload: Partial<Session>): Promise<Session> {
+    return this.patch(`/session/${encodeURIComponent(sessionID)}`, payload);
+  }
+
+  async updateSessionTaskManagement(sessionID: string, payload: Record<string, unknown>): Promise<Session> {
+    return this.patch(`/session/${encodeURIComponent(sessionID)}/task-management`, payload);
   }
 
   async abort(sessionID: string): Promise<unknown> {
     return this.post(`/session/${encodeURIComponent(sessionID)}/abort`, {});
-  }
-
-  async todos(sessionID: string): Promise<TodoItem[]> {
-    return this.get(`/session/${encodeURIComponent(sessionID)}/todo`);
-  }
-
-  async listPermissions(): Promise<PermissionRequest[]> {
-    return this.get("/permission");
-  }
-
-  async replyPermission(requestID: string, approve: boolean): Promise<PermissionReplyResponse> {
-    return this.post(`/permission/${encodeURIComponent(requestID)}/reply`, { approve });
-  }
-
-  async listQuestions(): Promise<QuestionRequest[]> {
-    return this.get("/question");
-  }
-
-  async replyQuestion(requestID: string, response: string): Promise<{ success: boolean }> {
-    return this.post(`/question/${encodeURIComponent(requestID)}/reply`, { response });
-  }
-
-  async rejectQuestion(requestID: string): Promise<boolean> {
-    return this.post(`/question/${encodeURIComponent(requestID)}/reject`, {});
   }
 
   async listProviders(): Promise<ProviderListResponse> {
@@ -153,24 +185,13 @@ export class GatewayClient {
     return this.post(`/provider/${encodeURIComponent(providerID)}/auth/logout`, {});
   }
 
-  async validateModel(model: string): Promise<{ ok: boolean; message: string; output?: unknown }> {
-    const [providerID, modelID] = model.split("/", 2);
-    return this.post("/provider/model/validate", { providerID, modelID });
+  async setProviderAuth(providerID: string, payload: ProviderAuthUpsert): Promise<boolean> {
+    return this.put(`/auth/${encodeURIComponent(providerID)}`, payload);
   }
 
-  async listCommands(): Promise<TuraCommand[]> {
-    await this.syncWorkspace();
-    return this.get("/command");
-  }
-
-  async listAgents(): Promise<unknown[]> {
+  async listAgents(): Promise<StoredAgent[]> {
     await this.syncWorkspace();
     return this.get("/agent");
-  }
-
-  async getAgent(agentID: string): Promise<StoredAgent> {
-    await this.syncWorkspace();
-    return this.get(`/agent/${encodeURIComponent(agentID)}`);
   }
 
   async createAgent(payload: AgentUpsertRequest): Promise<StoredAgent> {
@@ -178,7 +199,12 @@ export class GatewayClient {
     return this.post("/agent", payload);
   }
 
-  async updateAgent(agentID: string, payload: AgentUpsertRequest): Promise<StoredAgent> {
+  async getAgent(agentID: string): Promise<StoredAgent> {
+    await this.syncWorkspace();
+    return this.get(`/agent/${encodeURIComponent(agentID)}`);
+  }
+
+  async updateAgent(agentID: string, payload: { config?: unknown; prompt?: string | null }): Promise<StoredAgent> {
     await this.syncWorkspace();
     return this.patch(`/agent/${encodeURIComponent(agentID)}`, payload);
   }
@@ -188,34 +214,52 @@ export class GatewayClient {
     return this.delete(`/agent/${encodeURIComponent(agentID)}`);
   }
 
-  async executeCommand(command: string, args: string[]): Promise<{ output: string }> {
+  async listPersonas(): Promise<StoredPersona[]> {
+    await this.syncWorkspace();
+    return this.get("/persona");
+  }
+
+  async createPersona(payload: PersonaUpsertRequest): Promise<StoredPersona> {
+    await this.syncWorkspace();
+    return this.post("/persona", payload);
+  }
+
+  async getPersona(personaID: string): Promise<StoredPersona> {
+    await this.syncWorkspace();
+    return this.get(`/persona/${encodeURIComponent(personaID)}`);
+  }
+
+  async updatePersona(personaID: string, payload: PersonaUpsertRequest): Promise<StoredPersona> {
+    await this.syncWorkspace();
+    return this.patch(`/persona/${encodeURIComponent(personaID)}`, payload);
+  }
+
+  async deletePersona(personaID: string): Promise<boolean> {
+    await this.syncWorkspace();
+    return this.delete(`/persona/${encodeURIComponent(personaID)}`);
+  }
+
+  async listCommands(): Promise<GatewayCommand[]> {
+    await this.syncWorkspace();
+    return this.get("/command");
+  }
+
+  async executeCommand(command: string, args?: string[]): Promise<ExecuteCommandResponse> {
     await this.syncWorkspace();
     return this.post("/command", { command, args });
   }
 
-  async vcs(): Promise<{ branch: string; default_branch: string }> {
-    await this.syncWorkspace();
-    return this.get("/vcs");
-  }
-
-  async diff(): Promise<{ files: Array<{ old_file_name: string; new_file_name: string; hunks: Array<{ lines: string[] }> }> }> {
-    await this.syncWorkspace();
-    return this.get("/vcs/diff");
-  }
-
-  async serviceStatus(): Promise<unknown> {
+  async serviceStatus(): Promise<ServiceStatusResponse> {
     await this.syncWorkspace();
     return this.get("/service/status");
   }
 
-  async skills(): Promise<unknown[]> {
-    await this.syncWorkspace();
-    return this.get("/skill");
+  async paths(): Promise<GatewayPathResponse> {
+    return this.get("/path", { directory: this.directory });
   }
 
-  async plugins(): Promise<unknown[]> {
-    await this.syncWorkspace();
-    return this.get("/plugin");
+  async raw<T = unknown>(method: GatewayHttpMethod, path: string, body?: unknown): Promise<T> {
+    return this.request<T>(method, path.startsWith("/") ? path : `/${path}`, body, { directory: this.directory });
   }
 
   streamEvents(signal?: AbortSignal): AsyncGenerator<GatewayEventEnvelope> {
@@ -240,6 +284,10 @@ export class GatewayClient {
 
   private async post<T>(path: string, body: unknown, query?: Record<string, string | number | boolean>): Promise<T> {
     return this.request<T>("POST", path, body, query);
+  }
+
+  private async put<T>(path: string, body: unknown, query?: Record<string, string | number | boolean>): Promise<T> {
+    return this.request<T>("PUT", path, body, query);
   }
 
   private async patch<T>(path: string, body: unknown, query?: Record<string, string | number | boolean>): Promise<T> {

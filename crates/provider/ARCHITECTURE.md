@@ -276,6 +276,57 @@ Existing JSON route config remains supported:
 config/provider_config.json
 ```
 
+## Manual Provider Configuration
+
+The bundled provider catalog and routing config lives at:
+
+```text
+crates/provider/config/provider_config.json
+```
+
+Override the file path only when needed:
+
+- `TURA_PROVIDER_CONFIG`: preferred explicit provider config path.
+- `TURALLM_CONFIG`: legacy explicit provider config path.
+
+Runtime environment values are loaded from the project-root `.env` by default.
+`TURA_ENV_PATH` can point to another dotenv file, but normal project setup
+should keep provider secrets and local runtime values in the root `.env`.
+
+To add a model on an existing provider:
+
+1. Add or update the provider entry under `model_catalog.providers`.
+2. Add the model id, display metadata, cost/context values, and capability
+   flags expected by the gateway/model picker.
+3. Add the model as a candidate in one or more `routes` entries.
+4. Keep route names stable so existing agent configs continue to use names such
+   as `flagship_thinking`, `thinking`, `fast`, or `instant`.
+5. Add or update live smoke tests only when the provider/model can be tested in
+   the current environment.
+
+To add a new OpenAI-compatible provider:
+
+1. Add its base URL under `provider_base_url`.
+2. Add its models under `model_catalog.providers`.
+3. Add route candidates that reference the provider id and model id.
+4. Add the expected API key name to auth configuration or document the
+   environment variable, normally `{PROVIDER}_API_KEY`.
+5. Verify the provider through the OpenAI-compatible transport before creating a
+   dedicated adapter.
+
+To add a provider that is not compatible with the existing transports:
+
+1. Add a provider adapter under `src/llm/providers/`.
+2. Add any shared request/response normalization under `src/llm/`.
+3. Register the adapter in `src/llm/providers/mod.rs`.
+4. Keep provider-specific wire parsing inside this crate.
+5. Expose normalized text, tool calls, usage, and streaming events through the
+   provider crate API consumed by runtime.
+
+Provider config is fixed route/catalog configuration. User preferences such as
+the selected session model or selected agent belong in workspace/session config
+and should not be merged into `provider_config.json`.
+
 ## Auth Architecture
 
 ### `auth/api_key/`

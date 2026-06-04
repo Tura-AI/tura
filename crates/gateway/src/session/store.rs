@@ -425,7 +425,7 @@ impl SessionStore {
         let mut info = SessionManager::create_session(
             directory,
             None,
-            Some("coding_agent_planning".to_string()),
+            Some("thinking-planning".to_string()),
             Some("coding".to_string()),
         );
         info.id = child_session_id.to_string();

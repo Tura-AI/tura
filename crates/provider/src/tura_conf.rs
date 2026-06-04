@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
 
-use dotenvy::{dotenv_override, from_path_override, vars};
+use dotenvy::{from_path_override, vars};
 use tracing::{debug, warn};
 
 #[derive(Debug, Clone)]
@@ -13,30 +13,22 @@ pub struct TuraConfig {
 
 impl TuraConfig {
     pub fn new(env_file: &str) -> Self {
-        let current_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src");
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let project_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| manifest_dir.clone());
 
         let env_path = if let Ok(from_env) = env::var("TURA_ENV_PATH") {
             let path = PathBuf::from(from_env);
             if path.exists() {
                 path
             } else {
-                current_dir.parent().unwrap_or(&current_dir).join(env_file)
+                project_root.join(env_file)
             }
         } else {
-            let candidate1 = current_dir.join(env_file);
-            let candidate2 = current_dir.parent().unwrap_or(&current_dir).join(env_file);
-            let candidate3 = current_dir
-                .parent()
-                .and_then(Path::parent)
-                .unwrap_or(&current_dir)
-                .join(env_file);
-            if candidate1.exists() {
-                candidate1
-            } else if candidate2.exists() {
-                candidate2
-            } else {
-                candidate3
-            }
+            project_root.join(env_file)
         };
 
         let mut this = Self {
@@ -54,10 +46,8 @@ impl TuraConfig {
             } else {
                 debug!(path = %self.env_path.display(), "configuration loaded");
             }
-        } else if let Err(err) = dotenv_override() {
-            debug!(error = %err, "default dotenv not loaded");
         } else {
-            debug!("configuration loaded from process cwd .env");
+            debug!(path = %self.env_path.display(), "root dotenv not found");
         }
 
         self.values = vars().collect();

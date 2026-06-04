@@ -289,7 +289,10 @@ mod tests {
         let normalized = normalize_command_run_tool_input("command_run", input);
         let command = &normalized["commands"][0];
 
-        assert_eq!(normalized["commands"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            normalized["commands"].as_array().expect("commands").len(),
+            1
+        );
         assert_eq!(command["command_type"], "shell_command");
         assert_eq!(command["command_line"], "Get-Content probe.txt");
         assert_eq!(command["step"], 2);
@@ -309,7 +312,7 @@ mod tests {
         assert_eq!(command["command_type"], "apply_patch");
         assert!(command["command_line"]
             .as_str()
-            .unwrap()
+            .expect("command line")
             .starts_with("*** Begin Patch"));
     }
 }

@@ -22,7 +22,7 @@ pub fn run() -> anyhow::Result<()> {
         "get-session" => {
             let payload: GetSessionRequest = read_json()?;
             SessionLogResponse::Session {
-                session: store.get_session(payload)?,
+                session: store.get_session(payload)?.map(Box::new),
             }
         }
         "list-sessions" => {
@@ -66,7 +66,7 @@ fn handle_command(
             workspaces: store.list_workspaces()?,
         },
         SessionLogCommand::GetSession(payload) => SessionLogResponse::Session {
-            session: store.get_session(payload)?,
+            session: store.get_session(payload)?.map(Box::new),
         },
         SessionLogCommand::ListSessions(payload) => {
             let (page, sessions) = store.list_sessions(payload)?;

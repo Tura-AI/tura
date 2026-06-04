@@ -38,7 +38,7 @@ command = "npm install -g playwright"
 id = "playwright_chromium"
 description = "Chromium browser binary used by Playwright screenshot and interaction verification."
 platforms = ["windows", "linux", "macos"]
-verify = "npx playwright --version"
+verify = "npx --yes -p playwright node -e \"const { chromium } = require('playwright'); (async () => { const browser = await chromium.launch({ headless: true }); await browser.close(); })().catch((err) => { console.error(err); process.exit(1); });\""
 timeout_secs = 600
 permission = "network"
 cache_key = "playwright-chromium"

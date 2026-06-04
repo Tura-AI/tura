@@ -569,7 +569,7 @@ async function runAgent(agent, template, index) {
     "--session-id",
     sessionId,
     "--agent-id",
-    "coding_agent_fast",
+    "fast",
     "-m",
     model,
     ...serviceTierConfigArgs(),
@@ -676,3 +676,4 @@ async function main() {
 }
 
 await main()
+

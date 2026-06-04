@@ -63,7 +63,7 @@ impl SessionLogClient {
         match self.call(SessionLogCommand::GetSession(GetSessionRequest {
             session_id,
         }))? {
-            SessionLogResponse::Session { session } => Ok(session),
+            SessionLogResponse::Session { session } => Ok(session.map(|session| *session)),
             SessionLogResponse::Error { error } => Err(anyhow!(error)),
             other => Err(anyhow!("unexpected session_log response: {other:?}")),
         }

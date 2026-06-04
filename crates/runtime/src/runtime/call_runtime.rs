@@ -717,17 +717,17 @@ async fn call_runtime_streaming(
                 ));
             let mut live_results = results.clone();
             live_results.push(command_run_live_delta_result(&command, "", ""));
-            runtime.block_on(publish_streamed_command_run_update(
-                &gateway_session_id,
-                &gateway_runtime_id,
-                &gateway_provider,
-                &gateway_call_id,
-                &streamed_commands,
-                &live_results,
-                "running",
+            runtime.block_on(publish_streamed_command_run_update(StreamedCommandRunUpdate {
+                session_id: &gateway_session_id,
+                runtime_id: &gateway_runtime_id,
+                provider: &gateway_provider,
+                call_id: &gateway_call_id,
+                commands: &streamed_commands,
+                results: &live_results,
+                status: "running",
                 started_at,
-                None,
-            ));
+                ended_at: None,
+            }));
             let delta_poll_stop = Arc::new(AtomicBool::new(false));
             let delta_poll_stop_for_task = Arc::clone(&delta_poll_stop);
             let delta_event_ctx = executor.event_context();
@@ -773,15 +773,17 @@ async fn call_runtime_streaming(
                             &stderr,
                         ));
                         runtime.block_on(publish_streamed_command_run_update(
-                            &delta_gateway_session_id,
-                            &delta_gateway_runtime_id,
-                            &delta_gateway_provider,
-                            &delta_gateway_call_id,
-                            &delta_commands,
-                            &live_results,
-                            "running",
-                            started_at,
-                            None,
+                            StreamedCommandRunUpdate {
+                                session_id: &delta_gateway_session_id,
+                                runtime_id: &delta_gateway_runtime_id,
+                                provider: &delta_gateway_provider,
+                                call_id: &delta_gateway_call_id,
+                                commands: &delta_commands,
+                                results: &live_results,
+                                status: "running",
+                                started_at,
+                                ended_at: None,
+                            },
                         ));
                     }
                     if delta_poll_stop_for_task.load(Ordering::SeqCst) {
@@ -817,17 +819,17 @@ async fn call_runtime_streaming(
                     ));
             }
             results.extend(completed);
-            runtime.block_on(publish_streamed_command_run_update(
-                &gateway_session_id,
-                &gateway_runtime_id,
-                &gateway_provider,
-                &gateway_call_id,
-                &streamed_commands,
-                &results,
-                "running",
+            runtime.block_on(publish_streamed_command_run_update(StreamedCommandRunUpdate {
+                session_id: &gateway_session_id,
+                runtime_id: &gateway_runtime_id,
+                provider: &gateway_provider,
+                call_id: &gateway_call_id,
+                commands: &streamed_commands,
+                results: &results,
+                status: "running",
                 started_at,
-                None,
-            ));
+                ended_at: None,
+            }));
             if executor.is_halted() {
                 command_cancelled_for_task.store(true, Ordering::SeqCst);
                 break;
@@ -860,21 +862,21 @@ async fn call_runtime_streaming(
         }
         results.extend(completed);
         if !streamed_commands.is_empty() {
-            runtime.block_on(publish_streamed_command_run_update(
-                &gateway_session_id,
-                &gateway_runtime_id,
-                &gateway_provider,
-                &gateway_call_id,
-                &streamed_commands,
-                &results,
-                if halted_before_finish {
+            runtime.block_on(publish_streamed_command_run_update(StreamedCommandRunUpdate {
+                session_id: &gateway_session_id,
+                runtime_id: &gateway_runtime_id,
+                provider: &gateway_provider,
+                call_id: &gateway_call_id,
+                commands: &streamed_commands,
+                results: &results,
+                status: if halted_before_finish {
                     "error"
                 } else {
                     "completed"
                 },
                 started_at,
-                Some(Utc::now()),
-            ));
+                ended_at: Some(Utc::now()),
+            }));
         }
         if halted_before_finish {
             command_cancelled_for_task.store(true, Ordering::SeqCst);
@@ -1305,38 +1307,40 @@ fn command_run_live_delta_result(
     })
 }
 
-async fn publish_streamed_command_run_update(
-    session_id: &str,
-    runtime_id: &str,
-    provider: &serde_json::Value,
-    call_id: &str,
-    commands: &[serde_json::Value],
-    results: &[serde_json::Value],
-    status: &str,
+struct StreamedCommandRunUpdate<'a> {
+    session_id: &'a str,
+    runtime_id: &'a str,
+    provider: &'a serde_json::Value,
+    call_id: &'a str,
+    commands: &'a [serde_json::Value],
+    results: &'a [serde_json::Value],
+    status: &'a str,
     started_at: DateTime<Utc>,
     ended_at: Option<DateTime<Utc>>,
-) {
+}
+
+async fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>) {
     if gateway_callbacks_disabled() {
         return;
     }
 
-    let target_session_id = gateway_callback_session_id(session_id);
+    let target_session_id = gateway_callback_session_id(update.session_id);
     let endpoint = format!(
         "{}/session/{target_session_id}/message/agent",
         gateway_callback_base_url()
     );
-    let input = serde_json::json!({ "commands": commands });
+    let input = serde_json::json!({ "commands": update.commands });
     let output = serde_json::json!({
         "streamed_command_run_result": {
-            "results": results,
+            "results": update.results,
         }
     });
-    let success = match status {
+    let success = match update.status {
         "completed" => serde_json::Value::Bool(true),
         "error" => serde_json::Value::Bool(false),
         _ => serde_json::Value::Null,
     };
-    let error_value = if status == "error" {
+    let error_value = if update.status == "error" {
         serde_json::Value::String("command_run stream halted".to_string())
     } else {
         serde_json::Value::Null
@@ -1348,29 +1352,29 @@ async fn publish_streamed_command_run_update(
         "output": output,
         "success": success,
         "error": error_value,
-        "runtime_id": runtime_id,
-        "session_id": session_id,
-        "provider": provider,
+        "runtime_id": update.runtime_id,
+        "session_id": update.session_id,
+        "provider": update.provider,
     });
     let mut time = serde_json::Map::new();
     time.insert(
         "start".to_string(),
-        serde_json::Value::Number(started_at.timestamp_millis().into()),
+        serde_json::Value::Number(update.started_at.timestamp_millis().into()),
     );
-    if let Some(ended_at) = ended_at {
+    if let Some(ended_at) = update.ended_at {
         time.insert(
             "end".to_string(),
             serde_json::Value::Number(ended_at.timestamp_millis().into()),
         );
     }
     let state = serde_json::json!({
-        "status": status,
+        "status": update.status,
         "input": input,
         "output": output,
         "streamed_command_run_result": {
-            "results": results,
+            "results": update.results,
         },
-        "title": if status == "completed" {
+        "title": if update.status == "completed" {
             "Called `command_run`"
         } else {
             "Calling `command_run`"
@@ -1382,10 +1386,10 @@ async fn publish_streamed_command_run_update(
         "reply_message": "",
         "new_learning": "",
         "media": [],
-        "runtime_id": runtime_id,
+        "runtime_id": update.runtime_id,
         "tool_call": {
             "tool_name": COMMAND_RUN_TOOL_NAME,
-            "call_id": call_id,
+            "call_id": update.call_id,
             "state": state,
             "metadata": metadata,
         }
@@ -1402,8 +1406,8 @@ async fn publish_streamed_command_run_update(
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             warn!(
-                session_id = %session_id,
-                runtime_id = %runtime_id,
+                session_id = %update.session_id,
+                runtime_id = %update.runtime_id,
                 gateway_status = %status,
                 body = %body,
                 "failed to publish streamed command_run update"
@@ -1411,8 +1415,8 @@ async fn publish_streamed_command_run_update(
         }
         Err(error) => {
             warn!(
-                session_id = %session_id,
-                runtime_id = %runtime_id,
+                session_id = %update.session_id,
+                runtime_id = %update.runtime_id,
                 error = %error,
                 "failed to call gateway for streamed command_run update"
             );

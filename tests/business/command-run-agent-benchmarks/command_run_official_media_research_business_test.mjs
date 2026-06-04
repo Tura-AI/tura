@@ -59,7 +59,7 @@ function envFlag(name) {
 }
 
 function turaCliAgentName(id) {
-  return id.includes("fast") ? "coding_agent_fast" : "coding_agent"
+  return id.includes("fast") ? "fast" : "coding_agent"
 }
 
 function run(command, args, options = {}) {
@@ -781,3 +781,4 @@ main().catch((error) => {
   console.error(error)
   process.exit(1)
 })
+

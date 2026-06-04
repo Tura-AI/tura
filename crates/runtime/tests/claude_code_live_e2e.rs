@@ -12,10 +12,9 @@
 //! TURA_CLAUDE_CODE_E2E=1 cargo test -p runtime --test claude_code_live_e2e -- --nocapture
 //! ```
 //!
-//! Credentials are read from the process env first, then from the provider
-//! crate's `.env` (`crates/provider/.env`). The OAuth subscription token
-//! (`CLAUDE_CODE_OAUTH_TOKEN`) is preferred; the provider layer auto-detects the
-//! route from the token prefix.
+//! Credentials are read from the process env first, then from the project root
+//! `.env`. The OAuth subscription token (`CLAUDE_CODE_OAUTH_TOKEN`) is
+//! preferred; the provider layer auto-detects the route from the token prefix.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -46,7 +45,7 @@ fn claude_code_gateway_session_tool_calling_e2e() {
 
     let Some((token_env, token)) = resolve_credential() else {
         eprintln!(
-            "SKIP: no CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in env or crates/provider/.env"
+            "SKIP: no CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in env or project root .env"
         );
         return;
     };
@@ -79,7 +78,7 @@ fn claude_code_gateway_session_tool_calling_e2e() {
 
     eprintln!("final session state: {:?}", result.session.state);
     assert_eq!(result.agents.len(), 1);
-    assert_eq!(result.agents[0].agent_name, "coding_agent_planning");
+    assert_eq!(result.agents[0].agent_name, "thinking-planning");
     assert_eq!(
         result.session.state,
         SessionState::Completed,
@@ -97,7 +96,7 @@ fn claude_code_gateway_session_tool_calling_e2e() {
 }
 
 /// Prefer the OAuth subscription token, then the API key. Read from the process
-/// env first, then fall back to the provider crate's `.env`.
+/// env first, then fall back to the project root `.env`.
 fn resolve_credential() -> Option<(&'static str, String)> {
     for key in ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"] {
         if let Some(value) = env_or_dotenv(key) {
@@ -113,7 +112,7 @@ fn env_or_dotenv(key: &str) -> Option<String> {
     if let Ok(value) = std::env::var(key) {
         return Some(value);
     }
-    let dotenv = provider_dotenv_path();
+    let dotenv = root_dotenv_path();
     let contents = std::fs::read_to_string(dotenv).ok()?;
     for line in contents.lines() {
         let line = line.trim();
@@ -130,11 +129,11 @@ fn env_or_dotenv(key: &str) -> Option<String> {
     None
 }
 
-fn provider_dotenv_path() -> PathBuf {
-    // This test lives at crates/runtime/tests; the provider crate is a sibling.
+fn root_dotenv_path() -> PathBuf {
+    // This test crate lives under crates/runtime; the project root is two levels up.
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
-        .join("provider")
+        .join("..")
         .join(".env")
 }
 

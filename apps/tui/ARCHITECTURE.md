@@ -96,65 +96,68 @@ Keep DTOs local to `apps/tui/src/types` at first. The gateway JSON shape is the
 client contract; generated SDK types should only be introduced after the gateway
 has stable OpenAPI for these routes.
 
-## Proposed Layout
+## Current Layout
 
 ```text
 apps/tui/
   ARCHITECTURE.md
+  README.md
   package.json
   tsconfig.json
+  scripts/
+    web-terminal.mjs
+  e2e/
+    tui_gateway_cli_e2e.mjs
   src/
     index.ts
     cli.ts
     gateway/
       client.ts
-      events.ts
-      errors.ts
       directory.ts
+      errors.ts
+      events.ts
     commands/
+      agent.ts
+      command-registry.ts
+      completion.ts
+      config-values.ts
+      config.ts
+      file.ts
+      gateway.ts
+      inspect.ts
+      persona.ts
+      project.ts
+      provider.ts
       run.ts
       resume.ts
       session.ts
-      config.ts
-      provider.ts
-      permission.ts
-      command.ts
-      status.ts
-      completion.ts
     output/
+      final-result.ts
+      help.ts
       human.ts
       json.ts
       ndjson.ts
-      final-result.ts
     tui/
-      app.tsx
-      event-loop.ts
+      app.ts
+      capabilities.ts
       reducer.ts
-      keymap.ts
-      render.tsx
-      widgets/
-        transcript.tsx
-        composer.tsx
-        status.tsx
-        sessions.tsx
-        permissions.tsx
-        models.tsx
-        diff.tsx
+      render.ts
     types/
+      agent.ts
+      common.ts
       config.ts
-      session.ts
-      message.ts
       event.ts
+      gateway.ts
       provider.ts
       permission.ts
+      session.ts
+    locales/
+      en.json
+      zh-CN.json
 ```
 
-The initial non-interactive implementation only needs `cli.ts`,
-`gateway/client.ts`, `gateway/events.ts`, `output/*`, `commands/run.ts`,
-`commands/resume.ts`, `commands/session.ts`, `commands/provider.ts`,
-`commands/permission.ts`, `commands/command.ts`, `commands/status.ts`, and the
-`types/` files needed to describe gateway responses. The `tui/` module can be
-introduced after the command path is stable.
+Localized user-facing runtime strings may live under `src/locales/`. Repository
+documentation remains English.
 
 ## Gateway-Only Communication
 
@@ -365,7 +368,7 @@ The CLI should send a frontend-compatible prompt payload to `/prompt_async`:
     }
   ],
   "model": "openai/gpt-5.5",
-  "agent": "coding_agent",
+  "agent": "thinking-planning",
   "source": "cli"
 }
 ```

@@ -57,7 +57,7 @@ mod tests {
     #[test]
     fn identity_includes_dynamic_context_as_first_system_payload() {
         let identity = agent_identity(
-            "Coding Agent Planning",
+            "Thinking Planning",
             "Tura User",
             &["tura".to_string()],
             "gpt-5.5",
@@ -65,7 +65,7 @@ mod tests {
             "zh-CN",
         );
 
-        assert!(identity.contains("You are Coding Agent Planning"));
+        assert!(identity.contains("You are Thinking Planning"));
         assert!(identity.contains("persona: tura"));
         assert!(identity.contains("Current user: Tura User"));
         assert!(identity.contains("Runtime model: gpt-5.5"));

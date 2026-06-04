@@ -2,13 +2,16 @@
 
 This file is the fixed non-provider coverage map for the current-compatible
 `command_run` path. Every row points to a concrete passing local test. Long E2E
-runs call `scripts/test-command-run-robustness.ps1 -NoBuild` as a preflight
-whenever a Tura agent is requested.
+runs execute the same cargo tests directly as a preflight whenever a Tura agent
+is requested.
 
 ## Run
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-command-run-robustness.ps1
+cargo test -p code-tools --test command_run_current_flow -- --nocapture
+cargo test -p code-tools-suite --lib tool_router::execute_tool::tests::tool_output_success_follows_current_style_command_run_results -- --nocapture
+cargo test -p tura-llm-rust command_run_streaming --lib -- --nocapture
+cargo test -p tura-llm-rust codex_event_tool_calls --lib -- --nocapture
 ```
 
 ## Tool Architecture And Routing

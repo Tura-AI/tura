@@ -48,7 +48,7 @@ fn coding_agent_can_call_command_run_tool_e2e() {
     .expect("coding agent should complete the command_run e2e flow");
 
     assert_eq!(result.agents.len(), 1);
-    assert_eq!(result.agents[0].agent_name, "coding_agent_planning");
+    assert_eq!(result.agents[0].agent_name, "thinking-planning");
     assert_eq!(result.session.state, SessionState::Completed);
 
     let tool_results = tool_results(&result.session.session_log);

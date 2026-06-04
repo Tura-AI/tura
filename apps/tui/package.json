@@ -11,6 +11,8 @@
     "web": "node ./scripts/web-terminal.mjs",
     "test": "npm run build && node --test \"dist/**/*.test.js\"",
     "test:e2e": "npm run build && node ./e2e/tui_gateway_cli_e2e.mjs",
+    "test:business": "node ../../tests/business/tui_real_gateway_business_test.mjs",
+    "test:business:snake": "node ../../tests/business/tui_snake_playwright_business_test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node ./dist/index.js"
   },

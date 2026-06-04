@@ -18,27 +18,35 @@ fn coding_agents_inject_persona_style_then_agent_prompt() {
 
     for (agent_name, agent_prompt_path) in [
         (
-            "coding_agent_planning",
+            "thinking",
             project_root
                 .join("agents")
                 .join("src")
-                .join("coding_agent_planning")
+                .join("thinking")
                 .join("prompt.md"),
         ),
         (
-            "coding_agent_fast",
+            "thinking-planning",
             project_root
                 .join("agents")
                 .join("src")
-                .join("coding_agent_fast")
+                .join("thinking-planning")
                 .join("prompt.md"),
         ),
         (
-            "coding_agent_instant",
+            "fast",
             project_root
                 .join("agents")
                 .join("src")
-                .join("coding_agent_instant")
+                .join("fast")
+                .join("prompt.md"),
+        ),
+        (
+            "fast-text-only",
+            project_root
+                .join("agents")
+                .join("src")
+                .join("fast-text-only")
                 .join("prompt.md"),
         ),
     ] {
@@ -97,7 +105,7 @@ fn find_project_root() -> PathBuf {
             candidate
                 .join("agents")
                 .join("src")
-                .join("coding_agent")
+                .join("thinking-planning")
                 .join("agent_config.json")
                 .exists()
         })

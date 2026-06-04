@@ -14,16 +14,46 @@ const shell = process.platform === "win32" ? "powershell.exe" : "bash";
 const nodeBin = process.execPath;
 const tuiBin = path.join(appRoot, "dist", "index.js");
 
-let term;
-const clients = new Set();
+const profiles = new Map([
+  ["plain", { title: "Tura TUI Plain / Safe", path: "/plain", args: ["--plain"], termName: "dumb", forceColor: "0", clients: new Set(), term: undefined }],
+  ["ansi", { title: "Tura TUI ANSI / Default", path: "/ansi", args: [], termName: "vt100", forceColor: "1", clients: new Set(), term: undefined }],
+  ["rich", { title: "Tura TUI Rich / Modern", path: "/rich", args: ["--rich"], termName: "xterm-256color", forceColor: "1", clients: new Set(), term: undefined }],
+]);
 
-function html() {
+function indexHtml() {
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Tura TUI</title>
+  <title>Tura TUI terminal profiles</title>
+  <style>
+    html, body { height: 100%; margin: 0; background: #111417; color: #edf0f2; font-family: system-ui, sans-serif; }
+    main { max-width: 720px; padding: 32px; }
+    a { color: #7dd3fc; display: block; margin: 12px 0; font-size: 18px; }
+    code { color: #facc15; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Tura TUI terminal profiles</h1>
+    <p>Gateway: <code>${escapeHtml(gatewayUrl)}</code></p>
+    <p>Workspace: <code>${escapeHtml(workspace)}</code></p>
+    <a href="/plain">L1 Plain / Safe</a>
+    <a href="/ansi">L2 ANSI / Default</a>
+    <a href="/rich">L3 Rich / Modern</a>
+  </main>
+</body>
+</html>`;
+}
+
+function html(profileId, profile) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(profile.title)}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
   <style>
     html, body { height: 100%; margin: 0; background: #111417; }
@@ -48,7 +78,8 @@ function html() {
     term.loadAddon(fit);
     term.open(document.getElementById("terminal"));
     fit.fit();
-    const send = (body) => fetch("/input", {
+    const profile = ${JSON.stringify(profileId)};
+    const send = (body) => fetch("/" + profile + "/input", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body)
@@ -58,7 +89,7 @@ function html() {
       fit.fit();
       send({ resize: { cols: term.cols, rows: term.rows } });
     });
-    const events = new EventSource("/events");
+    const events = new EventSource("/" + profile + "/events");
     events.onmessage = (event) => term.write(JSON.parse(event.data));
     events.addEventListener("ready", () => send({ resize: { cols: term.cols, rows: term.rows } }));
     events.onerror = () => term.write("\\r\\n[web terminal disconnected]\\r\\n");
@@ -87,52 +118,71 @@ function readJson(req) {
   });
 }
 
-function broadcast(data) {
+function broadcast(profile, data) {
   const payload = `data: ${JSON.stringify(data)}\n\n`;
-  for (const res of clients) res.write(payload);
+  for (const res of profile.clients) res.write(payload);
 }
 
-function startTui() {
-  if (term) return term;
-  term = pty.spawn(nodeBin, [tuiBin, "--gateway-url", gatewayUrl, "--cwd", workspace], {
-    name: "xterm-256color",
+function startTui(profile) {
+  if (profile.term) return profile.term;
+  profile.term = pty.spawn(nodeBin, [tuiBin, "--gateway-url", gatewayUrl, "--cwd", workspace, ...profile.args], {
+    name: profile.termName,
     cols: 120,
     rows: 36,
     cwd: repoRoot,
     env: {
       ...process.env,
-      FORCE_COLOR: "1",
+      FORCE_COLOR: profile.forceColor,
+      TERM: profile.termName,
+      TERM_PROGRAM: profile.args.includes("--rich") ? "vscode" : "",
       TURA_GATEWAY_URL: gatewayUrl,
       TURA_CWD: workspace,
     },
     shell,
   });
-  term.onData((data) => broadcast(data));
-  term.onExit(({ exitCode }) => {
-    broadcast(`\r\n[tura tui exited with code ${exitCode}]\r\n`);
-    term = undefined;
+  profile.term.onData((data) => broadcast(profile, data));
+  profile.term.onExit(({ exitCode }) => {
+    broadcast(profile, `\r\n[tura tui exited with code ${exitCode}]\r\n`);
+    profile.term = undefined;
   });
-  return term;
+  return profile.term;
+}
+
+function profileFromPath(url) {
+  const id = url.pathname.split("/").filter(Boolean)[0] ?? "";
+  return profiles.get(id);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", "http://127.0.0.1");
-  if (req.method === "GET" && url.pathname === "/") return send(res, html());
-  if (req.method === "GET" && url.pathname === "/events") {
+  if (req.method === "GET" && url.pathname === "/") return send(res, indexHtml());
+  const profile = profileFromPath(url);
+  if (!profile) return send(res, { error: "not found" }, 404);
+  const leaf = `/${url.pathname.split("/").filter(Boolean).slice(1).join("/")}`;
+  if (req.method === "GET" && leaf === "/") return send(res, html(url.pathname.split("/").filter(Boolean)[0], profile));
+  if (req.method === "GET" && leaf === "/events") {
     res.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
       connection: "keep-alive",
     });
-    clients.add(res);
+    profile.clients.add(res);
     res.write("event: ready\ndata: ready\n\n");
-    startTui();
-    req.on("close", () => clients.delete(res));
+    startTui(profile);
+    req.on("close", () => profile.clients.delete(res));
     return;
   }
-  if (req.method === "POST" && url.pathname === "/input") {
+  if (req.method === "POST" && leaf === "/input") {
     const body = await readJson(req);
-    const active = startTui();
+    const active = startTui(profile);
     if (typeof body.data === "string") active.write(body.data);
     if (body.resize) active.resize(Number(body.resize.cols) || 120, Number(body.resize.rows) || 36);
     return send(res, { ok: true });

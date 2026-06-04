@@ -63,6 +63,7 @@ import {
   readBooleanSearchParam,
   readConfigBoolean,
   readConfigString,
+  defaultWorkspaceDirectory,
   readMainTabSearchParam,
   readSearchParam,
   samePath,
@@ -345,8 +346,23 @@ export function App() {
           safe(() => client.productIssues(), []),
           safe(() => client.productProjects(), []),
         ]);
-      const directory =
-        paths.directory || currentProject.project?.worktree || paths.worktree;
+      const directory = defaultWorkspaceDirectory({
+        ...paths,
+        directory:
+          paths.directory || currentProject.project?.worktree || paths.worktree,
+      });
+      const workspaceProjects = projects.some((project) =>
+        samePath(project.worktree, directory),
+      )
+        ? projects
+        : [
+            {
+              id: directory,
+              name: shortWorkspaceLabel(directory),
+              worktree: directory,
+            },
+            ...projects,
+          ];
       const scoped = client.withDirectory(directory);
       const [
         sessions,
@@ -412,7 +428,7 @@ export function App() {
         workspaceConfig,
         workspaceConfigDraft: recordToDraft(workspaceConfig),
         currentProject,
-        projects,
+        projects: workspaceProjects,
         directory,
         sessions: mergeSessions(sessions, previous.sessions),
         providers,

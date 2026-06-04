@@ -10,7 +10,7 @@ use crate::state_machine::agent_management::{
 use crate::state_machine::session_management::SessionManagement;
 use tura_agents::coding_agent::CodingAgent;
 
-const CODING_AGENT_NAME: &str = "coding_agent_planning";
+const CODING_AGENT_NAME: &str = "thinking-planning";
 const TOOLS_DIR: &str = "crates/tools/src";
 const DEFAULT_PERSONA_NAME: &str = "tura";
 

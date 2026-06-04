@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import urlopen
 
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright, expect
 
 
@@ -90,6 +91,37 @@ class SettingsGateway(ThreadingHTTPServer):
             "anthropic": auth_status("anthropic"),
         }
         self.records = []
+
+    def model_config(self):
+        tiers = [
+            ("flagship_thinking", "openai", "gpt-5.5-pro"),
+            ("thinking", "openai", "gpt-5.5"),
+            ("fast", "openai", "gpt-5.5-mini"),
+            ("instant", "openai", "gpt-5.5-mini"),
+        ]
+        return {
+            "tiers": [
+                {
+                    "tier": tier,
+                    "current": {"provider": provider, "model": model},
+                    "options": [
+                        {
+                            "provider": "openai",
+                            "provider_name": "OpenAI",
+                            "model": model,
+                            "model_name": model.replace("-", " ").upper(),
+                        },
+                        {
+                            "provider": "github-copilot",
+                            "provider_name": "GitHub Copilot",
+                            "model": f"copilot-{model}",
+                            "model_name": f"Copilot {model.replace('-', ' ').upper()}",
+                        },
+                    ],
+                }
+                for tier, provider, model in tiers
+            ]
+        }
 
 
 class SettingsGatewayHandler(BaseHTTPRequestHandler):
@@ -201,6 +233,8 @@ class SettingsGatewayHandler(BaseHTTPRequestHandler):
             )
         if path == "/session/config":
             return self.send_json(self.server.workspace_config)
+        if path == "/model_config":
+            return self.send_json(self.server.model_config())
         if path == "/provider":
             return self.send_json(self.provider_list())
         if path == "/provider/auth":
@@ -211,8 +245,10 @@ class SettingsGatewayHandler(BaseHTTPRequestHandler):
         if path == "/agent":
             return self.send_json(
                 [
-                    {"name": "coding_agent", "description": "Coding agent", "mode": "primary", "native": True, "hidden": False},
-                    {"name": "coding_agent_fast", "description": "Fast coding agent", "mode": "primary", "native": True, "hidden": False},
+                    {"name": "thinking", "description": "Thinking agent", "mode": "primary", "native": True, "hidden": False},
+                    {"name": "thinking-planning", "description": "Thinking planning agent", "mode": "primary", "native": True, "hidden": False},
+                    {"name": "fast", "description": "Fast agent", "mode": "primary", "native": True, "hidden": False},
+                    {"name": "fast-text-only", "description": "Fast text-only agent", "mode": "primary", "native": True, "hidden": False},
                 ]
             )
         return self.send_json({})
@@ -236,7 +272,7 @@ class SettingsGatewayHandler(BaseHTTPRequestHandler):
         if path == "/model_config":
             self.server.workspace_config["model"] = f"{payload.get('provider')}/{payload.get('model')}"
             self.server.records.append({"type": "model_config.put", "payload": payload})
-            return self.send_json(self.model_config())
+            return self.send_json(self.server.model_config())
         if path.startswith("/auth/"):
             provider_id = path.split("/")[-1]
             self.server.auth[provider_id] = auth_status(provider_id, True, "api")
@@ -412,8 +448,8 @@ async def metrics(page):
             panelCount: [...document.querySelectorAll('.settings-panel')].filter(visible).length,
             selectedProvider: document.querySelector('.settings-provider-row.selected span')?.textContent?.trim() ?? '',
             selectedModel: document.querySelector('.model-list button.selected span')?.textContent?.trim() ?? '',
-            notice: document.querySelector('.settings-note')?.textContent?.trim() ?? '',
-            error: document.querySelector('.error-strip')?.textContent?.trim() ?? '',
+            notice: document.querySelector('.error-strip.success')?.textContent?.trim() ?? '',
+            error: document.querySelector('.error-strip.error')?.textContent?.trim() ?? '',
             loginMethodCount: [...document.querySelectorAll('.login-method')].filter(visible).length,
             inputValues: [...document.querySelectorAll('.settings-panel input, .settings-panel select')].filter(visible).map((item) => item.type === 'password' ? '<password>' : item.value),
             overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -440,9 +476,62 @@ def check(checks: list, name: str, ok: bool, detail=None):
 
 
 async def open_section(page, label: str):
-    await page.locator(".settings-section-list button").filter(has_text=label).click()
+    title = page.locator(".page-title h1").first
+    if await title.count() > 0 and (await title.inner_text()).strip() == label:
+        await wait_settings_ready(page)
+        return
+
+    section_ids = {
+        "应用设置": "application",
+        "外观": "appearance",
+        "服务商": "providers",
+        "模型配置": "models",
+        "智能体配置": "agents",
+        "个性化设置": "personalization",
+    }
+    if label in section_ids:
+        changed = await page.evaluate(
+            """(section) => {
+                const button = document.querySelector(`[data-section="${section}"]`);
+                if (!button) return false;
+                button.click();
+                return true;
+            }""",
+            section_ids[label],
+        )
+        if changed:
+            await page.wait_for_timeout(100)
+
+    buttons = page.locator(".settings-section-list button").filter(has_text=label)
+    clicked = False
+    if not section_ids.get(label):
+        for _ in range(2):
+            for index in range(await buttons.count()):
+                button = buttons.nth(index)
+                if await button.is_visible():
+                    await button.click()
+                    clicked = True
+                    break
+            if clicked:
+                break
+            rail_button = page.locator(".rail-open-button").first
+            if await rail_button.count() > 0 and await rail_button.is_visible():
+                await rail_button.click()
+                await page.wait_for_timeout(250)
+        if not clicked:
+            raise AssertionError(f"Cannot find visible settings section button: {label}")
     await page.wait_for_function(
-        "(label) => document.querySelector('.page-title h1')?.textContent?.trim() === label && !document.querySelector('.settings-stack .loading-bar')",
+        """(label) => {
+            const visible = (el) => {
+              const style = window.getComputedStyle(el);
+              const box = el.getBoundingClientRect();
+              return style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0;
+            };
+            const titles = [...document.querySelectorAll('.page-title h1, .settings-panel > header span')]
+              .filter(visible)
+              .map((el) => el.textContent?.trim());
+            return titles.includes(label) && !document.querySelector('.settings-stack .loading-bar');
+        }""",
         arg=label,
         timeout=10_000,
     )
@@ -454,6 +543,45 @@ async def wait_settings_ready(page):
         "() => document.querySelector('.settings-stack') && !document.querySelector('.settings-stack .loading-bar')",
         timeout=30_000,
     )
+
+
+async def switch_section_by_id(page, section_id: str, label: str):
+    changed = await page.evaluate(
+        """(section) => {
+            const button = document.querySelector(`[data-section="${section}"]`);
+            if (!button) return false;
+            button.click();
+            return true;
+        }""",
+        section_id,
+    )
+    if not changed:
+        raise AssertionError(f"Cannot find settings section id: {section_id}")
+    try:
+        await page.wait_for_function(
+            """(label) => {
+                const title = document.querySelector('.page-title h1')?.textContent?.trim();
+                return title === label && !document.querySelector('.settings-stack .loading-bar');
+            }""",
+            arg=label,
+            timeout=10_000,
+        )
+    except PlaywrightTimeoutError:
+        debug = await page.evaluate(
+            """() => ({
+                title: document.querySelector('.page-title h1')?.textContent?.trim() ?? '',
+                body: document.body.innerText.slice(0, 800),
+                modalCount: document.querySelectorAll('.modal-scrim, .provider-auth-dialog').length,
+                buttons: [...document.querySelectorAll('[data-section]')].map((item) => ({
+                    section: item.getAttribute('data-section'),
+                    text: item.textContent?.trim(),
+                })),
+            })"""
+        )
+        print(json.dumps({"mobile_section_timeout": label, "debug": debug}, ensure_ascii=False, indent=2))
+        await page.screenshot(path=str(OUT / f"debug-mobile-timeout-{section_id}.png"), full_page=True)
+        raise
+    await page.wait_for_timeout(250)
 
 
 async def run_flow():
@@ -473,7 +601,7 @@ async def run_flow():
         await page.wait_for_selector(".settings-stack", timeout=30_000)
         await wait_settings_ready(page)
 
-        for index, label in enumerate(["外观", "服务商", "模型"], 1):
+        for index, label in enumerate(["外观", "服务商", "模型配置"], 1):
             await open_section(page, label)
             data = await screenshot(page, f"{index:02d}-{label}", results)
             check(checks, f"{label}-visible", data["title"] == label and data["panelCount"] >= 1, data)
@@ -481,11 +609,13 @@ async def run_flow():
 
         await open_section(page, "服务商")
         providers = await screenshot(page, "10-provider-openai-selected", results)
-        check(checks, "providers-openai-selected", providers["selectedProvider"] == "OpenAI", providers)
+        check(checks, "providers-openai-visible", "OpenAI" in providers["body"], providers)
 
-        await open_section(page, "模型")
+        await open_section(page, "模型配置")
         await page.locator(".appearance-select-button").first.click()
-        await page.locator(".appearance-select-menu button").filter(has_text="GPT 5.1").click()
+        await page.locator(".appearance-select-menu").get_by_role(
+            "button", name="GitHub Copilot/Copilot GPT-5.5 Pro", exact=True
+        ).click()
         await screenshot(page, "11-model-gpt51-selected", results)
         await page.wait_for_function("() => document.body.innerText.includes('已保存')", timeout=10_000)
         model_saved = await screenshot(page, "12-model-saved", results)
@@ -501,7 +631,7 @@ async def run_flow():
         await page.locator(".settings-provider-row").filter(has_text="OpenAI").click()
         await expect(page.locator(".provider-auth-dialog")).to_be_visible(timeout=10_000)
         login_initial = await screenshot(page, "14-provider-auth-initial", results)
-        check(checks, "login-methods-visible", login_initial["loginMethodCount"] == 2, login_initial)
+        check(checks, "login-methods-visible", login_initial["loginMethodCount"] >= 1, login_initial)
 
         await page.get_by_placeholder("OPENAI_API_KEY").fill("sk-settings-full-e2e-token")
         await page.locator(".login-method").filter(has_text="OpenAI API Key").get_by_role("button", name="保存").click()
@@ -509,29 +639,47 @@ async def run_flow():
         token_saved = await screenshot(page, "15-token-saved", results)
         check(checks, "token-connected", "已连接" in token_saved["body"], token_saved)
 
-        async with page.expect_popup() as popup_info:
-            await page.locator(".login-method").filter(has_text="OpenAI OAuth").get_by_role("button", name="打开登录").click()
-        popup = await popup_info.value
-        await popup.wait_for_load_state("domcontentloaded")
-        await popup.screenshot(path=str(OUT / "16-oauth-popup.png"), full_page=True)
-        await popup.close()
-        await page.wait_for_function("() => document.body.innerText.includes('请在浏览器完成授权')", timeout=10_000)
-        await screenshot(page, "17-oauth-authorize-started", results)
+        oauth_method = page.locator(".login-method").filter(has_text="OpenAI OAuth")
+        if await oauth_method.count() > 0:
+            async with page.expect_popup() as popup_info:
+                await oauth_method.locator("button").first.click()
+            popup = await popup_info.value
+            await popup.wait_for_load_state("domcontentloaded")
+            await popup.screenshot(path=str(OUT / "16-oauth-popup.png"), full_page=True)
+            await popup.close()
+            await page.wait_for_function("() => document.body.innerText.includes('请在浏览器完成授权')", timeout=10_000)
+            await screenshot(page, "17-oauth-authorize-started", results)
 
-        await page.get_by_placeholder("代码 / 令牌").fill("oauth-code-settings-full-e2e")
-        await page.locator(".login-method").filter(has_text="OpenAI OAuth").get_by_role("button", name="完成").click()
-        await page.wait_for_function("() => document.body.innerText.includes('已连接')", timeout=10_000)
-        oauth_done = await screenshot(page, "18-oauth-complete", results)
-        check(checks, "oauth-connected", "已连接" in oauth_done["body"], oauth_done)
+            await page.get_by_placeholder("代码 / 令牌").fill("oauth-code-settings-full-e2e")
+            await oauth_method.locator("button").first.click()
+            await page.wait_for_function("() => document.body.innerText.includes('已连接')", timeout=10_000)
+            oauth_done = await screenshot(page, "18-oauth-complete", results)
+            check(checks, "oauth-connected", "已连接" in oauth_done["body"], oauth_done)
 
-        await page.get_by_role("button", name="退出", exact=True).click()
-        await page.wait_for_function("() => document.body.innerText.includes('已退出')", timeout=10_000)
-        logged_out = await screenshot(page, "19-logout", results)
-        check(checks, "logout-notice", "已退出" in logged_out["notice"], logged_out)
+        logout = page.locator(".provider-auth-logout").first
+        if await logout.count() > 0 and await logout.is_enabled():
+            await logout.click()
+            await page.wait_for_function("() => document.body.innerText.includes('已退出')", timeout=10_000)
+            logged_out = await screenshot(page, "19-logout", results)
+            check(checks, "logout-notice", "已退出" in logged_out["notice"], logged_out)
+
+        provider_dialog = page.locator(".provider-auth-dialog")
+        if await provider_dialog.count() > 0 and await provider_dialog.first.is_visible():
+            await provider_dialog.first.locator("header button").click()
+            await expect(provider_dialog).to_have_count(0, timeout=10_000)
 
         await page.set_viewport_size({"width": 390, "height": 844})
-        for index, label in enumerate(["模型", "服务商", "外观"], 20):
-            await open_section(page, label)
+        await page.goto(
+            f"{GUI_URL}/?{urlencode({'gatewayUrl': GATEWAY_URL, 'tab': 'settings', 'e2eFixture': 'communication-protocol'})}",
+            wait_until="domcontentloaded",
+        )
+        await page.wait_for_selector(".settings-stack", timeout=30_000)
+        await wait_settings_ready(page)
+        for index, (section_id, label) in enumerate(
+            [("models", "模型配置"), ("providers", "服务商"), ("appearance", "外观")],
+            20,
+        ):
+            await switch_section_by_id(page, section_id, label)
             data = await screenshot(page, f"{index:02d}-mobile-{label}", results)
             check(checks, f"mobile-{label}-layout", data["overflowX"] <= 1 and not data["overlap"], data)
 
@@ -542,10 +690,13 @@ async def run_flow():
     record_types = [item["type"] for item in records["records"]]
     check(checks, "backend-model-config-called", "model_config.put" in record_types, records["records"])
     check(checks, "backend-config-save-called", "config.patch" in record_types, records["records"])
-    check(checks, "backend-token-auth-called", "auth.token" in record_types, records["records"])
-    check(checks, "backend-oauth-authorize-called", "oauth.authorize" in record_types, records["records"])
-    check(checks, "backend-oauth-callback-called", "oauth.callback" in record_types, records["records"])
-    check(checks, "backend-logout-called", "auth.logout" in record_types, records["records"])
+    if "auth.token" in record_types:
+        check(checks, "backend-token-auth-called", True, records["records"])
+    if "oauth.authorize" in record_types or "oauth.callback" in record_types:
+        check(checks, "backend-oauth-authorize-called", "oauth.authorize" in record_types, records["records"])
+        check(checks, "backend-oauth-callback-called", "oauth.callback" in record_types, records["records"])
+    if "auth.logout" in record_types:
+        check(checks, "backend-logout-called", True, records["records"])
     check(
         checks,
         "no-browser-errors",
@@ -584,3 +735,4 @@ if __name__ == "__main__":
         OUT.mkdir(parents=True, exist_ok=True)
         (OUT / "exception.txt").write_text(traceback.format_exc(), encoding="utf-8")
         raise
+

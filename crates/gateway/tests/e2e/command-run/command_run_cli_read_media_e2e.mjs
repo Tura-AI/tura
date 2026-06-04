@@ -100,7 +100,7 @@ function main() {
     "exec",
     "--json",
     "--agent-id",
-    "coding_agent_fast",
+    "fast",
     "-m",
     process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "gpt-5.1-codex",
     "-p",
@@ -146,3 +146,4 @@ function main() {
 }
 
 main()
+

@@ -148,7 +148,7 @@ function runTura(imagePath) {
     "--session-id",
     sessionId,
     "--agent-id",
-    "coding_agent_fast",
+    "fast",
     "-m",
     process.env.COMMAND_RUN_AGENT_TURA_MODEL || (model.includes("/") ? model : `openai/${model}`),
     "-p",
@@ -314,3 +314,4 @@ function main() {
 }
 
 main()
+

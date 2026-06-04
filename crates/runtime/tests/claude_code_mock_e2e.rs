@@ -65,7 +65,7 @@ fn claude_code_gateway_session_tool_calling_mock_e2e() {
     .expect("claude-code mock gateway session should complete");
 
     assert_eq!(result.agents.len(), 1);
-    assert_eq!(result.agents[0].agent_name, "coding_agent_planning");
+    assert_eq!(result.agents[0].agent_name, "thinking-planning");
     assert_eq!(
         result.session.state,
         SessionState::Completed,
@@ -246,14 +246,14 @@ fn handle_connection(stream: TcpStream, requests: &Arc<Mutex<Vec<Value>>>) {
 /// present, then produce final text.
 fn anthropic_stream_response(request: &Value) -> String {
     if request_has_tool_result(request) {
-        return sse_lines([
+        sse_lines([
             json!({"type":"message_start","message":{"id":"msg_final","type":"message","role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":30}}}),
             json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
             json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"claude-code mock e2e completed."}}),
             json!({"type":"content_block_stop","index":0}),
             json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":8}}),
             json!({"type":"message_stop"}),
-        ]);
+        ])
     } else {
         let input = json!({
             "commands": [{
@@ -263,14 +263,14 @@ fn anthropic_stream_response(request: &Value) -> String {
             }],
             "step_summary": "Run pwd via command_run as requested."
         });
-        return sse_lines([
+        sse_lines([
             json!({"type":"message_start","message":{"id":"msg_tool_use","type":"message","role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":24}}}),
             json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_pwd","name":"command_run","input":{}}}),
             json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":input.to_string()}}),
             json!({"type":"content_block_stop","index":0}),
             json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":12}}),
             json!({"type":"message_stop"}),
-        ]);
+        ])
     }
 }
 

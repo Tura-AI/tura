@@ -155,7 +155,8 @@ async def main() -> None:
                 mobile_workbench_class or ""
             ), mobile_workbench_class
             rail_button = await rect(mobile, ".rail-open-button")
-            assert rail_button["display"] == "none", rail_button
+            assert rail_button["display"] != "none", rail_button
+            assert rail_button["x"] < 56 and rail_button["y"] < 56, rail_button
             await mobile.screenshot(path=OUT / "mobile-plan-panel-overlay.png")
 
             await browser.close()

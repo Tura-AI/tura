@@ -19,7 +19,7 @@ pub struct CodingAgent;
 
 impl CodingAgent {
     pub fn name() -> String {
-        "coding_agent_planning".to_string()
+        "thinking-planning".to_string()
     }
 
     pub fn provider() -> CodingAgentProviderConfig {
@@ -47,6 +47,6 @@ impl CodingAgent {
     }
 
     pub fn prompts() -> Vec<String> {
-        vec!["coding_agent_planning".to_string()]
+        vec!["thinking-planning".to_string()]
     }
 }
