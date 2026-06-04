@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180">
+  <rect width="320" height="180" rx="18" fill="#f4f4f2"/>
+  <path d="M42 128 L108 72 L152 110 L196 58 L278 128 Z" fill="#111111" opacity="0.88"/>
+  <circle cx="238" cy="48" r="18" fill="#8a8a84"/>
+  <text x="32" y="38" fill="#111111" font-family="Arial, sans-serif" font-size="18" font-weight="700">Tura preview</text>
+</svg>

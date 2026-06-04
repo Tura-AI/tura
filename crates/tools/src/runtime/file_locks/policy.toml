@@ -1,0 +1,4 @@
+read_paths = "shared"
+write_paths = "exclusive"
+workspace_write = "exclusive"
+lock_order = "sorted_canonical_workspace_relative_paths"

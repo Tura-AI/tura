@@ -1,0 +1,248 @@
+.workspace-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.workspace-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-disclosure {
+  display: inline-grid;
+  flex: 0 0 13px;
+  width: 13px;
+  height: 13px;
+  place-items: center;
+  color: var(--muted);
+  transition: transform 120ms ease;
+}
+
+.rail-disclosure.expanded {
+  transform: rotate(90deg);
+}
+
+.section-title {
+  margin: 0;
+  color: var(--muted);
+}
+
+button.section-title {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  color: var(--muted);
+}
+
+button.section-title > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.section-title .rail-disclosure {
+  justify-self: end;
+}
+
+button.section-title:hover,
+button.section-title:focus-visible {
+  background: var(--wash);
+}
+
+.workspace-row-wrap {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.workspace-actions {
+  position: absolute;
+  right: var(--space-1);
+  display: none;
+  gap: 2px;
+  background: var(--paper);
+}
+
+.workspace-row-wrap:hover .workspace-actions {
+  display: flex;
+}
+
+.workspace-actions > button,
+.workspace-menu > button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--muted);
+}
+
+.workspace-actions > button:hover,
+.workspace-menu > button:hover {
+  background: var(--wash);
+  color: var(--ink);
+}
+
+.workspace-menu {
+  position: relative;
+}
+
+.rail-menu {
+  position: absolute;
+  top: 28px;
+  right: 0;
+  z-index: 90;
+  display: grid;
+  gap: 2px;
+  width: max-content;
+  min-width: 188px;
+  max-width: min(240px, calc(100vw - var(--space-5)));
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+  box-shadow: var(--shadow-menu);
+}
+
+.rail-menu button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--font-ui);
+  text-align: left;
+}
+
+.rail-menu button:hover {
+  background: var(--wash);
+}
+
+.rail-menu button > svg,
+.rail-menu .tiny-icon {
+  justify-self: center;
+}
+
+.rail-menu button > span:not(.tiny-icon) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tiny-icon {
+  display: inline-grid;
+  width: 14px;
+  height: 14px;
+  place-items: center;
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+
+.workspace-tree {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: var(--space-2);
+  scrollbar-gutter: stable;
+}
+
+.tree-group + .tree-group {
+  margin-top: 2px;
+}
+
+.workspace-children {
+  gap: 2px;
+  margin: var(--space-1) 0 var(--space-3);
+}
+
+.child-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+  min-height: 36px;
+  padding-left: calc(var(--space-3) + (var(--depth, 0) * var(--tree-step)));
+  color: var(--ink);
+  font-weight: 430;
+}
+
+.tree-row-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-children .child-row {
+  font-size: var(--font-ui);
+}
+
+.workspace-children .file-tree-row {
+  padding-left: calc(var(--space-3) + (var(--file-depth, 0) * 2ch));
+}
+
+.workspace-children .session-row {
+  padding-left: calc(var(--space-3) + (var(--session-depth, 0) * 2ch));
+}
+
+.session-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.session-row small,
+.rail-more {
+  color: var(--muted);
+  font-size: var(--font-small);
+  font-weight: 430;
+}
+
+.session-rename-icon {
+  display: none;
+  color: var(--muted);
+}
+
+.session-row:hover .session-row-time,
+.session-row:hover .session-row-status {
+  display: none;
+}
+
+.session-row-status {
+  display: inline-grid;
+  justify-self: end;
+  overflow: visible;
+  place-items: center;
+}
+
+.session-row:hover .session-rename-icon {
+  display: block;
+  justify-self: end;
+}
+
+.rail-more {
+  text-align: left;
+}

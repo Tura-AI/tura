@@ -1,0 +1,205 @@
+@media (max-width: 640px) {
+  :root {
+    --rail: 0px;
+    --page-shell-padding-inline: var(--space-4);
+    --page-shell-padding-bottom: var(--space-4);
+  }
+
+  .workbench.settings-workbench:not(.rail-collapsed) {
+    grid-template-columns: minmax(156px, 38vw) minmax(0, 1fr);
+  }
+
+  .workbench.settings-workbench.rail-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rail {
+    display: none;
+  }
+
+  .rail.settings-mode {
+    display: grid;
+    min-width: 0;
+  }
+
+  .settings-rail {
+    padding: var(--space-3) var(--space-2);
+  }
+
+  .settings-canvas,
+  .settings-stack,
+  .settings-panel {
+    width: 100%;
+  }
+
+  .settings-stack {
+    max-width: none;
+  }
+
+  .settings-back,
+  .settings-section-list button {
+    min-height: 32px;
+    padding: 0 var(--space-2);
+    font-size: var(--font-small);
+  }
+
+  .product-workbench,
+  .plan-detail,
+  .conversation-view,
+  .files-view,
+  .settings-view {
+    height: 100vh;
+  }
+
+  .layered-page {
+    --page-edge-space: var(--space-4);
+    padding-right: 0;
+    padding-left: 0;
+  }
+
+  .rail-collapsed .product-workbench,
+  .rail-collapsed .plan-detail,
+  .rail-collapsed .conversation-view,
+  .rail-collapsed .files-view,
+  .rail-collapsed .settings-view {
+    padding-top: var(--page-title-top-space);
+  }
+
+  .plan-trigger-control {
+    width: fit-content;
+    max-width: calc(100% - var(--space-2));
+    margin-left: var(--space-2);
+  }
+
+  .plan-composer-tools {
+    gap: var(--space-3);
+  }
+
+  .plan-composer-tools .plan-trigger-control {
+    width: fit-content;
+    margin-left: 0;
+  }
+
+  .plan-trigger-button,
+  .plan-session-button {
+    width: 54px;
+    min-width: 54px;
+    height: 34px;
+    min-height: 34px;
+    flex: 0 0 54px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .plan-trigger-button span,
+  .plan-session-button span {
+    display: none;
+  }
+
+  .plan-trigger-button .agent-icon {
+    display: inline-flex;
+  }
+
+  .plan-session-menu,
+  .plan-trigger-menu {
+    width: min(260px, calc(100vw - 32px));
+  }
+
+  .agent-trigger-menu {
+    right: 0;
+    left: auto;
+    width: min(220px, calc(100vw - 32px));
+  }
+
+  @media (hover: none) {
+    .plan-trigger-button:hover,
+    .plan-session-button:hover {
+      background: transparent;
+    }
+  }
+
+  .conversation-grid {
+    gap: var(--space-4);
+  }
+
+  .conversation-view .transcript {
+    padding: 0;
+  }
+
+  .transcript-inner {
+    padding: var(--space-3) 0 var(--space-2);
+  }
+
+  .assistant-response {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+
+  .assistant-meta {
+    margin-left: 0;
+  }
+
+  .message-avatar-wrap {
+    width: 56px;
+    height: 56px;
+  }
+
+  .agent-avatar {
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
+  }
+
+  .tool-inspector {
+    width: min(
+      54vw,
+      var(--inspector-max-width, 680px),
+      max(var(--inspector-min-width, 320px), var(--inspector-width, 430px))
+    );
+    min-width: 0;
+  }
+
+  .conversation-view.inspector-open {
+    --inspector-reserved: min(
+      54vw,
+      var(--inspector-max-width, 680px),
+      max(var(--inspector-min-width, 320px), var(--inspector-width, 430px))
+    );
+  }
+
+  .message-user-shell {
+    max-width: min(100%, 320px);
+  }
+
+  .page-title h1 {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .field-row,
+  .provider-auth-state-row,
+  .provider-auth-receipt,
+  .provider-domain-filter-row,
+  .agent-settings-layout,
+  .login-method-controls,
+  .login-method-controls.oauth-controls {
+    grid-template-columns: 1fr;
+    gap: var(--space-2);
+    align-items: stretch;
+  }
+
+  .segmented button {
+    min-width: 0;
+    padding: 0 var(--space-1);
+  }
+
+  .settings-filter-segmented {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agent-list {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+}

@@ -1,0 +1,322 @@
+.plan-gantt,
+.plan-calendar {
+  min-height: 0;
+}
+
+.plan-timeline-grid {
+  position: relative;
+  display: grid;
+  align-content: start;
+  container-type: inline-size;
+  height: 100%;
+  overflow: hidden auto;
+  cursor: default;
+  --plan-left-width: clamp(132px, 24cqw, 180px);
+  --plan-right-width: 0px;
+  --plan-scale-height: 88px;
+  --plan-day-width: calc(
+    (100% - var(--plan-left-width) - var(--plan-right-width)) / var(--plan-days)
+  );
+}
+
+@container (max-width: 520px) {
+  .plan-timeline-grid {
+    --plan-left-width: 76px;
+    --plan-scale-height: 78px;
+  }
+}
+
+@media (max-width: 560px) {
+  .plan-schedule-datetime {
+    grid-template-columns: 1fr;
+  }
+
+  .plan-schedule-presets {
+    grid-template-columns: 1fr;
+  }
+
+  .plan-timeline-grid {
+    --plan-left-width: 76px;
+    --plan-scale-height: 78px;
+  }
+}
+
+.plan-timeline-scale,
+.plan-timeline-row {
+  display: grid;
+  grid-template-columns:
+    var(--plan-left-width)
+    repeat(var(--plan-days), var(--plan-day-width));
+  width: 100%;
+  min-width: 100%;
+}
+
+.plan-timeline-scale {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  grid-template-rows: 42px 46px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.plan-timeline-title {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  min-height: 42px;
+  padding: 0 var(--space-4);
+}
+
+.plan-timeline-left-head {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  display: flex;
+  grid-row: 2;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--space-2);
+  background: var(--paper);
+}
+
+.plan-gantt-view-toggle {
+  flex: 0 0 auto;
+}
+
+.plan-timeline-scale [data-plan-timeline-day] {
+  display: grid;
+  grid-row: 2;
+  gap: 2px;
+  align-content: center;
+  min-height: 46px;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: center;
+  cursor: grab;
+}
+
+.plan-timeline-scale strong {
+  color: var(--ink);
+  font-size: var(--font-ui);
+  font-weight: 520;
+}
+
+.plan-timeline-scale small {
+  font-size: var(--font-caption);
+}
+
+@container (max-width: 520px) {
+  .plan-timeline-scale {
+    grid-template-rows: 38px 40px;
+  }
+
+  .plan-timeline-left-head {
+    justify-content: center;
+    padding: 0 var(--space-1);
+  }
+
+  .plan-timeline-title {
+    min-height: 38px;
+    padding: 0 var(--space-2);
+  }
+
+  .plan-timeline-scale [data-plan-timeline-day] {
+    min-height: 40px;
+    padding: 3px 2px;
+  }
+
+  .plan-timeline-scale strong {
+    font-size: var(--font-small);
+  }
+
+  .plan-timeline-scale small {
+    font-size: var(--font-caption);
+    line-height: 1.1;
+  }
+
+  .plan-timeline-session {
+    padding: 0 var(--space-1);
+  }
+}
+
+.plan-timeline-row {
+  align-items: stretch;
+  min-height: 48px;
+  border-bottom: 1px solid var(--line);
+}
+
+.plan-timeline-session {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0 var(--space-4);
+  appearance: none;
+  border: 0;
+  background: var(--paper);
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--font-small);
+  text-align: left;
+  cursor: pointer;
+}
+
+.plan-timeline-session:hover,
+.plan-timeline-session:focus-visible,
+.plan-timeline-session.selected {
+  background: color-mix(in srgb, var(--wash) 42%, var(--paper));
+  box-shadow: inset 2px 0 0 var(--line-strong);
+  color: var(--ink);
+}
+
+.plan-timeline-session:hover strong,
+.plan-timeline-session:focus-visible strong,
+.plan-timeline-session.selected strong {
+  color: var(--ink);
+}
+
+.plan-timeline-session.selected {
+  background: color-mix(in srgb, var(--wash) 66%, var(--paper));
+  box-shadow: inset 2px 0 0 var(--line-strong);
+}
+
+@container (max-width: 520px) {
+  .plan-timeline-session {
+    padding: 0 var(--space-2);
+  }
+
+  .plan-timeline-session strong,
+  .plan-timeline-session small {
+    max-width: 64px;
+  }
+}
+
+.plan-timeline-session strong,
+.plan-timeline-session small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-timeline-session strong {
+  color: var(--ink);
+  font-size: var(--font-small);
+  font-weight: 520;
+}
+
+.plan-timeline-session small {
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+
+.plan-timeline-track {
+  position: relative;
+  display: grid;
+  grid-column: 2 / -1;
+  grid-template-columns: repeat(var(--plan-days), var(--plan-day-width));
+  overflow: hidden;
+  background: transparent;
+}
+
+.plan-timeline-bar,
+.plan-calendar-event {
+  z-index: 1;
+  align-self: center;
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  min-height: 26px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--paper);
+  box-shadow: 0 2px 6px rgb(28 28 24 / 8%);
+  color: var(--ink);
+  cursor: pointer;
+  touch-action: none;
+  font-size: var(--font-small);
+  text-align: left;
+}
+
+.plan-timeline-bar {
+  position: absolute;
+  z-index: var(--plan-ticket-z, 3);
+  top: 50%;
+  width: min(
+    var(--plan-bar-width, 156px),
+    calc(var(--plan-day-width) * 3 - 8px)
+  );
+  transform: translateY(-50%);
+}
+
+.plan-drag-ghost.plan-timeline-bar {
+  transform: translateY(-50%);
+}
+
+.plan-calendar-event {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.plan-timeline-bar:hover,
+.plan-timeline-bar:focus-visible,
+.plan-calendar-event:hover,
+.plan-calendar-event:focus-visible {
+  border-color: var(--line-strong);
+  background: var(--wash);
+  box-shadow: 0 5px 14px rgb(28 28 24 / 10%);
+}
+
+.plan-timeline-bar.selected,
+.plan-calendar-event.selected {
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--wash) 72%, var(--paper));
+  box-shadow: 0 6px 16px rgb(28 28 24 / 12%);
+}
+
+.plan-source-dragging {
+  visibility: hidden;
+}
+
+.plan-timeline-bar strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-timeline-bar strong {
+  font-size: var(--font-small);
+  font-weight: 520;
+}
+
+.plan-timeline-drop {
+  z-index: 0;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+}
+
+.plan-timeline-drop:hover {
+  background: color-mix(in srgb, var(--wash) 54%, transparent);
+}
+
+.plan-today-line {
+  position: absolute;
+  inset: var(--plan-scale-height) auto 0
+    calc(
+      var(--plan-left-width) +
+        (100% - var(--plan-left-width) - var(--plan-right-width)) * var(--today)
+    );
+  z-index: 1;
+  width: 2px;
+  background: color-mix(in srgb, var(--line) 84%, var(--ink));
+  pointer-events: none;
+}

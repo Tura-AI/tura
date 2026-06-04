@@ -1,0 +1,61 @@
+{
+  "agent_name": "fast-text-only",
+  "description": "Fast text-only agent for low-latency edits, small fixes, and quick command-driven work.",
+  "aliases": ["coding_agent_instant", "instant"],
+  "icon_emoji": "⚡",
+  "agent_directory": "agents/src/fast-text-only",
+  "parent_agent_id": null,
+  "report_to_user": true,
+  "provider": {
+    "tura_llm_name": "fast",
+    "stream": true,
+    "temperature": 0.2,
+    "max_tokens": 0,
+    "tool_choice": "Auto",
+    "time_out_ms": 120000
+  },
+  "agent_prompt": [
+    {
+      "agent_prompt": "fast-text-only",
+      "prompt_directory": "agents/src/fast-text-only"
+    }
+  ],
+  "agent_persona": [
+    {
+      "persona_name": "tura",
+      "persona_directory": "personas/src/tura/prompt"
+    }
+  ],
+  "agent_capabilities": [
+    {
+      "capability_name": "command_run",
+      "capability_directory": "crates/tools/src"
+    },
+    {
+      "capability_name": "apply_patch",
+      "capability_directory": "crates/tools/src"
+    },
+    {
+      "capability_name": "shell_command",
+      "capability_directory": "crates/tools/src"
+    },
+    {
+      "capability_name": "web_discover",
+      "capability_directory": "crates/tools/src"
+    },
+    {
+      "capability_name": "compact_context",
+      "capability_directory": "crates/tools/src"
+    },
+    {
+      "capability_name": "task_status",
+      "capability_directory": "crates/tools/src"
+    }
+  ],
+  "validator": {
+    "need_validator": false,
+    "validator_name": null
+  },
+  "default_config": true
+}
+

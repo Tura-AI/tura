@@ -1,0 +1,10 @@
+package_id = "playwright_node"
+description = "Node and Playwright browser automation support for frontend screenshot and interaction workflows."
+node = ">=20"
+entry = "npx playwright"
+allowed_network_during_setup = true
+cache = ".tura/packages/playwright_node"
+
+dependencies = [
+  "playwright",
+]

@@ -1,0 +1,66 @@
+[package]
+name = "runtime"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+name = "runtime"
+path = "src/lib.rs"
+
+[[test]]
+name = "override_manas_direct_test"
+path = "tests/override_manas_direct_test.rs"
+
+[[test]]
+name = "override_mano_and_manas_test"
+path = "tests/override_mano_and_manas_test.rs"
+
+[[test]]
+name = "process_from_user_default_test"
+path = "tests/process_from_user_default_test.rs"
+
+[[test]]
+name = "prompt_injection_e2e"
+path = "tests/prompt_injection_e2e.rs"
+
+[[test]]
+name = "coding_agent_live_test"
+path = "tests/coding_agent_live_test.rs"
+
+[[test]]
+name = "claude_code_live_e2e"
+path = "tests/claude_code_live_e2e.rs"
+
+[[test]]
+name = "claude_code_mock_e2e"
+path = "tests/claude_code_mock_e2e.rs"
+
+[[test]]
+name = "child_dispatch_test"
+path = "tests/child_dispatch_test.rs"
+
+[[bin]]
+name = "mock_router_for_test"
+path = "src/bin/mock_router_for_test.rs"
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+redis.workspace = true
+tura-llm-rust = { workspace = true }
+tura-agents = { workspace = true }
+tura-router = { workspace = true }
+code-tools = { path = "../tools" }
+reqwest.workspace = true
+session_log = { workspace = true }
+uuid.workspace = true
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3"

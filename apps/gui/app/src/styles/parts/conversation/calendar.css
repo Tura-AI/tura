@@ -1,0 +1,271 @@
+.plan-calendar {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.plan-calendar-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 42px;
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.plan-calendar-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.plan-calendar-title strong {
+  min-width: 104px;
+  font-size: var(--font-ui);
+  font-weight: 540;
+  text-align: center;
+}
+
+.plan-calendar-view-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+}
+
+.plan-calendar-title .icon-action,
+.plan-calendar-view-toggle button {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+
+.plan-calendar-view-toggle button:hover,
+.plan-calendar-view-toggle button.selected {
+  background: var(--wash);
+  color: var(--ink);
+}
+
+.plan-calendar-weekdays,
+.plan-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  min-width: 0;
+  scrollbar-gutter: stable;
+}
+
+.plan-calendar-weekdays {
+  z-index: 1;
+  min-height: 30px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.plan-calendar-grid {
+  min-height: 0;
+  overflow: auto;
+}
+
+.plan-calendar-weekdays span {
+  padding: var(--space-2);
+  color: var(--muted);
+  font-size: var(--font-small);
+  text-align: center;
+}
+
+.plan-calendar-cell {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-height: 124px;
+  padding: var(--space-2);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.plan-calendar-cell:hover,
+.plan-calendar-hour-cell:hover {
+  background: color-mix(in srgb, var(--wash) 42%, transparent);
+}
+
+.plan-calendar-cell.muted {
+  color: var(--faint);
+  background: color-mix(in srgb, var(--wash) 36%, transparent);
+}
+
+.plan-calendar-cell.past,
+.plan-calendar-hour-cell.past {
+  background: color-mix(in srgb, var(--wash) 26%, transparent);
+}
+
+.plan-calendar-cell.past:not(.today) header,
+.plan-calendar-hour-cell.past {
+  color: color-mix(in srgb, var(--muted) 58%, var(--paper));
+}
+
+.plan-calendar-cell header {
+  display: flex;
+  align-items: center;
+  min-height: 22px;
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+
+.plan-calendar-cell header span {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+}
+
+.plan-calendar-cell.today header span {
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.plan-calendar-event span,
+.plan-calendar-event small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-calendar-event small {
+  color: var(--muted);
+}
+
+.plan-drag-ghost {
+  position: fixed;
+  z-index: 60;
+  box-shadow: 0 10px 28px rgb(28 28 24 / 12%);
+  pointer-events: none;
+  opacity: 0.96;
+}
+
+.plan-drag-ghost small,
+.plan-drag-ghost span,
+.plan-drag-ghost strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-drag-ghost small {
+  color: var(--muted);
+}
+
+.plan-calendar-week {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: auto hidden;
+}
+
+.plan-calendar-week-head,
+.plan-calendar-week-grid {
+  display: grid;
+  grid-template-columns: 64px repeat(
+      var(--calendar-days, 7),
+      minmax(118px, 1fr)
+    );
+  min-width: calc(64px + var(--calendar-days, 7) * 118px);
+  scrollbar-gutter: stable;
+}
+
+.plan-calendar-week.day-mode .plan-calendar-week-head,
+.plan-calendar-week.day-mode .plan-calendar-week-grid {
+  grid-template-columns: 64px minmax(180px, 1fr);
+  min-width: 244px;
+}
+
+.plan-calendar-week-head {
+  z-index: 1;
+  min-height: 46px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.plan-calendar-week-grid {
+  min-height: 0;
+  overflow: hidden auto;
+}
+
+.plan-calendar-week-day {
+  display: grid;
+  place-items: center;
+  gap: 2px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.plan-calendar-week-day small {
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+
+.plan-calendar-week-day strong {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  font-size: var(--font-ui);
+  font-weight: 560;
+}
+
+.plan-calendar-week-day.today strong {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.plan-calendar-week-day.selected {
+  background: var(--wash);
+}
+
+.plan-calendar-week-day.past:not(.today) {
+  color: color-mix(in srgb, var(--muted) 58%, var(--paper));
+}
+
+.plan-calendar-week-day.past:not(.today) small {
+  color: color-mix(in srgb, var(--muted) 58%, var(--paper));
+}
+
+.plan-calendar-hour-label {
+  display: flex;
+  justify-content: flex-end;
+  align-items: start;
+  min-height: 58px;
+  padding: 7px var(--space-2) 0 0;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+
+.plan-calendar-hour-cell {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-height: 58px;
+  padding: var(--space-1);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}

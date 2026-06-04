@@ -1,0 +1,384 @@
+.composer-task-dock {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-self: center;
+  width: 100%;
+  max-width: var(--page-max);
+  margin-bottom: 0;
+  padding: 0;
+  isolation: isolate;
+}
+
+.composer-task-dock:empty {
+  display: none;
+  margin-bottom: 0;
+}
+
+.composer-task-dock::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 -122px;
+  z-index: -1;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+}
+
+.composer-task-dock:empty::before {
+  content: none;
+}
+
+.composer-task-dock::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 -122px;
+  z-index: 3;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  pointer-events: none;
+}
+
+.composer-task-dock:empty::after {
+  content: none;
+}
+
+.composer-task-list {
+  position: relative;
+  display: grid;
+  gap: 0;
+  max-height: 158px;
+  overflow: auto;
+  padding: calc(var(--space-3) / 2) var(--space-3);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.composer-task-divider {
+  height: 1px;
+  margin: var(--space-1) 0;
+  background: var(--line);
+}
+
+.plan-feedback-prompt {
+  z-index: 1;
+  display: grid;
+  gap: var(--space-2);
+  width: min(100%, var(--page-max));
+  margin: 0 auto var(--space-3);
+  justify-self: center;
+  padding: var(--space-1) var(--space-2) var(--space-2);
+  color: var(--muted);
+}
+
+.plan-feedback-prompt span {
+  height: 1px;
+  background: var(--line);
+}
+
+.plan-feedback-prompt p {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  margin: 0;
+  font-size: var(--font-small);
+}
+
+.plan-feedback-prompt.error {
+  color: var(--danger);
+}
+
+.plan-feedback-prompt.error span {
+  background: color-mix(in srgb, var(--danger) 42%, var(--line));
+}
+
+.plan-feedback-prompt small {
+  color: inherit;
+  opacity: 0.72;
+}
+
+.plan-feedback-provider-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.plan-feedback-provider-link:hover {
+  color: var(--ink);
+}
+
+.composer-task-row-wrap {
+  position: relative;
+  padding: 3px 0;
+  border-top: 1px solid var(--line);
+  touch-action: none;
+}
+
+.composer-task-row-wrap:first-child {
+  border-top: 0;
+}
+
+.composer-task-row-wrap.dragging {
+  opacity: 0;
+}
+
+.composer-task-row-wrap.drop-before::before,
+.composer-task-row-wrap.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 4;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
+  pointer-events: none;
+}
+
+.composer-task-row-wrap.drop-before::before {
+  top: 0;
+}
+
+.composer-task-row-wrap.drop-after::after {
+  bottom: 0;
+}
+
+.composer-task-drag-handle {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  display: grid;
+  width: 22px;
+  height: 28px;
+  place-items: center;
+  color: var(--muted);
+  transform: translateY(-50%);
+}
+
+.composer-task-drag-ghost {
+  display: grid;
+  align-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--paper);
+  box-shadow: 0 10px 28px rgb(28 28 24 / 12%);
+  color: var(--ink);
+  overflow: hidden;
+}
+
+.composer-task-drag-ghost .composer-task-row-wrap {
+  border-top: 0;
+}
+
+.composer-task-drag-ghost .composer-task-row {
+  min-height: 100%;
+  background: var(--paper);
+}
+
+.composer-task-drag-ghost .composer-task-more {
+  display: none;
+}
+
+.composer-task-row,
+.composer-task-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: var(--space-2);
+  align-items: center;
+  min-height: 30px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--font-ui);
+  text-align: left;
+  cursor: default;
+  container-type: inline-size;
+}
+
+.composer-task-row {
+  width: 100%;
+  padding-left: 24px;
+  padding-right: 34px;
+}
+
+.composer-task-more {
+  position: absolute;
+  top: 50%;
+  right: var(--space-1);
+  display: none;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--muted);
+  cursor: default;
+  transform: translateY(-50%);
+}
+
+.composer-task-row-wrap:hover .composer-task-more,
+.composer-task-more:focus-visible {
+  display: grid;
+}
+
+.composer-task-more:hover {
+  background: var(--wash);
+  color: var(--ink);
+}
+
+.composer-task-menu {
+  position: fixed;
+  z-index: 1300;
+  display: grid;
+  gap: 2px;
+  width: 146px;
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+  box-shadow: var(--shadow-control);
+  transform: translateY(-100%);
+}
+
+.composer-task-menu button {
+  min-height: 32px;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.composer-task-menu button:hover {
+  background: var(--wash);
+}
+
+.composer-task-row:hover,
+.composer-task-option:hover,
+.composer-task-option.selected,
+.composer-task-row.selected {
+  background: var(--wash);
+}
+
+.composer-task-row.selected {
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.composer-task-title {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+}
+
+.composer-task-status {
+  width: 14px;
+  height: 14px;
+}
+
+.composer-task-title-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.composer-task-row span,
+.composer-task-option span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-task-row .task-text-pulse {
+  animation: task-text-nudge 260ms ease-out both;
+}
+
+.composer-task-row .task-media-token {
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 92px;
+  height: 22px;
+  margin: 0 2px;
+  vertical-align: -5px;
+  box-shadow: none;
+}
+
+.composer-task-row .task-media-token-main {
+  display: inline-grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  height: 20px;
+  padding: 0 8px;
+  color: var(--ink);
+}
+
+.composer-task-row .task-media-token-main svg {
+  color: var(--muted);
+}
+
+.composer-task-row .task-media-token-main span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes task-text-nudge {
+  0% {
+    transform: translateX(0);
+  }
+
+  35% {
+    transform: translateX(2px);
+  }
+
+  70% {
+    transform: translateX(-1px);
+  }
+
+  100% {
+    transform: translateX(0);
+  }
+}
+
+.composer-task-meta {
+  display: inline-flex;
+  gap: var(--space-2);
+  min-width: 0;
+  justify-content: flex-end;
+  color: var(--muted);
+  overflow: hidden;
+  font-size: var(--font-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-task-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-task-countdown {
+  flex: 0 0 auto;
+}
+
+@container (max-width: 320px) {
+  .composer-task-meta.has-countdown .composer-task-condition {
+    display: none;
+  }
+}

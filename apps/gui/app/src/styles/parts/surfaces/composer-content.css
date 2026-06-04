@@ -1,0 +1,265 @@
+.composer {
+  gap: 0;
+  overflow: visible;
+}
+
+.composer-input {
+  display: grid;
+  min-height: calc(2lh + 16px);
+}
+
+.composer-missing-image {
+  color: var(--faint);
+  overflow-wrap: anywhere;
+}
+
+.composer-toolbar {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 34px;
+  gap: var(--space-2);
+  align-items: center;
+  width: 100%;
+  min-height: 34px;
+  container-type: inline-size;
+}
+
+.composer-rich-editor {
+  min-height: calc(2lh + 16px);
+  max-height: calc(50vh - 54px);
+  padding: var(--space-2);
+  overflow: auto;
+  color: var(--ink);
+  font-size: var(--font-body);
+  line-height: 1.45;
+  outline: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.composer-rich-editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--muted);
+}
+
+.composer-raw-textarea {
+  position: absolute;
+  width: 1px !important;
+  height: 1px !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.composer-attachment-token {
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  gap: 4px;
+  align-items: center;
+  max-width: min(260px, 72vw);
+  margin: 0 4px;
+  vertical-align: middle;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.composer-attachment-token button {
+  min-width: 0;
+  height: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.composer-attachment-token button:first-child {
+  display: inline-grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  padding: 0 0 0 8px;
+}
+
+.composer-attachment-token button:last-child {
+  width: 18px;
+  padding: 0;
+  color: var(--muted);
+  border-radius: 999px;
+}
+
+.composer-attachment-token button:last-child:hover {
+  background: var(--wash);
+  color: var(--ink);
+}
+
+.composer-attachment-token img {
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.composer-attachment-token svg {
+  color: var(--muted);
+}
+
+.composer-attachment-token span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-attachment-menu {
+  position: fixed;
+  z-index: 80;
+  display: grid;
+  min-width: 168px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-medium);
+  background: var(--panel);
+  box-shadow: var(--shadow-menu);
+  transform: translateY(-100%);
+}
+
+.composer-attachment-menu button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: center;
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.composer-attachment-menu button:hover,
+.composer-attachment-menu button:focus-visible {
+  background: var(--wash);
+}
+
+.composer-settings {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: visible;
+}
+
+.composer-attach,
+.composer-send,
+.icon-action {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--ink);
+}
+
+.composer-file-input,
+.workspace-directory-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.composer-send {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.composer-attach:hover,
+.composer-attach:focus-visible {
+  background: var(--wash);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--ink);
+}
+
+.composer-attach:active {
+  background: var(--wash);
+  filter: brightness(0.98);
+}
+
+.slash-menu {
+  gap: 6px;
+}
+
+.slash-menu button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  text-align: left;
+}
+
+.slash-menu small {
+  color: var(--muted);
+}
+
+.composer-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.content-surface,
+.plan-board,
+.file-canvas,
+.settings-canvas {
+  justify-self: center;
+  width: 100%;
+  max-width: var(--page-max);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.files-view .file-canvas {
+  justify-self: stretch;
+  border: 0;
+  border-radius: 0;
+  max-width: none;
+  width: 100%;
+  overflow: auto;
+}
+
+.files-view {
+  --file-canvas-max: var(--page-max);
+  --page-middle-top-space: var(--space-5);
+}
+
+.file-canvas-inner {
+  display: grid;
+  min-height: calc(100% - var(--page-middle-top-space, 0px));
+  margin-top: var(--page-middle-top-space, 0px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.file-canvas-inner.page-layer-inner {
+  width: min(
+    var(--file-canvas-max),
+    max(0px, calc(100% - var(--page-edge-space) * 2))
+  );
+  max-width: var(--file-canvas-max);
+}
+
+.settings-view .settings-canvas {
+  justify-self: stretch;
+  max-width: none;
+  width: 100%;
+  overflow: auto;
+}

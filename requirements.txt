@@ -1,0 +1,8 @@
+ddgs
+duckduckgo-search
+imageio-ffmpeg
+opencv-python
+Pillow
+PyMuPDF
+yt-dlp
+libclang

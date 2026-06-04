@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "task_summary": {
+      "type": "string",
+      "description": "Optional task title/summary."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["question", "done"],
+      "description": "question when blocked on user feedback; done when the task is complete and verified."
+    }
+  }
+}

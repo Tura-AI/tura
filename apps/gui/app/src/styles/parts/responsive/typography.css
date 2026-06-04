@@ -1,0 +1,109 @@
+.brand strong,
+.main-tabs button,
+.workspace-row,
+.child-row,
+.surface-list-row,
+.settings-entry,
+.settings-back,
+.settings-section-list button,
+.ticket-session,
+.session-link,
+.text-button,
+.primary,
+.secondary,
+.plan-trigger-button,
+.plan-session-button,
+.plan-trigger-option,
+.composer-task-row,
+.composer-task-option,
+.surface-list-row span,
+.settings-provider-row span,
+.model-list span,
+.login-method span,
+.metric-cell span,
+.settings-panel > header span,
+.field-row input,
+.field-row select,
+.login-method input,
+.readonly-row code,
+.segmented button,
+.run-summary,
+.tool-inspector header span,
+.plan-panel-title strong,
+.plan-calendar-title strong,
+.plan-timeline-scale strong,
+.plan-calendar-week-day strong {
+  font-size: var(--font-ui);
+}
+
+.settings-view > .page-head {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.rich-text,
+.message-user-shell .rich-text,
+.bottom-composer textarea,
+.search-box input,
+.board-card strong {
+  font-size: var(--font-ui);
+}
+
+.session-row small,
+.rail-more,
+.subtle-text,
+.message-head,
+.message-foot,
+.tool-inspector header small,
+.surface-list-head,
+.surface-list-row small,
+.board-column header small,
+.board-card small,
+.inspector-block > span,
+.ticket-meta,
+.plan-panel-title span,
+.plan-timeline-scale small,
+.plan-timeline-session,
+.plan-timeline-session strong,
+.plan-timeline-session small,
+.plan-timeline-bar,
+.plan-calendar-event,
+.plan-calendar-cell header,
+.plan-calendar-weekdays span,
+.plan-calendar-week-day small,
+.plan-calendar-hour-label,
+.run-summary-time,
+.settings-provider-row small,
+.model-list small,
+.login-method small,
+.metric-cell small,
+.settings-note,
+.settings-panel > header small,
+.field-row > span,
+.field-row > label,
+.inspector-steps small,
+.diff-head small,
+.slash-menu small {
+  font-size: var(--font-small);
+}
+
+.page-title {
+  gap: 6px;
+}
+
+.page-head {
+  min-height: var(--page-title-bar-height);
+  align-items: start;
+}
+
+.page-title h1 {
+  font-size: var(--font-title);
+  line-height: 1.12;
+}
+
+.page-title span {
+  font-size: var(--font-ui);
+}
+
+.rich-text {
+  line-height: 1.6;
+}

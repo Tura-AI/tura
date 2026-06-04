@@ -1,0 +1,80 @@
+.appearance-select {
+  position: relative;
+  min-width: 0;
+}
+
+.appearance-select-button {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+}
+
+.appearance-select-button:hover {
+  background: var(--wash);
+}
+
+.appearance-select-value {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: baseline;
+  min-width: 0;
+}
+
+.appearance-select-value span,
+.appearance-select-value small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.appearance-select-value small {
+  color: var(--muted);
+  font-size: var(--font-small);
+  font-weight: 430;
+}
+
+.appearance-select-button svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.appearance-select-menu {
+  position: fixed;
+  bottom: auto;
+  z-index: 1200;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.appearance-select-menu .plan-trigger-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  align-items: center;
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.appearance-select-menu .plan-trigger-option span {
+  align-self: center;
+  line-height: 1.2;
+}
+
+.appearance-select-menu .plan-trigger-option svg {
+  align-self: center;
+  justify-self: end;
+}
+
+.appearance-select-menu .appearance-select-footer {
+  margin-top: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}

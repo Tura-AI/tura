@@ -1,0 +1,4 @@
+model_visible = false
+read_only_by_default = true
+unknown_mutation_lock = "workspace_exclusive"
+shell = "platform"
