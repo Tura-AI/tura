@@ -1,0 +1,42 @@
+[package]
+name = "tura-llm-rust"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+name = "tura_llm_rust"
+path = "src/lib.rs"
+
+[[test]]
+name = "provider_tool_call_live_smoke"
+path = "tests/provider_tool_call_live_smoke.rs"
+ harness = false
+
+[[test]]
+name = "claude_code_live_smoke"
+path = "tests/claude_code_live_smoke.rs"
+harness = false
+
+[[test]]
+name = "responses_tier_live_smoke"
+path = "tests/responses_tier_live_smoke.rs"
+harness = false
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+dotenvy.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+tokio-test = "0.4"
+futures = "0.3"

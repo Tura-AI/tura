@@ -1,0 +1,248 @@
+.brand {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  min-width: 0;
+  min-height: 64px;
+  overflow: hidden;
+  padding: 14px 14px 10px;
+}
+
+.brand-mark {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  border: 1px solid var(--ink);
+  border-radius: 50%;
+}
+
+.brand strong,
+.page-title span,
+.board-column header span,
+.surface-preview-panel header span {
+  font-weight: 560;
+  letter-spacing: 0;
+}
+
+.brand strong {
+  display: block;
+  overflow: hidden;
+  font-size: var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brand > div:last-child {
+  min-width: 0;
+}
+
+.main-tabs,
+.workspace-children,
+.tree-group,
+.board-cards,
+.slash-menu {
+  display: grid;
+}
+
+.main-tabs {
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 var(--space-2) var(--space-5);
+}
+
+.main-tabs button,
+.workspace-row,
+button.section-title,
+.child-row,
+.surface-list-row {
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--font-ui);
+  font-weight: 430;
+  letter-spacing: 0;
+  text-align: left;
+}
+
+.main-tabs button,
+.workspace-row,
+button.section-title,
+.child-row {
+  padding: 0 var(--space-3);
+}
+
+.main-tabs button,
+.workspace-row span,
+.child-row .tree-row-label,
+.tree-folder > span {
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.main-tabs button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  justify-content: initial;
+}
+
+.main-tabs button.no-icon,
+.workspace-row.no-icon,
+button.section-title:not(:has(> svg)) {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.main-tabs button > svg,
+.workspace-row > svg,
+button.section-title > svg {
+  color: var(--muted);
+}
+
+.main-tabs button span,
+.workspace-row span,
+.workspace-pick-row span,
+.session-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.main-tabs button .main-tab-hidden-alias {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  clip: rect(0 0 0 0);
+  overflow: hidden;
+}
+
+.main-tabs button:hover,
+.main-tabs button.selected,
+.workspace-row:hover,
+.workspace-row.selected,
+.workspace-pick-row:hover,
+.workspace-pick-row.selected,
+.workspace-picker-actions button:hover,
+.workspace-picker-actions button:active,
+.child-row:hover,
+.child-row.selected,
+.surface-list-row:hover,
+.surface-list-row.selected,
+.icon-action:hover,
+.icon-action.selected,
+.board-card:hover,
+.board-card.selected,
+.run-summary:hover {
+  background: var(--wash);
+}
+
+.main-tabs button:active,
+.workspace-row:active,
+.workspace-pick-row:active,
+.child-row:active,
+.surface-list-row:active,
+.icon-action:active,
+.board-card:active,
+.plan-trigger-button:active,
+.plan-session-button:active,
+.plan-trigger-option:active {
+  background: var(--wash);
+  filter: brightness(0.98);
+}
+
+.settings-entry {
+  min-width: 0;
+  min-height: 38px;
+  margin: var(--space-2);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--font-ui);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-entry:hover,
+.settings-entry.selected {
+  background: var(--wash);
+}
+
+.settings-rail {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: var(--space-2);
+  scrollbar-gutter: stable;
+}
+
+.settings-back,
+.settings-section-list button {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--font-ui);
+  font-weight: 430;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 var(--space-5);
+  padding: 0 var(--space-2);
+  color: var(--muted);
+}
+
+.settings-rail > .section-title {
+  min-height: 36px;
+  margin: 0 0 var(--space-4);
+  padding: 0 var(--space-3);
+  color: var(--muted);
+  font-size: var(--font-ui);
+  font-weight: 430;
+  line-height: 36px;
+}
+
+.settings-back svg {
+  flex: 0 0 auto;
+}
+
+.settings-section-list {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.settings-section-list button {
+  padding: 0 var(--space-3);
+  font-weight: 430;
+}
+
+.settings-back:hover,
+.settings-section-list button:hover,
+.settings-section-list button.selected {
+  background: var(--wash);
+  color: var(--ink);
+}

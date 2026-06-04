@@ -1,0 +1,146 @@
+.center-state,
+.empty-type {
+  display: grid;
+  min-height: 100%;
+  place-items: center;
+}
+
+.new-session-view {
+  display: grid;
+  height: 100vh;
+  min-height: 100vh;
+  overflow: auto;
+  padding: var(--space-7) var(--space-5);
+  place-items: center;
+}
+
+.new-session-center {
+  display: grid;
+  justify-self: center;
+  width: min(760px, 100%);
+  gap: var(--space-5);
+}
+
+.new-session-center h1 {
+  margin: 0;
+  text-align: center;
+}
+
+.new-session-center h1 {
+  font-size: var(--font-title);
+  font-weight: 400;
+  line-height: 1.08;
+}
+
+.workspace-search-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  min-height: 34px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.workspace-search {
+  width: 100%;
+  min-height: 34px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: var(--muted);
+  background: transparent;
+  font-size: var(--font-ui);
+  line-height: 34px;
+}
+
+.workspace-picker-list {
+  display: grid;
+  max-height: 232px;
+  overflow-y: auto;
+}
+
+.workspace-pick-row,
+.workspace-picker-actions button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+  min-height: 34px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.workspace-pick-row {
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+}
+
+.workspace-pick-row.no-icon {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.workspace-picker-actions {
+  display: grid;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  background: rgba(20, 20, 18, 0.22);
+}
+
+.name-dialog {
+  display: grid;
+  gap: var(--space-4);
+  width: min(420px, calc(100vw - 32px));
+  padding: var(--space-5);
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: var(--shadow-control);
+}
+
+.name-dialog header,
+.name-dialog footer {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  align-items: center;
+}
+
+.name-dialog h2,
+.name-dialog p {
+  margin: 0;
+}
+
+.name-dialog h2 {
+  font-size: var(--font-body);
+  font-weight: 620;
+}
+
+.name-dialog p {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: var(--font-ui);
+}
+
+.name-dialog header button {
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.name-dialog input {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+}

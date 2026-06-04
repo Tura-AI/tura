@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tura OAuth Business Test</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        background: #f6f7f9;
+        color: #17191f;
+      }
+      body {
+        margin: 0;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      h1 {
+        font-size: 24px;
+        margin: 0 0 16px;
+      }
+      .toolbar,
+      .provider {
+        background: #fff;
+        border: 1px solid #d8dde6;
+        border-radius: 8px;
+        padding: 14px;
+      }
+      .toolbar {
+        display: grid;
+        grid-template-columns: minmax(280px, 1fr) auto auto auto auto;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 14px;
+      }
+      input {
+        min-height: 36px;
+        border: 1px solid #c5cad3;
+        border-radius: 6px;
+        padding: 0 10px;
+        font: inherit;
+      }
+      button {
+        min-height: 36px;
+        border: 1px solid #aeb6c2;
+        border-radius: 6px;
+        background: #172033;
+        color: #fff;
+        padding: 0 12px;
+        font: inherit;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #fff;
+        color: #172033;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+        gap: 12px;
+      }
+      .provider {
+        display: grid;
+        gap: 10px;
+      }
+      .provider header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .provider h2 {
+        font-size: 17px;
+        margin: 0;
+      }
+      .status {
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 12px;
+        background: #edf0f5;
+      }
+      .status.ok {
+        background: #d9f6e5;
+        color: #145c2f;
+      }
+      .status.fail {
+        background: #ffe2df;
+        color: #8f1f14;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      pre {
+        min-height: 94px;
+        max-height: 220px;
+        overflow: auto;
+        margin: 0;
+        padding: 10px;
+        border-radius: 6px;
+        background: #111827;
+        color: #e5e7eb;
+        font-size: 12px;
+        white-space: pre-wrap;
+      }
+      .log {
+        margin-top: 14px;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          background: #111318;
+          color: #f5f7fb;
+        }
+        .toolbar,
+        .provider {
+          background: #181b22;
+          border-color: #303744;
+        }
+        input,
+        button.secondary {
+          background: #111318;
+          border-color: #3a4352;
+          color: #f5f7fb;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Tura OAuth Business Test</h1>
+      <section class="toolbar">
+        <input id="gatewayUrl" aria-label="Gateway URL" />
+        <button id="load">Load</button>
+        <button id="openTest" class="secondary">Open Test</button>
+        <button id="connectAll">Connect All</button>
+        <button id="refreshAll" class="secondary">Refresh All</button>
+        <button id="disconnectAll" class="secondary">Disconnect All</button>
+      </section>
+      <section id="providers" class="grid"></section>
+      <pre id="log" class="log"></pre>
+    </main>
+    <script>
+      const providerIds = [
+        "codex",
+        "claude-code",
+        "google",
+        "gemini",
+        "antigravity",
+        "github-copilot",
+      ];
+      const state = new Map();
+      const gatewayInput = document.querySelector("#gatewayUrl");
+      const providersEl = document.querySelector("#providers");
+      const logEl = document.querySelector("#log");
+      gatewayInput.value =
+        new URLSearchParams(location.search).get("gatewayUrl") ||
+        localStorage.getItem("tura.oauth.gatewayUrl") ||
+        "http://127.0.0.1:4096";
+      const openerUrl = new URLSearchParams(location.search).get("openerUrl") || "";
+
+      document.querySelector("#load").onclick = loadAll;
+      document.querySelector("#openTest").onclick = () =>
+        openSystemBrowser("https://auth.openai.com/oauth/authorize");
+      document.querySelector("#connectAll").onclick = async () => {
+        for (const id of providerIds) await connect(id);
+      };
+      document.querySelector("#refreshAll").onclick = async () => {
+        for (const id of providerIds) await refresh(id);
+      };
+      document.querySelector("#disconnectAll").onclick = async () => {
+        for (const id of providerIds) await disconnect(id);
+      };
+
+      render();
+      loadAll();
+
+      function gatewayUrl() {
+        const value = gatewayInput.value.replace(/\/+$/, "");
+        localStorage.setItem("tura.oauth.gatewayUrl", value);
+        return value;
+      }
+
+      async function request(path, options = {}) {
+        const response = await fetch(gatewayUrl() + path, {
+          ...options,
+          headers: {
+            "content-type": "application/json",
+            ...(options.headers || {}),
+          },
+        });
+        const text = await response.text();
+        if (!response.ok) throw new Error(`${response.status} ${text}`);
+        return text ? JSON.parse(text) : null;
+      }
+
+      async function loadAll() {
+        appendLog("Loading provider auth surface...");
+        const auth = await request("/provider/auth");
+        for (const id of providerIds) {
+          const methods = auth[id] || [];
+          const oauthIndex = methods.findIndex((method) => method.type === "oauth");
+          const status = await statusOf(id).catch((error) => ({
+            error: String(error),
+          }));
+          state.set(id, { methods, oauthIndex, status });
+        }
+        render();
+      }
+
+      async function statusOf(id) {
+        return request(`/provider/${encodeURIComponent(id)}/auth/status`);
+      }
+
+      async function connect(id) {
+        const item = state.get(id);
+        if (!item || item.oauthIndex < 0) {
+          appendLog(`${id}: no oauth method`);
+          return;
+        }
+        const method = item.methods[item.oauthIndex];
+        if (method.available === false) {
+          appendLog(`${id}: ${method.unavailable_reason || "oauth unavailable"}`);
+          return;
+        }
+        appendLog(`${id}: starting authorization`);
+        const authorize = await request(`/provider/${encodeURIComponent(id)}/oauth/authorize`, {
+          method: "POST",
+          body: JSON.stringify({ method: item.oauthIndex }),
+        });
+        if (!authorize.url) {
+          appendLog(`${id}: ${authorize.instructions || "missing authorization URL"}`);
+          return;
+        }
+        await openSystemBrowser(authorize.url);
+        appendLog(`${id}: ${authorize.instructions}\n${authorize.url}`);
+
+        if (id === "github-copilot") {
+          const code = (authorize.instructions.match(/\b[A-Z0-9]{4,}-[A-Z0-9-]{3,}\b/) || [])[0];
+          appendLog(`${id}: enter code ${code || "(see opened page)"} in the browser. Waiting for device authorization...`);
+          await callback(id, item.oauthIndex, {});
+        } else if (authorize.method === "auto" || authorize.method === "code") {
+          appendLog(`${id}: waiting for URL callback...`);
+          await callback(id, item.oauthIndex, {});
+        } else {
+          appendLog(`${id}: unsupported OAuth response method ${authorize.method}`);
+        }
+        await reloadOne(id);
+      }
+
+      async function callback(id, method, payload) {
+        const ok = await request(`/provider/${encodeURIComponent(id)}/oauth/callback`, {
+          method: "POST",
+          body: JSON.stringify({ method, ...payload }),
+        });
+        appendLog(`${id}: callback ${ok ? "ok" : "returned false"}`);
+      }
+
+      async function refresh(id) {
+        appendLog(`${id}: refreshing`);
+        const result = await request(`/provider/${encodeURIComponent(id)}/auth/refresh`, {
+          method: "POST",
+          body: "{}",
+        });
+        appendLog(`${id}: ${result.message}`);
+        await reloadOne(id);
+      }
+
+      async function disconnect(id) {
+        appendLog(`${id}: disconnecting`);
+        const result = await request(`/provider/${encodeURIComponent(id)}/auth/logout`, {
+          method: "POST",
+          body: "{}",
+        });
+        appendLog(`${id}: ${result.message || (result.ok ? "disconnected" : "disconnect failed")}`);
+        await reloadOne(id);
+      }
+
+      async function reloadOne(id) {
+        const item = state.get(id) || {};
+        item.status = await statusOf(id).catch((error) => ({ error: String(error) }));
+        state.set(id, item);
+        render();
+      }
+
+      function render() {
+        providersEl.innerHTML = "";
+        for (const id of providerIds) {
+          const item = state.get(id) || {};
+          const status = item.status || {};
+          const authenticated = status.authenticated === true;
+          const method = item.methods?.[item.oauthIndex];
+          const card = document.createElement("article");
+          card.className = "provider";
+          card.dataset.provider = id;
+          card.innerHTML = `
+            <header>
+              <h2>${id}</h2>
+              <span class="status ${authenticated ? "ok" : status.error ? "fail" : ""}">
+                ${authenticated ? "authenticated" : status.error ? "error" : status.auth_state || "unknown"}
+              </span>
+            </header>
+            <div class="actions">
+              <button data-action="connect">Connect</button>
+              <button data-action="refresh" class="secondary">Refresh</button>
+              <button data-action="disconnect" class="secondary">Disconnect</button>
+              <button data-action="status" class="secondary">Status</button>
+            </div>
+            <pre>${escapeHtml(
+              JSON.stringify(
+                {
+                  oauth: method
+                    ? {
+                        available: method.available,
+                        reason: method.unavailable_reason || null,
+                        token_url: method.token_url || null,
+                        supports_refresh: method.supports_refresh,
+                      }
+                    : null,
+                  status,
+                },
+                null,
+                2,
+              ),
+            )}</pre>
+          `;
+          card.querySelector('[data-action="connect"]').onclick = () => connect(id);
+          card.querySelector('[data-action="refresh"]').onclick = () => refresh(id);
+          card.querySelector('[data-action="disconnect"]').onclick = () => disconnect(id);
+          card.querySelector('[data-action="status"]').onclick = () => reloadOne(id);
+          providersEl.append(card);
+        }
+      }
+
+      function appendLog(message) {
+        logEl.textContent = `[${new Date().toLocaleTimeString()}] ${message}\n` + logEl.textContent;
+      }
+
+      async function openSystemBrowser(url) {
+        if (openerUrl) {
+          try {
+            const response = await fetch(openerUrl, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ url }),
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            appendLog(`Opened system browser: ${url}`);
+            return;
+          } catch (error) {
+            appendLog(`System opener failed, falling back to window.open: ${error}`);
+          }
+        }
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;");
+      }
+    </script>
+  </body>
+</html>

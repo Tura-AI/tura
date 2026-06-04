@@ -1,0 +1,53 @@
+[tool.node]
+id = "node"
+description = "Node.js runtime for Playwright browser workflows and frontend verification."
+platforms = ["windows", "linux", "macos"]
+verify = "node --version"
+timeout_secs = 300
+permission = "network"
+cache_key = "node"
+
+[tool.node.install.windows]
+command = "winget install --id OpenJS.NodeJS.LTS -e --accept-package-agreements --accept-source-agreements"
+
+[tool.node.install.linux]
+command = "sudo apt-get update && sudo apt-get install -y nodejs npm"
+
+[tool.node.install.macos]
+command = "brew install node"
+
+[tool.playwright]
+id = "playwright"
+description = "Playwright Node package for browser automation from command_run shell tasks."
+platforms = ["windows", "linux", "macos"]
+verify = "npm list -g playwright --depth=0"
+timeout_secs = 300
+permission = "network"
+cache_key = "node-playwright"
+
+[tool.playwright.install.windows]
+command = "npm install -g playwright"
+
+[tool.playwright.install.linux]
+command = "npm install -g playwright"
+
+[tool.playwright.install.macos]
+command = "npm install -g playwright"
+
+[tool.playwright_chromium]
+id = "playwright_chromium"
+description = "Chromium browser binary used by Playwright screenshot and interaction verification."
+platforms = ["windows", "linux", "macos"]
+verify = "npx --yes -p playwright node -e \"const { chromium } = require('playwright'); (async () => { const browser = await chromium.launch({ headless: true }); await browser.close(); })().catch((err) => { console.error(err); process.exit(1); });\""
+timeout_secs = 600
+permission = "network"
+cache_key = "playwright-chromium"
+
+[tool.playwright_chromium.install.windows]
+command = "npx playwright install chromium"
+
+[tool.playwright_chromium.install.linux]
+command = "npx playwright install chromium"
+
+[tool.playwright_chromium.install.macos]
+command = "npx playwright install chromium"

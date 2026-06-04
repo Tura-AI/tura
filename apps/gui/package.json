@@ -1,0 +1,35 @@
+{
+  "name": "@tura/gui-workspace",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.11",
+  "scripts": {
+    "dev": "bun --cwd app dev",
+    "build": "bun --cwd app build",
+    "typecheck": "bun --cwd app typecheck",
+    "format": "prettier --write \"app/src/**/*.{ts,tsx,css}\" \"sdk/**/*.ts\" \"ARCHITECTURE.md\"",
+    "format:check": "prettier --check \"app/src/**/*.{ts,tsx,css}\" \"sdk/**/*.ts\" \"ARCHITECTURE.md\"",
+    "check": "bun run format:check && bun run typecheck && bun run build",
+    "e2e:real": "python e2e/real_gateway_llm.py",
+    "e2e:frontend:gui": "python e2e/frontend_playwright_gui_e2e.py",
+    "e2e:session-task": "python e2e/session_task_workspace_e2e.py",
+    "e2e:plan-session": "python e2e/plan_session_backend_e2e.py",
+    "e2e:settings-full": "python e2e/settings_full_flow_e2e.py",
+    "e2e:settings-appearance": "python e2e/settings_appearance_playwright_e2e.py",
+    "e2e:settings-agents": "python e2e/settings_agents_playwright_e2e.py",
+    "e2e:settings-agents-real": "python e2e/settings_agents_real_gateway_e2e.py",
+    "e2e:plan-panel": "python e2e/plan_panel_constraints_playwright_e2e.py",
+    "e2e:workbench": "python e2e/workbench_smoke_e2e.py",
+    "e2e:split": "bun run e2e:workbench && bun run e2e:settings-full && bun run e2e:plan-session",
+    "test": "bun test"
+  },
+  "workspaces": [
+    "app",
+    "sdk/gateway",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.2"
+  }
+}

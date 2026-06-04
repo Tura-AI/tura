@@ -1,0 +1,2 @@
+[env]
+LIBCLANG_PATH = { value = "scripts/packages/python/clang/native", relative = true }

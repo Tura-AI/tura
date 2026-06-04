@@ -1,0 +1,42 @@
+[package]
+name = "gateway"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "fs", "io-util", "process", "time"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+parking_lot = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures = "0.3"
+lazy_static = "1.4"
+reqwest = { workspace = true }
+sysinfo = "0.30"
+base64 = "0.22"
+sha2 = "0.10"
+
+# Web framework
+axum = { version = "0.8", features = ["ws"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+
+# Internal
+runtime = { path = "../runtime" }
+tura-llm-rust = { workspace = true }
+tura-agents = { path = "../../agents" }
+tura-persona = { path = "../../personas" }
+tura-router = { workspace = true }
+
+[[bin]]
+name = "tura"
+path = "src/bin/tura.rs"
+
+[[bin]]
+name = "gateway"
+path = "src/bin/gateway.rs"

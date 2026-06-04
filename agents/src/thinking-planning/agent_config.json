@@ -1,0 +1,69 @@
+{
+  "agent_name": "thinking-planning",
+  "description": "Thinking agent with planning for complex tasks that need decomposition, coordination, and careful verification.",
+  "aliases": ["coding_agent_planning", "coding_agent", "coding"],
+  "icon_emoji": "🧭",
+  "agent_directory": "agents/src/thinking-planning",
+  "parent_agent_id": null,
+  "report_to_user": true,
+  "provider": {
+    "tura_llm_name": "flagship_thinking",
+    "stream": true,
+    "temperature": 0.2,
+    "max_tokens": 0,
+    "tool_choice": "Auto",
+    "time_out_ms": 120000
+  },
+  "agent_prompt": [
+    {
+      "agent_prompt": "thinking-planning",
+      "prompt_directory": "agents/src/thinking-planning"
+    }
+  ],
+  "agent_persona": [
+    {
+      "persona_name": "tura",
+      "persona_directory": "personas/src/tura/prompt"
+    }
+  ],
+  "agent_capabilities": [
+    {
+      "capability_name": "command_run",
+      "capability_directory": "crates/tools/src"
+    },
+    {
+      "capability_name": "apply_patch",
+      "capability_directory": "crates/tools/src"
+    },
+    {
+      "capability_name": "shell_command",
+      "capability_directory": "crates/tools/src"
+    },
+    {
+      "capability_name": "read_media",
+      "capability_directory": "crates/tools/src"
+    },
+    {
+      "capability_name": "web_discover",
+      "capability_directory": "crates/tools/src"
+    },
+    {
+      "capability_name": "compact_context",
+      "capability_directory": "crates/tools/src"
+    },
+    {
+      "capability_name": "task_status",
+      "capability_directory": "crates/tools/src"
+    },
+    {
+      "capability_name": "planning",
+      "capability_directory": "crates/tools/src"
+    }
+  ],
+  "validator": {
+    "need_validator": false,
+    "validator_name": null
+  },
+  "default_config": true
+}
+

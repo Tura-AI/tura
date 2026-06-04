@@ -1,0 +1,107 @@
+.workbench {
+  --font-ui: var(--base-font-size);
+  --font-body: calc(var(--base-font-size) * 1.077);
+  --font-small: calc(var(--base-font-size) * 0.846);
+  --font-caption: calc(var(--base-font-size) * 0.769);
+  --font-title: clamp(
+    calc(var(--base-font-size) * 1.692),
+    1.9vw,
+    calc(var(--base-font-size) * 2.154)
+  );
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--rail) minmax(0, 1fr);
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--paper);
+  font-family: var(--app-font-family);
+  font-size: var(--font-ui);
+}
+
+.rail {
+  position: relative;
+  z-index: 90;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  min-width: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.rail-collapsed .rail {
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.workbench.rail-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.workbench.rail-fullscreen {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workbench.rail-fullscreen .rail {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  grid-template-rows: auto auto auto auto;
+  align-content: start;
+  width: 100vw;
+  max-width: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-right: 0;
+  box-shadow: none;
+}
+
+.workbench.rail-fullscreen .rail.settings-mode {
+  grid-template-rows: auto;
+}
+
+.workbench.rail-fullscreen .workspace-tree,
+.workbench.rail-fullscreen .settings-rail,
+.workbench.rail-fullscreen .settings-section-list {
+  overflow: visible;
+}
+
+.workbench.rail-fullscreen .rail-resize-handle {
+  display: none;
+}
+
+.rail.settings-mode {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.rail-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: max(0px, calc(var(--rail) - 3px));
+  z-index: 60;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.rail-resize-handle::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 1px;
+  background: transparent;
+  content: "";
+}
+
+.rail-resize-handle:hover::after,
+.rail-resizing .rail-resize-handle::after {
+  background: var(--line-strong);
+}
+
+.rail-collapsed .rail-resize-handle {
+  display: none;
+}

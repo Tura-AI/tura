@@ -1,0 +1,28 @@
+{
+  "name": "@tura/gui-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
+    "unused:check": "knip --no-progress"
+  },
+  "dependencies": {
+    "@solidjs/router": "^0.16.1",
+    "@tura/gateway-sdk": "workspace:*",
+    "lucide-solid": "^0.468.0",
+    "solid-js": "^1.9.10"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.11",
+    "@types/node": "^22.13.9",
+    "knip": "^6.14.2",
+    "prettier": "^3.8.3",
+    "typescript": "^5.8.2",
+    "vite": "^7.1.4",
+    "vite-plugin-solid": "^2.11.10"
+  }
+}
