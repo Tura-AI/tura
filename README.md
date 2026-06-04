@@ -340,7 +340,6 @@ Representative run parameters used for the current sample pack:
 
 | Parameter | Playwright Lite | ProgramBench | Source-Port | SWE-bench Verified |
 |---|---|---|---|---|
-| 
 | Measured artifact root | `target/command-run-frontend-playwright/` | `target/agent-programbench-test/` | `target/agent-source-port-test/` | `target/agent-swebench-test/` |
 | Main task ids | frontend two-phase app task | `agourlay__zip-password-finder.704700d` | `zip-password-finder.source-port-python` | `django__django-10554`, `scikit-learn__scikit-learn-14629`, `pydata__xarray-4075` |
 | Timeout envelope | 5-7 min frontend runs | 4-10 min cleanroom runs | 7 min medium port run | 6-12 min issue runs |
@@ -366,7 +365,6 @@ Representative target examples:
 
 | Run | Agents | Issues | Harness | Output |
 |---|---|---|---|---|
-| 
 | `agent-swebench-test-django-10554-4agents-6min-20260522-221216` | `tura-fast-shll`, `tura-shll`, `current-shll`, `codex-main` | `django__django-10554` | Docker harness requested | Four prediction bundles and per-agent patches |
 | `agent-swebench-django-10554-tura-fast-high-12m` | `tura-fast-shll` | `django__django-10554` | Docker harness requested | One harness-compatible prediction bundle |
 | `swebench-sklearn-14629-4agents-6min-20260522` | `tura-fast-shll`, `tura-shll`, `current-shll`, `codex-main` | `scikit-learn__scikit-learn-14629` | Prediction-only | Four prediction bundles under the older xarray/sklearn target root |
