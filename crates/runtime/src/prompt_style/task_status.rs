@@ -1,5 +1,5 @@
 /// Fixed reminder injected when the model needs to settle task state.
-pub const TASK_STATUS: &str = "Reminder: settle the task state with the last task_status command. Do not keep re-running verification or read-only commands in place of marking `done` or `question`.";
+pub const TASK_STATUS: &str = "Reminder: settle the task state with the last task_status command only when the state is actually settled. If any required or reasonably runnable verification failed, timed out, was skipped, or could not start, continue working to fix the environment or implementation and rerun it. Mark `done` only after the task is complete and verified. If the current environment truly cannot run the verification after reasonable setup effort, clearly explain the blocker to the user and mark `question`.";
 
 pub fn planning_objective_context(objective: &str) -> String {
     format!(
