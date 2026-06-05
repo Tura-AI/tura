@@ -46,9 +46,13 @@ Install scripts should:
   - Linux: `apt-get`, `dnf`, `yum`, `pacman`, or `apk`.
   - macOS: Homebrew.
 - Install or verify Git, Node/npm, Python, Bun, ffmpeg, native build tools, and
-  the platform shell.
+  the platform shell. On Windows this includes MSVC Build Tools for Rust's
+  `*-msvc` linker, MSYS2/UCRT64 for POSIX/native command surfaces, and WebView2
+  for the Tauri desktop shell.
 - Install `apps/tui` dependencies from `package-lock.json`.
 - Install and build `apps/gui` when Bun is available.
+- Install `apps/tauri` dependencies and verify platform prerequisites when Bun
+  and the desktop shell are available.
 - Run `cargo fetch`.
 - Build `gateway` binaries `tura` and `gateway`.
 - Build `tura_router`.

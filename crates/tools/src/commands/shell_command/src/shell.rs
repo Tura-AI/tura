@@ -15,6 +15,8 @@ pub(super) fn bash_executable() -> PathBuf {
         return PathBuf::from("/bin/bash");
     }
     [
+        r"C:\msys64\usr\bin\bash.exe",
+        r"C:\msys64\ucrt64\bin\bash.exe",
         r"C:\Program Files\Git\bin\bash.exe",
         r"C:\Program Files\Git\usr\bin\bash.exe",
         r"C:\Program Files (x86)\Git\bin\bash.exe",
