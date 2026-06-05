@@ -207,7 +207,7 @@ impl ProductStore {
                 runtime_id: Some(runtime_id.clone()),
                 status: "online".to_string(),
                 visibility: "workspace".to_string(),
-                thinking_level: Some("low".to_string()),
+                thinking_level: Some("medium".to_string()),
                 run_count_7d: 3,
                 run_count_30d: 12,
             },

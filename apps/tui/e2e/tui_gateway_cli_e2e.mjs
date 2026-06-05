@@ -91,7 +91,7 @@ async function startGateway() {
     active_model: "openai/gpt-test",
     active_provider: "openai",
     active_agent: "fast",
-    model_variant: "low",
+    model_variant: "medium",
     model_acceleration_enabled: true,
   };
   let session = {

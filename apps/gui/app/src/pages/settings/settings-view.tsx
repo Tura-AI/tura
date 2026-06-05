@@ -846,7 +846,7 @@ function AgentSettingsPanel(props: {
   const [selectedTier, setSelectedTier] =
     createSignal<(typeof AGENT_MODEL_TIERS)[number]>("thinking");
   const [selectedReasoningEffort, setSelectedReasoningEffort] =
-    createSignal<(typeof AGENT_REASONING_EFFORTS)[number]>("low");
+    createSignal<(typeof AGENT_REASONING_EFFORTS)[number]>("medium");
   const [priorityEnabled, setPriorityEnabled] = createSignal(false);
   const [loadingAgent, setLoadingAgent] = createSignal(false);
   const [agentQuery, setAgentQuery] = createSignal("");
@@ -1102,7 +1102,7 @@ function agentReasoningEffort(agent?: Agent, stored?: StoredAgent): string {
       "reasoning_effort",
       "model_variant",
     ]) ??
-    "low"
+    "medium"
   );
 }
 
@@ -1116,7 +1116,7 @@ function normalizeReasoningEffort(
     ? value === "highest"
       ? "xhigh"
       : value
-    : "low";
+    : "medium";
 }
 
 function reasoningEffortLabel(value: string): string {

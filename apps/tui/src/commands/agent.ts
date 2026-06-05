@@ -61,7 +61,7 @@ export async function agentCommand(context: CliContext, args: string[]): Promise
       const response = {
         agent: id,
         tier: stringValue(provider.tura_llm_name) ?? "thinking",
-        reasoning_effort: stringValue(provider.model_reasoning_effort) ?? "low",
+        reasoning_effort: stringValue(provider.model_reasoning_effort) ?? "medium",
         priority: provider.service_tier === "priority" || provider.model_acceleration_enabled === true,
       };
       if (json) printJson(response);

@@ -471,7 +471,7 @@ export function App() {
           : clampNumber(config.code_font_size, 9, 15, 11),
         modelVariant: previous.bootstrapped
           ? previous.modelVariant
-          : (configuredVariant ?? previous.modelVariant ?? "low"),
+          : (configuredVariant ?? previous.modelVariant ?? "medium"),
         accelerationEnabled: previous.bootstrapped
           ? previous.accelerationEnabled
           : (configuredAcceleration ?? previous.accelerationEnabled ?? true),
