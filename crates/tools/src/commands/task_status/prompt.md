@@ -16,6 +16,10 @@ Use task_status only to update the task-management state Its arguments are limit
 
 If the task is complete, fully scoped, and verified, call task_status status `done`
 
+Do not call task_status status `done` when a required or reasonably runnable verification command failed, timed out, was skipped, or could not start. Keep working to install missing dependencies, start required services, fix environment setup, and rerun the validation until it passes. This includes builds, unit tests, integration tests, Playwright/browser tests, runtime smoke checks, harnesses, and any user-requested verifier.
+
+If verification should be runnable but the current environment truly cannot run it after reasonable setup effort, do not mark the task done. Clearly explain the environment blocker to the user in the normal assistant reply and call task_status status `question`.
+
 If user feedback, missing information, permissions, credentials, or keys are required, call task_status status `question`
 
 For status `question` or `done`, also send a normal assistant reply to the user in the conversation Put the explanation, question, completion summary, modified files, artifacts, validation, risks, and follow-up notes in that assistant reply, not in task_status arguments
