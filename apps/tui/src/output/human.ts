@@ -37,7 +37,9 @@ export function formatTable<T>(rows: T[], columns: Array<TableColumn<T>>): strin
   );
   const header = columns.map((column, index) => column.header.padEnd(widths[index])).join("  ");
   const divider = widths.map((width) => "-".repeat(width)).join("  ");
-  const body = values.map((row) => row.map((value, index) => value.padEnd(widths[index])).join("  "));
+  const body = values.map((row) =>
+    row.map((value, index) => value.padEnd(widths[index])).join("  "),
+  );
   return [header, divider, ...body].join("\n");
 }
 
@@ -61,7 +63,9 @@ export class HumanOutput {
     this.err(`${style("tura", "magenta", this.color)} ${style(session.id, "dim", this.color)}`);
     this.err(`${style(`${t("cwd")}:`, "bold", this.color)} ${cwd}`);
     if (session.model || session.agent) {
-      this.err(`${style(`${t("runtime")}:`, "bold", this.color)} ${[session.agent, session.model].filter(Boolean).join(" / ")}`);
+      this.err(
+        `${style(`${t("runtime")}:`, "bold", this.color)} ${[session.agent, session.model].filter(Boolean).join(" / ")}`,
+      );
     }
     this.err("--------");
   }
@@ -71,7 +75,11 @@ export class HumanOutput {
       this.err(`${style(`${t("status")}:`, "bold", this.color)} ${event.status}`);
       return;
     }
-    if (event.type === "message.updated" && event.messageID && !this.seenMessages.has(event.messageID)) {
+    if (
+      event.type === "message.updated" &&
+      event.messageID &&
+      !this.seenMessages.has(event.messageID)
+    ) {
       this.seenMessages.add(event.messageID);
       if (event.text?.trim()) {
         this.err(`${style(t("assistant"), "magenta", this.color)}\n${event.text.trim()}`);
@@ -94,11 +102,15 @@ export class HumanOutput {
       return;
     }
     if (event.type === "permission.asked" && event.permission) {
-      this.err(`${style(`${t("permissions")}:`, "yellow", this.color)} ${event.permission.permission} (${event.permission.id})`);
+      this.err(
+        `${style(`${t("permissions")}:`, "yellow", this.color)} ${event.permission.permission} (${event.permission.id})`,
+      );
       return;
     }
     if (event.type === "question.asked" && event.question) {
-      this.err(`${style(`${t("question")}:`, "yellow", this.color)} ${event.question.question} (${event.question.id})`);
+      this.err(
+        `${style(`${t("question")}:`, "yellow", this.color)} ${event.question.question} (${event.question.id})`,
+      );
     }
   }
 
@@ -107,7 +119,11 @@ export class HumanOutput {
       process.stdout.write(`${result.finalText.trim()}\n`);
     }
     this.err(`\n${style(`${t("session")}:`, "bold", this.color)} ${result.sessionID}`);
-    this.err(t("sessionResumeHint", { command: style(`tura resume ${result.sessionID}`, "cyan", this.color) }));
+    this.err(
+      t("sessionResumeHint", {
+        command: style(`tura resume ${result.sessionID}`, "cyan", this.color),
+      }),
+    );
   }
 
   listSessions(sessions: Session[]): void {
@@ -115,20 +131,29 @@ export class HumanOutput {
       this.err(t("noSessions"));
       return;
     }
-    this.out(formatTable(sessions, [
-      { header: t("id"), value: (session) => session.id },
-      { header: t("status"), value: (session) => session.status ?? t("sessionIdle") },
-      { header: t("messages"), value: (session) => session.message_count ?? "" },
-      { header: t("title"), value: sessionTitle },
-    ]));
+    this.out(
+      formatTable(sessions, [
+        { header: t("id"), value: (session) => session.id },
+        { header: t("status"), value: (session) => session.status ?? t("sessionIdle") },
+        { header: t("messages"), value: (session) => session.message_count ?? "" },
+        { header: t("title"), value: sessionTitle },
+      ]),
+    );
   }
 
   showMessages(messages: Message[]): void {
     for (const message of messages) {
       const text = messageText(message).trim();
       if (!text) continue;
-      const role = message.role === "assistant" ? t("assistant") : message.role === "user" ? t("user") : t("system");
-      this.out(`${style(role, message.role === "assistant" ? "magenta" : "cyan", this.color)}\n${text}\n`);
+      const role =
+        message.role === "assistant"
+          ? t("assistant")
+          : message.role === "user"
+            ? t("user")
+            : t("system");
+      this.out(
+        `${style(role, message.role === "assistant" ? "magenta" : "cyan", this.color)}\n${text}\n`,
+      );
     }
   }
 

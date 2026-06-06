@@ -86,10 +86,7 @@ export function beginPlanPointerDrag(options: {
       html: sourceHtml,
     });
   const onMove = (move: PointerEvent | MouseEvent) => {
-    if (
-      !moved &&
-      Math.hypot(move.clientX - startX, move.clientY - startY) >= dragThreshold
-    ) {
+    if (!moved && Math.hypot(move.clientX - startX, move.clientY - startY) >= dragThreshold) {
       moved = true;
       sourceElement?.classList.add("plan-source-dragging");
     }
@@ -129,20 +126,14 @@ export function pointerScheduleFromElement(
   point: { x: number; y: number },
   axis: "x" | "y",
 ): string | undefined {
-  const element = document.elementFromPoint(point.x, point.y) as
-    | HTMLElement
-    | undefined;
+  const element = document.elementFromPoint(point.x, point.y) as HTMLElement | undefined;
   const hourCell = element?.closest<HTMLElement>("[data-plan-hour-start]");
   if (hourCell?.dataset.planHourStart) {
     const start = new Date(hourCell.dataset.planHourStart);
     if (Number.isNaN(start.getTime())) {
       return undefined;
     }
-    start.setMinutes(
-      Math.round(pointerRatio(hourCell, point.y, "y") * 59),
-      0,
-      0,
-    );
+    start.setMinutes(Math.round(pointerRatio(hourCell, point.y, "y") * 59), 0, 0);
     return start.toISOString();
   }
   const dayCell = element?.closest<HTMLElement>("[data-plan-day]");
@@ -152,15 +143,12 @@ export function pointerScheduleFromElement(
       axis,
     }).toISOString();
   }
-  const timelineCell = element?.closest<HTMLElement>(
-    "[data-plan-timeline-day]",
-  );
+  const timelineCell = element?.closest<HTMLElement>("[data-plan-timeline-day]");
   if (timelineCell?.dataset.planTimelineDay) {
-    return dateWithPointerMinutes(
-      new Date(timelineCell.dataset.planTimelineDay),
-      timelineCell,
-      { ...point, axis },
-    ).toISOString();
+    return dateWithPointerMinutes(new Date(timelineCell.dataset.planTimelineDay), timelineCell, {
+      ...point,
+      axis,
+    }).toISOString();
   }
   return undefined;
 }
@@ -171,21 +159,13 @@ export function dateWithPointerMinutes(
   point: { x: number; y: number; axis: "x" | "y" },
 ): Date {
   const next = startOfDay(day);
-  const ratio = pointerRatio(
-    element,
-    point.axis === "x" ? point.x : point.y,
-    point.axis,
-  );
+  const ratio = pointerRatio(element, point.axis === "x" ? point.x : point.y, point.axis);
   const minutes = Math.max(0, Math.min(1439, Math.round(ratio * 1439)));
   next.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
   return next;
 }
 
-export function pointerRatio(
-  element: HTMLElement,
-  coordinate: number,
-  axis: "x" | "y",
-): number {
+export function pointerRatio(element: HTMLElement, coordinate: number, axis: "x" | "y"): number {
   const rect = element.getBoundingClientRect();
   const size = axis === "x" ? rect.width : rect.height;
   const start = axis === "x" ? rect.left : rect.top;

@@ -9,11 +9,26 @@ export interface GatewayEventEnvelope {
 
 export type GatewayEventPayload =
   | { type: "server.connected"; properties: Record<string, unknown> }
-  | { type: "session.created"; properties: { sessionID?: string; session_id?: string; info: Session } }
-  | { type: "session.updated"; properties: { sessionID?: string; session_id?: string; info: Session } }
-  | { type: "session.deleted"; properties: { sessionID?: string; session_id?: string; info: Session } }
-  | { type: "session.status"; properties: { sessionID?: string; session_id?: string; status: unknown } }
-  | { type: "message.updated"; properties: { sessionID?: string; session_id?: string; info: Message } }
+  | {
+      type: "session.created";
+      properties: { sessionID?: string; session_id?: string; info: Session };
+    }
+  | {
+      type: "session.updated";
+      properties: { sessionID?: string; session_id?: string; info: Session };
+    }
+  | {
+      type: "session.deleted";
+      properties: { sessionID?: string; session_id?: string; info: Session };
+    }
+  | {
+      type: "session.status";
+      properties: { sessionID?: string; session_id?: string; status: unknown };
+    }
+  | {
+      type: "message.updated";
+      properties: { sessionID?: string; session_id?: string; info: Message };
+    }
   | { type: "message.removed"; properties: { session_id?: string; message_id?: string } }
   | { type: "message.part.delta"; properties: Record<string, unknown> }
   | { type: "message.part.updated"; properties: Record<string, unknown> }
@@ -48,8 +63,9 @@ export function eventSessionID(payload: GatewayEventPayload | undefined): string
   const part = properties?.part as Record<string, unknown> | undefined;
   const partSession = (part?.sessionID ?? part?.session_id) as string | undefined;
   if (partSession) return partSession;
-  const request = (properties?.permission ?? properties?.question ?? properties?.request ?? properties) as
-    | Record<string, unknown>
-    | undefined;
+  const request = (properties?.permission ??
+    properties?.question ??
+    properties?.request ??
+    properties) as Record<string, unknown> | undefined;
   return (request?.sessionID ?? request?.session_id) as string | undefined;
 }

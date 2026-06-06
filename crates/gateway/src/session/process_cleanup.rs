@@ -122,13 +122,11 @@ fn control_plane_reason(process: &Process) -> Option<String> {
 
     // 受保护控制面进程：router、gateway 二进制（runtime worker 同一二进制 + TURA_ROLE）。
     let protected = [
-        "tura_router",
-        "cargo run -p tura_router",
         "cargo run -p gateway",
-        "target\\debug\\gateway",
-        "target/debug/gateway",
-        "target\\release\\gateway",
-        "target/release/gateway",
+        "bin\\gateway",
+        "bin/gateway",
+        "\\gateway.exe",
+        "/gateway",
     ];
 
     if protected.iter().any(|needle| haystack.contains(needle)) {

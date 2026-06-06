@@ -94,12 +94,7 @@ export interface RunResult {
 }
 
 export function sessionTitle(session: Session): string {
-  return (
-    session.session_display_name ||
-    session.name ||
-    session.id ||
-    "New Session"
-  ).toString();
+  return (session.session_display_name || session.name || session.id || "New Session").toString();
 }
 
 export function sessionUpdatedAt(session: Session): number {
@@ -153,7 +148,9 @@ export function messageText(message: Message): string {
 }
 
 export function messageSortValue(message: Message): number {
-  return message.created_at ?? message.time?.created ?? message.updated_at ?? message.time?.updated ?? 0;
+  return (
+    message.created_at ?? message.time?.created ?? message.updated_at ?? message.time?.updated ?? 0
+  );
 }
 
 export function lastAssistantText(messages: Message[]): string {
@@ -168,7 +165,11 @@ export function lastAssistantText(messages: Message[]): string {
 }
 
 export function hasUserFacingAssistantText(messages: Message[], startIndex = 0): boolean {
-  return messages.slice(startIndex).some((message) => message.role === "assistant" && isUserFacingAssistantText(messageText(message)));
+  return messages
+    .slice(startIndex)
+    .some(
+      (message) => message.role === "assistant" && isUserFacingAssistantText(messageText(message)),
+    );
 }
 
 function isUserFacingAssistantText(value: string): boolean {

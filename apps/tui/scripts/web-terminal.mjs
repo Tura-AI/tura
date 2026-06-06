@@ -15,9 +15,42 @@ const nodeBin = process.execPath;
 const tuiBin = path.join(appRoot, "dist", "index.js");
 
 const profiles = new Map([
-  ["plain", { title: "Tura TUI Plain / Safe", path: "/plain", args: ["--plain"], termName: "dumb", forceColor: "0", clients: new Set(), term: undefined }],
-  ["ansi", { title: "Tura TUI ANSI / Default", path: "/ansi", args: [], termName: "vt100", forceColor: "1", clients: new Set(), term: undefined }],
-  ["rich", { title: "Tura TUI Rich / Modern", path: "/rich", args: ["--rich"], termName: "xterm-256color", forceColor: "1", clients: new Set(), term: undefined }],
+  [
+    "plain",
+    {
+      title: "Tura TUI Plain / Safe",
+      path: "/plain",
+      args: ["--plain"],
+      termName: "dumb",
+      forceColor: "0",
+      clients: new Set(),
+      term: undefined,
+    },
+  ],
+  [
+    "ansi",
+    {
+      title: "Tura TUI ANSI / Default",
+      path: "/ansi",
+      args: [],
+      termName: "vt100",
+      forceColor: "1",
+      clients: new Set(),
+      term: undefined,
+    },
+  ],
+  [
+    "rich",
+    {
+      title: "Tura TUI Rich / Modern",
+      path: "/rich",
+      args: ["--rich"],
+      termName: "xterm-256color",
+      forceColor: "1",
+      clients: new Set(),
+      term: undefined,
+    },
+  ],
 ]);
 
 function indexHtml() {
@@ -125,21 +158,25 @@ function broadcast(profile, data) {
 
 function startTui(profile) {
   if (profile.term) return profile.term;
-  profile.term = pty.spawn(nodeBin, [tuiBin, "--gateway-url", gatewayUrl, "--cwd", workspace, ...profile.args], {
-    name: profile.termName,
-    cols: 120,
-    rows: 36,
-    cwd: repoRoot,
-    env: {
-      ...process.env,
-      FORCE_COLOR: profile.forceColor,
-      TERM: profile.termName,
-      TERM_PROGRAM: profile.args.includes("--rich") ? "vscode" : "",
-      TURA_GATEWAY_URL: gatewayUrl,
-      TURA_CWD: workspace,
+  profile.term = pty.spawn(
+    nodeBin,
+    [tuiBin, "--gateway-url", gatewayUrl, "--cwd", workspace, ...profile.args],
+    {
+      name: profile.termName,
+      cols: 120,
+      rows: 36,
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        FORCE_COLOR: profile.forceColor,
+        TERM: profile.termName,
+        TERM_PROGRAM: profile.args.includes("--rich") ? "vscode" : "",
+        TURA_GATEWAY_URL: gatewayUrl,
+        TURA_CWD: workspace,
+      },
+      shell,
     },
-    shell,
-  });
+  );
   profile.term.onData((data) => broadcast(profile, data));
   profile.term.onExit(({ exitCode }) => {
     broadcast(profile, `\r\n[tura tui exited with code ${exitCode}]\r\n`);
@@ -167,7 +204,8 @@ const server = http.createServer(async (req, res) => {
   const profile = profileFromPath(url);
   if (!profile) return send(res, { error: "not found" }, 404);
   const leaf = `/${url.pathname.split("/").filter(Boolean).slice(1).join("/")}`;
-  if (req.method === "GET" && leaf === "/") return send(res, html(url.pathname.split("/").filter(Boolean)[0], profile));
+  if (req.method === "GET" && leaf === "/")
+    return send(res, html(url.pathname.split("/").filter(Boolean)[0], profile));
   if (req.method === "GET" && leaf === "/events") {
     res.writeHead(200, {
       "content-type": "text/event-stream",

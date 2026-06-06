@@ -72,10 +72,7 @@
 }
 
 .page-layer-inner {
-  width: min(
-    var(--page-max),
-    max(0px, calc(100% - var(--page-edge-space) * 2))
-  );
+  width: min(var(--page-max), max(0px, calc(100% - var(--page-edge-space) * 2)));
   max-width: var(--page-max);
   min-width: 0;
   margin-right: auto;

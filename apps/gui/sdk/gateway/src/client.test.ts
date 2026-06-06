@@ -32,8 +32,7 @@ describe("GatewayClient", () => {
       directory: "C:\\repo",
       fetch: async (input, init) => {
         observedUrl = String(input);
-        observedHeader =
-          new Headers(init?.headers).get("x-opencode-directory") ?? "";
+        observedHeader = new Headers(init?.headers).get("x-opencode-directory") ?? "";
         return jsonResponse([]);
       },
     });
@@ -81,10 +80,7 @@ describe("GatewayClient", () => {
               aborted = true;
               reject(
                 init.signal?.reason ??
-                  new DOMException(
-                    "Gateway request timed out.",
-                    "TimeoutError",
-                  ),
+                  new DOMException("Gateway request timed out.", "TimeoutError"),
               );
             },
             { once: true },

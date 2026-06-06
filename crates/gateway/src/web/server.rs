@@ -169,6 +169,11 @@ pub fn build_router() -> Router {
         // Command
         .route("/command", get(api::command::list_commands))
         .route("/command", post(api::command::execute_command))
+        .route("/tool", get(api::tool::list_tools))
+        .route("/tool/{toolID}", get(api::tool::get_tool))
+        .route("/tool/{toolID}", patch(api::tool::patch_tool))
+        .route("/tool/{toolID}/config", get(api::tool::get_tool_config))
+        .route("/tool/{toolID}/config", patch(api::tool::patch_tool_config))
         .route("/service/status", get(api::service::get_service_status))
         // Path
         .route("/path", get(api::path::get_paths))

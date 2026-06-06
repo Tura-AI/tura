@@ -251,10 +251,7 @@
   position: absolute;
   z-index: var(--plan-ticket-z, 3);
   top: 50%;
-  width: min(
-    var(--plan-bar-width, 156px),
-    calc(var(--plan-day-width) * 3 - 8px)
-  );
+  width: min(var(--plan-bar-width, 156px), calc(var(--plan-day-width) * 3 - 8px));
   transform: translateY(-50%);
 }
 
@@ -312,8 +309,8 @@
   position: absolute;
   inset: var(--plan-scale-height) auto 0
     calc(
-      var(--plan-left-width) +
-        (100% - var(--plan-left-width) - var(--plan-right-width)) * var(--today)
+      var(--plan-left-width) + (100% - var(--plan-left-width) - var(--plan-right-width)) *
+        var(--today)
     );
   z-index: 1;
   width: 2px;

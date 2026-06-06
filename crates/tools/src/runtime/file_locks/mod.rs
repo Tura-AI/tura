@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Condvar, Mutex, OnceLock};
 
@@ -7,7 +8,7 @@ const WORKSPACE_LOCK: &str = ".";
 
 static FILE_LOCKS: OnceLock<FileLockManager> = OnceLock::new();
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Access {
     pub read_paths: Vec<String>,
     pub write_paths: Vec<String>,

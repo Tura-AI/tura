@@ -7,9 +7,11 @@
     "dev": "bun --cwd app dev",
     "build": "bun --cwd app build",
     "typecheck": "bun --cwd app typecheck",
+    "lint": "eslint app/src sdk/gateway/src app/vite.config.ts",
     "format": "prettier --write \"app/src/**/*.{ts,tsx,css}\" \"sdk/**/*.ts\" \"ARCHITECTURE.md\"",
     "format:check": "prettier --check \"app/src/**/*.{ts,tsx,css}\" \"sdk/**/*.ts\" \"ARCHITECTURE.md\"",
-    "check": "bun run format:check && bun run typecheck && bun run build",
+    "unused:check": "bun --cwd app unused:check && bun --cwd sdk/gateway unused:check",
+    "check": "bun run lint && bun run format:check && bun run typecheck && bun run unused:check && bun run build",
     "e2e:real": "python e2e/real_gateway_llm.py",
     "e2e:frontend:gui": "python e2e/frontend_playwright_gui_e2e.py",
     "e2e:session-task": "python e2e/session_task_workspace_e2e.py",
@@ -29,7 +31,12 @@
     "packages/*"
   ],
   "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "eslint": "^9.39.1",
+    "eslint-config-prettier": "^10.1.8",
+    "knip": "^6.14.2",
     "prettier": "^3.5.3",
+    "typescript-eslint": "^8.48.1",
     "typescript": "^5.8.2"
   }
 }

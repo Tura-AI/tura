@@ -3,7 +3,7 @@ use crate::state_machine::session_management::{
     PlanStatus, SessionManagement, StartCondition, TaskStep,
 };
 
-pub(super) fn messages_for_turn(
+pub(crate) fn messages_for_turn(
     current_messages: &[serde_json::Value],
     session: &SessionManagement,
     original_user_task: &str,
@@ -257,14 +257,14 @@ fn url_escape(value: &str) -> String {
 /// Inject the short task_status reminder when the model keeps doing workspace
 /// work (command_run turns) without ever writing or settling the task state.
 /// Used by the runtime loop after N consecutive no-write command_run turns.
-pub(super) fn push_task_status_nudge(messages: &mut Vec<serde_json::Value>) {
+pub(crate) fn push_task_status_nudge(messages: &mut Vec<serde_json::Value>) {
     messages.push(serde_json::json!({
         "role": "system",
         "content": task_status::TASK_STATUS,
     }));
 }
 
-pub(super) fn push_no_tool_task_status_retry_message(
+pub(crate) fn push_no_tool_task_status_retry_message(
     messages: &mut Vec<serde_json::Value>,
     session: &SessionManagement,
 ) {
@@ -292,7 +292,7 @@ pub(crate) fn planning_objective_block(session: &SessionManagement) -> String {
     )
 }
 
-pub(super) fn planning_current_task_text(task: &TaskStep) -> String {
+pub(crate) fn planning_current_task_text(task: &TaskStep) -> String {
     task.task_summary.trim().to_string()
 }
 

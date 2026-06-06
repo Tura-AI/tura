@@ -33,13 +33,8 @@ pub fn normalize_output(
     let Some(object) = value.as_object() else {
         return Err("task_status expects an object".to_string());
     };
-    let status = string_field(object, &["status", "task_status"]).map(|status| {
-        status
-            .trim()
-            .to_ascii_lowercase()
-            .replace('-', "_")
-            .to_string()
-    });
+    let status = string_field(object, &["status", "task_status"])
+        .map(|status| status.trim().to_ascii_lowercase().replace('-', "_"));
     if let Some(status) = status.as_deref() {
         if !matches!(status, "question" | "done") {
             return Err("task_status status must be question or done".to_string());
@@ -87,14 +82,26 @@ mod tests {
     fn done_status_normalizes() {
         let out = normalize_output(None, "{\"status\":\"done\",\"task_summary\":\"Fix bug\"}")
             .expect("ok");
-        assert_eq!(out.pointer("/task_status/status").unwrap(), "done");
-        assert_eq!(out.pointer("/task_status/task_summary").unwrap(), "Fix bug");
+        assert_eq!(
+            out.pointer("/task_status/status")
+                .expect("status should be present"),
+            "done"
+        );
+        assert_eq!(
+            out.pointer("/task_status/task_summary")
+                .expect("task summary should be present"),
+            "Fix bug"
+        );
     }
 
     #[test]
     fn question_text_form_normalizes() {
         let out = normalize_output(None, "question").expect("ok");
-        assert_eq!(out.pointer("/task_status/status").unwrap(), "question");
+        assert_eq!(
+            out.pointer("/task_status/status")
+                .expect("status should be present"),
+            "question"
+        );
     }
 
     #[test]
@@ -102,7 +109,8 @@ mod tests {
         let out = normalize_output(None, "{\"task_summary\":\"Rename task\"}").expect("ok");
         assert!(out.pointer("/task_status/status").is_none());
         assert_eq!(
-            out.pointer("/task_status/task_summary").unwrap(),
+            out.pointer("/task_status/task_summary")
+                .expect("task summary should be present"),
             "Rename task"
         );
     }
@@ -120,14 +128,19 @@ mod tests {
             "{\"status\":\"question\",\"reply_message\":\"Need API key.\",\"message\":\"Done.\"}",
         )
         .expect("ok");
-        assert_eq!(out.pointer("/task_status/status").unwrap(), "question");
+        assert_eq!(
+            out.pointer("/task_status/status")
+                .expect("status should be present"),
+            "question"
+        );
         assert!(out.pointer("/task_status/reply_message").is_none());
         assert!(out.pointer("/task_status/message").is_none());
     }
 
     #[test]
     fn invalid_status_rejected() {
-        let err = normalize_output(None, "{\"status\":\"doing\"}").unwrap_err();
+        let err = normalize_output(None, "{\"status\":\"doing\"}")
+            .expect_err("status should be rejected");
         assert_eq!(err, "task_status status must be question or done");
     }
 }

@@ -60,6 +60,7 @@ export type ComposerImage = {
 export type AppState = {
   gatewayUrl: string;
   connection: ConnectionState;
+  gatewayStartupNotice?: string;
   loading: boolean;
   bootstrapped: boolean;
   productConfig?: ProductConfig;
@@ -141,6 +142,7 @@ export function initialAppState(gatewayUrl: string): AppState {
   return {
     gatewayUrl,
     connection: "connecting",
+    gatewayStartupNotice: undefined,
     loading: true,
     bootstrapped: false,
     sessions: [],
@@ -195,8 +197,7 @@ export function initialAppState(gatewayUrl: string): AppState {
 }
 
 export function systemThemeMode(): Extract<ThemeMode, "light" | "dark"> {
-  return typeof window !== "undefined" &&
-    window.matchMedia("(prefers-color-scheme: dark)").matches
+  return typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches
     ? "dark"
     : "light";
 }
@@ -216,16 +217,11 @@ export function sessionFallbackNameFromInput(
 
 export function sessionHasDisplayName(session: Session): boolean {
   return Boolean(
-    session.session_display_name?.trim() ||
-    session.plan_summary?.trim() ||
-    session.name?.trim(),
+    session.session_display_name?.trim() || session.plan_summary?.trim() || session.name?.trim(),
   );
 }
 
-export function withSessionFallbackName(
-  session: Session,
-  input: string,
-): Session {
+export function withSessionFallbackName(session: Session, input: string): Session {
   if (sessionHasDisplayName(session)) {
     return session;
   }
@@ -241,12 +237,7 @@ export function withSessionFallbackName(
 }
 
 export function sessionTitle(session: Session): string {
-  return (
-    session.session_display_name ||
-    session.plan_summary ||
-    session.name ||
-    "New Session"
-  );
+  return session.session_display_name || session.plan_summary || session.name || "New Session";
 }
 
 export function sessionUpdatedAt(session: Session): number {
@@ -265,15 +256,10 @@ export function messageCreatedAt(message: Message): number {
   return message.time?.created ?? message.created_at ?? 0;
 }
 
-export function partText(part: {
-  text?: string | null;
-  content?: string | null;
-}): string {
+export function partText(part: { text?: string | null; content?: string | null }): string {
   return part.text || part.content || "";
 }
 
 export function activeSession(state: AppState): Session | undefined {
-  return state.sessions.find(
-    (session) => session.id === state.selectedSessionId,
-  );
+  return state.sessions.find((session) => session.id === state.selectedSessionId);
 }

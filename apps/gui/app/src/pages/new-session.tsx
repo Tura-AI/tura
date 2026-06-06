@@ -9,25 +9,13 @@ import Check from "lucide-solid/icons/check";
 import ChevronDown from "lucide-solid/icons/chevron-down";
 import FolderOpen from "lucide-solid/icons/folder-open";
 import Search from "lucide-solid/icons/search";
-import {
-  For,
-  type JSX,
-  Show,
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-} from "solid-js";
+import { For, type JSX, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { Composer } from "../conversation/conversation-view";
 import { t } from "../i18n";
 import { classNames } from "../state/format";
 import { type AppState, type ComposerImage } from "../state/global-store";
 
-import {
-  defaultWorkspaceDirectory,
-  samePath,
-  shortWorkspaceLabel,
-} from "../utils/app-format";
+import { defaultWorkspaceDirectory, samePath, shortWorkspaceLabel } from "../utils/app-format";
 import { PlanComposerControls } from "./plan/plan-composer";
 export function ConversationEmptyView(props: {
   state: AppState;
@@ -62,9 +50,7 @@ export function ConversationEmptyView(props: {
         if (!normalizedQuery) {
           return true;
         }
-        return `${project.name} ${project.worktree}`
-          .toLowerCase()
-          .includes(normalizedQuery);
+        return `${project.name} ${project.worktree}`.toLowerCase().includes(normalizedQuery);
       })
       .slice(0, 10);
   });
@@ -136,9 +122,7 @@ export function NewSessionWorkspacePicker(props: {
   let root: HTMLElement | undefined;
   const [open, setOpen] = createSignal(false);
   const selectedProject = createMemo(() =>
-    props.projects.find((project) =>
-      samePath(project.worktree, props.directory),
-    ),
+    props.projects.find((project) => samePath(project.worktree, props.directory)),
   );
 
   async function pickDirectory() {
@@ -170,9 +154,7 @@ export function NewSessionWorkspacePicker(props: {
         <FolderOpen size={15} strokeWidth={1.6} />
         <span>
           {selectedProject()?.name ??
-            (props.directory
-              ? shortWorkspaceLabel(props.directory)
-              : t("chooseWorkspace"))}
+            (props.directory ? shortWorkspaceLabel(props.directory) : t("chooseWorkspace"))}
         </span>
         <ChevronDown size={13} strokeWidth={1.8} />
       </button>
@@ -203,9 +185,7 @@ export function NewSessionWorkspacePicker(props: {
                   title={project.worktree}
                 >
                   <FolderOpen size={15} strokeWidth={1.6} />
-                  <span>
-                    {project.name || shortWorkspaceLabel(project.worktree)}
-                  </span>
+                  <span>{project.name || shortWorkspaceLabel(project.worktree)}</span>
                   <Show when={samePath(project.worktree, props.directory)}>
                     <Check size={14} strokeWidth={1.8} />
                   </Show>
@@ -289,10 +269,7 @@ export function NameDialog(props: {
 
 export function FileTreeLabel(props: { file: FileInfo; expanded?: boolean }) {
   return (
-    <Show
-      when={props.file.type === "directory"}
-      fallback={<span>{props.file.name}</span>}
-    >
+    <Show when={props.file.type === "directory"} fallback={<span>{props.file.name}</span>}>
       <span>{`${props.file.name}/`}</span>
     </Show>
   );

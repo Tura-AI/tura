@@ -1,5 +1,11 @@
 import { resolveGatewayUrl, resolveCwd } from "./gateway/directory.js";
-import { CliUsageError, type CliContext, type ColorMode, type DisplayMode, type OutputMode } from "./types/common.js";
+import {
+  CliUsageError,
+  type CliContext,
+  type ColorMode,
+  type DisplayMode,
+  type OutputMode,
+} from "./types/common.js";
 import { runPrompt } from "./commands/run.js";
 import { resumeCommand } from "./commands/resume.js";
 import { sessionCommand } from "./commands/session.js";
@@ -14,10 +20,16 @@ import { commandRegistryCommand } from "./commands/command-registry.js";
 import { gatewayCommand } from "./commands/gateway.js";
 import { inspectCommand } from "./commands/inspect.js";
 import { runTui } from "./tui/app.js";
-import { runtimeOverridesFromAssignment, type RuntimeConfigOverrides } from "./commands/config-values.js";
+import {
+  runtimeOverridesFromAssignment,
+  type RuntimeConfigOverrides,
+} from "./commands/config-values.js";
 import { formatHelp } from "./output/help.js";
 import { parseLanguage, setLanguage, t, type Language } from "./i18n.js";
 import { helpPage, type HelpTopic } from "./i18n-help.js";
+
+const DEFAULT_AGENT = "fast";
+const DEFAULT_MODEL_ACCELERATION_ENABLED = true;
 
 export async function main(argv: string[]): Promise<void> {
   const { context, args } = parseGlobal(argv);
@@ -75,7 +87,10 @@ export async function main(argv: string[]): Promise<void> {
     if (command === "completion") return completionCommand(args);
     await runTui(context, [command, ...args].join(" "));
   } catch (error) {
-    const exitCode = typeof error === "object" && error && "exitCode" in error ? Number((error as { exitCode: number }).exitCode) : 1;
+    const exitCode =
+      typeof error === "object" && error && "exitCode" in error
+        ? Number((error as { exitCode: number }).exitCode)
+        : 1;
     if (exitCode === 2) printHelp();
     throw Object.assign(error instanceof Error ? error : new Error(String(error)), { exitCode });
   }
@@ -94,6 +109,7 @@ function parseGlobal(argv: string[]): { context: CliContext; args: string[] } {
   let language: Language | undefined;
   let json = false;
   let verbose = false;
+  let mock = process.env.TURA_TUI_MOCK === "1" || process.env.TURA_TUI_MOCK === "true";
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--gateway-url") gatewayUrl = takeValue(args, index--);
@@ -109,6 +125,9 @@ function parseGlobal(argv: string[]): { context: CliContext; args: string[] } {
       args.splice(index--, 1);
     } else if (arg === "--verbose") {
       verbose = true;
+      args.splice(index--, 1);
+    } else if (arg === "--mock") {
+      mock = true;
       args.splice(index--, 1);
     } else if (arg === "--color") color = takeValue(args, index--) as ColorMode;
     else if (arg.startsWith("--color=")) {
@@ -147,6 +166,7 @@ function parseGlobal(argv: string[]): { context: CliContext; args: string[] } {
       display,
       language,
       verbose,
+      mock,
     },
     args,
   };
@@ -172,18 +192,29 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
     else if (arg.startsWith("--session=")) sessionID = arg.slice("--session=".length);
     else if (arg === "--model" || arg === "-m") model = args[++index];
     else if (arg.startsWith("--model=")) model = arg.slice("--model=".length);
-    else if (arg === "--agent" || arg === "--agent-id" || arg === "--agent-name" || arg === "-a") agent = args[++index];
+    else if (arg === "--agent" || arg === "--agent-id" || arg === "--agent-name" || arg === "-a")
+      agent = args[++index];
     else if (arg.startsWith("--agent=")) agent = arg.slice("--agent=".length);
     else if (arg.startsWith("--agent-id=")) agent = arg.slice("--agent-id=".length);
     else if (arg === "--session-type") sessionType = args[++index];
     else if (arg.startsWith("--session-type=")) sessionType = arg.slice("--session-type=".length);
-    else if (arg === "--model-variant" || arg === "--variant" || arg === "--reasoning-effort" || arg === "--model-reasoning-effort") {
+    else if (
+      arg === "--model-variant" ||
+      arg === "--variant" ||
+      arg === "--reasoning-effort" ||
+      arg === "--model-reasoning-effort"
+    ) {
       modelVariant = args[++index];
-    } else if (arg.startsWith("--model-variant=")) modelVariant = arg.slice("--model-variant=".length);
-    else if (arg.startsWith("--model-reasoning-effort=")) modelVariant = arg.slice("--model-reasoning-effort=".length);
-    else if (arg.startsWith("--reasoning-effort=")) modelVariant = arg.slice("--reasoning-effort=".length);
-    else if (arg === "--model-acceleration" || arg === "--accelerated") modelAccelerationEnabled = true;
-    else if (arg === "--no-model-acceleration" || arg === "--no-accelerated") modelAccelerationEnabled = false;
+    } else if (arg.startsWith("--model-variant="))
+      modelVariant = arg.slice("--model-variant=".length);
+    else if (arg.startsWith("--model-reasoning-effort="))
+      modelVariant = arg.slice("--model-reasoning-effort=".length);
+    else if (arg.startsWith("--reasoning-effort="))
+      modelVariant = arg.slice("--reasoning-effort=".length);
+    else if (arg === "--model-acceleration" || arg === "--accelerated")
+      modelAccelerationEnabled = true;
+    else if (arg === "--no-model-acceleration" || arg === "--no-accelerated")
+      modelAccelerationEnabled = false;
     else if (arg === "-p" || arg === "--priority") modelAccelerationEnabled = true;
     else if (arg === "--output") output = parseOutput(args[++index]);
     else if (arg === "--json") output = "json";
@@ -193,30 +224,59 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
     else if (arg === "--last-message-file") lastMessageFile = args[++index];
     else if (arg === "-c" || arg === "--config") {
       const overrides = runtimeOverridesFromAssignment(args[++index]);
-      ({ model, agent, sessionType, modelVariant, modelAccelerationEnabled, killProcessesOnStart, validatorEnabled } =
-        applyRunOverrides(
-          { model, agent, sessionType, modelVariant, modelAccelerationEnabled, killProcessesOnStart, validatorEnabled },
-          overrides,
-        ));
+      ({
+        model,
+        agent,
+        sessionType,
+        modelVariant,
+        modelAccelerationEnabled,
+        killProcessesOnStart,
+        validatorEnabled,
+      } = applyRunOverrides(
+        {
+          model,
+          agent,
+          sessionType,
+          modelVariant,
+          modelAccelerationEnabled,
+          killProcessesOnStart,
+          validatorEnabled,
+        },
+        overrides,
+      ));
     } else if (arg.startsWith("--config=")) {
       const overrides = runtimeOverridesFromAssignment(arg.slice("--config=".length));
-      ({ model, agent, sessionType, modelVariant, modelAccelerationEnabled, killProcessesOnStart, validatorEnabled } =
-        applyRunOverrides(
-          { model, agent, sessionType, modelVariant, modelAccelerationEnabled, killProcessesOnStart, validatorEnabled },
-          overrides,
-        ));
-    }
-    else prompt.push(arg);
+      ({
+        model,
+        agent,
+        sessionType,
+        modelVariant,
+        modelAccelerationEnabled,
+        killProcessesOnStart,
+        validatorEnabled,
+      } = applyRunOverrides(
+        {
+          model,
+          agent,
+          sessionType,
+          modelVariant,
+          modelAccelerationEnabled,
+          killProcessesOnStart,
+          validatorEnabled,
+        },
+        overrides,
+      ));
+    } else prompt.push(arg);
   }
   if (!prompt.join(" ").trim()) throw new CliUsageError(t("runRequiresPrompt"));
   return {
     prompt: prompt.join(" "),
     sessionID,
     model,
-    agent,
+    agent: agent ?? DEFAULT_AGENT,
     sessionType,
     modelVariant,
-    modelAccelerationEnabled,
+    modelAccelerationEnabled: modelAccelerationEnabled ?? DEFAULT_MODEL_ACCELERATION_ENABLED,
     killProcessesOnStart,
     validatorEnabled,
     output,
@@ -227,7 +287,10 @@ function parseRun(args: string[], rootJson: boolean): Parameters<typeof runPromp
   };
 }
 
-function applyRunOverrides(current: RuntimeConfigOverrides, next: RuntimeConfigOverrides): RuntimeConfigOverrides {
+function applyRunOverrides(
+  current: RuntimeConfigOverrides,
+  next: RuntimeConfigOverrides,
+): RuntimeConfigOverrides {
   return { ...current, ...next };
 }
 

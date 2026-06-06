@@ -7,11 +7,7 @@ import {
   visibleSessionTreeRows,
 } from "./session-tree";
 
-function session(
-  id: string,
-  updated_at: number,
-  parent_id?: string | null,
-): Session {
+function session(id: string, updated_at: number, parent_id?: string | null): Session {
   return {
     id,
     parent_id,
@@ -30,10 +26,7 @@ describe("session tree", () => {
   ];
 
   test("keeps sub sessions out of root plan lists", () => {
-    expect(rootSessions(sessions).map((item) => item.id)).toEqual([
-      "root-b",
-      "root-a",
-    ]);
+    expect(rootSessions(sessions).map((item) => item.id)).toEqual(["root-b", "root-a"]);
   });
 
   test("resolves a selected child to its top-level session", () => {
@@ -42,9 +35,10 @@ describe("session tree", () => {
 
   test("expands only the selected root session subtree", () => {
     expect(
-      visibleSessionTreeRows(sessions, "root-a", { expandedRoots: true }).map(
-        (row) => [row.session.id, row.depth],
-      ),
+      visibleSessionTreeRows(sessions, "root-a", { expandedRoots: true }).map((row) => [
+        row.session.id,
+        row.depth,
+      ]),
     ).toEqual([
       ["root-b", 0],
       ["root-a", 0],

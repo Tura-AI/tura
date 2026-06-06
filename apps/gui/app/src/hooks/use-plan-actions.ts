@@ -27,19 +27,13 @@ import {
 import { t } from "../i18n";
 import type { AppState } from "../state/global-store";
 import { sessionTitle, withSessionFallbackName } from "../state/global-store";
-import {
-  providerIdFromAuthError,
-  providerIdFromModel,
-} from "../utils/settings";
+import { providerIdFromAuthError, providerIdFromModel } from "../utils/settings";
 
 const PLAN_RUN_TIMEOUT_MS = 30_000;
 const PLAN_RUN_TIMEOUT_CODE = "GATEWAY_NO_RESPONSE_30S";
 const PLAN_INPUT_REQUIRED_CODE = "PLAN_INPUT_REQUIRED";
 
-function providerIssueIdFromError(
-  error: unknown,
-  state: AppState,
-): string | undefined {
+function providerIssueIdFromError(error: unknown, state: AppState): string | undefined {
   const authProvider = providerIdFromAuthError(error, state);
   if (authProvider) {
     return authProvider;
@@ -77,8 +71,9 @@ export function usePlanActions(options: PlanActionsOptions) {
     createSessionPayload,
     refreshSessions,
   } = options;
-  const [acknowledgedAttentionSessions, setAcknowledgedAttentionSessions] =
-    createSignal(new Set<string>());
+  const [acknowledgedAttentionSessions, setAcknowledgedAttentionSessions] = createSignal(
+    new Set<string>(),
+  );
 
   async function openPlanSession(session: Session) {
     acknowledgeSessionAttention(session.id);
@@ -127,9 +122,7 @@ export function usePlanActions(options: PlanActionsOptions) {
     return key ? acknowledgedAttentionSessions().has(key) : false;
   }
 
-  function taskForSessionStatusPatch(
-    session: Session,
-  ): TaskManagement | undefined {
+  function taskForSessionStatusPatch(session: Session): TaskManagement | undefined {
     return (
       sessionTasks(session).find((task) => task.status === "doing") ??
       firstRunnableTask(session) ??
@@ -197,8 +190,7 @@ export function usePlanActions(options: PlanActionsOptions) {
   ) {
     setState((previous) => ({
       ...previous,
-      submitting:
-        previous.selectedSessionId === session.id ? false : previous.submitting,
+      submitting: previous.selectedSessionId === session.id ? false : previous.submitting,
       sessions: previous.sessions.map((item) =>
         item.id === session.id ? { ...item, status: "idle" } : item,
       ),
@@ -220,10 +212,7 @@ export function usePlanActions(options: PlanActionsOptions) {
       }));
       return;
     }
-    await updatePlanTicketTask(
-      { ...session, status: "idle" },
-      { task_id: taskId, status },
-    );
+    await updatePlanTicketTask({ ...session, status: "idle" }, { task_id: taskId, status });
   }
 
   async function startPlanTicketDoing(session: Session) {
@@ -323,8 +312,7 @@ export function usePlanActions(options: PlanActionsOptions) {
                     parts: message.parts.map((part) => ({
                       ...part,
                       metadata: {
-                        ...(typeof part.metadata === "object" &&
-                        part.metadata !== null
+                        ...(typeof part.metadata === "object" && part.metadata !== null
                           ? part.metadata
                           : {}),
                         planRunPending: false,
@@ -368,15 +356,11 @@ export function usePlanActions(options: PlanActionsOptions) {
           agent: state().selectedAgent,
         }),
         new Promise<never>((_, reject) =>
-          window.setTimeout(
-            () => reject(new Error(PLAN_RUN_TIMEOUT_CODE)),
-            PLAN_RUN_TIMEOUT_MS,
-          ),
+          window.setTimeout(() => reject(new Error(PLAN_RUN_TIMEOUT_CODE)), PLAN_RUN_TIMEOUT_MS),
         ),
       ]);
     } catch (error) {
-      const timeout =
-        error instanceof Error && error.message === PLAN_RUN_TIMEOUT_CODE;
+      const timeout = error instanceof Error && error.message === PLAN_RUN_TIMEOUT_CODE;
       const responseTime = Date.now();
       setState((previous) => ({
         ...previous,
@@ -392,26 +376,24 @@ export function usePlanActions(options: PlanActionsOptions) {
             },
         messagesBySession: {
           ...previous.messagesBySession,
-          [session.id]: (previous.messagesBySession[session.id] ?? []).map(
-            (message) =>
-              message.id === messageId
-                ? {
-                    ...message,
-                    updated_at: responseTime,
-                    time: { ...message.time, updated: responseTime },
-                    parts: message.parts.map((part) => ({
-                      ...part,
-                      metadata: {
-                        ...(typeof part.metadata === "object" &&
-                        part.metadata !== null
-                          ? part.metadata
-                          : {}),
-                        planRunPending: false,
-                        planRunError: true,
-                      },
-                    })),
-                  }
-                : message,
+          [session.id]: (previous.messagesBySession[session.id] ?? []).map((message) =>
+            message.id === messageId
+              ? {
+                  ...message,
+                  updated_at: responseTime,
+                  time: { ...message.time, updated: responseTime },
+                  parts: message.parts.map((part) => ({
+                    ...part,
+                    metadata: {
+                      ...(typeof part.metadata === "object" && part.metadata !== null
+                        ? part.metadata
+                        : {}),
+                      planRunPending: false,
+                      planRunError: true,
+                    },
+                  })),
+                }
+              : message,
           ),
         },
         error: undefined,
@@ -431,14 +413,7 @@ export function usePlanActions(options: PlanActionsOptions) {
   ) {
     if (
       patch.status &&
-      ![
-        "todo",
-        "waiting_user",
-        "doing",
-        "question",
-        "done",
-        "archived",
-      ].includes(patch.status)
+      !["todo", "waiting_user", "doing", "question", "done", "archived"].includes(patch.status)
     ) {
       setState((previous) => ({
         ...previous,
@@ -465,16 +440,11 @@ export function usePlanActions(options: PlanActionsOptions) {
       return;
     }
     try {
-      const updated = await directoryClient().updateSessionTaskManagement(
-        session.id,
-        patch,
-      );
+      const updated = await directoryClient().updateSessionTaskManagement(session.id, patch);
       setState((previous) => ({
         ...previous,
         sessions: previous.sessions.map((item) =>
-          item.id === session.id
-            ? mergeTaskUpdateResponse(item, updated, patch)
-            : item,
+          item.id === session.id ? mergeTaskUpdateResponse(item, updated, patch) : item,
         ),
       }));
     } catch (error) {
@@ -483,10 +453,7 @@ export function usePlanActions(options: PlanActionsOptions) {
     }
   }
 
-  async function reorderPlanTasks(
-    session: Session,
-    orderedTasks: TaskManagement[],
-  ) {
+  async function reorderPlanTasks(session: Session, orderedTasks: TaskManagement[]) {
     const tasks = orderedTasks.map((task, index) => ({
       ...task,
       step: index + 1,
@@ -502,10 +469,7 @@ export function usePlanActions(options: PlanActionsOptions) {
       return;
     }
     try {
-      const updated = await directoryClient().updateSessionTaskManagement(
-        session.id,
-        { tasks },
-      );
+      const updated = await directoryClient().updateSessionTaskManagement(session.id, { tasks });
       setState((previous) => ({
         ...previous,
         sessions: previous.sessions.map((item) =>
@@ -534,12 +498,8 @@ export function usePlanActions(options: PlanActionsOptions) {
       return { ...current, ...updated };
     }
     const patchKeys = new Set(Object.keys(patch));
-    const currentTask = sessionTasks(current).find(
-      (task) => taskNonceId(task) === nonce,
-    );
-    const updatedTask = sessionTasks(updated).find(
-      (task) => taskNonceId(task) === nonce,
-    );
+    const currentTask = sessionTasks(current).find((task) => taskNonceId(task) === nonce);
+    const updatedTask = sessionTasks(updated).find((task) => taskNonceId(task) === nonce);
     if (!currentTask || !updatedTask) {
       return applyTaskPatchToSession(current, patch);
     }
@@ -561,11 +521,7 @@ export function usePlanActions(options: PlanActionsOptions) {
       }
     >,
   ): boolean {
-    return (
-      "start_condition" in patch ||
-      "start_at" in patch ||
-      "poll_interval" in patch
-    );
+    return "start_condition" in patch || "start_at" in patch || "poll_interval" in patch;
   }
 
   async function deletePlanTask(session: Session, task: TaskManagement) {
@@ -575,10 +531,7 @@ export function usePlanActions(options: PlanActionsOptions) {
     });
   }
 
-  async function createSessionFromPlanTask(
-    session: Session,
-    task: TaskManagement,
-  ) {
+  async function createSessionFromPlanTask(session: Session, task: TaskManagement) {
     const summary = taskSummaryText(task).trim();
     if (state().activeTab === "plan") {
       setState((previous) => ({
@@ -597,8 +550,7 @@ export function usePlanActions(options: PlanActionsOptions) {
       return;
     }
     const composerText = taskDisplayText(task);
-    const title =
-      summary || composerText.split("\n")[0]?.trim() || t("newTask");
+    const title = summary || composerText.split("\n")[0]?.trim() || t("newTask");
     const patch = {
       ...task,
       task_id: `${session.id}:${Date.now()}`,
@@ -620,9 +572,7 @@ export function usePlanActions(options: PlanActionsOptions) {
         planPreviewSessionId: next.id,
         activeTab: "conversation",
         previousMainTab:
-          previous.activeTab === "settings"
-            ? previous.previousMainTab
-            : previous.activeTab,
+          previous.activeTab === "settings" ? previous.previousMainTab : previous.activeTab,
         composerText,
         editingTask: undefined,
         error: undefined,
@@ -643,9 +593,7 @@ export function usePlanActions(options: PlanActionsOptions) {
       planPreviewSessionId: created.id,
       activeTab: "conversation",
       previousMainTab:
-        previous.activeTab === "settings"
-          ? previous.previousMainTab
-          : previous.activeTab,
+        previous.activeTab === "settings" ? previous.previousMainTab : previous.activeTab,
       composerText,
       editingTask: undefined,
       error: undefined,
@@ -657,9 +605,7 @@ export function usePlanActions(options: PlanActionsOptions) {
     if (!editing) {
       return false;
     }
-    const session = state().sessions.find(
-      (item) => item.id === editing.sessionId,
-    );
+    const session = state().sessions.find((item) => item.id === editing.sessionId);
     if (!session) {
       return false;
     }
@@ -749,10 +695,7 @@ export function usePlanActions(options: PlanActionsOptions) {
           };
       setState((previous) => ({
         ...previous,
-        sessions: [
-          session,
-          ...previous.sessions.filter((item) => item.id !== session.id),
-        ],
+        sessions: [session, ...previous.sessions.filter((item) => item.id !== session.id)],
         selectedSessionId: session.id,
         planPreviewSessionId: session.id,
         composerText: "",
@@ -768,10 +711,9 @@ export function usePlanActions(options: PlanActionsOptions) {
     try {
       let session: Session | undefined;
       if (existingSession) {
-        session = await directoryClient().updateSessionTaskManagement(
-          existingSession.id,
-          { tasks: [taskState] },
-        );
+        session = await directoryClient().updateSessionTaskManagement(existingSession.id, {
+          tasks: [taskState],
+        });
       } else {
         session = withSessionFallbackName(
           await directoryClient().createSession({
@@ -784,10 +726,7 @@ export function usePlanActions(options: PlanActionsOptions) {
       setState((previous) => ({
         ...previous,
         sessions: session
-          ? [
-              session,
-              ...previous.sessions.filter((item) => item.id !== session!.id),
-            ]
+          ? [session, ...previous.sessions.filter((item) => item.id !== session!.id)]
           : previous.sessions,
         selectedSessionId: session?.id ?? previous.selectedSessionId,
         planPreviewSessionId: session?.id ?? previous.planPreviewSessionId,

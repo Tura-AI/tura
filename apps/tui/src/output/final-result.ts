@@ -3,7 +3,11 @@ import { dirname } from "node:path";
 import type { Message, RunResult } from "../types/session.js";
 import { lastAssistantText } from "../types/session.js";
 
-export function buildRunResult(sessionID: string, messages: Message[], status: RunResult["status"] = "completed"): RunResult {
+export function buildRunResult(
+  sessionID: string,
+  messages: Message[],
+  status: RunResult["status"] = "completed",
+): RunResult {
   const finalText = lastAssistantText(messages);
   const lastAssistant = [...messages].reverse().find((message) => message.role === "assistant");
   return {

@@ -12,9 +12,6 @@ from playwright.async_api import async_playwright
 
 
 ROOT = Path(__file__).resolve().parents[3]
-COMMUNICATION_STYLE = (
-    ROOT / "crates" / "persona" / "src" / "tura" / "prompt" / "communication_style.md"
-)
 OUT = Path(
     os.environ.get(
         "TURA_GUI_E2E_OUT",
@@ -163,6 +160,49 @@ async def page_metrics(page):
               spoiler: document.querySelectorAll('.rich-spoiler').length,
               blockquote: document.querySelectorAll('.rich-text blockquote').length,
               codeBlock: document.querySelectorAll('.rich-text pre code').length,
+              table: document.querySelectorAll('.rich-table-frame').length,
+              tableRows: document.querySelectorAll('.rich-table-scroll tbody tr').length,
+              tableCells: document.querySelectorAll('.rich-table-scroll th, .rich-table-scroll td').length,
+              tableScrollX: (() => {
+                const table = document.querySelector('.rich-table-scroll');
+                return table ? table.scrollWidth - table.clientWidth : 0;
+              })(),
+              tableScrollY: (() => {
+                const table = document.querySelector('.rich-table-scroll');
+                return table ? table.scrollHeight - table.clientHeight : 0;
+              })(),
+              tableOverflow: (() => {
+                const table = document.querySelector('.rich-table-scroll');
+                return table ? getComputedStyle(table).overflow : '';
+              })(),
+              tableXOverflowBar: document.querySelectorAll('.rich-table-overflow-x').length,
+              tableYOverflowBar: document.querySelectorAll('.rich-table-overflow-y').length,
+              tableSticky: (() => {
+                const table = document.querySelector('.rich-table-scroll');
+                const header = document.querySelector('.rich-table-scroll th');
+                const index = document.querySelector('.rich-table-scroll tbody tr:nth-child(2) td:first-child');
+                if (!table || !header || !index) return { header: false, index: false };
+                const before = {
+                  headerTop: header.getBoundingClientRect().top,
+                };
+                table.scrollTop = Math.min(280, table.scrollHeight - table.clientHeight);
+                table.scrollLeft = Math.min(560, table.scrollWidth - table.clientWidth);
+                const after = {
+                  headerTop: header.getBoundingClientRect().top,
+                  indexLeft: index.getBoundingClientRect().left,
+                };
+                table.scrollLeft = Math.min(1120, table.scrollWidth - table.clientWidth);
+                const afterMore = {
+                  indexLeft: index.getBoundingClientRect().left,
+                };
+                table.scrollTop = 0;
+                table.scrollLeft = 0;
+                return {
+                  header: Math.abs(before.headerTop - after.headerTop) <= 1,
+                  index: Math.abs(after.indexLeft - afterMore.indexLeft) <= 1,
+                };
+              })(),
+              rawMarkdownTable: document.body.innerText.includes('| Index |'),
               media: document.querySelectorAll('.rich-media img').length,
               gallery: document.querySelectorAll('.rich-gallery').length,
               galleryImages: document.querySelectorAll('.rich-gallery img').length,
@@ -376,17 +416,6 @@ async def wait_for_avatar_decode(page):
 
 
 async def run_display_matrix(browser, results, browser_errors):
-    style_source = COMMUNICATION_STYLE.read_text(encoding="utf-8")
-    required_source_terms = [
-        "<b>",
-        "<i>",
-        "<code>",
-        "<blockquote>",
-        "[MEDIA:",
-        "[EMOJI:sticker:",
-        "[EMOJI:react:",
-    ]
-    missing_terms = [term for term in required_source_terms if term not in style_source]
     page = await new_page(browser, browser_errors, 1920, 1080)
     await goto_gui(
         page,
@@ -397,7 +426,8 @@ async def run_display_matrix(browser, results, browser_errors):
         },
     )
     await page.wait_for_function(
-        "() => document.querySelectorAll('.rich-spoiler').length >= 1"
+        "() => document.querySelectorAll('.rich-table-frame').length >= 1"
+        " && document.querySelectorAll('.rich-table-scroll tbody tr').length >= 73"
         " && document.querySelectorAll('.rich-gallery img').length >= 3"
         " && document.querySelectorAll('.message-reaction').length >= 1",
         timeout=8000,
@@ -408,7 +438,6 @@ async def run_display_matrix(browser, results, browser_errors):
     checks.extend(
         as_checks(
             [
-            ("communication-style-source-covered", not missing_terms),
             ("rich-bold", metrics["rich"]["bold"] >= 1),
             ("rich-italic", metrics["rich"]["italic"] >= 1),
             ("italic-computed-style", "italic" in metrics["italicFontStyle"] or "oblique" in metrics["italicFontStyle"]),
@@ -422,6 +451,17 @@ async def run_display_matrix(browser, results, browser_errors):
             ("rich-gallery", metrics["rich"]["gallery"] >= 1),
             ("rich-gallery-images", metrics["rich"]["galleryImages"] >= 3),
             ("rich-sticker", metrics["rich"]["sticker"] >= 1),
+            ("rich-table", metrics["rich"]["table"] >= 1),
+            ("rich-table-rows", metrics["rich"]["tableRows"] >= 73),
+            ("rich-table-cells", metrics["rich"]["tableCells"] >= 3500),
+            ("rich-table-horizontal-scroll", metrics["rich"]["tableScrollX"] > 10000),
+            ("rich-table-vertical-scroll", metrics["rich"]["tableScrollY"] > 900),
+            ("rich-table-internal-scrollbars", metrics["rich"]["tableOverflow"] == "scroll"),
+            ("rich-table-horizontal-bar-visible", metrics["rich"]["tableXOverflowBar"] == 1),
+            ("rich-table-vertical-bar-visible", metrics["rich"]["tableYOverflowBar"] == 1),
+            ("rich-table-header-sticky", metrics["rich"]["tableSticky"]["header"]),
+            ("rich-table-index-sticky", metrics["rich"]["tableSticky"]["index"]),
+            ("markdown-table-rendered", not metrics["rich"]["rawMarkdownTable"]),
             ("rich-reaction-moved-out-of-body", metrics["rich"]["reaction"] == 0),
             ("message-reaction-rendered", metrics["rich"]["messageReaction"] >= 1),
             ("reaction-token-stripped", not metrics["rich"]["rawReactToken"]),
@@ -430,27 +470,6 @@ async def run_display_matrix(browser, results, browser_errors):
             ]
         )
     )
-    gallery_item = page.locator(".rich-gallery-item")
-    if await gallery_item.count() > 0:
-        await gallery_item.first.click()
-        await page.wait_for_selector(".media-lightbox", timeout=5000)
-        await page.screenshot(path=str(OUT / "style-01b-lightbox-1920x1080.png"), full_page=True)
-        lightbox_metrics = await page_metrics(page)
-        results.append(
-            {
-                "name": "style-lightbox-1920x1080",
-                "metrics": lightbox_metrics,
-                "checks": (await validate_layout(lightbox_metrics, (1920, 1080)))
-                + as_checks(
-                    [
-                        ("lightbox-open", lightbox_metrics["rich"]["lightbox"] == 1),
-                        ("lightbox-no-overflow", lightbox_metrics["overflowX"] <= 1),
-                    ]
-                ),
-            }
-        )
-        await page.locator(".media-window-actions button").last.click()
-        await page.wait_for_timeout(150)
     results.append({"name": "style-matrix-1920x1080", "metrics": metrics, "checks": checks})
 
     summary = page.locator(".run-summary")

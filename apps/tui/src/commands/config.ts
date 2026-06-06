@@ -6,7 +6,11 @@ import { sessionConfigPatchFromAssignments } from "./config-values.js";
 import { t } from "../i18n.js";
 
 export async function configCommand(context: CliContext, args: string[]): Promise<void> {
-  const client = new GatewayClient({ baseUrl: context.gatewayUrl, directory: context.cwd, verbose: context.verbose });
+  const client = new GatewayClient({
+    baseUrl: context.gatewayUrl,
+    directory: context.cwd,
+    verbose: context.verbose,
+  });
   const subcommand = args.shift() ?? "get";
   const json = context.json || takeFlag(args, "--json");
   if (subcommand === "model-tiers" || subcommand === "tiers") {
@@ -18,11 +22,14 @@ export async function configCommand(context: CliContext, args: string[]): Promis
       options: tier.options.length,
       path: config.path,
     }));
-    return write(context, formatTable(rows, [
-      { header: t("tier"), value: (row) => row.tier },
-      { header: t("current"), value: (row) => row.current },
-      { header: t("optionsColumn"), value: (row) => row.options },
-    ]));
+    return write(
+      context,
+      formatTable(rows, [
+        { header: t("tier"), value: (row) => row.tier },
+        { header: t("current"), value: (row) => row.current },
+        { header: t("optionsColumn"), value: (row) => row.options },
+      ]),
+    );
   }
   if (subcommand === "model-tier" || subcommand === "tier") {
     const tier = args.shift();
@@ -32,11 +39,14 @@ export async function configCommand(context: CliContext, args: string[]): Promis
       const selected = config.tiers.find((item) => item.tier === tier);
       if (!selected) throw new CliUsageError(t("unknownModelTier", { tier }));
       if (json) return printJson(selected);
-      return write(context, formatTable(selected.options, [
-        { header: t("provider"), value: (option) => option.provider },
-        { header: t("model"), value: (option) => option.model },
-        { header: t("name"), value: (option) => option.model_name ?? "" },
-      ]));
+      return write(
+        context,
+        formatTable(selected.options, [
+          { header: t("provider"), value: (option) => option.provider },
+          { header: t("model"), value: (option) => option.model },
+          { header: t("name"), value: (option) => option.model_name ?? "" },
+        ]),
+      );
     }
     const [provider, model] = parseProviderModel(args);
     const updated = await client.putModelConfig({ tier, provider, model });

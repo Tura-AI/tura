@@ -1,9 +1,4 @@
-import {
-  type FileInfo,
-  type PlanStatus,
-  type ProductIssue,
-  type Session,
-} from "@tura/gateway-sdk";
+import { type FileInfo, type PlanStatus, type ProductIssue, type Session } from "@tura/gateway-sdk";
 import Edit3 from "lucide-solid/icons/pencil";
 import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
 import { t } from "../../i18n";
@@ -49,9 +44,7 @@ export function WorkspaceChildren(props: {
     }),
   );
   const hiddenSessionCount = createMemo(() =>
-    expandedSessions()
-      ? 0
-      : hiddenRootSessionCount(props.sessions, props.selectedSessionId),
+    expandedSessions() ? 0 : hiddenRootSessionCount(props.sessions, props.selectedSessionId),
   );
   const rootFiles = createMemo(() => props.fileTree[""] ?? props.files);
   const sortedPlanSessions = createMemo(() => rootSessions(props.sessions));
@@ -75,10 +68,7 @@ export function WorkspaceChildren(props: {
           </For>
         </Match>
         <Match when={props.activeTab === "conversation"}>
-          <For
-            each={visibleSessions()}
-            fallback={<div class="rail-empty">{t("noSessions")}</div>}
-          >
+          <For each={visibleSessions()} fallback={<div class="rail-empty">{t("noSessions")}</div>}>
             {(row) => (
               <SessionButton
                 session={row.session}
@@ -97,9 +87,7 @@ export function WorkspaceChildren(props: {
               style={{ "--depth": 1 }}
               onClick={() => setExpandedSessions((value) => !value)}
             >
-              {expandedSessions()
-                ? t("collapse")
-                : t("showMore", { count: hiddenSessionCount() })}
+              {expandedSessions() ? t("collapse") : t("showMore", { count: hiddenSessionCount() })}
             </button>
           </Show>
           <Show when={renaming()}>
@@ -145,20 +133,13 @@ function SessionButton(props: {
 }) {
   return (
     <button
-      class={classNames(
-        "child-row",
-        "session-row",
-        props.selected && "selected",
-      )}
+      class={classNames("child-row", "session-row", props.selected && "selected")}
       style={{ "--depth": 1, "--session-depth": props.depth ?? 0 }}
       onClick={() => props.onSession(props.session)}
       title={sessionHoverTitle(props.session)}
     >
       <span>{shortSessionTitle(sessionTitle(props.session))}</span>
-      <SessionRowMeta
-        session={props.session}
-        attentionAcknowledged={props.attentionAcknowledged}
-      />
+      <SessionRowMeta session={props.session} attentionAcknowledged={props.attentionAcknowledged} />
       <Edit3
         class="session-rename-icon"
         size={13}

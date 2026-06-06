@@ -1,13 +1,13 @@
 //! Session log API handlers.
 
 use crate::mock::global_store;
+use crate::session_db_client::SessionDbClient;
 use axum::{
     extract::{Path, Query},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
 };
-use runtime::session_log_client::SessionLogClient;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -33,7 +33,7 @@ fn default_session_log_page_size() -> u64 {
 
 pub async fn session_log_workspaces() -> impl IntoResponse {
     match tokio::task::spawn_blocking(|| {
-        SessionLogClient::discover().and_then(|client| client.list_workspaces())
+        SessionDbClient::discover().and_then(|client| client.list_workspaces())
     })
     .await
     {
@@ -63,7 +63,7 @@ pub async fn session_log_sessions(
     let page = params.page;
     let page_size = params.page_size;
     match tokio::task::spawn_blocking(move || {
-        SessionLogClient::discover()
+        SessionDbClient::discover()
             .and_then(|client| client.list_sessions(workspace, page, page_size))
     })
     .await
@@ -91,7 +91,7 @@ pub async fn session_log_records(
     let page = params.page;
     let page_size = params.page_size;
     match tokio::task::spawn_blocking(move || {
-        SessionLogClient::discover()
+        SessionDbClient::discover()
             .and_then(|client| client.list_session_records(session_id, page, page_size))
     })
     .await

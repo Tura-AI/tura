@@ -1,9 +1,4 @@
-import type {
-  Command,
-  Message,
-  Session,
-  TaskManagement,
-} from "@tura/gateway-sdk";
+import type { Command, Message, Session, TaskManagement } from "@tura/gateway-sdk";
 import type { Accessor, Setter } from "solid-js";
 import { Show, createMemo } from "solid-js";
 import { AgentComposerMenu } from "../conversation/agent-composer-menu";
@@ -51,11 +46,7 @@ export function ConversationPageOutlet(props: {
   >;
   onSubmit: () => void;
   onQueueSubmit?: () => void;
-  onInspectorLayout: (layout: {
-    open: boolean;
-    overlay: boolean;
-    width: number;
-  }) => void;
+  onInspectorLayout: (layout: { open: boolean; overlay: boolean; width: number }) => void;
   closeInspectorSignal?: number;
   onRequestCollapseLeftRail: () => void;
   onOpenProviderSettings: (providerId?: string) => void;
@@ -179,16 +170,9 @@ export function ConversationPageOutlet(props: {
             selectedSession() && props.selectedEditingTask() ? (
               <>
                 <PlanComposerControls
-                  startCondition={taskStartCondition(
-                    props.selectedEditingTask()!,
-                  )}
-                  startAt={utcIsoToLocalDateTime(
-                    props.selectedEditingTask()!.start_at,
-                  )}
-                  pollInterval={
-                    props.selectedEditingTask()!.poll_interval ??
-                    defaultPollInterval()
-                  }
+                  startCondition={taskStartCondition(props.selectedEditingTask()!)}
+                  startAt={utcIsoToLocalDateTime(props.selectedEditingTask()!.start_at)}
+                  pollInterval={props.selectedEditingTask()!.poll_interval ?? defaultPollInterval()}
                   onStartCondition={(start_condition) => {
                     const task = props.selectedEditingTask()!;
                     if (start_condition === "user_action") {
@@ -197,17 +181,12 @@ export function ConversationPageOutlet(props: {
                     }
                     const startAt =
                       localDateTimeToUtcIso(
-                        utcIsoToLocalDateTime(task.start_at) ||
-                          defaultLocalStartAt(),
+                        utcIsoToLocalDateTime(task.start_at) || defaultLocalStartAt(),
                       ) ?? localDateTimeToUtcIso(defaultLocalStartAt());
                     void updatePlanTicketTask(selectedSession()!, {
                       task_id: taskNonceId(task),
                       status: "todo",
-                      ...timedTaskPatch(
-                        start_condition,
-                        startAt,
-                        taskPollInterval(task),
-                      ),
+                      ...timedTaskPatch(start_condition, startAt, taskPollInterval(task)),
                     });
                   }}
                   onStartAt={(value) => {
@@ -273,20 +252,12 @@ export function ConversationPageOutlet(props: {
                     : undefined
                 }
                 onEdit={(task, composerText) =>
-                  props.onEditTask(
-                    selectedSession()!.id,
-                    taskNonceId(task),
-                    composerText,
-                  )
+                  props.onEditTask(selectedSession()!.id, taskNonceId(task), composerText)
                 }
                 onDelete={(task) => deletePlanTask(selectedSession()!, task)}
                 onRun={(task) => props.onRunTask(selectedSession()!, task)}
-                onCreateSession={(task) =>
-                  createSessionFromPlanTask(selectedSession()!, task)
-                }
-                onReorder={(tasks) =>
-                  reorderPlanTasks(selectedSession()!, tasks)
-                }
+                onCreateSession={(task) => createSessionFromPlanTask(selectedSession()!, task)}
+                onReorder={(tasks) => reorderPlanTasks(selectedSession()!, tasks)}
               />
             ) : undefined
           }

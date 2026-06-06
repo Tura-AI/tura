@@ -109,11 +109,14 @@ pub fn dispatch_child_agent(req: &ChildAgentRequest) -> Result<ChildAgentSummary
     let body = serde_json::to_string(&payload)
         .map_err(|error| format!("failed to encode child request: {error}"))?;
 
-    let mut child = Command::new(&router_bin)
+    let mut command = Command::new(&router_bin);
+    command
         .arg("run-agent")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    hide_child_window(&mut command);
+    let mut child = command
         .spawn()
         .map_err(|error| format!("failed to spawn router CLI {router_bin:?}: {error}"))?;
 
@@ -146,6 +149,16 @@ pub fn dispatch_child_agent(req: &ChildAgentRequest) -> Result<ChildAgentSummary
         summary,
         raw,
     })
+}
+
+fn hide_child_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        #[allow(unused_imports)]
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
 }
 
 /// Dispatch N child agents concurrently (each its own router CLI subprocess); returns once all summaries are collected.

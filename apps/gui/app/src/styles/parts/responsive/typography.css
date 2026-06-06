@@ -40,8 +40,6 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
-.rich-text,
-.message-user-shell .rich-text,
 .bottom-composer textarea,
 .search-box input,
 .board-card strong {
@@ -102,8 +100,4 @@
 
 .page-title span {
   font-size: var(--font-ui);
-}
-
-.rich-text {
-  line-height: 1.6;
 }

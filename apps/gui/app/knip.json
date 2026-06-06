@@ -3,6 +3,7 @@
   "entry": ["src/app.tsx"],
   "project": ["src/**/*.{ts,tsx}"],
   "ignore": ["src/**/*.test.ts"],
+  "ignoreBinaries": ["eslint"],
   "exclude": ["exports", "types"],
   "ignoreExportsUsedInFile": true
 }

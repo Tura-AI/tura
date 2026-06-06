@@ -1,11 +1,11 @@
-import { createRequire } from "node:module";
+import en from "./locales/en.json" with { type: "json" };
+import zhCN from "./locales/zh-CN.json" with { type: "json" };
 
 export type Language = "zh-CN" | "en";
 
-const requireLocale = createRequire(import.meta.url);
 const dictionaries = {
-  "zh-CN": requireLocale("./locales/zh-CN.json"),
-  en: requireLocale("./locales/en.json"),
+  "zh-CN": zhCN,
+  en,
 } as const satisfies Record<Language, Record<string, string>>;
 
 export type TextKey = keyof (typeof dictionaries)["zh-CN"];
@@ -25,7 +25,12 @@ export function parseLanguage(value: string | undefined): Language | undefined {
 }
 
 export function currentLanguage(): Language {
-  return languageOverride ?? parseLanguage(process.env.TURA_LANG) ?? parseLanguage(process.env.LANG) ?? "zh-CN";
+  return (
+    languageOverride ??
+    parseLanguage(process.env.TURA_LANG) ??
+    parseLanguage(process.env.LANG) ??
+    "zh-CN"
+  );
 }
 
 export function t(key: TextKey, values?: Record<string, string | number>): string {

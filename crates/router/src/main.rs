@@ -1,16 +1,19 @@
 #![warn(clippy::unwrap_used)]
 
-mod registry;
+mod ipc;
 mod services;
-use registry::agent::UpsertAgentRequest;
-use registry::command::ExecuteCommandRequest;
-use registry::persona::UpsertPersonaRequest;
-use registry::{resolve_binary_target, Registry};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use services::managed_process::repo_root;
 use services::manager::ServiceManager;
 use services::models::{CallContext, WorkerSpec};
+use services::{
+    execution::ExecutionService, recovery::recover_after_start, session_db::SessionDbService,
+};
+use tura_router::registry::agent::UpsertAgentRequest;
+use tura_router::registry::command::ExecuteCommandRequest;
+use tura_router::registry::persona::UpsertPersonaRequest;
+use tura_router::registry::{resolve_binary_target, Registry};
 
 /// Maximum recursion depth for child sub-sessions (fork-bomb guard, T5.4).
 const MAX_PLANNING_DEPTH: usize = 3;
@@ -21,6 +24,8 @@ const MAX_RUNTIME_WORKERS: usize = 16;
 struct AppState {
     manager: ServiceManager,
     registry: Registry,
+    session_db: SessionDbService,
+    execution: ExecutionService,
 }
 
 impl Serialize for AppState {
@@ -66,6 +71,8 @@ fn build_state() -> AppState {
     AppState {
         manager: ServiceManager::new(),
         registry: Registry::from_static(),
+        session_db: SessionDbService::new(),
+        execution: ExecutionService::new(),
     }
 }
 
@@ -213,19 +220,96 @@ fn registry_command_execute_cli() -> anyhow::Result<()> {
     print_json(&response)
 }
 
-fn session_log_cli() -> anyhow::Result<()> {
-    let raw = read_stdin()?;
-    let response = tura_router::session_log_forward::handle_session_log_json(&raw)?;
-    print_json(&response)
+async fn serve_stdio() -> anyhow::Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let state = build_state();
+    let _ = recover_after_start(&state.session_db)?;
+    let stdin = tokio::io::stdin();
+    let mut stdout = tokio::io::stdout();
+    let mut lines = BufReader::new(stdin).lines();
+    while let Some(line) = lines.next_line().await? {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let response = match serde_json::from_str::<ipc::IpcRequest>(line.trim()) {
+            Ok(request) => handle_ipc_request(&state, request).await,
+            Err(error) => {
+                ipc::IpcResponse::error("invalid", format!("invalid ipc request: {error}"))
+            }
+        };
+        stdout
+            .write_all(format!("{}\n", serde_json::to_string(&response)?).as_bytes())
+            .await?;
+        stdout.flush().await?;
+    }
+    Ok(())
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn handle_ipc_request(state: &AppState, request: ipc::IpcRequest) -> ipc::IpcResponse {
+    let result = match request.method.as_str() {
+        "" | "health_check"
+            if request.kind == "health_check" || request.method == "health_check" =>
+        {
+            Ok(json!({
+                "status": "ok",
+                "session_db": state.session_db.status(),
+                "runtime_policy": {
+                    "max_active_runtime_workers": services::runtime_workers::MAX_ACTIVE_RUNTIME_WORKERS,
+                    "runtime_worker_idle_ttl_secs": services::runtime_workers::RUNTIME_WORKER_IDLE_TTL_SECS,
+                    "max_idle_runtime_workers": services::runtime_workers::MAX_IDLE_RUNTIME_WORKERS
+                }
+            }))
+        }
+        "session_db.lifecycle.start" => state.session_db.start(),
+        "session_db.lifecycle.status" => Ok(state.session_db.status()),
+        "session_db.lifecycle.restart" => state.session_db.restart(),
+        "execution.enqueue_turn" => state.execution.enqueue_turn(state, request.payload).await,
+        "execution.cancel_turn" => Ok(state.execution.cancel_turn(state, request.payload).await),
+        "execution.get_status" => Ok(json!({ "status": "ok" })),
+        "execution.kill_session_workers" => {
+            let session_id = request
+                .payload
+                .get("session_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string);
+            let stopped = if let Some(session_id) = session_id {
+                usize::from(
+                    state
+                        .manager
+                        .stop_worker_by_key(&format!("runtime_worker:{session_id}"))
+                        .await,
+                )
+            } else {
+                state
+                    .manager
+                    .stop_workers_with_prefix("runtime_worker:")
+                    .await
+            };
+            Ok(json!({ "status": "stopped", "stopped": stopped }))
+        }
+        "execution.shutdown" => {
+            state.session_db.stop();
+            Ok(json!({ "status": "shutting_down" }))
+        }
+        other => Err(anyhow::anyhow!("unknown router method: {other}")),
+    };
+    match result {
+        Ok(payload) => ipc::IpcResponse::ok(request.request_id, payload),
+        Err(error) => ipc::IpcResponse::error(request.request_id, error.to_string()),
+    }
+}
+
+fn main() -> anyhow::Result<()> {
     let command = std::env::args()
         .nth(1)
-        .ok_or_else(|| anyhow::anyhow!("router requires a CLI command"))?;
+        .unwrap_or_else(|| "serve".to_string());
     match command.as_str() {
-        "run-agent" => run_agent_cli().await,
+        "session-db-call" => session_log::service::run_one_shot(),
+        "session-db-service" => session_log::service::run_lifecycle_service(),
+        "serve" => tokio_runtime()?.block_on(serve_stdio()),
+        "run-agent" => tokio_runtime()?.block_on(run_agent_cli()),
         "registry-agents-list" => registry_agents_list_cli(),
         "registry-agent-get" => registry_agent_get_cli(),
         "registry-agent-create" => registry_agent_upsert_cli(None),
@@ -248,9 +332,15 @@ async fn main() -> anyhow::Result<()> {
         "registry-persona-delete" => registry_persona_delete_cli(),
         "registry-commands-list" => registry_commands_list_cli(),
         "registry-command-execute" => registry_command_execute_cli(),
-        "session-log" => session_log_cli(),
         _ => Err(anyhow::anyhow!("unknown router command: {command}")),
     }
+}
+
+fn tokio_runtime() -> anyhow::Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(Into::into)
 }
 
 /// Pure-logic core of run_agent: resolve agent spec, spawn the runtime-
@@ -394,7 +484,10 @@ async fn dispatch_run_agent(state: &AppState, req: RunAgentRequest) -> (u16, Val
         call_input,
     );
 
-    match state.manager.call_worker(&worker.worker_id, ctx).await {
+    let worker_id = worker.worker_id.clone();
+    let call_result = state.manager.call_worker(&worker_id, ctx).await;
+    state.manager.stop_worker(&worker_id).await;
+    match call_result {
         Ok(result) => {
             let ok = result.get("ok").and_then(Value::as_bool).unwrap_or(true);
             let status = if ok { 200 } else { 502 };
@@ -403,7 +496,7 @@ async fn dispatch_run_agent(state: &AppState, req: RunAgentRequest) -> (u16, Val
                 json!({
                     "ok": ok,
                     "session_id": session_id,
-                    "worker_id": worker.worker_id,
+                    "worker_id": worker_id,
                     "agent": agent_spec.agent_name,
                     "result": result,
                 }),
@@ -414,7 +507,7 @@ async fn dispatch_run_agent(state: &AppState, req: RunAgentRequest) -> (u16, Val
             json!({
                 "ok": false,
                 "session_id": session_id,
-                "worker_id": worker.worker_id,
+                "worker_id": worker_id,
                 "error": format!("runtime worker invocation failed: {error}")
             }),
         ),

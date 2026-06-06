@@ -250,10 +250,7 @@
 }
 
 .file-canvas-inner.page-layer-inner {
-  width: min(
-    var(--file-canvas-max),
-    max(0px, calc(100% - var(--page-edge-space) * 2))
-  );
+  width: min(var(--file-canvas-max), max(0px, calc(100% - var(--page-edge-space) * 2)));
   max-width: var(--file-canvas-max);
 }
 

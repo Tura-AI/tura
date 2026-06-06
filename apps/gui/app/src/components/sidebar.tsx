@@ -76,9 +76,7 @@ export function WorkspaceTree(props: {
       .filter((project) => samePath(project.worktree, props.directory))
       .slice(0, 1)
       .concat(
-        props.projects.some((project) =>
-          samePath(project.worktree, props.directory),
-        )
+        props.projects.some((project) => samePath(project.worktree, props.directory))
           ? []
           : fallbackProject()
             ? [fallbackProject()!]
@@ -88,8 +86,7 @@ export function WorkspaceTree(props: {
   const activeWorkspaceSessions = (worktree: string) =>
     props.sessions.filter(
       (session) =>
-        samePath(sessionDirectory(session), worktree) &&
-        planSessionStatus(session) !== "archived",
+        samePath(sessionDirectory(session), worktree) && planSessionStatus(session) !== "archived",
     );
   function openRailSession(session: Session) {
     props.onSession(session.id);
@@ -111,19 +108,14 @@ export function WorkspaceTree(props: {
   const archivedWorkspaces = createMemo(() => {
     const groups = new Map<string, { project: Project; sessions: Session[] }>();
     for (const session of props.sessions) {
-      if (
-        planSessionStatus(session) !== "archived" ||
-        !isRootSession(session)
-      ) {
+      if (planSessionStatus(session) !== "archived" || !isRootSession(session)) {
         continue;
       }
       const directory = sessionDirectory(session);
       if (!directory) {
         continue;
       }
-      const project = props.projects.find((item) =>
-        samePath(item.worktree, directory),
-      ) ?? {
+      const project = props.projects.find((item) => samePath(item.worktree, directory)) ?? {
         id: directory,
         name: shortWorkspaceLabel(directory),
         worktree: directory,
@@ -239,9 +231,7 @@ export function WorkspaceTree(props: {
           </For>
         </Show>
       </Show>
-      <Show
-        when={props.activeTab !== "files" && archivedWorkspaces().length > 0}
-      >
+      <Show when={props.activeTab !== "files" && archivedWorkspaces().length > 0}>
         <RailSectionTitle
           className="archived-section-title"
           expanded={archivedSectionOpen()}
@@ -256,27 +246,19 @@ export function WorkspaceTree(props: {
                 <button
                   class={classNames(
                     "workspace-row",
-                    props.expandedGroup ===
-                      `archived:${group.project.worktree}` && "selected",
+                    props.expandedGroup === `archived:${group.project.worktree}` && "selected",
                   )}
-                  onClick={() =>
-                    props.onGroup(`archived:${group.project.worktree}`)
-                  }
+                  onClick={() => props.onGroup(`archived:${group.project.worktree}`)}
                   onDragOver={(event) => event.preventDefault()}
                   onDrop={dropArchivedSession}
                   title={group.project.worktree}
                 >
                   <FolderOpen size={15} strokeWidth={1.6} />
                   <span class="workspace-row-label">
-                    {group.project.name ||
-                      shortWorkspaceLabel(group.project.worktree)}
+                    {group.project.name || shortWorkspaceLabel(group.project.worktree)}
                   </span>
                 </button>
-                <Show
-                  when={
-                    props.expandedGroup === `archived:${group.project.worktree}`
-                  }
-                >
+                <Show when={props.expandedGroup === `archived:${group.project.worktree}`}>
                   <div class="workspace-children archived-group">
                     <For each={group.sessions}>
                       {(session) => (
@@ -286,9 +268,7 @@ export function WorkspaceTree(props: {
                           onClick={() => openRailSession(session)}
                           title={sessionHoverTitle(session)}
                         >
-                          <span>
-                            {shortSessionTitle(sessionTitle(session))}
-                          </span>
+                          <span>{shortSessionTitle(sessionTitle(session))}</span>
                           <small>{relativeSessionTime(session)}</small>
                         </button>
                       )}

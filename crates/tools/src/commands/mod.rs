@@ -3,10 +3,8 @@ pub mod bash;
 pub mod command_safety;
 pub mod compact_context;
 pub mod planning;
-pub mod read_media;
 pub mod shell_command;
 pub mod task_status;
-pub mod web_discover;
 
 use crate::runtime::file_locks::Access;
 use serde_json::Value;
@@ -33,9 +31,9 @@ pub fn execute(
         "bash" => bash::execute(command_line, session_dir, timeout_secs),
         "compact_context" => compact_context::execute(command_line, session_dir),
         "planning" if planning_command_enabled() => planning::execute(command_line, session_dir),
-        "read_media" => read_media::execute(command_line, session_dir),
+        "read_media" => execute_external("read_media", command_line, session_dir),
         "shell_command" => shell_command::execute(command_line, session_dir, timeout_secs),
-        "web_discover" => web_discover::execute(command_line, session_dir, timeout_secs),
+        "web_discover" => execute_external("web_discover", command_line, session_dir),
         other => CommandResponse {
             success: false,
             exit_code: 1,
@@ -52,8 +50,8 @@ pub fn access(command: &str, command_line: &str, session_dir: &Path) -> Access {
         "apply_patch" => apply_patch::access(command_line, session_dir),
         "compact_context" => Access::default(),
         "planning" if planning_command_enabled() => Access::default(),
-        "read_media" => read_media::access(command_line, session_dir),
-        "web_discover" => web_discover::access(command_line, session_dir),
+        "read_media" => access_external("read_media", command_line, session_dir),
+        "web_discover" => access_external("web_discover", command_line, session_dir),
         "shell_command" | "bash" if shell_command::looks_read_only(command_line) => {
             Access::default()
         }
@@ -140,4 +138,88 @@ fn planning_command_enabled() -> bool {
                 })
                 .unwrap_or(false)
         })
+}
+
+fn execute_external(command: &str, command_line: &str, session_dir: &Path) -> CommandResponse {
+    let command = command.to_string();
+    let payload = Value::String(command_line.to_string());
+    let session_dir = session_dir.display().to_string();
+    let run = async move {
+        crate::external::launcher::invoke(
+            &command,
+            "execute",
+            serde_json::json!({
+                "arguments": payload,
+                "session_dir": session_dir,
+                "call_id": "command_run",
+            }),
+        )
+        .await
+    };
+    let response = if tokio::runtime::Handle::try_current().is_ok() {
+        std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|err| err.to_string())?
+                .block_on(run)
+                .map_err(|err| err.to_string())
+        })
+        .join()
+        .unwrap_or_else(|_| Err("external command thread panicked".to_string()))
+    } else {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| err.to_string())
+            .and_then(|runtime| runtime.block_on(run).map_err(|err| err.to_string()))
+    };
+    match response {
+        Ok(response) => CommandResponse {
+            success: response.success,
+            exit_code: response.exit_code,
+            stdout: if response.success {
+                response.output.to_string()
+            } else {
+                String::new()
+            },
+            stderr: response.stderr,
+            output: response.output,
+            changes: Vec::new(),
+        },
+        Err(error) => CommandResponse {
+            success: false,
+            exit_code: 1,
+            stdout: String::new(),
+            stderr: error.clone(),
+            output: serde_json::json!({ "error": error }),
+            changes: Vec::new(),
+        },
+    }
+}
+
+fn access_external(command: &str, command_line: &str, session_dir: &Path) -> Access {
+    let command = command.to_string();
+    let payload = Value::String(command_line.to_string());
+    let session_dir = session_dir.display().to_string();
+    let run = async move {
+        crate::external::launcher::invoke(
+            &command,
+            "access",
+            serde_json::json!({
+                "arguments": payload,
+                "session_dir": session_dir,
+                "call_id": "command_run",
+            }),
+        )
+        .await
+    };
+    let response = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()
+        .and_then(|runtime| runtime.block_on(run).ok());
+    response
+        .and_then(|response| serde_json::from_value(response.output).ok())
+        .unwrap_or_default()
 }

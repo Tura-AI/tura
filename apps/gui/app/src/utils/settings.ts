@@ -11,17 +11,11 @@ export type ProviderAuthDisplayState = {
   configured: boolean;
 };
 
-export function defaultModel(
-  providers: AppState["providers"],
-): string | undefined {
+export function defaultModel(providers: AppState["providers"]): string | undefined {
   if (!providers) {
     return "openai/gpt-5.5";
   }
-  if (
-    providers.all.some(
-      (provider) => provider.id === "openai" && provider.models["gpt-5.5"],
-    )
-  ) {
+  if (providers.all.some((provider) => provider.id === "openai" && provider.models["gpt-5.5"])) {
     return "openai/gpt-5.5";
   }
   const firstConnected = providers.connected[0];
@@ -29,17 +23,11 @@ export function defaultModel(
     return `${firstConnected}/${providers.default[firstConnected]}`;
   }
   const firstProvider = providers.all[0];
-  const firstModel = firstProvider
-    ? Object.keys(firstProvider.models)[0]
-    : undefined;
-  return firstProvider && firstModel
-    ? `${firstProvider.id}/${firstModel}`
-    : undefined;
+  const firstModel = firstProvider ? Object.keys(firstProvider.models)[0] : undefined;
+  return firstProvider && firstModel ? `${firstProvider.id}/${firstModel}` : undefined;
 }
 
-export function configToDraft(
-  config: AppState["config"],
-): Record<string, string> {
+export function configToDraft(config: AppState["config"]): Record<string, string> {
   if (!config) {
     return {};
   }
@@ -78,17 +66,11 @@ export function configDraftToPatch(
   };
 }
 
-export function recordToDraft(
-  record: Record<string, unknown>,
-): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(record).map(([key, value]) => [key, draftValue(value)]),
-  );
+export function recordToDraft(record: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(Object.entries(record).map(([key, value]) => [key, draftValue(value)]));
 }
 
-export function draftToRecord(
-  draft: Record<string, string>,
-): Record<string, unknown> {
+export function draftToRecord(draft: Record<string, string>): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(draft).map(([key, value]) => [key, parseDraftValue(value)]),
   );
@@ -223,17 +205,11 @@ export function providerAuthDisplayState(
   };
 }
 
-export function providerConfigured(
-  state: AppState,
-  providerId: string,
-): boolean {
+export function providerConfigured(state: AppState, providerId: string): boolean {
   return providerAuthDisplayState(state, providerId).configured;
 }
 
-export function providerIdFromAuthError(
-  error: unknown,
-  state: AppState,
-): string | undefined {
+export function providerIdFromAuthError(error: unknown, state: AppState): string | undefined {
   if (!(error instanceof GatewayError)) {
     return undefined;
   }
@@ -248,16 +224,10 @@ export function providerIdFromAuthError(
   if (!authLike) {
     return undefined;
   }
-  const direct = [
-    body.provider_id,
-    body.providerID,
-    body.provider,
-    body.llm_provider,
-  ].find((value): value is string => typeof value === "string");
-  if (
-    direct &&
-    state.providers?.all.some((provider) => provider.id === direct)
-  ) {
+  const direct = [body.provider_id, body.providerID, body.provider, body.llm_provider].find(
+    (value): value is string => typeof value === "string",
+  );
+  if (direct && state.providers?.all.some((provider) => provider.id === direct)) {
     return direct;
   }
   const fromText = state.providers?.all.find((provider) =>

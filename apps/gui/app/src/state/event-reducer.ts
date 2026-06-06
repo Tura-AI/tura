@@ -6,16 +6,9 @@ import type {
   TodoItem,
 } from "@tura/gateway-sdk";
 import type { AppState } from "./global-store";
-import {
-  messageSessionId,
-  sessionHasDisplayName,
-  sessionUpdatedAt,
-} from "./global-store";
+import { messageSessionId, sessionHasDisplayName, sessionUpdatedAt } from "./global-store";
 
-export function applyGatewayEvent(
-  state: AppState,
-  envelope: GatewayEventEnvelope,
-): AppState {
+export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelope): AppState {
   const event = envelope.payload;
   const properties = event.properties ?? {};
   const next: AppState = {
@@ -36,9 +29,7 @@ export function applyGatewayEvent(
       return {
         ...next,
         currentProject: {
-          project: properties as NonNullable<
-            AppState["currentProject"]
-          >["project"],
+          project: properties as NonNullable<AppState["currentProject"]>["project"],
         },
       };
     case "session.created":
@@ -54,17 +45,12 @@ export function applyGatewayEvent(
       };
     }
     case "session.deleted": {
-      const sessionId =
-        readString(properties, "sessionID") ||
-        readString(properties, "session_id");
+      const sessionId = readString(properties, "sessionID") || readString(properties, "session_id");
       if (!sessionId) {
         return next;
       }
-      const sessions = next.sessions.filter(
-        (session) => session.id !== sessionId,
-      );
-      const { [sessionId]: _messages, ...messagesBySession } =
-        next.messagesBySession;
+      const sessions = next.sessions.filter((session) => session.id !== sessionId);
+      const { [sessionId]: _messages, ...messagesBySession } = next.messagesBySession;
       const { [sessionId]: _todos, ...todosBySession } = next.todosBySession;
       return {
         ...next,
@@ -72,15 +58,11 @@ export function applyGatewayEvent(
         messagesBySession,
         todosBySession,
         selectedSessionId:
-          next.selectedSessionId === sessionId
-            ? sessions[0]?.id
-            : next.selectedSessionId,
+          next.selectedSessionId === sessionId ? sessions[0]?.id : next.selectedSessionId,
       };
     }
     case "session.status": {
-      const sessionId =
-        readString(properties, "sessionID") ||
-        readString(properties, "session_id");
+      const sessionId = readString(properties, "sessionID") || readString(properties, "session_id");
       const status = normalizeStatus(properties.status);
       if (!sessionId || !status) {
         return next;
@@ -108,20 +90,13 @@ export function applyGatewayEvent(
         ...next,
         messagesBySession: {
           ...next.messagesBySession,
-          [sessionId]: upsertMessage(
-            next.messagesBySession[sessionId] ?? [],
-            message,
-          ),
+          [sessionId]: upsertMessage(next.messagesBySession[sessionId] ?? [], message),
         },
       };
     }
     case "message.removed": {
-      const sessionId =
-        readString(properties, "session_id") ||
-        readString(properties, "sessionID");
-      const messageId =
-        readString(properties, "message_id") ||
-        readString(properties, "messageID");
+      const sessionId = readString(properties, "session_id") || readString(properties, "sessionID");
+      const messageId = readString(properties, "message_id") || readString(properties, "messageID");
       if (!sessionId || !messageId) {
         return next;
       }
@@ -136,14 +111,9 @@ export function applyGatewayEvent(
       };
     }
     case "message.part.delta": {
-      const sessionId =
-        readString(properties, "session_id") ||
-        readString(properties, "sessionID");
-      const messageId =
-        readString(properties, "message_id") ||
-        readString(properties, "messageID");
-      const partId =
-        readString(properties, "part_id") || readString(properties, "partID");
+      const sessionId = readString(properties, "session_id") || readString(properties, "sessionID");
+      const messageId = readString(properties, "message_id") || readString(properties, "messageID");
+      const partId = readString(properties, "part_id") || readString(properties, "partID");
       const field = readString(properties, "field");
       const delta = readString(properties, "delta");
       if (!sessionId || !messageId || !partId || delta === undefined) {
@@ -165,9 +135,7 @@ export function applyGatewayEvent(
       };
     }
     case "message.part.updated": {
-      const sessionId =
-        readString(properties, "sessionID") ||
-        readString(properties, "session_id");
+      const sessionId = readString(properties, "sessionID") || readString(properties, "session_id");
       const part = properties.part as
         | (MessagePart & {
             messageID?: string;
@@ -192,16 +160,12 @@ export function applyGatewayEvent(
                 if (messageId && message.id !== messageId) {
                   return message;
                 }
-                const hasPart = message.parts.some(
-                  (existing) => existing.id === part.id,
-                );
+                const hasPart = message.parts.some((existing) => existing.id === part.id);
                 return {
                   ...message,
                   parts: hasPart
                     ? message.parts.map((existing) =>
-                        existing.id === part.id
-                          ? { ...existing, ...part }
-                          : existing,
+                        existing.id === part.id ? { ...existing, ...part } : existing,
                       )
                     : [...message.parts, part],
                 };
@@ -230,9 +194,7 @@ export function applyGatewayEvent(
         readString(properties, "sessionID") ||
         readString(properties, "session_id") ||
         next.selectedSessionId;
-      const todos = Array.isArray(properties.todos)
-        ? (properties.todos as TodoItem[])
-        : undefined;
+      const todos = Array.isArray(properties.todos) ? (properties.todos as TodoItem[]) : undefined;
       if (!sessionId || !todos) {
         return next;
       }
@@ -246,10 +208,10 @@ export function applyGatewayEvent(
     }
     case "permission.asked":
     case "permission.replied": {
-      const request = readRequest<NonNullable<AppState["permissions"]>[number]>(
-        properties,
-        ["permission", "request"],
-      );
+      const request = readRequest<NonNullable<AppState["permissions"]>[number]>(properties, [
+        "permission",
+        "request",
+      ]);
       if (!request?.id) {
         return next;
       }
@@ -264,10 +226,10 @@ export function applyGatewayEvent(
     case "question.asked":
     case "question.replied":
     case "question.rejected": {
-      const request = readRequest<NonNullable<AppState["questions"]>[number]>(
-        properties,
-        ["question", "request"],
-      );
+      const request = readRequest<NonNullable<AppState["questions"]>[number]>(properties, [
+        "question",
+        "request",
+      ]);
       if (!request?.id) {
         return next;
       }
@@ -296,15 +258,10 @@ export function applyGatewayEvent(
   }
 }
 
-export function upsertSession(
-  sessions: Session[],
-  session: Session,
-): Session[] {
+export function upsertSession(sessions: Session[], session: Session): Session[] {
   const existing = sessions.find((item) => item.id === session.id);
   const nextSession =
-    existing &&
-    !sessionHasDisplayName(session) &&
-    sessionHasDisplayName(existing)
+    existing && !sessionHasDisplayName(session) && sessionHasDisplayName(existing)
       ? {
           ...session,
           name: existing.name,
@@ -318,14 +275,9 @@ export function upsertSession(
   );
 }
 
-export function upsertMessage(
-  messages: Message[],
-  message: Message,
-): Message[] {
+export function upsertMessage(messages: Message[], message: Message): Message[] {
   const without = messages.filter(
-    (item) =>
-      item.id !== message.id &&
-      !isOptimisticDuplicateUserMessage(item, message),
+    (item) => item.id !== message.id && !isOptimisticDuplicateUserMessage(item, message),
   );
   return [...without, message].sort((left, right) => {
     const leftTime = left.time?.created ?? left.created_at ?? 0;
@@ -334,15 +286,8 @@ export function upsertMessage(
   });
 }
 
-function isOptimisticDuplicateUserMessage(
-  existing: Message,
-  incoming: Message,
-): boolean {
-  if (
-    existing.role !== "user" ||
-    incoming.role !== "user" ||
-    !existing.id.startsWith("prompt:")
-  ) {
+function isOptimisticDuplicateUserMessage(existing: Message, incoming: Message): boolean {
+  if (existing.role !== "user" || incoming.role !== "user" || !existing.id.startsWith("prompt:")) {
     return false;
   }
   const existingText = messageText(existing).trim();
@@ -457,33 +402,21 @@ function applyPartDelta(
 
 function readSession(properties: Record<string, unknown>): Session | undefined {
   const info = properties.info;
-  return isObject(info) && typeof info.id === "string"
-    ? (info as Session)
-    : undefined;
+  return isObject(info) && typeof info.id === "string" ? (info as Session) : undefined;
 }
 
 function readMessage(properties: Record<string, unknown>): Message | undefined {
   const info = properties.info;
-  return isObject(info) && typeof info.id === "string"
-    ? (info as Message)
-    : undefined;
+  return isObject(info) && typeof info.id === "string" ? (info as Message) : undefined;
 }
 
-function readString(
-  properties: Record<string, unknown>,
-  key: string,
-): string | undefined {
+function readString(properties: Record<string, unknown>, key: string): string | undefined {
   const value = properties[key];
   return typeof value === "string" ? value : undefined;
 }
 
-function normalizeStatus(
-  value: unknown,
-): "idle" | "busy" | "error" | undefined {
-  if (
-    typeof value === "string" &&
-    (value === "idle" || value === "busy" || value === "error")
-  ) {
+function normalizeStatus(value: unknown): "idle" | "busy" | "error" | undefined {
+  if (typeof value === "string" && (value === "idle" || value === "busy" || value === "error")) {
     return value;
   }
   if (isObject(value)) {

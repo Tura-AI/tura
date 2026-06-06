@@ -1,11 +1,7 @@
 import type { Agent } from "@tura/gateway-sdk";
 import { classNames } from "../state/format";
 
-export function AgentIcon(props: {
-  agent?: Agent;
-  agentId?: string;
-  class?: string;
-}) {
+export function AgentIcon(props: { agent?: Agent; agentId?: string; class?: string }) {
   return (
     <span class={classNames("agent-icon", props.class)} aria-hidden="true">
       {agentIconEmoji(props.agent, props.agentId)}

@@ -3,8 +3,18 @@ import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient } from "../gateway/client.js";
 import { sameDirectory } from "../gateway/directory.js";
 import { normalizeEvent } from "../gateway/events.js";
-import { GatewayUnavailableError, TimeoutError, type CliContext, type OutputMode } from "../types/common.js";
-import { hasUserFacingAssistantText, type PromptPayload, type RunResult, type Session } from "../types/session.js";
+import {
+  GatewayUnavailableError,
+  TimeoutError,
+  type CliContext,
+  type OutputMode,
+} from "../types/common.js";
+import {
+  hasUserFacingAssistantText,
+  type PromptPayload,
+  type RunResult,
+  type Session,
+} from "../types/session.js";
 import { buildRunResult, writeLastMessage } from "../output/final-result.js";
 import { HumanOutput } from "../output/human.js";
 import { printRunJson } from "../output/json.js";
@@ -28,7 +38,11 @@ export interface RunOptions {
 }
 
 export async function runPrompt(context: CliContext, options: RunOptions): Promise<RunResult> {
-  const client = new GatewayClient({ baseUrl: context.gatewayUrl, directory: context.cwd, verbose: context.verbose });
+  const client = new GatewayClient({
+    baseUrl: context.gatewayUrl,
+    directory: context.cwd,
+    verbose: context.verbose,
+  });
   try {
     await client.health();
     await client.syncWorkspace();
@@ -55,7 +69,8 @@ export async function runPrompt(context: CliContext, options: RunOptions): Promi
     model: options.model ?? session.model ?? undefined,
     agent: options.agent ?? session.agent ?? undefined,
     modelVariant: options.modelVariant ?? session.model_variant ?? undefined,
-    modelAccelerationEnabled: options.modelAccelerationEnabled ?? session.model_acceleration_enabled,
+    modelAccelerationEnabled:
+      options.modelAccelerationEnabled ?? session.model_acceleration_enabled,
   });
 
   const human = options.output === "text" ? new HumanOutput(context.color) : undefined;
@@ -83,7 +98,10 @@ export async function runPrompt(context: CliContext, options: RunOptions): Promi
 
 export function promptPayload(
   prompt: string,
-  options: Pick<RunOptions, "model" | "agent" | "source" | "modelVariant" | "modelAccelerationEnabled">,
+  options: Pick<
+    RunOptions,
+    "model" | "agent" | "source" | "modelVariant" | "modelAccelerationEnabled"
+  >,
 ): PromptPayload {
   const messageID = `msg_${options.source}_${randomUUID()}`;
   return {
@@ -91,7 +109,9 @@ export function promptPayload(
     parts: [{ id: `part_${options.source}_${randomUUID()}`, type: "text", text: prompt }],
     ...(options.model ? { model: options.model } : {}),
     ...(options.agent ? { agent: options.agent } : {}),
-    ...(options.modelVariant ? { variant: options.modelVariant, model_variant: options.modelVariant } : {}),
+    ...(options.modelVariant
+      ? { variant: options.modelVariant, model_variant: options.modelVariant }
+      : {}),
     ...(options.modelAccelerationEnabled !== undefined
       ? { model_acceleration_enabled: options.modelAccelerationEnabled }
       : {}),
@@ -113,14 +133,12 @@ async function waitWithEvents(
   try {
     while (Date.now() < deadline) {
       const remaining = Math.max(1, Math.min(1000, deadline - Date.now()));
-      const event = await Promise.race([
-        stream.next(),
-        delay(remaining).then(() => undefined),
-      ]);
+      const event = await Promise.race([stream.next(), delay(remaining).then(() => undefined)]);
       if (event && !event.done) {
         const normalized = normalizeEvent(event.value);
         const directoryMatches =
-          normalized.directory === "global" || sameDirectory(normalized.directory, client.directory);
+          normalized.directory === "global" ||
+          sameDirectory(normalized.directory, client.directory);
         if (directoryMatches && (!normalized.sessionID || normalized.sessionID === session.id)) {
           human?.event(normalized);
           ndjson?.event(normalized);
@@ -137,7 +155,12 @@ async function waitWithEvents(
   throw new TimeoutError(`timed out after ${timeoutSec}s`);
 }
 
-async function waitByPolling(client: GatewayClient, session: Session, initialCount: number, timeoutSec: number): Promise<RunResult> {
+async function waitByPolling(
+  client: GatewayClient,
+  session: Session,
+  initialCount: number,
+  timeoutSec: number,
+): Promise<RunResult> {
   const deadline = Date.now() + timeoutSec * 1000;
   while (Date.now() < deadline) {
     const completed = await completionResult(client, session.id, initialCount);
@@ -148,7 +171,11 @@ async function waitByPolling(client: GatewayClient, session: Session, initialCou
   throw new TimeoutError(`timed out after ${timeoutSec}s`);
 }
 
-async function completionResult(client: GatewayClient, sessionID: string, initialCount: number): Promise<RunResult | undefined> {
+async function completionResult(
+  client: GatewayClient,
+  sessionID: string,
+  initialCount: number,
+): Promise<RunResult | undefined> {
   const messages = await client.listMessages(sessionID);
   const hasNewAssistant = hasUserFacingAssistantText(messages, initialCount);
   if (hasNewAssistant) {

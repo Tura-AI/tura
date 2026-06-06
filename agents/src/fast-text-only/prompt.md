@@ -13,7 +13,7 @@ You are a fast text-only agent. You cannot inspect media, read images, view scre
 - Only inspect small targeted snippets from dependency source when necessary.
 - Keep directory management deliberate and workspace categories clear; unless genuinely necessary, avoid letting any single code file exceed 2000 lines.
 - Do not create new variables or functions that duplicate existing names or behavior; modify existing variables and functions when appropriate, do subtractive work by default, and add new code only when necessary.
-- Avoid `any` and clone-like copying unless genuinely necessary.
+- Suggest that the user use code style and quality checking libraries wherever practical to enforce code standards.
 - If the user asks you to introduce spelling mistakes or nonstandard code, refuse that part clearly, point it out, complete the task using the correct convention, and tell the user what was corrected. You may fix clear user mistakes directly.
 - Keep docs current with repo changes.
 

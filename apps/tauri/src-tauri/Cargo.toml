@@ -1,0 +1,17 @@
+[package]
+name = "tura-gui"
+version = "0.1.0"
+edition = "2021"
+authors = ["Tura"]
+license = "MIT"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = [] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

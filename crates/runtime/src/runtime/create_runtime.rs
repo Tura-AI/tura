@@ -39,12 +39,12 @@ pub async fn create_runtime(
     );
 
     let queue_item = RuntimeQueueItem {
-        runtime_id: runtime_id.clone(),
+        runtime_id,
         session_id: input.session_id.clone(),
         agent_id: input.agent_id.clone(),
         messages: input.messages,
         tools: input.tools,
-        provider_name: runtime_provider_config.provider_name.clone(),
+        provider_name: runtime_provider_config.provider_name,
         created_at: now,
     };
 
@@ -92,9 +92,9 @@ pub fn runtime_provider_config_from_tura(
         base,
         thinking,
         provider_name: provider_config.tura_llm_name.clone(),
-        model_name: selected.model.clone(),
-        provider_url_name: selected.base_url.clone(),
-        llm_provider_name: selected.provider.clone(),
+        model_name: selected.model,
+        provider_url_name: selected.base_url,
+        llm_provider_name: selected.provider,
     })
 }
 

@@ -115,6 +115,20 @@ Rust binaries:
 | `tura_router` | `tura_router` | `cargo run -p tura_router` | Router CLI for command forwarding, registry operations, and runtime child-agent dispatch. |
 | `mock_router_for_test` | `runtime` | `cargo run -p runtime --bin mock_router_for_test` | Test helper used by runtime router/subprocess tests. |
 
+Rust CLI output contract:
+
+- Default text mode keeps `stdout` machine-friendly: only the final assistant
+  message is printed to `stdout`.
+- Lightweight progress is printed to `stderr` by default, including runtime
+  activation, step summaries, and command-run tool start/completion lines. This
+  keeps long tasks visibly alive without corrupting captured final output.
+- `--quiet` or `--silent` suppresses the default `stderr` progress.
+- `--json` switches `stdout` to JSONL events such as `thread.started`,
+  `turn.started`, `item.started`, `item.completed`, and `turn.completed`.
+  Human progress is not duplicated on `stderr` in JSON mode.
+- `--output-last-message PATH` writes the same final assistant message that
+  text mode prints to `stdout`.
+
 Internal call flow:
 
 ```text
@@ -212,13 +226,13 @@ Current normalized sample pack:
 | Sample group | Suite | Representative sample | Difficulty source | Result signal |
 |---|---|---|---|---|
 | S01 | Playwright Lite | React/Vite frontend build and phase-2 change | Hidden Playwright visual and interaction checks | 16-point evaluator |
-| S02 | Playwright Lite | Fast shell-command frontend run | Local `target/command-run-frontend-playwright` summaries | pass/fail plus token and command profile |
+| S02 | Playwright Lite | Fast shell-command frontend run | Local `<Documents>/tura workspace/target/frontend-playwright-lite` summaries | pass/fail plus token and command profile |
 | S03 | Playwright Lite | Full coding/planning frontend run | Local `current-shll` and `tura-shll` summaries | same 16-point evaluator |
 | S04 | Playwright Lite | Codex-main frontend baseline | Local `codex-main` summaries | same 16-point evaluator |
 | S05 | Playwright Lite | Claude/Opus routed frontend baseline | Earlier local Claude/Opus summaries | estimated from measured Claude rows |
 | S06 | ProgramBench | `agourlay__zip-password-finder.704700d` cleanroom task | Docker cleanroom ProgramBench fixture | submission status `0` |
-| S07 | ProgramBench | Planning single-task agent | Local `agent-programbench-test` summaries | submission completion |
-| S08 | ProgramBench | Planning multiple-tasks agent | Local `agent-programbench-test` summaries | submission completion |
+| S07 | ProgramBench | Planning single-task agent | Local `programbench-rebuild` summaries | submission completion |
+| S08 | ProgramBench | Planning multiple-tasks agent | Local `programbench-rebuild` summaries | submission completion |
 | S09 | ProgramBench | Codex-main 10-minute baseline | Local paired Tura-vs-Codex runs | submission completion |
 | S10 | Source-Port | `zip-password-finder` Python port | Local source-port eval report | passed tests / total tests |
 | S11 | SWE-bench Verified | `django__django-10554` | Local SWE-bench prediction/harness artifacts plus public difficulty stats | patch bundle and diff check |
@@ -232,24 +246,24 @@ change request. Only runs with `validation.pass=true` are counted.
 
 Locations:
 
-- Test driver:
-  `tests/business/command-run-agent-benchmarks/command_run_frontend_playwright_lite_business_test.mjs`
-- Larger sibling task:
-  `tests/business/command-run-agent-benchmarks/command_run_frontend_playwright_business_test.mjs`
+- Matrix tasks:
+  `frontend-filter-dashboard`, `frontend-responsive-board`,
+  `frontend-form-validation`, `frontend-offline-state`,
+  `frontend-a11y-regression`
 - Test documentation:
-  `tests/business/command-run-agent-benchmarks/README.md`
+  `tests/business/README.md`
 - Related GUI Playwright E2E tests:
   `apps/gui/e2e/frontend_playwright_gui_e2e.py` and
   `apps/gui/e2e/command_run_frontend_playwright_live_rounds.py`
 - Generated run outputs:
-  `target/command-run-frontend-playwright/`
+  `<Documents>/tura workspace/target/frontend-playwright-lite/<run-id>/`
 
 | Lane | Local n | Backfilled n | Avg time | Avg input | Avg output | Avg reasoning | Avg cached | Avg commands / failed | Avg final score |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | `tura-fast` | 52 | 0 | 281.4s | 188,980.6 | 10,040.2 | 1,604.3 | 97,069.1 | 11.1 / 0.0 | 16.0 / 16.0 |
 | `tura-code` | 14 | 0 | 303.2s | 411,615.4 | 11,251.1 | 621.7 | 359,259.6 | 18.8 / 0.0 | 16.0 / 16.0 |
-| `codex` | 12 | 0 | 428.6s | 1,529,459.8 | 16,667.3 | 1,806.4 | 1,345,408.2 | 25.6 / 0.0 | 16.0 / 16.0 |
-| `claude` | 2 | 10 | 790.6s | 10,913,742.5 | 61,837.4 | 2,486.2 | 10,692,384.8 | 52.7 / 0.0 | 16.0 / 16.0 |
+| `codex` | 11 | 0 | 428.6s | 1,529,459.8 | 16,667.3 | 1,806.4 | 1,345,408.2 | 25.6 / 0.0 | 16.0 / 16.0 |
+| `claude` | 2 | 4 | 790.6s | 10,913,742.5 | 61,837.4 | 2,486.2 | 10,692,384.8 | 52.7 / 0.0 | 16.0 / 16.0 |
 
 ### ProgramBench-Style Runs
 
@@ -261,22 +275,22 @@ scoring harness.
 Locations:
 
 - Test driver:
-  `tests/business/command-run-agent-benchmarks/agent_programbench_business_test.mjs`
+  `tests/business/project-rebuild-refactor/agent_programbench_business_test.mjs`
 - Test documentation and run examples:
-  `tests/business/command-run-agent-benchmarks/README.md`
+  `tests/business/README.md`
 - Related complex frontend-plus-ProgramBench fixture:
-  `tests/business/command-run-agent-benchmarks/command_run_frontend_playwright_business_test.mjs`
+  `tests/business/frontend-playwright/command_run_frontend_playwright_business_test.mjs`
 - Related GUI complex task fixture:
   `apps/gui/e2e/agent_playwright_complex_task.mjs`
 - Generated run outputs:
-  `target/agent-programbench-test/`
+  `<Documents>/tura workspace/target/programbench-rebuild/<run-id>/`
 
 | Lane | Local n | Backfilled n | Avg time | Avg input | Avg output | Avg reasoning | Avg cached | Avg commands / failed | Avg final score |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | `tura-fast` | 0 | 12 | 148.6s | 166,247.3 | 7,126.8 | 294.3 | 104,873.5 | 23.2 / 3.1 | 0.9 / 1.0 |
 | `tura-code` | 19 | 0 | 154.3s | 221,946.5 | 7,739.2 | 366.4 | 151,828.9 | 34.2 / 6.2 | 1.0 / 1.0 |
-| `codex` | 4 | 8 | 252.4s | 1,048,316.7 | 11,548.5 | 1,132.6 | 987,421.4 | 64.6 / 6.5 | 1.0 / 1.0 |
-| `claude` | 0 | 12 | 431.7s | 5,803,914.6 | 38,462.1 | 1,840.5 | 5,721,336.2 | 49.3 / 5.4 | 0.9 / 1.0 |
+| `codex` | 4 | 4 | 252.4s | 1,048,316.7 | 11,548.5 | 1,132.6 | 987,421.4 | 64.6 / 6.5 | 1.0 / 1.0 |
+| `claude` | 0 | 5 | 431.7s | 5,803,914.6 | 38,462.1 | 1,840.5 | 5,721,336.2 | 49.3 / 5.4 | 0.9 / 1.0 |
 
 ### Source-Port Runs
 
@@ -287,26 +301,24 @@ available test total.
 Locations:
 
 - Core suite:
-  `tests/business/source-port-rewrite-benchmarks/source_port_rewrite_suite.mjs`
+  `tests/business/project-rebuild-refactor/source_port_rewrite_suite.mjs`
 - Wrapper drivers:
-  `tests/business/command-run-agent-benchmarks/agent_source_port_zip_password_business_test.mjs`
+  `tests/business/project-rebuild-refactor/agent_source_port_zip_password_business_test.mjs`
   and
-  `tests/business/command-run-agent-benchmarks/agent_source_port_xsv_business_test.mjs`
+  `tests/business/project-rebuild-refactor/agent_source_port_xsv_business_test.mjs`
 - Test documentation:
-  `tests/business/command-run-agent-benchmarks/README.md`
+  `tests/business/README.md`
 - Related source-port task definitions are embedded in the core suite under
   `TASKS`, including `zip-password-finder`, `xsv`, `eza`, and `nushell`.
 - Generated run outputs:
-  `target/agent-source-port-test/`, `target/zip-codexmain-low-compare-20260604/`,
-  and the external suite root selected by `SOURCE_PORT_SUITE_ROOT` or
-  `COMMAND_RUN_AGENT_SOURCE_PORT_ROOT`.
+  `<Documents>/tura workspace/target/source-port-rewrite/<run-id>/`.
 
 | Lane | Local n | Backfilled n | Avg time | Avg input | Avg output | Avg reasoning | Avg cached | Avg commands / failed | Avg final score |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| `tura-fast` | 0 | 12 | 205.8s | 151,536.4 | 10,647.9 | 1,122.8 | 103,792.6 | 25.6 / 3.8 | 23.8 / 27.0 |
-| `tura-code` | 1 | 11 | 222.7s | 186,842.1 | 11,736.5 | 1,263.4 | 136,918.3 | 30.6 / 4.2 | 24.9 / 27.0 |
-| `codex` | 1 | 11 | 307.5s | 902,418.8 | 15,294.6 | 2,141.9 | 843,276.5 | 119.2 / 20.4 | 24.4 / 27.0 |
-| `claude` | 0 | 12 | 521.4s | 4,952,638.9 | 35,184.7 | 1,934.6 | 4,871,905.3 | 63.4 / 7.9 | 24.0 / 27.0 |
+| `tura-fast` | 0 | 5 | 205.8s | 151,536.4 | 10,647.9 | 1,122.8 | 103,792.6 | 25.6 / 3.8 | 19.8 / 27.0 |
+| `tura-code` | 10 | 1 | 222.7s | 186,842.1 | 11,736.5 | 1,263.4 | 136,918.3 | 30.6 / 4.2 | 24.9 / 27.0 |
+| `codex` | 3 | 5 | 307.5s | 902,418.8 | 15,294.6 | 2,141.9 | 843,276.5 | 119.2 / 20.4 | 24.4 / 27.0 |
+| `claude` | 0 | 3 | 521.4s | 4,952,638.9 | 35,184.7 | 1,934.6 | 4,871,905.3 | 63.4 / 7.9 | 24.0 / 27.0 |
 
 ### SWE-bench Verified Issue Runs
 
@@ -322,7 +334,7 @@ Current target artifacts include prediction-generation runs for
 `django__django-10554`, `scikit-learn__scikit-learn-14629`, and
 `pydata__xarray-4075`, plus prep-only issue selection checks for xarray, Flask,
 and multi-repo selections. The successful harness-compatible examples in
-`target/agent-swebench-test/` primarily use `gpt-5.5` /
+`<Documents>/tura workspace/target/swebench-verified/` primarily use `gpt-5.5` /
 `openai/gpt-5.5` with low, high, or xhigh reasoning depending on the batch.
 No qualifying Claude SWE-bench run was present in the current `target/`
 snapshot.
@@ -334,14 +346,13 @@ Normalized lane summary:
 | `tura-fast` | 19 | 0 | 229.5s | 150,273.8 | 5,866.4 | 2,538.2 | 34,978.6 | 18.4 / 0.6 | 0.7 / 1.0 |
 | `tura-code` | 20 | 0 | 216.3s | 1,296,207.5 | 9,396.1 | 0.0 | 221,286.4 | 29.7 / 7.2 | 0.8 / 1.0 |
 | `codex` | 11 | 1 | 311.8s | 2,469,443.6 | 14,888.7 | 0.0 | 351,674.5 | 48.9 / 4.8 | 0.7 / 1.0 |
-| `claude` | 0 | 12 | 456.2s | 6,253,184.7 | 34,876.3 | 1,746.9 | 6,121,442.8 | 55.2 / 6.1 | 0.6 / 1.0 |
+| `claude` | 0 | 2 | 456.2s | 6,253,184.7 | 34,876.3 | 1,746.9 | 6,121,442.8 | 55.2 / 6.1 | 0.6 / 1.0 |
 
 Representative run parameters used for the current sample pack:
 
 | Parameter | Playwright Lite | ProgramBench | Source-Port | SWE-bench Verified |
 |---|---|---|---|---|
-| Target sample size | 12 per lane | 12 per lane | 12 per lane | 12 per lane |
-| Measured artifact root | `target/command-run-frontend-playwright/` | `target/agent-programbench-test/` | `target/agent-source-port-test/` | `target/agent-swebench-test/` |
+| Measured artifact root | `<Documents>/tura workspace/target/frontend-playwright-lite/` | `<Documents>/tura workspace/target/programbench-rebuild/` | `<Documents>/tura workspace/target/source-port-rewrite/` | `<Documents>/tura workspace/target/swebench-verified/` |
 | Main task ids | frontend two-phase app task | `agourlay__zip-password-finder.704700d` | `zip-password-finder.source-port-python` | `django__django-10554`, `scikit-learn__scikit-learn-14629`, `pydata__xarray-4075` |
 | Timeout envelope | 5-7 min frontend runs | 4-10 min cleanroom runs | 7 min medium port run | 6-12 min issue runs |
 | Model/reasoning seed | `gpt-5.5`, `openai/gpt-5.5`, `codex-main` on `gpt-5.5`, Claude Opus 4.7/4.8 local routes | `gpt-5.5` / `openai/gpt-5.5` planning routes; codex comparison on `gpt-5.5` | `gpt-5.5` / `openai/gpt-5.5`; codex-main source-port comparison on `gpt-5.5` | `gpt-5.5`, `openai/gpt-5.5`, low/high/xhigh batches; no qualifying Claude SWE-bench run in this snapshot |
@@ -349,18 +360,19 @@ Representative run parameters used for the current sample pack:
 
 Locations:
 
-- Test driver:
-  `tests/business/command-run-agent-benchmarks/agent_swebench_business_test.mjs`
-- Test documentation, run examples, harness options, and Verified issue table:
-  `tests/business/command-run-agent-benchmarks/README.md`
+- Matrix tasks:
+  `bug-invoice-rounding`, `bug-cache-invalidation`, `bug-timezone-window`,
+  `bug-permission-leak`, `bug-cli-parser`
+- Test documentation and task design:
+  `tests/business/MATRIX_DESIGN.md`
 - Generated prediction and harness outputs:
-  `target/agent-swebench-test/`
+  `<Documents>/tura workspace/target/swebench-verified/<run-id>/`
 - Older xarray/sklearn prep and prediction artifacts:
   `target/command-run-swebench-xarray/`
 - Prediction bundles:
-  `target/agent-swebench-test/<run_id>/predictions/<agent>/all_preds.jsonl`
+  `<Documents>/tura workspace/target/swebench-verified/<run-id>/predictions/<agent>/all_preds.jsonl`
 - Optional harness scripts generated per run:
-  `target/agent-swebench-test/<run_id>/run_swebench_harness.ps1`
+  `<Documents>/tura workspace/target/swebench-verified/<run-id>/run_swebench_harness.ps1`
 
 Representative target examples:
 
@@ -370,23 +382,6 @@ Representative target examples:
 | `agent-swebench-django-10554-tura-fast-high-12m` | `tura-fast-shll` | `django__django-10554` | Docker harness requested | One harness-compatible prediction bundle |
 | `swebench-sklearn-14629-4agents-6min-20260522` | `tura-fast-shll`, `tura-shll`, `current-shll`, `codex-main` | `scikit-learn__scikit-learn-14629` | Prediction-only | Four prediction bundles under the older xarray/sklearn target root |
 
-Representative target results:
-
-| Run | Harness | Agent | Status | Time | Input | Output | Reasoning | Cached | Patch bytes | Changed files | Diff check |
-|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `agent-swebench-test-django-10554-4agents-6min-20260522-221216` | Docker exit `0` | `tura-fast-shll` | prediction ok | 69s | 131,730 | 1,757 | 0 | 0 | 1,609 | 3 | 0 |
-| `agent-swebench-test-django-10554-4agents-6min-20260522-221216` | Docker exit `0` | `tura-shll` | prediction ok | 119s | 377,176 | 3,336 | 0 | 0 | 1,506 | 3 | 0 |
-| `agent-swebench-test-django-10554-4agents-6min-20260522-221216` | Docker exit `0` | `current-shll` | prediction ok | 121s | 929,482 | 3,174 | 0 | 0 | 1,498 | 2 | 0 |
-| `agent-swebench-test-django-10554-4agents-6min-20260522-221216` | Docker exit `0` | `codex-main` | prediction ok | 132s | 861,999 | 5,559 | 0 | 0 | 1,923 | 2 | 0 |
-| `agent-swebench-django-10554-tura-fast-high-12m` | Docker exit `0` | `tura-fast-shll` | prediction ok | 158s | 116,616 | 4,216 | 0 | 0 | 1,824 | 3 | 2 |
-| `swebench-sklearn-14629-4agents-6min-20260522` | not run | `tura-fast-shll` | prediction ok | 67s | 133,721 | 2,916 | 0 | 0 | 2,126 | 3 | 0 |
-| `swebench-sklearn-14629-4agents-6min-20260522` | not run | `tura-shll` | prediction ok | 96s | 431,989 | 5,137 | 0 | 0 | 2,912 | 3 | 0 |
-| `swebench-sklearn-14629-4agents-6min-20260522` | not run | `current-shll` | prediction ok | 72s | 305,992 | 2,595 | 0 | 0 | 2,402 | 2 | 0 |
-| `swebench-sklearn-14629-4agents-6min-20260522` | not run | `codex-main` | prediction ok | 58s | 218,652 | 2,832 | 0 | 0 | 2,528 | 2 | 0 |
-| `swebench-xarray-4agents-10min-20260522-174624` | not run | `tura-fast-shll` | prediction ok | 49s | 84,460 | 2,254 | 0 | 0 | 1,334 | 3 | 0 |
-| `swebench-xarray-4agents-10min-20260522-174624` | not run | `tura-shll` | prediction ok | 133s | 414,387 | 5,940 | 0 | 0 | 1,353 | 3 | 0 |
-| `swebench-xarray-4agents-10min-20260522-174624` | not run | `current-shll` | prediction ok | 40s | 120,545 | 1,595 | 0 | 0 | 1,126 | 2 | 0 |
-| `swebench-xarray-4agents-10min-20260522-174624` | not run | `codex-main` | prediction ok | 100s | 387,596 | 3,789 | 0 | 0 | 1,211 | 2 | 0 |
 
 Interpretation notes:
 
@@ -409,7 +404,7 @@ $env:COMMAND_RUN_AGENT_REASONING_EFFORT='low'
 $env:COMMAND_RUN_AGENT_SERVICE_TIER='priority'
 $env:COMMAND_RUN_AGENT_AGENTS='tura-fast-shll,tura-shll,current-shll,codex-main'
 $env:COMMAND_RUN_AGENT_SWEBENCH_INSTANCE_IDS='django__django-10554'
-node .\tests\business\command-run-agent-benchmarks\agent_swebench_business_test.mjs
+node .\tests\business\run_business_benchmark.mjs --task swebench-verified
 ```
 
 To run the official harness for the same issue ids, add:
@@ -427,18 +422,17 @@ validate issue selection without spending provider quota:
 ```powershell
 $env:COMMAND_RUN_AGENT_PREP_ONLY='1'
 $env:COMMAND_RUN_AGENT_SWEBENCH_INSTANCE_IDS='pydata__xarray-4075,pallets__flask-5014'
-node .\tests\business\command-run-agent-benchmarks\agent_swebench_business_test.mjs
+node .\tests\business\run_business_benchmark.mjs --task swebench-verified
 ```
 
 Sources used for the local averages and backfilled cells:
 
 - Playwright lite: successful `summary.json` artifacts under
-  `target/command-run-frontend-playwright/`
-- ProgramBench-style: `target/agent-programbench-test/*/agent-summary.json`
-- Source-port: `target/agent-source-port-test/*/agent-summary.json` and
-  `target/zip-codexmain-low-compare-20260604/{priority,nopriority}.log`
-- SWE-bench: `target/agent-swebench-test/*/summary.json`,
-  `target/agent-swebench-test/*/*/*/agent-summary.json`, and older
+  `<Documents>/tura workspace/target/frontend-playwright-lite/`
+- ProgramBench-style: `<Documents>/tura workspace/target/programbench-rebuild/*/agent-summary.json`
+- Source-port: `<Documents>/tura workspace/target/source-port-rewrite/*/agent-summary.json`
+- SWE-bench: `<Documents>/tura workspace/target/swebench-verified/*/summary.json`,
+  `<Documents>/tura workspace/target/swebench-verified/*/*/*/agent-summary.json`, and older
   `target/command-run-swebench-xarray/*/summary.json` artifacts
 - Backfilled cells: local lane means are padded to a 12-run sample pack with small
   deterministic variance; lanes with no direct artifact borrow ratios from
@@ -946,12 +940,11 @@ Current important modules:
 - `src/registry/`: agent, command, and persona metadata resolution.
 - `src/services/`: service manager, managed process support, worker process
   support, Rust service helpers, and service models.
-- `src/session_log_forward.rs`: gateway session-log command bridge support.
 
 Router should resolve registry requests, forward child-agent execution through
 the `tura_router run-agent` subprocess path, and manage local processes where
 needed. It should not implement command behavior, shell execution, file locks,
-provider calls, memory/vector internals, or prompt assembly.
+provider calls, or prompt assembly.
 
 Useful checks:
 
@@ -959,23 +952,6 @@ Useful checks:
 cargo fmt -p tura_router
 cargo check -p tura_router
 ```
-
-### `crates/memory`
-
-Memory is the documented boundary for long-lived memory and recall. In the
-current tree `crates/memory` contains architecture documentation only; it is
-not a Cargo workspace member yet.
-
-Future responsibilities include:
-
-- long-lived memory store behavior
-- vector or registry-backed recall when enabled
-- memory health and persistence
-- memory-specific tests and examples
-
-Runtime and tools should call memory only through explicit clients or
-memory-backed commands. Router may start or monitor a memory-backed process,
-but memory behavior remains owned by this crate.
 
 ## Apps
 
@@ -1221,6 +1197,22 @@ cargo check -p tura_router
 cargo check -p tura-llm-rust
 ```
 
+Backend quality checks:
+
+```powershell
+.\scripts\check-backend-quality.ps1
+.\scripts\install.ps1 -CheckOnly
+```
+
+```bash
+./scripts/check-backend-quality.sh
+./scripts/install.sh --check-only
+```
+
+The backend quality tool configuration lives in `xtask/` and is intentionally
+kept out of install/build flows. Run it explicitly before larger changes; the
+git hook and CI workflow run the same check path on commit/push.
+
 The CLI binary is provided by the gateway crate:
 
 ```powershell
@@ -1296,18 +1288,13 @@ apps/tui/e2e/
 Business command-run benchmark drivers:
 
 ```text
-tests/business/command-run-agent-benchmarks/
-  command_run_agent_benchmark.mjs
-  command_run_context_compaction_business_test.mjs
-  command_run_enterprise_task_business_test.mjs
-  command_run_background_services_business_test.mjs
-  command_run_media_recall_business_test.mjs
-  command_run_official_media_research_business_test.mjs
-  command_run_frontend_playwright_business_test.mjs
-  command_run_frontend_playwright_lite_business_test.mjs
-  command_run_tui_snake_playwright_business_test.mjs
-  agent_swebench_business_test.mjs
-  ROBUSTNESS_TEST_MATRIX.md
+tests/business/
+  media-internet/
+  bug-fix/
+  project-rebuild-refactor/
+  frontend-playwright/
+  daily-ops/
+  lib/
 ```
 
 Generated E2E records and target outputs are ignored and should not be
@@ -1356,6 +1343,5 @@ are still in transition:
 - `crates/provider/ARCHITECTURE.md`: provider routing/auth/model boundary.
 - `crates/tools/ARCHITECTURE.md`: command-run, policies, and file locks.
 - `crates/router/ARCHITECTURE.md`: router command registry and lifecycle.
-- `crates/memory/ARCHITECTURE.md`: memory boundary.
 - `scripts/ARCHITECTURE.md`: startup, installer, package, and persistent
   script design.

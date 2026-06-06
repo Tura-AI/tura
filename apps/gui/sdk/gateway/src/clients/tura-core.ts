@@ -9,8 +9,7 @@ export function turaCoreClient(client: GatewayClient) {
     paths: () => client.paths(),
     currentProject: () => client.currentProject(),
     projects: () => client.projects(),
-    sessions: (input?: Parameters<GatewayClient["sessions"]>[0]) =>
-      client.sessions(input),
+    sessions: (input?: Parameters<GatewayClient["sessions"]>[0]) => client.sessions(input),
     messages: (sessionId: string) => client.messages(sessionId),
     createSession: (payload: Parameters<GatewayClient["createSession"]>[0]) =>
       client.createSession(payload),

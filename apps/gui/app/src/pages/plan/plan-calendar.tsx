@@ -42,8 +42,7 @@ export function PlanCalendarView(props: {
 }) {
   const [dragState, setDragState] = createSignal<PlanDragState>();
   const timedSessions = createMemo(() => planTimedSessions(props.sessions));
-  const [calendarView, setCalendarView] =
-    createSignal<PlanCalendarMode>("month");
+  const [calendarView, setCalendarView] = createSignal<PlanCalendarMode>("month");
   const [calendarCursor, setCalendarCursor] = createSignal(
     planInitialCalendarDate(timedSessions()),
   );
@@ -115,19 +114,12 @@ export function PlanCalendarView(props: {
     );
     if (session) {
       const next = new Date(day);
-      const minuteRatio = pointerRatio(
-        event.currentTarget as HTMLElement,
-        event.clientY,
-        "y",
-      );
+      const minuteRatio = pointerRatio(event.currentTarget as HTMLElement, event.clientY, "y");
       next.setHours(hour, Math.round(minuteRatio * 59), 0, 0);
       props.onSchedule(session, next.toISOString());
     }
   }
-  function beginCalendarDrag(
-    event: PointerEvent | MouseEvent,
-    session: Session,
-  ) {
+  function beginCalendarDrag(event: PointerEvent | MouseEvent, session: Session) {
     beginPlanPointerDrag({
       event,
       session,
@@ -166,10 +158,7 @@ export function PlanCalendarView(props: {
     const start = new Date(day);
     start.setHours(
       hour,
-      Math.round(
-        pointerRatio(event.currentTarget as HTMLElement, event.clientY, "y") *
-          59,
-      ),
+      Math.round(pointerRatio(event.currentTarget as HTMLElement, event.clientY, "y") * 59),
       0,
       0,
     );
@@ -185,9 +174,7 @@ export function PlanCalendarView(props: {
       setCalendarCursor(new Date(cursor.getTime() + amount * 7 * DAY_MS));
       return;
     }
-    setCalendarCursor(
-      new Date(cursor.getFullYear(), cursor.getMonth() + amount, 1),
-    );
+    setCalendarCursor(new Date(cursor.getFullYear(), cursor.getMonth() + amount, 1));
   }
   function switchCalendarView(view: PlanCalendarMode) {
     setCalendarCursor(startOfDay(new Date()));
@@ -285,10 +272,7 @@ export function PlanCalendarView(props: {
         }
       >
         <div
-          class={classNames(
-            "plan-calendar-week",
-            calendarView() === "day" && "day-mode",
-          )}
+          class={classNames("plan-calendar-week", calendarView() === "day" && "day-mode")}
           style={{ "--calendar-days": String(activeHourDays().length) }}
         >
           <div class="plan-calendar-week-head">
@@ -306,9 +290,7 @@ export function PlanCalendarView(props: {
                   onClick={() => setCalendarCursor(day)}
                   onDblClick={() => setCalendarView("day")}
                 >
-                  <small>
-                    {day.toLocaleDateString(undefined, { weekday: "short" })}
-                  </small>
+                  <small>{day.toLocaleDateString(undefined, { weekday: "short" })}</small>
                   <strong>{day.getDate()}</strong>
                 </button>
               )}
@@ -318,9 +300,7 @@ export function PlanCalendarView(props: {
             <For each={weekHours}>
               {(hour) => (
                 <>
-                  <span class="plan-calendar-hour-label">
-                    {String(hour).padStart(2, "0")}:00
-                  </span>
+                  <span class="plan-calendar-hour-label">{String(hour).padStart(2, "0")}:00</span>
                   <For each={activeHourDays()}>
                     {(day) => (
                       <section
@@ -328,9 +308,7 @@ export function PlanCalendarView(props: {
                           "plan-calendar-hour-cell",
                           isPastCalendarHour(day, hour) && "past",
                         )}
-                        onClick={(event) =>
-                          createDraftFromWeek(event, day, hour)
-                        }
+                        onClick={(event) => createDraftFromWeek(event, day, hour)}
                         onDragOver={(event) => event.preventDefault()}
                         onDrop={(event) => dropOnDayHour(event, day, hour)}
                         data-plan-hour-start={hourStartIso(day, hour)}
@@ -362,10 +340,7 @@ export function PlanCalendarEvent(props: {
   session: Session;
   selected?: boolean;
   onOpenSession: (session: Session) => void;
-  onPointerDragStart: (
-    event: PointerEvent | MouseEvent,
-    session: Session,
-  ) => void;
+  onPointerDragStart: (event: PointerEvent | MouseEvent, session: Session) => void;
 }) {
   return (
     <button
@@ -384,9 +359,7 @@ export function PlanCalendarEvent(props: {
       }}
     >
       <span>{sessionTitle(props.session)}</span>
-      <small>
-        {formatCalendarEventTime(sessionTaskState(props.session).start_at)}
-      </small>
+      <small>{formatCalendarEventTime(sessionTaskState(props.session).start_at)}</small>
     </button>
   );
 }

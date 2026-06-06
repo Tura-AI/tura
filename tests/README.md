@@ -17,19 +17,18 @@ internal runtime ↔ router traffic is CLI stdin/stdout JSON.
 
 ## Business Tests
 
-`tests/business/command-run-agent-benchmarks/` contains long-running business
-benchmarks that spawn real agents and compare Tura with Codex variants. These
-can take minutes, consume provider quota, and write large run outputs under
-`target/`.
+`tests/business/` contains long-running benchmarks that spawn real CLI agents
+and compare them through isolated harnesses. The current entries are grouped by
+task category instead of the old flat `command-run-agent-benchmarks` layout.
 
-`tests/business/tui_real_gateway_business_test.mjs` is the TUI business flow
-coverage. It starts the real `target/debug/gateway(.exe)` and runs the TUI CLI
-and three web-terminal profiles against that gateway. It does not use a mock
-gateway; set `TUI_BUSINESS_LIVE_PROMPT=1` when you also want the business run to
-spend provider quota and require a real model reply.
+Business-test outputs default to the same user workspace used by GUI and TUI:
+`~/Documents/tura workspace`. Each run writes to
+`~/Documents/tura workspace/target/{test_name}/{run_id}/summary.json`.
+Override the artifact root with `TURA_BUSINESS_TARGET_ROOT` or
+`COMMAND_RUN_BUSINESS_TARGET_ROOT`.
 
-Historical generated command-run records from the old layout now live under
-`target/command-run-codex-two-way-records/`.
+See `tests/business/README.md` for the entry list, output schema, and agent CLI
+comparison contract.
 
 ## Inspecting Logs In Tests
 

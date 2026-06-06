@@ -301,3 +301,77 @@ mod tests {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod prompt_resource_tests {
+    use super::super::constants::COMMAND_RUN_TOOL;
+    use super::load_agent_prompt_messages;
+    use crate::state_machine::agent_management::{
+        AgentCapabilityItem, AgentManagement, AgentPromptItem, ProviderConfig, ToolChoice,
+        ValidatorConfig,
+    };
+    #[test]
+    fn prompt_loading_only_includes_agent_prompt() {
+        let now = chrono::Utc::now();
+        let unique = format!(
+            "mano-prompt-test-{:x}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let root = std::env::temp_dir().join(unique);
+        let agent_prompt_dir = root.join("agent-prompts");
+        let tool_dir = root.join("tools");
+        std::fs::create_dir_all(&agent_prompt_dir).expect("agent prompt dir should be created");
+        std::fs::write(agent_prompt_dir.join("prompt.md"), "agent prompt")
+            .expect("agent prompt should be written");
+
+        let provider = ProviderConfig {
+            tura_llm_name: "test".to_string(),
+            stream: false,
+            temperature: 0.0,
+            max_tokens: 0,
+            tool_choice: ToolChoice::Auto,
+            time_out_ms: 1_000,
+        };
+        let validator = ValidatorConfig {
+            need_validator: false,
+            validator_name: None,
+        };
+        let mut agent = AgentManagement::new(
+            "agent-id".to_string(),
+            "agent".to_string(),
+            root.clone(),
+            None,
+            true,
+            false,
+            provider,
+            validator,
+            now,
+        );
+        agent.add_prompt(
+            AgentPromptItem {
+                agent_prompt: "agent".to_string(),
+                prompt_directory: agent_prompt_dir,
+            },
+            now,
+        );
+        agent.add_capability(
+            AgentCapabilityItem {
+                capability_name: COMMAND_RUN_TOOL.to_string(),
+                capability_directory: tool_dir,
+            },
+            now,
+        );
+
+        let messages = load_agent_prompt_messages(&agent).expect("prompt loading should succeed");
+        let content = messages
+            .iter()
+            .filter_map(|message| message.get("content").and_then(|content| content.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(content.contains("agent prompt"));
+        assert!(!content.contains("command_run prompt"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+}

@@ -1,11 +1,7 @@
 import type { Session, TaskManagement } from "@tura/gateway-sdk";
 import { Match, Show, Switch, createSignal } from "solid-js";
 import { DEFAULT_CODE_FONT, DEFAULT_MAIN_FONT } from "../config/defaults";
-import {
-  sessionTasks,
-  taskDisplayText,
-  taskNonceId,
-} from "../features/plan/tasks";
+import { sessionTasks, taskDisplayText, taskNonceId } from "../features/plan/tasks";
 import { t } from "../i18n";
 import { classNames } from "../state/format";
 import type { AppState } from "../state/global-store";
@@ -13,10 +9,7 @@ import { AppRail } from "./app-rail";
 import type { AppShellViewModel } from "./app-shell-view-model";
 import { ConversationPageOutlet } from "./conversation-page-outlet";
 import { FilesPageOutlet } from "./files-page-outlet";
-import {
-  AppLoadingPlaceholder,
-  GatewayConnectionLoadingOverlay,
-} from "./loading-placeholders";
+import { AppLoadingPlaceholder, GatewayConnectionLoadingOverlay } from "./loading-placeholders";
 import { PlanPageOutlet } from "./plan-page-outlet";
 import { ProviderAuthPortal } from "./provider-auth-portal";
 import { SettingsPageOutlet } from "./settings-page-outlet";
@@ -28,7 +21,6 @@ export function AppShell(props: { view: AppShellViewModel }) {
   const {
     state,
     selectedSession,
-    selectedMessages,
     slashCommands,
     setState,
     submitPrompt,
@@ -53,9 +45,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
       ...previous,
       activeTab: "settings",
       previousMainTab:
-        previous.activeTab === "settings"
-          ? previous.previousMainTab
-          : previous.activeTab,
+        previous.activeTab === "settings" ? previous.previousMainTab : previous.activeTab,
       settingsSection: "providers",
       selectedProviderId: providerId ?? previous.selectedProviderId,
       planNotice: undefined,
@@ -70,8 +60,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
     overlay: false,
     width: 0,
   });
-  const [conversationInspectorCloseToken, setConversationInspectorCloseToken] =
-    createSignal(0);
+  const [conversationInspectorCloseToken, setConversationInspectorCloseToken] = createSignal(0);
   let settingsSaveTimer: number | undefined;
   function closeActiveRightSidebar() {
     if (state().activeTab === "conversation") {
@@ -145,11 +134,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
   ) {
     const editing = state().editingTask;
     const currentComposerText = state().composerText;
-    if (
-      editing &&
-      editing.sessionId === sessionId &&
-      editing.task_id === taskNonceIdValue
-    ) {
+    if (editing && editing.sessionId === sessionId && editing.task_id === taskNonceIdValue) {
       setState((previous) => ({
         ...previous,
         composerText: "",
@@ -174,16 +159,12 @@ export function AppShell(props: { view: AppShellViewModel }) {
     editing: { sessionId: string; task_id?: string },
     textValue: string,
   ) {
-    const session = state().sessions.find(
-      (item) => item.id === editing.sessionId,
-    );
+    const session = state().sessions.find((item) => item.id === editing.sessionId);
     const text = textValue.trim();
     if (!session || !text) {
       return;
     }
-    const task = sessionTasks(session).find(
-      (item) => taskNonceId(item) === editing.task_id,
-    );
+    const task = sessionTasks(session).find((item) => taskNonceId(item) === editing.task_id);
     if (task && taskDisplayText(task).trim() === text) {
       return;
     }
@@ -201,15 +182,10 @@ export function AppShell(props: { view: AppShellViewModel }) {
     if (!session || !editing || editing.sessionId !== session.id) {
       return undefined;
     }
-    return sessionTasks(session).find(
-      (task) => taskNonceId(task) === editing.task_id,
-    );
+    return sessionTasks(session).find((task) => taskNonceId(task) === editing.task_id);
   }
 
-  function taskWithComposerText(
-    task: TaskManagement,
-    textValue: string,
-  ): TaskManagement {
+  function taskWithComposerText(task: TaskManagement, textValue: string): TaskManagement {
     const text = textValue.trim();
     if (!text) {
       return task;
@@ -225,8 +201,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
   async function runEditingTaskNow(session: Session, task: TaskManagement) {
     const editing = state().editingTask;
     const editingThisTask =
-      editing?.sessionId === session.id &&
-      editing.task_id === taskNonceId(task);
+      editing?.sessionId === session.id && editing.task_id === taskNonceId(task);
     if (!editingThisTask) {
       await runPlanTaskNow(session, task);
       return;
@@ -266,8 +241,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
           state().activeTab === "conversation" &&
             conversationInspector().overlay &&
             "inspector-overlay-open",
-          ((state().activeTab === "conversation" &&
-            conversationInspector().overlay) ||
+          ((state().activeTab === "conversation" && conversationInspector().overlay) ||
             (state().activeTab === "plan" && planPanelLayout().overlay)) &&
             "right-overlay-open",
           railDragging() && "rail-resizing",
@@ -281,10 +255,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
           "--code-font-size": `${state().codeFontSize || 11}px`,
         }}
       >
-        <AppRail
-          view={props.view}
-          collapseAfterSelection={collapseRailAfterCompactSelection}
-        />
+        <AppRail view={props.view} collapseAfterSelection={collapseRailAfterCompactSelection} />
         <div
           class="rail-resize-handle"
           role="separator"
@@ -297,15 +268,9 @@ export function AppShell(props: { view: AppShellViewModel }) {
         <section class="main-column">
           <RailToggleButton
             collapsed={railCollapsed()}
-            onToggle={() =>
-              railCollapsed() ? openRail() : collapseRailForMainWidth()
-            }
+            onToggle={() => (railCollapsed() ? openRail() : collapseRailForMainWidth())}
           />
-          <ErrorStrip
-            error={state().error}
-            notice={state().settingsNotice}
-            setState={setState}
-          />
+          <ErrorStrip error={state().error} notice={state().settingsNotice} setState={setState} />
           <Show
             when={!state().loading}
             fallback={
@@ -325,23 +290,15 @@ export function AppShell(props: { view: AppShellViewModel }) {
                   )}
                   previewMessages={
                     state().planPreviewSessionId
-                      ? (state().messagesBySession[
-                          state().planPreviewSessionId!
-                        ] ?? [])
+                      ? (state().messagesBySession[state().planPreviewSessionId!] ?? [])
                       : []
                   }
                   slashCommands={slashCommands()}
                   view={props.view}
                   onEditTask={(session, task, composerText) =>
-                    editComposerTask(
-                      session.id,
-                      taskNonceId(task),
-                      composerText,
-                    )
+                    editComposerTask(session.id, taskNonceId(task), composerText)
                   }
-                  onRunTask={(session, task) =>
-                    void runEditingTaskNow(session, task)
-                  }
+                  onRunTask={(session, task) => void runEditingTaskNow(session, task)}
                   onSubmit={() => void submitCurrentComposer()}
                   onOpenProviderSettings={openProviderSettings}
                   leftRailOpen={!railCollapsed()}
@@ -353,11 +310,7 @@ export function AppShell(props: { view: AppShellViewModel }) {
                 />
               </Match>
               <Match when={state().activeTab === "files"}>
-                <FilesPageOutlet
-                  state={state()}
-                  setState={setState}
-                  view={props.view}
-                />
+                <FilesPageOutlet state={state()} setState={setState} view={props.view} />
               </Match>
               <Match when={state().activeTab === "conversation"}>
                 <ConversationPageOutlet
@@ -371,17 +324,13 @@ export function AppShell(props: { view: AppShellViewModel }) {
                   leftRailWidth={railFullscreen() ? 0 : railWidth()}
                   view={props.view}
                   onSubmit={() => void submitCurrentComposer()}
-                  onQueueSubmit={() =>
-                    void submitCurrentComposer({ queued: true })
-                  }
+                  onQueueSubmit={() => void submitCurrentComposer({ queued: true })}
                   onInspectorLayout={setConversationInspector}
                   closeInspectorSignal={conversationInspectorCloseToken()}
                   onRequestCollapseLeftRail={collapseRailForMainWidth}
                   onOpenProviderSettings={openProviderSettings}
                   onEditTask={editComposerTask}
-                  onRunTask={(session, task) =>
-                    void runEditingTaskNow(session, task)
-                  }
+                  onRunTask={(session, task) => void runEditingTaskNow(session, task)}
                   onRuntimeSetting={applyRuntimeSetting}
                   onOpenSettings={openSettings}
                 />
@@ -401,16 +350,11 @@ export function AppShell(props: { view: AppShellViewModel }) {
             </Switch>
           </Show>
         </section>
-        <Show
-          when={
-            !state().bootstrapped &&
-            state().connection !== "connected" &&
-            !state().error
-          }
-        >
+        <Show when={!state().bootstrapped && state().connection !== "connected" && !state().error}>
           <GatewayConnectionLoadingOverlay
             activeTab={state().activeTab}
             settingsSection={state().settingsSection}
+            notice={state().gatewayStartupNotice}
           />
         </Show>
       </main>

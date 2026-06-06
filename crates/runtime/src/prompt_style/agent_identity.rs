@@ -32,8 +32,8 @@ fn language_instruction(language: &str) -> &'static str {
         "en" | "en-us" | "en-gb" | "english" => {
             "Respond in English when the user's language is unclear; otherwise mirror the user's language."
         }
-        "zh" | "zh-cn" | "zh-hans" | "chinese" | "simplified chinese" | "简体中文" => {
-            "用户语言不明确时使用简体中文回复；否则跟随用户当前使用的语言。"
+        "zh" | "zh-cn" | "zh-hans" | "chinese" | "simplified chinese" => {
+            "Respond in Simplified Chinese when the user's language is unclear; otherwise mirror the user's language."
         }
         _ => {
             "Respond in the configured application language when the user's language is unclear; otherwise mirror the user's language."
@@ -70,6 +70,6 @@ mod tests {
         assert!(identity.contains("Current user: Tura User"));
         assert!(identity.contains("Runtime model: gpt-5.5"));
         assert!(identity.contains("LLM provider: openai"));
-        assert!(identity.contains("用户语言不明确时使用简体中文回复"));
+        assert!(identity.contains("Respond in Simplified Chinese"));
     }
 }

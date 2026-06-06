@@ -43,20 +43,13 @@ for the external gateway boundary.
 
 Both modes share the same `dispatch_run_agent` core.
 
-## Session Log Bridge
+## Session DB Data Path
 
-Router also exposes the `session-log` CLI bridge used by runtime and gateway
-helpers. It forwards JSON commands to `crates/session_log`; it does not own the
-database schema.
+Router owns `session_db` service lifecycle through `session-db-service`, but it
+does not expose a session-log data bridge. Gateway and runtime helpers call the
+session DB service directly through `session-db-call`; router IPC is limited to
+execution supervision and service lifecycle.
 
-Examples:
-
-```powershell
-'{"command":"list_workspaces"}' | target\debug\tura_router.exe session-log
-'{"command":"list_sessions","workspace":"C:/repo","page":0,"page_size":50}' | target\debug\tura_router.exe session-log
-'{"command":"get_session","session_id":"session-id"}' | target\debug\tura_router.exe session-log
-'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\tura_router.exe session-log
-```
-
-Gateway exposes the same bridge as `target\debug\gateway.exe session-log` and
-adds HTTP routes under `/session-log/*`.
+Gateway keeps `target\debug\gateway.exe session-log` for compatibility, but that
+command also uses the direct session DB client instead of routing reads through
+the router.

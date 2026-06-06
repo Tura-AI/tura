@@ -130,7 +130,10 @@ fn live_provider_matrix_downloads_docs_and_images() {
         serde_json::to_string_pretty(&summary).expect("summary json"),
     )
     .expect("write summary");
-    println!("{}", serde_json::to_string_pretty(&summary).unwrap());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&summary).expect("summary should serialize")
+    );
 
     env.restore();
 }
@@ -222,10 +225,12 @@ fn live_direct_image_and_youtube_url_download() {
     println!("{}", session_dir.display());
     println!(
         "{}",
-        serde_json::to_string_pretty(&image_response.output).unwrap()
+        serde_json::to_string_pretty(&image_response.output)
+            .expect("image output should serialize")
     );
     println!(
         "{}",
-        serde_json::to_string_pretty(&video_response.output).unwrap()
+        serde_json::to_string_pretty(&video_response.output)
+            .expect("video output should serialize")
     );
 }

@@ -7,11 +7,14 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint ../app/src",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
     "unused:check": "knip --no-progress"
   },
   "dependencies": {
     "@solidjs/router": "^0.16.1",
+    "@tauri-apps/api": "^2.0.0",
     "@tura/gateway-sdk": "workspace:*",
     "lucide-solid": "^0.468.0",
     "solid-js": "^1.9.10"

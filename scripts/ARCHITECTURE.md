@@ -84,6 +84,9 @@ Start scripts should:
 
 - Prefer CLI-driven startup.
 - Default to running `cargo run -p gateway --bin tura -- exec ...`.
+- Preserve the direct Rust CLI output contract: final assistant text on
+  `stdout`, default lightweight progress on `stderr`, `--quiet`/`--silent`
+  suppressing progress, and `--json` switching `stdout` to JSONL events.
 - Support a gateway-server mode for the TypeScript CLI/TUI:
   `cargo run -p gateway --bin gateway`.
 - Support a TUI-client mode that runs `node apps/tui/dist/index.js ...`.

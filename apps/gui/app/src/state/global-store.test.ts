@@ -32,10 +32,7 @@ describe("session fallback names", () => {
       plan_summary: "",
       status: "idle",
     };
-    const filled = withSessionFallbackName(
-      blank,
-      "头部输入会成为前端临时会话名",
-    );
+    const filled = withSessionFallbackName(blank, "头部输入会成为前端临时会话名");
 
     expect(filled.name).toBe("头部输入会成为前端临时会话名");
     expect(sessionTitle(filled)).toBe("头部输入会成为前端临时会话名");
@@ -46,8 +43,6 @@ describe("session fallback names", () => {
       status: "idle",
     };
 
-    expect(withSessionFallbackName(named, "用户输入").name).toBe(
-      "gateway name",
-    );
+    expect(withSessionFallbackName(named, "用户输入").name).toBe("gateway name");
   });
 });

@@ -5,12 +5,7 @@ import {
   type Session,
 } from "@tura/gateway-sdk";
 import { t } from "../i18n";
-import {
-  sessionTitle,
-  sessionUpdatedAt,
-  type AppState,
-  type MainTab,
-} from "../state/global-store";
+import { sessionTitle, sessionUpdatedAt, type AppState, type MainTab } from "../state/global-store";
 
 import {
   formatTicketTime,
@@ -39,10 +34,7 @@ export function formatModelLimit(value?: number): string {
   return String(value);
 }
 
-export function eventBelongsToState(
-  state: AppState,
-  directory?: string | null,
-): boolean {
+export function eventBelongsToState(state: AppState, directory?: string | null): boolean {
   if (!directory || directory === "global") {
     return true;
   }
@@ -84,9 +76,7 @@ export function shortWorkspaceLabel(path?: string | null): string {
   return shortPathLabel(path) ?? t("noWorkspace");
 }
 
-export function defaultWorkspaceDirectory(
-  paths?: Partial<PathResponse>,
-): string {
+export function defaultWorkspaceDirectory(paths?: Partial<PathResponse>): string {
   const existing = [paths?.directory, paths?.worktree]
     .map((value) => value?.trim())
     .find((value): value is string => Boolean(value));
@@ -102,10 +92,7 @@ export function defaultWorkspaceDirectory(
   return `${root}${separator}Documents${separator}tura workspace`;
 }
 
-export function fixtureFiles(
-  fixture: string | undefined,
-  path = "",
-): FileInfo[] {
+export function fixtureFiles(fixture: string | undefined, path = ""): FileInfo[] {
   if (fixture !== "plan-sessions") {
     return [];
   }
@@ -174,9 +161,7 @@ export function relativeSessionTime(session: Session): string {
 
 export function sessionHoverTitle(session: Session): string {
   const schedule = sessionScheduleHoverText(session);
-  return schedule
-    ? `${sessionTitle(session)}\n${schedule}`
-    : sessionTitle(session);
+  return schedule ? `${sessionTitle(session)}\n${schedule}` : sessionTitle(session);
 }
 
 export function sessionScheduleHoverText(session: Session): string | undefined {
@@ -222,10 +207,7 @@ export function normalizeTimeMs(value: number): number {
   return value > 10_000_000_000 ? value : value * 1000;
 }
 
-export function readConfigString(
-  config: Record<string, unknown>,
-  key: string,
-): string | undefined {
+export function readConfigString(config: Record<string, unknown>, key: string): string | undefined {
   const value = config[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
@@ -253,10 +235,7 @@ export function readConfigBoolean(
 export function inputHeight(value: string): string {
   const lines = Math.min(
     12,
-    Math.max(
-      3,
-      value.split(/\r\n|\r|\n/u).length + Math.floor(value.length / 72),
-    ),
+    Math.max(3, value.split(/\r\n|\r|\n/u).length + Math.floor(value.length / 72)),
   );
   return `${lines * 24 + 36}px`;
 }
@@ -334,10 +313,7 @@ export function readBooleanSearchParam(name: string): boolean {
 
 export function readMainTabSearchParam(): MainTab | undefined {
   const tab = readSearchParam("tab");
-  return tab === "plan" ||
-    tab === "conversation" ||
-    tab === "files" ||
-    tab === "settings"
+  return tab === "plan" || tab === "conversation" || tab === "files" || tab === "settings"
     ? tab
     : tab === "new"
       ? "conversation"
@@ -357,8 +333,7 @@ export function withInitialOverrides(
   return {
     ...state,
     activeTab,
-    previousMainTab:
-      activeTab === "settings" ? state.previousMainTab : activeTab,
+    previousMainTab: activeTab === "settings" ? state.previousMainTab : activeTab,
     selectedSessionId:
       overrides.selectedSessionId === null
         ? undefined

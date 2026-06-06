@@ -100,7 +100,11 @@ export function normalizeEvent(raw: GatewayEventEnvelope): NormalizedEvent {
   if (payload?.type === "permission.asked" || payload?.type === "permission.replied") {
     permission = readRequest<PermissionRequest>(payload.properties, ["permission", "request"]);
   }
-  if (payload?.type === "question.asked" || payload?.type === "question.replied" || payload?.type === "question.rejected") {
+  if (
+    payload?.type === "question.asked" ||
+    payload?.type === "question.replied" ||
+    payload?.type === "question.rejected"
+  ) {
     question = readRequest<QuestionRequest>(payload.properties, ["question", "request"]);
   }
   return {
@@ -125,7 +129,10 @@ function partStatus(part: MessagePart | undefined): string | undefined {
   return typeof status === "string" ? status : undefined;
 }
 
-function readString(properties: Record<string, unknown> | undefined, key: string): string | undefined {
+function readString(
+  properties: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
   const value = properties?.[key];
   return typeof value === "string" ? value : undefined;
 }

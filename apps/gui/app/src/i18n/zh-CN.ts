@@ -165,8 +165,10 @@ export const zhCN = {
   fileBrowser: "文件浏览器",
   fullscreen: "全屏",
   gateway: "网关",
-  gatewayResponseTimeout:
-    "超过 5 秒未收到 Gateway 响应，请检查 Gateway 是否正在运行。",
+  gatewayBuilding: "未找到 Gateway 二进制文件，正在构建 Gateway...",
+  gatewayResponseTimeout: "超过 5 秒未收到 Gateway 响应，请检查 Gateway 是否正在运行。",
+  gatewayStarting: "正在尝试启动 Gateway...",
+  gatewayWaiting: "正在等待 Gateway 健康检查...",
   general: "常规",
   git: "Git",
   global: "全局",
@@ -324,8 +326,7 @@ export const zhCN = {
   providerReceiptOauthTokenInvalidFormat: "OAuth access token 格式无效",
   providerReceiptTokenMissing: "缺少 token：{value}",
   providerReceiptApiKeyMissing: "缺少 API key：{value}",
-  providerReceiptPublicModelListUnsupported:
-    "{value} 的模型列表是公开接口，无法用于证明 key 有效",
+  providerReceiptPublicModelListUnsupported: "{value} 的模型列表是公开接口，无法用于证明 key 有效",
   providerReceiptGatewayNotConfigured: "验证网关没有配置",
   providerReceiptNoPaidModelRequest: "未发送付费模型请求",
   providerReceiptAuthRefreshUnsupported: "当前登录方式不支持刷新",

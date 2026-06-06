@@ -264,7 +264,11 @@ mod tests {
             .as_array()
             .expect("steps should be array")
             .iter()
-            .map(|step| step["step"].as_u64().unwrap())
+            .map(|step| {
+                step["step"]
+                    .as_u64()
+                    .expect("step number should be present")
+            })
             .collect::<Vec<_>>();
         assert_eq!(steps, vec![1, 2, 3, 4]);
     }

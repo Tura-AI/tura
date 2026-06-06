@@ -166,8 +166,11 @@ export const en = {
   explorer: "Explorer",
   fileBrowser: "File browser",
   gateway: "Gateway",
+  gatewayBuilding: "Gateway binary is missing; building Gateway...",
   gatewayResponseTimeout:
     "Gateway did not respond within 5 seconds. Check whether Gateway is running.",
+  gatewayStarting: "Trying to start Gateway...",
+  gatewayWaiting: "Waiting for Gateway health...",
   fullscreen: "Fullscreen",
   general: "General",
   git: "Git",
@@ -273,8 +276,7 @@ export const en = {
   secureTokenPlaceholder: "Protected with secure masking",
   selectStep: "Select a step",
   send: "Send",
-  sendButtonHint:
-    "Enter to send\nShift+Enter for a new line\n{modifier}+Enter to queue",
+  sendButtonHint: "Enter to send\nShift+Enter for a new line\n{modifier}+Enter to queue",
   sidebar: "Sidebar",
   session: "Session",
   sessionHistory: "Session",
@@ -317,28 +319,21 @@ export const en = {
   providerReceiptBaseUrlInvalid: "Base URL invalid: {value}",
   providerReceiptEnvPresent: "Configured env: {value}",
   providerReceiptEnvMissing: "Missing env: {value}",
-  providerReceiptEnvNoneRegistered:
-    "No credential env is registered for this provider",
-  providerReceiptRemoteAccepted:
-    "Remote validation accepted credentials: {value}",
-  providerReceiptRemotePermissionLimited:
-    "Credential is valid but permission is limited: {value}",
-  providerReceiptRemoteRejected:
-    "Remote validation rejected credentials: {value}",
-  providerReceiptRemoteRequestFailed:
-    "Remote validation request failed: {value}",
+  providerReceiptEnvNoneRegistered: "No credential env is registered for this provider",
+  providerReceiptRemoteAccepted: "Remote validation accepted credentials: {value}",
+  providerReceiptRemotePermissionLimited: "Credential is valid but permission is limited: {value}",
+  providerReceiptRemoteRejected: "Remote validation rejected credentials: {value}",
+  providerReceiptRemoteRequestFailed: "Remote validation request failed: {value}",
   providerReceiptClientSetupFailed: "Validation client setup failed: {value}",
   providerReceiptOauthTokenMissing: "OAuth access token is missing",
-  providerReceiptOauthTokenInvalidFormat:
-    "OAuth access token format is invalid",
+  providerReceiptOauthTokenInvalidFormat: "OAuth access token format is invalid",
   providerReceiptTokenMissing: "Token is missing: {value}",
   providerReceiptApiKeyMissing: "API key is missing: {value}",
   providerReceiptPublicModelListUnsupported:
     "{value} exposes a public model list and cannot prove key validity",
   providerReceiptGatewayNotConfigured: "Validation gateway is not configured",
   providerReceiptNoPaidModelRequest: "No paid model request was sent",
-  providerReceiptAuthRefreshUnsupported:
-    "This auth method does not support refresh",
+  providerReceiptAuthRefreshUnsupported: "This auth method does not support refresh",
   providerReceiptAuthRefreshFailed: "Refresh failed: {value}",
   providerReceiptAuthRefreshSucceeded: "Refresh succeeded",
   providerReceiptAuthNotConfigured: "Provider auth is not configured",

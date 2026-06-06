@@ -42,9 +42,7 @@ export function sessionTasks(session: Session): TaskManagement[] {
 }
 
 export function sortedSessionTasks(session: Session): TaskManagement[] {
-  return sessionTasks(session)
-    .filter(taskIsVisibleInFrontend)
-    .sort(compareTaskStep);
+  return sessionTasks(session).filter(taskIsVisibleInFrontend).sort(compareTaskStep);
 }
 
 export function hasVisibleSessionTasks(session: Session): boolean {
@@ -53,25 +51,16 @@ export function hasVisibleSessionTasks(session: Session): boolean {
 
 export function taskIsVisibleInFrontend(task: TaskManagement): boolean {
   const status = taskPlanStatus(task);
-  return (
-    status !== "done" &&
-    status !== "archived" &&
-    taskHasVisibleContent(task)
-  );
+  return status !== "done" && status !== "archived" && taskHasVisibleContent(task);
 }
 
 export function taskHasVisibleContent(task: TaskManagement): boolean {
   return taskDisplayText(task).trim().length > 0;
 }
 
-export function compareTaskStep(
-  left: TaskManagement,
-  right: TaskManagement,
-): number {
-  const leftStep =
-    typeof left.step === "number" ? left.step : Number.POSITIVE_INFINITY;
-  const rightStep =
-    typeof right.step === "number" ? right.step : Number.POSITIVE_INFINITY;
+export function compareTaskStep(left: TaskManagement, right: TaskManagement): number {
+  const leftStep = typeof left.step === "number" ? left.step : Number.POSITIVE_INFINITY;
+  const rightStep = typeof right.step === "number" ? right.step : Number.POSITIVE_INFINITY;
   return leftStep - rightStep;
 }
 
@@ -97,9 +86,7 @@ export function taskStartCondition(task: TaskManagement): StartCondition {
   return task.start_at ? "scheduled_task" : "session_idle";
 }
 
-function isStartConditionStatus(
-  value: string | undefined,
-): value is StartCondition {
+function isStartConditionStatus(value: string | undefined): value is StartCondition {
   return (
     value === "session_idle" ||
     value === "scheduled_task" ||
@@ -126,34 +113,20 @@ export function taskDisplayText(task: TaskManagement): string {
   return [summary, deliverable].filter(Boolean).join("\n\n");
 }
 
-export function firstRunnableTask(
-  session: Session,
-): TaskManagement | undefined {
-  return sortedSessionTasks(session).find((task) =>
-    isRunnableTask(task),
-  );
+export function firstRunnableTask(session: Session): TaskManagement | undefined {
+  return sortedSessionTasks(session).find((task) => isRunnableTask(task));
 }
 
 export function isRunnableTask(task: TaskManagement): boolean {
   const status = taskPlanStatus(task);
   return (
     taskDisplayText(task).trim().length > 0 &&
-    (status === undefined ||
-      status === "todo" ||
-      status === "waiting_user" ||
-      status === "doing")
+    (status === undefined || status === "todo" || status === "waiting_user" || status === "doing")
   );
 }
 
 export function taskSummaryText(task: TaskManagement): string {
-  return (
-    (task.task_summary ??
-      task.deliverable ??
-      "")
-      .trim()
-      .split(/\r?\n/u)[0]
-      ?.trim() ?? ""
-  );
+  return (task.task_summary ?? task.deliverable ?? "").trim().split(/\r?\n/u)[0]?.trim() ?? "";
 }
 
 export function formatTaskRemaining(task: TaskManagement): string {
@@ -215,10 +188,7 @@ export function formatPollingTaskTiming(task: TaskManagement): string {
   return `${remaining}/${formatPollIntervalEveryCompact(taskPollInterval(task))}`;
 }
 
-export function applyTaskPatchToSession(
-  session: Session,
-  patch: Partial<TaskManagement>,
-): Session {
+export function applyTaskPatchToSession(session: Session, patch: Partial<TaskManagement>): Session {
   const current = sessionTaskState(session);
   const nonce = patch.task_id;
   if (Array.isArray(current.tasks)) {
@@ -230,13 +200,8 @@ export function applyTaskPatchToSession(
         : -1;
     const nextTasks =
       index >= 0
-        ? tasks.map((task, itemIndex) =>
-            itemIndex === index ? { ...task, ...patch } : task,
-          )
-        : [
-            ...tasks,
-            { ...patch, task_id: nonce ?? `${session.id}:${tasks.length}` },
-          ];
+        ? tasks.map((task, itemIndex) => (itemIndex === index ? { ...task, ...patch } : task))
+        : [...tasks, { ...patch, task_id: nonce ?? `${session.id}:${tasks.length}` }];
     const nextManagement = { ...current, tasks: nextTasks };
     return {
       ...session,
@@ -257,10 +222,7 @@ export function applyTaskPatchToSession(
   };
 }
 
-export function appendTaskToSession(
-  session: Session,
-  task: Partial<TaskManagement>,
-): Session {
+export function appendTaskToSession(session: Session, task: Partial<TaskManagement>): Session {
   const current = sessionTaskState(session);
   const existingTasks = Array.isArray(current.tasks)
     ? sessionTasks(session)
@@ -271,10 +233,7 @@ export function appendTaskToSession(
   const nextTask = {
     ...task,
     task_id: nonce,
-    step:
-      typeof task.step === "number" && task.step > 0
-        ? task.step
-        : existingTasks.length + 1,
+    step: typeof task.step === "number" && task.step > 0 ? task.step : existingTasks.length + 1,
   };
   const index = existingTasks.findIndex((item) => taskNonceId(item) === nonce);
   const nextTasks =
@@ -292,10 +251,7 @@ export function appendTaskToSession(
   };
 }
 
-export function reorderTasksInSession(
-  session: Session,
-  orderedTasks: TaskManagement[],
-): Session {
+export function reorderTasksInSession(session: Session, orderedTasks: TaskManagement[]): Session {
   const current = sessionTaskState(session);
   const nextTasks = orderedTasks.map((task, index) => ({
     ...task,
@@ -324,10 +280,7 @@ export function planSessionStatus(session: Session): PlanStatus {
       return "question";
     }
     const visibleTasks = tasks.filter(taskHasVisibleContent);
-    if (
-      visibleTasks.length > 0 &&
-      visibleTasks.every((task) => taskPlanStatus(task) === "done")
-    ) {
+    if (visibleTasks.length > 0 && visibleTasks.every((task) => taskPlanStatus(task) === "done")) {
       return "done";
     }
   }
@@ -360,19 +313,14 @@ export function planStoredPlanStatus(session: Session): PlanStatus | undefined {
 
 export type PlanCalendarMode = "month" | "week" | "day";
 
-export function planSessionStartCondition(
-  session: Session,
-): StartCondition | undefined {
+export function planSessionStartCondition(session: Session): StartCondition | undefined {
   const task = sessionTaskState(session);
   return taskStartCondition(task);
 }
 
 export function planTimedSessions(sessions: Session[]): Session[] {
   return sessions.filter((session) => {
-    if (
-      planStoredPlanStatus(session) !== "todo" &&
-      timedSessionTasks(session).length === 0
-    ) {
+    if (planStoredPlanStatus(session) !== "todo" && timedSessionTasks(session).length === 0) {
       return false;
     }
     const condition = planSessionStartCondition(session);
@@ -420,9 +368,7 @@ export function localDateTimeToUtcIso(value: string): string | undefined {
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
-export function utcIsoToLocalDateTime(
-  value: string | number | undefined,
-): string {
+export function utcIsoToLocalDateTime(value: string | number | undefined): string {
   if (!value) {
     return "";
   }
@@ -449,16 +395,12 @@ export function emptyPollInterval(): PollInterval {
   return { m: 0, d: 0, h: 0, s: 0 };
 }
 
-export function normalizeIntervalPart(
-  value: string | number | undefined,
-): number {
+export function normalizeIntervalPart(value: string | number | undefined): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
 }
 
-export function normalizePollInterval(
-  value: PollInterval | undefined,
-): PollInterval {
+export function normalizePollInterval(value: PollInterval | undefined): PollInterval {
   const source = value ?? defaultPollInterval();
   const normalized = {
     m: normalizeIntervalPart(source.m),
@@ -481,9 +423,7 @@ export function timedTaskPatch(
   poll_interval?: PollInterval;
 } {
   return {
-    ...(startCondition !== "user_action"
-      ? { start_condition: startCondition }
-      : {}),
+    ...(startCondition !== "user_action" ? { start_condition: startCondition } : {}),
     ...(startCondition === "scheduled_task" || startCondition === "polling_task"
       ? startAt
         ? { start_at: startAt }
@@ -508,9 +448,7 @@ export function formatTicketTime(value: string | number | undefined): string {
   return date.toLocaleString();
 }
 
-export function formatCalendarEventTime(
-  value: string | number | undefined,
-): string {
+export function formatCalendarEventTime(value: string | number | undefined): string {
   if (!value) {
     return "";
   }
@@ -524,9 +462,7 @@ export function formatCalendarEventTime(
   });
 }
 
-export function formatStartCondition(
-  value: StartCondition | undefined,
-): string {
+export function formatStartCondition(value: StartCondition | undefined): string {
   switch (value) {
     case "session_idle":
       return t("sessionIdle");
@@ -546,18 +482,13 @@ export function isTimedStartCondition(
   return value === "scheduled_task" || value === "polling_task";
 }
 
-export function materializeComposerContent(
-  text: string,
-  images: ComposerImage[],
-): string {
+export function materializeComposerContent(text: string, images: ComposerImage[]): string {
   const seen = new Set<string>();
   let index = 0;
   let content = text;
   for (const image of images) {
     const isImage = (image.kind ?? "image") === "image";
-    const token = isImage
-      ? composerImageToken(image.id)
-      : composerFileToken(image.id);
+    const token = isImage ? composerImageToken(image.id) : composerFileToken(image.id);
     if (!content.includes(token)) {
       continue;
     }

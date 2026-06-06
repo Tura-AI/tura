@@ -1,3 +1,4 @@
+use crate::checkpoint::CommandCheckpoint;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -97,6 +98,7 @@ pub struct GetSessionRequest {
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum SessionLogCommand {
     UpsertSession(UpsertSessionRequest),
+    ApplyCommandCheckpoint(Box<CommandCheckpoint>),
     GetSession(GetSessionRequest),
     ListWorkspaces,
     ListSessions(ListSessionsRequest),

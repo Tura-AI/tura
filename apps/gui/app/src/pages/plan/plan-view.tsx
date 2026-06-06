@@ -33,11 +33,7 @@ import {
 } from "../../state/global-store";
 import { rootSessions } from "../../state/session-tree";
 
-import {
-  PlanDragGhost,
-  beginPlanPointerDrag,
-  type PlanDragState,
-} from "../../features/plan/drag";
+import { PlanDragGhost, beginPlanPointerDrag, type PlanDragState } from "../../features/plan/drag";
 import {
   defaultPollInterval,
   hasVisibleSessionTasks,
@@ -54,11 +50,7 @@ import {
   timedTaskPatch,
   utcIsoToLocalDateTime,
 } from "../../features/plan/tasks";
-import {
-  relativeSessionTime,
-  samePath,
-  shortWorkspaceLabel,
-} from "../../utils/app-format";
+import { relativeSessionTime, samePath, shortWorkspaceLabel } from "../../utils/app-format";
 import { PlanCalendarView } from "./plan-calendar";
 import {
   PlanComposerControls,
@@ -103,11 +95,7 @@ export function PlanView(props: {
     >,
   ) => void;
   onReorderTasks: (session: Session, tasks: TaskManagement[]) => void;
-  onEditTask: (
-    session: Session,
-    task: TaskManagement,
-    composerText: string,
-  ) => void;
+  onEditTask: (session: Session, task: TaskManagement, composerText: string) => void;
   onDeleteTask: (session: Session, task: TaskManagement) => void;
   onRunTask: (session: Session, task: TaskManagement) => void;
   onCreateSessionFromTask: (session: Session, task: TaskManagement) => void;
@@ -123,11 +111,7 @@ export function PlanView(props: {
   leftRailOpen?: boolean;
   leftRailWidth?: number;
   onRequestCollapseLeftRail?: () => void;
-  onPanelLayout?: (layout: {
-    open: boolean;
-    overlay: boolean;
-    width: number;
-  }) => void;
+  onPanelLayout?: (layout: { open: boolean; overlay: boolean; width: number }) => void;
 }) {
   const workspaceSessions = createMemo(() =>
     props.state.sessions.filter((session) =>
@@ -137,9 +121,7 @@ export function PlanView(props: {
   const visibleSessions = createMemo(() => {
     const query = props.state.issueSearch.trim().toLowerCase();
     const sessions = rootSessions(
-      workspaceSessions().filter(
-        (session) => planSessionStatus(session) !== "archived",
-      ),
+      workspaceSessions().filter((session) => planSessionStatus(session) !== "archived"),
     );
     if (!query) {
       return sessions;
@@ -150,9 +132,7 @@ export function PlanView(props: {
         session.id.toLowerCase().includes(query),
     );
   });
-  const panelOpen = createMemo(() =>
-    Boolean(props.previewSession || props.state.planDraftLane),
-  );
+  const panelOpen = createMemo(() => Boolean(props.previewSession || props.state.planDraftLane));
   const agentMenu = () => (
     <AgentComposerMenu
       agents={props.state.agents}
@@ -168,18 +148,14 @@ export function PlanView(props: {
     if (!preview || !editing || editing.sessionId !== preview.id) {
       return undefined;
     }
-    return sessionTasks(preview).find(
-      (task) => taskNonceId(task) === editing.task_id,
-    );
+    return sessionTasks(preview).find((task) => taskNonceId(task) === editing.task_id);
   });
   const composerTask = createMemo(() => {
     const preview = props.previewSession;
     if (!preview) {
       return undefined;
     }
-    return (
-      editingTask() ?? sessionTasks(preview)[0] ?? sessionTaskState(preview)
-    );
+    return editingTask() ?? sessionTasks(preview)[0] ?? sessionTaskState(preview);
   });
   const composerTaskNonce = createMemo(() => {
     const preview = props.previewSession;
@@ -214,29 +190,19 @@ export function PlanView(props: {
   function panelMaxWidth(width = workbenchWidth()) {
     return Math.min(
       PLAN_PANEL_MAX_WIDTH,
-      Math.max(
-        PLAN_PANEL_MIN_WIDTH,
-        width - PLAN_MAIN_MIN_WIDTH + PLAN_PANEL_GAP,
-      ),
+      Math.max(PLAN_PANEL_MIN_WIDTH, width - PLAN_MAIN_MIN_WIDTH + PLAN_PANEL_GAP),
     );
   }
   function clampPanelWidth(width: number, availableWidth = workbenchWidth()) {
-    return Math.min(
-      panelMaxWidth(availableWidth),
-      Math.max(PLAN_PANEL_MIN_WIDTH, width),
-    );
+    return Math.min(panelMaxWidth(availableWidth), Math.max(PLAN_PANEL_MIN_WIDTH, width));
   }
   const planPanelFullscreen = createMemo(
-    () =>
-      panelOpen() &&
-      workbenchWidth() - panelWidth() + PLAN_PANEL_GAP < PLAN_MAIN_MIN_WIDTH,
+    () => panelOpen() && workbenchWidth() - panelWidth() + PLAN_PANEL_GAP < PLAN_MAIN_MIN_WIDTH,
   );
 
   onMount(() => {
     const updateWorkbenchWidth = () =>
-      setWorkbenchWidth(
-        workbenchEl?.getBoundingClientRect().width ?? window.innerWidth,
-      );
+      setWorkbenchWidth(workbenchEl?.getBoundingClientRect().width ?? window.innerWidth);
     updateWorkbenchWidth();
     workbenchResizeObserver = new ResizeObserver(updateWorkbenchWidth);
     if (workbenchEl) {
@@ -259,8 +225,7 @@ export function PlanView(props: {
       props.leftRailOpen &&
       availableWidth + (props.leftRailWidth ?? 0) >=
         PLAN_MAIN_MIN_WIDTH + PLAN_PANEL_MIN_WIDTH - PLAN_PANEL_GAP &&
-      availableWidth <
-        PLAN_MAIN_MIN_WIDTH + PLAN_PANEL_MIN_WIDTH - PLAN_PANEL_GAP
+      availableWidth < PLAN_MAIN_MIN_WIDTH + PLAN_PANEL_MIN_WIDTH - PLAN_PANEL_GAP
     ) {
       props.onRequestCollapseLeftRail?.();
       return;
@@ -278,11 +243,8 @@ export function PlanView(props: {
 
   function beginPanelResize(event: PointerEvent) {
     event.preventDefault();
-    const workbench =
-      (event.currentTarget as HTMLElement).closest(".plan-workbench") ??
-      undefined;
-    const workbenchWidth =
-      workbench?.getBoundingClientRect().width ?? window.innerWidth;
+    const workbench = (event.currentTarget as HTMLElement).closest(".plan-workbench") ?? undefined;
+    const workbenchWidth = workbench?.getBoundingClientRect().width ?? window.innerWidth;
     const startX = event.clientX;
     const startWidth = panelWidth();
     const onMove = (move: PointerEvent) => {
@@ -295,10 +257,7 @@ export function PlanView(props: {
       }
       if (
         props.leftRailOpen &&
-        workbenchWidth +
-          (props.leftRailWidth ?? 0) -
-          nextWidth +
-          PLAN_PANEL_GAP >=
+        workbenchWidth + (props.leftRailWidth ?? 0) - nextWidth + PLAN_PANEL_GAP >=
           PLAN_MAIN_MIN_WIDTH &&
         workbenchWidth - nextWidth + PLAN_PANEL_GAP < PLAN_MAIN_MIN_WIDTH
       ) {
@@ -342,9 +301,8 @@ export function PlanView(props: {
       return;
     }
     const session =
-      workspaceSessions().find(
-        (item) => item.id === props.state.selectedSessionId,
-      ) ?? visibleSessions()[0];
+      workspaceSessions().find((item) => item.id === props.state.selectedSessionId) ??
+      visibleSessions()[0];
     if (session) {
       void props.onOpenSession(session);
     }
@@ -402,10 +360,7 @@ export function PlanView(props: {
         </header>
 
         <main
-          class={classNames(
-            "plan-board",
-            props.state.planMode === "calendar" && "calendar-mode",
-          )}
+          class={classNames("plan-board", props.state.planMode === "calendar" && "calendar-mode")}
         >
           <Switch>
             <Match when={props.state.planMode === "gantt"}>
@@ -478,11 +433,7 @@ export function PlanView(props: {
                     : t("conversation")}
               </strong>
             </div>
-            <button
-              class="inspector-close"
-              title={t("close")}
-              onClick={closePlanPanel}
-            >
+            <button class="inspector-close" title={t("close")} onClick={closePlanPanel}>
               ×
             </button>
           </header>
@@ -494,15 +445,10 @@ export function PlanView(props: {
             onComposerText={props.onComposerText}
             onComposerImages={props.onComposerImages}
             onSubmit={submitComposer}
-            onStop={() =>
-              props.previewSession && props.onStop(props.previewSession)
-            }
-            running={Boolean(
-              props.previewSession && props.previewSession.status !== "idle",
-            )}
+            onStop={() => props.previewSession && props.onStop(props.previewSession)}
+            running={Boolean(props.previewSession && props.previewSession.status !== "idle")}
             submitDisabled={
-              Boolean(props.state.planDraftLane) &&
-              props.state.composerText.trim().length === 0
+              Boolean(props.state.planDraftLane) && props.state.composerText.trim().length === 0
             }
             composerToolbar={
               props.state.planDraftLane ? (
@@ -538,17 +484,12 @@ export function PlanView(props: {
                 <>
                   <PlanComposerControls
                     startCondition={taskStartCondition(composerTask()!)}
-                    startAt={utcIsoToLocalDateTime(
-                      taskStartAt(composerTask()!),
-                    )}
+                    startAt={utcIsoToLocalDateTime(taskStartAt(composerTask()!))}
                     pollInterval={taskPollInterval(composerTask()!)}
                     onStartCondition={(startCondition) => {
                       const currentTask = composerTask()!;
                       if (startCondition === "user_action") {
-                        props.onRunTask(
-                          props.previewSession!,
-                          taskWithComposerText(currentTask),
-                        );
+                        props.onRunTask(props.previewSession!, taskWithComposerText(currentTask));
                         return;
                       }
                       const startAt = localDateTimeToUtcIso(
@@ -557,11 +498,7 @@ export function PlanView(props: {
                       props.onTask(props.previewSession!, {
                         task_id: composerTaskNonce(),
                         status: "todo",
-                        ...timedTaskPatch(
-                          startCondition,
-                          startAt,
-                          taskPollInterval(currentTask),
-                        ),
+                        ...timedTaskPatch(startCondition, startAt, taskPollInterval(currentTask)),
                       });
                     }}
                     onStartAt={(value) => {
@@ -604,16 +541,12 @@ export function PlanView(props: {
                   onEdit={(task, composerText) =>
                     props.onEditTask(props.previewSession!, task, composerText)
                   }
-                  onDelete={(task) =>
-                    props.onDeleteTask(props.previewSession!, task)
-                  }
+                  onDelete={(task) => props.onDeleteTask(props.previewSession!, task)}
                   onRun={(task) => props.onRunTask(props.previewSession!, task)}
                   onCreateSession={(task) =>
                     props.onCreateSessionFromTask(props.previewSession!, task)
                   }
-                  onReorder={(tasks) =>
-                    props.onReorderTasks(props.previewSession!, tasks)
-                  }
+                  onReorder={(tasks) => props.onReorderTasks(props.previewSession!, tasks)}
                 />
               ) : undefined
             }
@@ -626,10 +559,7 @@ export function PlanView(props: {
                   onOpenProviderSettings={props.onOpenProviderSettings}
                 />
               ) : props.previewSession &&
-                shouldShowPlanFeedbackPrompt(
-                  props.previewSession,
-                  props.state.composerText,
-                ) ? (
+                shouldShowPlanFeedbackPrompt(props.previewSession, props.state.composerText) ? (
                 <PlanConversationFeedbackNotice />
               ) : undefined
             }
@@ -679,9 +609,7 @@ export function PlanBoard(props: {
       onSchedule: () => undefined,
       resolveSchedule: () => undefined,
       onDrop: (point) => {
-        const element = document.elementFromPoint(point.x, point.y) as
-          | HTMLElement
-          | undefined;
+        const element = document.elementFromPoint(point.x, point.y) as HTMLElement | undefined;
         const archive = element?.closest<HTMLElement>(".board-archive-zone");
         if (archive) {
           props.onStatus(session, "archived");
@@ -689,10 +617,7 @@ export function PlanBoard(props: {
         }
         const column = element?.closest<HTMLElement>("[data-plan-status]");
         const status = column?.dataset.planStatus as PlanStatus | undefined;
-        if (
-          status &&
-          ["todo", "doing", "question", "done"].includes(status)
-        ) {
+        if (status && ["todo", "doing", "question", "done"].includes(status)) {
           props.onStatus(session, status);
           return true;
         }
@@ -707,9 +632,7 @@ export function PlanBoard(props: {
         <For each={columns}>
           {(column) => {
             const sessions = () =>
-              props.sessions.filter(
-                (session) => planSessionStatus(session) === column.id,
-              );
+              props.sessions.filter((session) => planSessionStatus(session) === column.id);
             return (
               <section
                 class="board-column"
@@ -732,10 +655,7 @@ export function PlanBoard(props: {
                   </Show>
                 </header>
                 <div
-                  class={classNames(
-                    "board-cards",
-                    props.draftLane === column.id && "draft-target",
-                  )}
+                  class={classNames("board-cards", props.draftLane === column.id && "draft-target")}
                   onDragOver={(event) => event.preventDefault()}
                   onDrop={(event) => dropOnStatus(event, column.id)}
                 >
@@ -747,32 +667,19 @@ export function PlanBoard(props: {
                           props.selectedSessionId === session.id && "selected",
                         )}
                         draggable="true"
-                        onPointerDown={(event) =>
-                          beginBoardDrag(event, session)
-                        }
+                        onPointerDown={(event) => beginBoardDrag(event, session)}
                         onMouseDown={(event) => beginBoardDrag(event, session)}
                         onPointerUp={(event) => {
-                          if (
-                            !event.currentTarget.classList.contains(
-                              "plan-source-dragging",
-                            )
-                          ) {
+                          if (!event.currentTarget.classList.contains("plan-source-dragging")) {
                             props.onOpenSession(session);
                           }
                         }}
                         onDragStart={(event) => {
-                          event.dataTransfer?.setData(
-                            "text/session-id",
-                            session.id,
-                          );
-                          event.currentTarget.classList.add(
-                            "plan-source-dragging",
-                          );
+                          event.dataTransfer?.setData("text/session-id", session.id);
+                          event.currentTarget.classList.add("plan-source-dragging");
                         }}
                         onDragEnd={(event) =>
-                          event.currentTarget.classList.remove(
-                            "plan-source-dragging",
-                          )
+                          event.currentTarget.classList.remove("plan-source-dragging")
                         }
                         onClick={() => props.onOpenSession(session)}
                         title={sessionTitle(session)}
@@ -786,9 +693,7 @@ export function PlanBoard(props: {
                               props.attentionAcknowledged(session),
                             )}
                           >
-                            <PlanStatusIndicator
-                              status={planSessionStatus(session)}
-                            />
+                            <PlanStatusIndicator status={planSessionStatus(session)} />
                           </Show>
                         </span>
                         <PlanTicketMeta session={session} />
@@ -819,13 +724,7 @@ export function PlanBoard(props: {
 
 export function PlanStatusIndicator(props: { status: PlanStatus }) {
   return (
-    <Show
-      when={
-        props.status === "doing" ||
-        props.status === "question" ||
-        props.status === "done"
-      }
-    >
+    <Show when={props.status === "doing" || props.status === "question" || props.status === "done"}>
       <span
         class={classNames("plan-status-indicator", `status-${props.status}`)}
         aria-hidden="true"
@@ -834,33 +733,17 @@ export function PlanStatusIndicator(props: { status: PlanStatus }) {
   );
 }
 
-export function shouldShowSessionAttention(
-  session: Session,
-  acknowledged: boolean,
-): boolean {
+export function shouldShowSessionAttention(session: Session, acknowledged: boolean): boolean {
   const status = planSessionStatus(session);
-  return (
-    !acknowledged &&
-    (status === "doing" || status === "question" || status === "done")
-  );
+  return !acknowledged && (status === "doing" || status === "question" || status === "done");
 }
 
-export function SessionRowMeta(props: {
-  session: Session;
-  attentionAcknowledged: boolean;
-}) {
+export function SessionRowMeta(props: { session: Session; attentionAcknowledged: boolean }) {
   const status = createMemo(() => planSessionStatus(props.session));
   return (
     <Show
-      when={shouldShowSessionAttention(
-        props.session,
-        props.attentionAcknowledged,
-      )}
-      fallback={
-        <small class="session-row-time">
-          {relativeSessionTime(props.session)}
-        </small>
-      }
+      when={shouldShowSessionAttention(props.session, props.attentionAcknowledged)}
+      fallback={<small class="session-row-time">{relativeSessionTime(props.session)}</small>}
     >
       <span class="session-row-status">
         <PlanStatusIndicator status={status()} />

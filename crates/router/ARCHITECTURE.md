@@ -62,7 +62,6 @@ Router does not own:
 - Command alias canonicalization (owned by `crates/tools`).
 - Shell execution.
 - File locks.
-- Memory/vector behavior.
 - Port allocation.
 
 ## Runtime Worker Dispatch
@@ -92,22 +91,14 @@ The router:
 The worker owns its own session state and reports progress back to the gateway
 through callbacks; the router does not replay or merge agent state.
 
-## Session Log Bridge
+## Session DB Data Path
 
-The `session-log` CLI subcommand is a narrow bridge to `crates/session_log`.
-Router does not own session-log schema, storage, hydration, or filtering. It
-only accepts a JSON `SessionLogCommand` on stdin and writes a
-`SessionLogResponse` on stdout.
-
-Use it when no gateway HTTP server is running:
-
-```powershell
-'{"command":"get_session","session_id":"session-id"}' | target\debug\tura_router.exe session-log
-'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\tura_router.exe session-log
-```
-
-Runtime and gateway helpers normally use `runtime::session_log_client`, which
-calls this bridge in-process through `tura_router::session_log_forward`.
+Router starts and supervises the `session_db` service, but normal session reads
+and writes are outside router IPC. Gateway and runtime helpers use their direct
+session DB clients, which invoke `tura_router session-db-call`; the persistent
+router process only accepts lifecycle methods such as
+`session_db.lifecycle.status` and execution methods such as
+`execution.enqueue_turn`.
 
 ### Internal-only CLI channel (runtime ↔ router)
 
