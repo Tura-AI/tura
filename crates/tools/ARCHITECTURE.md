@@ -427,9 +427,6 @@ If a command needs CLI routing or a managed local service/process, it asks
 state. Router owns startup, shutdown, status monitoring, and restart policy, but
 it does not own the command implementation.
 
-Memory-backed behavior crosses into `crates/memory` through explicit clients or
-commands.
-
 ## Checks
 
 Use:

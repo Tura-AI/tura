@@ -15,9 +15,7 @@ export function AppProviders(props: {
     <GlobalGatewayProvider state={props.state} setState={props.setState}>
       <WorkspaceProvider state={props.state}>
         <ExecutionProvider state={props.state} gatewayUrl={props.gatewayUrl}>
-          <NavigationProvider state={props.state}>
-            {props.children}
-          </NavigationProvider>
+          <NavigationProvider state={props.state}>{props.children}</NavigationProvider>
         </ExecutionProvider>
       </WorkspaceProvider>
     </GlobalGatewayProvider>

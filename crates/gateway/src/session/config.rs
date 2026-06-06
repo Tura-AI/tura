@@ -8,9 +8,9 @@ const CONFIG_FILE: &str = "config.conf";
 pub const DEFAULT_SESSION_MODEL: &str = "codex/gpt-5.5";
 pub const DEFAULT_SESSION_PROVIDER: &str = "codex";
 pub const DEFAULT_SESSION_MODEL_ID: &str = "gpt-5.5";
-pub const DEFAULT_SESSION_AGENT: &str = "thinking-planning";
+pub const DEFAULT_SESSION_AGENT: &str = "fast";
 pub const DEFAULT_SESSION_TYPE: &str = "coding";
-pub const DEFAULT_SESSION_REASONING_EFFORT: &str = "low";
+pub const DEFAULT_SESSION_REASONING_EFFORT: &str = "medium";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

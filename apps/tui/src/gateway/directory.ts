@@ -1,11 +1,17 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 export function resolveGatewayUrl(flagValue?: string): string {
   return (flagValue || process.env.TURA_GATEWAY_URL || "http://127.0.0.1:4096").replace(/\/+$/, "");
 }
 
 export function resolveCwd(flagValue?: string): string {
-  return resolve(flagValue || process.cwd());
+  return resolve(flagValue || process.env.TURA_CWD || defaultWorkspaceDirectory());
+}
+
+function defaultWorkspaceDirectory(): string {
+  const home = process.env.USERPROFILE || process.env.HOME;
+  if (!home) return process.cwd();
+  return join(home, "Documents", "tura workspace");
 }
 
 export function directoryHeader(directory: string): string {

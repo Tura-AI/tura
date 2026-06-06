@@ -34,14 +34,20 @@ fn run() -> Result<i32, String> {
     if let Some(max_tokens) = config.max_tokens {
         std::env::set_var("TURA_SESSION_MAX_TOKENS", max_tokens.to_string());
     }
-    std::env::set_var("TURA_PROJECT_ROOT", project_root_from_exe());
+    configure_release_runtime_env();
     std::env::set_var("TURA_DISABLE_GATEWAY_CALLBACKS", "1");
     std::env::set_var("TURA_DISABLE_ROUTER_AUTOSTART", "1");
     std::env::set_var("TURA_FAIL_ON_RUNTIME_ERROR", "1");
     if config.json {
         std::env::set_var("TURA_CLI_LIVE_JSONL", "1");
+        std::env::remove_var("TURA_CLI_PROGRESS");
     } else {
         std::env::remove_var("TURA_CLI_LIVE_JSONL");
+        if config.quiet {
+            std::env::remove_var("TURA_CLI_PROGRESS");
+        } else {
+            std::env::set_var("TURA_CLI_PROGRESS", "1");
+        }
     }
     let prompt = config.prompt()?;
     let session_id = config
@@ -112,6 +118,7 @@ Options:
   -a, --agent-id ID               agent id loaded from agents/src/
       --session-id ID             reuse a deterministic session id
       --json                      emit JSONL events instead of final text only
+      --quiet, --silent           suppress progress on stderr
       --output-last-message PATH  write the final assistant message to PATH
       --model-reasoning-effort LEVEL
                                   reasoning effort override
@@ -126,11 +133,18 @@ Options:
                                   accepted for compatibility
   -h, --help                      show this help
 
+Output:
+  Default text mode keeps stdout script-friendly: stdout receives only the final
+  assistant message, while lightweight progress goes to stderr.
+  Use --quiet or --silent to suppress stderr progress.
+  Use --json for stdout JSONL events instead of final text mode.
+
 If PROMPT is omitted, tura reads it from stdin.
 
 Examples:
   tura exec -C . -m openai/gpt-5 \"Inspect the workspace\"
   tura exec -C . -m openai/gpt-5 -p --model-reasoning-effort high \"Fix tests\"
+  tura exec --quiet \"Return only the final answer\"
   echo \"Summarize the architecture\" | tura exec --json
 "
     );
@@ -140,6 +154,7 @@ Examples:
 struct CliConfig {
     cwd: PathBuf,
     json: bool,
+    quiet: bool,
     model: Option<String>,
     reasoning_effort: Option<String>,
     priority: bool,
@@ -160,6 +175,7 @@ impl CliConfig {
         let mut config = Self {
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             json: false,
+            quiet: false,
             model: None,
             reasoning_effort: None,
             priority: false,
@@ -203,6 +219,10 @@ impl CliConfig {
                 }
                 "--json" => {
                     config.json = true;
+                    index += 1;
+                }
+                "--quiet" | "--silent" => {
+                    config.quiet = true;
                     index += 1;
                 }
                 "--planning" => {
@@ -357,6 +377,25 @@ fn project_root_from_exe() -> String {
         .to_string()
 }
 
+fn configure_release_runtime_env() {
+    let root = project_root_from_exe();
+    std::env::set_var("TURA_PROJECT_ROOT", &root);
+    if std::env::var_os("TURA_PROVIDER_CONFIG").is_none() {
+        let provider_config = PathBuf::from(&root)
+            .join("config")
+            .join("provider_config.json");
+        if provider_config.exists() {
+            std::env::set_var("TURA_PROVIDER_CONFIG", provider_config);
+        }
+    }
+    if std::env::var_os("TURA_ENV_PATH").is_none() {
+        let env_path = PathBuf::from(&root).join(".env");
+        if env_path.exists() {
+            std::env::set_var("TURA_ENV_PATH", env_path);
+        }
+    }
+}
+
 fn find_project_root_from(path: &Path) -> Option<PathBuf> {
     let start = if path.is_dir() {
         path
@@ -366,7 +405,12 @@ fn find_project_root_from(path: &Path) -> Option<PathBuf> {
     start
         .ancestors()
         .find(|candidate| {
-            candidate.join("agents").join("src").is_dir() && candidate.join("crates").is_dir()
+            candidate.join("agents").join("src").is_dir()
+                && (candidate.join("personas").join("src").is_dir()
+                    || candidate
+                        .join("config")
+                        .join("provider_config.json")
+                        .exists())
         })
         .map(Path::to_path_buf)
 }
@@ -782,6 +826,25 @@ mod tests {
         .expect("parse cli");
 
         assert_eq!(config.planning_mode, None);
+    }
+
+    #[test]
+    fn quiet_and_silent_suppress_progress() {
+        let quiet = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--quiet".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse quiet cli");
+        let silent = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--silent".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse silent cli");
+
+        assert!(quiet.quiet);
+        assert!(silent.quiet);
     }
 
     #[test]

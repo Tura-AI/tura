@@ -1,9 +1,4 @@
-import type {
-  Command,
-  Message,
-  Session,
-  TaskManagement,
-} from "@tura/gateway-sdk";
+import type { Command, Message, Session, TaskManagement } from "@tura/gateway-sdk";
 import type { Setter } from "solid-js";
 import { PlanView } from "../pages/plan/plan-view";
 import type { AppState } from "../state/global-store";
@@ -29,22 +24,14 @@ export function PlanPageOutlet(props: {
     | "updatePlanTicketTask"
     | "reorderPlanTasks"
   >;
-  onEditTask: (
-    session: Session,
-    task: TaskManagement,
-    composerText: string,
-  ) => void;
+  onEditTask: (session: Session, task: TaskManagement, composerText: string) => void;
   onRunTask: (session: Session, task: TaskManagement) => void;
   onSubmit: () => void;
   onOpenProviderSettings: (providerId?: string) => void;
   leftRailOpen: boolean;
   leftRailWidth: number;
   onRequestCollapseLeftRail: () => void;
-  onPanelLayout: (layout: {
-    open: boolean;
-    overlay: boolean;
-    width: number;
-  }) => void;
+  onPanelLayout: (layout: { open: boolean; overlay: boolean; width: number }) => void;
   onRuntimeSetting: (
     updater: (previous: AppState) => AppState,
     options?: { debounce?: boolean },
@@ -70,9 +57,7 @@ export function PlanPageOutlet(props: {
       previewSession={props.previewSession}
       previewMessages={props.previewMessages}
       slashCommands={props.slashCommands}
-      onPlanMode={(planMode) =>
-        props.setState((previous) => ({ ...previous, planMode }))
-      }
+      onPlanMode={(planMode) => props.setState((previous) => ({ ...previous, planMode }))}
       onClosePanel={() =>
         props.setState((previous) => ({
           ...previous,
@@ -82,9 +67,7 @@ export function PlanPageOutlet(props: {
           editingTask: undefined,
         }))
       }
-      onSearch={(issueSearch) =>
-        props.setState((previous) => ({ ...previous, issueSearch }))
-      }
+      onSearch={(issueSearch) => props.setState((previous) => ({ ...previous, issueSearch }))}
       onDraftLane={(planDraftLane) =>
         props.setState((previous) => ({
           ...previous,
@@ -109,9 +92,7 @@ export function PlanPageOutlet(props: {
           planDraftPollInterval,
         }))
       }
-      onDraftSession={(planDraftSessionId) =>
-        void selectDraftSession(planDraftSessionId)
-      }
+      onDraftSession={(planDraftSessionId) => void selectDraftSession(planDraftSessionId)}
       onCreateTicket={createPlanTicket}
       onStatus={updatePlanTicketStatus}
       attentionAcknowledged={sessionAttentionAcknowledged}

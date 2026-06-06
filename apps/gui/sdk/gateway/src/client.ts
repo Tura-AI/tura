@@ -110,9 +110,7 @@ export class GatewayClient {
     return this.get("/api/workspaces");
   }
 
-  productIssues(
-    input: { workspaceId?: string; search?: string } = {},
-  ): Promise<ProductIssue[]> {
+  productIssues(input: { workspaceId?: string; search?: string } = {}): Promise<ProductIssue[]> {
     return this.get("/api/issues", {
       workspace_id: input.workspaceId,
       search: input.search,
@@ -123,10 +121,7 @@ export class GatewayClient {
     return this.post("/api/issues/quick-create", payload);
   }
 
-  updateProductIssue(
-    issueId: string,
-    payload: ProductIssueInput,
-  ): Promise<ProductIssue | null> {
+  updateProductIssue(issueId: string, payload: ProductIssueInput): Promise<ProductIssue | null> {
     return this.patch(`/api/issues/${encodeURIComponent(issueId)}`, payload);
   }
 
@@ -142,9 +137,7 @@ export class GatewayClient {
     return this.post("/project/workspace/default", {});
   }
 
-  selectLocalWorkspace(
-    input: { title?: string } = {},
-  ): Promise<Project | null> {
+  selectLocalWorkspace(input: { title?: string } = {}): Promise<Project | null> {
     return this.post("/project/workspace/select-local", input);
   }
 
@@ -164,9 +157,7 @@ export class GatewayClient {
     return this.get("/project");
   }
 
-  sessions(
-    input: { limit?: number; search?: string } = {},
-  ): Promise<Session[]> {
+  sessions(input: { limit?: number; search?: string } = {}): Promise<Session[]> {
     if (!input.search) {
       return this.sessionLogSessions({
         page: 0,
@@ -235,10 +226,7 @@ export class GatewayClient {
     );
   }
 
-  updateSession(
-    sessionId: string,
-    payload: Partial<Session>,
-  ): Promise<Session> {
+  updateSession(sessionId: string, payload: Partial<Session>): Promise<Session> {
     return this.patch(`/session/${encodeURIComponent(sessionId)}`, payload);
   }
 
@@ -246,10 +234,9 @@ export class GatewayClient {
     sessionId: string,
     task_management: TaskManagement | TaskManagement[],
   ): Promise<Session> {
-    return this.patch(
-      `/session/${encodeURIComponent(sessionId)}/task-management`,
-      { task_management },
-    );
+    return this.patch(`/session/${encodeURIComponent(sessionId)}/task-management`, {
+      task_management,
+    });
   }
 
   async messages(sessionId: string): Promise<Message[]> {
@@ -261,18 +248,12 @@ export class GatewayClient {
       .filter((message): message is Message => !!message?.id);
   }
 
-  async promptAsync(
-    sessionId: string,
-    payload: PromptAsyncRequest,
-  ): Promise<void> {
-    await this.request(
-      `/session/${encodeURIComponent(sessionId)}/prompt_async`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-        timeoutMs: 120_000,
-      },
-    );
+  async promptAsync(sessionId: string, payload: PromptAsyncRequest): Promise<void> {
+    await this.request(`/session/${encodeURIComponent(sessionId)}/prompt_async`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+      timeoutMs: 120_000,
+    });
   }
 
   async abort(sessionId: string): Promise<void> {
@@ -291,10 +272,7 @@ export class GatewayClient {
     return this.get(`/provider/${encodeURIComponent(providerId)}/auth/status`);
   }
 
-  setProviderAuth(
-    providerId: string,
-    payload: ProviderAuthInput,
-  ): Promise<boolean> {
+  setProviderAuth(providerId: string, payload: ProviderAuthInput): Promise<boolean> {
     return this.request<boolean>(`/auth/${encodeURIComponent(providerId)}`, {
       method: "PUT",
       body: JSON.stringify(payload),
@@ -302,39 +280,25 @@ export class GatewayClient {
   }
 
   providerAuthLogout(providerId: string): Promise<ProviderAuthActionResponse> {
-    return this.post(
-      `/provider/${encodeURIComponent(providerId)}/auth/logout`,
-      {},
-    );
+    return this.post(`/provider/${encodeURIComponent(providerId)}/auth/logout`, {});
   }
 
-  providerAuthValidate(
-    providerId: string,
-  ): Promise<ProviderAuthActionResponse> {
-    return this.post(
-      `/provider/${encodeURIComponent(providerId)}/auth/validate`,
-      {},
-    );
+  providerAuthValidate(providerId: string): Promise<ProviderAuthActionResponse> {
+    return this.post(`/provider/${encodeURIComponent(providerId)}/auth/validate`, {});
   }
 
   providerOauthAuthorize(
     providerId: string,
     payload: { method: number; inputs?: Record<string, string> },
   ): Promise<OAuthAuthorizeResponse> {
-    return this.post(
-      `/provider/${encodeURIComponent(providerId)}/oauth/authorize`,
-      payload,
-    );
+    return this.post(`/provider/${encodeURIComponent(providerId)}/oauth/authorize`, payload);
   }
 
   providerOauthCallback(
     providerId: string,
     payload: OAuthCallbackInput,
   ): Promise<ProviderAuthActionResponse> {
-    return this.post(
-      `/provider/${encodeURIComponent(providerId)}/oauth/callback`,
-      payload,
-    );
+    return this.post(`/provider/${encodeURIComponent(providerId)}/oauth/callback`, payload);
   }
 
   agents(): Promise<Agent[]> {
@@ -349,10 +313,7 @@ export class GatewayClient {
     return this.post("/agent", payload);
   }
 
-  updateAgent(
-    agentId: string,
-    payload: AgentUpsertRequest,
-  ): Promise<StoredAgent> {
+  updateAgent(agentId: string, payload: AgentUpsertRequest): Promise<StoredAgent> {
     return this.patch(`/agent/${encodeURIComponent(agentId)}`, payload);
   }
 
@@ -368,10 +329,7 @@ export class GatewayClient {
     return this.get("/command");
   }
 
-  executeCommand(
-    command: string,
-    args: string[] = [],
-  ): Promise<{ output: string }> {
+  executeCommand(command: string, args: string[] = []): Promise<{ output: string }> {
     return this.post("/command", { command, args });
   }
 
@@ -399,17 +357,11 @@ export class GatewayClient {
     return this.get("/session/config", undefined, true);
   }
 
-  patchWorkspaceConfig(
-    payload: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
+  patchWorkspaceConfig(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     return this.patch("/session/config", payload, undefined, true);
   }
 
-  private get<T>(
-    path: string,
-    query?: Record<string, unknown>,
-    scoped = false,
-  ): Promise<T> {
+  private get<T>(path: string, query?: Record<string, unknown>, scoped = false): Promise<T> {
     return this.request<T>(path, { method: "GET" }, query, scoped);
   }
 
@@ -419,12 +371,7 @@ export class GatewayClient {
     query?: Record<string, unknown>,
     scoped = false,
   ): Promise<T> {
-    return this.request<T>(
-      path,
-      { method: "POST", body: JSON.stringify(payload) },
-      query,
-      scoped,
-    );
+    return this.request<T>(path, { method: "POST", body: JSON.stringify(payload) }, query, scoped);
   }
 
   private patch<T>(
@@ -433,19 +380,10 @@ export class GatewayClient {
     query?: Record<string, unknown>,
     scoped = false,
   ): Promise<T> {
-    return this.request<T>(
-      path,
-      { method: "PATCH", body: JSON.stringify(payload) },
-      query,
-      scoped,
-    );
+    return this.request<T>(path, { method: "PATCH", body: JSON.stringify(payload) }, query, scoped);
   }
 
-  private delete<T>(
-    path: string,
-    query?: Record<string, unknown>,
-    scoped = false,
-  ): Promise<T> {
+  private delete<T>(path: string, query?: Record<string, unknown>, scoped = false): Promise<T> {
     return this.request<T>(path, { method: "DELETE" }, query, scoped);
   }
 
@@ -471,10 +409,7 @@ export class GatewayClient {
     }
 
     const { timeoutMs, ...fetchInit } = init;
-    const { signal, dispose } = timeoutSignal(
-      init.signal,
-      timeoutMs ?? this.timeoutMs,
-    );
+    const { signal, dispose } = timeoutSignal(init.signal, timeoutMs ?? this.timeoutMs);
     let response: Response;
     try {
       response = await this.fetchImpl(url, {
@@ -522,10 +457,7 @@ export class GatewayClient {
     }
 
     const { timeoutMs, ...fetchInit } = init;
-    const { signal, dispose } = timeoutSignal(
-      init.signal,
-      timeoutMs ?? this.timeoutMs,
-    );
+    const { signal, dispose } = timeoutSignal(init.signal, timeoutMs ?? this.timeoutMs);
     let response: Response;
     try {
       response = await this.fetchImpl(url, {
@@ -561,8 +493,7 @@ export class GatewayClient {
 export function defaultGatewayUrl(): string {
   const fromQuery =
     typeof window !== "undefined"
-      ? (new URLSearchParams(window.location.search).get("gatewayUrl") ??
-        undefined)
+      ? (new URLSearchParams(window.location.search).get("gatewayUrl") ?? undefined)
       : undefined;
   const fromWindow =
     typeof window !== "undefined" && "localStorage" in window
@@ -573,9 +504,8 @@ export function defaultGatewayUrl(): string {
   };
   const fromVite = meta.env?.VITE_TURA_GATEWAY_URL;
   return (
-    [fromQuery, fromWindow, fromVite].find((value) =>
-      isValidGatewayUrl(value),
-    ) || "http://127.0.0.1:4096"
+    [fromQuery, fromWindow, fromVite].find((value) => isValidGatewayUrl(value)) ||
+    "http://127.0.0.1:4096"
   );
 }
 
@@ -614,19 +544,14 @@ function isValidGatewayUrl(value: string | undefined | null): value is string {
   if (!value?.trim()) return false;
   try {
     const url = new URL(value);
-    return (
-      (url.protocol === "http:" || url.protocol === "https:") && !!url.host
-    );
+    return (url.protocol === "http:" || url.protocol === "https:") && !!url.host;
   } catch {
     return false;
   }
 }
 
 function resolveFetch(): typeof fetch {
-  if (
-    typeof globalThis !== "undefined" &&
-    typeof globalThis.fetch === "function"
-  ) {
+  if (typeof globalThis !== "undefined" && typeof globalThis.fetch === "function") {
     return globalThis.fetch.bind(globalThis);
   }
   if (
@@ -643,10 +568,7 @@ async function unavailableFetch(input: RequestInfo | URL): Promise<Response> {
   throw new Error(`No fetch implementation available for ${String(input)}`);
 }
 
-function xhrFetch(
-  input: RequestInfo | URL,
-  init: RequestInit = {},
-): Promise<Response> {
+function xhrFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     const method = init.method ?? "GET";
@@ -666,10 +588,8 @@ function xhrFetch(
         }),
       );
     };
-    request.onerror = () =>
-      reject(new TypeError(`Network request failed: ${url}`));
-    request.ontimeout = () =>
-      reject(new DOMException(`Request timed out: ${url}`, "TimeoutError"));
+    request.onerror = () => reject(new TypeError(`Network request failed: ${url}`));
+    request.ontimeout = () => reject(new DOMException(`Request timed out: ${url}`, "TimeoutError"));
 
     if (init.signal) {
       init.signal.addEventListener(
@@ -727,12 +647,7 @@ function timeoutSignal(
   existing: AbortSignal | null | undefined,
   timeoutMs: number,
 ): { signal?: AbortSignal; dispose: () => void } {
-  if (
-    existing ||
-    !timeoutMs ||
-    timeoutMs < 1 ||
-    typeof AbortController === "undefined"
-  ) {
+  if (existing || !timeoutMs || timeoutMs < 1 || typeof AbortController === "undefined") {
     return { signal: existing ?? undefined, dispose: () => undefined };
   }
   const controller = new AbortController();
@@ -746,10 +661,7 @@ function timeoutSignal(
     return { signal: existing ?? undefined, dispose: () => undefined };
   }
   const timer = scheduler.setTimeout(
-    () =>
-      controller.abort(
-        new DOMException("Gateway request timed out.", "TimeoutError"),
-      ),
+    () => controller.abort(new DOMException("Gateway request timed out.", "TimeoutError")),
     timeoutMs,
   );
   return {

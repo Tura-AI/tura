@@ -1,14 +1,15 @@
 use chrono::Utc;
 
 use super::config::config_value;
+use super::oauth_flow::extract_account_id_from_jwt;
 use super::oauth_support::{
     anthropic_oauth_client_id, anthropic_oauth_token_url, google_oauth_client_id,
     google_oauth_client_secret, google_oauth_token_url, openai_oauth_client_id,
     openai_oauth_token_url,
 };
 use super::{
-    auth_registry, auth_update, auth_validator, build_provider_auth_status,
-    extract_account_id_from_jwt, persist_provider_auth, ProviderAuthStatusResponse,
+    auth_registry, auth_update, auth_validator, build_provider_auth_status, persist_provider_auth,
+    ProviderAuthStatusResponse,
 };
 
 pub(super) async fn refresh_provider_auth_if_needed(

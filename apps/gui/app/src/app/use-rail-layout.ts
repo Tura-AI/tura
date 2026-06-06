@@ -23,8 +23,7 @@ export function useRailLayout(options: {
   const [railWidth, setRailWidth] = createSignal(RAIL_DEFAULT_WIDTH);
   const [lastRailWidth, setLastRailWidth] = createSignal(RAIL_DEFAULT_WIDTH);
   const [railCollapsed, setRailCollapsed] = createSignal(
-    typeof window !== "undefined" &&
-      window.matchMedia("(max-width: 760px)").matches,
+    typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches,
   );
   const [railDragging, setRailDragging] = createSignal(false);
   const [viewportWidth, setViewportWidth] = createSignal(
@@ -39,20 +38,14 @@ export function useRailLayout(options: {
   });
 
   const railFullscreen = createMemo(() => {
-    if (
-      railCollapsed() ||
-      !["conversation", "plan"].includes(options.activeTab())
-    ) {
+    if (railCollapsed() || !["conversation", "plan"].includes(options.activeTab())) {
       return false;
     }
     return forceRailFullscreen();
   });
 
   createEffect(() => {
-    if (
-      railCollapsed() ||
-      !["conversation", "plan"].includes(options.activeTab())
-    ) {
+    if (railCollapsed() || !["conversation", "plan"].includes(options.activeTab())) {
       setForceRailFullscreen(false);
     }
   });
@@ -63,20 +56,12 @@ export function useRailLayout(options: {
     }
     return Math.min(
       RAIL_MAX_WIDTH,
-      Math.max(
-        0,
-        viewportWidth() -
-          rightSidebarWidth -
-          CONVERSATION_MAIN_MIN_WIDTH,
-      ),
+      Math.max(0, viewportWidth() - rightSidebarWidth - CONVERSATION_MAIN_MIN_WIDTH),
     );
   }
 
   function openRail() {
-    const preferredWidth = Math.min(
-      RAIL_MAX_WIDTH,
-      Math.max(RAIL_MIN_WIDTH, lastRailWidth()),
-    );
+    const preferredWidth = Math.min(RAIL_MAX_WIDTH, Math.max(RAIL_MIN_WIDTH, lastRailWidth()));
     let maxWidth = maxRailWidth();
     if (maxWidth < RAIL_MIN_WIDTH && options.rightSidebarOpen()) {
       options.closeRightSidebar();
@@ -92,8 +77,7 @@ export function useRailLayout(options: {
   function collapseRailAfterCompactSelection() {
     if (
       railFullscreen() ||
-      (typeof window !== "undefined" &&
-        window.matchMedia("(max-width: 760px)").matches)
+      (typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches)
     ) {
       setRailCollapsed(true);
       setRailWidth(0);

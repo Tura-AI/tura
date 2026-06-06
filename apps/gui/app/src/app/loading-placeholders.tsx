@@ -6,6 +6,7 @@ import type { AppState } from "../state/global-store";
 export function GatewayConnectionLoadingOverlay(props: {
   activeTab: AppState["activeTab"];
   settingsSection: AppState["settingsSection"];
+  notice?: string;
 }) {
   return (
     <section class="gateway-loading-overlay" aria-label={t("loading")}>
@@ -17,11 +18,7 @@ export function GatewayConnectionLoadingOverlay(props: {
           <For each={[0, 1, 2]}>
             {(item) => (
               <div
-                class={classNames(
-                  "loading-bar",
-                  item === 0 && "medium",
-                  item !== 0 && "short",
-                )}
+                class={classNames("loading-bar", item === 0 && "medium", item !== 0 && "short")}
               />
             )}
           </For>
@@ -42,6 +39,9 @@ export function GatewayConnectionLoadingOverlay(props: {
         <div class="loading-bar medium" />
       </aside>
       <div class="gateway-loading-main">
+        <div class="gateway-loading-status" role="status">
+          {props.notice || t("loading")}
+        </div>
         <AppLoadingPlaceholder
           activeTab={props.activeTab}
           settingsSection={props.settingsSection}
@@ -58,10 +58,7 @@ export function AppLoadingPlaceholder(props: {
   return (
     <Switch fallback={<ConversationLoadingPlaceholder />}>
       <Match when={props.activeTab === "settings"}>
-        <section
-          class="settings-view layered-page layered-page-two"
-          aria-label={t("loading")}
-        >
+        <section class="settings-view layered-page layered-page-two" aria-label={t("loading")}>
           <header class="page-head page-layer-inner">
             <div class="page-title">
               <span>{t("settings")}</span>
@@ -96,10 +93,7 @@ export function AppLoadingPlaceholder(props: {
         </section>
       </Match>
       <Match when={props.activeTab === "plan"}>
-        <section
-          class="product-workbench plan-workbench"
-          aria-label={t("loading")}
-        >
+        <section class="product-workbench plan-workbench" aria-label={t("loading")}>
           <div class="plan-main">
             <header class="page-head plan-head">
               <div class="page-title">
@@ -143,10 +137,7 @@ export function AppLoadingPlaceholder(props: {
         </section>
       </Match>
       <Match when={props.activeTab === "files"}>
-        <section
-          class="files-view layered-page layered-page-two"
-          aria-label={t("loading")}
-        >
+        <section class="files-view layered-page layered-page-two" aria-label={t("loading")}>
           <header class="page-head page-layer-inner">
             <div class="page-title">
               <span>{t("fileBrowser")}</span>

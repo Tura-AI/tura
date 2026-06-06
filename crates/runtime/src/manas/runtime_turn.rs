@@ -1,4 +1,3 @@
-use crate::context::messages_with_runtime_context;
 use crate::prompt_style::{agent_identity, PromptBuilder};
 use crate::runtime::call_runtime::{call_runtime, CallRuntimeInput};
 use crate::runtime::create_runtime::{
@@ -13,15 +12,15 @@ use super::agent_prompts::load_agent_system_prompt_messages;
 use super::constants::{COMMAND_RUN_TOOL, PLANNING_TOOL};
 use super::tool_catalog::{
     command_run_commands_for_agent, filter_tools_for_turn, load_agent_capabilities,
-    planning_child_depth, planning_tool_disabled, tool_schema_name,
+    planning_tool_disabled, tool_schema_name,
 };
 
-pub(super) fn execute_turn(
+pub(crate) fn execute_turn(
     agents: &[AgentManagement],
     session: &SessionManagement,
     messages: &[serde_json::Value],
     _redis_url: &str,
-    is_first_llm_call: bool,
+    _is_first_llm_call: bool,
     is_final_turn: bool,
     force_no_tools: bool,
 ) -> Result<(RuntimeManagement, Vec<ToolCallData>), String> {
@@ -35,13 +34,7 @@ pub(super) fn execute_turn(
     if planning_tool_disabled() {
         tools.retain(|tool| tool_schema_name(tool) != Some(PLANNING_TOOL));
     }
-    tools = filter_tools_for_turn(
-        tools,
-        is_final_turn,
-        force_no_tools,
-        planning_child_depth() > 0,
-        planning_enabled,
-    )?;
+    tools = filter_tools_for_turn(tools, is_final_turn, force_no_tools)?;
     let mut allowed_tool_names: std::collections::HashSet<String> = tools
         .iter()
         .filter_map(tool_schema_name)
@@ -61,14 +54,7 @@ pub(super) fn execute_turn(
                 .collect::<Vec<_>>()
         );
     }
-    let model_name = std::env::var("TURA_SESSION_MODEL_OVERRIDE").ok();
-    let turn_messages = messages_with_runtime_context(
-        session,
-        messages,
-        Some(agent.provider.tura_llm_name.as_str()),
-        model_name.as_deref(),
-        is_first_llm_call,
-    );
+    let turn_messages = messages.to_vec();
 
     let tura_runtime = tokio::runtime::Runtime::new()
         .map_err(|err| format!("failed to create tokio runtime: {err}"))?;
@@ -108,7 +94,7 @@ pub(super) fn execute_turn(
             messages: runtime_messages,
             tools,
             provider_config: agent.provider.clone(),
-            tura_settings: settings.clone(),
+            tura_settings: std::sync::Arc::clone(&settings),
             thinking: false,
         })
         .await?;
@@ -215,8 +201,7 @@ mod tests {
 
     #[test]
     fn non_final_turn_leaves_tool_choice_auto() {
-        let names =
-            std::collections::HashSet::from([COMMAND_RUN_TOOL.to_string(), "grep".to_string()]);
+        let names = std::collections::HashSet::from([COMMAND_RUN_TOOL.to_string()]);
 
         assert_eq!(
             tool_choice_for_turn(&names, false),

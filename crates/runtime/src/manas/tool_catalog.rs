@@ -1,14 +1,12 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use crate::prompt_style::task_status;
 use crate::state_machine::agent_management::AgentManagement;
 
 use super::constants::{
     COMMAND_RUN_TOOL, DISABLE_EXECUTE_TOOLS_TOOL_ENV, DISABLE_PLANNING_TOOL_ENV, PROJECT_ROOT_ENV,
 };
-
-#[cfg(test)]
-use super::constants::PLANNING_TOOL;
 
 pub(super) fn load_agent_capabilities(
     agent: &AgentManagement,
@@ -33,12 +31,10 @@ pub(super) fn load_agent_capabilities(
     )])
 }
 
-pub(super) fn filter_tools_for_turn(
+pub(crate) fn filter_tools_for_turn(
     tools: Vec<serde_json::Value>,
     is_final_turn: bool,
     force_no_tools: bool,
-    is_planning_child: bool,
-    planning_mode_enabled: bool,
 ) -> Result<Vec<serde_json::Value>, String> {
     if force_no_tools {
         return Ok(Vec::new());
@@ -48,33 +44,7 @@ pub(super) fn filter_tools_for_turn(
         return Ok(Vec::new());
     }
 
-    let _ = (is_planning_child, planning_mode_enabled);
     Ok(keep_command_run_only(tools))
-}
-
-#[cfg(test)]
-pub(super) fn require_planning_tool_for_planning_mode(
-    tools: Vec<serde_json::Value>,
-) -> Result<Vec<serde_json::Value>, String> {
-    if !tools
-        .iter()
-        .any(|tool| tool_schema_name(tool) == Some(PLANNING_TOOL))
-    {
-        return Err("planning mode requested but planning is unavailable".to_string());
-    }
-
-    Ok(tools)
-}
-
-#[cfg(test)]
-pub(super) fn remove_tool(
-    tools: Vec<serde_json::Value>,
-    tool_name: &str,
-) -> Vec<serde_json::Value> {
-    tools
-        .into_iter()
-        .filter(|tool| tool_schema_name(tool) != Some(tool_name))
-        .collect()
 }
 
 pub(super) fn keep_command_run_only(tools: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
@@ -90,7 +60,7 @@ pub(super) fn tool_schema_name(tool: &serde_json::Value) -> Option<&str> {
         .and_then(|name| name.as_str())
 }
 
-pub(super) fn env_flag(name: &str) -> bool {
+pub(crate) fn env_flag(name: &str) -> bool {
     std::env::var(name)
         .ok()
         .map(|value| {
@@ -104,7 +74,7 @@ pub(super) fn planning_tool_disabled() -> bool {
     env_flag(DISABLE_PLANNING_TOOL_ENV) || env_flag(DISABLE_EXECUTE_TOOLS_TOOL_ENV)
 }
 
-pub(super) fn planning_child_depth() -> usize {
+pub(crate) fn planning_child_depth() -> usize {
     std::env::var("TURA_PLANNING_DEPTH")
         .or_else(|_| std::env::var("TURA_EXECUTE_TOOLS_DEPTH"))
         .ok()
@@ -112,7 +82,7 @@ pub(super) fn planning_child_depth() -> usize {
         .unwrap_or(0)
 }
 
-pub(super) fn project_directory_with_tools() -> Result<PathBuf, String> {
+pub(crate) fn project_directory_with_tools() -> Result<PathBuf, String> {
     if let Ok(root) = std::env::var(PROJECT_ROOT_ENV) {
         let root = PathBuf::from(root);
         if root
@@ -176,7 +146,7 @@ pub(super) fn tool_interface_to_provider_schema_for_agent(
     tool_interface_to_provider_schema_with_commands(interface, Some(&allowed_commands))
 }
 
-pub(super) fn command_run_commands_for_agent(agent: &AgentManagement) -> BTreeSet<String> {
+pub(crate) fn command_run_commands_for_agent(agent: &AgentManagement) -> BTreeSet<String> {
     let mut commands = agent
         .agent_capabilities
         .iter()
@@ -388,21 +358,21 @@ fn command_run_description_for_active_shell(
         };
         command_lines.push(format!(
             "- {active}: {}",
-            current_shell_command_format(active, shell_prompt)
+            current_shell_command_format(shell_prompt)
         ));
     }
     if allowed_commands.contains("read_media") {
         command_lines.push(format!(
             "- read_media: {} Schema: {}",
-            compact_prompt(code_tools::commands::read_media::PROMPT),
-            compact_schema(code_tools::commands::read_media::SCHEMA),
+            compact_prompt(&command_prompt("read_media")),
+            compact_schema(&command_schema("read_media")),
         ));
     }
     if allowed_commands.contains("web_discover") {
         command_lines.push(format!(
             "- web_discover: {} Schema: {}",
-            compact_prompt(code_tools::commands::web_discover::PROMPT),
-            compact_schema(code_tools::commands::web_discover::SCHEMA),
+            compact_prompt(&command_prompt("web_discover")),
+            compact_schema(&command_schema("web_discover")),
         ));
     }
     if allowed_commands.contains("compact_context") {
@@ -415,7 +385,7 @@ fn command_run_description_for_active_shell(
     if allowed_commands.contains("task_status") {
         command_lines.push(format!(
             "- task_status: {} Schema: {}",
-            compact_prompt(code_tools::commands::task_status::PROMPT),
+            task_status::TASK_STATUS,
             compact_schema(code_tools::commands::task_status::SCHEMA),
         ));
     }
@@ -432,6 +402,29 @@ fn command_run_description_for_active_shell(
         command_run_usage_patterns(allowed_commands),
         command_lines.join("\n"),
     )
+}
+
+fn command_prompt(command_id: &str) -> String {
+    read_command_file(command_id, "prompt.md").unwrap_or_default()
+}
+
+fn command_schema(command_id: &str) -> String {
+    read_command_file(command_id, "schema.json").unwrap_or_else(|| "{}".to_string())
+}
+
+fn read_command_file(command_id: &str, file_name: &str) -> Option<String> {
+    let root = project_directory_with_tools().ok()?;
+    [
+        root.join("crates")
+            .join("tools")
+            .join("src")
+            .join("commands")
+            .join(command_id)
+            .join(file_name),
+        root.join("commands").join(command_id).join(file_name),
+    ]
+    .into_iter()
+    .find_map(|path| std::fs::read_to_string(path).ok())
 }
 
 fn command_list_for_description(commands: &BTreeSet<String>, active_shell: &str) -> Vec<String> {
@@ -479,18 +472,17 @@ fn current_apply_patch_command_format() -> String {
     )
 }
 
-fn current_shell_command_format(active: &str, shell_prompt: &str) -> String {
+fn current_shell_command_format(shell_prompt: &str) -> String {
     let guidance = format!(
         "Use for tests, builds, scripts, package tools, and host-shell behavior. Default timeout is 15 seconds; set timeout_ms explicitly for legitimate long-running one-shot commands. Put verification after edits in a later step only when that verification command is already known. {} {}",
         compact_prompt(shell_prompt),
-        long_running_service_guidance(active),
+        long_running_service_guidance(),
     );
     let schema = "{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\",\"description\":\"The shell script to execute in the user's default shell\"},\"workdir\":{\"type\":\"string\",\"description\":\"The working directory to execute the command in\"},\"timeout_ms\":{\"type\":\"number\",\"description\":\"The timeout for the command in milliseconds\"}},\"required\":[\"command\"],\"additionalProperties\":false}";
     format!("{guidance} JSON object string matching this schema: {schema}")
 }
 
-fn long_running_service_guidance(active: &str) -> &'static str {
-    let _ = active;
+fn long_running_service_guidance() -> &'static str {
     "Persistent services must never be used as blocking foreground commands. If a command can keep running after readiness, it must be backgrounded or wrapped in a persisted startup script with bounded readiness checks and cleanup; otherwise the command is considered hung and incorrect."
 }
 
@@ -524,6 +516,7 @@ fn sanitize_provider_schema(mut value: serde_json::Value) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manas::constants::PLANNING_TOOL;
     use crate::state_machine::agent_management::{
         AgentCapabilityItem, ProviderConfig, ToolChoice, ValidatorConfig,
     };
@@ -626,7 +619,9 @@ mod tests {
         );
         assert!(
             description
-                .contains("Reminder: settle the task state with the last task_status command."),
+                .contains("Reminder: settle the task state with the last task_status command")
+                && description
+                    .contains("Mark `done` only after the task is complete and verified."),
             "description missing task_status reminder"
         );
         // The schema enum is injected too.
@@ -652,7 +647,8 @@ mod tests {
 
         assert!(description.contains("task_status"));
         assert!(description
-            .contains("Reminder: settle the task state with the last task_status command."));
+            .contains("Reminder: settle the task state with the last task_status command"));
+        assert!(description.contains("Mark `done` only after the task is complete and verified."));
         assert!(!description.contains("Continue working toward the active thread goal."));
         assert!(!description.contains("[current objective]:"));
         assert!(!description.to_ascii_lowercase().contains("budget"));
@@ -664,11 +660,8 @@ mod tests {
             vec![
                 tool(COMMAND_RUN_TOOL),
                 tool(PLANNING_TOOL),
-                tool("apply_diff"),
                 tool("web_search"),
             ],
-            false,
-            false,
             false,
             false,
         )
@@ -680,15 +673,9 @@ mod tests {
     #[test]
     fn planning_mode_still_keeps_only_command_run() {
         let filtered = filter_tools_for_turn(
-            vec![
-                tool(COMMAND_RUN_TOOL),
-                tool(PLANNING_TOOL),
-                tool("apply_diff"),
-            ],
+            vec![tool(COMMAND_RUN_TOOL), tool(PLANNING_TOOL)],
             false,
             false,
-            false,
-            true,
         )
         .expect("filter should succeed");
 

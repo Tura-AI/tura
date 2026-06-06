@@ -3,10 +3,10 @@
 //! structured stdout (results/matches/outline/…) as `path:line:content`
 //! CLI lines, with diagnostics/errors extracted.
 //!
-//! Pure rendering layer carved out of `context_management.rs`; exposes only
-//! `command_run_display_command` and `command_run_llm_streams`.
+//! Pure rendering layer that exposes only `command_run_display_command` and
+//! `command_run_llm_streams`.
 
-use super::text_truncate::{formatted_truncate_text, COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS};
+use super::token_budget::{formatted_truncate_text, COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS};
 
 pub(super) fn command_run_display_command(command: &str, command_line: &str) -> String {
     if command_line.trim().is_empty() {
@@ -119,7 +119,7 @@ fn structured_command_line_as_cli(command: &str, command_line: &str) -> Option<S
     let command = normalized_command_run_subcommand(command);
     let path = json_string_field(&item, &["path", "file_path", "filePath"]);
     match command.as_str() {
-        "read_line" | "cat" => {
+        "cat" => {
             let path = path?;
             let start =
                 json_usize_field(&item, "start_line").or_else(|| json_usize_field(&item, "line"));
@@ -138,7 +138,7 @@ fn structured_command_line_as_cli(command: &str, command_line: &str) -> Option<S
                 _ => Some(format!("cat {}", shell_quote(&path))),
             }
         }
-        "read_block" | "sed" => {
+        "sed" => {
             let path = path?;
             let start = json_usize_field(&item, "start_line")
                 .or_else(|| json_usize_field(&item, "line"))
@@ -155,40 +155,26 @@ fn structured_command_line_as_cli(command: &str, command_line: &str) -> Option<S
                 shell_quote(&path)
             ))
         }
-        "rg" | "grep" => {
+        "rg" => {
             let query = json_string_field(&item, &["query", "pattern"]).unwrap_or_default();
             let directory =
                 json_string_field(&item, &["directory", "path"]).unwrap_or_else(|| ".".to_string());
-            let mut parts = vec![if command == "grep" {
-                "grep".to_string()
-            } else {
-                "rg".to_string()
-            }];
-            if command == "rg" {
-                parts.push("-n".to_string());
-            } else {
-                parts.push("-R".to_string());
-            }
+            let mut parts = vec!["rg".to_string(), "-n".to_string()];
             if !json_bool_field(&item, "case_sensitive").unwrap_or(false) {
                 parts.push("-i".to_string());
             }
-            if command == "rg" && !json_bool_field(&item, "use_regex").unwrap_or(false) {
+            if !json_bool_field(&item, "use_regex").unwrap_or(false) {
                 parts.push("--fixed-strings".to_string());
             }
             if let Some(glob) = json_string_field(&item, &["file_glob", "glob"]) {
-                if command == "rg" {
-                    parts.push("-g".to_string());
-                    parts.push(shell_quote(&glob));
-                } else {
-                    parts.push("--include".to_string());
-                    parts.push(shell_quote(&glob));
-                }
+                parts.push("-g".to_string());
+                parts.push(shell_quote(&glob));
             }
             parts.push(shell_quote(&query));
             parts.push(shell_quote(&directory));
             Some(parts.join(" "))
         }
-        "glob" | "find" => {
+        "find" => {
             let directory =
                 json_string_field(&item, &["directory", "path"]).unwrap_or_else(|| ".".to_string());
             let pattern = json_string_field(&item, &["pattern", "glob"])
@@ -205,26 +191,12 @@ fn structured_command_line_as_cli(command: &str, command_line: &str) -> Option<S
                 shell_quote(&pattern)
             ))
         }
-        "write_file" => path.map(|path| format!("cat > {}", shell_quote(&path))),
         _ => None,
     }
 }
 
 fn is_structured_code_read_command(command: &str) -> bool {
-    matches!(
-        command,
-        "cat"
-            | "sed"
-            | "read_line"
-            | "read_block"
-            | "rg"
-            | "grep"
-            | "find"
-            | "glob"
-            | "get_file_outline"
-            | "find_definition"
-            | "find_references"
-    )
+    matches!(command, "cat" | "sed" | "rg" | "find" | "get_file_outline")
 }
 
 fn structured_stdout_as_cli_streams(command: &str, stdout: &str) -> Option<(String, String)> {
@@ -238,12 +210,12 @@ fn structured_stdout_as_cli_streams(command: &str, stdout: &str) -> Option<(Stri
     for result in results {
         stderr.extend(command_run_result_diagnostics(result));
         match command.as_str() {
-            "read_line" | "read_block" | "cat" | "sed" => {
+            "cat" | "sed" => {
                 if let Some(content) = result.get("content").and_then(serde_json::Value::as_str) {
                     blocks.push(content.trim_end().to_string());
                 }
             }
-            "rg" | "grep" | "find_definition" | "find_references" => {
+            "rg" => {
                 if let Some(matches) = result.get("matches").and_then(serde_json::Value::as_array) {
                     let lines = matches
                         .iter()
@@ -254,7 +226,7 @@ fn structured_stdout_as_cli_streams(command: &str, stdout: &str) -> Option<(Stri
                     }
                 }
             }
-            "glob" | "find" => {
+            "find" => {
                 if let Some(paths) = result
                     .get("matched_paths")
                     .and_then(serde_json::Value::as_array)
@@ -283,7 +255,7 @@ fn structured_stdout_as_cli_streams(command: &str, stdout: &str) -> Option<(Stri
                     }
                 }
             }
-            "apply_patch" | "apply_diff" | "write_file" | "delete_file" => {
+            "apply_patch" => {
                 if let Some(summary) = result
                     .get("summary_markdown")
                     .and_then(serde_json::Value::as_str)
@@ -323,19 +295,12 @@ fn normalized_command_run_subcommand(command: &str) -> String {
         .to_ascii_lowercase()
         .replace('-', "_");
     match command.as_str() {
-        "type" | "get_content" => "read_line".to_string(),
         "cat" => "cat".to_string(),
         "sed" => "sed".to_string(),
-        "read_line" => "read_line".to_string(),
-        "read_block" => "read_block".to_string(),
         "ripgrep" => "rg".to_string(),
-        "grep" => "grep".to_string(),
         "rg" => "rg".to_string(),
         "find" => "find".to_string(),
-        "glob" => "glob".to_string(),
         "outline" | "symbols" => "get_file_outline".to_string(),
-        "definition" => "find_definition".to_string(),
-        "references" => "find_references".to_string(),
         "patch" | "applypatch" => "apply_patch".to_string(),
         other => other.to_string(),
     }

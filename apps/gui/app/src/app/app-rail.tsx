@@ -6,10 +6,7 @@ import { classNames } from "../state/format";
 import { parentPath } from "../utils/app-format";
 import type { AppShellViewModel } from "./app-shell-view-model";
 
-export function AppRail(props: {
-  view: AppShellViewModel;
-  collapseAfterSelection: () => void;
-}) {
+export function AppRail(props: { view: AppShellViewModel; collapseAfterSelection: () => void }) {
   const {
     state,
     closeSettings,
@@ -46,12 +43,7 @@ export function AppRail(props: {
   }
 
   return (
-    <aside
-      class={classNames(
-        "rail",
-        state().activeTab === "settings" && "settings-mode",
-      )}
-    >
+    <aside class={classNames("rail", state().activeTab === "settings" && "settings-mode")}>
       <Show
         when={state().activeTab === "settings"}
         fallback={
@@ -95,9 +87,7 @@ export function AppRail(props: {
               onIssue={openIssueConversation}
               onStatus={updatePlanTicketStatus}
               onSession={(sessionId) => {
-                const session = state().sessions.find(
-                  (item) => item.id === sessionId,
-                );
+                const session = state().sessions.find((item) => item.id === sessionId);
                 if (state().activeTab === "plan" && session) {
                   void openPlanSession(session);
                   props.collapseAfterSelection();
@@ -115,11 +105,7 @@ export function AppRail(props: {
               onUp={() => loadFiles(parentPath(state().filePath))}
               onSettings={openAppearanceSettings}
             />
-            <button
-              class="settings-entry"
-              type="button"
-              onClick={openAppearanceSettings}
-            >
+            <button class="settings-entry" type="button" onClick={openAppearanceSettings}>
               {t("settings")}
             </button>
           </>

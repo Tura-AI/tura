@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["."]
+
+[package]
+name = "tura-xtask"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]

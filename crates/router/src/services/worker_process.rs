@@ -77,6 +77,7 @@ impl WorkerProcess {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+        hide_child_window(&mut command);
         for (key, value) in env {
             command.env(key, value);
         }
@@ -177,6 +178,18 @@ impl WorkerProcess {
         }
     }
 
+    pub async fn stop(&self) {
+        if matches!(self.mode, WorkerMode::Persistent) {
+            let mut child = self.child.lock().await;
+            if let Some(mut child) = child.take() {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+            }
+        }
+        self.stdin.lock().await.take();
+        self.stdout.lock().await.take();
+    }
+
     async fn invoke_persistent(&self, ctx: CallContext) -> Result<Value> {
         let envelope = WorkerEnvelope {
             kind: "call".to_string(),
@@ -247,6 +260,7 @@ impl WorkerProcess {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        hide_child_window(&mut command);
         for (key, value) in &self.spawn_env {
             command.env(key, value);
         }
@@ -326,4 +340,14 @@ fn worker_invoke_timeout() -> Duration {
         .filter(|seconds| *seconds > 0)
         .map(Duration::from_secs)
         .unwrap_or(DEFAULT_WORKER_INVOKE_TIMEOUT)
+}
+
+fn hide_child_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        #[allow(unused_imports)]
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
 }

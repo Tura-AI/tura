@@ -2,9 +2,18 @@ import type { GatewayEventEnvelope } from "../types/event.js";
 import type { Message, MessagePart, Session } from "../types/session.js";
 import { normalizeEvent } from "../gateway/events.js";
 import { sameDirectory } from "../gateway/directory.js";
-import { messageSortValue, partMessageID, sessionStatusText, sessionUpdatedAt } from "../types/session.js";
+import {
+  messageSortValue,
+  partMessageID,
+  sessionStatusText,
+  sessionUpdatedAt,
+} from "../types/session.js";
 import type { PermissionRequest, QuestionRequest } from "../types/permission.js";
-import type { ProviderAuthMethodsResponse, ProviderAuthStatus, ProviderListResponse } from "../types/provider.js";
+import type {
+  ProviderAuthMethodsResponse,
+  ProviderAuthStatus,
+  ProviderListResponse,
+} from "../types/provider.js";
 import type { SessionConfig } from "../types/config.js";
 import type { StoredAgent } from "../types/agent.js";
 import type { StoredPersona } from "../types/gateway.js";
@@ -34,6 +43,8 @@ export interface AppState {
   selectedSessionIndex: number;
   selectedModelIndex: number;
   selectedPersonaIndex: number;
+  thinkingFrame: number;
+  commandDetailsOpen: boolean;
 }
 
 export type AppAction =
@@ -57,13 +68,20 @@ export type AppAction =
   | { type: "permissions"; value: PermissionRequest[] }
   | { type: "questions"; value: QuestionRequest[] }
   | { type: "sessions"; value: Session[]; open?: boolean }
-  | { type: "auth"; methods?: ProviderAuthMethodsResponse; statuses?: Record<string, ProviderAuthStatus>; open?: boolean }
+  | {
+      type: "auth";
+      methods?: ProviderAuthMethodsResponse;
+      statuses?: Record<string, ProviderAuthStatus>;
+      open?: boolean;
+    }
   | { type: "agents"; value: StoredAgent[] }
   | { type: "session-config"; value: SessionConfig; open?: boolean }
   | { type: "personas"; value: StoredPersona[]; open?: boolean }
   | { type: "select-session"; delta: number }
   | { type: "select-model"; delta: number }
   | { type: "select-persona"; delta: number }
+  | { type: "tick" }
+  | { type: "toggle-command-details" }
   | { type: "toggle-help" }
   | { type: "toggle-sessions" }
   | { type: "toggle-models" }
@@ -93,6 +111,8 @@ export function initialState(cwd: string): AppState {
     selectedSessionIndex: 0,
     selectedModelIndex: 0,
     selectedPersonaIndex: 0,
+    thinkingFrame: 0,
+    commandDetailsOpen: false,
   };
 }
 
@@ -112,14 +132,24 @@ export function reducer(state: AppState, action: AppAction): AppState {
       authStatuses: action.authStatuses ?? state.authStatuses,
       sessionConfig: action.sessionConfig ?? state.sessionConfig,
       status: action.session.status ?? "idle",
-      selectedSessionIndex: selectedSessionIndex(action.sessions ?? state.sessions, action.session.id),
-      selectedPersonaIndex: selectedPersonaIndex(action.personas ?? state.personas, action.agents ?? state.agents, action.session ?? state.session, action.sessionConfig ?? state.sessionConfig),
+      selectedSessionIndex: selectedSessionIndex(
+        action.sessions ?? state.sessions,
+        action.session.id,
+      ),
+      selectedPersonaIndex: selectedPersonaIndex(
+        action.personas ?? state.personas,
+        action.agents ?? state.agents,
+        action.session ?? state.session,
+        action.sessionConfig ?? state.sessionConfig,
+      ),
     };
   }
   if (action.type === "event") {
     const normalized = normalizeEvent(action.event);
-    if (normalized.directory !== "global" && !sameDirectory(normalized.directory, state.cwd)) return state;
-    if (state.session && normalized.sessionID && normalized.sessionID !== state.session.id) return state;
+    if (normalized.directory !== "global" && !sameDirectory(normalized.directory, state.cwd))
+      return state;
+    if (state.session && normalized.sessionID && normalized.sessionID !== state.session.id)
+      return state;
     if (action.event.payload?.type === "message.updated") {
       const message = (action.event.payload.properties as { info?: Message } | undefined)?.info;
       if (!message) return state;
@@ -146,7 +176,10 @@ export function reducer(state: AppState, action: AppAction): AppState {
     }
     if (action.event.payload?.type === "message.removed") {
       const properties = action.event.payload.properties as { message_id?: string } | undefined;
-      return { ...state, messages: state.messages.filter((message) => message.id !== properties?.message_id) };
+      return {
+        ...state,
+        messages: state.messages.filter((message) => message.id !== properties?.message_id),
+      };
     }
     if (action.event.payload?.type === "session.status") {
       const properties = action.event.payload.properties as Record<string, unknown> | undefined;
@@ -156,9 +189,14 @@ export function reducer(state: AppState, action: AppAction): AppState {
         ...state,
         status: state.session?.id === sessionID || !sessionID ? status : state.status,
         sessions: sessionID
-          ? state.sessions.map((session) => (session.id === sessionID ? { ...session, status } : session))
+          ? state.sessions.map((session) =>
+              session.id === sessionID ? { ...session, status } : session,
+            )
           : state.sessions,
-        session: state.session && state.session.id === sessionID ? { ...state.session, status } : state.session,
+        session:
+          state.session && state.session.id === sessionID
+            ? { ...state.session, status }
+            : state.session,
       };
     }
     if (action.event.payload?.type === "session.updated") {
@@ -180,19 +218,32 @@ export function reducer(state: AppState, action: AppAction): AppState {
     if (action.event.payload?.type === "session.deleted") {
       const properties = action.event.payload.properties as Record<string, unknown> | undefined;
       const sessionID = readString(properties, "sessionID") ?? readString(properties, "session_id");
-      if (sessionID) return { ...state, sessions: state.sessions.filter((session) => session.id !== sessionID) };
+      if (sessionID)
+        return { ...state, sessions: state.sessions.filter((session) => session.id !== sessionID) };
     }
     if (action.event.payload?.type === "permission.asked" && normalized.permission) {
       return { ...state, permissions: upsertById(state.permissions, normalized.permission) };
     }
     if (action.event.payload?.type === "permission.replied" && normalized.permission) {
-      return { ...state, permissions: state.permissions.filter((permission) => permission.id !== normalized.permission?.id) };
+      return {
+        ...state,
+        permissions: state.permissions.filter(
+          (permission) => permission.id !== normalized.permission?.id,
+        ),
+      };
     }
     if (action.event.payload?.type === "question.asked" && normalized.question) {
       return { ...state, questions: upsertById(state.questions, normalized.question) };
     }
-    if ((action.event.payload?.type === "question.replied" || action.event.payload?.type === "question.rejected") && normalized.question) {
-      return { ...state, questions: state.questions.filter((question) => question.id !== normalized.question?.id) };
+    if (
+      (action.event.payload?.type === "question.replied" ||
+        action.event.payload?.type === "question.rejected") &&
+      normalized.question
+    ) {
+      return {
+        ...state,
+        questions: state.questions.filter((question) => question.id !== normalized.question?.id),
+      };
     }
     return state;
   }
@@ -242,25 +293,100 @@ export function reducer(state: AppState, action: AppAction): AppState {
       modelsOpen: false,
       authOpen: false,
       settingsOpen: false,
-      selectedPersonaIndex: selectedPersonaIndex(action.value, state.agents, state.session, state.sessionConfig),
+      selectedPersonaIndex: selectedPersonaIndex(
+        action.value,
+        state.agents,
+        state.session,
+        state.sessionConfig,
+      ),
     };
   }
   if (action.type === "select-session") {
-    return { ...state, selectedSessionIndex: clampIndex(state.selectedSessionIndex + action.delta, state.sessions.length) };
+    return {
+      ...state,
+      selectedSessionIndex: clampIndex(
+        state.selectedSessionIndex + action.delta,
+        state.sessions.length,
+      ),
+    };
   }
   if (action.type === "select-model") {
-    return { ...state, selectedModelIndex: clampIndex(state.selectedModelIndex + action.delta, modelCount(state.providers)) };
+    return {
+      ...state,
+      selectedModelIndex: clampIndex(
+        state.selectedModelIndex + action.delta,
+        modelCount(state.providers),
+      ),
+    };
   }
   if (action.type === "select-persona") {
-    return { ...state, selectedPersonaIndex: clampIndex(state.selectedPersonaIndex + action.delta, state.personas.length) };
+    return {
+      ...state,
+      selectedPersonaIndex: clampIndex(
+        state.selectedPersonaIndex + action.delta,
+        state.personas.length,
+      ),
+    };
   }
+  if (action.type === "tick") return { ...state, thinkingFrame: state.thinkingFrame + 1 };
+  if (action.type === "toggle-command-details")
+    return { ...state, commandDetailsOpen: !state.commandDetailsOpen };
   if (action.type === "toggle-help") return { ...state, help: !state.help };
-  if (action.type === "toggle-sessions") return { ...state, sessionsOpen: !state.sessionsOpen, modelsOpen: false, authOpen: false, settingsOpen: false, personasOpen: false };
-  if (action.type === "toggle-models") return { ...state, modelsOpen: !state.modelsOpen, sessionsOpen: false, authOpen: false, settingsOpen: false, personasOpen: false };
-  if (action.type === "toggle-auth") return { ...state, authOpen: !state.authOpen, sessionsOpen: false, modelsOpen: false, settingsOpen: false, personasOpen: false };
-  if (action.type === "toggle-settings") return { ...state, settingsOpen: !state.settingsOpen, sessionsOpen: false, modelsOpen: false, authOpen: false, personasOpen: false };
-  if (action.type === "toggle-personas") return { ...state, personasOpen: !state.personasOpen, sessionsOpen: false, modelsOpen: false, authOpen: false, settingsOpen: false };
-  if (action.type === "close-panels") return { ...state, sessionsOpen: false, modelsOpen: false, authOpen: false, settingsOpen: false, personasOpen: false, help: false };
+  if (action.type === "toggle-sessions")
+    return {
+      ...state,
+      sessionsOpen: !state.sessionsOpen,
+      modelsOpen: false,
+      authOpen: false,
+      settingsOpen: false,
+      personasOpen: false,
+    };
+  if (action.type === "toggle-models")
+    return {
+      ...state,
+      modelsOpen: !state.modelsOpen,
+      sessionsOpen: false,
+      authOpen: false,
+      settingsOpen: false,
+      personasOpen: false,
+    };
+  if (action.type === "toggle-auth")
+    return {
+      ...state,
+      authOpen: !state.authOpen,
+      sessionsOpen: false,
+      modelsOpen: false,
+      settingsOpen: false,
+      personasOpen: false,
+    };
+  if (action.type === "toggle-settings")
+    return {
+      ...state,
+      settingsOpen: !state.settingsOpen,
+      sessionsOpen: false,
+      modelsOpen: false,
+      authOpen: false,
+      personasOpen: false,
+    };
+  if (action.type === "toggle-personas")
+    return {
+      ...state,
+      personasOpen: !state.personasOpen,
+      sessionsOpen: false,
+      modelsOpen: false,
+      authOpen: false,
+      settingsOpen: false,
+    };
+  if (action.type === "close-panels")
+    return {
+      ...state,
+      sessionsOpen: false,
+      modelsOpen: false,
+      authOpen: false,
+      settingsOpen: false,
+      personasOpen: false,
+      help: false,
+    };
   return state;
 }
 
@@ -278,7 +404,11 @@ function upsertMessage(messages: Message[], message: Message): Message[] {
   return next;
 }
 
-function upsertPart(messages: Message[], part: MessagePart, sessionID: string | undefined): Message[] {
+function upsertPart(
+  messages: Message[],
+  part: MessagePart,
+  sessionID: string | undefined,
+): Message[] {
   const messageID = partMessageID(part) || messages.at(-1)?.id || `message:${part.id}`;
   let found = false;
   const next = messages.map((message) => {
@@ -312,7 +442,8 @@ function applyPartDelta(
   delta: string | undefined,
   sessionID: string | undefined,
 ): Message[] {
-  if (!messageID || !partID || delta === undefined || !["text", "content"].includes(field ?? "")) return messages;
+  if (!messageID || !partID || delta === undefined || !["text", "content"].includes(field ?? ""))
+    return messages;
   let foundMessage = false;
   let foundPart = false;
   const next = messages.map((message) => {
@@ -348,7 +479,9 @@ function applyPartDelta(
       id: messageID,
       sessionID,
       role: "assistant",
-      parts: [{ id: partID, sessionID, messageID, type: "text", [field as "text" | "content"]: delta }],
+      parts: [
+        { id: partID, sessionID, messageID, type: "text", [field as "text" | "content"]: delta },
+      ],
       created_at: Date.now(),
       updated_at: Date.now(),
     });
@@ -357,7 +490,10 @@ function applyPartDelta(
   return next;
 }
 
-function readString(properties: Record<string, unknown> | undefined, key: string): string | undefined {
+function readString(
+  properties: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
   const value = properties?.[key];
   return typeof value === "string" ? value : undefined;
 }
@@ -371,7 +507,12 @@ function selectedSessionIndex(sessions: Session[], sessionID: string | undefined
   return index >= 0 ? index : 0;
 }
 
-function selectedPersonaIndex(personas: StoredPersona[], agents: StoredAgent[], session: Session | undefined, config: SessionConfig | undefined): number {
+function selectedPersonaIndex(
+  personas: StoredPersona[],
+  agents: StoredAgent[],
+  session: Session | undefined,
+  config: SessionConfig | undefined,
+): number {
   const active = activePersonaID(agents, session, config);
   if (!active) return 0;
   const index = personas.findIndex((persona) => personaID(persona) === active);
@@ -383,14 +524,21 @@ function personaID(persona: StoredPersona): string | undefined {
   return persona.summary?.id ?? (typeof configName === "string" ? configName : undefined);
 }
 
-function activePersonaID(agents: StoredAgent[], session: Session | undefined, config: SessionConfig | undefined): string | undefined {
+function activePersonaID(
+  agents: StoredAgent[],
+  session: Session | undefined,
+  config: SessionConfig | undefined,
+): string | undefined {
   const agentID = session?.agent ?? config?.active_agent;
   const agent = agents.find((item) => storedAgentID(item) === agentID);
-  const first = Array.isArray(agent?.config?.agent_persona) ? agent?.config?.agent_persona[0] : undefined;
+  const first = Array.isArray(agent?.config?.agent_persona)
+    ? agent?.config?.agent_persona[0]
+    : undefined;
   if (!first || typeof first !== "object" || Array.isArray(first)) return undefined;
   const name = (first as Record<string, unknown>).persona_name;
   if (typeof name === "string" && name.trim()) return name.trim();
-  const runtimePersonas = (agent as unknown as { options?: { personas?: StoredPersona[] } }).options?.personas;
+  const runtimePersonas = (agent as unknown as { options?: { personas?: StoredPersona[] } }).options
+    ?.personas;
   return runtimePersonas?.[0] ? personaID(runtimePersonas[0]) : undefined;
 }
 
@@ -404,5 +552,10 @@ function clampIndex(index: number, length: number): number {
 }
 
 function modelCount(providers: ProviderListResponse | undefined): number {
-  return providers?.all.reduce((count, provider) => count + Object.keys(provider.models ?? {}).length, 0) ?? 0;
+  return (
+    providers?.all.reduce(
+      (count, provider) => count + Object.keys(provider.models ?? {}).length,
+      0,
+    ) ?? 0
+  );
 }

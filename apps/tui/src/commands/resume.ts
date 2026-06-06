@@ -12,7 +12,11 @@ export interface ResumeOptions {
 }
 
 export async function resumeCommand(context: CliContext, options: ResumeOptions): Promise<void> {
-  const client = new GatewayClient({ baseUrl: context.gatewayUrl, directory: context.cwd, verbose: context.verbose });
+  const client = new GatewayClient({
+    baseUrl: context.gatewayUrl,
+    directory: context.cwd,
+    verbose: context.verbose,
+  });
   const sessionID = options.sessionID ?? (options.last ? await newestSessionID(client) : undefined);
   if (!sessionID) throw new CliUsageError(t("resumeRequiresSession"));
   if (options.prompt?.trim()) {

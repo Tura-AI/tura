@@ -18,8 +18,5 @@ export function settingsRoutes(): SettingsRoute[] {
 }
 
 export function settingsRouteTitle(section: SettingsSection): string {
-  return (
-    settingsRoutes().find((route) => route.id === section)?.label ??
-    t("settings")
-  );
+  return settingsRoutes().find((route) => route.id === section)?.label ?? t("settings");
 }

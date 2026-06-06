@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use crate::session::config::DEFAULT_SESSION_REASONING_EFFORT;
 
 const DEFAULT_SESSION_DIRECTORY: &str = "sessions";
-pub const CODING_AGENT_NAME: &str = "thinking-planning";
+pub const CODING_AGENT_NAME: &str = "fast";
 pub const THINKING_AGENT_NAME: &str = "thinking";
 pub const CODING_AGENT_FAST_NAME: &str = "fast";
 pub const CODING_AGENT_INSTANT_NAME: &str = "fast-text-only";
@@ -60,7 +60,7 @@ impl SessionManager {
 
         let mut management = SessionManagement::new(
             session_id.clone(),
-            session_name.clone(),
+            session_name,
             session_directory,
             false,
             session_topic,
@@ -187,8 +187,8 @@ pub fn normalize_session_type(session_type: Option<String>, agent: Option<&str>)
     match session_type.as_deref().or(agent) {
         Some("coding")
         | Some(CODING_AGENT_NAME)
+        | Some("thinking-planning")
         | Some(THINKING_AGENT_NAME)
-        | Some(CODING_AGENT_FAST_NAME)
         | None => "coding".to_string(),
         Some(CODING_AGENT_INSTANT_NAME) => "coding".to_string(),
         Some("coding_agent") | Some("coding_agent_planning") | Some("coding_agent_thinking") => {
@@ -212,8 +212,8 @@ pub fn runtime_provider_for_session(session_type: &str, agent: Option<&str>) -> 
         (_, Some(CODING_AGENT_INSTANT_NAME)) => Some("fast".to_string()),
         ("coding", _)
         | (_, Some(CODING_AGENT_NAME))
+        | (_, Some("thinking-planning"))
         | (_, Some(THINKING_AGENT_NAME))
-        | (_, Some(CODING_AGENT_FAST_NAME))
         | (_, Some("coding_agent"))
         | (_, Some("coding_agent_planning"))
         | (_, Some("coding_agent_thinking")) => Some(coding_agent_provider()),
@@ -230,8 +230,8 @@ pub fn default_use_last_tool_call_response_for_session(
         (session_type, agent),
         ("coding", _)
             | (_, Some(CODING_AGENT_NAME))
+            | (_, Some("thinking-planning"))
             | (_, Some(THINKING_AGENT_NAME))
-            | (_, Some(CODING_AGENT_FAST_NAME))
             | (_, Some(CODING_AGENT_INSTANT_NAME))
             | (_, Some("coding_agent"))
             | (_, Some("coding_agent_planning"))
@@ -273,7 +273,7 @@ mod tests {
         let info = SessionManager::create_session(
             None,
             None,
-            Some("thinking-planning".to_string()),
+            Some(CODING_AGENT_NAME.to_string()),
             Some("coding".to_string()),
         );
 

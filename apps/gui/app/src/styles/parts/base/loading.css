@@ -166,6 +166,22 @@
   background: var(--paper);
 }
 
+.gateway-loading-status {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  z-index: 3;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--muted);
+  font-size: var(--font-small);
+  line-height: 1.35;
+  box-shadow: var(--shadow-control);
+}
+
 @keyframes loading-bar-sweep {
   to {
     transform: translateX(100%);

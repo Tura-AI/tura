@@ -91,6 +91,25 @@ Product domains such as collaboration issues, workspaces, daemon APIs, and
 separate transport/domain/client directories are architectural growth areas,
 not directories that currently exist in this crate.
 
+## Direct Rust CLI Output
+
+The `src/bin/tura.rs` binary is the direct Rust CLI for one local prompt turn.
+It does not require the gateway HTTP server.
+
+Its output contract is:
+
+- default text mode prints only the final assistant message to `stdout`;
+- default lightweight progress goes to `stderr`, including runtime activation,
+  step summaries, and command-run tool start/completion lines;
+- `--quiet` and `--silent` suppress `stderr` progress;
+- `--json` switches `stdout` to JSONL events and disables human progress on
+  `stderr`;
+- `--output-last-message PATH` writes the same final assistant message that
+  text mode prints to `stdout`.
+
+This keeps shell pipelines and file redirects stable while still giving humans
+visible progress during long-running tasks.
+
 ## Owns
 
 Gateway owns:

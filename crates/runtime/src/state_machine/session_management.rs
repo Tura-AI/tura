@@ -29,9 +29,6 @@ pub type UserGoal = String;
 /// Free-form historical execution log entry.
 pub type SessionLogEntry = String;
 
-/// Free-form memory text recalled for a step.
-pub type StepMemory = String;
-
 /// JSON text describing the tools needed by a step.
 pub type StepToolJson = String;
 
@@ -154,9 +151,6 @@ pub struct TaskStep {
     /// Total turn count consumed by this step, including child processes.
     #[serde(default)]
     pub step_turn: u64,
-    /// Recalled memory needed to finish the step.
-    #[serde(default)]
-    pub step_memory: StepMemory,
     /// Tool description as JSON text.
     #[serde(default)]
     pub step_tool: StepToolJson,
@@ -205,16 +199,7 @@ pub enum SessionState {
 impl SessionState {
     /// Returns true if transitioning from `self` to `next` is allowed.
     pub fn can_transition_to(self, next: SessionState) -> bool {
-        use SessionState::*;
-
-        match (self, next) {
-            (Created, Running | Cancelled) => true,
-            (Running, Paused | Completed | Failed | Cancelled) => true,
-            (Paused, Running | Cancelled | Failed) => true,
-            (Completed | Failed | Cancelled, _) => false,
-            _ if self == next => true,
-            _ => false,
-        }
+        crate::session_state::transitions::can_transition_to(self, next)
     }
 }
 
@@ -369,86 +354,16 @@ impl SessionManagement {
     }
 
     pub fn task_plan_summary_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "plan_summary": self.task_plan.plan_summary,
-            "tasks": self.task_plan.detailed_tasks.iter().enumerate().map(|(index, task)| {
-                let mut value = serde_json::json!({
-                    "index": index + 1,
-                    "task_id": task.task_id,
-                    "step": task.step,
-                    "task_summary": task.task_summary,
-                    "deliverable": task.step_deliverable_description,
-                    "sub_session_id": task.sub_session_id,
-                    "start_condition": task.start_condition,
-                    "start_at": task.start_at,
-                    "poll_interval": task.poll_interval,
-                });
-                if let Some(task_state) = task_state_value(task) {
-                    value["status"] = task_state;
-                }
-                value
-            }).collect::<Vec<_>>(),
-        })
+        crate::session_state::task_plan::task_plan_summary_json(self)
     }
 
     pub fn task_plan_detail_json(&self) -> serde_json::Value {
-        serde_json::to_value(&self.task_plan)
-            .unwrap_or_else(|_| serde_json::json!({ "plan_summary": "", "detailed_tasks": [] }))
+        crate::session_state::task_plan::task_plan_detail_json(self)
     }
 
     pub fn task_management_json(&self) -> serde_json::Value {
-        if self.task_plan.detailed_tasks.len() <= 1 {
-            let task = self.task_plan.detailed_tasks.first();
-            let task_summary = task
-                .map(|task| task.task_summary.as_str())
-                .filter(|summary| !summary.trim().is_empty())
-                .unwrap_or(self.task_plan.plan_summary.as_str());
-            let mut value = serde_json::json!({
-                "task_id": task.map(|task| task.task_id.as_str()).unwrap_or_default(),
-                "step": task.map(|task| task.step).unwrap_or_default(),
-                "plan_summary": self.task_plan.plan_summary,
-                "task_summary": task_summary,
-                "deliverable": task.map(|task| task.step_deliverable_description.as_str()).unwrap_or_default(),
-                "sub_session_id": task.map(|task| task.sub_session_id.as_str()).unwrap_or_default(),
-                "start_condition": task.map(|task| task.start_condition).unwrap_or_default(),
-                "start_at": task.map(|task| task.start_at).unwrap_or(self.session_started_at),
-                "poll_interval": task.map(|task| task.poll_interval).unwrap_or_default(),
-            });
-            if let Some(task) = task {
-                if let Some(task_state) = task_state_value(task) {
-                    value["status"] = task_state;
-                }
-            }
-            return value;
-        }
-
-        serde_json::json!({
-            "plan_summary": self.task_plan.plan_summary,
-            "tasks": self.task_plan.detailed_tasks.iter().map(|task| {
-                let mut value = serde_json::json!({
-                    "task_id": task.task_id,
-                    "step": task.step,
-                    "task_summary": task.task_summary,
-                    "deliverable": task.step_deliverable_description,
-                    "sub_session_id": task.sub_session_id,
-                    "start_condition": task.start_condition,
-                    "start_at": task.start_at,
-                    "poll_interval": task.poll_interval,
-                });
-                if let Some(task_state) = task_state_value(task) {
-                    value["status"] = task_state;
-                }
-                value
-            }).collect::<Vec<_>>(),
-        })
+        crate::session_state::task_plan::task_management_json(self)
     }
-}
-
-fn task_state_value(task: &TaskStep) -> Option<serde_json::Value> {
-    if task.status != PlanStatus::default() {
-        return Some(serde_json::json!(task.status));
-    }
-    None
 }
 
 fn deserialize_task_plan<'de, D>(deserializer: D) -> Result<TaskPlan, D::Error>

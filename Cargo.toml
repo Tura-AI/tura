@@ -2,6 +2,9 @@
 resolver = "2"
 members = [
   "agents",
+  "apps/tauri/src-tauri",
+  "commands/read_media",
+  "commands/web_discover",
   "crates/gateway",
   "crates/provider",
   "personas",

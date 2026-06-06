@@ -17,7 +17,7 @@ import {
   providerAuthDisplayState,
   type ProviderAuthDisplayState,
 } from "../../utils/settings";
-import { ReadonlyRow } from "./settings-view";
+import { ReadonlyRow } from "./readonly-row";
 export function ProviderConfigGroup(props: {
   label: string;
   providers: SdkProvider[];
@@ -30,24 +30,16 @@ export function ProviderConfigGroup(props: {
         <span>{props.label}</span>
         <small>{props.providers.length}</small>
       </div>
-      <For
-        each={props.providers}
-        fallback={<div class="surface-list-empty">{t("empty")}</div>}
-      >
+      <For each={props.providers} fallback={<div class="surface-list-empty">{t("empty")}</div>}>
         {(provider) => (
-          <button
-            class="settings-provider-row"
-            onClick={() => props.onProvider(provider)}
-          >
+          <button class="settings-provider-row" onClick={() => props.onProvider(provider)}>
             <span class="provider-row-name">
               <span>{provider.name}</span>
               <Show when={providerHasOauthLogin(props.state, provider.id)}>
                 <small>{t("oauthLogin")}</small>
               </Show>
             </span>
-            <small>
-              {providerAuthDisplayState(props.state, provider.id).label}
-            </small>
+            <small>{providerAuthDisplayState(props.state, provider.id).label}</small>
           </button>
         )}
       </For>
@@ -57,8 +49,7 @@ export function ProviderConfigGroup(props: {
 
 function providerHasOauthLogin(state: AppState, providerId: string): boolean {
   return (state.providerAuthMethods[providerId] ?? []).some(
-    (method) =>
-      method.type === "oauth" || method.kind.toLowerCase().includes("oauth"),
+    (method) => method.type === "oauth" || method.kind.toLowerCase().includes("oauth"),
   );
 }
 
@@ -73,9 +64,7 @@ function ProviderAuthStatusRow(props: {
       <div class="field-row readonly-row provider-auth-state-row">
         <span>{t("state")}</span>
         <code class="provider-auth-state-value">
-          <span
-            class={classNames("provider-auth-state-dot", props.display.level)}
-          />
+          <span class={classNames("provider-auth-state-dot", props.display.level)} />
           {props.display.label}
         </code>
         <button
@@ -106,15 +95,10 @@ function validationReceiptText(receipt: ProviderAuthActionResponse): string {
   if (details.length === 0) {
     return validationReceiptCodeText(receipt.code ?? "", undefined);
   }
-  return details
-    .map((detail) => validationReceiptCodeText(detail.code, detail.value))
-    .join("\n");
+  return details.map((detail) => validationReceiptCodeText(detail.code, detail.value)).join("\n");
 }
 
-function validationReceiptCodeText(
-  code: string,
-  value?: string | null,
-): string {
+function validationReceiptCodeText(code: string, value?: string | null): string {
   const key = VALIDATION_RECEIPT_TEXT_KEYS[code];
   if (key) {
     return t(key, { value: value ?? "" });
@@ -135,20 +119,16 @@ const VALIDATION_RECEIPT_TEXT_KEYS: Record<string, TextKey> = {
   "provider.env.missing": "providerReceiptEnvMissing",
   "provider.env.none_registered": "providerReceiptEnvNoneRegistered",
   "provider.remote.accepted": "providerReceiptRemoteAccepted",
-  "provider.remote.permission_limited":
-    "providerReceiptRemotePermissionLimited",
+  "provider.remote.permission_limited": "providerReceiptRemotePermissionLimited",
   "provider.remote.rejected": "providerReceiptRemoteRejected",
   "provider.remote.request_failed": "providerReceiptRemoteRequestFailed",
   "provider.validation.client_setup_failed": "providerReceiptClientSetupFailed",
   "provider.credential.oauth_token_missing": "providerReceiptOauthTokenMissing",
-  "provider.credential.oauth_token_invalid_format":
-    "providerReceiptOauthTokenInvalidFormat",
+  "provider.credential.oauth_token_invalid_format": "providerReceiptOauthTokenInvalidFormat",
   "provider.credential.token_missing": "providerReceiptTokenMissing",
   "provider.credential.api_key_missing": "providerReceiptApiKeyMissing",
-  "provider.validation.public_model_list_unsupported":
-    "providerReceiptPublicModelListUnsupported",
-  "provider.validation.gateway_not_configured":
-    "providerReceiptGatewayNotConfigured",
+  "provider.validation.public_model_list_unsupported": "providerReceiptPublicModelListUnsupported",
+  "provider.validation.gateway_not_configured": "providerReceiptGatewayNotConfigured",
   "provider.request.no_paid_model": "providerReceiptNoPaidModelRequest",
   "provider.auth.refresh.unsupported": "providerReceiptAuthRefreshUnsupported",
   "provider.auth.refresh.failed": "providerReceiptAuthRefreshFailed",
@@ -167,24 +147,14 @@ export function ProviderAuthDialog(props: {
   onSaveKey: (providerId: string, method: ProviderAuthMethod) => void;
   onValidate: (providerId: string) => void;
   onStartLogin: (providerId: string, methodIndex: number) => void;
-  onCompleteLogin: (
-    providerId: string,
-    code?: string,
-    methodIndex?: number,
-  ) => void;
+  onCompleteLogin: (providerId: string, code?: string, methodIndex?: number) => void;
   onLogout: (providerId: string) => void;
 }) {
   const provider = createMemo(() =>
-    props.state.providers?.all.find(
-      (item) => item.id === props.panel.providerId,
-    ),
+    props.state.providers?.all.find((item) => item.id === props.panel.providerId),
   );
-  const methods = createMemo(
-    () => props.state.providerAuthMethods[props.panel.providerId] ?? [],
-  );
-  const status = createMemo(
-    () => props.state.providerAuthStatus[props.panel.providerId],
-  );
+  const methods = createMemo(() => props.state.providerAuthMethods[props.panel.providerId] ?? []);
+  const status = createMemo(() => props.state.providerAuthStatus[props.panel.providerId]);
   const validationReceipt = createMemo(
     () => props.state.providerValidationReceipts[props.panel.providerId],
   );
@@ -200,16 +170,9 @@ export function ProviderAuthDialog(props: {
       >
         <header>
           <div>
-            <h2>
-              {props.panel.reason
-                ? t("providerAuthRequired")
-                : t("providerCredential")}
-            </h2>
+            <h2>{props.panel.reason ? t("providerAuthRequired") : t("providerCredential")}</h2>
             <p>
-              {[
-                provider()?.name ?? props.panel.providerId,
-                t("providerCredentialHint"),
-              ]
+              {[provider()?.name ?? props.panel.providerId, t("providerCredentialHint")]
                 .filter(Boolean)
                 .join(" · ")}
             </p>
@@ -230,14 +193,8 @@ export function ProviderAuthDialog(props: {
                 saving={props.state.settingsSaving}
                 onValidate={() => props.onValidate(props.panel.providerId)}
               />
-              <ReadonlyRow
-                label={t("env")}
-                value={item().env.join(", ") || "--"}
-              />
-              <ReadonlyRow
-                label={t("capabilities")}
-                value={providerCapabilityText(item())}
-              />
+              <ReadonlyRow label={t("env")} value={item().env.join(", ") || "--"} />
+              <ReadonlyRow label={t("capabilities")} value={providerCapabilityText(item())} />
             </div>
           )}
         </Show>
@@ -269,36 +226,19 @@ function ProviderAuthMethods(props: {
   onSaveKey: (providerId: string, method: ProviderAuthMethod) => void;
   onValidate: (providerId: string) => void;
   onStartLogin: (providerId: string, methodIndex: number) => void;
-  onCompleteLogin: (
-    providerId: string,
-    code?: string,
-    methodIndex?: number,
-  ) => void;
+  onCompleteLogin: (providerId: string, code?: string, methodIndex?: number) => void;
   onLogout?: (providerId: string) => void;
 }) {
   return (
-    <Show
-      when={props.provider}
-      fallback={<div class="surface-list-empty">{t("empty")}</div>}
-    >
+    <Show when={props.provider} fallback={<div class="surface-list-empty">{t("empty")}</div>}>
       {(provider) => (
         <div class="settings-fields login-fields provider-auth-methods">
-          <For
-            each={props.methods}
-            fallback={<div class="surface-list-empty">{t("empty")}</div>}
-          >
+          <For each={props.methods} fallback={<div class="surface-list-empty">{t("empty")}</div>}>
             {(method, index) => (
-              <div
-                class={classNames(
-                  "login-method",
-                  method.type === "oauth" && "oauth",
-                )}
-              >
+              <div class={classNames("login-method", method.type === "oauth" && "oauth")}>
                 <div class="login-method-copy">
                   <span>{method.label}</span>
-                  <small>
-                    {method.token_env ?? method.login_env ?? method.kind}
-                  </small>
+                  <small>{method.token_env ?? method.login_env ?? method.kind}</small>
                 </div>
                 <Show when={methodUsesTokenInput(method)}>
                   <div class="login-method-controls">
@@ -314,9 +254,7 @@ function ProviderAuthMethods(props: {
                       class="secondary"
                       disabled={
                         props.state.settingsSaving ||
-                        !props.state.authDrafts[
-                          authDraftKey(provider().id, method)
-                        ]?.trim()
+                        !props.state.authDrafts[authDraftKey(provider().id, method)]?.trim()
                       }
                       onClick={() => props.onSaveKey(provider().id, method)}
                     >
@@ -326,12 +264,7 @@ function ProviderAuthMethods(props: {
                 </Show>
                 <Show when={methodUsesTokenInput(method) && method.api_key_url}>
                   {(url) => (
-                    <a
-                      class="provider-api-page-link"
-                      href={url()}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
+                    <a class="provider-api-page-link" href={url()} target="_blank" rel="noreferrer">
                       <LinkIcon size={14} strokeWidth={1.7} />
                       {t("providerApiPage")}
                     </a>
@@ -341,9 +274,7 @@ function ProviderAuthMethods(props: {
                   <div class="login-method-controls oauth-controls">
                     <button
                       class="secondary oauth-login-button"
-                      disabled={
-                        props.state.settingsSaving || method.available === false
-                      }
+                      disabled={props.state.settingsSaving || method.available === false}
                       onClick={() => props.onStartLogin(provider().id, index())}
                     >
                       <ExternalLink size={14} strokeWidth={1.7} />
@@ -355,10 +286,7 @@ function ProviderAuthMethods(props: {
                       value={props.state.authCodeDrafts[provider().id] ?? ""}
                       placeholder={t("codeOrToken")}
                       onInput={(event) =>
-                        props.onAuthCode(
-                          provider().id,
-                          event.currentTarget.value,
-                        )
+                        props.onAuthCode(provider().id, event.currentTarget.value)
                       }
                     />
                     <button
@@ -378,14 +306,8 @@ function ProviderAuthMethods(props: {
                       {t("login")}
                     </button>
                   </div>
-                  <Show
-                    when={
-                      method.available === false && method.unavailable_reason
-                    }
-                  >
-                    {(reason) => (
-                      <small class="login-method-help">{reason()}</small>
-                    )}
+                  <Show when={method.available === false && method.unavailable_reason}>
+                    {(reason) => <small class="login-method-help">{reason()}</small>}
                   </Show>
                 </Show>
               </div>
@@ -411,11 +333,7 @@ function ProviderAuthMethods(props: {
 }
 
 function methodUsesTokenInput(method: ProviderAuthMethod): boolean {
-  return (
-    method.type === "api" ||
-    method.type === "token" ||
-    method.type === "browser"
-  );
+  return method.type === "api" || method.type === "token" || method.type === "browser";
 }
 
 function ProtectedTokenInput(props: {
@@ -430,9 +348,7 @@ function ProtectedTokenInput(props: {
   const value = createMemo(() =>
     tokenInputValue(props.providerId, props.method, props.status, props.state),
   );
-  const title = createMemo(
-    () => value() || props.method.token_env || t("apiKey"),
-  );
+  const title = createMemo(() => value() || props.method.token_env || t("apiKey"));
   return (
     <div
       class="masked-token-field"
@@ -449,10 +365,7 @@ function ProtectedTokenInput(props: {
         placeholder={props.method.token_env ?? t("apiKey")}
         onFocus={(event) => event.currentTarget.select()}
         onInput={(event) =>
-          props.onAuthDraft(
-            authDraftKey(props.providerId, props.method),
-            event.currentTarget.value,
-          )
+          props.onAuthDraft(authDraftKey(props.providerId, props.method), event.currentTarget.value)
         }
       />
       <button
@@ -494,9 +407,7 @@ function stringValue(value: unknown): string {
 }
 
 function authDraftKey(providerId: string, method: ProviderAuthMethod): string {
-  return [providerId, method.token_env || method.login_env || method.kind].join(
-    "::",
-  );
+  return [providerId, method.token_env || method.login_env || method.kind].join("::");
 }
 
 const CAPABILITY_LABELS: Record<string, TextKey> = {
@@ -592,7 +503,5 @@ function providerCapabilityText(provider: SdkProvider): string {
   if (!capabilities.length) {
     return "--";
   }
-  return capabilities
-    .map((capability) => t(CAPABILITY_LABELS[capability] ?? "unknown"))
-    .join(", ");
+  return capabilities.map((capability) => t(CAPABILITY_LABELS[capability] ?? "unknown")).join(", ");
 }

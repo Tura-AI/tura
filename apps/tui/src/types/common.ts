@@ -8,6 +8,7 @@ export interface CliContext {
   display: DisplayMode;
   language?: "zh-CN" | "en";
   verbose: boolean;
+  mock: boolean;
 }
 
 export type ColorMode = "auto" | "always" | "never";

@@ -11,11 +11,7 @@ export function ProviderAuthPortal(props: {
   onSaveKey: (providerId: string, method: ProviderAuthMethod) => Promise<void>;
   onValidate: (providerId: string) => Promise<void>;
   onStartLogin: (providerId: string, methodIndex: number) => Promise<void>;
-  onCompleteLogin: (
-    providerId: string,
-    code?: string,
-    methodIndex?: number,
-  ) => Promise<void>;
+  onCompleteLogin: (providerId: string, code?: string, methodIndex?: number) => Promise<void>;
   onLogout: (providerId: string) => Promise<void>;
 }) {
   return (

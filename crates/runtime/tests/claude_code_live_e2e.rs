@@ -37,17 +37,10 @@ const MODEL: &str = "claude-opus-4-8";
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
+#[ignore = "live Anthropic smoke; run explicitly with credentials"]
 fn claude_code_gateway_session_tool_calling_e2e() {
-    if std::env::var("TURA_CLAUDE_CODE_E2E").ok().as_deref() != Some("1") {
-        eprintln!("skipping claude-code live e2e; set TURA_CLAUDE_CODE_E2E=1");
-        return;
-    }
-
     let Some((token_env, token)) = resolve_credential() else {
-        eprintln!(
-            "SKIP: no CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in env or project root .env"
-        );
-        return;
+        panic!("no CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in env or project root .env");
     };
     eprintln!("claude-code live e2e using credential {token_env}");
 
@@ -65,20 +58,20 @@ fn claude_code_gateway_session_tool_calling_e2e() {
     let result = mano::process_from_gateway_session_in_directory(
         "claude-code-e2e-tool-calling".to_string(),
         SessionInput {
-            user_input: "Use the command_run tool to run `pwd` (a shell_command), then reply with a short normal assistant message confirming you are done."
+            user_input: "Use command_run with a shell_command to inspect the current directory, then finish normally."
                 .to_string(),
             file_input: vec![],
             agent: None,
             runtime_context: None,
                 planning_mode_override: None,
         },
-        workspace.clone(),
+        workspace,
     )
     .expect("claude-code gateway session should complete");
 
     eprintln!("final session state: {:?}", result.session.state);
     assert_eq!(result.agents.len(), 1);
-    assert_eq!(result.agents[0].agent_name, "thinking-planning");
+    assert_eq!(result.agents[0].agent_name, "fast");
     assert_eq!(
         result.session.state,
         SessionState::Completed,

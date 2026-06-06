@@ -26,9 +26,7 @@ export function GlobalGatewayProvider(props: {
   children: JSX.Element;
 }) {
   const gatewayUrl = createMemo(() => props.state().gatewayUrl);
-  const rootClient = createMemo(
-    () => new GatewayClient({ baseUrl: gatewayUrl() }),
-  );
+  const rootClient = createMemo(() => new GatewayClient({ baseUrl: gatewayUrl() }));
   const queryCache = createQueryCache();
 
   return (
@@ -49,9 +47,7 @@ export function GlobalGatewayProvider(props: {
 export function useGlobalGateway() {
   const context = useContext(GlobalGatewayContext);
   if (!context) {
-    throw new Error(
-      "useGlobalGateway must be used inside GlobalGatewayProvider",
-    );
+    throw new Error("useGlobalGateway must be used inside GlobalGatewayProvider");
   }
   return context;
 }

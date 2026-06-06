@@ -2,8 +2,8 @@
 
 This is the whole-project architecture document for the current `tura`
 directory. The target design is CLI-driven: runtime, gateway, provider, tools,
-router, and memory behavior are implemented as crates and command modules, not
-as independent long-running services.
+and router behavior are implemented as crates and command modules, not as
+independent long-running services.
 
 Project root is the repository root. All paths in docs and config should be
 relative to the project root.
@@ -61,7 +61,6 @@ inside session-log records except as normalized runtime/session events.
 
   crates/
     gateway/
-    memory/        # docs-only boundary placeholder; not a Cargo member yet
     provider/
     router/
     runtime/
@@ -96,7 +95,6 @@ agents      -> package tura-agents, library tura_agents
 crates/provider    -> package tura-llm-rust, library tura_llm_rust
 crates/tools       -> package code-tools
 crates/router      -> package tura_router, default binary tura_router
-crates/memory      -> documented boundary only; no Cargo package in this tree yet
 ```
 
 Do not derive package names from directory names. Always check the local
@@ -159,6 +157,13 @@ formatting, tool execution, shell sandboxing, file locks, command registration,
 or CLI forwarding rules. It never runs the agent loop in-process; every agent
 turn is forwarded to the router, which dispatches a runtime worker.
 
+The `gateway` package also contains the direct Rust CLI binary `tura`. That
+binary is a local prompt-execution entrypoint, not the HTTP gateway surface. Its
+default text output contract is intentionally script-friendly: only the final
+assistant message is printed to `stdout`; lightweight runtime/tool progress is
+printed to `stderr`; `--quiet`/`--silent` suppresses that progress; `--json`
+uses `stdout` JSONL events instead of final-text mode.
+
 ### `crates/runtime`
 
 Runtime is the agent orchestration crate. It replaces the old Mano directory
@@ -180,7 +185,7 @@ Runtime does not own:
   `<thought>` stripping, prompt-cache key flag, SSE usage flag, unsupported
   content-type fallback) — these live in `crates/provider`;
 - shell execution details, file locks, router command registration, CLI
-  forwarding, runtime-worker dispatch, or memory/vector internals.
+  forwarding, or runtime-worker dispatch.
 
 For multi-agent dispatch, runtime spawns child sub-sessions by invoking
 `tura_router run-agent` as a subprocess (stdin/stdout JSON). It never calls
@@ -290,17 +295,6 @@ allocation. It resolves an agent or tool-binary request to the worker that
 should execute it, and it owns lifecycle for any worker needed to serve that
 request. Spawning is single-direction: gateway → router → runtime worker.
 
-### `crates/memory`
-
-Memory behavior is documented as a crate-level implementation boundary, not an
-independent service boundary. In the current tree `crates/memory` contains only
-architecture documentation and is not a Cargo workspace member yet.
-
-When implemented, memory owns long-lived memory store behavior, vector or
-registry-backed recall, memory health/persistence, and memory-specific
-tests/examples. Runtime and tools should call memory only through explicit
-memory-backed commands or clients.
-
 ### `scripts`
 
 Scripts owns setup, startup, install manifests, package environments, and
@@ -333,7 +327,6 @@ apps/gui or apps/tui
   -> crates/tools receives command_run requests
   -> crates/router resolves CLI forwarding and starts managed services when needed
   -> crates/tools/commands executes the selected command handler
-  -> crates/memory handles memory-backed requests when needed
   -> crates/runtime stores compact tool results and usage
   -> crates/gateway streams events and replayable state
   -> apps/gui or apps/tui renders rollout, tool state, usage, and final response
@@ -634,8 +627,8 @@ Rules:
 - Lock keys are canonical workspace-relative paths.
 - Reads acquire shared locks.
 - Writes acquire exclusive locks.
-- `apply_patch`, `write_file`, `delete_file`, and similar commands declare
-  affected paths before execution.
+- Mutating commands such as `apply_patch` declare affected paths before
+  execution.
 - Unknown mutating shell commands acquire a workspace-wide exclusive lock.
 - Locks are acquired in sorted path order.
 - Locks are released on success, error, timeout, and cancellation.
@@ -674,21 +667,6 @@ should not require port allocation.
 Router owns CLI forwarding metadata and lifecycle. The owning crate owns
 behavior.
 
-## Memory Crate
-
-`crates/memory` is the documented memory implementation boundary. It currently
-contains only `ARCHITECTURE.md`; no Cargo package has been added yet.
-
-Current layout:
-
-```text
-crates/memory/
-  ARCHITECTURE.md
-```
-
-When implemented, memory should expose stable request/response types and health
-checks. Runtime and tools should call it through explicit clients or commands.
-
 ## Adding A Command
 
 1. Create `crates/tools/src/commands/<name>/`.
@@ -700,8 +678,7 @@ checks. Runtime and tools should call it through explicit clients or commands.
    `crates/router` only when the command needs router discovery or a managed
    process.
 6. Enable it in the target `agents/src/<agent_id>/agent_config.json`.
-7. If it needs memory, add an explicit memory client/command path.
-8. Run focused tools and runtime checks.
+7. Run focused tools and runtime checks.
 
 ## Adding CLI Routing
 
@@ -783,7 +760,6 @@ Direct package checks should use the same package names as the build targets.
 - `crates/tools/**`: `cargo fmt -p code-tools`, `cargo check -p code-tools`.
 - `crates/router/**`: `cargo fmt -p tura_router`,
   `cargo check -p tura_router`.
-- `crates/memory/**`: documentation review only until a Cargo package is added.
 - `apps/gui/**`: GUI typecheck/build and focused frontend tests.
 - `apps/tui/**`: TUI build and focused CLI/TUI tests.
 - `scripts/**`: manifest validation and install dry run when possible.
@@ -802,6 +778,4 @@ Direct package checks should use the same package names as the build targets.
 - `crates/router/ARCHITECTURE.md`: CLI forwarding, command registration,
   lifecycle management, status monitoring, routing metadata, and permission
   forwarding.
-- `crates/memory/ARCHITECTURE.md`: memory and recall behavior as a crate
-  boundary.
 - `scripts/ARCHITECTURE.md`: install/start/package/persistent-script rules.

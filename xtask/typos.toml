@@ -1,0 +1,28 @@
+[files]
+extend-exclude = [
+  ".git/",
+  ".idea/",
+  ".tmp-cli-zero-probe/",
+  ".tmp-loop-probe/",
+  ".tmp-source-port-runs/",
+  ".tura/",
+  "bin/",
+  "bin.7z",
+  "target/",
+  "tmp/",
+  "log/",
+  "apps/gui/test-results/",
+  "apps/gui/app/public/assets/",
+  "personas/src/**/media/",
+]
+
+[default.extend-words]
+Configurables = "Configurables"
+configurables = "configurables"
+FO = "FO"
+hel = "hel"
+MCH = "MCH"
+oppend = "oppend"
+shll = "shll"
+stlye = "stlye"
+Vey = "Vey"

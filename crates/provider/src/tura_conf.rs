@@ -13,12 +13,14 @@ pub struct TuraConfig {
 
 impl TuraConfig {
     pub fn new(env_file: &str) -> Self {
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let project_root = manifest_dir
-            .parent()
-            .and_then(Path::parent)
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| manifest_dir.clone());
+        let project_root = runtime_project_root().unwrap_or_else(|| {
+            let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            manifest_dir
+                .parent()
+                .and_then(Path::parent)
+                .map(Path::to_path_buf)
+                .unwrap_or(manifest_dir)
+        });
 
         let env_path = if let Ok(from_env) = env::var("TURA_ENV_PATH") {
             let path = PathBuf::from(from_env);
@@ -100,6 +102,21 @@ impl TuraConfig {
                 ),
             })
     }
+}
+
+fn runtime_project_root() -> Option<PathBuf> {
+    if let Ok(root) = env::var("TURA_PROJECT_ROOT") {
+        let root = PathBuf::from(root);
+        if root.exists() {
+            return Some(root);
+        }
+    }
+    let exe = env::current_exe().ok()?;
+    let bin_dir = exe.parent()?;
+    if bin_dir.join("agents").join("src").is_dir() || bin_dir.join("config").is_dir() {
+        return Some(bin_dir.to_path_buf());
+    }
+    bin_dir.parent().map(Path::to_path_buf)
 }
 
 impl Default for TuraConfig {

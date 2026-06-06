@@ -1,11 +1,5 @@
 import { GatewayClient } from "@tura/gateway-sdk";
-import {
-  createContext,
-  createMemo,
-  useContext,
-  type Accessor,
-  type JSX,
-} from "solid-js";
+import { createContext, createMemo, useContext, type Accessor, type JSX } from "solid-js";
 import type { AppState } from "../state/global-store";
 
 export type ExecutionContextValue = {

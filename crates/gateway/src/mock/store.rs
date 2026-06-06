@@ -292,7 +292,7 @@ impl Store {
 
         let project = Project {
             id: project_id.clone(),
-            worktree: worktree.clone(),
+            worktree,
             vcs: Some("git".to_string()),
             name,
             icon: None,

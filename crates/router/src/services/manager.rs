@@ -103,4 +103,47 @@ impl ServiceManager {
 
         worker.invoke(ctx).await
     }
+
+    pub async fn stop_worker(&self, worker_id: &str) -> bool {
+        let worker = self.workers.write().remove(worker_id);
+        self.service_to_worker
+            .write()
+            .retain(|_, mapped_worker_id| mapped_worker_id != worker_id);
+        if let Some(worker) = worker {
+            worker.stop().await;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub async fn stop_worker_by_key(&self, key: &str) -> bool {
+        let worker_id = self.service_to_worker.write().remove(key);
+        if let Some(worker_id) = worker_id {
+            self.stop_worker(&worker_id).await
+        } else {
+            false
+        }
+    }
+
+    pub async fn stop_workers_with_prefix(&self, key_prefix: &str) -> usize {
+        let worker_ids = {
+            let mut service_to_worker = self.service_to_worker.write();
+            let keys: Vec<String> = service_to_worker
+                .keys()
+                .filter(|key| key.starts_with(key_prefix))
+                .cloned()
+                .collect();
+            keys.into_iter()
+                .filter_map(|key| service_to_worker.remove(&key))
+                .collect::<Vec<_>>()
+        };
+        let mut stopped = 0;
+        for worker_id in worker_ids {
+            if self.stop_worker(&worker_id).await {
+                stopped += 1;
+            }
+        }
+        stopped
+    }
 }

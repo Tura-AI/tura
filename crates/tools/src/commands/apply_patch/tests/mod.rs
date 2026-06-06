@@ -143,7 +143,10 @@ fn failed_middle_file_continues_and_reports_partial_changes() {
 #[test]
 fn path_escape_failure_is_classified_as_permission_denied() {
     let root = temp_workspace("path-escape");
-    let outside = root.parent().unwrap().join("outside-apply-patch-test.txt");
+    let outside = root
+        .parent()
+        .expect("temp workspace should have a parent")
+        .join("outside-apply-patch-test.txt");
     let _ = fs::remove_file(&outside);
 
     let result = execute(

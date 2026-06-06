@@ -11,10 +11,7 @@ const dictionaries: Record<Language, Dictionary> = {
 
 export const activeLanguage: Language = "zh-CN";
 
-export function t(
-  key: TextKey,
-  values?: Record<string, string | number>,
-): string {
+export function t(key: TextKey, values?: Record<string, string | number>): string {
   const template = dictionaries[activeLanguage][key] ?? dictionaries.en[key];
   if (!values) {
     return template;
@@ -30,8 +27,6 @@ export function assertDictionaryParity(): void {
   const zh = Object.keys(dictionaries["zh-CN"]).sort();
   const enKeys = Object.keys(dictionaries.en).sort();
   if (zh.join("\n") !== enKeys.join("\n")) {
-    throw new Error(
-      "GUI i18n dictionaries must keep zh-CN and en keys in sync",
-    );
+    throw new Error("GUI i18n dictionaries must keep zh-CN and en keys in sync");
   }
 }

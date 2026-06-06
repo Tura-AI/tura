@@ -44,7 +44,12 @@ test("render includes core TUI panels without throwing", () => {
         role: "assistant",
         parts: [
           { id: "part-1", type: "text", text: "Ready" },
-          { id: "tool-1", type: "tool", tool: "runtime", state: { status: "completed", output: { text: "checked" } } },
+          {
+            id: "tool-1",
+            type: "tool",
+            tool: "runtime",
+            state: { status: "completed", output: { text: "checked" } },
+          },
         ],
       },
       {
@@ -62,14 +67,19 @@ test("render includes core TUI panels without throwing", () => {
     ],
     permissions: [{ id: "perm-1", sessionID: "sess-1", permission: "shell" }],
     providers: {
-      all: [{ id: "openai", name: "OpenAI", models: { "gpt-5.5": { id: "gpt-5.5", name: "gpt-5.5" } } }],
+      all: [
+        { id: "openai", name: "OpenAI", models: { "gpt-5.5": { id: "gpt-5.5", name: "gpt-5.5" } } },
+      ],
       default: { openai: "gpt-5.5" },
       connected: ["openai"],
       enums: providerEnums,
     },
     sessions: [session],
   });
-  state = reducer(state, { type: "questions", value: [{ id: "q-1", sessionID: "sess-1", question: "Proceed?" }] });
+  state = reducer(state, {
+    type: "questions",
+    value: [{ id: "q-1", sessionID: "sess-1", question: "Proceed?" }],
+  });
 
   const transcript = render(state, richCapabilities());
   assert.match(transcript, /Tura/);
@@ -119,7 +129,8 @@ test("render applies communication style rich text without leaking protocol mark
   assert.match(transcript, /\x1b\[3mItalic\x1b\[0m/);
   assert.match(transcript, /\x1b\[4mUnder\x1b\[0m/);
   assert.match(transcript, /\x1b\[9mGone\x1b\[0m/);
-  assert.match(transcript, /\x1b\[36msrc\/App\.tsx:12\x1b\[0m/);
+  assert.match(transcript, /Gone\x1b\[0m \x1b\[48;5;236m src\/App\.tsx:12 \x1b\[0m/);
+  assert.doesNotMatch(transcript, /\x1b\[36msrc\/App\.tsx:12\x1b\[0m/);
   assert.match(transcript, /Example/);
   assert.match(transcript, /https:\/\/example\.com/);
   assert.match(transcript, /\x1b\]8;;https:\/\/example\.com\x1b\\/);
@@ -212,7 +223,12 @@ test("render supports markdown tables, markdown links, and local path access by 
   assert.doesNotMatch(plain, /\x1b\]8/);
 
   const rich = render(state, richCapabilities());
-  assert.match(rich, /Item\s+Path/);
+  assert.match(rich, /┌/);
+  assert.match(rich, /┼/);
+  assert.match(rich, /┘/);
+  assert.match(rich, /Item/);
+  assert.match(rich, /Path/);
+  assert.match(rich, /\x1b\[48;5;234m/);
   assert.match(rich, /\x1b\]8;;https:\/\/example\.com\/readme\x1b\\/);
   assert.match(rich, /\x1b\]8;;file:\/\/\/C:\/repo\/apps\/tui\x1b\\/);
 });
@@ -225,31 +241,43 @@ test("render shows agent persona summary and persona panel", () => {
     messages: [],
     permissions: [],
     providers: { all: [], default: {}, connected: [], enums: providerEnums },
-    agents: [{
-      summary: {
-        id: "fast",
-        name: "Fast",
-        description: "fast agent",
-        source: "static",
-        path: "agents/src/fast",
-        aliases: [],
-        capabilities: ["chat"],
-        hidden: false,
+    agents: [
+      {
+        summary: {
+          id: "fast",
+          name: "Fast",
+          description: "fast agent",
+          source: "static",
+          path: "agents/src/fast",
+          aliases: [],
+          capabilities: ["chat"],
+          hidden: false,
+        },
+        config: {
+          agent_name: "fast",
+          agent_persona: [{ persona_name: "tura", persona_directory: "personas/src/tura" }],
+        },
+        prompt: "Fast prompt",
       },
-      config: {
-        agent_name: "fast",
-        agent_persona: [{ persona_name: "tura", persona_directory: "personas/src/tura" }],
-      },
-      prompt: "Fast prompt",
-    }],
+    ],
     personas: [
       {
-        summary: { id: "tura", source: "static", description: "calm technical collaborator", path: "personas/src/tura" },
+        summary: {
+          id: "tura",
+          source: "static",
+          description: "calm technical collaborator",
+          path: "personas/src/tura",
+        },
         config: { persona_name: "tura" },
         communication_style: "concise, direct, friendly",
       },
       {
-        summary: { id: "reviewer", source: "dynamic", description: "review-first mode", path: "personas/src/reviewer" },
+        summary: {
+          id: "reviewer",
+          source: "dynamic",
+          description: "review-first mode",
+          path: "personas/src/reviewer",
+        },
         config: { persona_name: "reviewer" },
       },
     ],
@@ -292,7 +320,15 @@ test("render keeps model and auth tables readable across display levels", () => 
       enums: providerEnums,
     },
     authMethods: {
-      openai: [{ type: "oauth", login: "browser", label: "Browser login", available: true, supports_refresh: false }],
+      openai: [
+        {
+          type: "oauth",
+          login: "browser",
+          label: "Browser login",
+          available: true,
+          supports_refresh: false,
+        },
+      ],
     },
     authStatuses: {
       openai: { authenticated: true, login: "browser", account_id: "acct-1" },
@@ -358,4 +394,113 @@ test("render applies rich text cleanup to tool summaries", () => {
   assert.match(transcript, /npm run verify:all/);
   assert.match(transcript, /\[MEDIA:C:\/tmp\/a\.png:MEDIA\]/);
   assert.doesNotMatch(transcript, /<b>|<\/b>|<code>|<\/code>/);
+});
+
+test("render shows assistant command summaries, command details setting, and thinking state", () => {
+  const session = { id: "sess-commands", title: "Commands", status: "busy" as const };
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-command-summary",
+        sessionID: "sess-commands",
+        role: "assistant",
+        parts: [
+          {
+            id: "part-command-text",
+            type: "text",
+            text: "Checking the app before the final answer.",
+          },
+          {
+            id: "part-inline-payload",
+            type: "text",
+            text: '[command_run: {"task_summary":"inline payload summary should be readable"}]\n[command_run: {"status":"done"}]',
+          },
+          {
+            id: "tool-command-1",
+            type: "tool",
+            tool: "runtime",
+            state: { status: "completed", input: { command_line: "npm test -- --runInBand" } },
+          },
+          {
+            id: "tool-command-2",
+            type: "tool",
+            tool: "runtime",
+            state: {
+              status: "completed",
+              input: { command_line: "node tools/snake_playwright.mjs" },
+            },
+          },
+          {
+            id: "tool-powershell-command",
+            type: "tool",
+            tool: "command_run",
+            state: {
+              status: "completed",
+              input: { command: "Get-ChildItem -Force | Select-Object FullName" },
+            },
+          },
+          {
+            id: "tool-running-command",
+            type: "tool",
+            tool: "command_run",
+            state: { status: "running", input: { command_line: "pnpm test --watch" } },
+          },
+          {
+            id: "tool-task-summary",
+            type: "tool",
+            tool: "command_run",
+            state: {
+              status: "completed",
+              output:
+                '[command_run: {\\"task_summary\\":\\"provide concise final verification summary\\"}]',
+            },
+          },
+          {
+            id: "tool-status",
+            type: "tool",
+            tool: "command_run",
+            state: { status: "completed", output: '[command_run: {\\"status\\":\\"done\\"}]' },
+          },
+          {
+            id: "tool-input-status",
+            type: "tool",
+            tool: "command_run",
+            state: { status: "completed", input: { status: "done" } },
+          },
+        ],
+      },
+    ],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+    sessionConfig: { show_command_instructions: false },
+  });
+
+  const collapsed = render(state, richCapabilities());
+  assert.match(collapsed, /Checking the app/);
+  assert.match(collapsed, /Commands: 4/);
+  assert.match(collapsed, /■.*Commands: 4/);
+  assert.match(collapsed, /\x1b\[90m/);
+  assert.doesNotMatch(collapsed, /last.*Get-ChildItem -Force/);
+  assert.doesNotMatch(collapsed, /show commands/);
+  assert.doesNotMatch(collapsed, /click \/ Ctrl\+O/);
+  assert.match(collapsed, /inline payload summary should/);
+  assert.match(collapsed, /be readable/);
+  assert.match(collapsed, /\[command_run: done\]/);
+  assert.doesNotMatch(collapsed, /bash: npm test -- --runInBand/);
+  assert.doesNotMatch(collapsed, /task_summary/);
+  assert.doesNotMatch(collapsed, /\{"status"/);
+  assert.match(collapsed, /thinking/);
+
+  state = reducer(state, { type: "toggle-command-details" });
+  const expanded = render(state, richCapabilities());
+  assert.doesNotMatch(expanded, /hide commands/);
+  assert.match(expanded, /\$.*npm test -- --runInBand/);
+  assert.match(expanded, /\$.*node tools\/snake_playwright\.mjs/);
+  assert.match(expanded, /\$.*Get-ChildItem -Force/);
+  assert.match(expanded, /\$.*pnpm test --watch/);
+  assert.match(expanded, /\x1b\[90m\$ pnpm test --watch/);
+  assert.doesNotMatch(expanded, /\{"command_line"/);
 });

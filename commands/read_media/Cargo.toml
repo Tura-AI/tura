@@ -1,0 +1,21 @@
+[package]
+name = "tura-command-read-media"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+name = "tura_command_read_media"
+path = "mod.rs"
+
+[[bin]]
+name = "tura-command-read-media"
+path = "src/main.rs"
+
+[dependencies]
+base64 = "0.22"
+image = { version = "0.25", features = ["jpeg", "png", "webp"] }
+pdfium-render = { version = "0.8", features = ["image"] }
+serde = { workspace = true }
+serde_json = { workspace = true }

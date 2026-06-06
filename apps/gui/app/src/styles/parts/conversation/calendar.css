@@ -180,10 +180,7 @@
 .plan-calendar-week-head,
 .plan-calendar-week-grid {
   display: grid;
-  grid-template-columns: 64px repeat(
-      var(--calendar-days, 7),
-      minmax(118px, 1fr)
-    );
+  grid-template-columns: 64px repeat(var(--calendar-days, 7), minmax(118px, 1fr));
   min-width: calc(64px + var(--calendar-days, 7) * 118px);
   scrollbar-gutter: stable;
 }

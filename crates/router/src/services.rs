@@ -1,8 +1,16 @@
+#[path = "services/execution.rs"]
+pub mod execution;
 #[path = "services/managed_process.rs"]
 pub mod managed_process;
 #[path = "services/manager.rs"]
 pub mod manager;
 #[path = "services/models.rs"]
 pub mod models;
+#[path = "services/recovery.rs"]
+pub mod recovery;
+#[path = "services/runtime_workers.rs"]
+pub mod runtime_workers;
+#[path = "services/session_db.rs"]
+pub mod session_db;
 #[path = "services/worker_process.rs"]
 pub mod worker_process;

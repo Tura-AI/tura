@@ -11,14 +11,12 @@ path = "src/lib.rs"
 
 [dependencies]
 async-trait.workspace = true
-base64 = "0.22"
 futures.workspace = true
-image = { version = "0.25", features = ["jpeg", "png", "webp"] }
-pdfium-render = { version = "0.8", features = ["image"] }
-quick_html2md = "0.2.1"
 regex = "1"
-reqwest = { workspace = true, features = ["blocking", "json"] }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tura-llm-rust.workspace = true
+
+[dev-dependencies]
+image = { version = "0.25", features = ["jpeg", "png", "webp"] }

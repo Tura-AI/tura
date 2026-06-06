@@ -23,9 +23,19 @@ export function detectTerminalCapabilities(mode: DisplayMode = "auto"): Terminal
   const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   if (!isTty || env.CI || term === "dumb" || term === "unknown") return plainCapabilities();
 
-  const richPrograms = ["iterm.app", "wezterm", "ghostty", "vscode", "jetbrains-jediterm", "windows_terminal"];
-  const modernTerm = richPrograms.some((item) => program.includes(item)) ||
-    Boolean(env.WEZTERM_EXECUTABLE || env.KITTY_WINDOW_ID || env.GHOSTTY_RESOURCES_DIR || env.WT_SESSION) ||
+  const richPrograms = [
+    "iterm.app",
+    "wezterm",
+    "ghostty",
+    "vscode",
+    "jetbrains-jediterm",
+    "windows_terminal",
+  ];
+  const modernTerm =
+    richPrograms.some((item) => program.includes(item)) ||
+    Boolean(
+      env.WEZTERM_EXECUTABLE || env.KITTY_WINDOW_ID || env.GHOSTTY_RESOURCES_DIR || env.WT_SESSION,
+    ) ||
     term.includes("xterm-256color");
   if (modernTerm) return richCapabilities();
   return ansiCapabilities();

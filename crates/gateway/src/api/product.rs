@@ -207,17 +207,17 @@ impl ProductStore {
                 runtime_id: Some(runtime_id.clone()),
                 status: "online".to_string(),
                 visibility: "workspace".to_string(),
-                thinking_level: Some("low".to_string()),
+                thinking_level: Some("medium".to_string()),
                 run_count_7d: 3,
                 run_count_30d: 12,
             },
         );
 
         let active_task = TaskRun {
-            id: task_id.clone(),
+            id: task_id,
             issue_id: Some("issue-2".to_string()),
             agent_id: agent_id.clone(),
-            runtime_id: Some(runtime_id.clone()),
+            runtime_id: Some(runtime_id),
             status: "running".to_string(),
             session_id: None,
             title: "Connect GUI and gateway".to_string(),
@@ -261,7 +261,7 @@ impl ProductStore {
                 project_id: Some("project-core".to_string()),
                 labels: vec!["gateway".to_string()],
                 session_id: None,
-                active_task: Some(active_task.clone()),
+                active_task: Some(active_task),
                 created_at: now - 2_900_000,
                 updated_at: now - 120_000,
             },
@@ -314,7 +314,7 @@ impl ProductStore {
             "project-core".to_string(),
             ProductProject {
                 id: "project-core".to_string(),
-                workspace_id: workspace_id.clone(),
+                workspace_id,
                 title: "Tura GUI".to_string(),
                 description: "Minimal gateway-backed workbench".to_string(),
                 status: "active".to_string(),

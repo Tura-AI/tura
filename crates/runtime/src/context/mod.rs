@@ -1,15 +1,19 @@
+mod build;
 mod command_run_streams;
-mod context_management;
+mod compaction;
+mod media;
 mod text_truncate;
-mod workspace_snapshot;
+mod token_budget;
+mod tool_results;
+mod workspace;
 
-pub use context_management::{
-    accumulate_message, accumulate_tool_result, accumulate_tool_result_with_feedback,
-    accumulate_tool_result_with_provider_metadata, build_context, build_messages_from_session,
-    compact_session_context, messages_with_runtime_context, user_input_content_matches,
+pub use build::{
+    accumulate_message, accumulate_tool_result, accumulate_tool_result_with_provider_metadata,
+    build_context, build_messages_from_session, user_input_content_matches,
     user_input_content_value, ContextInput, ContextOutput,
 };
-pub(crate) use workspace_snapshot::WorkspaceSnapshot;
+pub use compaction::compact_session_context;
+pub(crate) use workspace::WorkspaceSnapshot;
 
 pub trait ContextualUserFragment {
     const ROLE: &'static str;

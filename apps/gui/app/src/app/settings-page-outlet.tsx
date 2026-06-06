@@ -1,8 +1,4 @@
-import type {
-  AgentUpsertRequest,
-  StoredAgent,
-  TuraConfigModelPair,
-} from "@tura/gateway-sdk";
+import type { AgentUpsertRequest, StoredAgent, TuraConfigModelPair } from "@tura/gateway-sdk";
 import type { Setter } from "solid-js";
 import {
   AVATAR_WORKSPACE_CONFIG_KEY,
@@ -21,10 +17,7 @@ export function SettingsPageOutlet(props: {
   onModelTier: (tier: string, option: TuraConfigModelPair) => Promise<void>;
   onRefreshAgents: () => Promise<void>;
   onGetAgent: (agentId: string) => Promise<StoredAgent | undefined>;
-  onSaveAgent: (
-    agentId: string | undefined,
-    payload: AgentUpsertRequest,
-  ) => Promise<void>;
+  onSaveAgent: (agentId: string | undefined, payload: AgentUpsertRequest) => Promise<void>;
   onDeleteAgent: (agentId: string) => Promise<void>;
 }) {
   return (
@@ -47,9 +40,7 @@ export function SettingsPageOutlet(props: {
           ...previous,
           workspaceConfigDraft: {
             ...previous.workspaceConfigDraft,
-            [AVATAR_WORKSPACE_CONFIG_KEY]: JSON.stringify(
-              normalizeAvatarSettings(avatar),
-            ),
+            [AVATAR_WORKSPACE_CONFIG_KEY]: JSON.stringify(normalizeAvatarSettings(avatar)),
           },
         }))
       }

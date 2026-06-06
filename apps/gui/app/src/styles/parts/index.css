@@ -6,6 +6,7 @@
 @import "./layout/composer-controls.css";
 @import "./layout/start-modal.css";
 @import "./layout/messages-rich.css";
+@import "./layout/rich-content.css";
 @import "./surfaces/media-actions.css";
 @import "./surfaces/inspector.css";
 @import "./surfaces/composer-content.css";

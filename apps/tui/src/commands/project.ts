@@ -5,37 +5,56 @@ import { printJson } from "../output/json.js";
 import { t } from "../i18n.js";
 
 export async function projectCommand(context: CliContext, args: string[]): Promise<void> {
-  const client = new GatewayClient({ baseUrl: context.gatewayUrl, directory: context.cwd, verbose: context.verbose });
+  const client = new GatewayClient({
+    baseUrl: context.gatewayUrl,
+    directory: context.cwd,
+    verbose: context.verbose,
+  });
   const subcommand = args.shift() ?? "current";
   const json = context.json || takeFlag(args, "--json");
   if (subcommand === "list") {
     const projects = await client.listProjects();
     if (json) return printJson(projects);
-    return write(context, formatTable(projects, [
-      { header: t("id"), value: (project) => project.id },
-      { header: t("name"), value: (project) => project.name ?? "" },
-      { header: t("worktree"), value: (project) => project.worktree },
-    ]));
+    return write(
+      context,
+      formatTable(projects, [
+        { header: t("id"), value: (project) => project.id },
+        { header: t("name"), value: (project) => project.name ?? "" },
+        { header: t("worktree"), value: (project) => project.worktree },
+      ]),
+    );
   }
   if (subcommand === "current") {
     const current = await client.currentProject();
     if (json) return printJson(current);
     const project = current.project;
-    return write(context, project ? `${project.name ?? project.id}\n${project.worktree}` : t("noCurrentProject"));
+    return write(
+      context,
+      project ? `${project.name ?? project.id}\n${project.worktree}` : t("noCurrentProject"),
+    );
   }
   if (subcommand === "create") {
     const project = await client.createWorkspace(args.join(" ").trim() || undefined);
-    return json ? printJson(project) : write(context, `${project.name ?? project.id}\n${project.worktree}`);
+    return json
+      ? printJson(project)
+      : write(context, `${project.name ?? project.id}\n${project.worktree}`);
   }
   if (subcommand === "default") {
     const project = await client.useDefaultWorkspace();
-    return json ? printJson(project) : write(context, `${project.name ?? project.id}\n${project.worktree}`);
+    return json
+      ? printJson(project)
+      : write(context, `${project.name ?? project.id}\n${project.worktree}`);
   }
   if (subcommand === "select-local") {
     const titleArg = takeOption(args, "--title") ?? args.join(" ").trim();
     const title = titleArg || undefined;
     const project = await client.selectLocalWorkspace(title);
-    return json ? printJson(project) : write(context, project ? `${project.name ?? project.id}\n${project.worktree}` : t("noWorkspaceSelected"));
+    return json
+      ? printJson(project)
+      : write(
+          context,
+          project ? `${project.name ?? project.id}\n${project.worktree}` : t("noWorkspaceSelected"),
+        );
   }
   throw new CliUsageError(t("unknownProjectCommand", { command: subcommand }));
 }

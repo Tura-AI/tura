@@ -25,7 +25,13 @@ import type {
   ProviderAuthUpsert,
   ProviderListResponse,
 } from "../types/provider.js";
-import type { CreateSessionRequest, Message, MessageEnvelope, PromptPayload, Session } from "../types/session.js";
+import type {
+  CreateSessionRequest,
+  Message,
+  MessageEnvelope,
+  PromptPayload,
+  Session,
+} from "../types/session.js";
 import { normalizeMessage } from "../types/session.js";
 import { directoryHeader } from "./directory.js";
 import { GatewayHttpError } from "./errors.js";
@@ -113,7 +119,9 @@ export class GatewayClient {
     return this.post("/file/open-location", {}, { directory: this.directory, path });
   }
 
-  async listSessions(options: { all?: boolean; includeChildren?: boolean; limit?: number } = {}): Promise<Session[]> {
+  async listSessions(
+    options: { all?: boolean; includeChildren?: boolean; limit?: number } = {},
+  ): Promise<Session[]> {
     const query: Record<string, string | number | boolean> = {};
     if (!options.all) query.directory = this.directory;
     if (options.includeChildren) query.includeChildren = true;
@@ -122,7 +130,11 @@ export class GatewayClient {
   }
 
   async createSession(payload: CreateSessionRequest = {}): Promise<Session> {
-    return this.post("/session", { directory: this.directory, ...payload }, { directory: this.directory });
+    return this.post(
+      "/session",
+      { directory: this.directory, ...payload },
+      { directory: this.directory },
+    );
   }
 
   async getSession(sessionID: string): Promise<Session> {
@@ -133,7 +145,9 @@ export class GatewayClient {
   }
 
   async listMessages(sessionID: string): Promise<Message[]> {
-    const response = await this.get<Array<Message | MessageEnvelope>>(`/session/${encodeURIComponent(sessionID)}/message`);
+    const response = await this.get<Array<Message | MessageEnvelope>>(
+      `/session/${encodeURIComponent(sessionID)}/message`,
+    );
     return response.map(normalizeMessage);
   }
 
@@ -157,7 +171,10 @@ export class GatewayClient {
     return this.patch(`/session/${encodeURIComponent(sessionID)}`, payload);
   }
 
-  async updateSessionTaskManagement(sessionID: string, payload: Record<string, unknown>): Promise<Session> {
+  async updateSessionTaskManagement(
+    sessionID: string,
+    payload: Record<string, unknown>,
+  ): Promise<Session> {
     return this.patch(`/session/${encodeURIComponent(sessionID)}/task-management`, payload);
   }
 
@@ -178,7 +195,11 @@ export class GatewayClient {
   }
 
   async providerOauthAuthorize(providerID: string, method = 0): Promise<OAuthAuthorizeResponse> {
-    return this.post(`/provider/${encodeURIComponent(providerID)}/oauth/authorize`, { method }, { directory: this.directory });
+    return this.post(
+      `/provider/${encodeURIComponent(providerID)}/oauth/authorize`,
+      { method },
+      { directory: this.directory },
+    );
   }
 
   async providerLogout(providerID: string): Promise<unknown> {
@@ -204,7 +225,10 @@ export class GatewayClient {
     return this.get(`/agent/${encodeURIComponent(agentID)}`);
   }
 
-  async updateAgent(agentID: string, payload: { config?: unknown; prompt?: string | null }): Promise<StoredAgent> {
+  async updateAgent(
+    agentID: string,
+    payload: { config?: unknown; prompt?: string | null },
+  ): Promise<StoredAgent> {
     await this.syncWorkspace();
     return this.patch(`/agent/${encodeURIComponent(agentID)}`, payload);
   }
@@ -259,14 +283,19 @@ export class GatewayClient {
   }
 
   async raw<T = unknown>(method: GatewayHttpMethod, path: string, body?: unknown): Promise<T> {
-    return this.request<T>(method, path.startsWith("/") ? path : `/${path}`, body, { directory: this.directory });
+    return this.request<T>(method, path.startsWith("/") ? path : `/${path}`, body, {
+      directory: this.directory,
+    });
   }
 
   streamEvents(signal?: AbortSignal): AsyncGenerator<GatewayEventEnvelope> {
     return this.eventStream("/event", signal);
   }
 
-  private async *eventStream(path: string, signal?: AbortSignal): AsyncGenerator<GatewayEventEnvelope> {
+  private async *eventStream(
+    path: string,
+    signal?: AbortSignal,
+  ): AsyncGenerator<GatewayEventEnvelope> {
     const response = await fetch(this.url(path), {
       method: "GET",
       headers: this.headers(),
@@ -278,23 +307,41 @@ export class GatewayClient {
     yield* parseSse(response);
   }
 
-  private async get<T>(path: string, query?: Record<string, string | number | boolean>): Promise<T> {
+  private async get<T>(
+    path: string,
+    query?: Record<string, string | number | boolean>,
+  ): Promise<T> {
     return this.request<T>("GET", path, undefined, query);
   }
 
-  private async post<T>(path: string, body: unknown, query?: Record<string, string | number | boolean>): Promise<T> {
+  private async post<T>(
+    path: string,
+    body: unknown,
+    query?: Record<string, string | number | boolean>,
+  ): Promise<T> {
     return this.request<T>("POST", path, body, query);
   }
 
-  private async put<T>(path: string, body: unknown, query?: Record<string, string | number | boolean>): Promise<T> {
+  private async put<T>(
+    path: string,
+    body: unknown,
+    query?: Record<string, string | number | boolean>,
+  ): Promise<T> {
     return this.request<T>("PUT", path, body, query);
   }
 
-  private async patch<T>(path: string, body: unknown, query?: Record<string, string | number | boolean>): Promise<T> {
+  private async patch<T>(
+    path: string,
+    body: unknown,
+    query?: Record<string, string | number | boolean>,
+  ): Promise<T> {
     return this.request<T>("PATCH", path, body, query);
   }
 
-  private async delete<T>(path: string, query?: Record<string, string | number | boolean>): Promise<T> {
+  private async delete<T>(
+    path: string,
+    query?: Record<string, string | number | boolean>,
+  ): Promise<T> {
     return this.request<T>("DELETE", path, undefined, query);
   }
 
@@ -308,7 +355,8 @@ export class GatewayClient {
     if (this.verbose) console.error(`[gateway] ${method} ${url}`);
     let response: Response;
     const controller = new AbortController();
-    const timer = this.timeoutMs > 0 ? setTimeout(() => controller.abort(), this.timeoutMs) : undefined;
+    const timer =
+      this.timeoutMs > 0 ? setTimeout(() => controller.abort(), this.timeoutMs) : undefined;
     try {
       response = await fetch(url, {
         method,
@@ -347,6 +395,11 @@ export class GatewayClient {
 
   private async httpError(response: Response): Promise<GatewayHttpError> {
     const body = await response.text().catch(() => "");
-    return new GatewayHttpError(response.status, response.url, `gateway returned HTTP ${response.status}`, body);
+    return new GatewayHttpError(
+      response.status,
+      response.url,
+      `gateway returned HTTP ${response.status}`,
+      body,
+    );
   }
 }

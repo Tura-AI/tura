@@ -8,6 +8,7 @@
 
 # Rust build output
 target/
+bin/
 
 # JavaScript and TypeScript dependency/build output
 node_modules/

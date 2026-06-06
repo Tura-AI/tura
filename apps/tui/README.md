@@ -91,26 +91,26 @@ architecture documentation should stay in English.
 
 The terminal client should use existing gateway endpoints only.
 
-| Feature | Method | Endpoint | Purpose |
-|---|---|---|---|
-| health | `GET` | `/global/health` | Check gateway availability |
-| current project sync | `GET` | `/project/current?directory=...` | Sync workspace-scoped state |
-| session config | `GET` | `/session/config?directory=...` | Read model/agent/provider settings |
-| session config patch | `PATCH` | `/session/config?directory=...` | Update runtime session settings |
-| list sessions | `GET` | `/session?directory=...&includeChildren=true&limit=...` | Select and resume sessions |
-| create session | `POST` | `/session` | Start a conversation session |
-| update session | `PATCH` | `/session/{sessionID}` | Set current session model/agent |
-| list messages | `GET` | `/session/{sessionID}/message` | Hydrate transcript history |
-| prompt async | `POST` | `/session/{sessionID}/prompt_async` | Send a user message |
-| abort | `POST` | `/session/{sessionID}/abort` | Stop the current turn |
-| event stream | `GET` | `/event` | Subscribe to message/session/provider events |
-| providers | `GET` | `/provider` | Read provider/model catalog |
-| auth methods | `GET` | `/provider/auth` | List provider auth methods |
-| auth status | `GET` | `/provider/{providerID}/auth/status` | Read provider login state |
-| OAuth authorize | `POST` | `/provider/{providerID}/oauth/authorize` | Start OAuth |
-| provider logout | `POST` | `/provider/{providerID}/auth/logout` | Log out from a provider |
-| agents | `GET` | `/agent` | List available runtime agents |
-| agent detail | `GET` | `/agent/{agentID}` | Inspect an existing agent |
+| Feature              | Method  | Endpoint                                                | Purpose                                      |
+| -------------------- | ------- | ------------------------------------------------------- | -------------------------------------------- |
+| health               | `GET`   | `/global/health`                                        | Check gateway availability                   |
+| current project sync | `GET`   | `/project/current?directory=...`                        | Sync workspace-scoped state                  |
+| session config       | `GET`   | `/session/config?directory=...`                         | Read model/agent/provider settings           |
+| session config patch | `PATCH` | `/session/config?directory=...`                         | Update runtime session settings              |
+| list sessions        | `GET`   | `/session?directory=...&includeChildren=true&limit=...` | Select and resume sessions                   |
+| create session       | `POST`  | `/session`                                              | Start a conversation session                 |
+| update session       | `PATCH` | `/session/{sessionID}`                                  | Set current session model/agent              |
+| list messages        | `GET`   | `/session/{sessionID}/message`                          | Hydrate transcript history                   |
+| prompt async         | `POST`  | `/session/{sessionID}/prompt_async`                     | Send a user message                          |
+| abort                | `POST`  | `/session/{sessionID}/abort`                            | Stop the current turn                        |
+| event stream         | `GET`   | `/event`                                                | Subscribe to message/session/provider events |
+| providers            | `GET`   | `/provider`                                             | Read provider/model catalog                  |
+| auth methods         | `GET`   | `/provider/auth`                                        | List provider auth methods                   |
+| auth status          | `GET`   | `/provider/{providerID}/auth/status`                    | Read provider login state                    |
+| OAuth authorize      | `POST`  | `/provider/{providerID}/oauth/authorize`                | Start OAuth                                  |
+| provider logout      | `POST`  | `/provider/{providerID}/auth/logout`                    | Log out from a provider                      |
+| agents               | `GET`   | `/agent`                                                | List available runtime agents                |
+| agent detail         | `GET`   | `/agent/{agentID}`                                      | Inspect an existing agent                    |
 
 The CLI/TUI should not read `.tura/sessions`, `db/session_log`, `.env`,
 `provider_config.json`, provider logs, or backend config files directly.
@@ -119,11 +119,11 @@ The CLI/TUI should not read `.tura/sessions`, `db/session_log`, `.env`,
 
 The renderer supports three terminal capability levels.
 
-| Level | Name | Environment | Goal |
-|---|---|---|---|
-| L1 | Plain / Safe | `TERM=dumb`, CI, non-TTY, poor SSH, or explicit `--plain` | Text-only output that is safe for logs |
-| L2 | ANSI / Default | Normal macOS/Linux/Windows terminals, SSH, tmux/screen/zellij | Compact default UI with ANSI color and basic redraw |
-| L3 | Rich / Modern | iTerm2, WezTerm, Kitty, Ghostty, VS Code terminal, JetBrains terminal, Windows Terminal, xterm.js, or explicit `--rich` | Richer layout, links, and markdown treatment when detected |
+| Level | Name           | Environment                                                                                                             | Goal                                                       |
+| ----- | -------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| L1    | Plain / Safe   | `TERM=dumb`, CI, non-TTY, poor SSH, or explicit `--plain`                                                               | Text-only output that is safe for logs                     |
+| L2    | ANSI / Default | Normal macOS/Linux/Windows terminals, SSH, tmux/screen/zellij                                                           | Compact default UI with ANSI color and basic redraw        |
+| L3    | Rich / Modern  | iTerm2, WezTerm, Kitty, Ghostty, VS Code terminal, JetBrains terminal, Windows Terminal, xterm.js, or explicit `--rich` | Richer layout, links, and markdown treatment when detected |
 
 ### L1 Plain / Safe
 

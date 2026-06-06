@@ -11,9 +11,7 @@ export function providerDomains(provider: SdkProvider): string[] {
   const domains = [
     ...directDomains,
     ...(Array.isArray(optionDomains)
-      ? optionDomains.filter(
-          (domain): domain is string => typeof domain === "string",
-        )
+      ? optionDomains.filter((domain): domain is string => typeof domain === "string")
       : []),
   ];
   const normalized = [...new Set(domains.filter(Boolean))];
@@ -32,8 +30,6 @@ export function providerDomains(provider: SdkProvider): string[] {
 function providerCapabilities(provider: SdkProvider): string[] {
   const value = provider.options.capabilities;
   return Array.isArray(value)
-    ? value.filter(
-        (capability): capability is string => typeof capability === "string",
-      )
+    ? value.filter((capability): capability is string => typeof capability === "string")
     : [];
 }

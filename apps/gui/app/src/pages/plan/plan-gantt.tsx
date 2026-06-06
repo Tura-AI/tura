@@ -1,15 +1,7 @@
 import { type Session, type TaskManagement } from "@tura/gateway-sdk";
 import ChevronLeft from "lucide-solid/icons/chevron-left";
 import ChevronRight from "lucide-solid/icons/chevron-right";
-import {
-  For,
-  Show,
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-  type JSX,
-} from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { t } from "../../i18n";
 import { classNames } from "../../state/format";
 import { sessionTitle } from "../../state/global-store";
@@ -71,9 +63,7 @@ export function PlanGanttView(props: {
   const [dragState, setDragState] = createSignal<PlanDragState>();
   const [timelineMode, setTimelineMode] = createSignal<PlanGanttMode>("week");
   const timedSessions = createMemo(() => planTimedSessions(props.sessions));
-  const [timelineCursor, setTimelineCursor] = createSignal(
-    currentTimelineStart("week"),
-  );
+  const [timelineCursor, setTimelineCursor] = createSignal(currentTimelineStart("week"));
   const [timelineWidth, setTimelineWidth] = createSignal(0);
   const dayHourCount = createMemo(() => {
     const width = timelineWidth();
@@ -99,10 +89,7 @@ export function PlanGanttView(props: {
       .map(
         (session) =>
           `${session.id}:${timedSessionTasks(session)
-            .map(
-              (task) =>
-                `${taskNonceId(task) ?? ""}:${String(taskStartAt(task) ?? "")}`,
-            )
+            .map((task) => `${taskNonceId(task) ?? ""}:${String(taskStartAt(task) ?? "")}`)
             .join(",")}`,
       )
       .join("|");
@@ -131,9 +118,7 @@ export function PlanGanttView(props: {
         tasks: timedSessionTasks(session),
         occurrences: timedSessionTasks(session)
           .flatMap((task) => taskOccurrences(task))
-          .sort(
-            (left, right) => left.startAt.getTime() - right.startAt.getTime(),
-          ),
+          .sort((left, right) => left.startAt.getTime() - right.startAt.getTime()),
       }))
       .filter((row) => row.occurrences.length > 0),
   );
@@ -174,13 +159,10 @@ export function PlanGanttView(props: {
       return [];
     }
     const windowEnd = windowStart + timelineWindowMs();
-    const intervalMs =
-      taskStartCondition(task) === "polling_task" ? pollingIntervalMs(task) : 0;
+    const intervalMs = taskStartCondition(task) === "polling_task" ? pollingIntervalMs(task) : 0;
     if (intervalMs <= 0) {
       const time = first.getTime();
-      return time >= windowStart && time < windowEnd
-        ? [{ task, startAt: first, sequence: 0 }]
-        : [];
+      return time >= windowStart && time < windowEnd ? [{ task, startAt: first, sequence: 0 }] : [];
     }
     const firstTime = first.getTime();
     const now = Date.now();
@@ -230,9 +212,7 @@ export function PlanGanttView(props: {
       return undefined;
     }
     const rect = timelineEl.getBoundingClientRect();
-    const axis = timelineEl.querySelector<HTMLElement>(
-      ".plan-timeline-left-head",
-    );
+    const axis = timelineEl.querySelector<HTMLElement>(".plan-timeline-left-head");
     const start = axis?.getBoundingClientRect().right ?? rect.left;
     const width = rect.width - (start - rect.left);
     if (width <= 0) {
@@ -281,14 +261,10 @@ export function PlanGanttView(props: {
     });
   }
   function moveTimelineMinutes(minutesDelta: number) {
-    setTimelineCursor(
-      (cursor) => new Date(cursor.getTime() + minutesDelta * 60_000),
-    );
+    setTimelineCursor((cursor) => new Date(cursor.getTime() + minutesDelta * 60_000));
   }
   function moveTimelineWindow(direction: number) {
-    moveTimelineMinutes(
-      direction * Math.round(timelineWindowMs() / 60_000 / 30),
-    );
+    moveTimelineMinutes(direction * Math.round(timelineWindowMs() / 60_000 / 30));
   }
   function stopTimelineHold() {
     if (holdScrollTimer !== undefined) {
@@ -299,18 +275,12 @@ export function PlanGanttView(props: {
     window.removeEventListener("pointercancel", stopTimelineHold);
     window.removeEventListener("mouseup", stopTimelineHold);
   }
-  function beginTimelineHold(
-    event: PointerEvent | MouseEvent,
-    direction: number,
-  ) {
+  function beginTimelineHold(event: PointerEvent | MouseEvent, direction: number) {
     event.preventDefault();
     event.stopPropagation();
     stopTimelineHold();
     moveTimelineWindow(direction);
-    holdScrollTimer = window.setInterval(
-      () => moveTimelineWindow(direction),
-      100,
-    );
+    holdScrollTimer = window.setInterval(() => moveTimelineWindow(direction), 100);
     window.addEventListener("pointerup", stopTimelineHold, { once: true });
     window.addEventListener("pointercancel", stopTimelineHold, { once: true });
     window.addEventListener("mouseup", stopTimelineHold, { once: true });
@@ -320,9 +290,7 @@ export function PlanGanttView(props: {
       return 0;
     }
     const rect = timelineEl.getBoundingClientRect();
-    const axis = timelineEl.querySelector<HTMLElement>(
-      ".plan-timeline-left-head",
-    );
+    const axis = timelineEl.querySelector<HTMLElement>(".plan-timeline-left-head");
     const leftWidth = axis?.getBoundingClientRect().width ?? 0;
     return Math.max(0, rect.width - leftWidth);
   }
@@ -331,20 +299,15 @@ export function PlanGanttView(props: {
     if (width <= 0 || deltaX === 0) {
       return;
     }
-    const rawMinutes =
-      (-deltaX / width) * (timelineWindowMs() / 60_000) + pixelMinuteRemainder;
-    const minutes =
-      rawMinutes < 0 ? Math.ceil(rawMinutes) : Math.floor(rawMinutes);
+    const rawMinutes = (-deltaX / width) * (timelineWindowMs() / 60_000) + pixelMinuteRemainder;
+    const minutes = rawMinutes < 0 ? Math.ceil(rawMinutes) : Math.floor(rawMinutes);
     pixelMinuteRemainder = rawMinutes - minutes;
     if (minutes !== 0) {
       moveTimelineMinutes(minutes);
     }
   }
   function wheelTimeline(event: WheelEvent) {
-    const delta =
-      Math.abs(event.deltaX) > Math.abs(event.deltaY)
-        ? event.deltaX
-        : event.deltaY;
+    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
     if (delta === 0) {
       return;
     }
@@ -361,9 +324,8 @@ export function PlanGanttView(props: {
     }
     const gridRect = timelineEl.getBoundingClientRect();
     const trackRect =
-      timelineEl
-        .querySelector<HTMLElement>(".plan-timeline-track")
-        ?.getBoundingClientRect() ?? gridRect;
+      timelineEl.querySelector<HTMLElement>(".plan-timeline-track")?.getBoundingClientRect() ??
+      gridRect;
     const edge = 24;
     const now = Date.now();
     if (now - lastEdgeMoveAt < 60) {
@@ -374,8 +336,7 @@ export function PlanGanttView(props: {
       const minutes = Math.max(
         1,
         Math.round(
-          (Math.max(18, Math.min(48, distance)) / trackRect.width) *
-            (timelineWindowMs() / 60_000),
+          (Math.max(18, Math.min(48, distance)) / trackRect.width) * (timelineWindowMs() / 60_000),
         ),
       );
       moveTimelineMinutes(-minutes);
@@ -385,8 +346,7 @@ export function PlanGanttView(props: {
       const minutes = Math.max(
         1,
         Math.round(
-          (Math.max(18, Math.min(48, distance)) / trackRect.width) *
-            (timelineWindowMs() / 60_000),
+          (Math.max(18, Math.min(48, distance)) / trackRect.width) * (timelineWindowMs() / 60_000),
         ),
       );
       moveTimelineMinutes(minutes);
@@ -491,10 +451,7 @@ export function PlanGanttView(props: {
           </For>
         </div>
         <Show when={todayPosition() !== undefined}>
-          <i
-            class="plan-today-line"
-            style={{ "--today": String(todayPosition()) }}
-          />
+          <i class="plan-today-line" style={{ "--today": String(todayPosition()) }} />
         </Show>
         <For each={ganttRows()}>
           {(row) => {
@@ -529,33 +486,24 @@ export function PlanGanttView(props: {
                           `status-${taskPlanStatus(occurrence.task) ?? planSessionStatus(session)}`,
                           taskTriggerClass(occurrence.task),
                           props.selectedSessionId === session.id &&
-                            props.selectedTaskNonceId ===
-                              taskNonceId(occurrence.task) &&
+                            props.selectedTaskNonceId === taskNonceId(occurrence.task) &&
                             "selected",
                         )}
-                        style={occurrenceTimelineStyle(
-                          occurrence,
-                          index(),
-                          row.occurrences.length,
-                        )}
+                        style={occurrenceTimelineStyle(occurrence, index(), row.occurrences.length)}
                         onPointerDown={(event) =>
                           beginGanttTaskDrag(event, session, occurrence.task)
                         }
-                        onMouseDown={(event) =>
-                          beginGanttTaskDrag(event, session, occurrence.task)
-                        }
+                        onMouseDown={(event) => beginGanttTaskDrag(event, session, occurrence.task)}
                         onClick={(event) => event.preventDefault()}
                         title={[
-                          taskSummaryText(occurrence.task) ||
-                            planTaskTitle(session),
+                          taskSummaryText(occurrence.task) || planTaskTitle(session),
                           sessionTitle(session),
                         ].join("\n")}
                         data-task-nonce={taskNonceId(occurrence.task)}
                         data-task-occurrence={occurrence.startAt.toISOString()}
                       >
                         <strong>
-                          {taskSummaryText(occurrence.task) ||
-                            planTaskTitle(session)}
+                          {taskSummaryText(occurrence.task) || planTaskTitle(session)}
                         </strong>
                       </button>
                     )}

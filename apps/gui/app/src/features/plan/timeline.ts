@@ -26,10 +26,7 @@ export function planSessionDate(session: Session): Date | undefined {
 export function planTimelineDays(sessions: Session[], count: number): Date[] {
   const first = sessions.map(planSessionDate).find(Boolean) ?? new Date();
   const start = startOfDay(new Date(first.getTime() - 2 * DAY_MS));
-  return Array.from(
-    { length: count },
-    (_, index) => new Date(start.getTime() + index * DAY_MS),
-  );
+  return Array.from({ length: count }, (_, index) => new Date(start.getTime() + index * DAY_MS));
 }
 
 export function planTimelineStart(sessions: Session[]): Date {
@@ -38,26 +35,16 @@ export function planTimelineStart(sessions: Session[]): Date {
 
 export function planTimelineWindow(anchor: Date, count: number): Date[] {
   const start = new Date(anchor);
-  return Array.from(
-    { length: count },
-    (_, index) => new Date(start.getTime() + index * DAY_MS),
-  );
+  return Array.from({ length: count }, (_, index) => new Date(start.getTime() + index * DAY_MS));
 }
 
 export type PlanGanttMode = "week" | "day";
 
-export function planTimelineMarks(
-  anchor: Date,
-  mode: PlanGanttMode,
-  dayHourCount = 6,
-): Date[] {
+export function planTimelineMarks(anchor: Date, mode: PlanGanttMode, dayHourCount = 6): Date[] {
   const start = new Date(new Date(anchor).setSeconds(0, 0));
   const count = mode === "day" ? dayHourCount : 7;
   const step = mode === "day" ? HOUR_MS : DAY_MS;
-  return Array.from(
-    { length: count },
-    (_, index) => new Date(start.getTime() + index * step),
-  );
+  return Array.from({ length: count }, (_, index) => new Date(start.getTime() + index * step));
 }
 
 export function formatGanttDayTitle(days: Date[]): string {
@@ -130,30 +117,16 @@ export function planTimelineWeeks(days: Date[]): Array<{
 
 export function calendarGridDays(monthStart: Date): Date[] {
   const start = startOfDay(
-    new Date(
-      monthStart.getFullYear(),
-      monthStart.getMonth(),
-      1 - monthStart.getDay(),
-    ),
+    new Date(monthStart.getFullYear(), monthStart.getMonth(), 1 - monthStart.getDay()),
   );
-  return Array.from(
-    { length: 42 },
-    (_, index) => new Date(start.getTime() + index * DAY_MS),
-  );
+  return Array.from({ length: 42 }, (_, index) => new Date(start.getTime() + index * DAY_MS));
 }
 
 export function calendarWeekDays(anchor: Date): Date[] {
   const start = startOfDay(
-    new Date(
-      anchor.getFullYear(),
-      anchor.getMonth(),
-      anchor.getDate() - anchor.getDay(),
-    ),
+    new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() - anchor.getDay()),
   );
-  return Array.from(
-    { length: 7 },
-    (_, index) => new Date(start.getTime() + index * DAY_MS),
-  );
+  return Array.from({ length: 7 }, (_, index) => new Date(start.getTime() + index * DAY_MS));
 }
 
 export function hourStartIso(day: Date, hour: number): string {

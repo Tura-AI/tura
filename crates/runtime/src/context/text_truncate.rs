@@ -1,22 +1,9 @@
-//! Context-text truncation helpers: token budget, section-/query-/ripgrep-
-//! grouped truncation, and character-boundary safe slicing.
+//! Context-text truncation helpers: section-/query-/ripgrep-grouped truncation.
 //!
-//! Pure text-processing layer carved out of `context_management.rs`; no
-//! external state. Exposed only inside `context::*` via `pub(super)`.
+//! Pure text-processing layer with no external state. Exposed only inside
+//! `context::*` via `pub(super)`.
 
-pub(super) const CONTEXT_OUTPUT_MAX_TOKENS: usize = 2_500;
-pub(super) const COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS: usize = 2_500;
-pub(super) const APPROX_CHARS_PER_TOKEN: usize = 4;
-
-pub(super) fn truncate_text_to_token_budget(text: &str, max_tokens: usize) -> String {
-    let max_chars = max_tokens.saturating_mul(APPROX_CHARS_PER_TOKEN);
-    if text.len() <= max_chars {
-        return text.to_string();
-    }
-    let mut out = text.chars().take(max_chars).collect::<String>();
-    out.push_str("\n\n[context checkpoint truncated to about 20,000 tokens]");
-    out
-}
+use super::token_budget::{formatted_truncate_text, APPROX_CHARS_PER_TOKEN};
 
 pub(super) fn environment_context_message(cwd: &std::path::Path) -> String {
     format!(
@@ -54,19 +41,6 @@ fn context_shell_name() -> &'static str {
         _ if cfg!(windows) => "powershell",
         _ => "bash",
     }
-}
-
-pub(super) fn context_output_byte_budget() -> usize {
-    CONTEXT_OUTPUT_MAX_TOKENS * APPROX_CHARS_PER_TOKEN
-}
-
-pub(super) fn formatted_truncate_text(content: &str, max_tokens: usize) -> String {
-    if content.len() <= max_tokens * APPROX_CHARS_PER_TOKEN {
-        return content.to_string();
-    }
-    let total_lines = content.lines().count();
-    let truncated = truncate_middle_with_token_budget(content, max_tokens);
-    format!("Total output lines: {total_lines}\n\n{truncated}")
 }
 
 pub(super) fn command_run_truncate_text(
@@ -545,55 +519,4 @@ fn ripgrep_result_path(line: &str) -> Option<String> {
         return None;
     }
     Some(path.replace('\\', "/"))
-}
-
-fn truncate_middle_with_token_budget(content: &str, max_tokens: usize) -> String {
-    let max_chars = max_tokens.saturating_mul(APPROX_CHARS_PER_TOKEN);
-    if content.len() <= max_chars {
-        return content.to_string();
-    }
-    if max_chars == 0 {
-        return format!("…{} tokens truncated…", approx_token_count(content.len()));
-    }
-
-    let marker_budget = 32usize;
-    let visible_budget = max_chars.saturating_sub(marker_budget).max(2);
-    let head_budget = visible_budget / 2;
-    let tail_budget = visible_budget.saturating_sub(head_budget);
-    let head_end = byte_floor_char_boundary(content, head_budget);
-    let tail_start = byte_ceil_char_boundary(content, content.len().saturating_sub(tail_budget));
-    let removed = tail_start.saturating_sub(head_end);
-    let removed_tokens = approx_token_count(removed);
-    format!(
-        "{}…{} tokens truncated…{}",
-        &content[..head_end],
-        removed_tokens,
-        &content[tail_start..]
-    )
-}
-
-fn approx_token_count(byte_count: usize) -> usize {
-    byte_count.div_ceil(APPROX_CHARS_PER_TOKEN)
-}
-
-fn byte_floor_char_boundary(text: &str, target: usize) -> usize {
-    if target >= text.len() {
-        return text.len();
-    }
-    let mut index = target;
-    while index > 0 && !text.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
-}
-
-fn byte_ceil_char_boundary(text: &str, target: usize) -> usize {
-    if target >= text.len() {
-        return text.len();
-    }
-    let mut index = target;
-    while index < text.len() && !text.is_char_boundary(index) {
-        index += 1;
-    }
-    index
 }

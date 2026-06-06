@@ -24,10 +24,7 @@ export function RailSectionTitle(props: {
 
 export function RailDisclosure(props: { expanded: boolean }) {
   return (
-    <span
-      class={classNames("rail-disclosure", props.expanded && "expanded")}
-      aria-hidden="true"
-    >
+    <span class={classNames("rail-disclosure", props.expanded && "expanded")} aria-hidden="true">
       <ChevronRight size={13} strokeWidth={1.8} />
     </span>
   );

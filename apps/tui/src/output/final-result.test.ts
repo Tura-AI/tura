@@ -13,7 +13,13 @@ test("run result ignores internal assistant completion placeholders", () => {
     {
       id: "msg-internal",
       role: "assistant",
-      parts: [{ id: "part-internal", type: "text", text: "MANO completed without a user-facing message." }],
+      parts: [
+        {
+          id: "part-internal",
+          type: "text",
+          text: "MANO completed without a user-facing message.",
+        },
+      ],
     },
   ];
 

@@ -27,9 +27,7 @@ export function connectGatewayEvents(input: {
         input.onEvent(parsed);
       }
     } catch (error) {
-      input.onError?.(
-        error instanceof Error ? error : new Error(String(error)),
-      );
+      input.onError?.(error instanceof Error ? error : new Error(String(error)));
     }
   };
 

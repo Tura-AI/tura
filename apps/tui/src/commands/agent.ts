@@ -7,7 +7,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { t } from "../i18n.js";
 
 export async function agentCommand(context: CliContext, args: string[]): Promise<void> {
-  const client = new GatewayClient({ baseUrl: context.gatewayUrl, directory: context.cwd, verbose: context.verbose });
+  const client = new GatewayClient({
+    baseUrl: context.gatewayUrl,
+    directory: context.cwd,
+    verbose: context.verbose,
+  });
   const subcommand = args.shift() ?? "list";
   const json = context.json || takeFlag(args, "--json");
   if (subcommand === "list") {
@@ -16,7 +20,9 @@ export async function agentCommand(context: CliContext, args: string[]): Promise
     else {
       const human = new HumanOutput(context.color);
       for (const agent of agents) {
-        human.out(`${agent.summary?.name ?? agent.summary?.id}\t${agent.summary?.description ?? ""}`);
+        human.out(
+          `${agent.summary?.name ?? agent.summary?.id}\t${agent.summary?.description ?? ""}`,
+        );
       }
     }
     return;
@@ -37,8 +43,14 @@ export async function agentCommand(context: CliContext, args: string[]): Promise
     const id = args.shift();
     if (!id) throw new CliUsageError(t("agentRequiresId", { command: subcommand }));
     const payload = parseAgentUpsertArgs(id, args);
-    if (args.length > 0) throw new CliUsageError(t("unknownAgentArguments", { command: subcommand, args: args.join(" ") }));
-    const agent = subcommand === "create" ? await client.createAgent(payload) : await client.updateAgent(id, payload);
+    if (args.length > 0)
+      throw new CliUsageError(
+        t("unknownAgentArguments", { command: subcommand, args: args.join(" ") }),
+      );
+    const agent =
+      subcommand === "create"
+        ? await client.createAgent(payload)
+        : await client.updateAgent(id, payload);
     if (json) printJson(agent);
     else new HumanOutput(context.color).out(`${agent.summary.id}\t${agent.summary.path}`);
     return;
@@ -61,17 +73,22 @@ export async function agentCommand(context: CliContext, args: string[]): Promise
       const response = {
         agent: id,
         tier: stringValue(provider.tura_llm_name) ?? "thinking",
-        reasoning_effort: stringValue(provider.model_reasoning_effort) ?? "low",
-        priority: provider.service_tier === "priority" || provider.model_acceleration_enabled === true,
+        reasoning_effort: stringValue(provider.model_reasoning_effort) ?? "medium",
+        priority:
+          provider.service_tier === "priority" || provider.model_acceleration_enabled === true,
       };
       if (json) printJson(response);
-      else new HumanOutput(context.color).out(`${response.agent}\t${response.tier}\t${response.reasoning_effort}\t${response.priority ? t("priority") : t("defaultModel")}`);
+      else
+        new HumanOutput(context.color).out(
+          `${response.agent}\t${response.tier}\t${response.reasoning_effort}\t${response.priority ? t("priority") : t("defaultModel")}`,
+        );
       return;
     }
     const reasoning = takeOption(args, "--reasoning") ?? takeOption(args, "--reasoning-effort");
     const priority = takeFlag(args, "--priority");
     const noPriority = takeFlag(args, "--no-priority");
-    if (args.length > 0) throw new CliUsageError(t("unknownAgentTierArguments", { args: args.join(" ") }));
+    if (args.length > 0)
+      throw new CliUsageError(t("unknownAgentTierArguments", { args: args.join(" ") }));
     const config = agentConfigWithProviderTier(stored.config, {
       tier,
       reasoningEffort: reasoning,
@@ -89,7 +106,8 @@ function parseAgentUpsertArgs(id: string, args: string[]): AgentUpsertRequest {
   const configInput = takeOption(args, "--config");
   const prompt = takeOption(args, "--prompt");
   const promptFile = takeOption(args, "--prompt-file");
-  if (prompt && promptFile) throw new CliUsageError(t("useOnlyOneOption", { left: "--prompt", right: "--prompt-file" }));
+  if (prompt && promptFile)
+    throw new CliUsageError(t("useOnlyOneOption", { left: "--prompt", right: "--prompt-file" }));
   const config = configInput ? readJsonValue<AgentConfig>(configInput, "--config") : undefined;
   return {
     id,
@@ -147,15 +165,21 @@ function takeFlag(args: string[], name: string): boolean {
 }
 
 function readJsonValue<T>(value: string, option: string): T {
-  const source = value.trim().startsWith("{") || value.trim().startsWith("[")
-    ? value
-    : existsSync(value)
-      ? readTextFile(value, option)
-      : value;
+  const source =
+    value.trim().startsWith("{") || value.trim().startsWith("[")
+      ? value
+      : existsSync(value)
+        ? readTextFile(value, option)
+        : value;
   try {
     return JSON.parse(source) as T;
   } catch (error) {
-    throw new CliUsageError(t("jsonOrFileRequired", { option, error: error instanceof Error ? error.message : String(error) }));
+    throw new CliUsageError(
+      t("jsonOrFileRequired", {
+        option,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
   }
 }
 
@@ -163,6 +187,11 @@ function readTextFile(path: string, option: string): string {
   try {
     return readFileSync(path, "utf8");
   } catch (error) {
-    throw new CliUsageError(t("jsonFileReadFailed", { option, error: error instanceof Error ? error.message : String(error) }));
+    throw new CliUsageError(
+      t("jsonFileReadFailed", {
+        option,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
   }
 }

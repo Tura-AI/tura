@@ -11,9 +11,7 @@ import Check from "lucide-solid/icons/check";
 import ChevronDown from "lucide-solid/icons/chevron-down";
 import Columns3 from "lucide-solid/icons/columns-3";
 import MoreHorizontal from "lucide-solid/icons/ellipsis";
-import FileIcon from "lucide-solid/icons/file";
 import GripVertical from "lucide-solid/icons/grip-vertical";
-import ImageIcon from "lucide-solid/icons/image";
 import LayoutList from "lucide-solid/icons/layout-list";
 import Play from "lucide-solid/icons/play";
 import Plus from "lucide-solid/icons/plus";
@@ -21,15 +19,7 @@ import Repeat2 from "lucide-solid/icons/repeat-2";
 import ScrollText from "lucide-solid/icons/scroll-text";
 import Search from "lucide-solid/icons/search";
 import Timer from "lucide-solid/icons/timer";
-import {
-  For,
-  Show,
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-  type JSX,
-} from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { Dynamic, Portal } from "solid-js/web";
 import { t, type TextKey } from "../../i18n";
 import { classNames } from "../../state/format";
@@ -56,6 +46,12 @@ import {
   taskStartCondition,
   taskSummaryText,
 } from "../../features/plan/tasks";
+import {
+  beginComposerTaskPointerDrag,
+  type ComposerTaskDragState,
+  type TaskDropIndicator,
+} from "./plan-composer-drag";
+import { TaskRowText } from "./plan-task-row-text";
 export function PlanModeButtons(props: {
   mode: PlanMode;
   splitOpen: boolean;
@@ -81,14 +77,10 @@ export function PlanModeButtons(props: {
             <button
               class={classNames(
                 "icon-action",
-                (mode.id === "split"
-                  ? props.splitOpen
-                  : props.mode === mode.id) && "selected",
+                (mode.id === "split" ? props.splitOpen : props.mode === mode.id) && "selected",
               )}
               title={mode.label}
-              onClick={() =>
-                mode.id === "split" ? props.onSplit() : props.onMode(mode.id)
-              }
+              onClick={() => (mode.id === "split" ? props.onSplit() : props.onMode(mode.id))}
             >
               <Icon size={17} />
             </button>
@@ -103,9 +95,7 @@ export function PlanTicketMeta(props: { session: Session }) {
   const task = createMemo(() => sessionTaskState(props.session));
   const condition = createMemo(() => taskStartCondition(task()));
   const label = createMemo(() =>
-    condition() === "user_action"
-      ? t("sessionIdle")
-      : formatStartCondition(condition()),
+    condition() === "user_action" ? t("sessionIdle") : formatStartCondition(condition()),
   );
   return (
     <div class="ticket-meta">
@@ -143,21 +133,15 @@ export function PlanComposerTaskList(props: {
       return;
     }
     const current = tasks();
-    const sourceIndex = current.findIndex(
-      (task) => taskNonceId(task) === sourceNonce,
-    );
-    const targetIndex = current.findIndex(
-      (task) => taskNonceId(task) === targetNonce,
-    );
+    const sourceIndex = current.findIndex((task) => taskNonceId(task) === sourceNonce);
+    const targetIndex = current.findIndex((task) => taskNonceId(task) === targetNonce);
     if (sourceIndex < 0 || targetIndex < 0) {
       return;
     }
     const next = [...current];
     const [source] = next.splice(sourceIndex, 1);
-    const targetIndexAfterRemoval =
-      sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
-    const insertIndex =
-      edge === "after" ? targetIndexAfterRemoval + 1 : targetIndexAfterRemoval;
+    const targetIndexAfterRemoval = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+    const insertIndex = edge === "after" ? targetIndexAfterRemoval + 1 : targetIndexAfterRemoval;
     next.splice(insertIndex, 0, source);
     props.onReorder(next);
   }
@@ -176,10 +160,7 @@ export function PlanComposerTaskList(props: {
     }
     const closeMenu = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null;
-      if (
-        target?.closest(".composer-task-menu") ||
-        target?.closest(".composer-task-more")
-      ) {
+      if (target?.closest(".composer-task-menu") || target?.closest(".composer-task-more")) {
         return;
       }
       setMenuNonce(undefined);
@@ -209,28 +190,19 @@ export function PlanComposerTaskList(props: {
           {(task, index) => {
             const rowKey = () => taskNonceId(task) ?? `task:${index()}`;
             const indicator = () =>
-              dropIndicator()?.nonce === taskNonceId(task)
-                ? dropIndicator()?.edge
-                : undefined;
+              dropIndicator()?.nonce === taskNonceId(task) ? dropIndicator()?.edge : undefined;
             return (
               <PlanTaskRow
                 pulseId={rowKey()}
                 task={task}
                 dragging={dragNonce() === taskNonceId(task)}
                 dropIndicator={indicator()}
-                pulseToken={
-                  props.pulseNonceId === taskNonceId(task)
-                    ? props.pulseToken
-                    : undefined
-                }
+                pulseToken={props.pulseNonceId === taskNonceId(task) ? props.pulseToken : undefined}
                 selected={Boolean(
-                  props.selected_task_id &&
-                  props.selected_task_id === taskNonceId(task),
+                  props.selected_task_id && props.selected_task_id === taskNonceId(task),
                 )}
                 menuOpen={menuNonce() === rowKey()}
-                onMenu={() =>
-                  setMenuNonce(menuNonce() === rowKey() ? undefined : rowKey())
-                }
+                onMenu={() => setMenuNonce(menuNonce() === rowKey() ? undefined : rowKey())}
                 onEdit={() => {
                   if (suppressedEditNonce() === taskNonceId(task)) {
                     return;
@@ -260,8 +232,7 @@ export function PlanComposerTaskList(props: {
                     setDragNonce,
                     setDragGhost,
                     setDropIndicator,
-                    onDrop: (drop) =>
-                      reorderTaskTo(nonce, drop.nonce, drop.edge),
+                    onDrop: (drop) => reorderTaskTo(nonce, drop.nonce, drop.edge),
                     onFinish: (moved) => finishDrag(nonce, moved),
                   });
                 }}
@@ -272,113 +243,6 @@ export function PlanComposerTaskList(props: {
       </section>
     </Show>
   );
-}
-
-type ComposerTaskDragState = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  html: string;
-};
-
-type TaskDropIndicator = {
-  nonce: string;
-  edge: "before" | "after";
-};
-
-function beginComposerTaskPointerDrag(options: {
-  event: PointerEvent;
-  sourceNonce: string;
-  setDragNonce: (value?: string) => void;
-  setDragGhost: (value?: ComposerTaskDragState) => void;
-  setDropIndicator: (value?: TaskDropIndicator) => void;
-  onDrop: (drop: TaskDropIndicator) => void;
-  onFinish: (moved: boolean) => void;
-}) {
-  if (options.event.button !== 0) {
-    return;
-  }
-  const target = options.event.target as HTMLElement | null;
-  if (target?.closest(".composer-task-more, .composer-task-menu")) {
-    return;
-  }
-  const sourceElement = options.event.currentTarget as HTMLElement | null;
-  const sourceRect = sourceElement?.getBoundingClientRect();
-  if (!sourceElement || !sourceRect) {
-    return;
-  }
-  const startX = options.event.clientX;
-  const startY = options.event.clientY;
-  const offsetX = startX - sourceRect.left;
-  const offsetY = startY - sourceRect.top;
-  const sourceHtml = sourceElement.innerHTML;
-  const dragThreshold = 8;
-  let moved = false;
-  let latestDrop: TaskDropIndicator | undefined;
-
-  const updateDropIndicator = (point: { x: number; y: number }) => {
-    const element = document.elementFromPoint(point.x, point.y) as
-      | HTMLElement
-      | undefined;
-    const row = element?.closest<HTMLElement>(".composer-task-row-wrap");
-    const nonce = row?.dataset.taskNonce;
-    if (!row || !nonce || nonce === options.sourceNonce) {
-      latestDrop = undefined;
-      options.setDropIndicator(undefined);
-      return;
-    }
-    const rect = row.getBoundingClientRect();
-    latestDrop = {
-      nonce,
-      edge: point.y > rect.top + rect.height / 2 ? "after" : "before",
-    };
-    options.setDropIndicator(latestDrop);
-  };
-
-  const updateGhost = (x: number, y: number) => {
-    options.setDragGhost({
-      x: Math.round(x - offsetX),
-      y: Math.round(y - offsetY),
-      width: Math.round(sourceRect.width),
-      height: Math.round(sourceRect.height),
-      html: sourceHtml,
-    });
-  };
-
-  const onMove = (move: PointerEvent | MouseEvent) => {
-    if (
-      !moved &&
-      Math.hypot(move.clientX - startX, move.clientY - startY) >= dragThreshold
-    ) {
-      moved = true;
-      options.setDragNonce(options.sourceNonce);
-      sourceElement.classList.add("plan-source-dragging");
-    }
-    if (!moved) {
-      return;
-    }
-    move.preventDefault();
-    updateGhost(move.clientX, move.clientY);
-    updateDropIndicator({ x: move.clientX, y: move.clientY });
-  };
-
-  const onUp = () => {
-    window.removeEventListener("pointermove", onMove);
-    window.removeEventListener("pointerup", onUp);
-    window.removeEventListener("mousemove", onMove);
-    window.removeEventListener("mouseup", onUp);
-    sourceElement.classList.remove("plan-source-dragging");
-    if (moved && latestDrop) {
-      options.onDrop(latestDrop);
-    }
-    options.onFinish(moved);
-  };
-
-  window.addEventListener("pointermove", onMove);
-  window.addEventListener("pointerup", onUp, { once: true });
-  window.addEventListener("mousemove", onMove);
-  window.addEventListener("mouseup", onUp, { once: true });
 }
 
 export function PlanConversationFeedbackNotice(props: {
@@ -409,89 +273,15 @@ export function PlanConversationFeedbackNotice(props: {
   );
 }
 
-export function shouldShowPlanFeedbackPrompt(
-  session: Session,
-  composerText: string,
-): boolean {
+export function shouldShowPlanFeedbackPrompt(session: Session, composerText: string): boolean {
   const status = planSessionStatus(session);
   if (status === "question" || status === "done") {
     return true;
   }
-  return (
-    status === "todo" &&
-    !firstRunnableTask(session) &&
-    composerText.trim().length > 0
-  );
+  return status === "todo" && !firstRunnableTask(session) && composerText.trim().length > 0;
 }
 
 const taskRowPulseSignatureCache = new Map<string, string>();
-const TASK_MEDIA_TOKEN_PATTERN =
-  /\[\[(image|file):([a-zA-Z0-9_-]+)\]\]|\[(image|file):([a-zA-Z0-9_-]+)\]/gu;
-
-type TaskTextSegment =
-  | { type: "text"; value: string }
-  | { type: "image" | "file"; value: string };
-
-function taskTextSegments(text: string): TaskTextSegment[] {
-  const segments: TaskTextSegment[] = [];
-  let cursor = 0;
-  for (const match of text.matchAll(TASK_MEDIA_TOKEN_PATTERN)) {
-    if (match.index > cursor) {
-      segments.push({ type: "text", value: text.slice(cursor, match.index) });
-    }
-    segments.push({
-      type: (match[1] ?? match[3]) === "file" ? "file" : "image",
-      value: match[2] ?? match[4] ?? "",
-    });
-    cursor = match.index + match[0].length;
-  }
-  if (cursor < text.length) {
-    segments.push({ type: "text", value: text.slice(cursor) });
-  }
-  return segments.length > 0 ? segments : [{ type: "text", value: text }];
-}
-
-function TaskRowText(props: { text: string }) {
-  const segments = createMemo(() => taskTextSegments(props.text));
-  return (
-    <>
-      <For each={segments()}>
-        {(segment) => (
-          <Show when={segment.type !== "text"} fallback={<>{segment.value}</>}>
-            <TaskMediaToken
-              type={segment.type as "image" | "file"}
-              id={segment.value}
-            />
-          </Show>
-        )}
-      </For>
-    </>
-  );
-}
-
-function TaskMediaToken(props: { type: "image" | "file"; id: string }) {
-  const Icon = props.type === "file" ? FileIcon : ImageIcon;
-  const label = createMemo(() =>
-    props.type === "file" ? t("attachmentFile") : t("attachmentImage"),
-  );
-  return (
-    <span
-      class={classNames(
-        "composer-attachment-token",
-        "task-media-token",
-        props.type === "image" && "composer-image-token",
-        props.type === "file" && "composer-file-token",
-      )}
-      title={`${label()} ${props.id}`}
-    >
-      <span class="task-media-token-main">
-        <Icon size={13} strokeWidth={1.7} />
-        <span>{label()}</span>
-      </span>
-    </span>
-  );
-}
-
 export function PlanTaskRow(props: {
   pulseId: string;
   task: TaskManagement;
@@ -518,9 +308,7 @@ export function PlanTaskRow(props: {
     const value = status();
     return value === "doing" || value === "question" ? value : undefined;
   });
-  const taskPulseSignature = createMemo(
-    () => `${summaryText()}\n${taskDisplayText(props.task)}`,
-  );
+  const taskPulseSignature = createMemo(() => `${summaryText()}\n${taskDisplayText(props.task)}`);
   const scheduleText = createMemo(() => {
     const startCondition = taskStartCondition(props.task);
     return startCondition === "user_action"
@@ -539,10 +327,7 @@ export function PlanTaskRow(props: {
       return;
     }
     const width = 146;
-    const left = Math.max(
-      8,
-      Math.min(rect.right - width, window.innerWidth - width - 8),
-    );
+    const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
     setMenuRect({ left, top: rect.top - 6 });
   }
   createEffect(() => {
@@ -620,12 +405,7 @@ export function PlanTaskRow(props: {
             <TaskRowText text={summaryText()} />
           </span>
         </span>
-        <small
-          class={classNames(
-            "composer-task-meta",
-            remainingText() && "has-countdown",
-          )}
-        >
+        <small class={classNames("composer-task-meta", remainingText() && "has-countdown")}>
           <Show when={scheduleText()}>
             <span class="composer-task-condition">{scheduleText()}</span>
           </Show>
@@ -674,9 +454,7 @@ export function PlanTaskRow(props: {
 
 export function formatPollInterval(interval: PollInterval): string {
   const normalized = normalizePollInterval(interval);
-  return (["d", "h", "m", "s"] as const)
-    .map((part) => `${normalized[part] ?? 0}${part}`)
-    .join(" ");
+  return (["d", "h", "m", "s"] as const).map((part) => `${normalized[part] ?? 0}${part}`).join(" ");
 }
 
 export function PlanDraftSessionPicker(props: {
@@ -694,9 +472,7 @@ export function PlanDraftSessionPicker(props: {
   );
   const filteredSessions = createMemo(() => {
     const normalized = query().trim().toLowerCase();
-    const sessions = props.sessions.filter(
-      (session) => planSessionStatus(session) !== "archived",
-    );
+    const sessions = props.sessions.filter((session) => planSessionStatus(session) !== "archived");
     if (!normalized) {
       return sessions.slice(0, 8);
     }
@@ -726,16 +502,10 @@ export function PlanDraftSessionPicker(props: {
         type="button"
         class="plan-session-button"
         onClick={() => setOpen(!open())}
-        title={
-          selectedSession() ? sessionTitle(selectedSession()!) : t("newSession")
-        }
+        title={selectedSession() ? sessionTitle(selectedSession()!) : t("newSession")}
       >
         <ScrollText size={15} strokeWidth={1.8} />
-        <span>
-          {selectedSession()
-            ? sessionTitle(selectedSession()!)
-            : t("newSession")}
-        </span>
+        <span>{selectedSession() ? sessionTitle(selectedSession()!) : t("newSession")}</span>
         <ChevronDown size={13} strokeWidth={1.8} />
       </button>
       <Show when={open()}>
@@ -809,11 +579,8 @@ export function PlanComposerControls(props: {
   let root: HTMLElement | undefined;
   const [open, setOpen] = createSignal(false);
   const [scheduleOpen, setScheduleOpen] = createSignal(false);
-  const [scheduleCondition, setScheduleCondition] =
-    createSignal<StartCondition>();
-  const [scheduleDefaultStartAt, setScheduleDefaultStartAt] = createSignal(
-    defaultLocalStartAt(),
-  );
+  const [scheduleCondition, setScheduleCondition] = createSignal<StartCondition>();
+  const [scheduleDefaultStartAt, setScheduleDefaultStartAt] = createSignal(defaultLocalStartAt());
   const startConditions: Array<{
     id: StartCondition;
     label: string;
@@ -826,9 +593,8 @@ export function PlanComposerControls(props: {
   ];
   const selectedCondition = createMemo(
     () =>
-      startConditions.find(
-        (condition) => condition.id === props.startCondition,
-      ) ?? startConditions[0]!,
+      startConditions.find((condition) => condition.id === props.startCondition) ??
+      startConditions[0]!,
   );
   const selectedLabel = createMemo(() => {
     return selectedCondition().label;
@@ -836,9 +602,7 @@ export function PlanComposerControls(props: {
   const SelectedIcon = createMemo(() => selectedCondition().icon);
   const conditionRemainingText = (condition: StartCondition) =>
     formatTaskRemaining({
-      start_at: localDateTimeToUtcIso(
-        props.startAt || scheduleDefaultStartAt(),
-      ),
+      start_at: localDateTimeToUtcIso(props.startAt || scheduleDefaultStartAt()),
       poll_interval: condition === "polling_task" ? props.pollInterval : {},
     });
   const conditionMetaText = (condition: StartCondition) => {
@@ -850,9 +614,7 @@ export function PlanComposerControls(props: {
       if (!remaining) {
         return "";
       }
-      return `${remaining}/${formatPollIntervalEveryCompact(
-        props.pollInterval,
-      )}`;
+      return `${remaining}/${formatPollIntervalEveryCompact(props.pollInterval)}`;
     }
     return "";
   };
@@ -860,10 +622,7 @@ export function PlanComposerControls(props: {
     const openedDefaultStartAt = defaultLocalStartAt();
     setScheduleDefaultStartAt(openedDefaultStartAt);
     props.onStartCondition(condition);
-    if (
-      (condition === "scheduled_task" || condition === "polling_task") &&
-      !props.startAt
-    ) {
+    if ((condition === "scheduled_task" || condition === "polling_task") && !props.startAt) {
       props.onStartAt(openedDefaultStartAt);
     }
     if (condition === "polling_task") {
@@ -920,11 +679,7 @@ export function PlanComposerControls(props: {
                 )}
                 onClick={() => selectCondition(condition.id)}
               >
-                <Dynamic
-                  component={condition.icon}
-                  size={15}
-                  strokeWidth={1.7}
-                />
+                <Dynamic component={condition.icon} size={15} strokeWidth={1.7} />
                 <span>{condition.label}</span>
                 <Show when={conditionMetaText(condition.id)}>
                   {(meta) => <small>{meta()}</small>}
@@ -1016,9 +771,7 @@ export function PlanScheduleDialog(props: {
       { label: "今晚", value: localDateTimeFromDate(atLocalTime(now, 20, 0)) },
       {
         label: "明早",
-        value: localDateTimeFromDate(
-          atLocalTime(addMinutes(now, 24 * 60), 9, 0),
-        ),
+        value: localDateTimeFromDate(atLocalTime(addMinutes(now, 24 * 60), 9, 0)),
       },
     ];
     return items;
@@ -1032,11 +785,7 @@ export function PlanScheduleDialog(props: {
         >
           <header>
             <div>
-              <h2>
-                {props.condition === "polling_task"
-                  ? t("pollingTask")
-                  : t("scheduledTask")}
-              </h2>
+              <h2>{props.condition === "polling_task" ? t("pollingTask") : t("scheduledTask")}</h2>
             </div>
             <button type="button" onClick={props.onCancel}>
               ×

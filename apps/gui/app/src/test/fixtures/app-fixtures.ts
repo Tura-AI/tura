@@ -30,6 +30,8 @@ import {
 
 const FIXTURE_FILE_ROOT = "C:\\Users\\liuliu\\Documents\\tura";
 const FIXTURE_MODEL = "openai/gpt-5.5";
+const RICH_TABLE_ROWS = 72;
+const RICH_TABLE_COLUMNS = 48;
 const FIXTURE_AGENTS: Agent[] = [
   {
     name: "thinking",
@@ -120,44 +122,84 @@ const FIXTURE_AGENTS: Agent[] = [
     permission: { allow: [], deny: [] },
   },
 ];
-const FIXTURE_PERSONAS: StoredPersona[] = ["tura", "wonderful", "pidan"].map(
-  (id) => ({
-    summary: {
-      id,
-      display_name: id,
-      description: `${id} avatar`,
-      short_description:
-        id === "tura"
-          ? "Sharp supervisor"
-          : id === "wonderful"
-            ? "Loyal companion"
-            : "Sleepy strategist",
-      source: "static",
-      path: "",
-      default_config: true,
-      state: "active",
-      media: fixturePersonaMedia(id),
-    },
-    config: {
-      persona_name: id,
-      display_name: id,
-      description: `${id} avatar`,
-      short_description:
-        id === "tura"
-          ? "Sharp supervisor"
-          : id === "wonderful"
-            ? "Loyal companion"
-            : "Sleepy strategist",
-      default_config: true,
-      persona_directory: `personas/src/${id}`,
-      prompt_directory: `personas/src/${id}/prompt`,
-      media: fixturePersonaMedia(id),
-    },
-    persona: "",
-    communication_style: "",
-    management: {},
-  }),
-);
+
+function richTableProtocolFixture(): string {
+  const headers = Array.from(
+    { length: RICH_TABLE_COLUMNS },
+    (_, index) => `Col ${String(index + 1).padStart(2, "0")}`,
+  );
+  const separator = Array.from({ length: RICH_TABLE_COLUMNS + 1 }, () => "---");
+  const rows = Array.from({ length: RICH_TABLE_ROWS }, (_, rowIndex) => {
+    const row = rowIndex + 1;
+    const cells = Array.from({ length: RICH_TABLE_COLUMNS }, (_, colIndex) => {
+      const col = colIndex + 1;
+      const value = `${String(row).padStart(2, "0")}-${String(col).padStart(2, "0")}`;
+      const load = row * col * 17;
+      return `service-${value} viewport-${load}px scroll-${"wide".repeat((col % 4) + 1)}`;
+    });
+    return `| Row ${String(row).padStart(2, "0")} | ${cells.join(" | ")} |`;
+  });
+  return [
+    "<b>Bold</b>",
+    "<i>Italic</i>",
+    "<u>Underline</u>",
+    "<s>Strike</s>",
+    "<a href='https://example.com'>Search Link</a>",
+    "Inline <code>code_snippet</code>",
+    "<span class='tg-spoiler'>Hidden Text</span>",
+    "<blockquote>Cited text or summary</blockquote>",
+    "<pre><code class='language-python'>print('hello')</code></pre>",
+    "[MEDIA:/assets/conversation-avatar.png:MEDIA]",
+    "[MEDIA:/assets/conversation-avatar.png:MEDIA]",
+    "[MEDIA:/assets/conversation-avatar.png:MEDIA]",
+    "[MEDIA:/assets/conversation-avatar.png:MEDIA]",
+    "Table 2",
+    "Frontend table service stress matrix rendered from Markdown.",
+    "",
+    `| Index | ${headers.join(" | ")} |`,
+    `| ${separator.join(" | ")} |`,
+    ...rows,
+    "[EMOJI:sticker:😂:EMOJI]",
+    "[EMOJI:react:👍:EMOJI]",
+    "Protocol fixture complete.",
+  ].join("\n");
+}
+const FIXTURE_PERSONAS: StoredPersona[] = ["tura", "wonderful", "pidan"].map((id) => ({
+  summary: {
+    id,
+    display_name: id,
+    description: `${id} avatar`,
+    short_description:
+      id === "tura"
+        ? "Sharp supervisor"
+        : id === "wonderful"
+          ? "Loyal companion"
+          : "Sleepy strategist",
+    source: "static",
+    path: "",
+    default_config: true,
+    state: "active",
+    media: fixturePersonaMedia(id),
+  },
+  config: {
+    persona_name: id,
+    display_name: id,
+    description: `${id} avatar`,
+    short_description:
+      id === "tura"
+        ? "Sharp supervisor"
+        : id === "wonderful"
+          ? "Loyal companion"
+          : "Sleepy strategist",
+    default_config: true,
+    persona_directory: `personas/src/${id}`,
+    prompt_directory: `personas/src/${id}/prompt`,
+    media: fixturePersonaMedia(id),
+  },
+  persona: "",
+  communication_style: "",
+  management: {},
+}));
 
 function fixturePersonaMedia(role: string) {
   const directions = [
@@ -499,22 +541,14 @@ const FIXTURE_PROVIDER_STATE: Pick<
   },
 };
 
-export function fixtureAbsolutePath(
-  fixture: string | undefined,
-  path = "",
-): string | undefined {
+export function fixtureAbsolutePath(fixture: string | undefined, path = ""): string | undefined {
   if (fixture !== "plan-sessions") {
     return undefined;
   }
-  return path
-    ? `${FIXTURE_FILE_ROOT}\\${path.replaceAll("/", "\\")}`
-    : FIXTURE_FILE_ROOT;
+  return path ? `${FIXTURE_FILE_ROOT}\\${path.replaceAll("/", "\\")}` : FIXTURE_FILE_ROOT;
 }
 
-export function fixtureFiles(
-  fixture: string | undefined,
-  path = "",
-): FileInfo[] {
+export function fixtureFiles(fixture: string | undefined, path = ""): FileInfo[] {
   if (fixture !== "plan-sessions") {
     return [];
   }
@@ -587,8 +621,7 @@ export function fixtureFileContent(
       null,
       2,
     ),
-    "apps/app.config.ts":
-      'export default {\n  name: "tura",\n  workspace: "tura workspace",\n};\n',
+    "apps/app.config.ts": 'export default {\n  name: "tura",\n  workspace: "tura workspace",\n};\n',
     "apps/gui/package.json": JSON.stringify(
       {
         name: "@tura/gui",
@@ -643,9 +676,7 @@ export function relativeSessionTime(session: Session): string {
 
 export function sessionHoverTitle(session: Session): string {
   const schedule = sessionScheduleHoverText(session);
-  return schedule
-    ? `${sessionTitle(session)}\n${schedule}`
-    : sessionTitle(session);
+  return schedule ? `${sessionTitle(session)}\n${schedule}` : sessionTitle(session);
 }
 
 export function sessionScheduleHoverText(session: Session): string | undefined {
@@ -691,10 +722,7 @@ export function normalizeTimeMs(value: number): number {
   return value > 10_000_000_000 ? value : value * 1000;
 }
 
-export function readConfigString(
-  config: Record<string, unknown>,
-  key: string,
-): string | undefined {
+export function readConfigString(config: Record<string, unknown>, key: string): string | undefined {
   const value = config[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
@@ -722,10 +750,7 @@ export function readConfigBoolean(
 export function inputHeight(value: string): string {
   const lines = Math.min(
     12,
-    Math.max(
-      3,
-      value.split(/\r\n|\r|\n/u).length + Math.floor(value.length / 72),
-    ),
+    Math.max(3, value.split(/\r\n|\r|\n/u).length + Math.floor(value.length / 72)),
   );
   return `${lines * 24 + 36}px`;
 }
@@ -803,10 +828,7 @@ export function readBooleanSearchParam(name: string): boolean {
 
 export function readMainTabSearchParam(): MainTab | undefined {
   const tab = readSearchParam("tab");
-  return tab === "plan" ||
-    tab === "conversation" ||
-    tab === "files" ||
-    tab === "settings"
+  return tab === "plan" || tab === "conversation" || tab === "files" || tab === "settings"
     ? tab
     : tab === "new"
       ? "conversation"
@@ -846,30 +868,15 @@ function fixtureGatewaySessions(now: number, directory: string): Session[] {
       deliverable: "session ticket e2e",
       sub_session_id: "",
       status,
-      ...(startCondition === "scheduled_task" ||
-      startCondition === "polling_task"
+      ...(startCondition === "scheduled_task" || startCondition === "polling_task"
         ? { start_at: new Date(now + offset).toISOString() }
         : {}),
-      ...(startCondition === "polling_task"
-        ? { poll_interval: { m: 0, d: 0, h: 1, s: 0 } }
-        : {}),
+      ...(startCondition === "polling_task" ? { poll_interval: { m: 0, d: 0, h: 1, s: 0 } } : {}),
     },
   });
   const sessions = [
-    makeSessionRecord(
-      "session-todo-001",
-      "整理发布检查清单",
-      "todo",
-      1_000,
-      "scheduled_task",
-    ),
-    makeSessionRecord(
-      "session-doing-002",
-      "实现拖拽状态切换",
-      "doing",
-      3_700_000,
-      "polling_task",
-    ),
+    makeSessionRecord("session-todo-001", "整理发布检查清单", "todo", 1_000, "scheduled_task"),
+    makeSessionRecord("session-doing-002", "实现拖拽状态切换", "doing", 3_700_000, "polling_task"),
     makeSessionRecord(
       "session-question-003",
       "等待用户补充权限",
@@ -898,13 +905,7 @@ function fixtureGatewaySessions(now: number, directory: string): Session[] {
       9_200_000,
       "user_action",
     ),
-    makeSessionRecord(
-      "session-polling-008",
-      "轮询待办工单",
-      "todo",
-      13_200_000,
-      "polling_task",
-    ),
+    makeSessionRecord("session-polling-008", "轮询待办工单", "todo", 13_200_000, "polling_task"),
     makeSessionRecord(
       "session-long-scroll-009",
       longScrollTestTitle,
@@ -940,18 +941,14 @@ function fixtureGatewaySessions(now: number, directory: string): Session[] {
       "session-child-010",
     ),
   ];
-  const longSession = sessions.find(
-    (session) => session.id === "session-long-scroll-009",
-  );
+  const longSession = sessions.find((session) => session.id === "session-long-scroll-009");
   if (longSession?.task_management) {
     longSession.task_management.deliverable =
       "这条 mock 数据专门用来测试全屏侧边栏滚动条。它的标题很长，正文也很长，用户可以切到文件浏览器或会话页，在移动端宽度打开侧边栏，确认滚动条是否贴在画面的最右侧，而不是贴近内容列。".repeat(
         8,
       );
   }
-  const multiTaskSession = sessions.find(
-    (session) => session.id === "session-doing-002",
-  );
+  const multiTaskSession = sessions.find((session) => session.id === "session-doing-002");
   if (multiTaskSession?.task_management) {
     multiTaskSession.task_management.tasks = [
       {
@@ -987,8 +984,7 @@ function commandRunPart(
   exitCode?: number,
 ): MessagePart {
   const started = now - timing.startOffset;
-  const ended =
-    timing.endOffset === undefined ? undefined : now - timing.endOffset;
+  const ended = timing.endOffset === undefined ? undefined : now - timing.endOffset;
   const result = {
     command_type: "shell",
     command_line: command,
@@ -1038,8 +1034,7 @@ export function withInitialOverrides(
   return {
     ...state,
     activeTab,
-    previousMainTab:
-      activeTab === "settings" ? state.previousMainTab : activeTab,
+    previousMainTab: activeTab === "settings" ? state.previousMainTab : activeTab,
     selectedSessionId: overrides.selectedSessionId ?? state.selectedSessionId,
     selectedModel: overrides.selectedModel ?? state.selectedModel,
     selectedAgent: overrides.selectedAgent ?? state.selectedAgent,
@@ -1170,16 +1165,11 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       };
       return [user, assistant];
     };
-    const fixtureMessagesBySession: Record<string, Message[]> =
-      Object.fromEntries(
-        sessions.map((session, index) => [
-          session.id,
-          messagesForSession(session, index),
-        ]),
-      );
+    const fixtureMessagesBySession: Record<string, Message[]> = Object.fromEntries(
+      sessions.map((session, index) => [session.id, messagesForSession(session, index)]),
+    );
     const selectedFixtureSession =
-      sessions.find((session) => session.id === "session-doing-002") ??
-      sessions[0];
+      sessions.find((session) => session.id === "session-doing-002") ?? sessions[0];
     return {
       ...base,
       loading: false,
@@ -1311,8 +1301,7 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
           command: "browser screenshot localhost snake page",
           time: { start: now - 5_200, end: now - 1_200 },
           exit_code: 0,
-          output:
-            "3 screenshots captured\nstreaming text remained stable\nno overlap detected",
+          output: "3 screenshots captured\nstreaming text remained stable\nno overlap detected",
         },
       },
       {
@@ -1350,7 +1339,7 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
           fixture === "snake-pending"
             ? ""
             : protocolFixture
-              ? "<b>Bold</b>\n<i>Italic</i>\n<u>Underline</u>\n<s>Strike</s>\n<a href='https://example.com'>Search Link</a>\nInline <code>code_snippet</code>\n<span class='tg-spoiler'>Hidden Text</span>\n<blockquote>Cited text or summary</blockquote>\n<pre><code class='language-python'>print('hello')</code></pre>\n[MEDIA:/assets/conversation-avatar.png:MEDIA]\n[MEDIA:/assets/conversation-avatar.png:MEDIA]\n[MEDIA:/assets/conversation-avatar.png:MEDIA]\n[MEDIA:/assets/conversation-avatar.png:MEDIA]\n[EMOJI:sticker:😂:EMOJI]\n[EMOJI:react:👍:EMOJI]\nProtocol fixture complete."
+              ? richTableProtocolFixture()
               : "Snake 页面已经完成。棋盘、键盘控制、分数反馈和失败重开都在同一套极简布局里；streaming 输出保持稳定，没有挤压工具列表或输入框。",
       },
     ],
@@ -1382,9 +1371,7 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
     selectedSessionId: session.id,
     sessions: [session],
     messagesBySession: {
-      [session.id]: protocolFixture
-        ? [user, reaction, assistant]
-        : [user, assistant],
+      [session.id]: protocolFixture ? [user, reaction, assistant] : [user, assistant],
     },
     selectedModel: "openai/gpt-5.5",
     agents: FIXTURE_AGENTS,

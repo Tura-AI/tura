@@ -150,7 +150,7 @@ fn fail_unsupported_internal_command_returns_model_visible_result() {
     assert_eq!(output["results"][0]["success"], false);
     assert!(output["results"][0]["error"]
         .as_str()
-        .unwrap()
+        .expect("error should be a string")
         .contains("unsupported command_run command"));
 }
 
@@ -1578,7 +1578,7 @@ fn pass_command_run_arguments_accept_requests_wrapper_and_json_fence() {
 #[test]
 fn pass_apply_patch_success_and_fail_context_mismatch() {
     let root = temp_workspace("patch");
-    fs::write(root.join("app.txt"), "old\n").unwrap();
+    fs::write(root.join("app.txt"), "old\n").expect("fixture should be written");
 
     let pass = command_run::execute(
         &json!({
@@ -1592,7 +1592,10 @@ fn pass_apply_patch_success_and_fail_context_mismatch() {
         &root,
     );
     assert_eq!(pass["results"][0]["success"], true);
-    assert_eq!(fs::read_to_string(root.join("app.txt")).unwrap(), "new\n");
+    assert_eq!(
+        fs::read_to_string(root.join("app.txt")).expect("patched file should be readable"),
+        "new\n"
+    );
 
     let fail = command_run::execute(
         &json!({
@@ -1611,8 +1614,8 @@ fn pass_apply_patch_success_and_fail_context_mismatch() {
 #[test]
 fn pass_apply_patch_add_delete_and_move_are_tracked_in_output() {
     let root = temp_workspace("patch-add-delete-move");
-    fs::write(root.join("move-me.txt"), "alpha\n").unwrap();
-    fs::write(root.join("delete-me.txt"), "gone\n").unwrap();
+    fs::write(root.join("move-me.txt"), "alpha\n").expect("move fixture should be written");
+    fs::write(root.join("delete-me.txt"), "gone\n").expect("delete fixture should be written");
 
     let output = command_run::execute(
         &json!({
@@ -1629,18 +1632,18 @@ fn pass_apply_patch_add_delete_and_move_are_tracked_in_output() {
 
     assert_eq!(output["results"][0]["success"], true);
     assert_eq!(
-        fs::read_to_string(root.join("added.txt")).unwrap(),
+        fs::read_to_string(root.join("added.txt")).expect("added file should be readable"),
         "hello\n"
     );
     assert!(!root.join("move-me.txt").exists());
     assert_eq!(
-        fs::read_to_string(root.join("moved.txt")).unwrap(),
+        fs::read_to_string(root.join("moved.txt")).expect("moved file should be readable"),
         "beta\n"
     );
     assert!(!root.join("delete-me.txt").exists());
     let changes = output["results"][0]["output"]["changes"]
         .as_array()
-        .unwrap();
+        .expect("changes should be an array");
     assert!(changes.iter().any(|change| change["kind"] == "add"));
     assert!(changes
         .iter()
@@ -1651,7 +1654,10 @@ fn pass_apply_patch_add_delete_and_move_are_tracked_in_output() {
 #[test]
 fn fail_apply_patch_rejects_path_outside_workspace() {
     let root = temp_workspace("patch-outside");
-    let outside = root.parent().unwrap().join("outside-command-run-test.txt");
+    let outside = root
+        .parent()
+        .expect("temp workspace should have a parent")
+        .join("outside-command-run-test.txt");
     let _ = fs::remove_file(&outside);
 
     let output = command_run::execute(
@@ -1679,7 +1685,7 @@ fn pass_shell_embedded_apply_patch_is_intercepted_before_shell_execution() {
     let _guard = env_lock_blocking();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("embedded-patch");
-    fs::write(root.join("app.txt"), "old\n").unwrap();
+    fs::write(root.join("app.txt"), "old\n").expect("fixture should be written");
     let command_line = "@'\n*** Begin Patch\n*** Update File: app.txt\n@@\n-old\n+new\n*** End Patch\n'@ | apply_patch";
 
     let output = command_run::execute(
@@ -1692,7 +1698,10 @@ fn pass_shell_embedded_apply_patch_is_intercepted_before_shell_execution() {
     );
 
     assert_eq!(output["results"][0]["success"], true);
-    assert_eq!(fs::read_to_string(root.join("app.txt")).unwrap(), "new\n");
+    assert_eq!(
+        fs::read_to_string(root.join("app.txt")).expect("patched file should be readable"),
+        "new\n"
+    );
 }
 
 #[test]
@@ -1715,7 +1724,10 @@ fn pass_command_line_wrapped_apply_patch_routes_to_apply_patch() {
 
     assert_eq!(output["results"][0]["success"], true);
     assert_eq!(output["results"][0]["command_type"], "apply_patch");
-    assert_eq!(fs::read_to_string(root.join("app.txt")).unwrap(), "new\n");
+    assert_eq!(
+        fs::read_to_string(root.join("app.txt")).expect("patched file should be readable"),
+        "new\n"
+    );
 }
 
 #[test]
@@ -1771,7 +1783,10 @@ fn pass_command_only_here_string_patch_is_routed_to_apply_patch() {
 
     assert_eq!(output["results"][0]["success"], true);
     assert_eq!(output["results"][0]["command_type"], "apply_patch");
-    assert_eq!(fs::read_to_string(root.join("app.txt")).unwrap(), "new\n");
+    assert_eq!(
+        fs::read_to_string(root.join("app.txt")).expect("patched file should be readable"),
+        "new\n"
+    );
 }
 
 #[test]
@@ -1830,7 +1845,10 @@ fn pass_streaming_executor_returns_apply_patch_result_without_finish() {
     assert_eq!(immediate.len(), 1);
     assert_eq!(immediate[0]["command_type"], "apply_patch");
     assert_eq!(immediate[0]["success"], true);
-    assert_eq!(fs::read_to_string(root.join("app.txt")).unwrap(), "new\n");
+    assert_eq!(
+        fs::read_to_string(root.join("app.txt")).expect("patched file should be readable"),
+        "new\n"
+    );
     let final_results = runtime.block_on(executor.finish());
     assert!(final_results.is_empty());
 }
@@ -1851,7 +1869,10 @@ fn pass_streaming_executor_strips_apply_patch_tool_prefix() {
     assert_eq!(immediate.len(), 1);
     assert_eq!(immediate[0]["command_type"], "apply_patch");
     assert_eq!(immediate[0]["success"], true);
-    assert_eq!(fs::read_to_string(root.join("app.txt")).unwrap(), "new\n");
+    assert_eq!(
+        fs::read_to_string(root.join("app.txt")).expect("patched file should be readable"),
+        "new\n"
+    );
 }
 
 #[test]
@@ -1879,7 +1900,7 @@ fn fail_streaming_executor_ignores_commands_after_failed_apply_patch() {
     assert!(ignored.is_empty());
     assert!(final_results.is_empty());
     assert_eq!(
-        fs::read_to_string(root.join("app.txt")).unwrap(),
+        fs::read_to_string(root.join("app.txt")).expect("fixture file should be readable"),
         "actual\n"
     );
 }
@@ -1933,7 +1954,7 @@ fn pass_mutating_commands_are_barriers_between_read_batches() {
     let _guard = env_lock_blocking();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("barrier");
-    fs::write(root.join("state.txt"), "before\n").unwrap();
+    fs::write(root.join("state.txt"), "before\n").expect("state fixture should be written");
 
     let output = command_run::execute(
         &json!({
@@ -1968,7 +1989,7 @@ fn pass_same_step_commands_are_extended_to_unique_order() {
     let _guard = env_lock_blocking();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("unique-read-step");
-    fs::write(root.join("state.txt"), "ready\n").unwrap();
+    fs::write(root.join("state.txt"), "ready\n").expect("state fixture should be written");
     let command_a = if cfg!(windows) {
         "Test-Path state.txt; Write-Output read-a"
     } else {

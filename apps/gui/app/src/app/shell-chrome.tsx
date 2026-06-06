@@ -5,10 +5,7 @@ import { Show } from "solid-js";
 import { t } from "../i18n";
 import type { AppState } from "../state/global-store";
 
-export function RailToggleButton(props: {
-  collapsed: boolean;
-  onToggle: () => void;
-}) {
+export function RailToggleButton(props: { collapsed: boolean; onToggle: () => void }) {
   return (
     <button
       class="rail-open-button"
@@ -17,21 +14,14 @@ export function RailToggleButton(props: {
       aria-label={t("sidebar")}
       onClick={props.onToggle}
     >
-      <Show
-        when={props.collapsed}
-        fallback={<PanelLeftClose size={17} strokeWidth={1.8} />}
-      >
+      <Show when={props.collapsed} fallback={<PanelLeftClose size={17} strokeWidth={1.8} />}>
         <PanelLeftOpen size={17} strokeWidth={1.8} />
       </Show>
     </button>
   );
 }
 
-export function ErrorStrip(props: {
-  error?: string;
-  notice?: string;
-  setState: Setter<AppState>;
-}) {
+export function ErrorStrip(props: { error?: string; notice?: string; setState: Setter<AppState> }) {
   const message = () => props.error ?? props.notice;
   return (
     <Show when={message()}>
@@ -46,9 +36,7 @@ export function ErrorStrip(props: {
               props.setState((previous) => ({
                 ...previous,
                 error: props.error ? undefined : previous.error,
-                settingsNotice: props.error
-                  ? previous.settingsNotice
-                  : undefined,
+                settingsNotice: props.error ? previous.settingsNotice : undefined,
               }))
             }
           >

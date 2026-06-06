@@ -33,19 +33,13 @@ export type AppShellViewModel = {
   pickExistingWorkspaceDirectory: () => Promise<void>;
   submitPrompt: (options?: { queued?: boolean }) => Promise<void>;
   abortSession: (sessionId: string) => Promise<void>;
-  updatePlanTicketStatus: (
-    session: Session,
-    status: PlanStatus,
-  ) => Promise<void>;
+  updatePlanTicketStatus: (session: Session, status: PlanStatus) => Promise<void>;
   sessionAttentionAcknowledged: (session: Session) => boolean;
   deletePlanTask: (session: Session, task: TaskManagement) => Promise<void>;
   openPlanSession: (session: Session) => Promise<void>;
   selectDraftSession: (sessionId: string | undefined) => Promise<void>;
   createPlanTicket: (sessionIdOverride?: string) => Promise<void>;
-  createSessionFromPlanTask: (
-    session: Session,
-    task: TaskManagement,
-  ) => Promise<void>;
+  createSessionFromPlanTask: (session: Session, task: TaskManagement) => Promise<void>;
   runPlanTaskNow: (session: Session, task: TaskManagement) => Promise<void>;
   updatePlanTicketTask: (
     session: Session,
@@ -57,10 +51,7 @@ export type AppShellViewModel = {
       }
     >,
   ) => Promise<void>;
-  reorderPlanTasks: (
-    session: Session,
-    tasks: TaskManagement[],
-  ) => Promise<void>;
+  reorderPlanTasks: (session: Session, tasks: TaskManagement[]) => Promise<void>;
   updateEditingTaskFromComposer: () => Promise<boolean>;
   fileTree: Accessor<Record<string, FileInfo[]>>;
   fileLoadingPath: Accessor<string | undefined>;
@@ -80,24 +71,11 @@ export type AppShellViewModel = {
   updateModelTier: (tier: string, option: TuraConfigModelPair) => Promise<void>;
   refreshAgents: () => Promise<void>;
   getAgent: (agentId: string) => Promise<StoredAgent | undefined>;
-  saveAgent: (
-    agentId: string | undefined,
-    payload: AgentUpsertRequest,
-  ) => Promise<void>;
+  saveAgent: (agentId: string | undefined, payload: AgentUpsertRequest) => Promise<void>;
   deleteAgent: (agentId: string) => Promise<void>;
-  saveProviderKey: (
-    providerId: string,
-    method: ProviderAuthMethod,
-  ) => Promise<void>;
+  saveProviderKey: (providerId: string, method: ProviderAuthMethod) => Promise<void>;
   validateProvider: (providerId: string) => Promise<void>;
-  startProviderLogin: (
-    providerId: string,
-    methodIndex: number,
-  ) => Promise<void>;
-  completeProviderLogin: (
-    providerId: string,
-    code?: string,
-    methodIndex?: number,
-  ) => Promise<void>;
+  startProviderLogin: (providerId: string, methodIndex: number) => Promise<void>;
+  completeProviderLogin: (providerId: string, code?: string, methodIndex?: number) => Promise<void>;
   logoutProvider: (providerId: string) => Promise<void>;
 };

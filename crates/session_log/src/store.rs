@@ -1,3 +1,4 @@
+use crate::checkpoint::CommandCheckpoint;
 use crate::path::normalize_workspace;
 use crate::protocol::{
     GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, Page, SessionRecord,
@@ -49,6 +50,59 @@ impl SessionLogStore {
 
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
+    }
+
+    pub fn replay_pending_write_queue(&self) -> Result<u64> {
+        let mut client = self.pool.get()?;
+        let rows = client.query(
+            "SELECT id, event_type, payload_json::TEXT
+             FROM session_write_queue
+             WHERE status = 'pending'
+             ORDER BY id
+             LIMIT 1000",
+            &[],
+        )?;
+        drop(client);
+
+        let mut applied = 0;
+        for row in rows {
+            let id: i64 = row.get(0);
+            let event_type: String = row.get(1);
+            let payload_json: String = row.get(2);
+            match self.apply_queue_item(&event_type, &payload_json) {
+                Ok(()) => {
+                    let mut client = self.pool.get()?;
+                    client.execute(
+                        "UPDATE session_write_queue
+                         SET status = 'applied', applied_at = NOW(), last_error = NULL
+                         WHERE id = $1",
+                        &[&id],
+                    )?;
+                    applied += 1;
+                }
+                Err(error) => {
+                    let mut client = self.pool.get()?;
+                    client.execute(
+                        "UPDATE session_write_queue
+                         SET retry_count = retry_count + 1, last_error = $2
+                         WHERE id = $1",
+                        &[&id, &error.to_string()],
+                    )?;
+                    return Err(error);
+                }
+            }
+        }
+        Ok(applied)
+    }
+
+    fn apply_queue_item(&self, event_type: &str, payload_json: &str) -> Result<()> {
+        match event_type {
+            "upsert_session" | "session.upsert" => {
+                let request: UpsertSessionRequest = serde_json::from_str(payload_json)?;
+                self.upsert_session(request)
+            }
+            other => anyhow::bail!("unsupported session_write_queue event_type: {other}"),
+        }
     }
 
     pub fn upsert_session(&self, request: UpsertSessionRequest) -> Result<()> {
@@ -159,6 +213,69 @@ impl SessionLogStore {
 
         tx.commit()?;
         Ok(())
+    }
+
+    pub fn apply_command_checkpoint(&self, checkpoint: CommandCheckpoint) -> Result<()> {
+        let mut client = self.pool.get()?;
+        let idempotency_key = checkpoint.idempotency_key();
+        let payload_json = serde_json::to_string(&checkpoint)?;
+        client.execute(
+            "INSERT INTO session_write_queue(
+                idempotency_key, session_id, turn_id, runtime_worker_id,
+                command_run_id, command_id, event_seq, event_type, payload_json,
+                status, retry_count, applied_at
+            ) VALUES (
+                $1::TEXT, $2::TEXT, $3::TEXT, $4::TEXT, $5::TEXT,
+                $6::TEXT, $7::BIGINT, $8::TEXT, $9::TEXT::JSONB,
+                'applied', 0, NOW()
+            )
+            ON CONFLICT(idempotency_key) DO UPDATE SET
+                payload_json=EXCLUDED.payload_json,
+                status='applied',
+                applied_at=NOW(),
+                last_error=NULL",
+            &[
+                &idempotency_key,
+                &checkpoint.session_id,
+                &checkpoint.turn_id,
+                &checkpoint.runtime_worker_id,
+                &checkpoint.command_run_id,
+                &checkpoint.command_id,
+                &checkpoint.event_seq,
+                &checkpoint.status,
+                &payload_json,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn mark_running_sessions_interrupted(&self) -> Result<u64> {
+        let mut client = self.pool.get()?;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let updated = client.execute(
+            "UPDATE sessions
+             SET
+                state = 'interrupted',
+                status = 'interrupted',
+                updated_at = GREATEST(updated_at, $1),
+                session_json = jsonb_set(
+                    COALESCE(session_json::JSONB, '{}'::JSONB),
+                    '{status}',
+                    '\"interrupted\"'::JSONB,
+                    true
+                )::TEXT,
+                management_json = jsonb_set(
+                    COALESCE(management_json::JSONB, '{}'::JSONB),
+                    '{state}',
+                    '\"interrupted\"'::JSONB,
+                    true
+                )::TEXT
+             WHERE
+                COALESCE(status, '') IN ('busy', 'running')
+                OR COALESCE(state, '') IN ('busy', 'running', 'Running')",
+            &[&now_ms],
+        )?;
+        Ok(updated)
     }
 
     pub fn list_workspaces(&self) -> Result<Vec<WorkspaceSummary>> {
@@ -340,6 +457,7 @@ fn init(client: &mut Client) -> Result<()> {
             ON session_records(session_id, created_at, id);
         ",
     )?;
+    client.batch_execute(crate::migrations::SESSION_WRITE_QUEUE_MIGRATION)?;
     Ok(())
 }
 

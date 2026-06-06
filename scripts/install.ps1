@@ -16,6 +16,7 @@ $RepoRoot = Resolve-Path (Join-Path $ScriptDir "..")
 $PythonPackagesDir = Join-Path $ScriptDir "packages\python"
 $TuiDir = Join-Path $RepoRoot "apps\tui"
 $GuiDir = Join-Path $RepoRoot "apps\gui"
+$TauriDir = Join-Path $RepoRoot "apps\tauri"
 
 if ($Help) {
   Write-Host @"
@@ -43,6 +44,10 @@ function Write-Step {
 function Test-CommandAvailable {
   param([string]$Name)
   $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Test-IsWindows {
+  return ($IsWindows -or $env:OS -eq "Windows_NT")
 }
 
 function Get-CommandOutputLine {
@@ -92,11 +97,22 @@ function Update-ProcessPath {
   $env:Path = ($paths -join [IO.Path]::PathSeparator)
 }
 
+function Add-PathEntry {
+  param([string]$PathEntry)
+  if ((Test-Path $PathEntry) -and (($env:Path -split [IO.Path]::PathSeparator) -notcontains $PathEntry)) {
+    $env:Path = "$PathEntry$([IO.Path]::PathSeparator)$env:Path"
+  }
+}
+
 function Add-CargoToPath {
   $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
-  if ((Test-Path $cargoBin) -and (($env:Path -split [IO.Path]::PathSeparator) -notcontains $cargoBin)) {
-    $env:Path = "$cargoBin$([IO.Path]::PathSeparator)$env:Path"
-  }
+  Add-PathEntry $cargoBin
+}
+
+function Add-Msys2ToPath {
+  $msysRoot = Get-Msys2Root
+  Add-PathEntry (Join-Path $msysRoot "ucrt64\bin")
+  Add-PathEntry (Join-Path $msysRoot "usr\bin")
 }
 
 function Require-Command {
@@ -134,6 +150,54 @@ function Require-Winget {
   Require-Command "winget" "Install App Installer from Microsoft Store, then rerun this script."
 }
 
+function Get-VsWherePath {
+  $programFilesX86 = ${env:ProgramFiles(x86)}
+  if (-not $programFilesX86) {
+    $programFilesX86 = $env:ProgramFiles
+  }
+  $candidate = Join-Path $programFilesX86 "Microsoft Visual Studio\Installer\vswhere.exe"
+  if (Test-Path $candidate) {
+    return $candidate
+  }
+  $command = Get-Command "vswhere" -ErrorAction SilentlyContinue
+  if ($command) {
+    return $command.Source
+  }
+  return $null
+}
+
+function Get-VisualStudioMsvcLinker {
+  $vswhere = Get-VsWherePath
+  if (-not $vswhere) {
+    return $null
+  }
+  try {
+    $paths = & $vswhere -products "*" -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find "VC\Tools\MSVC\*\bin\Hostx64\x64\link.exe" 2>$null
+    $path = $paths | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+    if ($path) {
+      return "$path"
+    }
+  } catch {
+    return $null
+  }
+  return $null
+}
+
+function Test-MsvcLinkerAvailable {
+  if (Test-CommandAvailable "link") {
+    return $true
+  }
+  $null -ne (Get-VisualStudioMsvcLinker)
+}
+
+function Test-MsvcRustBuildToolsRequired {
+  if (-not (Test-IsWindows)) {
+    return $false
+  }
+  $rustupToolchain = Get-CommandOutputLine "rustup" @("show", "active-toolchain")
+  return (-not $rustupToolchain) -or ($rustupToolchain -match "msvc")
+}
+
 function Invoke-WingetInstall {
   param(
     [string]$Id,
@@ -144,12 +208,157 @@ function Invoke-WingetInstall {
   if (-not (Test-CommandAvailable "winget")) {
     throw "winget is not available. $ManualHint"
   }
-  $args = @("install", "--id", $Id, "-e", "--accept-package-agreements", "--accept-source-agreements") + $ExtraArgs
+  $args = @("install", "--id", $Id, "-e", "--silent", "--accept-package-agreements", "--accept-source-agreements") + $ExtraArgs
   & winget @args
   if ($LASTEXITCODE -ne 0) {
     throw "$Name install failed through winget. $ManualHint"
   }
   Update-ProcessPath
+}
+
+function Invoke-VisualStudioBuildToolsInstall {
+  $installer = Join-Path $env:TEMP "vs_BuildTools.exe"
+  Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_BuildTools.exe" -OutFile $installer -UseBasicParsing
+  $args = @(
+    "--quiet",
+    "--wait",
+    "--norestart",
+    "--nocache",
+    "--add", "Microsoft.VisualStudio.Workload.VCTools",
+    "--add", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+    "--add", "Microsoft.VisualStudio.Component.Windows11SDK.22621",
+    "--includeRecommended"
+  )
+  & $installer @args
+  if ($LASTEXITCODE -ne 0) {
+    throw "vs_BuildTools.exe exited with code $LASTEXITCODE"
+  }
+  Update-ProcessPath
+}
+
+function Get-Msys2Root {
+  if ($env:MSYS2_ROOT -and (Test-Path $env:MSYS2_ROOT)) {
+    return $env:MSYS2_ROOT
+  }
+  foreach ($path in @("C:\msys64", (Join-Path $env:LOCALAPPDATA "Programs\MSYS2"))) {
+    if ($path -and (Test-Path $path)) {
+      return $path
+    }
+  }
+  return "C:\msys64"
+}
+
+function Get-Msys2Bash {
+  $bash = Join-Path (Get-Msys2Root) "usr\bin\bash.exe"
+  if (Test-Path $bash) {
+    return $bash
+  }
+  $command = Get-Command "bash" -ErrorAction SilentlyContinue
+  if ($command) {
+    return $command.Source
+  }
+  return $null
+}
+
+function Invoke-Msys2Bash {
+  param([string]$Command)
+  $bash = Get-Msys2Bash
+  if (-not $bash) {
+    throw "MSYS2 bash.exe was not found."
+  }
+  & $bash -lc $Command
+  if ($LASTEXITCODE -ne 0) {
+    throw "MSYS2 command failed with exit code ${LASTEXITCODE}: $Command"
+  }
+}
+
+function Test-Msys2Ucrt64Toolchain {
+  $msysRoot = Get-Msys2Root
+  $bash = Join-Path $msysRoot "usr\bin\bash.exe"
+  $gcc = Join-Path $msysRoot "ucrt64\bin\gcc.exe"
+  $pkgconf = Join-Path $msysRoot "ucrt64\bin\pkgconf.exe"
+  $make = Join-Path $msysRoot "ucrt64\bin\mingw32-make.exe"
+  return (Test-Path $bash) -and (Test-Path $gcc) -and (Test-Path $pkgconf) -and (Test-Path $make)
+}
+
+function Ensure-Msys2Ucrt64Toolchain {
+  if (-not (Test-IsWindows)) {
+    return
+  }
+  if (Test-Msys2Ucrt64Toolchain) {
+    Add-Msys2ToPath
+    Write-Host "MSYS2 UCRT64: $(Get-Msys2Root)\ucrt64"
+    return
+  }
+
+  Write-Step "Installing MSYS2 UCRT64 native toolchain"
+  if (-not (Test-CommandAvailable "winget")) {
+    throw "MSYS2 UCRT64 toolchain was not found and winget is not available. Install MSYS2 from https://www.msys2.org/ and install mingw-w64-ucrt-x86_64-toolchain."
+  }
+  Invoke-WingetInstall "MSYS2.MSYS2" "MSYS2" "Install MSYS2 from https://www.msys2.org/."
+  Add-Msys2ToPath
+
+  Invoke-Msys2Bash "pacman --noconfirm -Syuu"
+  Invoke-Msys2Bash "pacman --noconfirm -S --needed mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-openssl mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja"
+  Add-Msys2ToPath
+  if (-not (Test-Msys2Ucrt64Toolchain)) {
+    throw "MSYS2 installed, but the UCRT64 toolchain was not found under $(Get-Msys2Root)\ucrt64. Reopen the terminal and rerun this script."
+  }
+  Write-Host "MSYS2 UCRT64: $(Get-Msys2Root)\ucrt64"
+}
+
+function Require-Msys2Ucrt64Toolchain {
+  if (-not (Test-IsWindows)) {
+    return
+  }
+  if (-not (Test-Msys2Ucrt64Toolchain)) {
+    throw "MSYS2 UCRT64 toolchain was not found. Run .\scripts\install.ps1 without -CheckOnly to install it automatically."
+  }
+  Add-Msys2ToPath
+  Write-Host "MSYS2 UCRT64: $(Get-Msys2Root)\ucrt64"
+}
+
+function Test-WebView2Runtime {
+  if (-not (Test-IsWindows)) {
+    return $true
+  }
+  $keys = @(
+    "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+  )
+  foreach ($key in $keys) {
+    if (Test-Path $key) {
+      return $true
+    }
+  }
+  return $false
+}
+
+function Ensure-WebView2Runtime {
+  if (-not (Test-IsWindows)) {
+    return
+  }
+  if (Test-WebView2Runtime) {
+    Write-Host "WebView2 Runtime: found"
+    return
+  }
+  Write-Step "Installing Microsoft Edge WebView2 Runtime"
+  Invoke-WingetInstall "Microsoft.EdgeWebView2Runtime" "WebView2 Runtime" "Install Microsoft Edge WebView2 Runtime from https://developer.microsoft.com/microsoft-edge/webview2/."
+  if (-not (Test-WebView2Runtime)) {
+    Write-Warning "WebView2 Runtime was installed but could not be verified from the registry. Tauri may still work if Windows provides it system-wide."
+  } else {
+    Write-Host "WebView2 Runtime: found"
+  }
+}
+
+function Require-WebView2Runtime {
+  if (-not (Test-IsWindows)) {
+    return
+  }
+  if (-not (Test-WebView2Runtime)) {
+    throw "Microsoft Edge WebView2 Runtime was not found. Run .\scripts\install.ps1 without -CheckOnly to install it automatically."
+  }
+  Write-Host "WebView2 Runtime: found"
 }
 
 function Ensure-Git {
@@ -229,28 +438,56 @@ function Ensure-RustToolchain {
 }
 
 function Ensure-WindowsRustBuildTools {
-  if (-not $IsWindows -and $env:OS -ne "Windows_NT") {
+  if (-not (Test-MsvcRustBuildToolsRequired)) {
     return
   }
-  if (Test-CommandAvailable "cl") {
-    Write-Host "MSVC C++ build tools: cl.exe found"
+  $linker = Get-CommandOutputLine "where.exe" @("link")
+  if (-not $linker) {
+    $linker = Get-VisualStudioMsvcLinker
+  }
+  if ($linker) {
+    Write-Host "MSVC linker: $linker"
     return
   }
-  $rustupToolchain = Get-CommandOutputLine "rustup" @("show", "active-toolchain")
-  if ($rustupToolchain -and $rustupToolchain -notmatch "msvc") {
-    return
-  }
-  Write-Warning "MSVC C++ build tools were not found. Some Rust crates may fail to link on Windows."
-  if (Test-CommandAvailable "winget") {
-    Write-Step "Attempting to install Visual Studio Build Tools C++ workload"
-    & winget install --id Microsoft.VisualStudio.2022.BuildTools -e --accept-package-agreements --accept-source-agreements --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --norestart"
-    Update-ProcessPath
-    if ($LASTEXITCODE -eq 0 -and (Test-CommandAvailable "cl")) {
-      Write-Host "MSVC C++ build tools installed."
-      return
+
+  $manualHint = "Install Visual Studio Build Tools with Desktop development with C++, MSVC tools, and Windows 10/11 SDK from https://visualstudio.microsoft.com/visual-cpp-build-tools/."
+  Write-Warning "MSVC linker link.exe was not found. Rust's Windows MSVC target needs Visual Studio C++ Build Tools."
+  Write-Step "Installing Visual Studio Build Tools C++ workload"
+  try {
+    Invoke-VisualStudioBuildToolsInstall
+  } catch {
+    if (-not (Test-CommandAvailable "winget")) {
+      throw "Visual Studio Build Tools automatic installation failed and winget is not available. $manualHint`n$($_.Exception.Message)"
     }
+    $override = "--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.Windows11SDK.22621 --includeRecommended"
+    & winget install --id Microsoft.VisualStudio.2022.BuildTools -e --silent --accept-package-agreements --accept-source-agreements --override $override
+    if ($LASTEXITCODE -ne 0) {
+      throw "Visual Studio Build Tools installation failed through winget. $manualHint`n$($_.Exception.Message)"
+    }
+    Update-ProcessPath
   }
-  Write-Warning "If Rust linking fails, install 'Desktop development with C++' from Visual Studio Build Tools: https://visualstudio.microsoft.com/visual-cpp-build-tools/"
+  $linker = Get-CommandOutputLine "where.exe" @("link")
+  if (-not $linker) {
+    $linker = Get-VisualStudioMsvcLinker
+  }
+  if (-not $linker) {
+    throw "Visual Studio Build Tools installed, but link.exe was not found yet. Reopen the terminal and rerun this script. $manualHint"
+  }
+  Write-Host "MSVC linker: $linker"
+}
+
+function Require-WindowsRustBuildTools {
+  if (-not (Test-MsvcRustBuildToolsRequired)) {
+    return
+  }
+  if (-not (Test-MsvcLinkerAvailable)) {
+    throw "MSVC linker link.exe was not found. Run .\scripts\install.ps1 without -CheckOnly to install Visual Studio Build Tools automatically, or install Desktop development with C++ manually."
+  }
+  $linker = Get-CommandOutputLine "where.exe" @("link")
+  if (-not $linker) {
+    $linker = Get-VisualStudioMsvcLinker
+  }
+  Write-Host "MSVC linker: $linker"
 }
 
 function Ensure-BunToolchain {
@@ -478,6 +715,33 @@ function Ensure-Gui {
   }
 }
 
+function Ensure-Tauri {
+  if ($SkipFrontend -or -not (Test-Path $TauriDir)) {
+    return
+  }
+  Ensure-BunToolchain
+  if (-not (Test-CommandAvailable "bun")) {
+    Write-Warning "Bun was not found; skipping apps/tauri workspace install. Install Bun if you need the desktop GUI."
+    return
+  }
+  Ensure-WebView2Runtime
+
+  Write-Step "Installing apps/tauri workspace"
+  Push-Location $TauriDir
+  try {
+    if (Test-Path "bun.lock") {
+      bun install --frozen-lockfile
+    } else {
+      bun install
+    }
+    if ($LASTEXITCODE -ne 0) {
+      exit $LASTEXITCODE
+    }
+  } finally {
+    Pop-Location
+  }
+}
+
 function Ensure-Playwright {
   if ($SkipPlaywright -or $SkipFrontend) {
     return
@@ -534,7 +798,12 @@ if ($CheckOnly) {
   Require-Command "cargo" "Install Rust with rustup from https://rustup.rs."
   Write-DetectedVersion "git" (Get-CommandOutputLine "git" @("--version"))
   Write-DetectedVersion "cargo" (Get-CommandOutputLine "cargo" @("--version"))
+  Require-WindowsRustBuildTools
+  Require-Msys2Ucrt64Toolchain
   if (-not $SkipFrontend) {
+    if (Test-Path $TauriDir) {
+      Require-WebView2Runtime
+    }
     Require-Command "node" "Install Node.js 20 or newer."
     Require-Command "npm" "Install npm with Node.js 20 or newer."
     $nodeVersion = Get-CommandOutputLine "node" @("--version")
@@ -573,7 +842,12 @@ if ($CheckOnly) {
 
 Ensure-Git
 Ensure-RustToolchain
+Ensure-WindowsRustBuildTools
+Ensure-Msys2Ucrt64Toolchain
 if (-not $SkipFrontend) {
+  if (Test-Path $TauriDir) {
+    Ensure-WebView2Runtime
+  }
   Ensure-Node
 }
 
@@ -581,6 +855,7 @@ Ensure-FfmpegToolchain
 Ensure-PythonPackages
 Ensure-Tui
 Ensure-Gui
+Ensure-Tauri
 Ensure-Playwright
 Ensure-Rust
 

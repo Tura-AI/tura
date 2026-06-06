@@ -62,6 +62,10 @@ fn handle_command(
             store.upsert_session(payload)?;
             SessionLogResponse::Ok
         }
+        SessionLogCommand::ApplyCommandCheckpoint(payload) => {
+            store.apply_command_checkpoint(*payload)?;
+            SessionLogResponse::Ok
+        }
         SessionLogCommand::ListWorkspaces => SessionLogResponse::Workspaces {
             workspaces: store.list_workspaces()?,
         },

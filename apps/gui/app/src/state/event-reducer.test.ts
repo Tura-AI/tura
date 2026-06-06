@@ -103,9 +103,7 @@ describe("applyGatewayEvent", () => {
     });
 
     expect(state.messagesBySession.s1[0]?.id).toBe("m1");
-    expect(state.messagesBySession.s1[0]?.parts[0]?.text).toBe(
-      "Thinking through the task",
-    );
+    expect(state.messagesBySession.s1[0]?.parts[0]?.text).toBe("Thinking through the task");
   });
 
   test("adds delta parts to existing messages before part hydration", () => {
@@ -136,9 +134,7 @@ describe("applyGatewayEvent", () => {
       },
     });
 
-    expect(state.messagesBySession.s1[0]?.parts[0]?.content).toBe(
-      "Visible process text",
-    );
+    expect(state.messagesBySession.s1[0]?.parts[0]?.content).toBe("Visible process text");
   });
 
   test("applies gateway status objects", () => {

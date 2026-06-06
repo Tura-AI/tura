@@ -253,8 +253,8 @@ pub struct ToolRouter {
     apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
     compact_context: crate::commands::compact_context::CompactContextHandler,
     planning: crate::commands::planning::PlanningHandler,
-    read_media: crate::commands::read_media::ReadMediaHandler,
-    web_discover: crate::commands::web_discover::WebDiscoverHandler,
+    read_media: ExternalCommandHandler,
+    web_discover: ExternalCommandHandler,
 }
 
 impl ToolRouter {
@@ -265,8 +265,8 @@ impl ToolRouter {
             apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
             compact_context: crate::commands::compact_context::CompactContextHandler,
             planning: crate::commands::planning::PlanningHandler,
-            read_media: crate::commands::read_media::ReadMediaHandler,
-            web_discover: crate::commands::web_discover::WebDiscoverHandler,
+            read_media: ExternalCommandHandler::new("read_media", false, true),
+            web_discover: ExternalCommandHandler::new("web_discover", false, true),
         }
     }
 
@@ -321,27 +321,10 @@ impl ToolRouter {
             call_id: call.call_id.clone(),
             tool_name: call.tool_name.clone(),
         });
-        let mutating = force_exclusive || handler.is_mutating(&call, &ctx).await;
-        let access = if force_exclusive {
-            file_locks::Access {
-                workspace_write: true,
-                ..file_locks::Access::default()
-            }
-        } else {
-            handler.access(&call, &ctx).await
-        };
-        let call_ctx = ctx.with_call_id(call.call_id.clone());
-        let mut result = if mutating {
-            let gate = Arc::clone(&ctx.execution_gate);
-            let _guard = gate.write().await;
-            let _file_guard = file_locks::acquire(&access);
-            handler.handle(call.clone(), call_ctx.clone()).await?
-        } else {
-            let gate = Arc::clone(&ctx.execution_gate);
-            let _guard = gate.read().await;
-            let _file_guard = file_locks::acquire(&access);
-            handler.handle(call.clone(), call_ctx.clone()).await?
-        };
+        let mut dispatched =
+            super::dispatch::dispatch_handler(handler, call.clone(), ctx.clone(), force_exclusive)
+                .await?;
+        let mut result = dispatched.result;
         if let Some(post) = ctx.hooks().post {
             post(&call, &mut result)?;
         }
@@ -350,11 +333,8 @@ impl ToolRouter {
             tool_name: call.tool_name.clone(),
             success: result.success_for_logging(),
         });
-        Ok(AnyToolResult {
-            call_id: call.call_id,
-            payload: call.payload,
-            result,
-        })
+        dispatched.result = result;
+        Ok(dispatched)
     }
 }
 
@@ -378,4 +358,69 @@ fn planning_command_enabled() -> bool {
                 })
                 .unwrap_or(false)
         })
+}
+
+pub struct ExternalCommandHandler {
+    command_id: &'static str,
+    mutating: bool,
+    macro_command: bool,
+}
+
+impl ExternalCommandHandler {
+    pub fn new(command_id: &'static str, mutating: bool, macro_command: bool) -> Self {
+        Self {
+            command_id,
+            mutating,
+            macro_command,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ToolHandler for ExternalCommandHandler {
+    fn tool_name(&self) -> &'static str {
+        self.command_id
+    }
+
+    fn supports_macro_command(&self) -> bool {
+        self.macro_command
+    }
+
+    async fn is_mutating(&self, _call: &ToolCall, _ctx: &ToolContext) -> bool {
+        self.mutating
+    }
+
+    async fn access(&self, call: &ToolCall, ctx: &ToolContext) -> file_locks::Access {
+        let arguments = call.payload.code_mode_input();
+        let response = crate::external::launcher::invoke(
+            self.command_id,
+            "access",
+            serde_json::json!({
+                "arguments": arguments,
+                "session_dir": ctx.session_dir.display().to_string(),
+                "call_id": call.call_id,
+            }),
+        )
+        .await;
+        response
+            .ok()
+            .and_then(|response| serde_json::from_value(response.output).ok())
+            .unwrap_or_default()
+    }
+
+    async fn handle(
+        &self,
+        call: ToolCall,
+        ctx: ToolContext,
+    ) -> Result<FunctionToolOutput, ToolError> {
+        let arguments = call.payload.code_mode_input();
+        let output = crate::external::launcher::execute(
+            self.command_id,
+            arguments,
+            &ctx.session_dir,
+            &call.call_id,
+        )
+        .await?;
+        Ok(FunctionToolOutput::from_value(output, Some(true)))
+    }
 }

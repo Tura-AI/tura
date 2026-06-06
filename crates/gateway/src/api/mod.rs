@@ -14,4 +14,5 @@ pub(crate) mod registry;
 pub mod service;
 pub mod session;
 pub mod session_log;
+pub mod tool;
 pub mod types;

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Tura",
+  "version": "0.1.0",
+  "identifier": "dev.tura.gui",
+  "build": {
+    "beforeDevCommand": "bun --cwd ../gui/app dev",
+    "beforeBuildCommand": "bun --cwd ../gui build",
+    "devUrl": "http://127.0.0.1:5174",
+    "frontendDist": "../../gui/app/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Tura",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 640
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all"
+  }
+}

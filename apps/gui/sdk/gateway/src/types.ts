@@ -44,18 +44,8 @@ export type TuraConfigUpdate = {
 };
 
 export type SessionStatus = "idle" | "busy" | "error";
-export type PlanStatus =
-  | "todo"
-  | "waiting_user"
-  | "doing"
-  | "question"
-  | "done"
-  | "archived";
-export type StartCondition =
-  | "session_idle"
-  | "user_action"
-  | "scheduled_task"
-  | "polling_task";
+export type PlanStatus = "todo" | "waiting_user" | "doing" | "question" | "done" | "archived";
+export type StartCondition = "session_idle" | "user_action" | "scheduled_task" | "polling_task";
 
 export type PollInterval = {
   m?: number;
@@ -647,13 +637,7 @@ export type Workspace = {
   updated_at: number;
 };
 
-export type ProductIssueStatus =
-  | "backlog"
-  | "todo"
-  | "in_progress"
-  | "review"
-  | "done"
-  | "closed";
+export type ProductIssueStatus = "backlog" | "todo" | "in_progress" | "review" | "done" | "closed";
 export type ProductIssuePriority = "low" | "medium" | "high" | "urgent";
 
 export type TaskRun = {

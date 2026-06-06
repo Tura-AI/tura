@@ -31,22 +31,10 @@ fn default_agent_registry_loads_general_agent() {
     assert!(agents[0].report_to_user);
     assert_eq!(agents[0].provider.tura_llm_name, "fast");
     assert!(agents[0].validator.need_validator);
-    assert!(!agents[0]
-        .agent_capabilities
-        .iter()
-        .any(|capability| capability.capability_name == "grep"));
     assert!(agents[0]
         .agent_capabilities
         .iter()
         .any(|capability| capability.capability_name == "command_run"));
-    assert!(!agents[0]
-        .agent_capabilities
-        .iter()
-        .any(|capability| capability.capability_name == "recall_memory"));
-    assert!(!agents[0]
-        .agent_capabilities
-        .iter()
-        .any(|capability| capability.capability_name == "remember_memory"));
     assert!(!agents[0]
         .agent_capabilities
         .iter()
@@ -81,29 +69,17 @@ fn coding_topic_registry_loads_coding_agent() {
     let agents = activate_agents_by_session_type(&session).expect("agent registry should load");
 
     assert_eq!(agents.len(), 1);
-    assert_eq!(agents[0].agent_name, "thinking-planning");
+    assert_eq!(agents[0].agent_name, "fast");
     assert_eq!(
         agents[0].provider.tura_llm_name,
         coding_agent_provider_name()
     );
     assert!(!agents[0].validator.need_validator);
-    assert!(!agents[0]
-        .agent_capabilities
-        .iter()
-        .any(|capability| capability.capability_name == "write_file"));
-    assert!(!agents[0]
-        .agent_capabilities
-        .iter()
-        .any(|capability| capability.capability_name == "apply_diff"));
-    assert!(!agents[0]
-        .agent_capabilities
-        .iter()
-        .any(|capability| capability.capability_name == "delete_file"));
     assert!(agents[0]
         .agent_capabilities
         .iter()
         .any(|capability| capability.capability_name == "command_run"));
-    assert!(agents[0]
+    assert!(!agents[0]
         .agent_capabilities
         .iter()
         .any(|capability| capability.capability_name == "planning"));

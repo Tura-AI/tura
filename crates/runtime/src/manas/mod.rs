@@ -1,18 +1,15 @@
 mod agent_prompts;
-mod change_tracker;
 pub mod child_dispatch;
-mod constants;
-mod final_response;
-mod gateway_events;
-mod permission_gate;
+pub(crate) mod constants;
+pub(crate) mod final_response;
 mod process;
 pub(crate) mod prompt_messages;
-mod runtime_turn;
-mod tool_arguments;
-mod tool_catalog;
-mod tool_execution;
-mod validator_feedback;
+pub(crate) mod runtime_turn;
+pub(crate) mod tool_arguments;
+pub(crate) mod tool_catalog;
 
+pub(crate) use constants::{COMMAND_RUN_TOOL, TASK_STATUS_COMMAND};
+pub(crate) use final_response::user_visible_runtime_text;
 pub use process::{process_manas_internal, ManasInput, ManasResult};
 
 use crate::state_machine::agent_management::AgentManagement;
