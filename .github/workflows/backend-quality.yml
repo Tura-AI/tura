@@ -42,3 +42,31 @@ jobs:
 
       - name: Run backend quality checks
         run: sh scripts/check-backend-quality.sh
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/tui/package-lock.json
+
+      - name: Install TUI dependencies
+        run: npm ci
+        working-directory: apps/tui
+
+      - name: Run TUI TypeScript checks
+        run: npm run check
+        working-directory: apps/tui
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+
+      - name: Install GUI dependencies
+        run: bun install --frozen-lockfile
+        working-directory: apps/gui
+
+      - name: Run GUI TypeScript checks
+        run: bun run check
+        working-directory: apps/gui

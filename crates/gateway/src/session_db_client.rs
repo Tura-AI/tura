@@ -101,6 +101,14 @@ impl SessionDbClient {
     }
 
     fn call_blocking(command: SessionLogCommand) -> Result<SessionLogResponse> {
+        #[cfg(test)]
+        {
+            if session_log::file_queue::is_async_write(&command) {
+                let store = session_log::SessionLogStore::open_default()?;
+                return handle_write_command(command, &store);
+            }
+        }
+
         if session_log::file_queue::is_async_write(&command) {
             session_log::file_queue::enqueue_command(&command)?;
             return Ok(SessionLogResponse::Ok);
@@ -132,4 +140,22 @@ fn handle_read_command(
         }
         other => anyhow::bail!("unexpected session_db read command: {other:?}"),
     })
+}
+
+#[cfg(test)]
+fn handle_write_command(
+    command: SessionLogCommand,
+    store: &session_log::SessionLogStore,
+) -> Result<SessionLogResponse> {
+    match command {
+        SessionLogCommand::UpsertSession(payload) => {
+            store.upsert_session(payload)?;
+            Ok(SessionLogResponse::Ok)
+        }
+        SessionLogCommand::ApplyCommandCheckpoint(payload) => {
+            store.apply_command_checkpoint(*payload)?;
+            Ok(SessionLogResponse::Ok)
+        }
+        other => anyhow::bail!("unexpected session_db write command: {other:?}"),
+    }
 }

@@ -1011,7 +1011,9 @@ test("help renders as a system dialogue instead of a separate command panel", ()
   assert.match(plain, /^\s{2}\/chat/m);
   assert.doesNotMatch(plain, /(?:^|\n)system(?:\n|$)/);
   assert.match(plain, /\/settings\s+show session config/);
-  const wrappedWordPattern = new RegExp(["ret\\n\\s+urn", "deta\\n\\s+ils", "lo\\n\\s+gin"].join("|"));
+  const wrappedWordPattern = new RegExp(
+    ["ret\\n\\s+urn", "deta\\n\\s+ils", "lo\\n\\s+gin"].join("|"),
+  );
   assert.doesNotMatch(plain, wrappedWordPattern);
   assert.doesNotMatch(plain, /[▏─┌┐└┘├┤┬┴┼]/u);
 
