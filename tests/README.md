@@ -18,8 +18,8 @@ internal runtime ↔ router traffic is CLI stdin/stdout JSON.
 ## Business Tests
 
 `tests/business/` contains long-running benchmarks that spawn real CLI agents
-and compare them through isolated harnesses. The current entries are grouped by
-task category instead of the old flat `command-run-agent-benchmarks` layout.
+and compare them through isolated harnesses. Entries are grouped by task
+category.
 
 Business-test outputs default to the same user workspace used by GUI and TUI:
 `~/Documents/tura workspace`. Each run writes to

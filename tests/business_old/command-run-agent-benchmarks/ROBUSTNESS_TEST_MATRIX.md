@@ -8,10 +8,10 @@ is requested.
 ## Run
 
 ```powershell
-cargo test -p code-tools --test command_run_current_flow -- --nocapture
-cargo test -p code-tools-suite --lib tool_router::execute_tool::tests::tool_output_success_follows_current_style_command_run_results -- --nocapture
-cargo test -p tura-llm-rust command_run_streaming --lib -- --nocapture
-cargo test -p tura-llm-rust codex_event_tool_calls --lib -- --nocapture
+cargo test -p tools --test command_run_current_flow -- --nocapture
+cargo test -p tools --lib tool_router::execute_tool::tests::tool_output_success_follows_current_style_command_run_results -- --nocapture
+cargo test -p provider command_run_streaming --lib -- --nocapture
+cargo test -p provider codex_event_tool_calls --lib -- --nocapture
 ```
 
 ## Tool Architecture And Routing

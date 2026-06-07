@@ -1,5 +1,5 @@
 [package]
-name = "tura-command-web-discover"
+name = "web_discover"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -14,9 +14,9 @@ name = "tura-command-web-discover"
 path = "src/main.rs"
 
 [dependencies]
-quick_html2md = "0.2.1"
-regex = "1"
+quick_html2md.workspace = true
+regex.workspace = true
 reqwest = { workspace = true, features = ["blocking", "json"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tura-llm-rust = { workspace = true }
+provider = { workspace = true }

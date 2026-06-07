@@ -191,7 +191,6 @@ Reference CLI modes:
 
 ## Duplicate Policy
 
-The old flat `command-run-agent-benchmarks` and `source-port-rewrite-benchmarks`
-layouts have been collapsed into category directories. Current entry scripts
-are hash-unique; do not add thin duplicate wrappers unless they set a distinct
-`test_name` and write to their own run directory.
+Entry scripts are grouped by category and are hash-unique; do not add thin
+duplicate wrappers unless they set a distinct `test_name` and write to their
+own run directory.

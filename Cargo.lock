@@ -9,6 +9,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "agents"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -551,20 +559,6 @@ name = "cmov"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
-
-[[package]]
-name = "code-tools"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "futures",
- "image",
- "regex",
- "serde",
- "serde_json",
- "tokio",
- "tura-llm-rust",
-]
 
 [[package]]
 name = "color_quant"
@@ -1475,6 +1469,7 @@ dependencies = [
 name = "gateway"
 version = "0.1.0"
 dependencies = [
+ "agents",
  "anyhow",
  "async-trait",
  "axum",
@@ -1484,7 +1479,10 @@ dependencies = [
  "lazy_static",
  "once_cell",
  "parking_lot",
+ "personas",
+ "provider",
  "reqwest 0.12.28",
+ "router",
  "runtime",
  "serde",
  "serde_json",
@@ -1496,10 +1494,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
- "tura-agents",
- "tura-llm-rust",
- "tura-persona",
- "tura_router",
  "uuid",
 ]
 
@@ -3280,6 +3274,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
+name = "personas"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "phf"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3626,6 +3628,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dotenvy",
+ "futures",
+ "futures-util",
+ "regex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "pxfm"
 version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3856,6 +3877,17 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
+]
+
+[[package]]
+name = "read_media"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "image",
+ "pdfium-render",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4130,24 +4162,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "router"
+version = "0.1.0"
+dependencies = [
+ "agents",
+ "anyhow",
+ "parking_lot",
+ "personas",
+ "serde",
+ "serde_json",
+ "session_log",
+ "tokio",
+ "toml 0.8.2",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "runtime"
 version = "0.1.0"
 dependencies = [
+ "agents",
  "anyhow",
  "chrono",
- "code-tools",
+ "provider",
  "redis",
  "reqwest 0.12.28",
+ "router",
  "serde",
  "serde_json",
  "session_log",
  "tempfile",
  "tokio",
  "tokio-test",
+ "tools",
  "tracing",
- "tura-agents",
- "tura-llm-rust",
- "tura_router",
  "uuid",
 ]
 
@@ -4863,6 +4912,16 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "whoami 1.6.1",
+]
+
+[[package]]
+name = "src-tauri"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tauri",
+ "tauri-build",
+ "url",
 ]
 
 [[package]]
@@ -5701,6 +5760,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "756daf9b1013ebe47a8776667b466417e2d4c5679d441c26230efd9ef78692db"
 
 [[package]]
+name = "tools"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "image",
+ "provider",
+ "regex",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "tower"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5859,91 +5932,6 @@ dependencies = [
  "rand 0.9.4",
  "sha1",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "tura-agents"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "tura-command-read-media"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "image",
- "pdfium-render",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "tura-command-web-discover"
-version = "0.1.0"
-dependencies = [
- "quick_html2md",
- "regex",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tura-llm-rust",
-]
-
-[[package]]
-name = "tura-gui"
-version = "0.1.0"
-dependencies = [
- "serde",
- "tauri",
- "tauri-build",
- "url",
-]
-
-[[package]]
-name = "tura-llm-rust"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "dotenvy",
- "futures",
- "futures-util",
- "regex",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tokio-test",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "tura-persona"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "tura_router"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "parking_lot",
- "serde",
- "serde_json",
- "session_log",
- "tokio",
- "toml 0.8.2",
- "tracing",
- "tura-agents",
- "tura-persona",
- "uuid",
 ]
 
 [[package]]
@@ -6388,6 +6376,18 @@ dependencies = [
  "phf_codegen",
  "string_cache",
  "string_cache_codegen",
+]
+
+[[package]]
+name = "web_discover"
+version = "0.1.0"
+dependencies = [
+ "provider",
+ "quick_html2md",
+ "regex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

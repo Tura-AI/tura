@@ -92,6 +92,15 @@ impl SessionDbClient {
     }
 
     pub fn call(&self, command: SessionLogCommand) -> Result<SessionLogResponse> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            return std::thread::spawn(move || Self::call_blocking(command))
+                .join()
+                .map_err(|_| anyhow!("session_db client worker thread panicked"))?;
+        }
+        Self::call_blocking(command)
+    }
+
+    fn call_blocking(command: SessionLogCommand) -> Result<SessionLogResponse> {
         if session_log::file_queue::is_async_write(&command) {
             session_log::file_queue::enqueue_command(&command)?;
             return Ok(SessionLogResponse::Ok);

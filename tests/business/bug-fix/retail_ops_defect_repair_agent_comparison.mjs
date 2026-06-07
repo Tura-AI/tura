@@ -404,17 +404,17 @@ function spawnLogged(command, args, options = {}) {
 
 async function runTuraRobustnessPreflight() {
   const tests = [
-    ["-p", "code-tools", "--test", "command_run_current_flow", "--", "--nocapture"],
+    ["-p", "tools", "--test", "command_run_current_flow", "--", "--nocapture"],
     [
       "-p",
-      "code-tools-suite",
+      "tools",
       "--lib",
       "tool_router::execute_tool::tests::tool_output_success_follows_current_style_command_run_results",
       "--",
       "--nocapture",
     ],
-    ["-p", "tura-llm-rust", "command_run_streaming", "--lib", "--", "--nocapture"],
-    ["-p", "tura-llm-rust", "codex_event_tool_calls", "--lib", "--", "--nocapture"],
+    ["-p", "provider", "command_run_streaming", "--lib", "--", "--nocapture"],
+    ["-p", "provider", "codex_event_tool_calls", "--lib", "--", "--nocapture"],
   ]
   const stdoutLogs = []
   const stderrLogs = []

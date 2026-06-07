@@ -4,9 +4,8 @@
 snapshots, task-management state, todos, parent links, and replayable
 message/event records.
 
-It replaces direct `.tura/sessions/*.json` session persistence. Gateway and
-runtime must go through `runtime::session_log_client` or the session-log CLI
-bridge instead of writing workspace-local session JSON.
+Gateway and runtime must go through `runtime::session_log_client` or the
+session-log CLI bridge instead of writing workspace-local session JSON.
 
 ## Layout
 

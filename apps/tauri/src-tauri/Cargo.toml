@@ -1,17 +1,17 @@
 [package]
-name = "tura-gui"
-version = "0.1.0"
-edition = "2021"
-authors = ["Tura"]
-license = "MIT"
+name = "src-tauri"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build.workspace = true
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-tauri = { version = "2", features = [] }
-url = "2"
+serde.workspace = true
+tauri.workspace = true
+url.workspace = true
 
 [features]
 default = ["custom-protocol"]

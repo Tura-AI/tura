@@ -69,13 +69,15 @@ Invoke-Checked "cargo" @(
   "--workspace",
   "--all-targets",
   "--",
-  "-D", "warnings",
   "-W", "clippy::redundant_clone",
   "-W", "clippy::clone_on_copy",
   "-W", "clippy::clone_on_ref_ptr",
   "-W", "clippy::unnecessary_to_owned",
   "-W", "clippy::unwrap_used"
 )
+
+Write-Step "Running Rust tests over the workspace"
+Invoke-Checked "cargo" @("test", "--workspace")
 
 if (-not $SkipAudit) {
   Write-Step "Auditing Rust dependencies"

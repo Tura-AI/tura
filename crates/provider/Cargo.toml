@@ -1,5 +1,5 @@
 [package]
-name = "tura-llm-rust"
+name = "provider"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -38,5 +38,5 @@ futures-util.workspace = true
 regex.workspace = true
 
 [dev-dependencies]
-tokio-test = "0.4"
-futures = "0.3"
+tokio-test.workspace = true
+futures.workspace = true

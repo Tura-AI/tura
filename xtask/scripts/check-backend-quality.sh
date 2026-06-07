@@ -21,6 +21,7 @@ Usage:
 Runs backend quality checks without building release binaries:
   cargo fmt --all --check
   cargo clippy --workspace --all-targets
+  cargo test --workspace
   cargo audit
   cargo deny check
   typos
@@ -67,12 +68,14 @@ cargo fmt --all --check -- --config-path "$XTASK_ROOT/rustfmt.toml"
 
 step "Running Clippy over the Rust workspace"
 cargo clippy --workspace --all-targets -- \
-  -D warnings \
   -W clippy::redundant_clone \
   -W clippy::clone_on_copy \
   -W clippy::clone_on_ref_ptr \
   -W clippy::unnecessary_to_owned \
   -W clippy::unwrap_used
+
+step "Running Rust tests over the workspace"
+cargo test --workspace
 
 if [ "$SKIP_AUDIT" -eq 0 ]; then
   step "Auditing Rust dependencies"

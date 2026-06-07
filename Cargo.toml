@@ -23,14 +23,18 @@ license = "MIT"
 [workspace.dependencies]
 anyhow = "1"
 async-trait = "0.1"
-bytes = "1"
+axum = { version = "0.8", features = ["ws"] }
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 futures = "0.3"
 futures-util = "0.3"
 fs2 = "0.4"
-http = "1"
+image = { version = "0.25", features = ["jpeg", "png", "webp"] }
+lazy_static = "1.4"
 once_cell = "1"
+parking_lot = "0.12"
+pdfium-render = { version = "0.8", features = ["image"] }
 redis = { version = "0.25", features = ["tokio-comp"] }
 regex = "1"
 reqwest = { version = "0.12", features = ["json", "stream"] }
@@ -38,16 +42,29 @@ r2d2 = "0.8"
 r2d2_postgres = "0.18"
 postgres = { version = "0.19", features = ["with-serde_json-1"] }
 postgresql_embedded = { version = "0.20.2", features = ["blocking"] }
+quick_html2md = "0.2.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
+sysinfo = "0.30"
+tauri = "2"
+tauri-build = "2"
+tempfile = "3"
 thiserror = "1"
 tokio = { version = "1", features = ["full"] }
+tokio-test = "0.4"
+toml = "0.8"
 tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "fs"] }
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 
-tura-agents = { path = "agents" }
-tura-llm-rust = { path = "crates/provider" }
-tura-persona = { path = "personas" }
-tura-router = { package = "tura_router", path = "crates/router" }
+agents = { path = "agents" }
+provider = { path = "crates/provider" }
+personas = { path = "personas" }
+router = { path = "crates/router" }
+runtime = { path = "crates/runtime" }
 session_log = { path = "crates/session_log" }
+tools = { path = "crates/tools" }

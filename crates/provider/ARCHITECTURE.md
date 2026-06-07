@@ -5,25 +5,23 @@ provider-control crate for Tura. It is used by `crates/runtime` to execute one
 model call, and by gateway/config surfaces to inspect provider settings, auth
 state, usage, and health.
 
-The Cargo package and library names should stay compatible with Tura:
+Cargo target names:
 
 ```text
-package = tura-llm-rust
+package = provider
 library = tura_llm_rust
 ```
 
-This crate keeps compatibility with the current Tura provider behavior:
+This crate owns current Tura provider behavior:
 
 - route-based provider configuration
 - `provider_config.json`
 - `.env` / `TURA_ENV_PATH`
-- `TURA_PROVIDER_CONFIG` (preferred), `TURALLM_CONFIG` (legacy)
+- `TURA_PROVIDER_CONFIG`, `TURALLM_CONFIG`
 - provider call logs under project-root `log/provider/`
 - OpenAI-compatible, Google, and Bedrock providers
 - usage/cost extraction already present in provider responses
 - OpenAI OAuth refresh behavior already present in `tura_llm.rs`
-
-It also adopts the cleaner separation seen in Codex current:
 
 - auth and token storage are separate from provider calls
 - model catalog/presets are separate from provider adapters
@@ -210,10 +208,10 @@ llm/providers/bedrock.rs
 Provider must not invent independent path rules. It should use the path contract
 from `tura_path` for project-root-aware paths.
 
-Supported compatibility inputs:
+Accepted path inputs:
 
 - `TURA_ENV_PATH`
-- `TURA_PROVIDER_CONFIG` (preferred), `TURALLM_CONFIG` (legacy)
+- `TURA_PROVIDER_CONFIG`, `TURALLM_CONFIG`
 - project config from `tura_path`
 - provider `config/provider_config.json`
 - project-root `log/provider/YYYY-MM-DD/...json`
@@ -226,7 +224,7 @@ config/path_compat/
   resolves env path
   resolves log root
   resolves cache root
-  maps old provider paths to new paths
+  maps provider paths
 ```
 
 Rules:
@@ -235,8 +233,8 @@ Rules:
 - Explicit runtime/session provider config overrides defaults.
 - Missing config should return typed errors, not panic.
 - Path resolution should be deterministic and testable.
-- Log and usage stores should support both legacy provider `log/` and new global
-  Tura storage paths.
+- Log and usage stores should support provider `log/` and global Tura storage
+  paths.
 
 ## Configuration Model
 
@@ -286,8 +284,8 @@ crates/provider/config/provider_config.json
 
 Override the file path only when needed:
 
-- `TURA_PROVIDER_CONFIG`: preferred explicit provider config path.
-- `TURALLM_CONFIG`: legacy explicit provider config path.
+- `TURA_PROVIDER_CONFIG`: explicit provider config path.
+- `TURALLM_CONFIG`: explicit provider config path.
 
 Runtime environment values are loaded from the project-root `.env` by default.
 `TURA_ENV_PATH` can point to another dotenv file, but normal project setup
@@ -340,11 +338,11 @@ Responsibilities:
 - validate presence without leaking values
 - expose masked key status
 
-Existing compatible names:
+Accepted key names:
 
 - `OPENAI_API_KEY`
 - `{PROVIDER}_API_KEY`
-- legacy lowercase variants if needed
+- lowercase provider variants when configured
 
 ### `auth/oauth/`
 
@@ -359,7 +357,7 @@ Responsibilities:
 - validate token expiry
 - expose auth state
 
-OpenAI OAuth compatibility:
+OpenAI OAuth inputs:
 
 - `OPENAI_LOGIN=oauth`
 - `OPENAI_API_KEY` as access token
@@ -681,7 +679,7 @@ Rules:
 - Redact auth and secrets.
 - Bound raw payload size.
 - Store large raw payloads by reference.
-- Keep `LOG_PATH` override compatibility; the default provider log location is
+- Keep `LOG_PATH` override support; the default provider log location is
   project-root `log/provider/YYYY-MM-DD`.
 - Prefer structured JSON logs.
 
@@ -777,7 +775,7 @@ Sources:
 
 - environment
 - `TURA_ENV_PATH`
-- `TURA_PROVIDER_CONFIG` (preferred), `TURALLM_CONFIG` (legacy)
+- `TURA_PROVIDER_CONFIG`, `TURALLM_CONFIG`
 - provider `config/provider_config.json`
 - future global Tura config from `tura_path`
 
@@ -839,8 +837,8 @@ Gateway should not inspect raw provider secrets.
 
 Minimum tests when implementation begins:
 
-- config path resolution including `TURA_ENV_PATH` and `TURA_PROVIDER_CONFIG` (preferred), `TURALLM_CONFIG` (legacy)
-- route loading from legacy JSON
+- config path resolution including `TURA_ENV_PATH`, `TURA_PROVIDER_CONFIG`, and `TURALLM_CONFIG`
+- route loading from provider JSON
 - API key resolution and masking
 - OAuth state transitions
 - token refresh success/failure
@@ -853,23 +851,22 @@ Minimum tests when implementation begins:
 - call log redaction
 - rate-limit snapshot parsing
 - pause/resume provider policy
-- tura_path compatibility
+- tura_path path resolution
 
 ## Design Summary
 
-Provider should become a clean provider-control crate:
+Provider is a provider-control crate:
 
 ```text
 config + auth + routing + adapters + response + usage + logging + monitoring
 ```
 
-It should preserve the useful parts of current Tura provider:
+It owns:
 
 - route config
 - provider logs
 - rich usage/cost shape
-- OAuth refresh compatibility
+- OAuth refresh
 - OpenAI/Google/Bedrock adapters
 
-But it should remove the old concentration of responsibilities from
-`tura_llm.rs` and provider-specific mega-files.
+Provider-specific modules should stay focused by responsibility.

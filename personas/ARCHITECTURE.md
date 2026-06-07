@@ -94,7 +94,7 @@ To add a built-in persona:
 6. Set `prompt_directory` to `personas/src/<persona_id>/prompt`.
 7. Set `default_config: true` only for protected built-ins.
 8. Add optional media under `media/expressions`.
-9. Run `cargo test -p tura-personas` if persona loader behavior changes.
+9. Run `cargo test -p personas` if persona loader behavior changes.
 
 To add a user-created persona manually, use `personas/<persona_id>/` instead and
 set `default_config: false`.

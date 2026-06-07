@@ -95,7 +95,7 @@ Start scripts should:
   `apps/tauri`, letting Tauri own the Vite frontend startup.
 - Start the router binary when CLI forwarding or managed lifecycle is needed,
   for example
-  `cargo run -p tura_router -- forward <command> [args...]`.
+  `cargo run -p router --bin tura_router -- forward <command> [args...]`.
 - Pass router/gateway/frontend overrides when a local UI flow needs them.
 - For GUI startup, set `VITE_TURA_GATEWAY_URL` from `TURA_GATEWAY_URL` when
   present, otherwise from the selected gateway port.

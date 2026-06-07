@@ -10,7 +10,7 @@ under `log/provider/` or `LOG_PATH`.
 The Cargo package name should stay compatible with Tura:
 
 ```text
-package = code-tools
+package = tools
 ```
 
 ## Layout
@@ -145,8 +145,8 @@ command_run
 arguments. Tools asks `crates/router` to resolve that command name through the
 router-owned CLI registry, then executes the mapped command handler.
 
-Direct model-visible tools are allowed only for compatibility or provider routes
-that require them.
+Direct model-visible tools are allowed only for provider routes that require
+them.
 
 ## Command Contract
 
@@ -225,8 +225,8 @@ belongs in `crates/router`.
 
 Rules:
 
-- `command_type` is the canonical provider-facing command selector. Legacy
-  `command` input can be normalized for compatibility, but prompts and schemas
+- `command_type` is the canonical provider-facing command selector. `command`
+  input can be normalized at the handler boundary, but prompts and schemas
   should use `command_type`.
 - `step` is optional in the provider-facing schema to match codex-current.
   The handler normalizes missing steps to the command's original 1-based
@@ -244,7 +244,7 @@ The internal name for the batched concurrent-read scheduling is
 **`macro_command`**, not "parallel". The unified naming covers handler
 internals, the router capability flag, and the per-command trait method:
 
-| Old (legacy) | New (unified) | Site |
+| Previous name | Current name | Site |
 |---|---|---|
 | `supports_parallel_tool_calls` | `supports_macro_command` | `ToolHandler` trait method on each command |
 | `tool_supports_parallel` | `tool_supports_macro_command` | `ToolRouter` capability probe |
@@ -374,7 +374,7 @@ Rules:
    direct routed tool.
 5. Add the handler field and dispatch branches in
    `crates/tools/src/runtime/tool.rs`.
-6. Add compatibility execution/access/display branches in
+6. Add execution/access/display branches in
    `crates/tools/src/commands/mod.rs` when `command_run` should support the
    command by name.
 7. Register command aliases, CLI forwarding metadata, and lifecycle metadata in
@@ -432,6 +432,6 @@ it does not own the command implementation.
 Use:
 
 ```text
-cargo fmt -p code-tools
-cargo check -p code-tools
+cargo fmt -p tools
+cargo check -p tools
 ```

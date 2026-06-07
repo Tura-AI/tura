@@ -123,7 +123,7 @@ Rust binaries:
 |---|---|---|---|
 | `tura` | `gateway` | `cargo run -p gateway --bin tura -- exec "Prompt"` | CLI entrypoint for direct prompt execution. |
 | `gateway` | `gateway` | `cargo run -p gateway --bin gateway` | HTTP/SSE server used by TUI, GUI, and SDK clients. |
-| `tura_router` | `tura_router` | `cargo run -p tura_router` | Router CLI for command forwarding, registry operations, and runtime child-agent dispatch. |
+| `tura_router` | `router` | `cargo run -p router --bin tura_router` | Router CLI for command forwarding, registry operations, and runtime child-agent dispatch. |
 | `mock_router_for_test` | `runtime` | `cargo run -p runtime --bin mock_router_for_test` | Test helper used by runtime router/subprocess tests. |
 
 Rust CLI output contract:
@@ -473,7 +473,7 @@ normalized as input plus cached prompt tokens to match the other rows.
   full external scoring harness. Source-port rows are stricter because they
   include final test pass/fail counts.
 - SWE-bench rows use a separate local patch-check summary because prediction
-  generation, patch compatibility, and official harness resolution are separate
+  generation, patch handling, and official harness resolution are separate
   stages with different score semantics.
 - `Local n=0` means no recent qualifying success was present in `target/` for
   that lane and suite; the companion `Backfilled n` cells are estimates, not
@@ -570,23 +570,25 @@ in `session_log`.
 The Rust workspace is defined in the root `Cargo.toml`.
 
 ```text
-agents    package tura-agents       library tura_agents
+agents    package agents            library tura_agents
 crates/gateway   package gateway           binaries tura, gateway
-crates/provider  package tura-llm-rust     library tura_llm_rust
-crates/router    package tura_router       binary tura_router
+crates/provider  package provider          library tura_llm_rust
+crates/router    package router            binary tura_router
 crates/runtime   package runtime          library runtime, binary mock_router_for_test
 crates/session_log package session_log      library session_log
-crates/tools     package code-tools        library code_tools
+crates/tools     package tools             library code_tools
 ```
 
-Package names do not always match directory names. Prefer package names from
-the local `Cargo.toml` when running `cargo check`, `cargo fmt`, or tests.
+Package names match their owning directory names. Some library and binary
+targets keep public names, such as `tura_router`, `tura_llm_rust`, and
+`code_tools`.
 
 The TypeScript workspaces live under `apps/`:
 
 ```text
 apps/gui    Vite GUI and gateway SDK workspace
 apps/tui    TypeScript CLI/TUI workspace
+apps/tauri  Tauri desktop shell that hosts the GUI build/dev server
 ```
 
 Apps consume gateway APIs and SDK types. They must not call runtime, provider,
@@ -701,7 +703,7 @@ sequenceDiagram
   Gateway-->>App: HTTP/SSE response or CLI output
 ```
 
-The product direction is CLI-driven. Ports may exist for compatibility or UI
+The product direction is CLI-driven. Ports may exist for UI
 development, but the architecture avoids treating every subsystem as a separate
 network service.
 
@@ -760,7 +762,7 @@ cargo check -p gateway
 
 ### `crates/runtime`
 
-Runtime is the renamed Mano/MANAS orchestration crate. It owns sessions,
+Runtime is the agent orchestration crate. It owns sessions,
 agents, state machines, prompt/context assembly, provider turns, tool-call
 normalization, compact tool results, gateway event publishing, and final
 response behavior.
@@ -779,9 +781,9 @@ Current important modules:
   receive helpers.
 - `src/context/`: retained message context and workspace/runtime fragments.
 - `src/prompt_style/`: fixed runtime prompt fragments as Rust modules.
-- `src/tool_router/`: compatibility bridge for executing local tools.
+- `src/tool_router/`: bridge for executing local tools.
 
-The internal names `mano` and `manas` remain because they describe two layers:
+The internal module names `mano` and `manas` describe two layers:
 the user/session orchestration entrypoint and the active agent execution loop.
 Large behavior should live in focused helper modules rather than in `mod.rs`
 files.
@@ -822,7 +824,7 @@ Provider owns model access, configuration, authentication, routing, response
 normalization, streaming normalization, usage/cost records, and provider call
 logs.
 
-Current implementation keeps compatibility with legacy files:
+Current important modules:
 
 - `src/tura_conf.rs`
 - `src/tura_llm_conf.rs`
@@ -881,8 +883,8 @@ fall back to an empty API key.
 Useful checks:
 
 ```powershell
-cargo fmt -p tura-llm-rust
-cargo check -p tura-llm-rust
+cargo fmt -p provider
+cargo check -p provider
 ```
 
 ### `crates/tools`
@@ -935,15 +937,14 @@ directory expansion, document attachment size, and audio preview size;
 Useful checks:
 
 ```powershell
-cargo fmt -p code-tools
-cargo check -p code-tools
+cargo fmt -p tools
+cargo check -p tools
 ```
 
 ### `crates/router`
 
 Router owns command registration metadata, aliases, CLI forwarding, and managed
-local process lifecycle. It also contains compatibility routes used by older
-gateway/frontend flows.
+local process lifecycle and routes used by gateway/frontend flows.
 
 Current important modules:
 
@@ -960,8 +961,8 @@ provider calls, or prompt assembly.
 Useful checks:
 
 ```powershell
-cargo fmt -p tura_router
-cargo check -p tura_router
+cargo fmt -p router
+cargo check -p router
 ```
 
 ## Apps
@@ -1030,7 +1031,7 @@ Provider configuration can come from:
 
 - project-root `.env`
 - `TURA_ENV_PATH`
-- `TURA_PROVIDER_CONFIG` (preferred), `TURALLM_CONFIG` (legacy)
+- `TURA_PROVIDER_CONFIG`, `TURALLM_CONFIG`
 - `crates/provider/config/provider_config.json`
 - project-root-aware path configuration
 
@@ -1082,7 +1083,7 @@ needed file-lock behavior. In this tree, `shell_command`, `bash`, `read_media`,
 ```mermaid
 flowchart TD
   Model["Provider returns command_run tool call"]
-  Parse["Parse commands array\nnormalize command_type, legacy command, step, timeout"]
+  Parse["Parse commands array\nnormalize command_type, command, step, timeout"]
   Step["Group by effective step"]
   Inspect["Resolve command through ToolRouter\ncheck handler and policy"]
   MacroSafe{"Macro safe?\nhandler supports macro\nand call is read-only"}
@@ -1124,8 +1125,8 @@ Conceptual request:
 Execution rules:
 
 - command names are canonicalized before execution
-- `command_type` is accepted as the canonical provider-facing field; legacy
-  `command` payloads are normalized at the handler boundary
+- `command_type` is the canonical provider-facing field; `command` payloads are
+  normalized at the handler boundary
 - missing `step` values are normalized
 - same-step read-only commands may run concurrently
 - later steps wait for earlier steps
@@ -1200,12 +1201,13 @@ Rust commands:
 cargo check
 cargo test
 cargo fmt
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets
+cargo test --workspace
 cargo check -p gateway
 cargo check -p runtime
-cargo check -p code-tools
-cargo check -p tura_router
-cargo check -p tura-llm-rust
+cargo check -p tools
+cargo check -p router
+cargo check -p provider
 ```
 
 Backend quality checks:
@@ -1233,7 +1235,7 @@ cargo run -p gateway --bin tura -- exec "Inspect the workspace"
 The router binary is:
 
 ```powershell
-cargo run -p tura_router
+cargo run -p router --bin tura_router
 ```
 
 The gateway server binary is:
@@ -1274,9 +1276,9 @@ Crate-native tests:
 
 ```powershell
 cargo test -p runtime
-cargo test -p code-tools
-cargo test -p tura_router
-cargo test -p tura-llm-rust
+cargo test -p tools
+cargo test -p router
+cargo test -p provider
 ```
 
 Crate-owned command-run E2E and contract scripts:
@@ -1328,19 +1330,17 @@ committed.
 ## Architecture Roadmap
 
 The current codebase already reflects the core boundaries, but several areas
-are still in transition:
+Current maintenance focus:
 
-- Provider has compatibility files and target subdomain directories. Continue
-  moving auth, routing, request, response, streaming, usage, and logging logic
-  into focused modules without breaking legacy config paths.
-- Router currently exposes compatibility HTTP routes and managed process
-  helpers. Continue separating registry, lifecycle, monitor, security, and
-  event responsibilities.
-- Runtime keeps Mano/MANAS naming internally. Preserve that split while keeping
-  public entrypoints thin and moving detailed behavior into owner modules.
-- Tools currently exposes command-run plus shell/bash/apply_patch/read_media,
-  web_discover, task_status, compact_context, and planning commands.
-  New commands should be added under `crates/tools/src/commands/<name>` and
+- Provider owns auth, routing, request, response, streaming, usage, and
+  logging logic under `crates/provider`.
+- Router owns registry, lifecycle, monitor, security, and event
+  responsibilities under `crates/router`.
+- Runtime uses `mano` and `manas` modules for its session-entry and active
+  agent-loop layers while keeping public entrypoints thin.
+- Tools exposes command-run plus shell/bash/apply_patch/read_media,
+  web_discover, task_status, compact_context, and planning commands. New
+  commands should be added under `crates/tools/src/commands/<name>` and
   registered through router metadata or the command-run capability gate.
 - Apps directories are present as product surfaces. Gateway remains the stable
   boundary for UI and desktop integration.

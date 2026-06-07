@@ -453,7 +453,7 @@ ensure_rust() {
   step "Building Rust binaries and core crates"
   cargo build $PROFILE_ARGS -p gateway --bin tura --bin gateway
   cargo build $PROFILE_ARGS -p tura_router
-  cargo check -p code-tools -p tura-llm-rust -p tura-agents -p runtime -p session_log
+  cargo check -p tools -p provider -p agents -p runtime -p session_log
 }
 
 cd "$REPO_ROOT"

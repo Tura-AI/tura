@@ -1,5 +1,5 @@
 [package]
-name = "tura-persona"
+name = "personas"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

@@ -55,6 +55,7 @@ pub struct MessagePart {
     pub state: Option<serde_json::Value>,
 }
 
+#[derive(Clone)]
 pub struct SessionStore {
     sessions: Arc<RwLock<HashMap<String, SessionInfo>>>,
     messages: Arc<RwLock<HashMap<String, Vec<Message>>>>,
@@ -201,8 +202,9 @@ impl SessionStore {
         let Some(directory) = directory else {
             return;
         };
+        let store = self.clone();
         std::thread::spawn(move || {
-            session_store().hydrate_directory(Some(directory));
+            store.hydrate_directory(Some(directory));
         });
     }
 
@@ -249,12 +251,21 @@ impl SessionStore {
     }
 
     fn persist_session_background(&self, session_id: &str) {
-        let session_id = session_id.to_string();
-        std::thread::spawn(move || {
-            if let Err(err) = session_store().persist_session_result(&session_id) {
-                tracing::warn!(session_id, error = %err, "failed to persist session");
-            }
-        });
+        #[cfg(test)]
+        {
+            self.persist_session(session_id);
+        }
+
+        #[cfg(not(test))]
+        {
+            let session_id = session_id.to_string();
+            let store = self.clone();
+            std::thread::spawn(move || {
+                if let Err(err) = store.persist_session_result(&session_id) {
+                    tracing::warn!(session_id, error = %err, "failed to persist session");
+                }
+            });
+        }
     }
 
     pub fn persist_session_ack(&self, session_id: &str) -> Result<(), String> {

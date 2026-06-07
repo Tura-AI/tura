@@ -116,7 +116,7 @@ Gateway owns:
 
 - frontend-facing HTTP API routes and DTOs
 - request validation, auth, workspace scoping, role checks, and response shaping
-- compatibility mapping between Multica-style APIs and Tura session/runtime APIs
+- mapping between Multica-style APIs and Tura session/runtime APIs
 - UI-facing persistence for workspaces, users, members, invitations, issues,
   comments, labels, attachments, reactions, subscribers, projects, squads,
   agents, skills, autopilots, chat, inbox, notification preferences, pins,
@@ -370,8 +370,7 @@ All handlers should return:
 }
 ```
 
-for failures. Existing routes can keep legacy behavior until migration, but new
-Multica-compatible routes should use the shared envelope.
+for failures. Multica-style routes should use the shared envelope.
 
 ## Session Plan And Task Management
 
@@ -441,10 +440,9 @@ single task and may set the task `task_id`. Multi-task updates that need
 task-specific matching use `task_management.tasks[]`; array entries match by
 `task_id` and create missing tasks using supplied fields plus defaults.
 
-Current patch validation behavior is intentionally compatibility-preserving:
-invalid task-management patches are logged and ignored, prior state is kept,
-and the session response is returned. GUI/TUI behavior must reconcile by
-refreshing gateway state.
+Current patch validation behavior logs and ignores invalid task-management
+patches, keeps prior state, and returns the session response. GUI/TUI behavior
+must reconcile by refreshing gateway state.
 
 User messages appended through gateway message APIs are also appended to the
 session-management log so runtime context and hydration can keep follow-up
@@ -1163,7 +1161,7 @@ Requirements:
 
 Unit tests:
 
-- DTO serialization compatibility
+- DTO serialization
 - workspace role middleware
 - auth/PAT/daemon token validation
 - issue filters/grouping/search params

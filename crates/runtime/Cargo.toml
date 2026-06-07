@@ -53,14 +53,14 @@ serde_json.workspace = true
 tracing.workspace = true
 chrono.workspace = true
 redis.workspace = true
-tura-llm-rust = { workspace = true }
-tura-agents = { workspace = true }
-tura-router = { workspace = true }
-code-tools = { path = "../tools" }
+provider = { workspace = true }
+agents = { workspace = true }
+router = { workspace = true }
+tools = { workspace = true }
 reqwest.workspace = true
 session_log = { workspace = true }
 uuid.workspace = true
 
 [dev-dependencies]
-tokio-test = "0.4"
-tempfile = "3"
+tokio-test.workspace = true
+tempfile.workspace = true

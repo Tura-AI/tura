@@ -8,7 +8,7 @@ runtime loop.
 The Cargo package and library names stay compatible with Tura:
 
 ```text
-package = tura-agents
+package = agents
 library = tura_agents
 ```
 
@@ -67,7 +67,7 @@ Each agent directory contains:
 
 - `agent_name`: canonical id. It should match the directory name.
 - `description`: human-readable summary for gateway/TUI listings.
-- `aliases`: optional compatibility names, such as `coding_agent`.
+- `aliases`: optional accepted names, such as `coding_agent`.
 - `agent_directory`: repository-relative path to the agent directory.
 - `default_config`: `true` for built-in protected agents, `false` for
   user-created agents.
@@ -95,7 +95,7 @@ To add or edit an agent manually:
 6. Bind one or more personas through `agent_persona`.
 7. Choose a provider route through `provider.tura_llm_name`.
 8. Enable only the command capabilities the agent should receive.
-9. Run `cargo test -p tura-agents` after changing loader-visible fields.
+9. Run `cargo test -p agents` after changing loader-visible fields.
 
 Minimal custom agent example:
 
@@ -199,7 +199,7 @@ They are loaded from the persona binding declared in `agent_persona`.
 
 Agent changes should include the narrowest useful checks:
 
-- `cargo test -p tura-agents` for config discovery and loader behavior.
+- `cargo test -p agents` for config discovery and loader behavior.
 - Runtime activation tests when provider route, capability selection, or prompt
   assembly behavior changes.
 - Gateway/TUI smoke tests when an agent id, alias, or listing behavior changes.

@@ -25,7 +25,7 @@ stream, output formatting, and API types after the command path is stable.
 - Do not read or write `.tura/config.conf`, `.env`, or provider config files
   directly.
 - Do not create a separate local session/message database for the CLI/TUI app.
-- Do not make `/tui/*` compatibility routes the main implementation path.
+- Do not make `/tui/*` shortcut routes the main implementation path.
 
 ## Terminal Interaction Goals
 
@@ -219,9 +219,9 @@ skills/plugins                 GET    /skill, GET /plugin
 paths                          GET    /path
 ```
 
-The existing `/tui/*` routes in gateway are compatibility shortcuts. The new
-TypeScript CLI/TUI should prefer the richer session/message/config endpoints,
-and only use `/tui/*` for compatibility shims or very early smoke tests.
+The `/tui/*` routes in gateway are shortcuts. The TypeScript CLI/TUI should
+prefer the richer session/message/config endpoints, and only use `/tui/*` for
+very small smoke tests.
 
 ## Session Plan Commands
 
@@ -320,8 +320,8 @@ settings. Persistent changes belong to `tura config set`.
 ## Run Flow
 
 Use `/prompt_async` as the default execution endpoint because it returns
-immediately and lets the CLI stream `/event`. Keep `/message` only as a
-compatibility fallback because it currently runs synchronously.
+immediately and lets the CLI stream `/event`. Use `/message` only for simple
+synchronous calls.
 
 ```text
 parse args
