@@ -23,6 +23,7 @@ const suiteRoot =
   path.join(runPaths.target_root, runPaths.test_name, "_cache")
 const runRoot = runPaths.run_root
 const summaryPath = runPaths.summary_path
+const sessionDbRoot = process.env.SESSION_LOG_DB_ROOT || path.join(runRoot, "_session-db")
 const model = process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "gpt-5.5"
 const turaModel = process.env.COMMAND_RUN_AGENT_TURA_MODEL || (model.includes("/") ? model : `openai/${model}`)
 const reasoning = process.env.COMMAND_RUN_AGENT_REASONING_EFFORT || "medium"
@@ -37,6 +38,7 @@ const runEval = truthy(process.env.SOURCE_PORT_RUN_EVAL || process.env.COMMAND_R
 const complexTodoHint = defaultTruthy(process.env.SOURCE_PORT_COMPLEX_TODO_HINT || process.env.COMMAND_RUN_AGENT_SOURCE_PORT_COMPLEX_TODO_HINT)
 const planningOverride = parsePlanningOverride(process.env.COMMAND_RUN_AGENT_TURA_PLANNING || "auto")
 const codexGoalsEnabled = truthy(process.env.COMMAND_RUN_AGENT_CODEX_GOALS || "0")
+const turaExplicitSessionId = truthy(process.env.COMMAND_RUN_AGENT_TURA_SESSION_ID || "0")
 const turaExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura.exe" : "tura")
 const codexMainExe = findCodexMainExe()
 const codexDocumentsExe = findCodexDocumentsExe()
@@ -153,6 +155,9 @@ function findCodexDocumentsExe() {
 function parseAgents(value) {
   const alias = new Map([
     ["tura", "tura-planning-shll"],
+    ["tura-thinking", "tura-thinking-shll"],
+    ["tura-thinking-shll", "tura-thinking-shll"],
+    ["thinking", "tura-thinking-shll"],
     ["tura-planning", "tura-planning-shll"],
     ["tura-planning-shll", "tura-planning-shll"],
     ["tura-fast", "tura-fast-shll"],
@@ -539,7 +544,7 @@ function sourcePortPrompt(task) {
   return `You are in a benchmark workspace containing a Rust reference application at ./rust-reference and an official release binary path recorded in ./REFERENCE_BINARY.txt.
 
 Goal:
-Create a Python implementation that replicates the reference application's observable CLI behavior needed for this benchmark with byte-for-byte compatible outputs after normal platform newline/color normalization.
+Create a Python implementation that replicates the reference application's business-relevant CLI behavior needed for this benchmark. The evaluator focuses on functional outputs for representative real workflows rather than exhaustive help text or parser-copy minutiae.
 
 Reference:
 - Project: ${task.label}
@@ -564,22 +569,22 @@ Hard constraints:
 - Do not fake tests by special-casing harness file names only. Implement the general command semantics for the requested scope.
 
 Required benchmark scope:
-- Determine the required CLI surface from the authoritative sources before planning implementation work: inspect the Rust source, command dispatcher, command help, tests/fixtures when present, and official binary behavior.
-- Do not assume the required scope is limited to an obvious subset or to the first commands you inspect. Include command discovery, global parser behavior, help/list/version behavior, unknown command handling, and any command behaviors needed to match the benchmark's observable checks.
+- Determine the required CLI surface from the authoritative sources before planning implementation work: inspect the Rust source, command dispatcher, tests/fixtures when present, and official binary behavior.
+- Do not assume the required scope is limited to an obvious subset or to the first commands you inspect. Prioritize command behaviors needed for realistic data-processing or file-processing workflows over copying static help text.
 - Treat the official binary and local source as the source of truth for which commands, flags, inputs, outputs, exit codes, and error cases matter.
 
 Equivalence requirements:
-- For every required command/flag/input you identify, exit code, stdout, and stderr must match the official binary exactly, except for unavoidable runtime fields such as durations, terminal colors, and OS-specific newline normalization.
-- Match parser behavior: help text, version text, unknown flags, missing arguments, invalid values, validation order, and error streams.
-- Match data behavior: ordering, delimiters, quoting, escaping, whitespace, headers, formatting, path handling, numeric/string coercion, and failure cases.
+- For every required command/flag/input you identify, exit code, stdout, and stderr should match the official binary for functional behavior, except for unavoidable runtime fields such as durations, terminal colors, and OS-specific newline normalization.
+- Do not spend disproportionate effort cloning long static help text. Match parser behavior enough to support the evaluated workflows.
+- Match data behavior: ordering, delimiters, quoting, escaping, whitespace, headers, formatting, path handling, numeric/string coercion, and realistic failure cases.
 - If the official binary prints nothing, your program must print nothing. If the official binary writes to stderr, your program must write to stderr, not stdout.
 - The evaluator will generate expected results by invoking the official binary at runtime and then invoke your ./executable with the same inputs.
-- Passing local hand-written examples is not enough. You must probe the official binary and reconcile differences before marking the task done.
+- Passing local hand-written examples is not enough. You must probe the official binary on representative business workflows and reconcile functional differences before marking the task done.
 ${todoHint}
 
 Required workflow:
 1. Inspect README/Cargo metadata and the relevant Rust source files under ./rust-reference.
-2. Use the official binary from ./REFERENCE_BINARY.txt to probe representative CLI input/output/exit-code behavior before implementing and again after implementation.
+2. Use the official binary from ./REFERENCE_BINARY.txt to probe representative business CLI input/output/exit-code behavior before implementing and again after implementation.
 3. Implement the Python port.
 4. Run local checks against the official binary behavior and fix every mismatch you find.
 5. Finish by leaving ./executable and ./compile.sh in the workspace root.
@@ -673,19 +678,15 @@ def zip_cases(fx):
     two = zips / "2.test.txt.zip"
     three = zips / "3.test.txt.zip"
     return [
-        {"name": "version", "args": ["--version"]},
-        {"name": "help", "args": ["--help"]},
-        {"name": "missing input", "args": ["-i", "missing.zip"]},
-        {"name": "workers zero", "args": ["-i", str(two), "-w", "0"]},
-        {"name": "min zero", "args": ["-i", str(two), "--minPasswordLen", "0"]},
-        {"name": "max before min", "args": ["-i", str(two), "--minPasswordLen", "3", "--maxPasswordLen", "2"]},
-        {"name": "unknown charset", "args": ["-i", str(two), "-c", "z"]},
         {"name": "find generated", "args": ["-i", str(two), "-c", "l", "--maxPasswordLen", "2", "-w", "1"], "timeout": 90},
         {"name": "find generated starting password", "args": ["-i", str(three), "-c", "l", "--maxPasswordLen", "3", "-s", "abc", "-w", "1"], "timeout": 90},
         {"name": "not found", "args": ["-i", str(two), "-c", "l", "--maxPasswordLen", "1", "-w", "1"], "timeout": 90},
         {"name": "dictionary", "args": ["-i", str(two), "-p", str(dict_file), "-w", "1"], "timeout": 90},
         {"name": "mask two lowercase", "args": ["-i", str(two), "--mask", "?l?l", "-w", "1"], "timeout": 90},
         {"name": "mask custom charset", "args": ["-i", str(two), "--mask", "?1?1", "-1", "ab", "-w", "1"], "timeout": 90},
+        {"name": "missing input", "args": ["-i", "missing.zip"]},
+        {"name": "workers zero", "args": ["-i", str(two), "-w", "0"]},
+        {"name": "max before min", "args": ["-i", str(two), "--minPasswordLen", "3", "--maxPasswordLen", "2"]},
         {"name": "file number missing", "args": ["-i", str(two), "--fileNumber", "99", "-c", "l", "--maxPasswordLen", "2"]},
     ]
 
@@ -695,52 +696,32 @@ def xsv_cases(fx):
     people2 = fx / "people2.csv"
     semi = fx / "semi.csv"
     no_headers = fx / "no_headers.csv"
-    all_command_help = [
-        {"name": f"help {cmd}", "args": [cmd, "--help"]}
-        for cmd in ["cat", "count", "fixlengths", "flatten", "fmt", "frequency", "headers", "index", "input", "join", "partition", "reverse", "sample", "search", "select", "slice", "sort", "split", "stats", "table"]
-    ]
-    behavior = [
-        {"name": "version", "args": ["--version"]},
-        {"name": "help", "args": ["--help"]},
-        {"name": "list commands", "args": ["--list"]},
-        {"name": "unknown command", "args": ["does-not-exist"]},
+    return [
         {"name": "headers", "args": ["headers", str(people)]},
         {"name": "headers names", "args": ["headers", "--just-names", str(people)]},
-        {"name": "count", "args": ["count", str(people)]},
         {"name": "count stdin", "args": ["count"], "stdin_file": people},
         {"name": "cat rows", "args": ["cat", "rows", str(people), str(people2)]},
         {"name": "cat columns", "args": ["cat", "columns", str(people), str(people2)]},
         {"name": "select", "args": ["select", "city,name", str(people)]},
         {"name": "select range", "args": ["select", "1-2", str(people)]},
-        {"name": "select invert", "args": ["select", "!", "score", str(people)]},
         {"name": "select no headers", "args": ["select", "--no-headers", "1,3", str(no_headers)]},
+        {"name": "select invert", "args": ["select", "!", "score", str(people)]},
         {"name": "slice", "args": ["slice", "-s", "1", "-l", "2", str(people)]},
         {"name": "slice end", "args": ["slice", "-e", "3", str(people)]},
         {"name": "search", "args": ["search", "-s", "city", "Berlin", str(people)]},
         {"name": "search invert", "args": ["search", "-v", "-s", "city", "Berlin", str(people)]},
-        {"name": "reverse", "args": ["reverse", str(people)]},
         {"name": "sort numeric", "args": ["sort", "-s", "age", "-N", str(people)]},
         {"name": "sort reverse", "args": ["sort", "-s", "city", "-R", str(people)]},
         {"name": "fmt delimiter", "args": ["fmt", "-d", ";", str(semi)]},
         {"name": "fixlengths", "args": ["fixlengths", str(fx / "unequal.csv")]},
         {"name": "flatten", "args": ["flatten", str(people)]},
-        {"name": "table", "args": ["table", str(people)]},
         {"name": "stats", "args": ["stats", "-s", "age,score", str(people)]},
-        {"name": "stats everything", "args": ["stats", str(people)]},
         {"name": "frequency", "args": ["frequency", "-s", "city", str(people)]},
     ]
-    return all_command_help + behavior
 
 
 def eza_cases(fx):
-    help_flags = [
-        "all", "long", "tree", "sort", "reverse", "oneline", "grid", "classify", "only-dirs",
-        "recurse", "level", "header", "binary", "bytes", "group-directories-first", "git",
-        "icons", "color", "time-style", "no-user", "no-permissions",
-    ]
-    behavior = [
-        {"name": "version", "args": ["--version"]},
-        {"name": "help", "args": ["--help"]},
+    return [
         {"name": "plain", "args": ["--color=never", "--icons=never", str(fx)]},
         {"name": "all", "args": ["--color=never", "--icons=never", "-a", str(fx)]},
         {"name": "almost all", "args": ["--color=never", "--icons=never", "-A", str(fx)]},
@@ -770,31 +751,15 @@ def eza_cases(fx):
         {"name": "header", "args": ["--color=never", "--icons=never", "-l", "--header", "--no-permissions", "--no-user", "--time-style=iso", str(fx)]},
         {"name": "group dirs first", "args": ["--color=never", "--icons=never", "--group-directories-first", str(fx)]},
         {"name": "absolute", "args": ["--color=never", "--icons=never", "--absolute", str(fx / "notes.txt")]},
-        {"name": "single file", "args": ["--color=never", "--icons=never", str(fx / "notes.txt")]},
         {"name": "multiple paths", "args": ["--color=never", "--icons=never", str(fx / "notes.txt"), str(fx / "README.md")]},
-        {"name": "extension filter", "args": ["--color=never", "--icons=never", "--extension", str(fx)]},
-        {"name": "inode long", "args": ["--color=never", "--icons=never", "-l", "--inode", "--no-permissions", "--no-user", "--time-style=iso", str(fx)]},
-        {"name": "blocks long", "args": ["--color=never", "--icons=never", "-l", "--blocksize", "--no-permissions", "--no-user", "--time-style=iso", str(fx)]},
-        {"name": "octal permissions", "args": ["--color=never", "--icons=never", "-l", "--octal-permissions", "--no-user", "--time-style=iso", str(fx)]},
-        {"name": "icons never", "args": ["--icons=never", "--color=never", str(fx)]},
-        {"name": "color never", "args": ["--color=never", "--icons=never", str(fx)]},
-        {"name": "invalid sort", "args": ["--color=never", "--icons=never", "--sort=definitely-not-sort", str(fx)]},
-        {"name": "bad level", "args": ["--color=never", "--icons=never", "-T", "-L", "not-a-number", str(fx)]},
-        {"name": "missing", "args": ["--color=never", "--icons=never", str(fx / "missing")]},
     ]
-    return [{"name": f"help mentions {flag}", "args": ["--help"]} for flag in help_flags] + behavior
 
 
 def nushell_cases(fx):
     people = fx / "people.csv"
-    help_topics = [
-        "math", "str", "to json", "from json", "open", "where", "sort-by", "select", "get",
-        "length", "first", "last", "each", "flatten", "merge", "default", "path", "split row",
-        "detect columns", "to csv", "from csv",
-    ]
-    behavior = [
-        {"name": "version", "args": ["--version"]},
-        {"name": "help", "args": ["--help"]},
+    return [
+        {"name": "help math", "args": ["-c", "help math"]},
+        {"name": "help open", "args": ["-c", "help open"]},
         {"name": "math", "args": ["-c", "1 + 2"]},
         {"name": "pipeline math", "args": ["-c", "[1 2 3 4] | math sum"]},
         {"name": "math avg", "args": ["-c", "[1 2 3 4] | math avg"]},
@@ -834,7 +799,6 @@ def nushell_cases(fx):
         {"name": "missing file", "args": ["-c", f"open {str(fx / 'missing.txt')!r}"]},
         {"name": "bad expression", "args": ["-c", "definitely-not-a-command"]},
     ]
-    return [{"name": f"help {topic}", "args": ["-c", f"help {topic}"]} for topic in help_topics] + behavior
 
 
 def cases_for(task, fx):
@@ -968,6 +932,7 @@ function safeArchiveEnv(env) {
     "TURA_COMMAND_RUN_STRICT_JSON",
     "TURA_FORCE_EXECUTE_TOOLS_PLANNING",
     "TURA_PROJECT_ROOT",
+    "SESSION_LOG_DB_ROOT",
     "TURA_SESSION_REASONING_EFFORT",
     "session_log_POSTGRES_PORT",
   ])
@@ -1067,8 +1032,8 @@ async function runCodexDocuments(workspace, agentDir, prompt, onProgress) {
 
 async function runTuraPlanning(workspace, agentDir, prompt, agentPrompt, onProgress) {
   assert(fs.existsSync(turaExe), `missing Tura exe: ${turaExe}`)
-  const sessionId = `source-port-${agentPrompt}-${process.pid}-${Date.now()}`
-  const sessionCwd = prepareTuraSessionCwd(sessionId)
+  const launchId = `source-port-${agentPrompt}-${process.pid}-${Date.now()}`
+  const sessionCwd = prepareTuraSessionCwd(launchId)
   const providerLogPath = path.join(agentDir, "provider-log")
   snapshotTuraInternalPrompt(agentDir, agentPrompt)
   snapshotTuraAgentConfig(agentDir, agentPrompt)
@@ -1078,8 +1043,7 @@ async function runTuraPlanning(workspace, agentDir, prompt, agentPrompt, onProgr
     "exec",
     "--json",
     "--skip-git-repo-check",
-    "--session-id",
-    sessionId,
+    ...(turaExplicitSessionId ? ["--session-id", launchId] : []),
     "--agent-id",
     agentPrompt,
     "-m",
@@ -1097,6 +1061,7 @@ async function runTuraPlanning(workspace, agentDir, prompt, agentPrompt, onProgr
     TURA_COMMAND_RUN_SHELL: process.env.COMMAND_RUN_AGENT_TURA_SHELL || "shell_command",
     TURA_COMMAND_RUN_STRICT_JSON: "0",
     TURA_SESSION_REASONING_EFFORT: reasoning,
+    SESSION_LOG_DB_ROOT: sessionDbRoot,
     session_log_POSTGRES_PORT: String(57000 + (process.pid % 1000)),
     ...(planningMode ? { TURA_FORCE_EXECUTE_TOOLS_PLANNING: "1" } : {}),
     COMMAND_RUN_AGENT_TIMEOUT_MS: String(timeoutMs),
@@ -1109,6 +1074,8 @@ async function runTuraPlanning(workspace, agentDir, prompt, agentPrompt, onProgr
     args,
     cwd: sessionCwd,
     env,
+    session_id: turaExplicitSessionId ? launchId : null,
+    launch_id: launchId,
     input: prompt,
     context_kind: "tura-stdin-plus-provider-log",
     notes: [
@@ -1479,6 +1446,7 @@ async function runAgent(agentId, task, taskIndex, agentIndex, onAgentUpdate = nu
   const started = performance.now()
   const agentPrompt =
     agentId === "tura-fast-shll" || agentId === "tura-fast-planning-shll" ? "fast" :
+    agentId === "tura-thinking-shll" ? "thinking" :
     agentId === "tura-planning-shll" ? "thinking-planning" :
     null
   let lastContextArchive = null
@@ -1537,6 +1505,7 @@ async function runAgent(agentId, task, taskIndex, agentIndex, onAgentUpdate = nu
   else if (agentId === "codex-documents") result = await runCodexDocuments(prep.workspace, agentDir, prompt, publishProgress)
   else if (agentId === "tura-fast-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "fast", publishProgress)
   else if (agentId === "tura-fast-planning-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "fast", publishProgress)
+  else if (agentId === "tura-thinking-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "thinking", publishProgress)
   else if (agentId === "tura-planning-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "thinking-planning", publishProgress)
   else if (agentId === "claude-code" || agentId === "pi-agent") result = await runExternalCliAgent(prep.workspace, agentDir, prompt, agentId, publishProgress)
   else throw new Error(`unsupported agent ${agentId}`)

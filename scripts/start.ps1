@@ -4,6 +4,7 @@ param(
   [switch]$Gateway,
   [switch]$Tui,
   [switch]$Gui,
+  [switch]$Desktop,
   [switch]$SkipInstall,
   [switch]$SkipFrontend,
   [switch]$SkipPlaywright,
@@ -19,6 +20,7 @@ $RepoRoot = Resolve-Path (Join-Path $ScriptDir "..")
 $InstallScript = Join-Path $ScriptDir "install.ps1"
 $TuiDir = Join-Path $RepoRoot "apps\tui"
 $GuiDir = Join-Path $RepoRoot "apps\gui"
+$TauriDir = Join-Path $RepoRoot "apps\tauri"
 
 function Test-CommandAvailable {
   param([string]$Name)
@@ -52,6 +54,7 @@ Usage:
   .\scripts\start.ps1 [PROMPT...]
   .\scripts\start.ps1 -Tui [tura args...]
   .\scripts\start.ps1 -Gui [bun dev args...]
+  .\scripts\start.ps1 -Desktop [tauri dev args...]
   .\scripts\start.ps1 -Gateway [-Port 4096]
   .\scripts\start.ps1 -BuildOnly [-ReleaseServices]
 
@@ -61,6 +64,7 @@ Options:
   -Gateway          run the gateway HTTP server binary
   -Tui              run the TypeScript terminal client from apps/tui
   -Gui              run the Bun/Vite graphical UI from apps/gui
+  -Desktop          run the Tauri desktop shell from apps/tauri
   -SkipInstall      skip dependency bootstrap before starting
   -SkipFrontend     skip frontend dependency setup during bootstrap
   -SkipPlaywright   skip Playwright Chromium setup during bootstrap
@@ -71,7 +75,7 @@ Default behavior runs the Rust CLI:
 "@
 }
 
-if ((-not $Tui) -and (-not $Gateway) -and ($PassThruArgs -contains "--help" -or $PassThruArgs -contains "-h" -or $PassThruArgs -contains "help")) {
+if ((-not $Tui) -and (-not $Gateway) -and (-not $Desktop) -and ($PassThruArgs -contains "--help" -or $PassThruArgs -contains "-h" -or $PassThruArgs -contains "help")) {
   Show-Help
   exit 0
 }
@@ -114,8 +118,11 @@ if (-not $SkipInstall) {
     Require-StartupCommand "node" "Run .\scripts\install.ps1 first, or install Node.js 20+ from https://nodejs.org/."
     Require-StartupCommand "npm" "Run .\scripts\install.ps1 first, or install npm with Node.js 20+."
   }
-  if ($Gui) {
+  if ($Gui -or $Desktop) {
     Require-StartupCommand "bun" "Run .\scripts\install.ps1 first, or install Bun from https://bun.sh/."
+  }
+  if ($Desktop) {
+    Require-StartupCommand "cargo" "Run .\scripts\install.ps1 first, or install Rust from https://rustup.rs."
   }
 }
 
@@ -154,6 +161,18 @@ if ($Gui) {
     $env:VITE_TURA_GATEWAY_URL = if ($env:TURA_GATEWAY_URL) { $env:TURA_GATEWAY_URL } else { "http://127.0.0.1:$Port" }
   }
   Push-Location $GuiDir
+  try {
+    Invoke-Checked "bun" (@("run", "dev") + $PassThruArgs)
+  } finally {
+    Pop-Location
+  }
+  exit 0
+}
+
+if ($Desktop) {
+  Require-StartupCommand "bun" "Run .\scripts\install.ps1 first, or install Bun from https://bun.sh/."
+  Require-StartupCommand "cargo" "Run .\scripts\install.ps1 first, or install Rust from https://rustup.rs."
+  Push-Location $TauriDir
   try {
     Invoke-Checked "bun" (@("run", "dev") + $PassThruArgs)
   } finally {

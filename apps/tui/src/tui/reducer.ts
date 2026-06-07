@@ -43,6 +43,7 @@ export interface AppState {
   selectedSessionIndex: number;
   selectedModelIndex: number;
   selectedPersonaIndex: number;
+  selectedSettingsIndex: number;
   thinkingFrame: number;
   commandDetailsOpen: boolean;
 }
@@ -80,6 +81,7 @@ export type AppAction =
   | { type: "select-session"; delta: number }
   | { type: "select-model"; delta: number }
   | { type: "select-persona"; delta: number }
+  | { type: "select-settings"; delta: number }
   | { type: "tick" }
   | { type: "toggle-command-details" }
   | { type: "toggle-help" }
@@ -111,6 +113,7 @@ export function initialState(cwd: string): AppState {
     selectedSessionIndex: 0,
     selectedModelIndex: 0,
     selectedPersonaIndex: 0,
+    selectedSettingsIndex: 0,
     thinkingFrame: 0,
     commandDetailsOpen: false,
   };
@@ -326,6 +329,12 @@ export function reducer(state: AppState, action: AppAction): AppState {
         state.selectedPersonaIndex + action.delta,
         state.personas.length,
       ),
+    };
+  }
+  if (action.type === "select-settings") {
+    return {
+      ...state,
+      selectedSettingsIndex: clampIndex(state.selectedSettingsIndex + action.delta, 11),
     };
   }
   if (action.type === "tick") return { ...state, thinkingFrame: state.thinkingFrame + 1 };

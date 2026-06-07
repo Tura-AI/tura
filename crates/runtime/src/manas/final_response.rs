@@ -67,6 +67,12 @@ pub(crate) fn user_visible_runtime_text(text: &str) -> Option<String> {
     Some(fallback)
 }
 
+pub(crate) fn user_visible_runtime_output_text(output: &serde_json::Value) -> Option<String> {
+    let content = tura_llm_rust::normalize_response_content(output);
+    let text = tura_llm_rust::extract_response_text(&content)?;
+    user_visible_runtime_text(&tura_llm_rust::strip_thought_blocks(&text))
+}
+
 fn strip_tool_payload_suffix(text: &str) -> String {
     let Some(index) = text.find("{\"commands\"") else {
         return text.to_string();
@@ -224,7 +230,7 @@ pub(crate) fn summarize_tool_results_for_user(session: &SessionManagement) -> Op
 
 #[cfg(test)]
 mod tests {
-    use super::user_visible_runtime_text;
+    use super::{user_visible_runtime_output_text, user_visible_runtime_text};
     use serde_json::json;
     #[test]
     fn user_visible_runtime_text_extracts_reply_message_from_tool_payload() {
@@ -257,5 +263,15 @@ mod tests {
             .to_string();
 
         assert_eq!(user_visible_runtime_text(&text), None);
+    }
+
+    #[test]
+    fn user_visible_runtime_output_text_extracts_string_output() {
+        let output = json!("你好。小主管已上线。");
+
+        assert_eq!(
+            user_visible_runtime_output_text(&output).as_deref(),
+            Some("你好。小主管已上线。")
+        );
     }
 }

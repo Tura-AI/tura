@@ -12,6 +12,17 @@ fn checkpoint_runtime_state_event(
     command_id: Option<&str>,
     event_seq: Option<i64>,
 ) -> Result<(), String> {
+    let mut payload = serde_json::json!({
+        "event_type": event_type,
+        "runtime_state": runtime.state,
+        "call_result_status": runtime.call_result_status,
+    });
+    if matches!(
+        event_type,
+        "provider_call_finished" | "turn_finished" | "turn_failed" | "turn_interrupted"
+    ) {
+        payload["usage"] = serde_json::to_value(&runtime.usage).unwrap_or(serde_json::Value::Null);
+    }
     if let Err(error) = checkpoint_runtime_event(RuntimeCheckpoint {
         session_id: &runtime.session_id,
         turn_id: &runtime.runtime_id,
@@ -21,11 +32,7 @@ fn checkpoint_runtime_state_event(
         command_id,
         event_seq,
         event_type,
-        payload: serde_json::json!({
-            "event_type": event_type,
-            "runtime_state": runtime.state,
-            "call_result_status": runtime.call_result_status,
-        }),
+        payload,
     }) {
         tracing::warn!(
             session_id = %runtime.session_id,

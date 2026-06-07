@@ -25,7 +25,7 @@ impl SessionStore {
         self.todos
             .write()
             .insert(session_id.to_string(), todos.clone());
-        self.persist_session(session_id);
+        self.persist_session_background(session_id);
         self.push_event(GlobalEvent::TodoUpdated {
             properties: serde_json::json!({
                 "sessionID": session_id,
@@ -150,7 +150,7 @@ impl SessionStore {
             }
         }
         drop(messages);
-        self.persist_session(session_id);
+        self.persist_session_background(session_id);
 
         let event_message = message.clone();
         let event_parts = event_message.parts.clone();

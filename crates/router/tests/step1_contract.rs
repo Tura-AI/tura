@@ -33,6 +33,10 @@ fn router_ipc_has_supervision_methods_but_no_session_db_data_call() {
         "router must not expose session DB read/write data calls"
     );
     assert!(
+        !main.contains("session-db-call"),
+        "router must not expose a one-shot session DB process path"
+    );
+    assert!(
         !read("crates/router/src/lib.rs").contains("session_log_forward"),
         "router library must not export the old session_log_forward bridge"
     );
@@ -40,7 +44,7 @@ fn router_ipc_has_supervision_methods_but_no_session_db_data_call() {
 
 #[test]
 fn gateway_uses_router_enqueue_and_direct_session_db_client() {
-    let session_api = read("crates/gateway/src/api/session.rs");
+    let session_api = read("crates/gateway/src/api/session_prompt.rs");
     assert!(
         session_api.contains("RouterClient::global()")
             && session_api.contains("enqueue_turn")
@@ -62,24 +66,32 @@ fn gateway_uses_router_enqueue_and_direct_session_db_client() {
 }
 
 #[test]
-fn runtime_and_gateway_session_db_calls_use_session_db_service_cli() {
+fn runtime_and_gateway_session_db_clients_use_file_queue_without_one_shot_processes() {
     for path in [
         "crates/gateway/src/session_db_client.rs",
         "crates/runtime/src/session_log_client.rs",
     ] {
         let source = read(path);
         assert!(
-            source.contains("session-db-call"),
-            "{path} must call the session_db service endpoint"
+            source.contains("file_queue::enqueue_command")
+                && source.contains("file_queue::drain_queue")
+                && source.contains("SessionLogStore::open_default"),
+            "{path} must enqueue writes and drain before direct reads"
         );
-        assert!(
-            source.contains("CREATE_NO_WINDOW"),
-            "{path} must hide child process windows on Windows"
-        );
-        assert!(
-            !source.contains("SessionLogStore::open_default"),
-            "{path} must not open PostgreSQL directly"
-        );
+        for forbidden in [
+            "session-db-call",
+            "Command::new",
+            "wait_with_timeout",
+            "kill_process_tree",
+            "CREATE_NO_WINDOW",
+            "router_binary",
+            "resolve_router_binary",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{path} must not keep one-shot session DB process flow: {forbidden}"
+            );
+        }
     }
 }
 
@@ -95,6 +107,10 @@ fn session_db_service_replays_durable_queue_on_startup() {
         "session_db service must replay the durable write queue during startup"
     );
     assert!(
+        service.contains("file_queue::drain_queue(&store, 1000)"),
+        "session_db service must own draining the file-backed runtime write queue"
+    );
+    assert!(
         store.contains("pub fn mark_running_sessions_interrupted")
             && service.contains("store.mark_running_sessions_interrupted()?"),
         "session_db service startup must mark non-reattachable running work interrupted"
@@ -105,11 +121,11 @@ fn session_db_service_replays_durable_queue_on_startup() {
 fn runtime_acks_streamed_command_checkpoints_through_session_db() {
     let protocol = read("crates/session_log/src/protocol.rs");
     let runtime_client = read("crates/runtime/src/session_log_client.rs");
-    let runtime_call = read("crates/runtime/src/runtime/call_runtime.rs");
+    let runtime_call = read("crates/runtime/src/provider_flow/call.rs");
     assert!(
         protocol.contains("ApplyCommandCheckpoint(Box<CommandCheckpoint>)")
             && runtime_client.contains("pub fn apply_command_checkpoint")
-            && runtime_call.contains("ack_streamed_command_checkpoint")
+            && runtime_call.contains("checkpoint_streamed_command_finished")
             && runtime_call.contains("session_db command checkpoint ACK failed"),
         "runtime streamed command results must ACK durable command checkpoints through session_db"
     );

@@ -1,0 +1,7 @@
+[[permission]]
+identifier = "allow-start-gateway"
+description = "Allow the GUI shell to start the local Tura gateway process."
+
+[permission.commands]
+allow = ["start_gateway"]
+deny = []

@@ -31,6 +31,7 @@ class GuiE2EGateway(ThreadingHTTPServer):
         self.messages = {}
         self.statuses = {}
         self.watchdog_events = []
+        self.requests = []
         self.started = int(time.time() * 1000)
 
     def session(self, session_id: str):
@@ -39,6 +40,7 @@ class GuiE2EGateway(ThreadingHTTPServer):
 
 class GuiE2EGatewayHandler(BaseHTTPRequestHandler):
     server: GuiE2EGateway
+    protocol_version = "HTTP/1.1"
 
     def log_message(self, format, *args):
         return
@@ -52,8 +54,18 @@ class GuiE2EGatewayHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def json(self, payload, status=200):
-        self._headers(status)
-        self.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("access-control-allow-origin", "*")
+        self.send_header("access-control-allow-methods", "GET,POST,PATCH,DELETE,OPTIONS")
+        self.send_header("access-control-allow-headers", "content-type,x-opencode-directory")
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.send_header("connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+        self.wfile.flush()
+        self.close_connection = True
 
     def read_json(self):
         length = int(self.headers.get("content-length") or "0")
@@ -66,10 +78,20 @@ class GuiE2EGatewayHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
+        self.server.requests.append({"method": "GET", "path": path, "time": int(time.time() * 1000)})
         if path == "/event":
-            self._headers(200, "text/event-stream")
-            self.wfile.write(b'data: {"payload":{"type":"server.connected","properties":{}}}\n\n')
+            body = b'data: {"payload":{"type":"server.connected","properties":{}}}\n\n'
+            self.send_response(200)
+            self.send_header("access-control-allow-origin", "*")
+            self.send_header("access-control-allow-methods", "GET,POST,PATCH,DELETE,OPTIONS")
+            self.send_header("access-control-allow-headers", "content-type,x-opencode-directory")
+            self.send_header("content-type", "text/event-stream")
+            self.send_header("content-length", str(len(body)))
+            self.send_header("connection", "close")
+            self.end_headers()
+            self.wfile.write(body)
             self.wfile.flush()
+            self.close_connection = True
             time.sleep(0.2)
             return
         if path == "/global/health":
@@ -88,7 +110,7 @@ class GuiE2EGatewayHandler(BaseHTTPRequestHandler):
             return self.json({"id": "e2e", "email": "gui-e2e@tura.local", "name": "GUI E2E"})
         if path == "/api/workspaces":
             return self.json([{"id": "local", "name": "tura", "worktree": str(ROOT)}])
-        if path in {"/api/issues", "/api/projects", "/permission", "/question", "/command", "/file"}:
+        if path in {"/api/issues", "/api/projects", "/permission", "/question", "/command", "/file", "/persona"}:
             return self.json([])
         if path == "/config":
             return self.json({"model": "openai/gpt-5.5", "agent": "coding_agent", "theme": "light"})
@@ -141,17 +163,22 @@ class GuiE2EGatewayHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        self.server.requests.append({"method": "POST", "path": path, "time": int(time.time() * 1000)})
         if path == "/session":
             payload = self.read_json()
+            self.server.requests.append(
+                {"method": "POST", "path": path, "stage": "body-read", "payload": payload, "time": int(time.time() * 1000)}
+            )
             now = int(time.time() * 1000)
             session_id = f"gui-e2e-{now}"
+            directory = self.headers.get("x-opencode-directory") or str(ROOT)
             session = {
                 "id": session_id,
                 "title": f"GUI frontend e2e {now}",
                 "session_display_name": f"GUI frontend e2e {now}",
-                "directory": payload.get("directory") or str(ROOT),
-                "model": payload.get("model") or "openai/gpt-5.5",
-                "agent": payload.get("agent") or "coding_agent",
+                "directory": directory,
+                "model": "openai/gpt-5.5",
+                "agent": "coding_agent",
                 "status": "idle",
                 "message_count": 0,
                 "time": {"created": now, "updated": now},
@@ -160,22 +187,36 @@ class GuiE2EGatewayHandler(BaseHTTPRequestHandler):
             }
             self.server.sessions.insert(0, session)
             self.server.messages[session_id] = []
-            return self.json(session)
+            self.json(session)
+            self.server.requests.append(
+                {"method": "POST", "path": path, "stage": "responded", "session_id": session_id, "time": int(time.time() * 1000)}
+            )
+            return
         if path.endswith("/prompt_async"):
             payload = self.read_json()
             session_id = path.strip("/").split("/")[1]
             prompt = "\n".join(part.get("text", "") for part in payload.get("parts", []) if isinstance(part, dict))
             self.run_frontend_task(session_id, prompt)
-            self._headers(204)
+            self.send_response(204)
+            self.send_header("access-control-allow-origin", "*")
+            self.send_header("access-control-allow-methods", "GET,POST,PATCH,DELETE,OPTIONS")
+            self.send_header("access-control-allow-headers", "content-type,x-opencode-directory")
+            self.send_header("content-length", "0")
+            self.send_header("connection", "close")
+            self.end_headers()
+            self.wfile.flush()
+            self.close_connection = True
             return
         if path == "/command":
             return self.json({"output": ""})
         return self.json({})
 
     def do_PATCH(self):
+        self.server.requests.append({"method": "PATCH", "path": urlparse(self.path).path, "time": int(time.time() * 1000)})
         return self.json({})
 
     def do_DELETE(self):
+        self.server.requests.append({"method": "DELETE", "path": urlparse(self.path).path, "time": int(time.time() * 1000)})
         return self.json(True)
 
     def project(self):
@@ -403,7 +444,10 @@ class GuiE2EGatewayHandler(BaseHTTPRequestHandler):
 def url_ready(url: str) -> bool:
     try:
         with urlopen(url, timeout=2) as response:
-            return 200 <= response.status < 500
+            if url.rstrip("/").endswith("/global/health"):
+                return 200 <= response.status < 500
+            body = response.read(2048).decode("utf-8", errors="ignore")
+            return 200 <= response.status < 500 and "<title>Tura</title>" in body and "/src/entry.tsx" in body
     except Exception:
         return False
 
@@ -426,21 +470,18 @@ def start_gui_server() -> subprocess.Popen | None:
     out_dir.mkdir(parents=True, exist_ok=True)
     out = (out_dir / "gui-dev.log").open("w", encoding="utf-8")
     err = (out_dir / "gui-dev.err.log").open("w", encoding="utf-8")
-    bun = "bun.exe" if os.name == "nt" else "bun"
+    node = "node.exe" if os.name == "nt" else "node"
     return subprocess.Popen(
         [
-            bun,
-            "--cwd",
-            str(ROOT / "apps" / "gui" / "app"),
-            "dev",
-            "--",
+            node,
+            str(ROOT / "apps" / "gui" / "app" / "node_modules" / "vite" / "bin" / "vite.js"),
             "--host",
             "127.0.0.1",
             "--port",
             "5180",
             "--strictPort",
         ],
-        cwd=ROOT,
+        cwd=ROOT / "apps" / "gui" / "app",
         stdout=out,
         stderr=err,
         stdin=subprocess.DEVNULL,
@@ -514,6 +555,10 @@ async def main() -> None:
     finally:
         stop_process_tree(gui_server)
         if gateway_server:
+            (OUT / "gateway-requests.json").write_text(
+                json.dumps(gateway_server.requests, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
             gateway_server.shutdown()
             gateway_server.server_close()
 

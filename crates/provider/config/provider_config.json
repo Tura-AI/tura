@@ -3927,11 +3927,11 @@
       "status": "connected",
       "token_env": "CLAUDE_CODE_OAUTH_TOKEN",
       "type": "oauth",
-      "updated_at": "2026-06-06T09:40:24.586526400+00:00"
+      "updated_at": "2026-06-07T16:26:36.330461200+00:00"
     },
     "codex": {
       "account_env": "OPENAI_ACCOUNT_ID",
-      "auth_url": "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&scope=openid+profile+email+offline_access&code_challenge=ezZ3IzESrwWRBvkCLIhx2ExSfgVyo6Hc1UF7-LaxsVA&code_challenge_method=S256&id_token_add_organizations=true&codex_cli_simplified_flow=true&state=eda13920120743348f196351281a162d&originator=opencode",
+      "auth_url": "https://auth.example.com/oauth/codex",
       "endpoint": "https://chatgpt.com/backend-api/codex/responses",
       "expires_env": "OPENAI_TOKEN_EXPIRES",
       "login": "oauth",
@@ -3941,7 +3941,7 @@
       "status": "connected",
       "token_env": "OPENAI_API_KEY",
       "type": "oauth",
-      "updated_at": "2026-05-28T12:25:06.893626+00:00"
+      "updated_at": "2026-06-07T11:50:07.867711+00:00"
     },
     "openai": {
       "account_env": "OPENAI_ACCOUNT_ID",

@@ -48,12 +48,6 @@ export function AppRail(props: { view: AppShellViewModel; collapseAfterSelection
         when={state().activeTab === "settings"}
         fallback={
           <>
-            <div class="brand">
-              <div class="brand-mark" />
-              <div>
-                <strong>Tura</strong>
-              </div>
-            </div>
             <MainTabs
               active={state().previousMainTab}
               conversationLabel={t("session")}

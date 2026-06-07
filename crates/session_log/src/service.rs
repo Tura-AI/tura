@@ -6,20 +6,7 @@
 use anyhow::Result;
 use serde_json::json;
 
-use crate::{cli, SessionLogResponse, SessionLogStore};
-
-pub fn handle_command_json(raw: &str) -> Result<SessionLogResponse> {
-    cli::handle_raw_command(raw)
-}
-
-pub fn run_one_shot() -> Result<()> {
-    use std::io::Read;
-    let mut raw = String::new();
-    std::io::stdin().read_to_string(&mut raw)?;
-    let response = handle_command_json(&raw)?;
-    println!("{}", serde_json::to_string(&response)?);
-    Ok(())
-}
+use crate::{file_queue, SessionLogStore};
 
 pub fn run_lifecycle_service() -> Result<()> {
     use std::io::{BufRead, Write};
@@ -27,6 +14,7 @@ pub fn run_lifecycle_service() -> Result<()> {
     let mut stdout = std::io::stdout();
     let store = SessionLogStore::open_default()?;
     let replayed_queue_items = store.replay_pending_write_queue()?;
+    start_file_queue_drain(store.clone());
     let interrupted_running_sessions = store.mark_running_sessions_interrupted()?;
     for line in stdin.lock().lines() {
         let line = line?;
@@ -44,4 +32,13 @@ pub fn run_lifecycle_service() -> Result<()> {
         stdout.flush()?;
     }
     Ok(())
+}
+
+fn start_file_queue_drain(store: SessionLogStore) {
+    std::thread::spawn(move || loop {
+        if let Err(error) = file_queue::drain_queue(&store, 1000) {
+            tracing::warn!(error = %error, "failed to drain session file queue");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    });
 }

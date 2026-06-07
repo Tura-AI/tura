@@ -197,6 +197,15 @@ impl SessionStore {
         }
     }
 
+    fn hydrate_directory_background(&self, directory: Option<String>) {
+        let Some(directory) = directory else {
+            return;
+        };
+        std::thread::spawn(move || {
+            session_store().hydrate_directory(Some(directory));
+        });
+    }
+
     fn load_persisted_session(
         &self,
         snapshot: SessionSnapshot,
@@ -237,6 +246,15 @@ impl SessionStore {
         if let Err(err) = self.persist_session_result(session_id) {
             tracing::warn!(session_id, error = %err, "failed to persist session");
         }
+    }
+
+    fn persist_session_background(&self, session_id: &str) {
+        let session_id = session_id.to_string();
+        std::thread::spawn(move || {
+            if let Err(err) = session_store().persist_session_result(&session_id) {
+                tracing::warn!(session_id, error = %err, "failed to persist session");
+            }
+        });
     }
 
     pub fn persist_session_ack(&self, session_id: &str) -> Result<(), String> {
@@ -503,7 +521,7 @@ impl SessionStore {
         model_acceleration_enabled: bool,
         disable_permission_restrictions: bool,
     ) -> ApiSession {
-        self.hydrate_directory(directory.clone());
+        self.hydrate_directory_background(directory.clone());
         let persisted_config = directory.as_deref().map(load_config).unwrap_or_default();
         let model = model.or(persisted_config.model.clone());
         let agent = agent.or(persisted_config.active_agent.clone());
@@ -530,7 +548,7 @@ impl SessionStore {
         self.messages.write().insert(session_id, Vec::new());
         self.todos.write().insert(session.id.clone(), Vec::new());
         self.persist_active_config(&session);
-        self.persist_session(&session.id);
+        self.persist_session_background(&session.id);
 
         session
     }
@@ -686,7 +704,7 @@ impl SessionStore {
             info.status = status;
             info.updated_at = now.timestamp_millis();
         }
-        self.persist_session(session_id);
+        self.persist_session_background(session_id);
         self.push_event(GlobalEvent::SessionStatus {
             properties: crate::api::types::SessionStatusProperties {
                 session_id: session_id.to_string(),

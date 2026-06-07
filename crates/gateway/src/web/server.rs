@@ -115,6 +115,11 @@ pub fn build_router() -> Router {
             "/session/{sessionID}/prompt_async",
             post(api::session::prompt_async),
         )
+        .route(
+            "/session/{sessionID}/user-commands",
+            get(api::session::session_user_commands)
+                .post(api::session::append_session_user_command),
+        )
         .route("/file", get(api::file::list_files))
         .route("/file/content", get(api::file::get_file_content))
         .route("/file/open", post(api::file::open_file))

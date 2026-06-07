@@ -37,21 +37,18 @@ def start_server() -> subprocess.Popen | None:
     OUT.mkdir(parents=True, exist_ok=True)
     log = (OUT / "gui-dev.log").open("w", encoding="utf-8")
     err = (OUT / "gui-dev.err.log").open("w", encoding="utf-8")
-    bun = "bun.exe" if os.name == "nt" else "bun"
+    node = "node.exe" if os.name == "nt" else "node"
     return subprocess.Popen(
         [
-            bun,
-            "--cwd",
-            str(GUI / "app"),
-            "dev",
-            "--",
+            node,
+            str(GUI / "app" / "node_modules" / "vite" / "bin" / "vite.js"),
             "--host",
             "127.0.0.1",
             "--port",
             "5184",
             "--strictPort",
         ],
-        cwd=ROOT,
+        cwd=GUI / "app",
         stdout=log,
         stderr=err,
         stdin=subprocess.DEVNULL,

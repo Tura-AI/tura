@@ -1,6 +1,6 @@
 use chrono::Utc;
 
-use crate::manas::user_visible_runtime_text;
+use crate::manas::{user_visible_runtime_output_text, user_visible_runtime_text};
 use crate::provider_flow::usage::runtime_cache_diagnostics;
 use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::state_machine::session_management::SessionManagement;
@@ -31,7 +31,14 @@ pub(crate) fn accumulate_session_from_runtime(
         return Ok(());
     }
 
-    if let Some(content) = user_visible_runtime_text(&runtime.text) {
+    let visible_text = user_visible_runtime_text(&runtime.text).or_else(|| {
+        runtime
+            .output
+            .as_ref()
+            .and_then(user_visible_runtime_output_text)
+    });
+
+    if let Some(content) = visible_text {
         session.push_log(
             serde_json::json!({
                 "role": "assistant",

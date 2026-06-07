@@ -47,7 +47,7 @@
   max-height: 50vh;
   align-self: end;
   overflow: visible;
-  padding: var(--space-3);
+  padding: var(--space-2);
   border-top: 1px solid var(--line);
   background: var(--paper);
   box-shadow: var(--shadow-control);

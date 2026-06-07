@@ -9,7 +9,7 @@ pub(crate) mod tool_arguments;
 pub(crate) mod tool_catalog;
 
 pub(crate) use constants::{COMMAND_RUN_TOOL, TASK_STATUS_COMMAND};
-pub(crate) use final_response::user_visible_runtime_text;
+pub(crate) use final_response::{user_visible_runtime_output_text, user_visible_runtime_text};
 pub use process::{process_manas_internal, ManasInput, ManasResult};
 
 use crate::state_machine::agent_management::AgentManagement;

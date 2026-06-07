@@ -77,6 +77,7 @@ function richFixtureMessages(sessionID) {
           },
         },
       ],
+      tokens: { input: 12, output: 18, reasoning: 4, cache: { read: 5, write: 3 } },
       created_at: now,
       updated_at: now,
     },
@@ -85,6 +86,7 @@ function richFixtureMessages(sessionID) {
       sessionID,
       role: "assistant",
       parts: [{ id: "part-rich-web-2", type: "text", text: richFixtureTextTwo }],
+      tokens: { prompt_tokens: 10, completion_tokens: 12 },
       created_at: now + 1,
       updated_at: now + 1,
     },
@@ -131,6 +133,76 @@ async function waitForCondition(predicate, message, timeoutMs = 10_000) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(message);
+}
+
+async function assertTerminalFits(page, label) {
+  const metrics = await page.evaluate(() => {
+    const body = document.body;
+    const terminal = document.querySelector("#terminal");
+    const screen = document.querySelector(".xterm-screen");
+    const viewport = document.querySelector(".xterm-viewport");
+    return {
+      bodyClientWidth: body.clientWidth,
+      bodyScrollWidth: body.scrollWidth,
+      terminalClientWidth: terminal?.clientWidth ?? 0,
+      terminalScrollWidth: terminal?.scrollWidth ?? 0,
+      screenClientWidth: screen?.clientWidth ?? 0,
+      screenScrollWidth: screen?.scrollWidth ?? 0,
+      viewportClientWidth: viewport?.clientWidth ?? 0,
+      viewportScrollWidth: viewport?.scrollWidth ?? 0,
+    };
+  });
+  assert.ok(
+    metrics.bodyScrollWidth <= metrics.bodyClientWidth + 2 &&
+      metrics.terminalScrollWidth <= metrics.terminalClientWidth + 2 &&
+      metrics.viewportScrollWidth <= metrics.viewportClientWidth + 2,
+    `${label} horizontal overflow: ${JSON.stringify(metrics)}`,
+  );
+}
+
+async function terminalViewportText(page) {
+  return page.evaluate(() =>
+    [...document.querySelectorAll(".xterm-rows > div")]
+      .map((node) => node.textContent ?? "")
+      .join("\n"),
+  );
+}
+
+async function assertTerminalVisualContract(page, profile) {
+  const contract = await page.evaluate(() => {
+    const row = document.querySelector(".xterm-rows > div");
+    const rowStyle = row ? getComputedStyle(row) : undefined;
+    const terminal = globalThis.__turaTerminal;
+    const syntheticRailRows = document.querySelectorAll(".xterm-rows > div.tura-rail-row").length;
+    return {
+      rowOverflowY: rowStyle?.overflowY ?? "",
+      lineHeight: terminal?.options?.lineHeight,
+      unicodeVersion: terminal?.unicode?.activeVersion ?? "",
+      fontFamily: terminal?.options?.fontFamily ?? "",
+      syntheticRailRows,
+      viewportText: [...document.querySelectorAll(".xterm-rows > div")]
+        .map((node) => node.textContent ?? "")
+        .join("\n"),
+    };
+  });
+  assert.ok(contract.lineHeight >= 1.18, `${profile} should leave vertical room for emoji`);
+  assert.equal(contract.unicodeVersion, "11", `${profile} should render emoji as wide cells`);
+  assert.equal(contract.rowOverflowY, "visible", `${profile} should not clip emoji vertically`);
+  assert.match(contract.fontFamily, /Emoji/i, `${profile} should include emoji fallback fonts`);
+  assert.equal(
+    contract.syntheticRailRows,
+    0,
+    `${profile} should not re-render rails in the web UI`,
+  );
+  if (profile === "plain") {
+    assert.doesNotMatch(contract.viewportText, /▏/u);
+  } else {
+    assert.match(
+      contract.viewportText,
+      /▏/u,
+      `${profile} should render terminal-native split border`,
+    );
+  }
 }
 
 async function startGateway() {
@@ -563,11 +635,15 @@ async function runWebTerminalE2e(gateway) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
     try {
       for (const profile of ["plain", "ansi", "rich"]) {
-        await page.goto(`http://127.0.0.1:${webPort}/${profile}`, {
+        await page.setViewportSize({ width: 1280, height: 720 });
+        await page.goto(`http://127.0.0.1:${webPort}/${profile}?instance=${profile}-desktop`, {
           waitUntil: "domcontentloaded",
         });
         await page.waitForFunction(
-          () => document.body.innerText.includes("Rich fixture phase 1"),
+          () =>
+            /Rich Fixture|Rich fixture ph\s*ase 1|Rich fixture phase 1/.test(
+              document.body.innerText,
+            ),
           null,
           { timeout: 10_000 },
         );
@@ -575,23 +651,123 @@ async function runWebTerminalE2e(gateway) {
           path: path.join(screenshotsDir, `${profile}.png`),
           fullPage: false,
         });
+        await assertTerminalFits(page, `${profile} desktop`);
+        await assertTerminalVisualContract(page, profile);
         assert.equal(
           await page.title(),
           `Tura TUI ${profile === "plain" ? "Plain / Safe" : profile === "ansi" ? "ANSI / Default" : "Rich / Modern"}`,
         );
         const body = await page.locator("body").innerText();
-        assert.match(body, /Rich fixture phase 1/);
-        assert.match(body, /Rich fixture phase 2/);
+        assert.match(body, /OC \| Tura TUI/);
+        assert.doesNotMatch(body, /^workspace$/im);
+        assert.match(body, /Rich fixture p\s*h\s*a\s*s\s*e 1|Bold\s+Italic\s+Under\s+Gone/i);
+        assert.match(body, /Rich fixture phase 2|Local path C:\/repo\/apps\/tui/);
         assert.match(body, /Protocol fixture complete|Search Link|README/);
         assert.match(body, /commands?:[\s\u00a0]*2|命令:[\s\u00a0]*2/i);
-        assert.match(body, profile === "plain" ? /\[EMOJI:react:thumbs_up:EMOJI\]/ : /👍/u);
+        assert.match(body, /👍/u);
+        assert.doesNotMatch(body, /\[EMOJI:/);
+        if (profile === "plain") {
+          assert.doesNotMatch(body, /[│▏─┌┐└┘├┤┬┴┼]/u);
+          assert.doesNotMatch(body, /^-{8,}$/m);
+        }
+        if (profile === "rich") {
+          assert.match(body, /Rich Fixture/);
+          assert.match(
+            body,
+            /Enter to send,\s+\/help commands \/settings settings|回车输入，\s+\/help查看命令行 \/settings设置/,
+          );
+          assert.doesNotMatch(body, /\[MEDIA:/);
+          assert.doesNotMatch(body, /Agent:fast|智能体:fast/);
+          assert.doesNotMatch(body, /persona:direct|人格:direct/);
+          const chromeColors = await page.evaluate(() =>
+            [...document.querySelectorAll(".dot")].map(
+              (node) => getComputedStyle(node).backgroundColor,
+            ),
+          );
+          assert.deepEqual(chromeColors, [
+            "rgb(92, 92, 92)",
+            "rgb(250, 178, 131)",
+            "rgb(92, 92, 92)",
+          ]);
+        }
+
+        await page.setViewportSize({ width: 820, height: 680 });
+        await page.goto(`http://127.0.0.1:${webPort}/${profile}?instance=${profile}-medium`, {
+          waitUntil: "domcontentloaded",
+        });
+        await page.waitForFunction(
+          () =>
+            /Rich Fixture|Rich fixture ph\s*ase 1|Rich fixture phase 1/.test(
+              document.body.innerText,
+            ),
+          null,
+          { timeout: 10_000 },
+        );
+        await page.screenshot({
+          path: path.join(screenshotsDir, `${profile}-medium.png`),
+          fullPage: false,
+        });
+        await assertTerminalFits(page, `${profile} medium`);
+
+        await page.setViewportSize({ width: 390, height: 640 });
+        await page.goto(`http://127.0.0.1:${webPort}/${profile}?instance=${profile}-mobile`, {
+          waitUntil: "domcontentloaded",
+        });
+        await page.waitForFunction(() => /Rich Fixture/.test(document.body.innerText), null, {
+          timeout: 10_000,
+        });
+        await page.screenshot({
+          path: path.join(screenshotsDir, `${profile}-mobile.png`),
+          fullPage: false,
+        });
+        await assertTerminalFits(page, `${profile} mobile`);
+        const mobileViewport = await terminalViewportText(page);
+        assert.match(
+          mobileViewport,
+          /Rich Fixture/,
+          `${profile} mobile viewport should keep the session title visible`,
+        );
+        assert.doesNotMatch(mobileViewport, /(?:\\x1b|\\u001b|8;2;128;128;128m)/);
       }
-      await fetch(`http://127.0.0.1:${webPort}/rich/input`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ data: "/commands\r" }),
+      await page.setViewportSize({ width: 1280, height: 720 });
+      const richCommandInstance = "rich-command";
+      const richCommandUrl = `http://127.0.0.1:${webPort}/rich?instance=${richCommandInstance}`;
+      const sendRichCommandInput = (data) =>
+        page.evaluate((input) => globalThis.__turaSendInput?.(input), data);
+      await page.goto(richCommandUrl, { waitUntil: "domcontentloaded" });
+      await page.waitForFunction(() => /Rich Fixture/.test(document.body.innerText), null, {
+        timeout: 10_000,
       });
-      await page.goto(`http://127.0.0.1:${webPort}/rich`, { waitUntil: "domcontentloaded" });
+      await page.evaluate(() => globalThis.__turaFit?.());
+      await sendRichCommandInput("/help\r");
+      await page.waitForFunction(
+        () =>
+          /[─-]{3}\s*(Help|帮助)\s*[─-]{9}/i.test(document.body.innerText) &&
+          /(^|\n).*\/chat(?:\s|$)/m.test(document.body.innerText),
+        null,
+        { timeout: 20_000 },
+      );
+      await page.screenshot({
+        path: path.join(screenshotsDir, "rich-help.png"),
+        fullPage: false,
+      });
+      await assertTerminalFits(page, "rich help");
+      {
+        const body = await page.locator("body").innerText();
+        assert.match(body, /[─-]{3}\s*(Help|帮助)\s*[─-]{9}/i);
+        assert.doesNotMatch(body, /^\s*[─-]{8,}\s*$/m);
+        assert.match(body, /(^|\n).*\/chat(?:\s|$)/m);
+        assert.match(body, /(^|\n).*\/commands(?:\s|$)/m);
+        assert.doesNotMatch(body, /system|系统|assistant|助手|user|用户/);
+        assert.doesNotMatch(body, /Agent:fast|智能体:fast/);
+      }
+      await sendRichCommandInput("/chat\r");
+      await page.waitForFunction(
+        () => !/[─-]{3}\s*(Help|帮助)\s*[─-]{9}/i.test(document.body.innerText),
+        null,
+        { timeout: 10_000 },
+      );
+      await sendRichCommandInput("/commands\r");
       await page.waitForFunction(
         () => document.body.innerText.includes("node tools/snake_playwright.mjs"),
         null,
@@ -604,31 +780,57 @@ async function runWebTerminalE2e(gateway) {
       {
         const body = await page.locator("body").innerText();
         assert.match(body, /node tools\/snake_playwright\.mjs/);
-        assert.match(body, /pnpm test -- --rich-fixture/);
+        assert.match(body, /pnpm test -- --rich-fixture|#2\s+shell running/);
+        assert.doesNotMatch(body, /◆\s+◇\s+命令|◆\s+◇\s+Commands/);
       }
-      await fetch(`http://127.0.0.1:${webPort}/rich/input`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ data: "/models\r" }),
-      });
-      await page.goto(`http://127.0.0.1:${webPort}/rich`, { waitUntil: "domcontentloaded" });
+      await sendRichCommandInput("/models\r");
       await page.waitForTimeout(1200);
       await page.screenshot({
         path: path.join(screenshotsDir, "rich-models.png"),
         fullPage: false,
       });
-      await fetch(`http://127.0.0.1:${webPort}/rich/input`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ data: "/auth\r" }),
+      await sendRichCommandInput("/settings\r");
+      await page.waitForFunction(
+        () =>
+          /[─-]{3}\s*(Session Settings|会话设置)\s*[─-]{9}/.test(document.body.innerText) &&
+          /\/commands/.test(document.body.innerText),
+        null,
+        { timeout: 10_000 },
+      );
+      await page.screenshot({
+        path: path.join(screenshotsDir, "rich-settings.png"),
+        fullPage: false,
       });
+      {
+        const body = await page.locator("body").innerText();
+        assert.match(body, /[─-]{3}\s*(Session Settings|会话设置)\s*[─-]{9}/);
+        assert.doesNotMatch(body, /^\s*[─-]{8,}\s*$/m);
+        assert.match(body, />\s+\/model/);
+        assert.match(body, /\/commands/);
+        assert.doesNotMatch(body, /\/config get|\/config set|\/model provider\/model/);
+      }
+      await sendRichCommandInput("/auth\r");
       await page.waitForTimeout(1200);
       await page.screenshot({ path: path.join(screenshotsDir, "rich-auth.png"), fullPage: false });
-      await fetch(`http://127.0.0.1:${webPort}/rich/input`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ data: "/personas\r" }),
+      await sendRichCommandInput("/sessions\r");
+      await page.waitForFunction(
+        () =>
+          /[─-]{3}\s*(Sessions|会话)\s*[─-]{9}/.test(document.body.innerText) &&
+          />\s+/.test(document.body.innerText),
+        null,
+        { timeout: 10_000 },
+      );
+      await page.screenshot({
+        path: path.join(screenshotsDir, "rich-sessions.png"),
+        fullPage: false,
       });
+      {
+        const body = await page.locator("body").innerText();
+        assert.match(body, /[─-]{3}\s*(Sessions|会话)\s*[─-]{9}/);
+        assert.match(body, />\s+/);
+        assert.doesNotMatch(body, /^\s*[─-]{8,}\s*$/m);
+      }
+      await sendRichCommandInput("/personas\r");
       await page.waitForFunction(
         () => /Direct persona|Concise|direct/.test(document.body.innerText),
         null,
@@ -642,11 +844,7 @@ async function runWebTerminalE2e(gateway) {
       });
       const configPatchCount = gateway.records.configPatches.length;
       const agentPatchCount = gateway.records.agentUpserts.length;
-      await fetch(`http://127.0.0.1:${webPort}/rich/input`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ data: "/persona direct\r" }),
-      });
+      await sendRichCommandInput("/persona direct\r");
       await page.waitForTimeout(1200);
       assert.equal(gateway.records.configPatches.length, configPatchCount);
       const agentPatch = gateway.records.agentUpserts.slice(agentPatchCount).at(-1);
@@ -657,18 +855,10 @@ async function runWebTerminalE2e(gateway) {
           persona_directory: "personas/src/direct",
         },
       ]);
-      await fetch(`http://127.0.0.1:${webPort}/rich/input`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ data: "/chat\r" }),
-      });
+      await sendRichCommandInput("/chat\r");
       await page.waitForTimeout(150);
       const promptCountBeforeMedia = gateway.records.prompts.length;
-      await fetch(`http://127.0.0.1:${webPort}/rich/input`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ data: `${draggedImage}\r` }),
-      });
+      await sendRichCommandInput(`${draggedImage}\r`);
       await waitForCondition(
         () => gateway.records.prompts.length > promptCountBeforeMedia,
         "timed out waiting for dragged image prompt",

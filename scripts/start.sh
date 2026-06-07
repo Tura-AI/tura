@@ -4,12 +4,14 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 TUI_DIR="$REPO_ROOT/apps/tui"
+TAURI_DIR="$REPO_ROOT/apps/tauri"
 
 BUILD_ONLY=0
 RELEASE_SERVICES=0
 GATEWAY=0
 TUI=0
 GUI=0
+DESKTOP=0
 SKIP_INSTALL=0
 SKIP_FRONTEND=0
 SKIP_PLAYWRIGHT=0
@@ -22,6 +24,7 @@ while [ "$#" -gt 0 ]; do
     --gateway) GATEWAY=1 ;;
     --tui) TUI=1 ;;
     --gui) GUI=1 ;;
+    --desktop) DESKTOP=1 ;;
     --skip-install) SKIP_INSTALL=1 ;;
     --skip-frontend) SKIP_FRONTEND=1 ;;
     --skip-playwright) SKIP_PLAYWRIGHT=1 ;;
@@ -36,6 +39,7 @@ Usage:
   scripts/start.sh [PROMPT...]
   scripts/start.sh --tui [tura args...]
   scripts/start.sh --gui [bun dev args...]
+  scripts/start.sh --desktop [tauri dev args...]
   scripts/start.sh --gateway [--port 4096]
   scripts/start.sh --build-only [--release-services]
 
@@ -45,6 +49,7 @@ Options:
   --gateway          run the gateway HTTP server binary
   --tui              run the TypeScript terminal client from apps/tui
   --gui              run the Bun/Vite graphical UI from apps/gui
+  --desktop          run the Tauri desktop shell from apps/tauri
   --skip-install     skip dependency bootstrap before starting
   --skip-frontend    skip frontend dependency setup during bootstrap
   --skip-playwright  skip Playwright Chromium setup during bootstrap
@@ -89,11 +94,15 @@ else
       exit 1
     fi
   fi
-  if [ "$GUI" -eq 1 ]; then
+  if [ "$GUI" -eq 1 ] || [ "$DESKTOP" -eq 1 ]; then
     if ! command -v bun >/dev/null 2>&1; then
       echo "bun was not found. Run ./scripts/install.sh first, or install Bun from https://bun.sh/." >&2
       exit 1
     fi
+  fi
+  if [ "$DESKTOP" -eq 1 ] && ! command -v cargo >/dev/null 2>&1; then
+    echo "cargo was not found. Run ./scripts/install.sh first, or install Rust from https://rustup.rs/." >&2
+    exit 1
   fi
 fi
 
@@ -133,6 +142,19 @@ if [ "$GUI" -eq 1 ]; then
     fi
   fi
   (cd "$REPO_ROOT/apps/gui" && bun run dev "$@")
+  exit $?
+fi
+
+if [ "$DESKTOP" -eq 1 ]; then
+  if ! command -v bun >/dev/null 2>&1; then
+    echo "bun was not found. Run ./scripts/install.sh first, or install Bun from https://bun.sh/." >&2
+    exit 1
+  fi
+  if ! command -v cargo >/dev/null 2>&1; then
+    echo "cargo was not found. Run ./scripts/install.sh first, or install Rust from https://rustup.rs/." >&2
+    exit 1
+  fi
+  (cd "$TAURI_DIR" && bun run dev "$@")
   exit $?
 fi
 

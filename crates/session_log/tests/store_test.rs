@@ -1,6 +1,6 @@
 use session_log::{
-    GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, SessionLogStore,
-    UpsertSessionRequest,
+    file_queue, GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest,
+    SessionLogCommand, SessionLogStore, UpsertSessionRequest,
 };
 use std::process::Command;
 
@@ -200,6 +200,76 @@ fn cross_process_open_default_uses_one_queued_local_database() {
         .status()
         .expect("verify helper");
     assert!(status.success(), "verify helper exited with {status}");
+}
+
+#[test]
+fn file_queue_write_drains_into_session_store() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let port = reserve_local_port();
+    let nonce = uuid::Uuid::new_v4().to_string();
+    let session_id = format!("file-queue-{nonce}");
+    let workspace = format!("C:/file-queue-{nonce}");
+    let current_exe = std::env::current_exe().expect("current test exe");
+
+    let status = Command::new(&current_exe)
+        .args([
+            "--ignored",
+            "--exact",
+            "file_queue_session_log_helper",
+            "--nocapture",
+        ])
+        .env("SESSION_LOG_FILE_QUEUE_SESSION_ID", &session_id)
+        .env("SESSION_LOG_FILE_QUEUE_WORKSPACE", &workspace)
+        .env("SESSION_LOG_DB_ROOT", temp.path())
+        .env("session_log_POSTGRES_PORT", port.to_string())
+        .env_remove("session_log_DATABASE_URL")
+        .env_remove("DATABASE_URL")
+        .status()
+        .expect("file queue helper");
+    assert!(status.success(), "file queue helper exited with {status}");
+}
+
+#[test]
+#[ignore]
+fn file_queue_session_log_helper() {
+    let Ok(session_id) = std::env::var("SESSION_LOG_FILE_QUEUE_SESSION_ID") else {
+        return;
+    };
+    let workspace = std::env::var("SESSION_LOG_FILE_QUEUE_WORKSPACE").expect("workspace");
+    let store = SessionLogStore::open_default().expect("store");
+
+    file_queue::enqueue_command(&SessionLogCommand::UpsertSession(UpsertSessionRequest {
+        session: serde_json::json!({
+            "id": session_id,
+            "name": "File Queue",
+            "directory": workspace,
+            "created_at": 1,
+            "updated_at": 2,
+            "status": "idle",
+            "management": {
+                "session_id": session_id,
+                "session_name": "File Queue",
+                "state": "Idle"
+            }
+        }),
+        parent_id: None,
+        messages: vec![serde_json::json!({
+            "id": format!("m-{session_id}"),
+            "role": "assistant",
+            "created_at": 1,
+            "updated_at": 1
+        })],
+        todos: vec![],
+    }))
+    .expect("enqueue");
+
+    assert_eq!(file_queue::drain_queue(&store, 10).expect("drain"), 1);
+    let session = store
+        .get_session(GetSessionRequest { session_id })
+        .expect("get session")
+        .expect("session should be written");
+    assert_eq!(session.name.as_deref(), Some("File Queue"));
+    assert_eq!(session.message_count, 1);
 }
 
 #[test]

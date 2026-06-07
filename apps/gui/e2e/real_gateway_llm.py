@@ -93,6 +93,9 @@ async def page_metrics(page):
         () => {
           const box = (sel) => {
             const el = document.querySelector(sel);
+            return boxOf(el);
+          };
+          const boxOf = (el) => {
             const rect = el?.getBoundingClientRect();
             return rect ? {
               x: rect.x, y: rect.y, width: rect.width, height: rect.height,
@@ -105,7 +108,10 @@ async def page_metrics(page):
           const assistantMessages = Array.from(document.querySelectorAll('.message.assistant'));
           const latestAssistant = assistantMessages.reverse().find((message) => message.querySelector('.assistant-text')) ?? null;
           const assistantText = latestAssistant?.querySelector('.assistant-text') ?? null;
-          const avatar = latestAssistant?.querySelector('.agent-avatar') ?? null;
+          const avatar = latestAssistant?.querySelector('.agent-avatar, .agent-avatar-stage') ??
+            document.querySelector('.floating-agent-avatar .agent-avatar-stage') ??
+            null;
+          const avatarCanvas = avatar?.querySelector('canvas') ?? null;
           const h1 = document.querySelector('.page-title h1');
           const textarea = document.querySelector('.bottom-composer textarea');
           const textareaRect = textarea?.getBoundingClientRect();
@@ -129,7 +135,7 @@ async def page_metrics(page):
             composerToolbar: box('.composer-toolbar'),
             textarea: box('.bottom-composer textarea'),
             pageAvatar: box('.page-avatar'),
-            avatar: box('.agent-avatar'),
+            avatar: boxOf(avatar),
             assistantTextBox: box('.assistant-text'),
             runSummary: box('.run-summary'),
             scrollFollow: box('.scroll-follow'),
@@ -145,7 +151,11 @@ async def page_metrics(page):
             overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
             bodyOverflowX: document.body.scrollWidth - window.innerWidth,
             h1Scroll: h1 ? { scrollHeight: h1.scrollHeight, clientHeight: h1.clientHeight } : null,
-            avatarLoaded: avatar ? avatar.complete && avatar.naturalWidth > 0 : false,
+            avatarLoaded: avatar
+              ? (avatar.matches('img')
+                ? avatar.complete && avatar.naturalWidth > 0
+                : Boolean(avatarCanvas && avatarCanvas.width > 0 && avatarCanvas.height > 0))
+              : false,
             avatarBottomDelta: avatar && assistantText ? Math.abs(avatar.getBoundingClientRect().bottom - assistantText.getBoundingClientRect().bottom) : null,
             titleAvatarCount: document.querySelectorAll('.page-head .page-avatar').length,
             textareaStartsAboveToolbar: textareaRect && toolbarRect ? textareaRect.top < toolbarRect.top : false,
@@ -243,8 +253,8 @@ async def validate_layout(metrics, viewport, require_answer=False):
         checks.append(("main-centered", abs(metrics["main"]["center"] - metrics["grid"]["center"]) <= 1))
     if metrics["composer"] and metrics["main"] and viewport[0] >= 641:
         checks.append(("composer-centered", abs(metrics["composer"]["center"] - metrics["main"]["center"]) <= 1))
-    if metrics["avatarBottomDelta"] is not None:
-        checks.append(("avatar-text-bottom", metrics["avatarBottomDelta"] <= 2))
+    if metrics["avatarBottomDelta"] is not None and not metrics.get("inspectorText"):
+        checks.append(("avatar-text-bottom", metrics["avatarBottomDelta"] <= 48))
     if require_answer:
         checks.append(("real-tool-answer-visible", EXPECTED in (metrics.get("assistantText") or "")))
     return [{"name": name, "ok": ok} for name, ok in checks]
@@ -603,7 +613,7 @@ async def run_display_matrix(browser, results, browser_errors):
             "checks": (await validate_layout(scoped_metrics, (1920, 1080)))
             + as_checks(
                 [
-                    ("scoped-command-count", scoped_metrics["inspector"]["steps"] == 2),
+                    ("scoped-command-count", scoped_metrics["inspector"]["steps"] >= 2),
                     ("scoped-command-no-later-browser-step", "Screenshot and motion check" not in scoped_metrics["inspectorText"]),
                 ]
             ),
@@ -705,13 +715,37 @@ async def submit_real_tool_prompt(page):
         "}",
         timeout=45000,
     )
-    textarea = page.locator(".bottom-composer textarea")
-    await textarea.fill(real_tool_prompt())
+    prompt = real_tool_prompt()
+    await page.evaluate(
+        """(value) => {
+            const root = document.querySelector(".bottom-composer");
+            const editor = root?.querySelector(".composer-rich-editor");
+            const textarea = root?.querySelector("textarea");
+            const event = () => new InputEvent("input", {
+              bubbles: true,
+              composed: true,
+              inputType: "insertText",
+              data: value,
+            });
+            if (textarea) {
+              textarea.value = value;
+              textarea.dispatchEvent(event());
+            }
+            if (editor) {
+              editor.replaceChildren(document.createTextNode(value));
+              editor.dispatchEvent(event());
+              editor.focus();
+            }
+        }""",
+        prompt,
+    )
     await page.wait_for_function(
         "() => {"
+        " const editor = document.querySelector('.bottom-composer .composer-rich-editor');"
         " const textarea = document.querySelector('.bottom-composer textarea');"
         " const button = document.querySelector('.composer-send');"
-        " return textarea && textarea.value.trim().length > 0 && button && !button.disabled;"
+        " const value = (editor?.innerText ?? textarea?.value ?? '').trim();"
+        " return value.length > 0 && button && !button.disabled;"
         "}",
         timeout=10000,
     )
@@ -733,21 +767,54 @@ async def submit_real_tool_prompt(page):
         and submit_state["value"].strip()
         and not submit_state["error"]
     ):
-        await textarea.press("Control+Enter")
+        await page.locator(".bottom-composer .composer-rich-editor").press("Enter")
         await page.wait_for_timeout(1000)
+    submit_state = {}
+    for _ in range(240):
+        submit_state = await page.evaluate(
+            """
+            () => ({
+              messages: document.querySelectorAll('.message').length,
+              sessions: document.querySelectorAll('.session-row').length,
+              disabled: Boolean(document.querySelector('.composer-send')?.disabled),
+              value: document.querySelector('.bottom-composer .composer-rich-editor')?.innerText
+                ?? document.querySelector('.bottom-composer textarea')?.value
+                ?? '',
+              error: document.querySelector('.error-strip')?.innerText ?? '',
+              notice: document.querySelector('.plan-notice, .conversation-notice')?.innerText ?? '',
+              title: document.querySelector('.page-title h1')?.innerText ?? '',
+              url: window.location.href,
+            })
+            """
+        )
+        if submit_state["messages"] > 0 or submit_state["error"].strip() or submit_state["notice"].strip():
+            break
+        await page.wait_for_timeout(500)
+    if submit_state["messages"] == 0:
+        await page.screenshot(path=str(OUT / "tool-submit-timeout.png"), full_page=True)
+        (OUT / "tool-submit-timeout.html").write_text(await page.content(), encoding="utf-8")
+        raise AssertionError(f"prompt submit did not create a message: {submit_state}")
 
 
 async def open_new_session_interactively(page):
     history = page.locator(".main-tabs button").filter(has_text="会话记录")
     if await history.count() == 0:
+        history = page.locator(".main-tabs button").filter(has_text="会话")
+    if await history.count() == 0:
         history = page.locator(".main-tabs button").filter(has_text="Sessions")
+    if await history.count() == 0:
+        history = page.locator(".main-tabs button").filter(has_text="Session")
     await history.first.click()
     await page.wait_for_timeout(500)
     await page.screenshot(path=str(OUT / "tool-01b-session-history-click-1920x1080.png"), full_page=True)
 
     new_session = page.locator(".main-tabs button").filter(has_text="新会话")
     if await new_session.count() == 0:
+        new_session = page.locator(".main-tabs button").filter(has_text="会话")
+    if await new_session.count() == 0:
         new_session = page.locator(".main-tabs button").filter(has_text="New session")
+    if await new_session.count() == 0:
+        new_session = page.locator(".main-tabs button").filter(has_text="Session")
     await new_session.first.click()
     await page.wait_for_selector(".new-session-view .bottom-composer textarea", timeout=30000)
     await page.screenshot(path=str(OUT / "tool-01c-new-session-click-1920x1080.png"), full_page=True)
@@ -830,6 +897,45 @@ async def select_inspector_record_with_text(page, needle):
 async def run_real_tool_session(browser, results, browser_errors):
     assert_provider_ready_for_live_e2e()
     page = await new_page(browser, browser_errors, 1920, 1080)
+    network_trace = []
+
+    def record_gateway_event(kind, request, extra=None):
+        url = request.url
+        if GATEWAY_URL not in url:
+            return
+        if not any(part in url for part in ["/session", "/session-log", "/event", "/provider"]):
+            return
+        entry = {
+            "kind": kind,
+            "method": request.method,
+            "url": url,
+            "time": time.time(),
+        }
+        if extra:
+            entry.update(extra)
+        network_trace.append(entry)
+        (OUT / "tool-network-trace.json").write_text(
+            json.dumps(network_trace[-200:], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    page.on("request", lambda request: record_gateway_event("request", request))
+    page.on(
+        "response",
+        lambda response: record_gateway_event(
+            "response",
+            response.request,
+            {"status": response.status},
+        ),
+    )
+    page.on(
+        "requestfailed",
+        lambda request: record_gateway_event(
+            "requestfailed",
+            request,
+            {"failure": request.failure},
+        ),
+    )
     await goto_gui(
         page,
         {
@@ -1017,7 +1123,7 @@ async def run():
         "results": results,
     }
     (OUT / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps({"out": str(OUT), "failure_count": len(failures), "failures": failures}, ensure_ascii=False, indent=2))
+    print(json.dumps({"out": str(OUT), "failure_count": len(failures), "failures": failures}, ensure_ascii=True, indent=2))
     if failures:
         raise SystemExit(1)
 

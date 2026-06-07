@@ -409,17 +409,12 @@ export class GatewayClient {
     }
 
     const { timeoutMs, ...fetchInit } = init;
-    const { signal, dispose } = timeoutSignal(init.signal, timeoutMs ?? this.timeoutMs);
-    let response: Response;
-    try {
-      response = await this.fetchImpl(url, {
-        ...fetchInit,
-        headers,
-        signal,
-      });
-    } finally {
-      dispose();
-    }
+    const response = await fetchWithRetry(this.fetchImpl, url, {
+      ...fetchInit,
+      headers,
+      signal: init.signal,
+      timeoutMs: timeoutMs ?? this.timeoutMs,
+    });
 
     if (!response.ok) {
       throw new GatewayError(
@@ -457,17 +452,12 @@ export class GatewayClient {
     }
 
     const { timeoutMs, ...fetchInit } = init;
-    const { signal, dispose } = timeoutSignal(init.signal, timeoutMs ?? this.timeoutMs);
-    let response: Response;
-    try {
-      response = await this.fetchImpl(url, {
-        ...fetchInit,
-        headers,
-        signal,
-      });
-    } finally {
-      dispose();
-    }
+    const response = await fetchWithRetry(this.fetchImpl, url, {
+      ...fetchInit,
+      headers,
+      signal: init.signal,
+      timeoutMs: timeoutMs ?? this.timeoutMs,
+    });
 
     if (!response.ok) {
       throw new GatewayError(
@@ -562,6 +552,55 @@ function resolveFetch(): typeof fetch {
     return xhrFetch as typeof fetch;
   }
   return unavailableFetch as typeof fetch;
+}
+
+async function fetchWithRetry(
+  fetchImpl: typeof fetch,
+  input: RequestInfo | URL,
+  init: RequestInit & { timeoutMs: number },
+): Promise<Response> {
+  const { timeoutMs, signal: upstreamSignal, ...fetchInit } = init;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const { signal, dispose } = timeoutSignal(upstreamSignal, timeoutMs);
+    try {
+      return await fetchImpl(input, {
+        ...fetchInit,
+        signal,
+      });
+    } catch (error) {
+      lastError = error;
+      if (upstreamSignal?.aborted || !isRetryableNetworkError(error) || attempt > 0) {
+        throw error;
+      }
+      await sleep(250);
+    } finally {
+      dispose();
+    }
+  }
+  throw lastError;
+}
+
+function isRetryableNetworkError(error: unknown): boolean {
+  if (error instanceof DOMException) {
+    return error.name === "AbortError" || error.name === "NetworkError";
+  }
+  if (error instanceof TypeError || error instanceof Error) {
+    const message = error.message.toLowerCase();
+    return (
+      message.includes("network_changed") ||
+      message.includes("network changed") ||
+      message.includes("failed to fetch") ||
+      message.includes("fetch failed") ||
+      message.includes("networkerror") ||
+      message.includes("network error")
+    );
+  }
+  return false;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function unavailableFetch(input: RequestInfo | URL): Promise<Response> {

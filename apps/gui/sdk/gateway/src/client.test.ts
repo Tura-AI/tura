@@ -67,6 +67,23 @@ describe("GatewayClient", () => {
     });
   });
 
+  test("retries transient network changed failures", async () => {
+    let calls = 0;
+    const client = new GatewayClient({
+      baseUrl: "http://gateway.test",
+      fetch: async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new TypeError("Failed to fetch: net::ERR_NETWORK_CHANGED");
+        }
+        return jsonResponse({ healthy: true, version: "test" });
+      },
+    });
+
+    await expect(client.health()).resolves.toEqual({ healthy: true, version: "test" });
+    expect(calls).toBe(2);
+  });
+
   test("aborts unanswered requests after the configured timeout", async () => {
     let aborted = false;
     const client = new GatewayClient({

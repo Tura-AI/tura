@@ -6,12 +6,11 @@ import {
   gray,
   inverse,
   italic,
+  opencodeTextWeak,
   pad,
-  padVisible,
   reset,
   richBlockBg,
   richInlineBg,
-  richTableBg,
   strike,
   stripAnsi,
   truncate,
@@ -20,6 +19,7 @@ import {
 } from "./render-terminal.js";
 
 const osc8FullPattern = /\x1b\]8;;[^\x1b]*\x1b\\[\s\S]*?\x1b\]8;;\x1b\\/g;
+const ansiSequencePattern = /\x1b\[[0-9;]*m|\x1b\]8;;[^\x1b]*\x1b\\/g;
 
 export function displayMessageText(role: string, value: string): string {
   const text = cleanMessageText(value);
@@ -33,7 +33,7 @@ export function displayMessageText(role: string, value: string): string {
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
     .filter((line) => line.trim())
-    .slice(0, 14);
+    .slice(0, activeCapabilities.level === "rich" ? 8 : 10);
   return lines.join("\n");
 }
 
@@ -91,9 +91,7 @@ export function renderRichText(source: string): string {
     /\[(MEDIA):([\s\S]*?):MEDIA\]|\[EMOJI:(sticker|react):([\s\S]*?):EMOJI\]/gu,
     (_match, media, path, mode, emoji) => {
       if (media) return renderMediaToken(String(path).trim());
-      return mode === "react"
-        ? `${dim}[EMOJI:react:${String(emoji).trim()}:EMOJI]${reset}`
-        : String(emoji).trim();
+      return mode === "react" ? `${dim}${String(emoji).trim()}${reset}` : String(emoji).trim();
     },
   );
   return renderInlineMarkdown(
@@ -112,10 +110,8 @@ function plainRichText(source: string): string {
           )
           .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/gu, "$1 ($2)")
           .replace(/\[MEDIA:([\s\S]*?):MEDIA\]/gu, "[MEDIA:$1:MEDIA]")
-          .replace(
-            /\[EMOJI:(sticker|react):([\s\S]*?):EMOJI\]/gu,
-            (_match, mode, emoji) =>
-              `[EMOJI:${mode}:${emojiFallbackName(String(emoji).trim())}:EMOJI]`,
+          .replace(/\[EMOJI:(sticker|react):([\s\S]*?):EMOJI\]/gu, (_match, _mode, emoji) =>
+            String(emoji).trim(),
           ),
       ),
     ),
@@ -126,7 +122,7 @@ function basicRichText(source: string): string {
   const tokenized = source.replace(
     /\[(MEDIA):([\s\S]*?):MEDIA\]|\[EMOJI:(sticker|react):([\s\S]*?):EMOJI\]/gu,
     (_match, media, path, _mode, emoji) => {
-      if (media) return `[MEDIA:${String(path).trim()}:MEDIA]`;
+      if (media) return renderMediaToken(String(path).trim());
       return String(emoji).trim();
     },
   );
@@ -147,7 +143,7 @@ function renderHtmlSubset(source: string): string {
   output = output.replace(/<blockquote>([\s\S]*?)<\/blockquote>/giu, (_match, body) =>
     decodeHtml(stripHtml(body))
       .split(/\r?\n/)
-      .map((line) => blockRegion(`${activeCapabilities.unicode ? "│" : ">"} ${line}`))
+      .map((line) => quoteRegion(`${activeCapabilities.unicode ? "│" : ">"} ${line}`))
       .join("\n"),
   );
   const replacements: Array<[RegExp, (body: string, attr?: string) => string]> = [
@@ -217,7 +213,7 @@ function renderMarkdownRegions(source: string): string {
     }
     const quote = lines[index].match(/^\s{0,3}>\s?(.*)$/u);
     if (quote) {
-      output.push(blockRegion(`${activeCapabilities.unicode ? "│" : ">"} ${quote[1] ?? ""}`));
+      output.push(quoteRegion(`${activeCapabilities.unicode ? "│" : ">"} ${quote[1] ?? ""}`));
       continue;
     }
     output.push(lines[index]);
@@ -227,6 +223,11 @@ function renderMarkdownRegions(source: string): string {
 
 function blockRegion(value: string): string {
   if (activeCapabilities.level !== "rich") return value;
+  return `${richBlockBg}${opencodeTextWeak}${value.replaceAll(reset, `${reset}${richBlockBg}${opencodeTextWeak}`)}${reset}`;
+}
+
+function quoteRegion(value: string): string {
+  if (activeCapabilities.level !== "rich") return value;
   return `${richBlockBg}${value.replaceAll(reset, `${reset}${richBlockBg}`)}${reset}`;
 }
 
@@ -234,27 +235,7 @@ function inlineRegion(value: string): string {
   if (activeCapabilities.level !== "rich") return value;
   const normalized = value.replace(/\s+/gu, " ").trim();
   if (!normalized) return "";
-  return `${richInlineBg} ${normalized.replaceAll(reset, `${reset}${richInlineBg}`)} ${reset}`;
-}
-
-function tableRegion(value: string): string {
-  if (activeCapabilities.level !== "rich") return value;
-  return `${richTableBg}${value.replaceAll(reset, `${reset}${richTableBg}`)}${reset}`;
-}
-
-function tableRule(left: string, join: string, right: string, widths: number[]): string {
-  const segments = widths.map((width) => "─".repeat(width + 2));
-  return `${gray}${left}${segments.join(join)}${right}${reset}`;
-}
-
-function tableRow(cells: string[], widths: number[], header = false): string {
-  const rendered = cells.map((cell, column) => {
-    const value = padVisible(cell, widths[column]);
-    return ` ${header ? `${bold}${value}${reset}` : value} `;
-  });
-  return tableRegion(
-    `${gray}│${reset}${richTableBg}${rendered.join(`${gray}│${reset}${richTableBg}`)}${gray}│${reset}`,
-  );
+  return `${richInlineBg}${opencodeTextWeak} ${normalized.replaceAll(reset, `${reset}${richInlineBg}${opencodeTextWeak}`)} ${reset}`;
 }
 
 function renderMarkdownTables(source: string): string {
@@ -306,14 +287,7 @@ function formatMarkdownTable(rows: string[][]): string[] {
     Math.min(48, Math.max(3, ...normalized.map((row) => visibleTextWidth(row[column])))),
   );
   if (activeCapabilities.level === "rich") {
-    const output = [
-      tableRule("┌", "┬", "┐", widths),
-      tableRow(normalized[0], widths, true),
-      tableRule("├", "┼", "┤", widths),
-    ];
-    for (const row of normalized.slice(1)) output.push(tableRow(row, widths));
-    output.push(tableRule("└", "┴", "┘", widths));
-    return output;
+    return compactMarkdownTable(normalized);
   }
   return normalized.map((row, index) => {
     const cells = row.map((cell, column) => pad(truncate(cell, widths[column]), widths[column]));
@@ -322,11 +296,41 @@ function formatMarkdownTable(rows: string[][]): string[] {
   });
 }
 
+function compactMarkdownTable(rows: string[][]): string[] {
+  const headers = rows[0] ?? [];
+  return rows.slice(1).map((row) => {
+    const cells = row
+      .map((cell, index) => {
+        const header = stripAnsi(headers[index] ?? "").trim();
+        const value = cell.trim();
+        if (!value) return "";
+        return header ? `${header}: ${value}` : value;
+      })
+      .filter(Boolean);
+    return `${gray}◇${reset} ${opencodeTextWeak}${cells.join("  ")}${reset}`;
+  });
+}
+
 function renderInlineMarkdown(source: string): string {
   const linked = source.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/gu, (_match, label, href) =>
     renderLinkTarget(String(href), String(label)),
   );
-  return renderInlineDecorations(linkLocalPathsPreservingOsc(linked));
+  const localLinked = linkLocalPathsPreservingOsc(linked);
+  const preserved = preserveAnsiSequences(localLinked);
+  return restoreAnsiSequences(renderInlineDecorations(preserved.text), preserved.tokens);
+}
+
+function preserveAnsiSequences(source: string): { text: string; tokens: string[] } {
+  const tokens: string[] = [];
+  const text = source.replace(ansiSequencePattern, (match) => {
+    const index = tokens.push(match) - 1;
+    return `\u0000ANSI${index}\u0000`;
+  });
+  return { text, tokens };
+}
+
+function restoreAnsiSequences(source: string, tokens: string[]): string {
+  return source.replace(/\u0000ANSI(\d+)\u0000/gu, (_match, index) => tokens[Number(index)] ?? "");
 }
 
 function renderInlineDecorations(source: string): string {
@@ -337,37 +341,16 @@ function renderInlineDecorations(source: string): string {
 }
 
 function renderMediaToken(path: string): string {
-  const label = `[MEDIA:${path}:MEDIA]`;
+  const label = path;
   return isLinkTarget(path)
-    ? terminalLink(linkTargetUrl(path), `${dim}${label}${reset}`)
-    : `${dim}${label}${reset}`;
-}
-
-function emojiFallbackName(value: string): string {
-  const known: Record<string, string> = {
-    "👍": "thumbs_up",
-    "👎": "thumbs_down",
-    "😂": "face_with_tears_of_joy",
-    "😀": "grinning_face",
-    "🙂": "slightly_smiling_face",
-    "😊": "smiling_face",
-    "❤️": "red_heart",
-    "✅": "check_mark",
-    "❌": "cross_mark",
-    "🔥": "fire",
-    "🚀": "rocket",
-  };
-  if (known[value]) return known[value];
-  const fallback = Array.from(value)
-    .map((char) => `u+${char.codePointAt(0)?.toString(16) ?? "unknown"}`)
-    .join("_");
-  return fallback || "unknown";
+    ? terminalLink(linkTargetUrl(path), `${opencodeTextWeak}${label}${reset}`)
+    : `${opencodeTextWeak}${label}${reset}`;
 }
 
 function renderLinkTarget(target: string, label: string): string {
   if (!isLinkTarget(target)) return `${label} (${target})`;
-  const visible = `${underline}${label}${reset}`;
-  return `${terminalLink(linkTargetUrl(target), visible)} ${dim}(${target})${reset}`;
+  const visible = `${stripAnsi(label)} ${opencodeTextWeak}(${target})${reset}`;
+  return terminalLink(linkTargetUrl(target), visible);
 }
 
 const LOCAL_PATH_PATTERN =
@@ -376,16 +359,21 @@ const TRAILING_PATH_PUNCTUATION = /[),.;:!?]+$/u;
 
 function linkLocalPaths(source: string): string {
   return source.replace(LOCAL_PATH_PATTERN, (raw, offset: number) => {
+    if (source.slice(Math.max(0, offset - 8), offset).includes("[MEDIA:")) return raw;
+    if (offset > 1 && source[offset - 2] === ":" && source[offset - 1] === "/") return raw;
     if (/^[A-Za-z]:[\\/]/u.test(raw) && offset > 0 && /[A-Za-z0-9]/u.test(source[offset - 1]))
       return raw;
     const path = raw.replace(TRAILING_PATH_PUNCTUATION, "");
     const trailing = raw.slice(path.length);
     if (!isLocalPath(path)) return raw;
-    return `${terminalLink(linkTargetUrl(path), `${underline}${path}${reset}`)}${trailing}`;
+    if (activeCapabilities.level === "rich" || activeCapabilities.level === "ansi")
+      return `${terminalLink(linkTargetUrl(path), `${opencodeTextWeak}${path}${reset}`)}${trailing}`;
+    return `${path}${trailing}`;
   });
 }
 
 function linkLocalPathsPreservingOsc(source: string): string {
+  if (stripAnsi(source).trimStart().startsWith("◇")) return source;
   let cursor = 0;
   let output = "";
   for (const match of source.matchAll(osc8FullPattern)) {
@@ -403,8 +391,9 @@ function isLocalPath(value: string): boolean {
 }
 
 function terminalLink(url: string, label: string): string {
-  if (!isLinkTarget(url) || !activeCapabilities.osc8) return label;
-  return `\x1b]8;;${url}\x1b\\${label}\x1b]8;;\x1b\\`;
+  return isLinkTarget(url) && activeCapabilities.osc8 && activeCapabilities.level !== "plain"
+    ? `\x1b]8;;${url}\x1b\\${label}\x1b]8;;\x1b\\`
+    : label;
 }
 
 function stripHtml(value: string): string {

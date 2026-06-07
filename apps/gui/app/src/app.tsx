@@ -20,6 +20,7 @@ import {
 import { mergeSessions, providerIssueIdFromError, writeLastSessionOpened } from "./app-state-utils";
 import { AppShell } from "./app/app-shell";
 import { AppProviders } from "./context/app-providers";
+import { isToolPart } from "./conversation/message-tools";
 import { DEFAULT_AGENT_ID } from "./config/defaults";
 import {
   appendTaskToSession,
@@ -56,6 +57,8 @@ import { safe } from "./utils/safe";
 
 const PROMPT_RESPONSE_TIMEOUT_MS = 30_000;
 const PROMPT_RESPONSE_TIMEOUT_CODE = "GATEWAY_NO_RESPONSE_30S";
+const ASSISTANT_REPLY_POLL_TIMEOUT_MS = 120_000;
+const ASSISTANT_REPLY_POLL_INTERVAL_MS = 1_250;
 
 export function App() {
   const e2eFixture = readSearchParam("e2eFixture");
@@ -587,6 +590,7 @@ export function App() {
         planNotice: undefined,
       }));
       await refreshSessions();
+      void pollSessionMessagesUntilAssistantReply(sessionId);
     } catch (error) {
       const timeout = error instanceof Error && error.message === PROMPT_RESPONSE_TIMEOUT_CODE;
       setState((previous) => ({
@@ -631,6 +635,39 @@ export function App() {
       }));
     } finally {
       setState((previous) => ({ ...previous, submitting: false }));
+    }
+  }
+
+  async function pollSessionMessagesUntilAssistantReply(sessionId: string): Promise<void> {
+    if (e2eFixture) {
+      return;
+    }
+    const deadline = Date.now() + ASSISTANT_REPLY_POLL_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await delay(ASSISTANT_REPLY_POLL_INTERVAL_MS);
+      if (state().selectedSessionId !== sessionId) {
+        return;
+      }
+      let messages: Message[];
+      try {
+        messages = await directoryClient().messages(sessionId);
+      } catch {
+        continue;
+      }
+      if (messages.length === 0) {
+        continue;
+      }
+      setState((previous) => ({
+        ...previous,
+        messagesBySession: {
+          ...previous.messagesBySession,
+          [sessionId]: messages,
+        },
+      }));
+      if (hasVisibleAssistantReply(messages)) {
+        await refreshSessions();
+        return;
+      }
     }
   }
 
@@ -680,55 +717,65 @@ export function App() {
       deliverable: deliverableLines.join("\n").trim(),
       ...timingPatch,
     };
-    if (e2eFixture) {
-      const session: Session = currentSession
-        ? {
-            ...appendTaskToSession(currentSession, taskState),
-            updated_at: Date.now(),
-          }
-        : {
-            id: `queued-local-${Date.now()}`,
-            name: title,
-            directory: state().directory,
-            status: "idle",
-            created_at: Date.now(),
-            updated_at: Date.now(),
-            plan_summary: title,
-            session_display_name: title,
-            task_management: taskState,
-          };
-      setState((previous) => ({
-        ...previous,
-        sessions: [session, ...previous.sessions.filter((item) => item.id !== session.id)],
-        selectedSessionId: session.id,
-        planPreviewSessionId:
-          previous.activeTab === "plan" ? session.id : previous.planPreviewSessionId,
-        activeTab: previous.activeTab,
-        previousMainTab: previous.previousMainTab,
-        composerText: "",
-        composerImages: [],
-        planDraftStartCondition: "user_action",
-        planDraftStartAt: "",
-        planDraftPollInterval: defaultPollInterval(),
-        planNotice: undefined,
-        error: undefined,
-      }));
-      return;
-    }
-    const session = currentSession
-      ? await directoryClient().updateSessionTaskManagement(currentSession.id, {
-          tasks: [taskState],
-        })
-      : withSessionFallbackName(
-          await directoryClient().createSession({
-            ...createSessionPayload(),
-            task_management: taskState,
-          }),
-          title,
-        );
+    const optimisticSession: Session = currentSession
+      ? {
+          ...appendTaskToSession(currentSession, taskState),
+          updated_at: Date.now(),
+        }
+      : {
+          id: `queued-local-${Date.now()}`,
+          name: title,
+          directory: state().directory,
+          status: "idle",
+          created_at: Date.now(),
+          updated_at: Date.now(),
+          plan_summary: title,
+          session_display_name: title,
+          task_management: taskState,
+        };
     setState((previous) => ({
       ...previous,
-      sessions: [session, ...previous.sessions.filter((item) => item.id !== session.id)],
+      sessions: [
+        optimisticSession,
+        ...previous.sessions.filter((item) => item.id !== optimisticSession.id),
+      ],
+      selectedSessionId: optimisticSession.id,
+      planPreviewSessionId:
+        previous.activeTab === "plan" ? optimisticSession.id : previous.planPreviewSessionId,
+      composerText: "",
+      composerImages: [],
+      planDraftStartCondition: "user_action",
+      planDraftStartAt: "",
+      planDraftPollInterval: defaultPollInterval(),
+      planNotice: undefined,
+      error: undefined,
+    }));
+    if (e2eFixture) {
+      return;
+    }
+    const session = await Promise.race([
+      currentSession
+        ? directoryClient().updateSessionTaskManagement(currentSession.id, {
+            tasks: [taskState],
+          })
+        : directoryClient()
+            .createSession({
+              ...createSessionPayload(),
+              task_management: taskState,
+            })
+            .then((created) => withSessionFallbackName(created, title)),
+      new Promise<Session>((resolve) =>
+        window.setTimeout(() => resolve(optimisticSession), PROMPT_RESPONSE_TIMEOUT_MS),
+      ),
+    ]);
+    setState((previous) => ({
+      ...previous,
+      sessions: [
+        session,
+        ...previous.sessions.filter(
+          (item) => item.id !== session.id && item.id !== optimisticSession.id,
+        ),
+      ],
       selectedSessionId: session.id,
       planPreviewSessionId:
         previous.activeTab === "plan" ? session.id : previous.planPreviewSessionId,
@@ -943,5 +990,33 @@ export function App() {
         }}
       />
     </AppProviders>
+  );
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function hasVisibleAssistantReply(messages: Message[]): boolean {
+  return messages.some((message) => {
+    if (message.role !== "assistant") {
+      return false;
+    }
+    return message.parts.some((part) => {
+      if (isToolPart(part)) {
+        return false;
+      }
+      const text = (part.text || part.content || "").trim();
+      return text.length > 0 && !isTransientAssistantText(text);
+    });
+  });
+}
+
+function isTransientAssistantText(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return (
+    normalized === "正在思考" ||
+    normalized === "thinking" ||
+    (normalized.includes("正在思考") && normalized.startsWith("已运行"))
   );
 }

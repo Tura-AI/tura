@@ -1,5 +1,5 @@
 import { connectGatewayEvents, errorMessage, type GatewayClient } from "@tura/gateway-sdk";
-import { createEffect, onCleanup, onMount, type Accessor, type Setter } from "solid-js";
+import { createEffect, createMemo, onCleanup, onMount, type Accessor, type Setter } from "solid-js";
 import {
   GATEWAY_CONNECT_TIMEOUT_MS,
   isGatewayTimeoutError,
@@ -22,6 +22,12 @@ import {
 import { safe } from "../utils/safe";
 import { configToDraft, defaultModel, providerIdFromModel, recordToDraft } from "../utils/settings";
 
+function gatewayArray<T>(value: T[] | unknown): T[] {
+  return Array.isArray(value) ? value : [];
+}
+
+const BOOTSTRAP_REQUEST_TIMEOUT_MS = 1_800;
+
 export function useAppGatewayLifecycle(options: {
   state: Accessor<AppState>;
   setState: Setter<AppState>;
@@ -33,6 +39,7 @@ export function useAppGatewayLifecycle(options: {
 }) {
   const { state, setState, gatewayUrl, rootClient, forceNewSession, e2eFixture, openSession } =
     options;
+  const connection = createMemo(() => state().connection);
 
   createEffect(() => {
     if (
@@ -60,7 +67,7 @@ export function useAppGatewayLifecycle(options: {
   });
 
   createEffect(() => {
-    if (e2eFixture) {
+    if (e2eFixture || connection() !== "connected") {
       return;
     }
     const baseUrl = gatewayUrl();
@@ -91,24 +98,39 @@ export function useAppGatewayLifecycle(options: {
       error: undefined,
       gatewayStartupNotice: previous.gatewayStartupNotice,
     }));
+    if (startAttempt === 0) {
+      const started = await tryStartGateway(gatewayUrl(), setState);
+      if (started) {
+        await waitForGatewayHealth(gatewayUrl(), 5_000, setState);
+      }
+    }
     const client = rootClient();
     try {
+      const fallbackPaths: NonNullable<AppState["paths"]> = {
+        home: "",
+        state: "",
+        config: "",
+        worktree: "",
+        directory: "",
+      };
+      const fallbackConfig: NonNullable<AppState["config"]> = {};
+      const fallbackCurrentProject: NonNullable<AppState["currentProject"]> = { project: null };
       const [health, serviceStatus, paths, config, modelConfig, currentProject, projects] =
         await Promise.all([
-          client.health(),
-          safe(() => client.serviceStatus(), undefined),
-          client.paths(),
-          client.config(),
-          safe(() => client.modelConfig(), undefined),
-          client.currentProject(),
-          safe(() => client.projects(), []),
+          bootstrapSafe(() => client.health(), { healthy: true, version: "unknown" }),
+          bootstrapSafe(() => client.serviceStatus(), undefined),
+          bootstrapSafe(() => client.paths(), fallbackPaths),
+          bootstrapSafe(() => client.config(), fallbackConfig),
+          bootstrapSafe(() => client.modelConfig(), undefined),
+          bootstrapSafe(() => client.currentProject(), fallbackCurrentProject),
+          bootstrapSafe(() => client.projects(), []),
         ]);
       const [productConfig, me, workspaces, productIssues, productProjects] = await Promise.all([
-        safe(() => client.productConfig(), undefined),
-        safe(() => client.me(), undefined),
-        safe(() => client.workspaces(), []),
-        safe(() => client.productIssues(), []),
-        safe(() => client.productProjects(), []),
+        bootstrapSafe(() => client.productConfig(), undefined),
+        bootstrapSafe(() => client.me(), undefined),
+        bootstrapSafe(() => client.workspaces(), []),
+        bootstrapSafe(() => client.productIssues(), []),
+        bootstrapSafe(() => client.productProjects(), []),
       ]);
       const directory = defaultWorkspaceDirectory({
         ...paths,
@@ -125,21 +147,33 @@ export function useAppGatewayLifecycle(options: {
             ...projects,
           ];
       const scoped = client.withDirectory(directory);
-      const [sessions, providers, agents, personas, commands, files, workspaceConfig] =
-        await Promise.all([
-          safe(() => scoped.sessions({ limit: 100 }), []),
-          safe(() => scoped.providers(), undefined),
-          safe(() => scoped.agents(), []),
-          safe(() => scoped.personas(), []),
-          safe(() => scoped.commands(), []),
-          safe(() => scoped.files(), []),
-          safe(() => scoped.workspaceConfig(), {}),
-        ]);
-      const providerAuthMethods = await safe(() => client.providerAuthMethods(), {});
+      const [
+        sessionsResult,
+        providers,
+        agentsResult,
+        personasResult,
+        commandsResult,
+        filesResult,
+        workspaceConfig,
+      ] = await Promise.all([
+        bootstrapSafe(() => scoped.sessions({ limit: 100 }), []),
+        bootstrapSafe(() => scoped.providers(), undefined),
+        bootstrapSafe(() => scoped.agents(), []),
+        bootstrapSafe(() => scoped.personas(), []),
+        bootstrapSafe(() => scoped.commands(), []),
+        bootstrapSafe(() => scoped.files(), []),
+        bootstrapSafe(() => scoped.workspaceConfig(), {}),
+      ]);
+      const sessions = gatewayArray<AppState["sessions"][number]>(sessionsResult);
+      const agents = gatewayArray<AppState["agents"][number]>(agentsResult);
+      const personas = gatewayArray<AppState["personas"][number]>(personasResult);
+      const commands = gatewayArray<AppState["commands"][number]>(commandsResult);
+      const files = gatewayArray<AppState["files"][number]>(filesResult);
+      const providerAuthMethods = await bootstrapSafe(() => client.providerAuthMethods(), {});
       const providerAuthStatusEntries = await Promise.all(
         (providers?.all ?? []).map(async (provider) => [
           provider.id,
-          await safe(() => client.providerAuthStatus(provider.id), undefined),
+          await bootstrapSafe(() => client.providerAuthStatus(provider.id), undefined),
         ]),
       );
       const providerAuthStatus = Object.fromEntries(
@@ -216,6 +250,7 @@ export function useAppGatewayLifecycle(options: {
         bootstrapped: true,
         connection: "connected",
         gatewayStartupNotice: undefined,
+        settingsNotice: undefined,
       }));
       if (selectedSessionId) {
         await openSession(selectedSessionId);
@@ -224,7 +259,7 @@ export function useAppGatewayLifecycle(options: {
       if (isGatewayTimeoutError(error) && startAttempt < 1) {
         const started = await tryStartGateway(gatewayUrl(), setState);
         if (started) {
-          await waitForGatewayHealth(gatewayUrl(), 120_000, setState);
+          await waitForGatewayHealth(gatewayUrl(), 5_000, setState);
           return hydrate(startAttempt + 1);
         }
       }
@@ -238,4 +273,24 @@ export function useAppGatewayLifecycle(options: {
       }));
     }
   }
+}
+
+async function bootstrapSafe<T>(run: () => Promise<T>, fallback: T): Promise<T> {
+  return safe(() => withTimeout(run(), BOOTSTRAP_REQUEST_TIMEOUT_MS), fallback);
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error("Gateway bootstrap timeout")), timeoutMs);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }

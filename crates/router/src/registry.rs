@@ -42,20 +42,27 @@ fn default_repo_root() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
-/// Resolve a binary target from release first, then debug.
+/// Resolve a sibling service binary for the current router profile first.
 pub fn resolve_binary_target(repo_root: &Path, binary_name: &str) -> Option<PathBuf> {
     let file_name = if cfg!(windows) {
         format!("{binary_name}.exe")
     } else {
         binary_name.to_string()
     };
-    let release = repo_root.join("target").join("release").join(&file_name);
-    if release.exists() {
-        return Some(release);
+    binary_target_candidates(repo_root, &file_name)
+        .into_iter()
+        .find(|path| path.exists())
+}
+
+fn binary_target_candidates(repo_root: &Path, file_name: &str) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(directory) = current_exe.parent() {
+            candidates.push(directory.join(file_name));
+        }
     }
-    let debug = repo_root.join("target").join("debug").join(&file_name);
-    if debug.exists() {
-        return Some(debug);
-    }
-    None
+    candidates.push(repo_root.join("bin").join(file_name));
+    candidates.push(repo_root.join("target").join("debug").join(file_name));
+    candidates.push(repo_root.join("target").join("release").join(file_name));
+    candidates
 }
