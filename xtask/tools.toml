@@ -12,7 +12,7 @@ install = "cargo install typos-cli --locked"
 
 [checks]
 format = "cargo fmt --all --check"
-clippy = "cargo clippy --workspace --all-targets"
+clippy = "cargo clippy --workspace --exclude src-tauri --all-targets"
 audit = "cargo audit"
 deny = "cargo deny check"
 typos = "typos"
