@@ -10,7 +10,7 @@
         "type": "array",
         "minItems": 5,
         "maxItems": 15,
-        "description": "Executable command-line instructions. During task execution, complete all currently needed steps in one batch; prefer 5 or more commands. Include only commands whose inputs are already known when this batch is created. Independent read/search commands may share one step. Do not create test/probe commands that depend on output from earlier commands in the same batch. If the only remaining action is to send information to the user or ask for input, a single task_status command is enough.",
+        "description": "Executable command-line instructions. During task execution, complete all currently needed steps in one batch; prefer 5 or more commands. Include only commands whose inputs are already known when this batch is created. Independent read/search commands may share one step. Do not create test/probe commands that depend on output from earlier commands in the same batch.",
         "items": {
           "type": "object",
           "required": ["command_type", "command_line"],

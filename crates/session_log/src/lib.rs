@@ -2,6 +2,7 @@ pub mod checkpoint;
 pub mod cli;
 pub mod client;
 pub mod client_protocol;
+pub mod file_queue;
 mod local_postgres;
 pub mod migrations;
 pub mod path;

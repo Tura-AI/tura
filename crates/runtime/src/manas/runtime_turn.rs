@@ -109,7 +109,7 @@ pub(crate) fn execute_turn(
                 provider_name: queue_item.provider_name,
                 stream: agent.provider.stream,
                 max_tokens: agent.provider.max_tokens,
-                tool_choice: tool_choice_for_turn(&allowed_tool_names, is_final_turn),
+                tool_choice: tool_choice_for_turn(&allowed_tool_names),
                 session_directory: session.session_directory.clone(),
                 allowed_command_run_commands: Some(agent_commands),
             },
@@ -172,19 +172,9 @@ fn debug_runtime_enabled() -> bool {
 }
 
 fn tool_choice_for_turn(
-    allowed_tool_names: &std::collections::HashSet<String>,
-    is_final_turn: bool,
+    _allowed_tool_names: &std::collections::HashSet<String>,
 ) -> Option<serde_json::Value> {
-    if is_final_turn || !allowed_tool_names.contains(COMMAND_RUN_TOOL) {
-        return None;
-    }
-
-    Some(serde_json::json!({
-        "type": "function",
-        "function": {
-            "name": COMMAND_RUN_TOOL,
-        }
-    }))
+    Some(serde_json::json!("auto"))
 }
 
 fn move_command_run_to_end(tools: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
@@ -200,30 +190,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn non_final_turn_leaves_tool_choice_auto() {
+    fn non_final_turn_uses_auto_tool_choice() {
         let names = std::collections::HashSet::from([COMMAND_RUN_TOOL.to_string()]);
 
         assert_eq!(
-            tool_choice_for_turn(&names, false),
-            Some(serde_json::json!({
-                "type": "function",
-                "function": { "name": COMMAND_RUN_TOOL }
-            }))
+            tool_choice_for_turn(&names),
+            Some(serde_json::json!("auto"))
         );
     }
 
     #[test]
-    fn final_turn_leaves_tool_choice_auto() {
+    fn final_turn_uses_auto_tool_choice() {
         let names = std::collections::HashSet::from([COMMAND_RUN_TOOL.to_string()]);
 
-        assert!(tool_choice_for_turn(&names, true).is_none());
+        assert_eq!(
+            tool_choice_for_turn(&names),
+            Some(serde_json::json!("auto"))
+        );
     }
 
     #[test]
-    fn tool_choice_is_absent_when_required_tool_is_not_available() {
+    fn tool_choice_uses_auto_when_required_tool_is_not_available() {
         let names = std::collections::HashSet::new();
 
-        assert!(tool_choice_for_turn(&names, false).is_none());
-        assert!(tool_choice_for_turn(&names, true).is_none());
+        assert_eq!(
+            tool_choice_for_turn(&names),
+            Some(serde_json::json!("auto"))
+        );
     }
 }

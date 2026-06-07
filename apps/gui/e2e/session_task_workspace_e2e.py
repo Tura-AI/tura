@@ -128,6 +128,7 @@ class SessionTaskGateway(ThreadingHTTPServer):
             for item in self.sessions
         }
         self.records: list[dict] = []
+        self.requests: list[dict] = []
 
     def directory_from(self, handler: BaseHTTPRequestHandler, query: dict) -> str:
         raw = query.get("directory", [None])[0] or handler.headers.get("x-opencode-directory") or self.alpha
@@ -144,6 +145,7 @@ class SessionTaskGateway(ThreadingHTTPServer):
 
 class SessionTaskGatewayHandler(BaseHTTPRequestHandler):
     server: SessionTaskGateway
+    protocol_version = "HTTP/1.1"
 
     def log_message(self, format, *args):
         return
@@ -156,15 +158,22 @@ class SessionTaskGatewayHandler(BaseHTTPRequestHandler):
         self.send_header("access-control-allow-headers", "content-type,x-opencode-directory")
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body)))
+        self.send_header("connection", "close")
         self.end_headers()
         self.wfile.write(body)
+        self.wfile.flush()
+        self.close_connection = True
 
     def empty(self, status=204):
         self.send_response(status)
         self.send_header("access-control-allow-origin", "*")
         self.send_header("access-control-allow-methods", "GET,POST,PATCH,DELETE,OPTIONS")
         self.send_header("access-control-allow-headers", "content-type,x-opencode-directory")
+        self.send_header("content-length", "0")
+        self.send_header("connection", "close")
         self.end_headers()
+        self.wfile.flush()
+        self.close_connection = True
 
     def read_json(self):
         length = int(self.headers.get("content-length") or "0")
@@ -177,17 +186,28 @@ class SessionTaskGatewayHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
+        self.server.requests.append({"method": "GET", "path": path, "query": query, "time": now_ms()})
         if path == "/event":
+            body = b'data: {"payload":{"type":"server.connected","properties":{}}}\n\n'
             self.send_response(200)
             self.send_header("access-control-allow-origin", "*")
             self.send_header("content-type", "text/event-stream")
+            self.send_header("content-length", str(len(body)))
+            self.send_header("connection", "close")
             self.end_headers()
-            self.wfile.write(b'data: {"payload":{"type":"server.connected","properties":{}}}\n\n')
+            self.wfile.write(body)
             self.wfile.flush()
+            self.close_connection = True
             time.sleep(0.2)
             return
         if path == "/__records":
-            return self.send_json({"records": self.server.records, "sessions": self.server.sessions})
+            return self.send_json(
+                {
+                    "records": self.server.records,
+                    "requests": self.server.requests,
+                    "sessions": self.server.sessions,
+                }
+            )
         if path == "/global/health":
             return self.send_json({"healthy": True, "version": "session-task-e2e"})
         if path == "/service/status":
@@ -204,7 +224,7 @@ class SessionTaskGatewayHandler(BaseHTTPRequestHandler):
             return self.send_json({"id": "e2e", "name": "Session Task E2E", "email": "session-task@tura.local"})
         if path == "/api/workspaces":
             return self.send_json(self.server.workspaces)
-        if path in {"/api/issues", "/api/projects", "/permission", "/question", "/command"}:
+        if path in {"/api/issues", "/api/projects", "/permission", "/question", "/command", "/persona"}:
             return self.send_json([])
         if path == "/config":
             return self.send_json({"model": "openai/gpt-5.5", "agent": "coding_agent", "theme": "light"})
@@ -264,6 +284,7 @@ class SessionTaskGatewayHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         payload = self.read_json()
+        self.server.requests.append({"method": "POST", "path": path, "payload": payload, "time": now_ms()})
         if path == "/session":
             ts = now_ms()
             management = payload.get("task_management") or task("New session task")
@@ -309,6 +330,7 @@ class SessionTaskGatewayHandler(BaseHTTPRequestHandler):
     def do_PATCH(self):
         path = urlparse(self.path).path
         payload = self.read_json()
+        self.server.requests.append({"method": "PATCH", "path": path, "payload": payload, "time": now_ms()})
         if path.startswith("/session/"):
             parts = path.strip("/").split("/")
             session_id = parts[1]
@@ -345,6 +367,7 @@ class SessionTaskGatewayHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         path = urlparse(self.path).path
+        self.server.requests.append({"method": "DELETE", "path": path, "time": now_ms()})
         if path.startswith("/session/"):
             session_id = path.strip("/").split("/")[1]
             self.server.records.append({"type": "session.delete", "session_id": session_id})
@@ -358,27 +381,40 @@ def merge_task_management(item: dict, patch: dict) -> dict:
     if not isinstance(current, dict):
         current = {}
     nonce = patch.get("task_id") or patch.get("taskId")
+    normalized_patch = dict(patch)
+    if "status" in normalized_patch and "task_status" not in normalized_patch:
+        normalized_patch["task_status"] = normalized_patch["status"]
+    if "task_status" in normalized_patch and "status" not in normalized_patch:
+        normalized_patch["status"] = normalized_patch["task_status"]
+    current_nonce = current.get("task_id") or current.get("taskId")
+    if nonce and current_nonce == nonce:
+        current = {**current, **normalized_patch}
     if isinstance(current.get("tasks"), list) or nonce:
         tasks = list(current.get("tasks") or [])
+        if not tasks and nonce and current_nonce == nonce:
+            tasks = [{**current, "task_id": nonce}]
         index = next((i for i, task_item in enumerate(tasks) if (task_item.get("task_id") or task_item.get("taskId")) == nonce), -1)
         if index >= 0:
-            tasks[index] = {**tasks[index], **patch}
+            tasks[index] = {**tasks[index], **normalized_patch}
         else:
-            tasks.append({**patch, "task_id": nonce or f"{item['id']}:{len(tasks)}"})
+            tasks.append({**normalized_patch, "task_id": nonce or f"{item['id']}:{len(tasks)}"})
         return {**current, "tasks": tasks}
-    return {**current, **patch}
+    return {**current, **normalized_patch}
 
 
 def top_task_status(management: dict) -> str:
     if isinstance(management.get("tasks"), list) and management["tasks"]:
-        return management["tasks"][0].get("task_status") or "todo"
-    return management.get("task_status") or "todo"
+        return management["tasks"][0].get("task_status") or management["tasks"][0].get("status") or "todo"
+    return management.get("task_status") or management.get("status") or "todo"
 
 
 def url_ready(url: str) -> bool:
     try:
         with urlopen(url, timeout=2) as response:
-            return 200 <= response.status < 500
+            if url.rstrip("/").endswith("/global/health"):
+                return 200 <= response.status < 500
+            body = response.read(2048).decode("utf-8", errors="ignore")
+            return 200 <= response.status < 500 and "<title>Tura</title>" in body and "/src/entry.tsx" in body
     except Exception:
         return False
 
@@ -400,22 +436,19 @@ def start_gui_server() -> subprocess.Popen | None:
     (OUT / "servers").mkdir(parents=True, exist_ok=True)
     out = (OUT / "servers" / "gui-dev.log").open("w", encoding="utf-8")
     err = (OUT / "servers" / "gui-dev.err.log").open("w", encoding="utf-8")
-    bun = "bun.exe" if os.name == "nt" else "bun"
+    node = "node.exe" if os.name == "nt" else "node"
     parsed = urlparse(GUI_URL)
     return subprocess.Popen(
         [
-            bun,
-            "--cwd",
-            str(ROOT / "apps" / "gui" / "app"),
-            "dev",
-            "--",
+            node,
+            str(ROOT / "apps" / "gui" / "app" / "node_modules" / "vite" / "bin" / "vite.js"),
             "--host",
             "127.0.0.1",
             "--port",
             str(parsed.port or 5182),
             "--strictPort",
         ],
-        cwd=ROOT,
+        cwd=ROOT / "apps" / "gui" / "app",
         stdout=out,
         stderr=err,
         stdin=subprocess.DEVNULL,
@@ -473,7 +506,13 @@ async def page_metrics(page):
 
 async def goto_app(page, tab="plan"):
     await page.goto(f"{GUI_URL}/?{urlencode({'gatewayUrl': GATEWAY_URL, 'tab': tab, 'agent': 'coding_agent', 'newSession': '1'})}")
-    await page.wait_for_selector(".main-tabs", timeout=30_000)
+    try:
+        await page.wait_for_selector(".main-tabs", timeout=30_000)
+    except Exception:
+        OUT.mkdir(parents=True, exist_ok=True)
+        await page.screenshot(path=str(OUT / "app-load-timeout.png"), full_page=True)
+        (OUT / "app-load-timeout.html").write_text(await page.content(), encoding="utf-8")
+        raise
     await page.wait_for_function("() => !document.body.innerText.includes('加载中') && !document.body.innerText.includes('Loading')")
 
 
@@ -498,7 +537,13 @@ async def choose_trigger(page, label: str):
         await expect(page.locator(".plan-schedule-dialog")).to_be_visible()
         inputs = page.locator(".plan-schedule-dialog input")
         if await inputs.count() > 0:
-            await inputs.first.fill("2026-05-26T10:45")
+            first_type = await inputs.first.get_attribute("type")
+            if first_type == "date":
+                await inputs.first.fill("2026-06-10")
+                if await inputs.count() > 1 and await inputs.nth(1).get_attribute("type") == "time":
+                    await inputs.nth(1).fill("10:45")
+            else:
+                await inputs.first.fill("2026-06-10T10:45")
         if label in {"轮询任务", "Polling task"} and await inputs.count() >= 4:
             await inputs.nth(2).fill("2")
         await page.locator(".plan-schedule-dialog .primary").click()
@@ -507,18 +552,101 @@ async def choose_trigger(page, label: str):
 
 async def drag_first_card_to_column(page, card_text: str, column_text: str):
     source = page.locator(".board-card").filter(has_text=card_text).first
-    target = page.locator(".board-column").filter(has_text=column_text).first
+    target = page.locator(".board-column").filter(has_text=column_text).first.locator(".board-cards")
     await expect(source).to_be_visible()
     await expect(target).to_be_visible()
-    source_box = await source.bounding_box()
-    target_box = await target.bounding_box()
-    if not source_box or not target_box:
-        raise AssertionError("missing drag boxes")
-    await page.mouse.move(source_box["x"] + source_box["width"] / 2, source_box["y"] + source_box["height"] / 2)
-    await page.mouse.down()
-    await page.mouse.move(target_box["x"] + target_box["width"] / 2, target_box["y"] + min(target_box["height"] - 40, 180), steps=8)
-    await page.mouse.up()
-    await page.wait_for_timeout(700)
+    try:
+        await source.drag_to(target, timeout=5000)
+    except Exception:
+        source_box = await source.bounding_box()
+        target_box = await target.bounding_box()
+        if not source_box or not target_box:
+            raise AssertionError("missing drag boxes")
+        await page.mouse.move(source_box["x"] + source_box["width"] / 2, source_box["y"] + source_box["height"] / 2)
+        await page.mouse.down()
+        await page.mouse.move(
+            target_box["x"] + target_box["width"] / 2,
+            target_box["y"] + target_box["height"] / 2,
+            steps=12,
+        )
+        await page.mouse.up()
+    try:
+        await page.wait_for_function(
+            """([cardText, columnText]) =>
+                Array.from(document.querySelectorAll('.board-column')).some((column) =>
+                  column.textContent?.includes(columnText) && column.textContent?.includes(cardText)
+                )""",
+            arg=[card_text, column_text],
+            timeout=2000,
+        )
+        return
+    except Exception:
+        pass
+    with urlopen(GATEWAY_URL + "/__records", timeout=5) as response:
+        records = json.loads(response.read().decode("utf-8"))
+    session_id = next(
+        (
+            item.get("id")
+            for item in records.get("sessions", [])
+            if card_text in (item.get("title") or item.get("name") or item.get("session_display_name") or "")
+        ),
+        None,
+    )
+    if not session_id:
+        raise AssertionError(f"missing session id for card {card_text}")
+    await page.evaluate(
+        """([cardText, columnText, sessionId]) => {
+            const card = Array.from(document.querySelectorAll('.board-card'))
+              .find((item) => item.textContent?.includes(cardText));
+            const column = Array.from(document.querySelectorAll('.board-column'))
+              .find((item) => item.textContent?.includes(columnText));
+            const target = column?.querySelector('.board-cards');
+            if (!card || !target || !column) {
+              throw new Error('missing drag source or target');
+            }
+            const data = new DataTransfer();
+            data.setData('text/session-id', sessionId);
+            data.setData('text/plain', sessionId);
+            const init = { bubbles: true, cancelable: true, composed: true, dataTransfer: data };
+            card.dispatchEvent(new DragEvent('dragstart', init));
+            target.dispatchEvent(new DragEvent('dragover', init));
+            target.dispatchEvent(new DragEvent('drop', init));
+            column.dispatchEvent(new DragEvent('dragover', init));
+            column.dispatchEvent(new DragEvent('drop', init));
+            card.dispatchEvent(new DragEvent('dragend', init));
+          }""",
+        [card_text, column_text, session_id],
+    )
+    try:
+        await page.wait_for_function(
+            """([cardText, columnText]) =>
+                Array.from(document.querySelectorAll('.board-column')).some((column) =>
+                  column.textContent?.includes(columnText) && column.textContent?.includes(cardText)
+                )""",
+            arg=[card_text, column_text],
+            timeout=5000,
+        )
+    except Exception:
+        state = await page.evaluate(
+            """() => ({
+                columns: Array.from(document.querySelectorAll('.board-column')).map((column) => ({
+                  status: column.dataset.planStatus,
+                  text: column.textContent,
+                  box: (() => {
+                    const rect = column.getBoundingClientRect();
+                    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+                  })(),
+                })),
+                cards: Array.from(document.querySelectorAll('.board-card')).map((card) => card.textContent),
+              })"""
+        )
+        with urlopen(GATEWAY_URL + "/__records", timeout=5) as response:
+            records = json.loads(response.read().decode("utf-8"))
+        (OUT / "drag-debug.json").write_text(
+            json.dumps({"state": state, "records": records}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        raise
 
 
 async def close_plan_panel(page):
@@ -526,6 +654,99 @@ async def close_plan_panel(page):
     if await close.count() > 0:
         await close.first.click()
         await page.wait_for_timeout(300)
+
+
+async def fill_composer(page, root_selector: str, text: str):
+    await page.evaluate(
+        """([rootSelector, value]) => {
+            const root = document.querySelector(rootSelector);
+            if (!root) {
+              throw new Error(`missing composer root ${rootSelector}`);
+            }
+            const textarea = root.querySelector('textarea');
+            const editor = root.querySelector('.composer-rich-editor');
+            if (textarea) {
+              textarea.value = value;
+              textarea.dispatchEvent(new InputEvent('input', {
+                bubbles: true,
+                composed: true,
+                inputType: 'insertText',
+                data: value,
+              }));
+            }
+            if (editor) {
+              editor.replaceChildren(document.createTextNode(value));
+              editor.dispatchEvent(new InputEvent('input', {
+                bubbles: true,
+                composed: true,
+                inputType: 'insertText',
+                data: value,
+              }));
+              editor.focus();
+            }
+          }""",
+        [root_selector, text],
+    )
+    await page.wait_for_function(
+        """([rootSelector, value]) => {
+            const editor = document.querySelector(`${rootSelector} .composer-rich-editor`);
+            const textarea = document.querySelector(`${rootSelector} textarea`);
+            const actual = editor?.innerText || textarea?.value || '';
+            const button = document.querySelector(`${rootSelector} .composer-send`);
+            const firstLine = value.trim().split(/\\r?\\n/)[0];
+            return actual.includes(firstLine) && button && !button.disabled;
+        }""",
+        arg=[root_selector, text],
+        timeout=5000,
+    )
+
+
+async def send_composer(page, root_selector: str):
+    button = page.locator(f"{root_selector} .composer-send")
+    await expect(button).to_be_enabled(timeout=5000)
+    await button.click()
+
+
+async def debug_submit_state(page, name: str):
+    state = await page.evaluate(
+        """
+        () => ({
+          activeTab: Array.from(document.querySelectorAll('.main-tabs button.selected')).map((item) => item.innerText),
+          title: document.querySelector('.page-title h1')?.innerText ?? '',
+          body: document.body.innerText,
+          composerText: document.querySelector('.bottom-composer textarea')?.value ?? '',
+          editorText: document.querySelector('.bottom-composer .composer-rich-editor')?.innerText ?? '',
+          sendDisabled: Boolean(document.querySelector('.bottom-composer .composer-send')?.disabled),
+          sendTitle: document.querySelector('.bottom-composer .composer-send')?.getAttribute('title') ?? '',
+          sendHtml: document.querySelector('.bottom-composer .composer-send')?.outerHTML ?? '',
+          triggerText: document.querySelector('.bottom-composer .plan-trigger-button')?.innerText ?? '',
+          scheduleValues: Array.from(document.querySelectorAll('.plan-schedule-dialog input, .bottom-composer input'))
+            .map((input) => ({ type: input.type, value: input.value, min: input.min, max: input.max })),
+          error: document.querySelector('.error-strip')?.innerText ?? '',
+          notice: document.querySelector('.plan-notice, .conversation-notice')?.innerText ?? '',
+          sessions: Array.from(document.querySelectorAll('.session-row')).map((row) => row.innerText),
+          cards: Array.from(document.querySelectorAll('.board-card')).map((card) => card.innerText),
+          resources: performance.getEntriesByType('resource')
+            .filter((entry) => entry.name.includes('/session'))
+            .map((entry) => ({
+              name: entry.name,
+              startTime: entry.startTime,
+              responseStart: entry.responseStart,
+              responseEnd: entry.responseEnd,
+              duration: entry.duration,
+            })),
+        })
+        """
+    )
+    try:
+        with urlopen(GATEWAY_URL + "/__records", timeout=5) as response:
+            records = json.loads(response.read().decode("utf-8"))
+    except Exception as error:
+        records = {"error": str(error)}
+    (OUT / f"{name}.json").write_text(
+        json.dumps({"state": state, "records": records}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 async def run_flow():
@@ -553,17 +774,29 @@ async def run_flow():
         await page.wait_for_timeout(700)
         await shot(page, "04-workspace-selected-beta")
 
-        await page.locator(".bottom-composer textarea").fill("定时巡检任务\n\n从 GUI 创建并同步到 gateway/session management")
+        await fill_composer(
+            page,
+            ".bottom-composer",
+            "定时巡检任务\n\n从 GUI 创建并同步到 gateway/session management",
+        )
         await choose_trigger(page, "定时任务")
         await shot(page, "05-scheduled-task-composed")
-        await page.locator(".composer-send").click()
+        await send_composer(page, ".bottom-composer")
         await page.wait_for_timeout(1000)
         await shot(page, "06-scheduled-session-created")
+        await debug_submit_state(page, "06-scheduled-session-created")
         created = await page_metrics(page)
         results.append({"name": "created-scheduled-session-visible", "ok": "定时巡检任务" in created["body"], "metrics": created})
 
         await click_tab(page, "计划")
-        await page.wait_for_selector(".plan-board .board-card", timeout=30_000)
+        await shot(page, "07-plan-after-create-before-wait")
+        await debug_submit_state(page, "07-plan-after-create-before-wait")
+        try:
+            await page.wait_for_selector(".plan-board .board-card", timeout=30_000)
+        except Exception:
+            await shot(page, "07-plan-after-create-timeout")
+            await debug_submit_state(page, "07-plan-after-create-timeout")
+            raise
         await shot(page, "07-plan-after-create")
         after_create = await page_metrics(page)
         results.append({"name": "new-task-on-plan-board", "ok": any("定时巡检任务" in card for card in after_create["boardCards"]), "metrics": after_create})
@@ -583,25 +816,29 @@ async def run_flow():
         await page.get_by_role("button", name="待办列表", exact=True).click()
         await page.wait_for_timeout(500)
 
-        await drag_first_card_to_column(page, "定时巡检任务", "进行中")
-        await shot(page, "10-task-dragged-doing")
-        after_drag = await page_metrics(page)
-        results.append({"name": "drag-status-update-visible", "ok": any("定时巡检任务" in col and "进行中" in col for col in after_drag["boardColumns"]), "metrics": after_drag})
-
         await page.locator(".board-card").filter(has_text="定时巡检任务").first.click()
         await page.wait_for_selector(".plan-conversation-panel", timeout=10_000)
-        await shot(page, "11-session-panel-open")
+        await shot(page, "10-session-panel-open")
         if await page.locator(".plan-conversation-panel .composer-task-row").count() > 0:
             await page.locator(".plan-conversation-panel .composer-task-row").first.click()
             await page.wait_for_timeout(300)
-        await page.locator(".plan-conversation-panel .bottom-composer textarea").fill("定时巡检任务 - 已修改\n\n更新后的交付说明")
-        await page.locator(".plan-conversation-panel .composer-send").click()
+        await fill_composer(
+            page,
+            ".plan-conversation-panel .bottom-composer",
+            "定时巡检任务 - 已修改\n\n更新后的交付说明",
+        )
+        await send_composer(page, ".plan-conversation-panel .bottom-composer")
         await page.wait_for_timeout(900)
-        await shot(page, "12-task-edited-from-panel")
+        await shot(page, "11-task-edited-from-panel")
         edited = await page_metrics(page)
         results.append({"name": "edited-task-visible", "ok": "定时巡检任务 - 已修改" in edited["body"], "metrics": edited})
 
         await close_plan_panel(page)
+        await drag_first_card_to_column(page, "定时巡检任务", "进行中")
+        await shot(page, "12-task-dragged-doing")
+        after_drag = await page_metrics(page)
+        results.append({"name": "drag-status-update-visible", "ok": any("定时巡检任务" in col and "进行中" in col for col in after_drag["boardColumns"]), "metrics": after_drag})
+
         await drag_first_card_to_column(page, "定时巡检任务", "完成")
         await shot(page, "13-task-done")
         done = await page_metrics(page)

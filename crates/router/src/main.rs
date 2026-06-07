@@ -306,7 +306,6 @@ fn main() -> anyhow::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "serve".to_string());
     match command.as_str() {
-        "session-db-call" => session_log::service::run_one_shot(),
         "session-db-service" => session_log::service::run_lifecycle_service(),
         "serve" => tokio_runtime()?.block_on(serve_stdio()),
         "run-agent" => tokio_runtime()?.block_on(run_agent_cli()),

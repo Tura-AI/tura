@@ -76,12 +76,13 @@
     inset: 0;
     z-index: 80;
     display: grid;
-    grid-template-rows: auto auto auto auto;
-    align-content: start;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    align-content: stretch;
     width: 100vw;
+    height: 100vh;
     max-width: none;
     overflow-x: hidden;
-    overflow-y: auto;
+    overflow-y: hidden;
     border-right: 0;
     box-shadow: none;
   }

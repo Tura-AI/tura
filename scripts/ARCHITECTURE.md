@@ -91,6 +91,8 @@ Start scripts should:
   `cargo run -p gateway --bin gateway`.
 - Support a TUI-client mode that runs `node apps/tui/dist/index.js ...`.
 - Support a GUI dev-server mode that runs `bun run dev` from `apps/gui`.
+- Support a desktop quickstart mode that runs `bun run dev` from
+  `apps/tauri`, letting Tauri own the Vite frontend startup.
 - Start the router binary when CLI forwarding or managed lifecycle is needed,
   for example
   `cargo run -p tura_router -- forward <command> [args...]`.
@@ -115,11 +117,13 @@ scripts/start.ps1 "Prompt"                  Rust CLI exec
 scripts/start.ps1 -Gateway -Port 4096       gateway HTTP server
 scripts/start.ps1 -Tui --help               TypeScript CLI/TUI
 scripts/start.ps1 -Gui                      GUI Vite dev server
+scripts/start.ps1 -Desktop                  Tauri desktop shell
 
 scripts/start.sh "Prompt"                   Rust CLI exec
 scripts/start.sh --gateway --port 4096      gateway HTTP server
 scripts/start.sh --tui --help               TypeScript CLI/TUI
 scripts/start.sh --gui                      GUI Vite dev server
+scripts/start.sh --desktop                  Tauri desktop shell
 ```
 
 ## Auto Install Manifests

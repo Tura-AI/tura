@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use std::time::Duration;
 
 use crate::state_machine::runtime_management::{
-    RuntimeCallResultStatus, RuntimeError, RuntimeManagement,
+    RuntimeCallResultStatus, RuntimeError, RuntimeManagement, UsageReport,
 };
 
 pub(crate) fn runtime_timeout(runtime: &RuntimeManagement) -> std::time::Duration {
@@ -18,6 +18,17 @@ pub(crate) fn finish_runtime_failure(
     error_text: String,
     status: RuntimeCallResultStatus,
 ) -> Result<(), String> {
+    finish_runtime_failure_with_usage(runtime, finished_at, error_code, error_text, status, None)
+}
+
+pub(crate) fn finish_runtime_failure_with_usage(
+    runtime: &mut RuntimeManagement,
+    finished_at: DateTime<Utc>,
+    error_code: &str,
+    error_text: String,
+    status: RuntimeCallResultStatus,
+    usage: Option<UsageReport>,
+) -> Result<(), String> {
     let err = RuntimeError {
         error_code: Some(error_code.to_string()),
         error_text: Some(error_text),
@@ -26,7 +37,7 @@ pub(crate) fn finish_runtime_failure(
         fallback_to_id: None,
     };
     runtime
-        .finish_failure(finished_at, err, status, None)
+        .finish_failure(finished_at, err, status, usage)
         .map_err(|e| format!("failed to finish runtime failure: {}", e))
 }
 

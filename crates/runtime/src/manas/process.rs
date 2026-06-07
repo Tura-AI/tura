@@ -6,7 +6,7 @@ use crate::manas::prompt_messages::{
 };
 use crate::manas::runtime_turn::execute_turn;
 use crate::manas::tool_catalog::{command_run_commands_for_agent, planning_child_depth};
-use crate::manas::user_visible_runtime_text;
+use crate::manas::{user_visible_runtime_output_text, user_visible_runtime_text};
 use crate::manas::{COMMAND_RUN_TOOL, TASK_STATUS_COMMAND};
 use crate::tool_flow::execute::execute_tool_calls;
 use chrono::Utc;
@@ -325,23 +325,32 @@ pub fn process_manas_internal(
                 persist_session_checkpoint(session, "task_focus");
                 current_messages.push(next_task);
             } else if matches!(terminal_task_status.as_deref(), Some("done" | "question")) {
-                if let Some(content) = terminal_task_status_final_message(
+                let final_response_published = run_terminal_final_response_turn(
+                    agents,
                     session,
-                    terminal_task_status.as_deref().unwrap_or("done"),
+                    &current_messages,
+                    redis_url,
                     &original_user_task,
-                ) {
-                    if let Err(error) = publish_gateway_agent_message(
-                        &session.session_id,
-                        &runtime.runtime_id,
-                        content,
-                        String::new(),
+                )?;
+                if !final_response_published {
+                    if let Some(content) = terminal_task_status_final_message(
+                        session,
+                        terminal_task_status.as_deref().unwrap_or("done"),
+                        &original_user_task,
                     ) {
-                        warn!(
-                            session_id = %session.session_id,
-                            runtime_id = %runtime.runtime_id,
-                            error = %error,
-                            "failed to publish terminal task_status assistant message"
-                        );
+                        if let Err(error) = publish_gateway_agent_message(
+                            &session.session_id,
+                            &runtime.runtime_id,
+                            content,
+                            String::new(),
+                        ) {
+                            warn!(
+                                session_id = %session.session_id,
+                                runtime_id = %runtime.runtime_id,
+                                error = %error,
+                                "failed to publish terminal task_status assistant message"
+                            );
+                        }
                     }
                 }
                 info!(
@@ -457,6 +466,59 @@ fn messages_with_initial_context_prefix(
         .collect::<Vec<_>>();
     messages.extend(session_messages);
     messages
+}
+
+fn run_terminal_final_response_turn(
+    agents: &[AgentManagement],
+    session: &mut SessionManagement,
+    current_messages: &[serde_json::Value],
+    redis_url: &str,
+    original_user_task: &str,
+) -> Result<bool, String> {
+    let mut final_messages = messages_for_turn(current_messages, session, original_user_task);
+    final_messages.push(serde_json::json!({
+        "role": "system",
+        "content": "The task was marked done. Now send the user-facing assistant reply directly, without calling tools and without mentioning task_status, command_run, or internal status updates.",
+    }));
+    let (runtime, _tool_calls) = execute_turn(
+        agents,
+        session,
+        &final_messages,
+        redis_url,
+        false,
+        true,
+        true,
+    )?;
+    let visible_text = user_visible_runtime_text(&runtime.text).or_else(|| {
+        runtime
+            .output
+            .as_ref()
+            .and_then(user_visible_runtime_output_text)
+    });
+    let has_visible_text = visible_text
+        .as_ref()
+        .map(|text| !text.trim().is_empty())
+        .unwrap_or(false);
+    if let Some(content) = visible_text.filter(|text| !text.trim().is_empty()) {
+        if let Err(error) = publish_gateway_agent_message(
+            &session.session_id,
+            &runtime.runtime_id,
+            content,
+            String::new(),
+        ) {
+            warn!(
+                session_id = %session.session_id,
+                runtime_id = %runtime.runtime_id,
+                error = %error,
+                "failed to publish terminal final response assistant message"
+            );
+        }
+    }
+    accumulate_session_from_runtime(session, &runtime, true)?;
+    publish_runtime_usage_record(session, &runtime);
+    session.increment_turn(Utc::now());
+    persist_session_checkpoint(session, "terminal_final_response");
+    Ok(has_visible_text)
 }
 
 #[cfg(test)]

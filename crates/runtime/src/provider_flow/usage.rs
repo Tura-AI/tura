@@ -2,12 +2,14 @@
 
 use chrono::{DateTime, Utc};
 
+use crate::state_machine::runtime_management::{RuntimeManagement, UsageReport};
+
 pub(crate) fn usage_report_from_metrics(
     metrics: Option<tura_llm_rust::CallMetrics>,
     started_at: DateTime<Utc>,
     finished_at: DateTime<Utc>,
     first_token_at: DateTime<Utc>,
-) -> Option<crate::state_machine::runtime_management::UsageReport> {
+) -> Option<UsageReport> {
     let latency_ms = finished_at
         .signed_duration_since(started_at)
         .num_milliseconds()
@@ -35,11 +37,65 @@ pub(crate) fn usage_report_from_metrics(
     })
 }
 
+pub(crate) fn estimated_usage_report_for_interrupted_runtime(
+    runtime: &RuntimeManagement,
+    started_at: DateTime<Utc>,
+    finished_at: DateTime<Utc>,
+    first_token_at: DateTime<Utc>,
+    pricing_source: impl Into<String>,
+) -> UsageReport {
+    let latency_ms = finished_at
+        .signed_duration_since(started_at)
+        .num_milliseconds()
+        .max(0) as u64;
+    let time_to_first_token_ms = first_token_at
+        .signed_duration_since(started_at)
+        .num_milliseconds()
+        .max(0) as u64;
+    let input_tokens = runtime
+        .input
+        .as_ref()
+        .map(approx_json_tokens)
+        .unwrap_or_default();
+    let output_tokens = runtime
+        .output
+        .as_ref()
+        .map(approx_json_tokens)
+        .unwrap_or_default();
+
+    UsageReport {
+        input_tokens,
+        output_tokens,
+        total_tokens: input_tokens + output_tokens,
+        cached_input_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        attachment_input_tokens: 0,
+        input_cost: 0.0,
+        output_cost: 0.0,
+        total_cost: 0.0,
+        currency: "USD".to_string(),
+        pricing_source: pricing_source.into(),
+        latency_ms,
+        time_to_first_token_ms,
+        token_per_second: tokens_per_second(output_tokens, latency_ms),
+    }
+}
+
 fn tokens_per_second(output_tokens: u64, latency_ms: u64) -> f64 {
     if output_tokens == 0 || latency_ms == 0 {
         return 0.0;
     }
     output_tokens as f64 / (latency_ms as f64 / 1000.0)
+}
+
+fn approx_json_tokens(value: &serde_json::Value) -> u64 {
+    approx_text_tokens(&serde_json::to_string(value).unwrap_or_else(|_| value.to_string()))
+}
+
+fn approx_text_tokens(text: &str) -> u64 {
+    let chars = text.chars().count() as u64;
+    chars.div_ceil(4).max((!text.is_empty()) as u64)
 }
 
 pub(crate) fn runtime_cache_diagnostics(
@@ -83,4 +139,56 @@ fn stable_json_hash(value: &serde_json::Value) -> String {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     format!("{hash:016x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::estimated_usage_report_for_interrupted_runtime;
+    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
+    use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
+    use chrono::{Duration, Utc};
+    use serde_json::json;
+
+    #[test]
+    fn interrupted_usage_estimate_counts_input_and_output() {
+        let started_at = Utc::now();
+        let finished_at = started_at + Duration::milliseconds(2500);
+        let mut runtime = RuntimeManagement::new(
+            "runtime-estimate".to_string(),
+            "session-estimate".to_string(),
+            "agent-estimate".to_string(),
+            RuntimeProviderConfig {
+                base: ProviderConfig {
+                    tura_llm_name: "openai".to_string(),
+                    stream: true,
+                    temperature: 0.0,
+                    max_tokens: 0,
+                    tool_choice: ToolChoice::Auto,
+                    time_out_ms: 1_000,
+                },
+                thinking: false,
+                provider_name: "openai".to_string(),
+                model_name: "gpt-test".to_string(),
+                provider_url_name: String::new(),
+                llm_provider_name: "openai".to_string(),
+            },
+            started_at,
+        );
+        runtime.set_input(json!({"messages":[{"role":"user","content":"hello world"}]}));
+        runtime.set_output(json!({"streamed_command_run_result":{"commands":["apply_patch"]}}));
+
+        let usage = estimated_usage_report_for_interrupted_runtime(
+            &runtime,
+            started_at,
+            finished_at,
+            started_at,
+            "runtime_estimate_cancelled",
+        );
+
+        assert!(usage.input_tokens > 0);
+        assert!(usage.output_tokens > 0);
+        assert_eq!(usage.total_tokens, usage.input_tokens + usage.output_tokens);
+        assert_eq!(usage.pricing_source, "runtime_estimate_cancelled");
+        assert_eq!(usage.latency_ms, 2500);
+    }
 }

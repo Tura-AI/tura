@@ -82,6 +82,16 @@ Run the GUI dev server after the gateway is running:
 ./scripts/start.sh --gui
 ```
 
+Run the Tauri desktop shell:
+
+```powershell
+.\scripts\start.ps1 -Desktop
+```
+
+```bash
+./scripts/start.sh --desktop
+```
+
 See `scripts/ARCHITECTURE.md` for platform notes, install flags, and
 troubleshooting.
 
@@ -95,6 +105,7 @@ Rust test helper binary.
 | Rust CLI | `.\scripts\start.ps1 "Prompt"` / `./scripts/start.sh "Prompt"` | No | Runs `cargo run -p gateway --bin tura -- exec ...` for a direct CLI turn. |
 | TypeScript CLI/TUI | `.\scripts\start.ps1 -Tui --help` / `./scripts/start.sh --tui --help` | Yes | Runs `node apps/tui/dist/index.js ...` and talks to the gateway over HTTP/SSE. |
 | GUI | `.\scripts\start.ps1 -Gui` / `./scripts/start.sh --gui` | Yes | Runs the Bun/Vite GUI dev server from `apps/gui` and talks to the gateway through `@tura/gateway-sdk`. |
+| Desktop | `.\scripts\start.ps1 -Desktop` / `./scripts/start.sh --desktop` | Yes | Runs the Tauri desktop shell from `apps/tauri`, including its Vite frontend startup. |
 
 Start the gateway server for TUI/GUI in a separate terminal:
 

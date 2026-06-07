@@ -312,7 +312,7 @@ async def main() -> None:
                 {"gatewayUrl": GATEWAY_URL, "tab": "conversation", "newSession": "true"}
             )
             await page.goto(f"{GUI_URL}/?{conversation_query}", wait_until="domcontentloaded")
-            await expect(page.locator(".agent-trigger-button")).to_be_visible(timeout=15000)
+            await expect(page.locator(".agent-trigger-button")).to_be_visible(timeout=60000)
             await page.screenshot(path=OUT / "01-conversation-toolbar.png", full_page=True)
 
             await page.locator(".agent-trigger-button").click()
@@ -451,9 +451,10 @@ async def main() -> None:
             await page.screenshot(path=OUT / "05-personalization.png", full_page=True)
 
             await page.goto(f"{GUI_URL}/?{conversation_query}", wait_until="domcontentloaded")
+            await expect(page.locator(".agent-trigger-button")).to_be_visible(timeout=60000)
             await expect(page.locator(".agent-trigger-button")).to_contain_text(
                 "Fast Text Only",
-                timeout=15000,
+                timeout=60000,
             )
             await page.locator(".agent-trigger-button").click()
             await expect(

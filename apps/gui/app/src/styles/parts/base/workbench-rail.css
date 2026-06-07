@@ -23,7 +23,7 @@
   position: relative;
   z-index: 90;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   overflow: hidden;
   border-right: 1px solid var(--line);
@@ -48,12 +48,13 @@
   inset: 0;
   z-index: 80;
   display: grid;
-  grid-template-rows: auto auto auto auto;
-  align-content: start;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-content: stretch;
   width: 100vw;
+  height: 100vh;
   max-width: none;
   overflow-x: hidden;
-  overflow-y: auto;
+  overflow-y: hidden;
   border-right: 0;
   box-shadow: none;
 }
@@ -63,9 +64,13 @@
 }
 
 .workbench.rail-fullscreen .workspace-tree,
-.workbench.rail-fullscreen .settings-rail,
+.workbench.rail-fullscreen .settings-rail {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 .workbench.rail-fullscreen .settings-section-list {
-  overflow: visible;
+  overflow: hidden;
 }
 
 .workbench.rail-fullscreen .rail-resize-handle {

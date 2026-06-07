@@ -63,15 +63,15 @@ function indexHtml() {
   <style>
     html, body { height: 100%; margin: 0; background: #111417; color: #edf0f2; font-family: system-ui, sans-serif; }
     main { max-width: 720px; padding: 32px; }
-    a { color: #7dd3fc; display: block; margin: 12px 0; font-size: 18px; }
-    code { color: #facc15; }
+    a { color: #fab283; display: block; margin: 12px 0; font-size: 18px; }
+    p { color: #808080; }
+    code { color: #808080; }
   </style>
 </head>
 <body>
   <main>
     <h1>Tura TUI terminal profiles</h1>
-    <p>Gateway: <code>${escapeHtml(gatewayUrl)}</code></p>
-    <p>Workspace: <code>${escapeHtml(workspace)}</code></p>
+    <p>Gateway <code>${escapeHtml(gatewayUrl)}</code></p>
     <a href="/plain">L1 Plain / Safe</a>
     <a href="/ansi">L2 ANSI / Default</a>
     <a href="/rich">L3 Rich / Modern</a>
@@ -80,7 +80,8 @@ function indexHtml() {
 </html>`;
 }
 
-function html(profileId, profile) {
+function html(profileId, profile, instance) {
+  const instanceQuery = instance ? `?instance=${encodeURIComponent(instance)}` : "";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -89,42 +90,144 @@ function html(profileId, profile) {
   <title>${escapeHtml(profile.title)}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
   <style>
-    html, body { height: 100%; margin: 0; background: #111417; }
-    body { overflow: hidden; }
-    #terminal { height: 100vh; width: 100vw; padding: 8px; box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; background: #0a0a0a; color: #eeeeee; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    body { overflow: hidden; display: grid; place-items: center; }
+    .shell {
+      width: min(92vw, 1100px);
+      height: min(88vh, 820px);
+      border: 2px solid #3a3a3a;
+      border-radius: 6px;
+      background: #101010;
+      box-shadow: 0 24px 70px rgba(0,0,0,.5);
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: 36px 1fr;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 12px;
+      background: #161618;
+      color: #b4b4b4;
+      font: 600 13px/1 system-ui, sans-serif;
+      border-bottom: 2px solid #3a3a3a;
+      box-sizing: border-box;
+    }
+    .chrome { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+    .dot { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
+    .red { background: #5c5c5c; }
+    .yellow-dot { background: #fab283; }
+    .green-dot { background: #5c5c5c; }
+    .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .badge { color: #808080; text-transform: uppercase; font-size: 11px; letter-spacing: .08em; white-space: nowrap; }
+    #terminal { width: 100%; max-width: 100%; padding: 12px 14px 10px; box-sizing: border-box; overflow: hidden; background: #101010; min-height: 0; }
+    .xterm, .xterm-screen, .xterm-viewport { max-width: 100%; overflow-x: hidden; }
+    .xterm-rows, .xterm-rows > div { overflow: visible !important; }
     .xterm { height: 100%; }
+    @media (max-width: 640px) {
+      .shell { width: 100vw; height: 100vh; border: 0; border-radius: 0; }
+      .badge { display: none; }
+      #terminal { padding: 8px; }
+    }
   </style>
 </head>
 <body>
-  <div id="terminal"></div>
+  <section class="shell" aria-label="${escapeHtml(profile.title)}">
+    <div class="topbar">
+      <span class="chrome">
+        <span class="dot red"></span>
+        <span class="dot yellow-dot"></span>
+        <span class="dot green-dot"></span>
+        <span class="title">OC | ${escapeHtml(profile.title)}</span>
+      </span>
+      <span class="badge">terminal ui</span>
+    </div>
+    <div id="terminal"></div>
+  </section>
   <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-unicode11@0.6.0/lib/xterm-addon-unicode11.min.js"></script>
   <script>
     const term = new Terminal({
+      allowProposedApi: true,
       cursorBlink: true,
-      fontFamily: "Cascadia Mono, Consolas, monospace",
+      fontFamily: "Cascadia Mono, Segoe UI Emoji, Apple Color Emoji, Noto Color Emoji, Consolas, monospace",
       fontSize: 15,
-      theme: { background: "#111417", foreground: "#edf0f2" },
+      lineHeight: 1.22,
+      theme: { background: "#101010", foreground: "#eeeeee", cursor: "#fab283" },
       convertEol: true
     });
+    window.__turaTerminal = term;
     const fit = new FitAddon.FitAddon();
+    window.__turaUnicode11Loaded = false;
+    try {
+      const Unicode11Ctor =
+        globalThis.Unicode11Addon?.Unicode11Addon ||
+        globalThis.Unicode11Addon ||
+        globalThis.XTermAddonUnicode11?.Unicode11Addon;
+      if (Unicode11Ctor) {
+        term.loadAddon(new Unicode11Ctor());
+        if (term.unicode) term.unicode.activeVersion = "11";
+        window.__turaUnicode11Loaded = term.unicode?.activeVersion === "11";
+      }
+    } catch (error) {
+      console.warn("Unicode11 addon unavailable", error);
+    }
     term.loadAddon(fit);
     term.open(document.getElementById("terminal"));
     fit.fit();
     const profile = ${JSON.stringify(profileId)};
-    const send = (body) => fetch("/" + profile + "/input", {
+    const instanceQuery = ${JSON.stringify(instanceQuery)};
+    const send = (body) => fetch("/" + profile + "/input" + instanceQuery, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body)
     }).catch(() => {});
-    term.onData((data) => send({ data }));
-    addEventListener("resize", () => {
+    const shortDelay = () => new Promise((resolve) => setTimeout(resolve, 30));
+    window.__turaSendInput = async (data) => {
+      for (const char of Array.from(data)) {
+        await send({ data: char });
+        await shortDelay();
+      }
+      await shortDelay();
+      await shortDelay();
+      await nextFrame();
+      await nextFrame();
+    };
+    const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+    window.__turaFit = async () => {
+      term.options.fontSize = innerWidth <= 640 ? 13 : 15;
+      await nextFrame();
       fit.fit();
-      send({ resize: { cols: term.cols, rows: term.rows } });
+      await nextFrame();
+      fit.fit();
+      await send({ resize: { cols: term.cols, rows: term.rows } });
+      term.scrollToTop?.();
+      return { cols: term.cols, rows: term.rows };
+    };
+    term.onData((data) => send({ data }));
+    const resizeObserver = new ResizeObserver(() => {
+      window.__turaFit();
     });
-    const events = new EventSource("/" + profile + "/events");
-    events.onmessage = (event) => term.write(JSON.parse(event.data));
-    events.addEventListener("ready", () => send({ resize: { cols: term.cols, rows: term.rows } }));
+    resizeObserver.observe(document.getElementById("terminal"));
+    addEventListener("resize", () => {
+      window.__turaFit();
+    });
+    const events = new EventSource("/" + profile + "/events" + instanceQuery);
+    events.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      const fullFrame = data.includes("[3J");
+      if (fullFrame) {
+        term.reset();
+        fit.fit();
+      }
+      term.write(data, () => {
+        if (fullFrame) term.scrollToTop?.();
+      });
+    };
+    events.addEventListener("ready", () => window.__turaFit());
     events.onerror = () => term.write("\\r\\n[web terminal disconnected]\\r\\n");
   </script>
 </body>
@@ -151,38 +254,53 @@ function readJson(req) {
   });
 }
 
-function broadcast(profile, data) {
-  const payload = `data: ${JSON.stringify(data)}\n\n`;
-  for (const res of profile.clients) res.write(payload);
+function runtimeFor(profile, key) {
+  profile.runtimes ??= new Map();
+  const runtimeKey = key || "default";
+  let runtime = profile.runtimes.get(runtimeKey);
+  if (!runtime) {
+    runtime = { clients: new Set(), term: undefined };
+    profile.runtimes.set(runtimeKey, runtime);
+  }
+  return runtime;
 }
 
-function startTui(profile) {
-  if (profile.term) return profile.term;
-  profile.term = pty.spawn(
+function broadcast(runtime, data) {
+  const payload = `data: ${JSON.stringify(data)}\n\n`;
+  for (const res of runtime.clients) res.write(payload);
+}
+
+function startTui(profile, runtime, size = undefined) {
+  if (runtime.term) return runtime.term;
+  const cols = Number(size?.cols) || 120;
+  const rows = Number(size?.rows) || 22;
+  const term = pty.spawn(
     nodeBin,
     [tuiBin, "--gateway-url", gatewayUrl, "--cwd", workspace, ...profile.args],
     {
       name: profile.termName,
-      cols: 120,
-      rows: 36,
+      cols,
+      rows,
       cwd: repoRoot,
       env: {
         ...process.env,
         FORCE_COLOR: profile.forceColor,
         TERM: profile.termName,
         TERM_PROGRAM: profile.args.includes("--rich") ? "vscode" : "",
+        TURA_TUI_DISABLE_MOUSE: "1",
         TURA_GATEWAY_URL: gatewayUrl,
         TURA_CWD: workspace,
       },
       shell,
     },
   );
-  profile.term.onData((data) => broadcast(profile, data));
-  profile.term.onExit(({ exitCode }) => {
-    broadcast(profile, `\r\n[tura tui exited with code ${exitCode}]\r\n`);
-    profile.term = undefined;
+  runtime.term = term;
+  term.onData((data) => broadcast(runtime, data));
+  term.onExit(({ exitCode }) => {
+    broadcast(runtime, `\r\n[tura tui exited with code ${exitCode}]\r\n`);
+    if (runtime.term === term) runtime.term = undefined;
   });
-  return profile.term;
+  return term;
 }
 
 function profileFromPath(url) {
@@ -203,24 +321,26 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/") return send(res, indexHtml());
   const profile = profileFromPath(url);
   if (!profile) return send(res, { error: "not found" }, 404);
+  const instance = url.searchParams.get("instance") ?? "";
+  const runtime = runtimeFor(profile, instance);
   const leaf = `/${url.pathname.split("/").filter(Boolean).slice(1).join("/")}`;
-  if (req.method === "GET" && leaf === "/")
-    return send(res, html(url.pathname.split("/").filter(Boolean)[0], profile));
+  if (req.method === "GET" && leaf === "/") {
+    return send(res, html(url.pathname.split("/").filter(Boolean)[0], profile, instance));
+  }
   if (req.method === "GET" && leaf === "/events") {
     res.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
       connection: "keep-alive",
     });
-    profile.clients.add(res);
+    runtime.clients.add(res);
     res.write("event: ready\ndata: ready\n\n");
-    startTui(profile);
-    req.on("close", () => profile.clients.delete(res));
+    req.on("close", () => runtime.clients.delete(res));
     return;
   }
   if (req.method === "POST" && leaf === "/input") {
     const body = await readJson(req);
-    const active = startTui(profile);
+    const active = startTui(profile, runtime, body.resize);
     if (typeof body.data === "string") active.write(body.data);
     if (body.resize) active.resize(Number(body.resize.cols) || 120, Number(body.resize.rows) || 36);
     return send(res, { ok: true });

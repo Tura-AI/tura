@@ -398,22 +398,19 @@ def start_gui_server() -> subprocess.Popen | None:
     (OUT / "servers").mkdir(parents=True, exist_ok=True)
     out = (OUT / "servers" / "gui-dev.log").open("w", encoding="utf-8")
     err = (OUT / "servers" / "gui-dev.err.log").open("w", encoding="utf-8")
-    bun = "bun.exe" if os.name == "nt" else "bun"
+    node = "node.exe" if os.name == "nt" else "node"
     parsed = urlparse(GUI_URL)
     return subprocess.Popen(
         [
-            bun,
-            "--cwd",
-            str(ROOT / "apps" / "gui" / "app"),
-            "dev",
-            "--",
+            node,
+            str(ROOT / "apps" / "gui" / "app" / "node_modules" / "vite" / "bin" / "vite.js"),
             "--host",
             "127.0.0.1",
             "--port",
             str(parsed.port or 5186),
             "--strictPort",
         ],
-        cwd=ROOT,
+        cwd=ROOT / "apps" / "gui" / "app",
         stdout=out,
         stderr=err,
         stdin=subprocess.DEVNULL,

@@ -23,6 +23,7 @@
   "collapseCommands": "收起命令",
   "commandRunRequiresCommand": "command run 需要 COMMAND",
   "commands": "命令",
+  "composerHint": "回车输入， /help查看命令行 /settings设置",
   "configGet": "/config get [键]",
   "configSet": "/config set KEY=VALUE",
   "configSetRequiresAssignment": "config set 需要 KEY=VALUE",

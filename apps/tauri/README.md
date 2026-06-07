@@ -10,5 +10,12 @@ bun install
 bun run dev
 ```
 
+Windows quickstart that always rebuilds the current router/gateway and starts
+the latest desktop GUI:
+
+```powershell
+.\run-latest-gui.cmd
+```
+
 Release builds are driven from the repository-level `scripts/build-bin.*`
 scripts so the generated executable is copied into the shared `bin` layout.

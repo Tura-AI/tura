@@ -1,39 +1,8 @@
-.brand {
-  display: flex;
-  gap: var(--space-3);
-  align-items: center;
-  min-width: 0;
-  min-height: 64px;
-  overflow: hidden;
-  padding: 14px 14px 10px;
-}
-
-.brand-mark {
-  width: 26px;
-  height: 26px;
-  flex: 0 0 auto;
-  border: 1px solid var(--ink);
-  border-radius: 50%;
-}
-
-.brand strong,
 .page-title span,
 .board-column header span,
 .surface-preview-panel header span {
   font-weight: 560;
   letter-spacing: 0;
-}
-
-.brand strong {
-  display: block;
-  overflow: hidden;
-  font-size: var(--font-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.brand > div:last-child {
-  min-width: 0;
 }
 
 .main-tabs,
@@ -48,7 +17,7 @@
   gap: 2px;
   min-width: 0;
   overflow: hidden;
-  padding: 0 var(--space-2) var(--space-5);
+  padding: var(--space-2) var(--space-2) var(--space-5);
 }
 
 .main-tabs button,
@@ -156,9 +125,13 @@ button.section-title > svg {
 }
 
 .settings-entry {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
   min-width: 0;
   min-height: 38px;
   margin: var(--space-2);
+  padding: 0 var(--space-3);
   overflow: hidden;
   border: 0;
   border-radius: var(--radius-small);

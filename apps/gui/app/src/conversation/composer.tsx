@@ -53,6 +53,7 @@ export function Composer(props: {
       (!props.running && props.submitDisabled) ||
       (!props.text.trim() && props.images.length === 0),
   );
+  const textEmpty = createMemo(() => !props.text.trim() && props.images.length === 0);
 
   function submitFromControl() {
     if (props.running) {
@@ -376,6 +377,9 @@ export function Composer(props: {
           class="composer-send"
           type="button"
           title={sendButtonTitle()}
+          data-submitting={props.submitting ? "true" : "false"}
+          data-submit-disabled={props.submitDisabled ? "true" : "false"}
+          data-text-empty={textEmpty() ? "true" : "false"}
           disabled={props.running ? !props.onStop : submitBlocked()}
           onPointerDown={(event) => {
             if (event.button !== 0) {

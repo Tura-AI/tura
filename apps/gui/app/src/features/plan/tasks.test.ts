@@ -1,8 +1,12 @@
 import type { Session, TaskManagement } from "@tura/gateway-sdk";
 import { describe, expect, test } from "bun:test";
 import {
+  appendTaskToSession,
+  applyTaskPatchToSession,
   firstRunnableTask,
+  materializeComposerContent,
   planSessionStatus,
+  reorderTasksInSession,
   sortedSessionTasks,
   taskStartCondition,
   timedTaskPatch,
@@ -130,5 +134,73 @@ describe("plan task contract", () => {
     );
 
     expect(visible.map((task) => task.task_id)).toEqual(["todo"]);
+  });
+
+  test("patches, appends, and reorders task lists without losing sibling tasks", () => {
+    const initial = session("idle", {
+      tasks: [
+        { task_id: "a", step: 1, status: "todo", task_summary: "A" },
+        { task_id: "b", step: 2, status: "todo", task_summary: "B" },
+      ],
+    });
+
+    const patched = applyTaskPatchToSession(initial, {
+      task_id: "b",
+      task_summary: "B updated",
+      deliverable: "Ship it",
+    });
+    expect(patched.task_management?.tasks?.map((task) => task.task_summary)).toEqual([
+      "A",
+      "B updated",
+    ]);
+
+    const appended = appendTaskToSession(patched, { task_summary: "C" });
+    expect(appended.task_management?.tasks?.map((task) => task.task_id)).toEqual([
+      "a",
+      "b",
+      "session-idle-none:2",
+    ]);
+
+    const reordered = reorderTasksInSession(appended, [
+      appended.task_management!.tasks![2]!,
+      appended.task_management!.tasks![0]!,
+      appended.task_management!.tasks![1]!,
+    ]);
+    expect(reordered.task_management?.tasks?.map((task) => [task.task_summary, task.step])).toEqual(
+      [
+        ["C", 1],
+        ["A", 2],
+        ["B updated", 3],
+      ],
+    );
+  });
+
+  test("materializes composer image and file attachments in prompt order", () => {
+    const content = materializeComposerContent("Investigate\n[[image:img1]]\n[[file:file1]]", [
+      {
+        id: "img1",
+        name: "screen.png",
+        dataUrl: "data:image/png;base64,abc",
+        kind: "image",
+      },
+      {
+        id: "file1",
+        name: "notes.txt",
+        dataUrl: "blob:notes",
+        kind: "file",
+      },
+      {
+        id: "img2",
+        name: "extra.png",
+        dataUrl: "data:image/png;base64,def",
+        kind: "image",
+      },
+    ]);
+
+    expect(content).toContain("[Image 1: screen.png]");
+    expect(content).toContain("[MEDIA:data:image/png;base64,abc:MEDIA]");
+    expect(content).toContain("[File 2: notes.txt]");
+    expect(content).toContain("[Image 3: extra.png]");
+    expect(content).not.toContain("[[image:img1]]");
   });
 });

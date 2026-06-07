@@ -248,4 +248,74 @@ describe("applyGatewayEvent", () => {
     expect(state.messagesBySession.s1).toHaveLength(1);
     expect(state.messagesBySession.s1[0]?.id).toBe("m-real");
   });
+
+  test("removes a deleted conversation and selects the next available session", () => {
+    let state: AppState = {
+      ...initialAppState("http://127.0.0.1:4096"),
+      selectedSessionId: "s1",
+      sessions: [
+        { id: "s1", status: "idle", updated_at: 2 },
+        { id: "s2", status: "idle", updated_at: 1 },
+      ],
+      messagesBySession: {
+        s1: [{ id: "m1", sessionID: "s1", role: "user", parts: [] }],
+        s2: [{ id: "m2", sessionID: "s2", role: "assistant", parts: [] }],
+      },
+      todosBySession: {
+        s1: [{ id: "todo", content: "old", status: "pending" }],
+      },
+    };
+
+    state = applyGatewayEvent(state, {
+      payload: {
+        type: "session.deleted",
+        properties: {
+          sessionID: "s1",
+        },
+      },
+    });
+
+    expect(state.sessions.map((session) => session.id)).toEqual(["s2"]);
+    expect(state.messagesBySession.s1).toBeUndefined();
+    expect(state.todosBySession.s1).toBeUndefined();
+    expect(state.selectedSessionId).toBe("s2");
+  });
+
+  test("hydrates assistant messages over previously streamed placeholder parts", () => {
+    let state: AppState = initialAppState("http://127.0.0.1:4096");
+
+    state = applyGatewayEvent(state, {
+      payload: {
+        type: "message.part.delta",
+        properties: {
+          session_id: "s1",
+          message_id: "m1",
+          part_id: "tool",
+          field: "content",
+          delta: "running",
+        },
+      },
+    });
+    state = applyGatewayEvent(state, {
+      payload: {
+        type: "message.updated",
+        properties: {
+          sessionID: "s1",
+          info: {
+            id: "m1",
+            sessionID: "s1",
+            role: "assistant",
+            parts: [
+              { id: "tool", type: "tool", tool: "shell_command", state: { status: "completed" } },
+              { id: "final", type: "text", text: "done" },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(state.messagesBySession.s1).toHaveLength(1);
+    expect(state.messagesBySession.s1[0]?.parts.map((part) => part.id)).toEqual(["tool", "final"]);
+    expect(state.messagesBySession.s1[0]?.parts[1]?.text).toBe("done");
+  });
 });

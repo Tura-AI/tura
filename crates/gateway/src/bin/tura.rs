@@ -54,6 +54,9 @@ fn run() -> Result<i32, String> {
         .session_id
         .clone()
         .unwrap_or_else(|| format!("cli-{}", uuid::Uuid::new_v4()));
+    if config.session_id.is_some() {
+        reject_busy_session(&session_id, config.json)?;
+    }
     if config.json {
         emit_jsonl(&json!({"type": "thread.started", "thread_id": session_id}))?;
         emit_jsonl(&json!({"type": "turn.started"}))?;
@@ -89,6 +92,69 @@ fn run() -> Result<i32, String> {
     }
 
     Ok(0)
+}
+
+fn reject_busy_session(session_id: &str, json_output: bool) -> Result<(), String> {
+    let Some(session) = runtime::session_log_client::SessionLogClient::discover()
+        .map_err(|err| format!("failed to inspect session state: {err}"))?
+        .get_session(session_id.to_string())
+        .map_err(|err| format!("failed to inspect session state: {err}"))?
+    else {
+        return Ok(());
+    };
+    if !session_is_busy(&session) {
+        return Ok(());
+    }
+    if json_output {
+        emit_jsonl(&json!({
+            "type": "session.locked",
+            "thread_id": session_id,
+            "status": session.status,
+            "state": session.state,
+            "message": "session is already running; append the prompt through the gateway user-commands endpoint"
+        }))?;
+        io::stdout()
+            .flush()
+            .map_err(|err| format!("failed to flush stdout: {err}"))?;
+    }
+    Err(busy_session_message(session_id))
+}
+
+fn session_is_busy(session: &runtime::session_log_client::SessionSnapshot) -> bool {
+    fn busy_text(value: Option<&String>) -> bool {
+        value
+            .map(|value| value.trim().to_ascii_lowercase())
+            .is_some_and(|value| matches!(value.as_str(), "busy" | "running"))
+    }
+    busy_text(session.status.as_ref()) || busy_text(session.state.as_ref())
+}
+
+fn busy_session_message(session_id: &str) -> String {
+    let gateway = gateway_base_url_for_hint();
+    let escaped = session_id.replace('\'', "''");
+    format!(
+        "session `{session_id}` is already running.\n\
+         `tura exec --session-id {session_id}` will not start a second runtime for the same session.\n\
+         To add guidance to the running session, send it through the gateway user-command queue:\n\
+         PowerShell:\n\
+           Invoke-RestMethod -Method Post -Uri '{gateway}/session/{escaped}/user-commands' -ContentType 'application/json' -Body '{{\"command\":\"your additional instruction\"}}'\n\
+         curl:\n\
+           curl -X POST '{gateway}/session/{escaped}/user-commands' -H 'Content-Type: application/json' -d '{{\"command\":\"your additional instruction\"}}'"
+    )
+}
+
+fn gateway_base_url_for_hint() -> String {
+    std::env::var("TURA_GATEWAY_URL")
+        .or_else(|_| std::env::var("GATEWAY_BASE_URL"))
+        .unwrap_or_else(|_| {
+            let port = std::env::var("TURA_GATEWAY_PORT")
+                .ok()
+                .and_then(|value| value.parse::<u16>().ok())
+                .unwrap_or(4096);
+            format!("http://127.0.0.1:{port}")
+        })
+        .trim_end_matches('/')
+        .to_string()
 }
 
 fn wants_help(args: &[String]) -> bool {
@@ -912,5 +978,47 @@ mod tests {
         assert_eq!(automatic.planning_mode, None);
         assert_eq!(enabled.planning_mode, Some(true));
         assert_eq!(disabled.planning_mode, Some(false));
+    }
+
+    #[test]
+    fn busy_session_detection_accepts_gateway_and_runtime_statuses() {
+        let mut session = test_snapshot();
+        session.status = Some("busy".to_string());
+        assert!(session_is_busy(&session));
+
+        session.status = Some("idle".to_string());
+        session.state = Some("Running".to_string());
+        assert!(session_is_busy(&session));
+
+        session.state = Some("Completed".to_string());
+        assert!(!session_is_busy(&session));
+    }
+
+    #[test]
+    fn busy_session_message_points_to_gateway_user_command_queue() {
+        let message = busy_session_message("session-123");
+
+        assert!(message.contains("session `session-123` is already running"));
+        assert!(message.contains("/session/session-123/user-commands"));
+        assert!(message.contains("Invoke-RestMethod"));
+        assert!(message.contains("curl -X POST"));
+    }
+
+    fn test_snapshot() -> runtime::session_log_client::SessionSnapshot {
+        runtime::session_log_client::SessionSnapshot {
+            session_id: "session-123".to_string(),
+            workspace: "C:/workspace".to_string(),
+            name: None,
+            parent_id: None,
+            created_at: 0,
+            updated_at: 0,
+            state: None,
+            status: None,
+            message_count: 0,
+            task_management: serde_json::json!({}),
+            management: serde_json::json!({}),
+            session: serde_json::json!({}),
+            todos: Vec::new(),
+        }
     }
 }

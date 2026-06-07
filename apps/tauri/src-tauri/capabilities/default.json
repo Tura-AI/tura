@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default permissions for the Tura GUI shell.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "allow-start-gateway"]
 }

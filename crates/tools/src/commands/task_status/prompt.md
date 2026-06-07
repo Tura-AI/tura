@@ -22,7 +22,11 @@ If verification should be runnable but the current environment truly cannot run 
 
 If user feedback, missing information, permissions, credentials, or keys are required, call task_status status `question`
 
-For status `question` or `done`, also send a normal assistant reply to the user in the conversation Put the explanation, question, completion summary, modified files, artifacts, validation, risks, and follow-up notes in that assistant reply, not in task_status arguments
+For status `question` or `done`, you MUST also send a normal assistant-channel natural language reply to the user. `task_status` only updates internal task state; it is never a substitute for the user-visible assistant message.
+
+For simple questions, greetings, acknowledgements, or ordinary conversation, answer the user naturally in the assistant channel. Do not use `task_status` as the only response. If you also mark `done` or `question`, the assistant-channel reply must contain the actual answer, explanation, or question for the user.
+
+Put the explanation, question, completion summary, modified files, artifacts, validation, risks, and follow-up notes in that assistant reply, not in task_status arguments.
 
 Update `task_summary` separately when there is no current task summary, or when the current task direction has changed substantially Use only `task_summary` for that update
 

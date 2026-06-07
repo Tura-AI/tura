@@ -23,6 +23,7 @@
   "collapseCommands": "hide commands",
   "commandRunRequiresCommand": "command run requires COMMAND",
   "commands": "Commands",
+  "composerHint": "Enter to send, /help commands /settings settings",
   "configGet": "/config get [key]",
   "configSet": "/config set KEY=VALUE",
   "configSetRequiresAssignment": "config set requires KEY=VALUE",

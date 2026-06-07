@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 use tracing::error;
 
 use crate::gateway_events::{emit_cli_live_command_run_results, emit_cli_live_command_run_started};
-use crate::provider_flow::errors::{finish_runtime_failure, runtime_timeout};
+use crate::provider_flow::errors::{
+    finish_runtime_failure, finish_runtime_failure_with_usage, runtime_timeout,
+};
 use crate::provider_flow::provider_response::{
     apply_provider_response, apply_provider_response_with_options,
 };
@@ -26,7 +28,9 @@ use crate::provider_flow::streamed_command_run::{
     streamed_command_result_record, streamed_command_run_call_id, StreamedCommandEvent,
     StreamedCommandRunUpdate,
 };
-use crate::provider_flow::usage::usage_report_from_metrics;
+use crate::provider_flow::usage::{
+    estimated_usage_report_for_interrupted_runtime, usage_report_from_metrics,
+};
 use crate::state_machine::runtime_management::{
     RuntimeCallResultStatus, RuntimeManagement, RuntimeState, ToolCallRecord,
 };
@@ -187,12 +191,20 @@ async fn call_runtime_non_streaming(
             runtime.set_output(serde_json::json!({
                 "error": message
             }));
-            finish_runtime_failure(
+            let usage = estimated_usage_report_for_interrupted_runtime(
+                runtime,
+                started_at,
+                finished_at,
+                finished_at,
+                "runtime_estimate_timeout",
+            );
+            finish_runtime_failure_with_usage(
                 runtime,
                 finished_at,
                 "CALL_TIMED_OUT",
                 message,
                 RuntimeCallResultStatus::TimedOut,
+                Some(usage),
             )?;
         }
         Ok(Ok(response)) => {
@@ -628,12 +640,24 @@ async fn call_runtime_streaming(
             runtime.set_output(serde_json::json!({
                 "error": message
             }));
-            finish_runtime_failure(
+            let first_token_at = first_stream_output_at
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .unwrap_or(finished_at);
+            let usage = estimated_usage_report_for_interrupted_runtime(
+                runtime,
+                started_at,
+                finished_at,
+                first_token_at,
+                "runtime_estimate_timeout",
+            );
+            finish_runtime_failure_with_usage(
                 runtime,
                 finished_at,
                 "CALL_TIMED_OUT",
                 message,
                 RuntimeCallResultStatus::TimedOut,
+                Some(usage),
             )?;
             provider_task.abort();
             drop(final_response_stream_tx);
@@ -731,13 +755,24 @@ async fn call_runtime_streaming(
                                 .unwrap_or(finished_at),
                         )
                         .map_err(|e| format!("failed to mark first token: {}", e))?;
-                    finish_runtime_failure(
+                    let usage = estimated_usage_report_for_interrupted_runtime(
+                        runtime,
+                        started_at,
+                        finished_at,
+                        first_stream_output_at
+                            .lock()
+                            .unwrap_or_else(|err| err.into_inner())
+                            .unwrap_or(finished_at),
+                        "runtime_estimate_cancelled",
+                    );
+                    finish_runtime_failure_with_usage(
                         runtime,
                         finished_at,
                         "COMMAND_RUN_CANCELLED",
                         "apply_patch failed; runtime stream cancelled after command_run result"
                             .to_string(),
                         RuntimeCallResultStatus::Cancelled,
+                        Some(usage),
                     )?;
                     provider_task.abort();
                     drop(final_response_stream_tx);
@@ -804,8 +839,18 @@ async fn call_runtime_streaming(
                                 .unwrap_or(finished_at),
                         )
                         .map_err(|e| format!("failed to mark first token: {}", e))?;
+                    let usage = estimated_usage_report_for_interrupted_runtime(
+                        runtime,
+                        started_at,
+                        finished_at,
+                        first_stream_output_at
+                            .lock()
+                            .unwrap_or_else(|err| err.into_inner())
+                            .unwrap_or(finished_at),
+                        "runtime_estimate_post_command_run_stream_timeout",
+                    );
                     runtime
-                        .finish_success(finished_at, None)
+                        .finish_success(finished_at, Some(usage))
                         .map_err(|e| format!("failed to finish runtime success: {}", e))?;
                     provider_task.abort();
                     drop(final_response_stream_tx);

@@ -61,10 +61,9 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
   clearInterval(thinkingTimer);
   controller.abort();
   if (process.stdin.isTTY) process.stdin.setRawMode(false);
+  const mouseTracking = capabilities.level === "rich" && !process.env.TURA_TUI_DISABLE_MOUSE;
   if (capabilities.cursorControl)
-    process.stdout.write(
-      `${capabilities.level === "rich" ? "\x1b[?1000l\x1b[?1006l" : ""}\x1b[?25h\x1b[0m\n`,
-    );
+    process.stdout.write(`${mouseTracking ? "\x1b[?1000l\x1b[?1006l" : ""}\x1b[?25h\x1b[0m\n`);
   else process.stdout.write("\n");
 }
 
@@ -173,10 +172,9 @@ async function inputLoop(
 ): Promise<void> {
   emitKeypressEvents(process.stdin);
   if (process.stdin.isTTY && capabilities.interactive) process.stdin.setRawMode(true);
+  const mouseTracking = capabilities.level === "rich" && !process.env.TURA_TUI_DISABLE_MOUSE;
   if (capabilities.cursorControl)
-    process.stdout.write(
-      `${capabilities.level === "rich" ? "\x1b[?1000h\x1b[?1006h" : ""}\x1b[?25l`,
-    );
+    process.stdout.write(`${mouseTracking ? "\x1b[?1000h\x1b[?1006h" : ""}\x1b[?25l`);
   return new Promise((resolve) => {
     const onResize = () => dispatch({ type: "notice", value: getState().notice });
     const onKeypress = async (
@@ -218,6 +216,7 @@ async function inputLoop(
         if (state.sessionsOpen) dispatch({ type: "select-session", delta });
         else if (state.modelsOpen) dispatch({ type: "select-model", delta });
         else if (state.personasOpen) dispatch({ type: "select-persona", delta });
+        else if (state.settingsOpen) dispatch({ type: "select-settings", delta });
         return;
       }
       if (key?.name === "return") {
@@ -292,6 +291,10 @@ async function inputLoop(
       }
       if (key?.ctrl && key.name === "o") {
         dispatch({ type: "toggle-command-details" });
+        return;
+      }
+      if (key?.ctrl && key.name === "l") {
+        dispatch({ type: "notice", value: state.notice });
         return;
       }
       if (key?.name === "backspace") {
@@ -479,7 +482,7 @@ async function slashCommand(
   } else if (name === "abort") {
     const sessionID = getState().session?.id;
     if (sessionID) await client.abort(sessionID);
-  } else if (name === "settings") {
+  } else if (name === "settings" || name === "setting") {
     dispatch({ type: "session-config", value: await client.getSessionConfig(), open: true });
   } else if (name === "config") {
     const subcommand = args.shift() ?? "get";

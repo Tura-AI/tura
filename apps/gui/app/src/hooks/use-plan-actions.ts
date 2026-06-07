@@ -501,7 +501,12 @@ export function usePlanActions(options: PlanActionsOptions) {
     const currentTask = sessionTasks(current).find((task) => taskNonceId(task) === nonce);
     const updatedTask = sessionTasks(updated).find((task) => taskNonceId(task) === nonce);
     if (!currentTask || !updatedTask) {
-      return applyTaskPatchToSession(current, patch);
+      const merged = applyTaskPatchToSession(current, patch);
+      return {
+        ...merged,
+        ...updated,
+        task_management: merged.task_management,
+      };
     }
     const mergedTask: TaskManagement = { ...updatedTask };
     for (const [key, value] of Object.entries(currentTask)) {
@@ -509,7 +514,12 @@ export function usePlanActions(options: PlanActionsOptions) {
         (mergedTask as Record<string, unknown>)[key] = value;
       }
     }
-    return applyTaskPatchToSession(current, mergedTask);
+    const merged = applyTaskPatchToSession(current, mergedTask);
+    return {
+      ...merged,
+      ...updated,
+      task_management: merged.task_management,
+    };
   }
 
   function isTaskTimingPatch(

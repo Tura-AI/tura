@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "dev.tura.gui",
   "build": {
-    "beforeDevCommand": "bun --cwd ../gui/app dev",
+    "beforeDevCommand": "bun --cwd ../gui/app dev -- --host 127.0.0.1 --port 5174 --strictPort",
     "beforeBuildCommand": "bun --cwd ../gui build",
     "devUrl": "http://127.0.0.1:5174",
     "frontendDist": "../../gui/app/dist"
@@ -25,6 +25,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all"
+    "targets": "all",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"]
   }
 }
