@@ -1,5 +1,5 @@
 [rustup_components]
-required = ["rustfmt", "clippy", "rust-analyzer"]
+required = ["rustfmt", "clippy"]
 
 [cargo_bins.cargo-audit]
 install = "cargo install cargo-audit --locked"

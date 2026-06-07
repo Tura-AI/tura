@@ -49,7 +49,6 @@ $TyposConfig = Join-Path $XtaskRoot "typos.toml"
 Require-Command "cargo" "Install Rust from https://rustup.rs/."
 Require-RustComponent "rustfmt"
 Require-RustComponent "clippy"
-Require-RustComponent "rust-analyzer"
 if (-not $SkipAudit) {
   Require-Command "cargo-audit" "Install with: cargo install cargo-audit --locked"
 }

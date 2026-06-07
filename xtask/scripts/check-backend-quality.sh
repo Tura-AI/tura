@@ -58,7 +58,6 @@ cd "$REPO_ROOT"
 require cargo "Install Rust from https://rustup.rs/."
 require_rust_component rustfmt
 require_rust_component clippy
-require_rust_component rust-analyzer
 [ "$SKIP_AUDIT" -eq 1 ] || require cargo-audit "Install with: cargo install cargo-audit --locked"
 [ "$SKIP_DENY" -eq 1 ] || require cargo-deny "Install with: cargo install cargo-deny --locked"
 [ "$SKIP_TYPOS" -eq 1 ] || require typos "Install with: cargo install typos-cli --locked"

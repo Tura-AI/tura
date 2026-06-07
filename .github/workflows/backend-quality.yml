@@ -17,7 +17,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy,rustfmt,rust-analyzer
+          components: clippy,rustfmt
 
       - name: Install Linux system dependencies
         run: |
