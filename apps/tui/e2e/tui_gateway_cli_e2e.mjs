@@ -661,7 +661,10 @@ async function runWebTerminalE2e(gateway) {
         assert.match(body, /OC \| Tura TUI/);
         assert.doesNotMatch(body, /^workspace$/im);
         assert.match(body, /Rich fixture p\s*h\s*a\s*s\s*e 1|Bold\s+Italic\s+Under\s+Gone/i);
-        assert.match(body, /Rich fixture phase 2|Local path C:\/repo\/apps\/tui|Directory\s+C:\/repo\/apps\/tui/);
+        assert.match(
+          body,
+          /Rich fixture phase 2|Local path C:\/repo\/apps\/tui|Directory\s+C:\/repo\/apps\/tui/,
+        );
         assert.match(body, /Protocol fixture complete|Search Link|README/);
         assert.match(body, /commands?:[\s\u00a0]*2|命令:[\s\u00a0]*2/i);
         assert.match(body, /👍/u);
@@ -797,8 +800,7 @@ async function runWebTerminalE2e(gateway) {
       await page.waitForTimeout(300);
       await sendRichCommandInput("\u0015/settings\r");
       await page.waitForFunction(
-        () =>
-          /[─-]{3}\s*(Session Settings|会话设置)\s*[─-]{9}/.test(document.body.innerText),
+        () => /[─-]{3}\s*(Session Settings|会话设置)\s*[─-]{9}/.test(document.body.innerText),
         null,
         { timeout: 10_000 },
       );
