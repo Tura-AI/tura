@@ -11,27 +11,33 @@ SKIP_PYTHON_PACKAGES=0
 SKIP_FRONTEND=0
 SKIP_PLAYWRIGHT=0
 SKIP_RUST_BUILD=0
-RELEASE=0
+SKIP_CLI_REGISTER=0
+DEV=0
 CHECK_ONLY=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    dev|--dev) DEV=1 ;;
     --skip-python-packages) SKIP_PYTHON_PACKAGES=1 ;;
     --skip-frontend) SKIP_FRONTEND=1 ;;
     --skip-playwright) SKIP_PLAYWRIGHT=1 ;;
     --skip-rust-build) SKIP_RUST_BUILD=1 ;;
-    --release) RELEASE=1 ;;
+    --skip-cli-register) SKIP_CLI_REGISTER=1 ;;
     --check-only) CHECK_ONLY=1 ;;
     -h|--help)
       cat <<'EOF'
-Usage: scripts/install.sh [OPTIONS]
+Usage: scripts/install.sh [dev] [OPTIONS]
+
+By default this builds the production (release) binaries into bin/ — a
+self-contained runtime directory. Pass `dev` for a debug build instead.
 
 Options:
+  dev                     debug build (target/debug + apps/tui/dist) instead of release into bin/
   --skip-python-packages  skip project-local Python fallback packages
   --skip-frontend         skip apps/tui and apps/gui dependency setup
   --skip-playwright       skip Playwright Chromium installation
-  --skip-rust-build       fetch Rust dependencies but do not build
-  --release               build Rust binaries with --release
+  --skip-rust-build       (dev only) fetch Rust dependencies but do not build
+  --skip-cli-register     do not generate tura-tui/tura-gateway launchers or touch PATH
   --check-only            only verify required toolchains
   -h, --help              show this help
 EOF
@@ -445,15 +451,35 @@ ensure_rust() {
     return
   fi
 
-  PROFILE_ARGS=""
-  if [ "$RELEASE" -eq 1 ]; then
-    PROFILE_ARGS="--release"
-  fi
-
-  step "Building Rust binaries and core crates"
-  cargo build $PROFILE_ARGS -p gateway --bin tura --bin gateway
-  cargo build $PROFILE_ARGS -p tura_router
+  step "Building Rust binaries and core crates (debug)"
+  cargo build -p gateway --bin tura --bin gateway
+  cargo build -p router --bin tura_router
   cargo check -p tools -p provider -p agents -p runtime -p session_log
+}
+
+invoke_build_bin() {
+  # Production route: build release binaries and package them (plus runtime
+  # resources) into bin/ via build-bin.sh, leaving a self-contained directory.
+  step "Building release binaries into bin/"
+  ensure_rust_toolchain
+  ensure_native_build_tools
+  # install registers the CLI itself as its final step, so build-bin must not.
+  if [ "$SKIP_FRONTEND" -eq 1 ]; then
+    sh "$SCRIPT_DIR/build-bin.sh" --skip-gui --skip-tui --skip-frontend-install --skip-cli-register
+  else
+    sh "$SCRIPT_DIR/build-bin.sh" --skip-cli-register
+  fi
+}
+
+register_tura_cli_launchers() {
+  mode=$1
+  # CLI registration (launcher generation + user PATH) lives in the shared
+  # scripts/register-cli.sh so install.sh and build-bin.sh stay in sync.
+  if [ "$SKIP_CLI_REGISTER" -eq 1 ]; then
+    return
+  fi
+  step "Registering tura CLI launchers (tura-tui, tura-gateway)"
+  sh "$SCRIPT_DIR/register-cli.sh" --mode "$mode"
 }
 
 cd "$REPO_ROOT"
@@ -506,15 +532,35 @@ ensure_git
 ensure_rust_toolchain
 if [ "$SKIP_FRONTEND" -eq 0 ]; then
   ensure_node
+  ensure_bun
 fi
 
 ensure_python_packages
 ensure_ffmpeg
-ensure_tui
-ensure_gui
 ensure_playwright
-ensure_rust
+if [ "$DEV" -eq 1 ]; then
+  ensure_tui
+  ensure_gui
+  ensure_rust
+else
+  invoke_build_bin
+fi
+if [ "$DEV" -eq 1 ]; then
+  register_tura_cli_launchers dev
+else
+  register_tura_cli_launchers production
+fi
 
 step "Tura install completed"
-echo 'Rust CLI: cargo run -p gateway --bin tura -- exec "Inspect the workspace"'
-echo 'TUI CLI:  node apps/tui/dist/index.js --help'
+if [ "$DEV" -eq 1 ]; then
+  echo 'Mode:         dev (debug build)'
+  echo 'Rust CLI:     cargo run -p gateway --bin tura -- exec "Inspect the workspace"'
+  echo 'TUI CLI:      node apps/tui/dist/index.js --help'
+else
+  echo 'Mode:         production (release binaries in bin/)'
+  echo 'Gateway:      bin/gateway'
+  echo 'TUI:          bin/tura-tui --help'
+fi
+if [ "$SKIP_CLI_REGISTER" -eq 0 ]; then
+  echo 'Registered:   tura-tui (TUI) and tura-gateway (gateway server) — open a new terminal to use them'
+fi

@@ -95,10 +95,9 @@ if (-not $SkipInstall) {
   if (-not $powerShellCommand) {
     throw "PowerShell was not found for bootstrap. Install PowerShell or run scripts/install.ps1 manually."
   }
-  $installArgs = @()
-  if ($ReleaseServices) {
-    $installArgs += "-Release"
-  }
+  # start.ps1 runs the app from source for local development, so bootstrap the
+  # debug (dev) install rather than the production release-into-bin route.
+  $installArgs = @("-Dev")
   if ($SkipFrontend) {
     $installArgs += "-SkipFrontend"
   }

@@ -77,8 +77,9 @@ if [ -z "${TURA_ENV_PATH:-}" ] && [ -f "$REPO_ROOT/.env" ]; then
 fi
 
 if [ "$SKIP_INSTALL" -eq 0 ]; then
-  INSTALL_ARGS=""
-  if [ "$RELEASE_SERVICES" -eq 1 ]; then INSTALL_ARGS="$INSTALL_ARGS --release"; fi
+  # start.sh runs the app from source for local development, so bootstrap the
+  # debug (dev) install rather than the production release-into-bin route.
+  INSTALL_ARGS="dev"
   if [ "$SKIP_FRONTEND" -eq 1 ]; then INSTALL_ARGS="$INSTALL_ARGS --skip-frontend"; fi
   if [ "$SKIP_PLAYWRIGHT" -eq 1 ]; then INSTALL_ARGS="$INSTALL_ARGS --skip-playwright"; fi
   if [ "$BUILD_ONLY" -eq 0 ]; then INSTALL_ARGS="$INSTALL_ARGS --skip-rust-build"; fi

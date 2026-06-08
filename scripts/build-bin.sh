@@ -7,6 +7,7 @@ BIN_DIR="$REPO_ROOT/bin"
 SKIP_GUI=0
 SKIP_TUI=0
 SKIP_FRONTEND_INSTALL=0
+SKIP_CLI_REGISTER=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -18,13 +19,14 @@ while [ "$#" -gt 0 ]; do
     --skip-gui) SKIP_GUI=1 ;;
     --skip-tui) SKIP_TUI=1 ;;
     --skip-frontend-install) SKIP_FRONTEND_INSTALL=1 ;;
+    --skip-cli-register) SKIP_CLI_REGISTER=1 ;;
     -h|--help)
       cat <<'EOF'
 Usage:
-  scripts/build-bin.sh [--bin-dir DIR] [--skip-gui] [--skip-tui] [--skip-frontend-install]
+  scripts/build-bin.sh [--bin-dir DIR] [--skip-gui] [--skip-tui] [--skip-frontend-install] [--skip-cli-register]
 
 Builds release binaries into bin/ and copies editable runtime resources:
-  gateway, tura-tui, tura-gui, agents/, personas/, config/, .env
+  gateway, tura, tura_router, tura-tui, tura-gui, agents/, personas/, config/, .env
 EOF
       exit 0
       ;;
@@ -33,18 +35,27 @@ EOF
   shift
 done
 
-command -v cargo >/dev/null 2>&1 || { echo "cargo was not found. Install Rust from https://rustup.rs/." >&2; exit 1; }
-command -v bun >/dev/null 2>&1 || { echo "bun was not found. Install Bun from https://bun.sh/." >&2; exit 1; }
+command -v cargo >/dev/null 2>&1 || { echo "cargo was not found. 请先运行 scripts/install.sh 安装工具链。" >&2; exit 1; }
+BUILDS_FRONTEND=0
+if [ "$SKIP_GUI" -eq 0 ] || [ "$SKIP_TUI" -eq 0 ] || [ "$SKIP_FRONTEND_INSTALL" -eq 0 ]; then
+  BUILDS_FRONTEND=1
+fi
+if [ "$BUILDS_FRONTEND" -eq 1 ]; then
+  command -v bun >/dev/null 2>&1 || { echo "bun was not found. 请先运行 scripts/install.sh 安装工具链。" >&2; exit 1; }
+fi
 
 mkdir -p "$BIN_DIR"
 rm -f "$BIN_DIR/tura" "$BIN_DIR/tura.exe" "$BIN_DIR/tura_router" "$BIN_DIR/tura_router.exe"
 
-if [ "$SKIP_FRONTEND_INSTALL" -eq 0 ]; then
+if [ "$BUILDS_FRONTEND" -eq 1 ] && [ "$SKIP_FRONTEND_INSTALL" -eq 0 ]; then
   (cd "$REPO_ROOT/apps/gui" && bun install)
   (cd "$REPO_ROOT/apps/tauri" && bun install)
 fi
 
-(cd "$REPO_ROOT" && cargo build --release -p gateway --bin gateway)
+# gateway server + tura CLI + persistent router so bin/ is self-contained
+# (the gateway resolves tura_router next to its own exe).
+(cd "$REPO_ROOT" && cargo build --release -p gateway --bin gateway --bin tura)
+(cd "$REPO_ROOT" && cargo build --release -p router --bin tura_router)
 
 if [ "$SKIP_GUI" -eq 0 ]; then
   (cd "$REPO_ROOT" && bun --cwd apps/gui build)
@@ -79,6 +90,8 @@ sync_dir() {
 }
 
 copy_required_file "$REPO_ROOT/target/release/gateway" "gateway"
+copy_required_file "$REPO_ROOT/target/release/tura" "tura"
+copy_required_file "$REPO_ROOT/target/release/tura_router" "tura_router"
 if [ "$SKIP_GUI" -eq 0 ]; then
   copy_required_file "$REPO_ROOT/target/release/tura-gui" "tura-gui"
 fi
@@ -89,4 +102,8 @@ sync_dir "$REPO_ROOT/crates/provider/config" "config"
 [ ! -f "$REPO_ROOT/.env" ] || cp "$REPO_ROOT/.env" "$BIN_DIR/.env"
 
 echo "Release binaries and editable resources are ready in $BIN_DIR"
-echo "Expected executables: gateway, tura-tui, tura-gui"
+echo "Expected executables: gateway, tura, tura_router, tura-tui, tura-gui"
+
+if [ "$SKIP_CLI_REGISTER" -eq 0 ]; then
+  sh "$SCRIPT_DIR/register-cli.sh" --mode production
+fi
