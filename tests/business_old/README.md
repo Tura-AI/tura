@@ -1,12 +1,13 @@
-# Archived Live Business Benchmarks
+# Legacy Business Benchmarks
 
-This directory contains long-running business benchmarks that launch real CLI
-agents, prepare isolated workspaces, call live providers, and score results
-through harnesses. They can require private keys, consume provider quota, write
-large artifacts, and depend on local agent checkouts.
+This directory contains older manual benchmark scripts kept for reference and
+comparison runs. Like `tests/business/`, these scripts can require private
+keys, consume provider quota, write large artifacts, and depend on local agent
+checkouts.
 
-These scripts are intentionally excluded from default CI. Run them manually
-only in an environment that has the required credentials and agent binaries.
+The entire root `tests/` tree is intentionally excluded from default CI and
+default `cargo test --workspace`. Run these scripts manually only in an
+environment that has the required credentials and agent binaries.
 
 Business-test outputs default to:
 
@@ -27,6 +28,3 @@ Common agent selection variables include:
 - `COMMAND_RUN_AGENT_CLAUDE_MODEL`
 - `COMMAND_RUN_AGENT_PI_EXE`
 - `COMMAND_RUN_AGENT_TIMEOUT_MS`
-
-Shared helpers for the archived categorized scripts live in
-`tests/business_old/lib/`.
