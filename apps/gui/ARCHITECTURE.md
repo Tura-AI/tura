@@ -29,7 +29,7 @@ The first screen must be a usable workbench/dashboard, never a marketing page.
 - Do not persist provider credentials, session records, messages, issue data,
   workspace membership, or task queue state directly from the GUI.
 - Do not create a second local database in the GUI.
-- Do not make `/tui/*` compatibility routes the main GUI path.
+- Do not make `/tui/*` shortcut routes the main GUI path.
 - Do not hide Multica features behind placeholder text. Every route described
   here must map to a real gateway contract before code implementation.
 

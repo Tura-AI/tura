@@ -1,19 +1,28 @@
 [package]
-name = "tura_router"
-version = "0.1.0"
-edition = "2021"
+name = "router"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 license.workspace = true
 default-run = "tura_router"
 
+[lib]
+name = "tura_router"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tura_router"
+path = "src/main.rs"
+
 [dependencies]
-tokio = { version = "1", features = ["full"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-toml = "0.8"
-tracing = "0.1"
-parking_lot = "0.12"
-uuid = { version = "1", features = ["v4", "serde"] }
-anyhow = "1"
-tura-agents = { path = "../../agents" }
-tura-persona = { path = "../../personas" }
-session_log = { path = "../session_log" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+uuid.workspace = true
+anyhow.workspace = true
+agents = { workspace = true }
+personas = { workspace = true }
+session_log = { workspace = true }

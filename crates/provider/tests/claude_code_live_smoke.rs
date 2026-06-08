@@ -5,7 +5,7 @@
 //! with credentials loaded from the crate `.env`:
 //!
 //! ```text
-//! TURA_CLAUDE_CODE_SMOKE=1 cargo test -p tura-llm-rust --test claude_code_live_smoke
+//! TURA_CLAUDE_CODE_SMOKE=1 cargo test -p provider --test claude_code_live_smoke
 //! ```
 //!
 //! It auto-detects the auth route from whichever token is configured:

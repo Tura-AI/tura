@@ -1,39 +1,40 @@
 [package]
 name = "gateway"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 license.workspace = true
 
 [dependencies]
-anyhow = "1"
-async-trait = "0.1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "fs", "io-util", "process", "time"] }
-uuid = { version = "1", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
-parking_lot = "0.12"
-once_cell = "1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-futures = "0.3"
-lazy_static = "1.4"
+anyhow.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+parking_lot.workspace = true
+once_cell.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+futures.workspace = true
+lazy_static.workspace = true
 reqwest = { workspace = true }
-sysinfo = "0.30"
-base64 = "0.22"
-sha2 = "0.10"
+sysinfo.workspace = true
+base64.workspace = true
+sha2.workspace = true
 
 # Web framework
-axum = { version = "0.8", features = ["ws"] }
-tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "fs"] }
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
 
 # Internal
-runtime = { path = "../runtime" }
-tura-llm-rust = { workspace = true }
-tura-agents = { path = "../../agents" }
-tura-persona = { path = "../../personas" }
-tura-router = { workspace = true }
+runtime = { workspace = true }
+provider = { workspace = true }
+agents = { workspace = true }
+personas = { workspace = true }
+router = { workspace = true }
 session_log = { workspace = true }
 
 [[bin]]

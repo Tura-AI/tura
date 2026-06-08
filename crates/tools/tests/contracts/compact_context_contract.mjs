@@ -37,7 +37,7 @@ assert(prompt.includes("200,000 tokens"), "compact_context prompt must include t
 assert(prompt.includes("final command"), "compact_context prompt must require final-step placement");
 assert(prompt.includes("15,000 English words"), "compact_context prompt must include the 20k-token output cap as words");
 
-run("cargo", ["test", "-p", "code-tools", "compact_context", "--", "--nocapture"]);
+run("cargo", ["test", "-p", "tools", "compact_context", "--", "--nocapture"]);
 run("cargo", [
   "test",
   "-p",

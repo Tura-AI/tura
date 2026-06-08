@@ -2,6 +2,7 @@ param(
   [switch]$SkipGui,
   [switch]$SkipTui,
   [switch]$SkipFrontendInstall,
+  [switch]$SkipCliRegister,
   [string]$BinDir = ""
 )
 
@@ -69,20 +70,26 @@ function Remove-IfExists {
   }
 }
 
-Require-Command "cargo" "Install Rust from https://rustup.rs/."
-Require-Command "bun" "Install Bun from https://bun.sh/."
+Require-Command "cargo" "请先运行 scripts\install.ps1 安装工具链。"
+$buildsFrontend = (-not $SkipGui) -or (-not $SkipTui) -or (-not $SkipFrontendInstall)
+if ($buildsFrontend) {
+  Require-Command "bun" "请先运行 scripts\install.ps1 安装工具链。"
+}
 
 New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 Remove-IfExists (Join-Path $OutDir "tura.exe")
 Remove-IfExists (Join-Path $OutDir "tura_router.exe")
 Remove-IfExists (Join-Path $OutDir "tura_router")
 
-if (-not $SkipFrontendInstall) {
+if ($buildsFrontend -and -not $SkipFrontendInstall) {
   Invoke-Checked "bun" @("install") (Join-Path $RepoRootPath "apps\gui")
   Invoke-Checked "bun" @("install") (Join-Path $RepoRootPath "apps\tauri")
 }
 
-Invoke-Checked "cargo" @("build", "--release", "-p", "gateway", "--bin", "gateway")
+# gateway server + tura CLI + persistent router so bin/ is self-contained
+# (the gateway resolves tura_router next to its own exe).
+Invoke-Checked "cargo" @("build", "--release", "-p", "gateway", "--bin", "gateway", "--bin", "tura")
+Invoke-Checked "cargo" @("build", "--release", "-p", "router", "--bin", "tura_router")
 
 if (-not $SkipGui) {
   Invoke-Checked "bun" @("--cwd", "apps\gui", "build")
@@ -101,6 +108,8 @@ if (-not $SkipTui) {
 
 $ReleaseDir = Join-Path $RepoRootPath "target\release"
 Copy-RequiredFile (Join-Path $ReleaseDir "gateway.exe") "gateway.exe"
+Copy-RequiredFile (Join-Path $ReleaseDir "tura.exe") "tura.exe"
+Copy-RequiredFile (Join-Path $ReleaseDir "tura_router.exe") "tura_router.exe"
 if (-not $SkipGui) {
   Copy-RequiredFile (Join-Path $ReleaseDir "tura-gui.exe") "tura-gui.exe"
 }
@@ -113,4 +122,11 @@ if (Test-Path (Join-Path $RepoRootPath ".env")) {
 }
 
 Write-Host "Release binaries and editable resources are ready in $OutDir"
-Write-Host "Expected executables: gateway.exe, tura-tui.exe, tura-gui.exe"
+Write-Host "Expected executables: gateway.exe, tura.exe, tura_router.exe, tura-tui.exe, tura-gui.exe"
+
+if (-not $SkipCliRegister) {
+  & (Join-Path $ScriptDir "register-cli.ps1") -Mode production
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+  }
+}

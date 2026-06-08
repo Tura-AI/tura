@@ -1,5 +1,5 @@
 [package]
-name = "code-tools"
+name = "tools"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -9,14 +9,22 @@ license.workspace = true
 name = "code_tools"
 path = "src/lib.rs"
 
+[[test]]
+name = "web_discover_live_provider_check"
+path = "tests/web_discover_live_provider_check.rs"
+required-features = ["live-tests"]
+
+[features]
+live-tests = []
+
 [dependencies]
 async-trait.workspace = true
 futures.workspace = true
-regex = "1"
+regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-tura-llm-rust.workspace = true
+provider.workspace = true
 
 [dev-dependencies]
-image = { version = "0.25", features = ["jpeg", "png", "webp"] }
+image.workspace = true

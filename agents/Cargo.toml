@@ -1,5 +1,5 @@
 [package]
-name = "tura-agents"
+name = "agents"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

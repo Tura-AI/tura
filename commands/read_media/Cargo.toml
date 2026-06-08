@@ -1,5 +1,5 @@
 [package]
-name = "tura-command-read-media"
+name = "read_media"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -14,8 +14,8 @@ name = "tura-command-read-media"
 path = "src/main.rs"
 
 [dependencies]
-base64 = "0.22"
-image = { version = "0.25", features = ["jpeg", "png", "webp"] }
-pdfium-render = { version = "0.8", features = ["image"] }
+base64.workspace = true
+image.workspace = true
+pdfium-render.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }

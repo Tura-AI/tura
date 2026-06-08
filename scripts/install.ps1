@@ -3,7 +3,8 @@ param(
   [switch]$SkipFrontend,
   [switch]$SkipPlaywright,
   [switch]$SkipRustBuild,
-  [switch]$Release,
+  [switch]$SkipCliRegister,
+  [switch]$Dev,
   [switch]$CheckOnly,
   [Alias("h")]
   [switch]$Help
@@ -23,12 +24,16 @@ if ($Help) {
 Usage:
   .\scripts\install.ps1 [OPTIONS]
 
+By default this builds the production (release) binaries into bin/ — a
+self-contained runtime directory. Pass -Dev for a debug build instead.
+
 Options:
+  -Dev                 debug build (target/debug + apps/tui/dist) instead of release into bin/
   -SkipPythonPackages  skip project-local Python fallback packages
   -SkipFrontend        skip apps/tui and apps/gui dependency setup
   -SkipPlaywright      skip Playwright Chromium installation
-  -SkipRustBuild       fetch Rust dependencies but do not build
-  -Release             build Rust binaries with --release
+  -SkipRustBuild       (dev only) fetch Rust dependencies but do not build
+  -SkipCliRegister     do not generate tura-tui/tura-gateway launchers or touch PATH
   -CheckOnly           only verify required toolchains
   -Help                show this help
 "@
@@ -107,6 +112,20 @@ function Add-PathEntry {
 function Add-CargoToPath {
   $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
   Add-PathEntry $cargoBin
+}
+
+function Register-TuraCliLaunchers {
+  param([string]$Mode)
+  # CLI registration (launcher generation + user PATH) lives in the shared
+  # scripts/register-cli.ps1 so install.ps1 and build-bin.ps1 stay in sync.
+  if ($SkipCliRegister) {
+    return
+  }
+  Write-Step "Registering tura CLI launchers (tura-tui, tura-gateway)"
+  & (Join-Path $ScriptDir "register-cli.ps1") -Mode $Mode
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+  }
 }
 
 function Add-Msys2ToPath {
@@ -635,20 +654,32 @@ function Ensure-Rust {
     return
   }
 
-  $profileArgs = @()
-  if ($Release) {
-    $profileArgs += "--release"
-  }
-  Write-Step "Building Rust binaries and core crates"
-  cargo build @profileArgs -p gateway --bin tura --bin gateway
+  Write-Step "Building Rust binaries and core crates (debug)"
+  cargo build -p gateway --bin tura --bin gateway
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
   }
-  cargo build @profileArgs -p tura_router
+  cargo build -p router --bin tura_router
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
   }
-  cargo check -p code-tools -p tura-llm-rust -p tura-agents -p runtime -p session_log
+  cargo check -p tools -p provider -p agents -p runtime -p session_log
+  if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+  }
+}
+
+function Invoke-BuildBin {
+  # Production route: build release binaries and package them (plus runtime
+  # resources) into bin/ via build-bin.ps1, leaving a self-contained directory.
+  Write-Step "Building release binaries into bin/"
+  $buildBin = Join-Path $ScriptDir "build-bin.ps1"
+  # install registers the CLI itself as its final step, so build-bin must not.
+  $buildArgs = @("-SkipCliRegister")
+  if ($SkipFrontend) {
+    $buildArgs += @("-SkipGui", "-SkipTui", "-SkipFrontendInstall")
+  }
+  & $buildBin @buildArgs
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
   }
@@ -849,16 +880,33 @@ if (-not $SkipFrontend) {
     Ensure-WebView2Runtime
   }
   Ensure-Node
+  Ensure-BunToolchain
 }
 
 Ensure-FfmpegToolchain
 Ensure-PythonPackages
-Ensure-Tui
-Ensure-Gui
-Ensure-Tauri
 Ensure-Playwright
-Ensure-Rust
+if ($Dev) {
+  Ensure-Tui
+  Ensure-Gui
+  Ensure-Tauri
+  Ensure-Rust
+} else {
+  Invoke-BuildBin
+}
+$registrationMode = if ($Dev) { "dev" } else { "production" }
+Register-TuraCliLaunchers $registrationMode
 
 Write-Step "Tura install completed"
-Write-Host "Rust CLI: cargo run -p gateway --bin tura -- exec `"Inspect the workspace`""
-Write-Host "TUI CLI:  node apps/tui/dist/index.js --help"
+if ($Dev) {
+  Write-Host "Mode:         dev (debug build)"
+  Write-Host "Rust CLI:     cargo run -p gateway --bin tura -- exec `"Inspect the workspace`""
+  Write-Host "TUI CLI:      node apps/tui/dist/index.js --help"
+} else {
+  Write-Host "Mode:         production (release binaries in bin/)"
+  Write-Host "Gateway:      bin/gateway.exe"
+  Write-Host "TUI:          bin/tura-tui.exe --help"
+}
+if (-not $SkipCliRegister) {
+  Write-Host "Registered:   tura-tui (TUI) and tura-gateway (gateway server) — open a new terminal to use them"
+}

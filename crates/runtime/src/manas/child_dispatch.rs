@@ -151,13 +151,13 @@ pub fn dispatch_child_agent(req: &ChildAgentRequest) -> Result<ChildAgentSummary
     })
 }
 
-fn hide_child_window(command: &mut Command) {
+fn hide_child_window(_command: &mut Command) {
     #[cfg(windows)]
     {
         #[allow(unused_imports)]
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        command.creation_flags(CREATE_NO_WINDOW);
+        _command.creation_flags(CREATE_NO_WINDOW);
     }
 }
 

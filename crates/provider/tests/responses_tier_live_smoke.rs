@@ -7,7 +7,7 @@
 //! Gated (talks to real APIs, costs quota):
 //!
 //! ```text
-//! TURA_RESPONSES_TIER_SMOKE=1 cargo test -p tura-llm-rust \
+//! TURA_RESPONSES_TIER_SMOKE=1 cargo test -p provider \
 //!     --test responses_tier_live_smoke -- --nocapture
 //! ```
 //!

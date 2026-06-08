@@ -281,7 +281,10 @@ async function bootstrapSafe<T>(run: () => Promise<T>, fallback: T): Promise<T> 
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = window.setTimeout(() => reject(new Error("Gateway bootstrap timeout")), timeoutMs);
+    const timer = window.setTimeout(
+      () => reject(new Error("Gateway bootstrap timeout")),
+      timeoutMs,
+    );
     promise.then(
       (value) => {
         window.clearTimeout(timer);

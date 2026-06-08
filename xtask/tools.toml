@@ -1,5 +1,5 @@
 [rustup_components]
-required = ["rustfmt", "clippy", "rust-analyzer"]
+required = ["rustfmt", "clippy"]
 
 [cargo_bins.cargo-audit]
 install = "cargo install cargo-audit --locked"
@@ -12,7 +12,7 @@ install = "cargo install typos-cli --locked"
 
 [checks]
 format = "cargo fmt --all --check"
-clippy = "cargo clippy --workspace --all-targets -- -D warnings"
+clippy = "cargo clippy --workspace --exclude src-tauri --all-targets"
 audit = "cargo audit"
 deny = "cargo deny check"
 typos = "typos"

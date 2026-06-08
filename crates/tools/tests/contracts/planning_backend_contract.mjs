@@ -173,8 +173,8 @@ addCheck("planning reuses command_run execution gate and file locks", () => {
 
 const cargoTests = [
   {
-    name: "code-tools planning command and schema coverage",
-    args: ["test", "-p", "code-tools", "planning"],
+    name: "tools planning command and schema coverage",
+    args: ["test", "-p", "tools", "planning"],
   },
   {
     name: "runtime planning replacement keeps queued task order",
@@ -187,15 +187,15 @@ const cargoTests = [
   },
   {
     name: "command_run file lock workspace write barrier",
-    args: ["test", "-p", "code-tools", "workspace_write_blocks_path_locks_until_released"],
+    args: ["test", "-p", "tools", "workspace_write_blocks_path_locks_until_released"],
   },
   {
     name: "command_run stops queued commands after apply_patch failure",
-    args: ["test", "-p", "code-tools", "later_batch_commands_stop_after_apply_patch_failure"],
+    args: ["test", "-p", "tools", "later_batch_commands_stop_after_apply_patch_failure"],
   },
   {
     name: "streaming command_run ignores commands after failed patch",
-    args: ["test", "-p", "code-tools", "streaming_executor_ignores_commands_after_failed_apply_patch"],
+    args: ["test", "-p", "tools", "streaming_executor_ignores_commands_after_failed_apply_patch"],
   },
   {
     name: "gateway multi-task patch deliverable fields",

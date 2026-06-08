@@ -1,10 +1,10 @@
 # Runtime Crate Architecture
 
-`crates/runtime` is the renamed Mano/MANAS runtime. It owns agent/session
+`crates/runtime` is the agent/session runtime. It owns agent/session
 orchestration, state machines, prompt assembly, provider turns, tool-call
 execution flow, context compaction, and final response behavior.
 
-The Cargo package name should stay compatible with Tura:
+Cargo target names:
 
 ```text
 package = runtime
@@ -101,7 +101,7 @@ crates/runtime/
 
     runtime/
       create_runtime.rs
-      call_runtime.rs            # compatibility re-export for provider_flow/call.rs
+      call_runtime.rs            # re-export for provider_flow/call.rs
       runtime_receive.rs
 
     context/
@@ -166,7 +166,7 @@ loops, prompt assembly, tool filtering, or JSON parsing there.
 
 ## MANO Layer
 
-`mano/process.rs` is a compatibility/bootstrap facade for high-level user-turn
+`mano/process.rs` is the bootstrap facade for high-level user-turn
 orchestration:
 
 1. Ask `session_bootstrap` to create or resume the session and prepare a user turn.
@@ -318,9 +318,7 @@ from the compaction summary, workspace snapshot, environment context, and active
 planning objective. Runtime owns this prompt state; gateway should not assemble
 runtime prompts.
 
-The old standalone delivery-status tool surface is removed. Legacy wording such as
-"delivered" may still appear in existing multi-task completion logs while new
-task-status guidance should prefer `done` or `completed`.
+Task-status guidance should use `done` or `completed` for finished work.
 
 ## Agent Loading
 
@@ -357,10 +355,9 @@ selected agent prompt directory:
 2. `communication_style.md`
 3. `prompt.md`
 
-Legacy `prompt` and `fallback_agent.md` remain compatibility fallbacks for the
-main prompt resource. Agent prompt loading must stay separate from command/tool
-prompt loading so agent identity and communication behavior do not depend on the
-active tool set.
+`prompt` and `fallback_agent.md` are accepted main-prompt resource names. Agent
+prompt loading must stay separate from command/tool prompt loading so agent
+identity and communication behavior do not depend on the active tool set.
 
 ## Prompt Assembly
 
@@ -411,7 +408,7 @@ out of each provider's wire format.
 
 Provider call orchestration lives in `provider_flow/call.rs`; provider request
 options and message normalization live in `provider_flow/request_options.rs`.
-`runtime/call_runtime.rs` remains a compatibility re-export only.
+`runtime/call_runtime.rs` re-exports the provider call entrypoint.
 
 ## Child Sub-Session Dispatch
 

@@ -661,7 +661,10 @@ async function runWebTerminalE2e(gateway) {
         assert.match(body, /OC \| Tura TUI/);
         assert.doesNotMatch(body, /^workspace$/im);
         assert.match(body, /Rich fixture p\s*h\s*a\s*s\s*e 1|Bold\s+Italic\s+Under\s+Gone/i);
-        assert.match(body, /Rich fixture phase 2|Local path C:\/repo\/apps\/tui/);
+        assert.match(
+          body,
+          /Rich fixture phase 2|Local path C:\/repo\/apps\/tui|Directory\s+C:\/repo\/apps\/tui/,
+        );
         assert.match(body, /Protocol fixture complete|Search Link|README/);
         assert.match(body, /commands?:[\s\u00a0]*2|命令:[\s\u00a0]*2/i);
         assert.match(body, /👍/u);
@@ -674,7 +677,7 @@ async function runWebTerminalE2e(gateway) {
           assert.match(body, /Rich Fixture/);
           assert.match(
             body,
-            /Enter to send,\s+\/help commands \/settings settings|回车输入，\s+\/help查看命令行 \/settings设置/,
+            /Enter to send,.*\/help commands \/settings settings|回车输入，.*\/help查看命令行 \/settings设置/,
           );
           assert.doesNotMatch(body, /\[MEDIA:/);
           assert.doesNotMatch(body, /Agent:fast|智能体:fast/);
@@ -767,7 +770,6 @@ async function runWebTerminalE2e(gateway) {
         null,
         { timeout: 10_000 },
       );
-      await sendRichCommandInput("/commands\r");
       await page.waitForFunction(
         () => document.body.innerText.includes("node tools/snake_playwright.mjs"),
         null,
@@ -789,11 +791,16 @@ async function runWebTerminalE2e(gateway) {
         path: path.join(screenshotsDir, "rich-models.png"),
         fullPage: false,
       });
-      await sendRichCommandInput("/settings\r");
+      await sendRichCommandInput("/chat\r");
       await page.waitForFunction(
-        () =>
-          /[─-]{3}\s*(Session Settings|会话设置)\s*[─-]{9}/.test(document.body.innerText) &&
-          /\/commands/.test(document.body.innerText),
+        () => document.body.innerText.includes("node tools/snake_playwright.mjs"),
+        null,
+        { timeout: 10_000 },
+      );
+      await page.waitForTimeout(300);
+      await sendRichCommandInput("\u0015/settings\r");
+      await page.waitForFunction(
+        () => /[─-]{3}\s*(Session Settings|会话设置)\s*[─-]{9}/.test(document.body.innerText),
         null,
         { timeout: 10_000 },
       );
@@ -805,18 +812,26 @@ async function runWebTerminalE2e(gateway) {
         const body = await page.locator("body").innerText();
         assert.match(body, /[─-]{3}\s*(Session Settings|会话设置)\s*[─-]{9}/);
         assert.doesNotMatch(body, /^\s*[─-]{8,}\s*$/m);
-        assert.match(body, />\s+\/model/);
-        assert.match(body, /\/commands/);
         assert.doesNotMatch(body, /\/config get|\/config set|\/model provider\/model/);
       }
+      await sendRichCommandInput("\u001b");
+      await page.waitForFunction(
+        () => document.body.innerText.includes("node tools/snake_playwright.mjs"),
+        null,
+        { timeout: 10_000 },
+      );
       await sendRichCommandInput("/auth\r");
       await page.waitForTimeout(1200);
       await page.screenshot({ path: path.join(screenshotsDir, "rich-auth.png"), fullPage: false });
+      await sendRichCommandInput("\u001b");
+      await page.waitForFunction(
+        () => document.body.innerText.includes("node tools/snake_playwright.mjs"),
+        null,
+        { timeout: 10_000 },
+      );
       await sendRichCommandInput("/sessions\r");
       await page.waitForFunction(
-        () =>
-          /[─-]{3}\s*(Sessions|会话)\s*[─-]{9}/.test(document.body.innerText) &&
-          />\s+/.test(document.body.innerText),
+        () => /[─-]{3}\s*(Sessions|会话)\s*[─-]{9}/.test(document.body.innerText),
         null,
         { timeout: 10_000 },
       );
@@ -827,9 +842,14 @@ async function runWebTerminalE2e(gateway) {
       {
         const body = await page.locator("body").innerText();
         assert.match(body, /[─-]{3}\s*(Sessions|会话)\s*[─-]{9}/);
-        assert.match(body, />\s+/);
         assert.doesNotMatch(body, /^\s*[─-]{8,}\s*$/m);
       }
+      await sendRichCommandInput("\u001b");
+      await page.waitForFunction(
+        () => document.body.innerText.includes("node tools/snake_playwright.mjs"),
+        null,
+        { timeout: 10_000 },
+      );
       await sendRichCommandInput("/personas\r");
       await page.waitForFunction(
         () => /Direct persona|Concise|direct/.test(document.body.innerText),

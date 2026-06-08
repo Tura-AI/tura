@@ -53,11 +53,16 @@ Install scripts should:
 - Install and build `apps/gui` when Bun is available.
 - Install `apps/tauri` dependencies and verify platform prerequisites when Bun
   and the desktop shell are available.
-- Run `cargo fetch`.
-- Build `gateway` binaries `tura` and `gateway`.
-- Build `tura_router`.
-- Check runtime, tools, provider, and agents packages by Cargo package
-  name.
+- Default to the **production** route (no `dev` argument): build release
+  binaries and package them into a self-contained `bin/` via `build-bin.*`
+  (`gateway`, `tura`, `tura_router`, `tura-tui`, `tura-gui` plus runtime
+  resources). `bin/` must include `tura_router` so the packaged gateway resolves
+  the router next to its own executable.
+- With a `dev` argument (`-Dev` / `dev`), build the debug route instead:
+  - Run `cargo fetch`.
+  - Build `gateway` binaries `tura` and `gateway` (debug) plus `tura_router`.
+  - Build `apps/tui` into `apps/tui/dist`.
+  - Check runtime, tools, provider, and agents packages by Cargo package name.
 - Install Python fallback packages into `scripts/packages/python`, never the
   repository root or a tracked package directory.
 - Export `PYTHONPATH` and `LIBCLANG_PATH` for the current script invocation
@@ -95,7 +100,7 @@ Start scripts should:
   `apps/tauri`, letting Tauri own the Vite frontend startup.
 - Start the router binary when CLI forwarding or managed lifecycle is needed,
   for example
-  `cargo run -p tura_router -- forward <command> [args...]`.
+  `cargo run -p router --bin tura_router -- forward <command> [args...]`.
 - Pass router/gateway/frontend overrides when a local UI flow needs them.
 - For GUI startup, set `VITE_TURA_GATEWAY_URL` from `TURA_GATEWAY_URL` when
   present, otherwise from the selected gateway port.

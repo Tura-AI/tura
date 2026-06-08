@@ -8,7 +8,7 @@ allocation.
 The Cargo package and default binary name should stay compatible with Tura:
 
 ```text
-package = tura_router
+package = router
 default binary = tura_router
 ```
 
@@ -158,6 +158,6 @@ forwards.
 Use:
 
 ```text
-cargo fmt -p tura_router
-cargo check -p tura_router
+cargo fmt -p router
+cargo check -p router
 ```

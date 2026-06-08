@@ -17,12 +17,16 @@ internal runtime ↔ router traffic is CLI stdin/stdout JSON.
 
 ## Business Tests
 
-`tests/business/` contains long-running benchmarks that spawn real CLI agents
-and compare them through isolated harnesses. The current entries are grouped by
-task category instead of the old flat `command-run-agent-benchmarks` layout.
+`tests/business/` contains long-running business benchmarks that can spawn real
+CLI agents, call live providers, consume quota, require private keys, and write
+large artifacts.
 
-Business-test outputs default to the same user workspace used by GUI and TUI:
-`~/Documents/tura workspace`. Each run writes to
+The root `tests/` tree is committed for manual benchmark work only. GitHub CI
+and default `cargo test --workspace` must not execute scripts from this
+directory or read them as test fixtures. Crate-owned tests should live under the
+owning crate, for example `crates/*/tests/`.
+
+Business-test outputs default to
 `~/Documents/tura workspace/target/{test_name}/{run_id}/summary.json`.
 Override the artifact root with `TURA_BUSINESS_TARGET_ROOT` or
 `COMMAND_RUN_BUSINESS_TARGET_ROOT`.

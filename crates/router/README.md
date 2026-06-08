@@ -50,6 +50,5 @@ does not expose a session-log data bridge. Gateway and runtime helpers call the
 session DB service directly through `session-db-call`; router IPC is limited to
 execution supervision and service lifecycle.
 
-Gateway keeps `target\debug\gateway.exe session-log` for compatibility, but that
-command also uses the direct session DB client instead of routing reads through
-the router.
+`target\debug\gateway.exe session-log` also uses the direct session DB client
+instead of routing reads through the router.

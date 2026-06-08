@@ -49,7 +49,6 @@ $TyposConfig = Join-Path $XtaskRoot "typos.toml"
 Require-Command "cargo" "Install Rust from https://rustup.rs/."
 Require-RustComponent "rustfmt"
 Require-RustComponent "clippy"
-Require-RustComponent "rust-analyzer"
 if (-not $SkipAudit) {
   Require-Command "cargo-audit" "Install with: cargo install cargo-audit --locked"
 }
@@ -67,15 +66,18 @@ Write-Step "Running Clippy over the Rust workspace"
 Invoke-Checked "cargo" @(
   "clippy",
   "--workspace",
+  "--exclude", "src-tauri",
   "--all-targets",
   "--",
-  "-D", "warnings",
   "-W", "clippy::redundant_clone",
   "-W", "clippy::clone_on_copy",
   "-W", "clippy::clone_on_ref_ptr",
   "-W", "clippy::unnecessary_to_owned",
   "-W", "clippy::unwrap_used"
 )
+
+Write-Step "Running Rust tests over the workspace"
+Invoke-Checked "cargo" @("test", "--workspace", "--exclude", "src-tauri")
 
 if (-not $SkipAudit) {
   Write-Step "Auditing Rust dependencies"

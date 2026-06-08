@@ -98,7 +98,7 @@ def ensure_router_binary() -> None:
     ).exists():
         return
     cargo = "cargo.exe" if os.name == "nt" else "cargo"
-    subprocess.run([cargo, "build", "-p", "tura_router"], cwd=ROOT, check=True)
+    subprocess.run([cargo, "build", "-p", "router"], cwd=ROOT, check=True)
 
 
 def start_gateway() -> subprocess.Popen | None:

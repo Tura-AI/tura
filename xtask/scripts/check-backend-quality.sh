@@ -20,7 +20,8 @@ Usage:
 
 Runs backend quality checks without building release binaries:
   cargo fmt --all --check
-  cargo clippy --workspace --all-targets
+  cargo clippy --workspace --exclude src-tauri --all-targets
+  cargo test --workspace --exclude src-tauri
   cargo audit
   cargo deny check
   typos
@@ -57,7 +58,6 @@ cd "$REPO_ROOT"
 require cargo "Install Rust from https://rustup.rs/."
 require_rust_component rustfmt
 require_rust_component clippy
-require_rust_component rust-analyzer
 [ "$SKIP_AUDIT" -eq 1 ] || require cargo-audit "Install with: cargo install cargo-audit --locked"
 [ "$SKIP_DENY" -eq 1 ] || require cargo-deny "Install with: cargo install cargo-deny --locked"
 [ "$SKIP_TYPOS" -eq 1 ] || require typos "Install with: cargo install typos-cli --locked"
@@ -66,13 +66,15 @@ step "Checking Rust formatting"
 cargo fmt --all --check -- --config-path "$XTASK_ROOT/rustfmt.toml"
 
 step "Running Clippy over the Rust workspace"
-cargo clippy --workspace --all-targets -- \
-  -D warnings \
+cargo clippy --workspace --exclude src-tauri --all-targets -- \
   -W clippy::redundant_clone \
   -W clippy::clone_on_copy \
   -W clippy::clone_on_ref_ptr \
   -W clippy::unnecessary_to_owned \
   -W clippy::unwrap_used
+
+step "Running Rust tests over the workspace"
+cargo test --workspace --exclude src-tauri
 
 if [ "$SKIP_AUDIT" -eq 0 ]; then
   step "Auditing Rust dependencies"

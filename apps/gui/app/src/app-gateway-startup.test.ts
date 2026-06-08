@@ -125,9 +125,9 @@ describe("gateway startup wrapper", () => {
     expect(isGatewayTimeoutError(new DOMException("timed out", "TimeoutError"))).toBe(true);
     expect(isGatewayTimeoutError(new TypeError("Failed to fetch"))).toBe(true);
     expect(isGatewayTimeoutError(new TypeError("fetch failed"))).toBe(true);
-    expect(isGatewayTimeoutError(new TypeError("NetworkError when attempting to fetch resource."))).toBe(
-      true,
-    );
+    expect(
+      isGatewayTimeoutError(new TypeError("NetworkError when attempting to fetch resource.")),
+    ).toBe(true);
     expect(isGatewayTimeoutError(new TypeError("Load failed"))).toBe(true);
     expect(isGatewayTimeoutError(new Error("other"))).toBe(false);
   });

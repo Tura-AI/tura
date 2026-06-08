@@ -83,22 +83,20 @@ inside session-log records except as normalized runtime/session events.
 
 ## Crate Names And Runnable Packages
 
-Directory names describe architecture ownership. Cargo package names should
-follow the existing Tura names so build scripts, logs, and developer commands
-stay compatible.
+Directory names describe architecture ownership. Cargo package names match the
+owning directory names.
 
 ```text
 crates/gateway     -> package gateway
 crates/runtime     -> package runtime, library runtime
 crates/session_log -> package session_log, library session_log
-agents      -> package tura-agents, library tura_agents
-crates/provider    -> package tura-llm-rust, library tura_llm_rust
-crates/tools       -> package code-tools
-crates/router      -> package tura_router, default binary tura_router
+agents      -> package agents, library tura_agents
+crates/provider    -> package provider, library tura_llm_rust
+crates/tools       -> package tools, library code_tools
+crates/router      -> package router, default binary tura_router
 ```
 
-Do not derive package names from directory names. Always check the local
-`Cargo.toml` package name before writing build, check, install, or start
+Use the directory-matching package names in build, check, install, and start
 commands.
 
 ## Architectural Boundaries
@@ -139,6 +137,17 @@ code belongs in a page folder; shared state, formatting, and gateway behavior
 belong in their existing shared folders instead of being embedded into a single
 large component.
 
+### `apps/tui`
+
+The TUI is the TypeScript terminal client. It talks to gateway HTTP/SSE APIs and
+must not call Rust runtime/provider/tool crates directly. CLI and terminal UI
+code live together under `apps/tui`.
+
+### `apps/tauri`
+
+The desktop shell lives under `apps/tauri`. It hosts the GUI frontend and starts
+the same gateway/router path used by browser and terminal clients.
+
 ### `crates/gateway`
 
 Gateway is the middleware between the frontend and backend crates. It provides
@@ -166,8 +175,8 @@ uses `stdout` JSONL events instead of final-text mode.
 
 ### `crates/runtime`
 
-Runtime is the agent orchestration crate. It replaces the old Mano directory
-while preserving the useful MANO/MANAS split as internal modules. Runtime is a
+Runtime is the agent orchestration crate. It uses the MANO/MANAS split as
+internal modules. Runtime is a
 library executed inside a runtime worker — the gateway binary re-invoked with
 `TURA_ROLE=runtime_worker` and dispatched by the router. It is never spawned
 directly by the gateway and does not bind a fixed service port.
@@ -386,7 +395,7 @@ agents/
 Agent config should define agent id, provider route defaults, stream/tool
 choice defaults, enabled command ids, persona bindings, planning defaults, and
 validator/final-response policy. The loader scans only `agents/src/<agent_id>`;
-legacy root-level `agents/<agent_id>` directories are not read.
+root-level `agents/<agent_id>` directories are not read.
 
 Default coding-agent behavior:
 
@@ -580,7 +589,7 @@ network-backed web/media discovery, internal task status, and mode-gated
 context/task lifecycle commands through `command_run`.
 
 `command_type` is the canonical provider-facing command field. Legacy
-`command` payloads may be accepted for compatibility at the handler boundary,
+`command` payloads may be accepted at the handler boundary,
 but prompt and schema text should use `command_type`.
 
 ### Compact Context
@@ -719,10 +728,10 @@ scripts/start.sh
 Core Rust build targets should use package names:
 
 ```text
-cargo build -p tura_router
+cargo build -p router
 cargo build -p gateway
 cargo build -p runtime
-cargo build -p code-tools
+cargo build -p tools
 ```
 
 The installer/package manifest tree also includes Playwright support for
@@ -743,7 +752,7 @@ The normal local path is CLI-driven. Router may start managed local services as
 needed, but those services are not addressed through fixed ports:
 
 ```text
-cargo run -p tura_router -- forward <command> [args...]
+cargo run -p router --bin tura_router -- forward <command> [args...]
 ```
 
 Direct package checks should use the same package names as the build targets.
@@ -753,13 +762,13 @@ Direct package checks should use the same package names as the build targets.
 - `crates/gateway/**`: `cargo fmt -p gateway`, `cargo check -p gateway`.
 - `crates/runtime/**`: `cargo fmt -p runtime`,
   `cargo check -p runtime`.
-- `agents/**`: `cargo fmt -p tura-agents`,
-  `cargo check -p tura-agents`, plus affected agent interface checks.
-- `crates/provider/**`: `cargo fmt -p tura-llm-rust`,
-  `cargo check -p tura-llm-rust`.
-- `crates/tools/**`: `cargo fmt -p code-tools`, `cargo check -p code-tools`.
-- `crates/router/**`: `cargo fmt -p tura_router`,
-  `cargo check -p tura_router`.
+- `agents/**`: `cargo fmt -p agents`,
+  `cargo check -p agents`, plus affected agent interface checks.
+- `crates/provider/**`: `cargo fmt -p provider`,
+  `cargo check -p provider`.
+- `crates/tools/**`: `cargo fmt -p tools`, `cargo check -p tools`.
+- `crates/router/**`: `cargo fmt -p router`,
+  `cargo check -p router`.
 - `apps/gui/**`: GUI typecheck/build and focused frontend tests.
 - `apps/tui/**`: TUI build and focused CLI/TUI tests.
 - `scripts/**`: manifest validation and install dry run when possible.
