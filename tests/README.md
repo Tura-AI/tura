@@ -17,18 +17,16 @@ internal runtime ↔ router traffic is CLI stdin/stdout JSON.
 
 ## Business Tests
 
-`tests/business/` contains long-running benchmarks that spawn real CLI agents
-and compare them through isolated harnesses. Entries are grouped by task
-category.
+`tests/business/` is reserved for non-live business test documentation and must
+not contain entry scripts that require private provider keys, authenticated CLI
+agents, live model calls, or long-running external services.
 
-Business-test outputs default to the same user workspace used by GUI and TUI:
-`~/Documents/tura workspace`. Each run writes to
-`~/Documents/tura workspace/target/{test_name}/{run_id}/summary.json`.
-Override the artifact root with `TURA_BUSINESS_TARGET_ROOT` or
-`COMMAND_RUN_BUSINESS_TARGET_ROOT`.
+Archived live business benchmarks live under `tests/business_old/`. They are
+manual-only and excluded from default CI because they can consume provider
+quota, require local agent checkouts, and write large artifacts. Their outputs
+default to `~/Documents/tura workspace/target/{test_name}/{run_id}/summary.json`.
 
-See `tests/business/README.md` for the entry list, output schema, and agent CLI
-comparison contract.
+See `tests/business_old/README.md` for manual execution notes.
 
 ## Inspecting Logs In Tests
 

@@ -134,7 +134,7 @@ fn runtime_acks_streamed_command_checkpoints_through_session_db() {
 #[test]
 fn playwright_lite_tura_usage_reports_final_cumulative_phase() {
     let script =
-        read("tests/business/frontend-playwright/react_ops_board_playwright_repair_lite.mjs");
+        read("tests/business_old/frontend-playwright/react_ops_board_playwright_repair_lite.mjs");
     assert!(
         script.contains("reporting_mode: useFinalPhaseUsage ? \"final_phase_cumulative\"")
             && script.contains("agentKind(agentId).startsWith(\"tura-\") && second.total > 0"),

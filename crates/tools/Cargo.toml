@@ -9,6 +9,14 @@ license.workspace = true
 name = "code_tools"
 path = "src/lib.rs"
 
+[[test]]
+name = "web_discover_live_provider_check"
+path = "tests/web_discover_live_provider_check.rs"
+required-features = ["live-tests"]
+
+[features]
+live-tests = []
+
 [dependencies]
 async-trait.workspace = true
 futures.workspace = true

@@ -28,10 +28,15 @@ path = "tests/prompt_injection_e2e.rs"
 [[test]]
 name = "coding_agent_live_test"
 path = "tests/coding_agent_live_test.rs"
+required-features = ["live-tests"]
 
 [[test]]
 name = "claude_code_live_e2e"
 path = "tests/claude_code_live_e2e.rs"
+required-features = ["live-tests"]
+
+[features]
+live-tests = []
 
 [[test]]
 name = "claude_code_mock_e2e"
