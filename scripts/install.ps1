@@ -48,11 +48,48 @@ function Write-Step {
 
 function Test-CommandAvailable {
   param([string]$Name)
-  $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
+
+  if (Get-Command $Name -ErrorAction SilentlyContinue) {
+    return $true
+  }
+
+  # winget is usually installed as an App Execution Alias under WindowsApps.
+  # Some PowerShell hosts do not have that directory on PATH, so Get-Command
+  # can return false even though winget.exe exists and is usable by path.
+  if ($Name -eq "winget") {
+    return $null -ne (Get-WingetCommand)
+  }
+
+  return $false
 }
 
 function Test-IsWindows {
   return ($IsWindows -or $env:OS -eq "Windows_NT")
+}
+
+function Get-WingetCommand {
+  $command = Get-Command "winget" -ErrorAction SilentlyContinue
+  if ($command) {
+    return $command.Source
+  }
+
+  if (Test-IsWindows) {
+    $candidates = @(
+      (Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps\winget.exe"),
+      (Join-Path $env:ProgramFiles "WindowsApps\Microsoft.DesktopAppInstaller_*_x64__8wekyb3d8bbwe\winget.exe")
+    )
+
+    foreach ($candidate in $candidates) {
+      $matches = Get-ChildItem -Path $candidate -ErrorAction SilentlyContinue | Sort-Object FullName -Descending
+      foreach ($match in $matches) {
+        if ($match -and (Test-Path $match.FullName)) {
+          return $match.FullName
+        }
+      }
+    }
+  }
+
+  return $null
 }
 
 function Get-CommandOutputLine {
@@ -166,7 +203,9 @@ function Invoke-InstallCommand {
 }
 
 function Require-Winget {
-  Require-Command "winget" "Install App Installer from Microsoft Store, then rerun this script."
+  if (-not (Get-WingetCommand)) {
+    throw "winget was not found. Install App Installer from Microsoft Store, then rerun this script."
+  }
 }
 
 function Get-VsWherePath {
@@ -224,11 +263,14 @@ function Invoke-WingetInstall {
     [string]$ManualHint,
     [string[]]$ExtraArgs = @()
   )
-  if (-not (Test-CommandAvailable "winget")) {
+
+  $winget = Get-WingetCommand
+  if (-not $winget) {
     throw "winget is not available. $ManualHint"
   }
+
   $args = @("install", "--id", $Id, "-e", "--silent", "--accept-package-agreements", "--accept-source-agreements") + $ExtraArgs
-  & winget @args
+  & $winget @args
   if ($LASTEXITCODE -ne 0) {
     throw "$Name install failed through winget. $ManualHint"
   }
@@ -311,7 +353,7 @@ function Ensure-Msys2Ucrt64Toolchain {
   }
 
   Write-Step "Installing MSYS2 UCRT64 native toolchain"
-  if (-not (Test-CommandAvailable "winget")) {
+  if (-not (Get-WingetCommand)) {
     throw "MSYS2 UCRT64 toolchain was not found and winget is not available. Install MSYS2 from https://www.msys2.org/ and install mingw-w64-ucrt-x86_64-toolchain."
   }
   Invoke-WingetInstall "MSYS2.MSYS2" "MSYS2" "Install MSYS2 from https://www.msys2.org/."
@@ -475,11 +517,12 @@ function Ensure-WindowsRustBuildTools {
   try {
     Invoke-VisualStudioBuildToolsInstall
   } catch {
-    if (-not (Test-CommandAvailable "winget")) {
+    $winget = Get-WingetCommand
+    if (-not $winget) {
       throw "Visual Studio Build Tools automatic installation failed and winget is not available. $manualHint`n$($_.Exception.Message)"
     }
     $override = "--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.Windows11SDK.22621 --includeRecommended"
-    & winget install --id Microsoft.VisualStudio.2022.BuildTools -e --silent --accept-package-agreements --accept-source-agreements --override $override
+    & $winget install --id Microsoft.VisualStudio.2022.BuildTools -e --silent --accept-package-agreements --accept-source-agreements --override $override
     if ($LASTEXITCODE -ne 0) {
       throw "Visual Studio Build Tools installation failed through winget. $manualHint`n$($_.Exception.Message)"
     }
