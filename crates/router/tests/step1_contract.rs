@@ -74,10 +74,12 @@ fn runtime_and_gateway_session_db_clients_use_file_queue_without_one_shot_proces
         let source = read(path);
         assert!(
             source.contains("file_queue::enqueue_command")
-                && source.contains("file_queue::drain_queue")
-                && source.contains("SessionLogStore::open_default"),
-            "{path} must enqueue writes and drain before direct reads"
+                && source.contains("ipc::call_service")
+                && !source.contains("SessionLogStore::open_default")
+                && !source.contains("file_queue::drain_queue"),
+            "{path} must enqueue writes and read only through the session_db socket"
         );
+        let forbidden_direct_env = ["TURA_SESSION_DB_ALLOW", "DIRECT"].join("_");
         for forbidden in [
             "session-db-call",
             "Command::new",
@@ -92,6 +94,10 @@ fn runtime_and_gateway_session_db_clients_use_file_queue_without_one_shot_proces
                 "{path} must not keep one-shot session DB process flow: {forbidden}"
             );
         }
+        assert!(
+            !source.contains(&forbidden_direct_env),
+            "{path} must not keep one-shot session DB process flow: {forbidden_direct_env}"
+        );
     }
 }
 
@@ -128,5 +134,24 @@ fn runtime_acks_streamed_command_checkpoints_through_session_db() {
             && runtime_call.contains("checkpoint_streamed_command_finished")
             && runtime_call.contains("session_db command checkpoint ACK failed"),
         "runtime streamed command results must ACK durable command checkpoints through session_db"
+    );
+}
+
+#[test]
+fn gui_dev_gateway_is_parent_owned_and_refuses_unknown_port_owner() {
+    let vite = read("apps/gui/app/vite.config.ts");
+    assert!(
+        vite.contains("ownedGatewayChild")
+            && vite.contains("server.httpServer?.once(\"close\"")
+            && vite.contains("killOwnedGateway()"),
+        "GUI dev must keep an owned gateway child and kill it when Vite closes"
+    );
+    assert!(
+        !vite.contains("detached: true") && !vite.contains("child.unref()"),
+        "GUI dev gateway must not be detached or unrefed"
+    );
+    assert!(
+        vite.contains("canBindGatewayUrl") && vite.contains("unknown or foreign process"),
+        "GUI dev must fail rather than spawn when the gateway port is occupied by an unknown process"
     );
 }

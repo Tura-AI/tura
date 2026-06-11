@@ -1,6 +1,7 @@
 use super::{normalize_command_steps, normalize_shell_command_arguments, parse_args};
 use serde_json::json;
 use serde_json::Value;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn parse_missing_steps_default_to_original_order_steps() {
@@ -233,4 +234,41 @@ fn parse_command_only_here_string_patch_is_routed_to_apply_patch() {
 
     assert_eq!(args.commands[0].command, "apply_patch");
     assert!(args.commands[0].command_line.starts_with("*** Begin Patch"));
+}
+
+#[tokio::test]
+async fn streaming_executor_returns_safe_shell_result_before_finish() {
+    let workspace = temporary_workspace("streaming-safe-shell-before-finish");
+    let mut executor = super::StreamingCommandRunExecutor::new(workspace.clone());
+
+    let result = executor
+        .push_command_value(json!({
+            "command": "shell_command",
+            "command_line": "echo streamed-safe-shell",
+            "timeout_ms": 3000,
+            "step": 1
+        }))
+        .await;
+
+    assert!(
+        !result.is_empty(),
+        "streaming shell result should be available before finish()"
+    );
+    assert_eq!(
+        result[0].get("success").and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+fn temporary_workspace(prefix: &str) -> std::path::PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after UNIX_EPOCH")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&path)
+        .unwrap_or_else(|error| panic!("failed to create {}: {error}", path.display()));
+    path
 }

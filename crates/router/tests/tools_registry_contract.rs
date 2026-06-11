@@ -24,6 +24,7 @@ fn router_loads_core_and_external_command_manifests() {
     for id in [
         "shell_command",
         "bash",
+        "zsh",
         "apply_patch",
         "task_status",
         "compact_context",

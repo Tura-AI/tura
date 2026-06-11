@@ -38,7 +38,13 @@ crates/provider/
   config/
     provider_config.json
   tests/
-    provider_tool_call_live_smoke.rs
+    business/
+      live/
+        claude_code_live_smoke.rs
+        codex_priority_tps_live.rs
+        live_model_smoke.rs
+        provider_tool_call_live_smoke.rs
+        responses_tier_live_smoke.rs
 
   src/
     lib.rs

@@ -1,14 +1,14 @@
 //! End-to-end interceptor tests.
 //!
-//! These tests drive the real `command_run` entry point with the bash surface
+//! These tests drive the real `command_run` entry point with shell surfaces
 //! and *actually execute* commands. The point is to prove the interceptor's
 //! effect on real execution: dangerous commands must be blocked before they run
 //! (verified by checking that their destructive side effect never happened),
 //! while safe commands must still run for real (verified by their side effect).
 //!
 //! Designed to run on Linux inside the Docker harness under `tests/docker/`.
-//! The whole file is gated to Unix so it only executes where a real `bash` is
-//! present.
+//! The whole file is gated to Unix so it only executes where a real POSIX shell
+//! is present.
 #![cfg(unix)]
 
 use code_tools::command_run;
@@ -37,6 +37,29 @@ fn run_bash(root: &Path, command: &str) -> serde_json::Value {
         &json!({
             "commands": [
                 { "command": "bash", "command_line": json!({ "command": command, "timeout_ms": 8000 }).to_string() }
+            ]
+        }),
+        root,
+    )
+}
+
+fn zsh_available() -> bool {
+    std::process::Command::new("zsh")
+        .arg("-c")
+        .arg("print -r -- zsh-ok")
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn run_zsh(root: &Path, command: &str) -> serde_json::Value {
+    let _guard = ENV_LOCK.lock().expect("env lock");
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "zsh");
+    std::env::remove_var("TURA_COMMAND_INTERCEPTOR_DISABLED");
+    command_run::execute(
+        &json!({
+            "commands": [
+                { "command": "zsh", "command_line": json!({ "command": command, "timeout_ms": 8000 }).to_string() }
             ]
         }),
         root,
@@ -75,6 +98,26 @@ fn dangerous_rm_rf_is_blocked_and_target_survives() {
     assert!(
         target.join("keep.txt").exists(),
         "dangerous rm must not have executed"
+    );
+}
+
+#[test]
+fn zsh_surface_blocks_dangerous_rm_rf_and_target_survives() {
+    if !zsh_available() {
+        eprintln!("zsh unavailable; skipping zsh interceptor fixture");
+        return;
+    }
+    let root = workspace("zsh-rm-rf");
+    let target = root.join("precious-zsh");
+    fs::create_dir_all(&target).expect("create target");
+    fs::write(target.join("keep.txt"), "data").expect("write file");
+
+    let output = run_zsh(&root, "rm -rf precious-zsh");
+
+    assert_blocked(&output);
+    assert!(
+        target.join("keep.txt").exists(),
+        "dangerous zsh rm must not have executed"
     );
 }
 

@@ -2,6 +2,10 @@ Continue working toward the active thread goal. The objective below is user-prov
 
 ***the objective is the last user input***
 
+When you have just received a user message, always first tell the user how you intend to handle it before starting tool work or deeper investigation.
+
+When a task objective is created, changed, or recognized from the user's message, notify the user about that objective immediately in a normal assistant-channel reply.
+
 Before deciding that the goal is achieved, perform a completion audit against the actual current state:
 - Verify all the scoop of work in the objective is 100% identified.
 - Restate the objective as concrete deliverables or success criteria.

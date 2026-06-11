@@ -7,7 +7,13 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
-use std::{fs, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
+
+const DEFAULT_WORKSPACE_NAME: &str = "tura_workspace";
+const DOCUMENTS_DIRECTORY_NAMES: &[&str] = &["Documents", "文档"];
 
 // ============================================================================
 // Project List & Current
@@ -58,7 +64,7 @@ pub async fn create_named_workspace(
 }
 
 pub async fn use_default_workspace() -> Result<Json<Project>, (StatusCode, String)> {
-    let name = "tura workspace".to_string();
+    let name = DEFAULT_WORKSPACE_NAME.to_string();
     let directory = documents_directory().join(&name);
     fs::create_dir_all(&directory).map_err(internal_error)?;
     Ok(Json(upsert_workspace_project(directory, Some(name))))
@@ -111,7 +117,7 @@ fn upsert_workspace_project(directory: PathBuf, name: Option<String>) -> Project
 }
 
 fn list_projects_with_default_workspace() -> Vec<Project> {
-    let default_directory = documents_directory().join("tura workspace");
+    let default_directory = documents_directory().join(DEFAULT_WORKSPACE_NAME);
     let default_worktree = default_directory.to_string_lossy().to_string();
     let mut projects = global_store().list_projects();
     if !projects
@@ -121,7 +127,7 @@ fn list_projects_with_default_workspace() -> Vec<Project> {
         let _ = fs::create_dir_all(&default_directory);
         projects.insert(
             0,
-            global_store().add_project(default_worktree, Some("tura workspace".to_string())),
+            global_store().add_project(default_worktree, Some(DEFAULT_WORKSPACE_NAME.to_string())),
         );
     }
     projects
@@ -131,28 +137,97 @@ fn documents_directory() -> PathBuf {
     if let Some(path) = xdg_documents_directory() {
         return path;
     }
-    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"));
-    let home = home
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    home.join("Documents")
+
+    let homes = home_directory_candidates();
+    documents_directory_from_homes(&homes).unwrap_or_else(|| {
+        env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(DOCUMENTS_DIRECTORY_NAMES[0])
+    })
 }
 
 fn xdg_documents_directory() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let home = env::var_os("HOME").map(PathBuf::from)?;
     let config = home.join(".config").join("user-dirs.dirs");
     let content = fs::read_to_string(config).ok()?;
     for line in content.lines() {
         let line = line.trim();
-        let value = line.strip_prefix("XDG_DOCUMENTS_DIR=")?;
+        let Some(value) = line.strip_prefix("XDG_DOCUMENTS_DIR=") else {
+            continue;
+        };
         let value = value
             .trim_matches('"')
+            .replace("${HOME}", &home.to_string_lossy())
             .replace("$HOME", &home.to_string_lossy());
         if !value.trim().is_empty() {
             return Some(PathBuf::from(value));
         }
     }
     None
+}
+
+fn home_directory_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    for key in ["USERPROFILE", "HOME"] {
+        if let Some(value) = env::var_os(key) {
+            push_unique_path(&mut candidates, PathBuf::from(value));
+        }
+    }
+
+    if let (Some(drive), Some(path)) = (env::var_os("HOMEDRIVE"), env::var_os("HOMEPATH")) {
+        let mut combined = PathBuf::from(drive);
+        combined.push(path);
+        push_unique_path(&mut candidates, combined);
+    }
+
+    candidates
+}
+
+fn documents_directory_from_homes(homes: &[PathBuf]) -> Option<PathBuf> {
+    for home in homes {
+        if is_documents_directory(home) {
+            return Some(home.clone());
+        }
+    }
+
+    for home in homes {
+        for name in DOCUMENTS_DIRECTORY_NAMES {
+            let candidate = home.join(name);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    homes
+        .first()
+        .map(|home| home.join(DOCUMENTS_DIRECTORY_NAMES[0]))
+}
+
+fn is_documents_directory(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|name| {
+            DOCUMENTS_DIRECTORY_NAMES
+                .iter()
+                .any(|candidate| name.eq_ignore_ascii_case(candidate))
+        })
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, candidate: PathBuf) {
+    if candidate.as_os_str().is_empty() {
+        return;
+    }
+    if !paths
+        .iter()
+        .any(|existing| same_directory_path(existing, &candidate))
+    {
+        paths.push(candidate);
+    }
+}
+
+fn same_directory_path(left: &Path, right: &Path) -> bool {
+    same_directory(&left.to_string_lossy(), &right.to_string_lossy())
 }
 
 fn sanitize_workspace_name(value: &str) -> String {
@@ -223,5 +298,44 @@ fn hex(value: u8) -> Option<u8> {
         b'a'..=b'f' => Some(value - b'a' + 10),
         b'A'..=b'F' => Some(value - b'A' + 10),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn documents_directory_uses_existing_documents_candidate() {
+        let temp = env::temp_dir().join(format!(
+            "tura-project-documents-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let documents = temp.join("文档");
+        fs::create_dir_all(&documents).expect("create localized documents directory");
+
+        let selected =
+            documents_directory_from_homes(std::slice::from_ref(&temp)).expect("documents path");
+
+        assert_eq!(selected, documents);
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn documents_directory_does_not_duplicate_documents_leaf() {
+        let home = PathBuf::from(r"C:\Users\alice\Documents");
+
+        let selected =
+            documents_directory_from_homes(std::slice::from_ref(&home)).expect("documents path");
+
+        assert_eq!(selected, home);
+    }
+
+    #[test]
+    fn same_directory_matches_mixed_separators_and_case() {
+        assert!(same_directory(
+            r"C:\Users\Alice\Documents\tura_workspace\",
+            "c:/users/alice/documents/tura_workspace"
+        ));
     }
 }

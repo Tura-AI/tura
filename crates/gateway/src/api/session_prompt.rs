@@ -234,8 +234,9 @@ fn prompt_runtime_context(payload: &serde_json::Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
-/// 通过 router CLI 转发一次 prompt：gateway 仅做转发 + 状态收尾，
-/// runtime 行为全部经 router→runtime worker 子进程执行，事件经现有回调通道回报。
+/// Forward one prompt through the router; the gateway only handles handoff and
+/// final state bookkeeping. Runtime work runs in router-managed worker
+/// subprocesses and reports events through the existing callback channel.
 pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value) {
     let content = prompt_text(&payload).unwrap_or_else(|| "Prompt submitted".to_string());
     let before_count = session_store().get_messages(&session_id).len();
@@ -294,7 +295,7 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
-    // worker env 契约：取代旧的进程级 with_*_env 注入，由 router 注入 runtime worker 子进程。
+    // Worker env contract: router injects these values into the runtime worker.
     let mut worker_env: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     if let Some(reasoning) = reasoning_effort
@@ -377,7 +378,8 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
     }
 }
 
-/// 阻塞式提交给 gateway 持有的唯一 persistent router；gateway 不再直接 spawn runtime worker。
+/// Submit through the gateway-owned persistent router instead of spawning a
+/// runtime worker directly.
 fn forward_run_agent_to_router(
     turn_id: &str,
     session_id: &str,

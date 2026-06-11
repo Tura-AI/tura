@@ -51,7 +51,7 @@ function codexBinForRoot(root) {
 }
 
 function turaBinForRoot(root) {
-  return path.join(root, "target", "debug", process.platform === "win32" ? "tura.exe" : "tura")
+  return path.join(root, "target", "debug", process.platform === "win32" ? "tura_exec.exe" : "tura_exec")
 }
 
 async function writeText(file, content) {

@@ -39,17 +39,42 @@ pub fn resolve_binary(binary_name: &str) -> Option<PathBuf> {
     } else {
         binary_name.to_string()
     };
-    repo_root().and_then(|root| {
-        [
-            root.join("target").join("release").join(&exe_name),
-            root.join("target").join("debug").join(&exe_name),
-        ]
+    binary_candidates(&exe_name)
         .into_iter()
         .find(|candidate| candidate.exists())
-    })
+}
+
+/// Candidate locations for a packaged command binary, in priority order.
+///
+/// Packaged builds place the command binaries next to the gateway executable
+/// (e.g. `target/release/` or `bin/`) and set `TURA_PROJECT_ROOT`, so those are
+/// checked before the source-tree `target/{release,debug}` layout used in dev.
+fn binary_candidates(exe_name: &str) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(dir) = current_exe.parent() {
+            candidates.push(dir.join(exe_name));
+        }
+    }
+    if let Some(root) = std::env::var_os("TURA_PROJECT_ROOT").map(PathBuf::from) {
+        candidates.push(root.join("bin").join(exe_name));
+        candidates.push(root.join(exe_name));
+        candidates.push(root.join("target").join("release").join(exe_name));
+        candidates.push(root.join("target").join("debug").join(exe_name));
+    }
+    if let Some(root) = repo_root() {
+        candidates.push(root.join("target").join("release").join(exe_name));
+        candidates.push(root.join("target").join("debug").join(exe_name));
+    }
+    candidates
 }
 
 pub fn repo_root() -> Option<PathBuf> {
+    if let Some(root) = std::env::var_os("TURA_PROJECT_ROOT").map(PathBuf::from) {
+        if root.exists() {
+            return Some(root);
+        }
+    }
     std::env::current_dir().ok().and_then(|current| {
         current
             .ancestors()

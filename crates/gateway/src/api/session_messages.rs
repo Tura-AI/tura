@@ -53,10 +53,12 @@ pub async fn send_agent_message(
     let message = if content.trim().is_empty() {
         None
     } else {
-        session_store().add_message_with_metadata(
+        session_store().add_message_with_ids(
             &session_id,
             SessionMessageRole::Assistant,
             content,
+            payload.message_id.clone(),
+            payload.part_id.clone(),
             agent_message_metadata(&payload),
         )
     };
@@ -97,6 +99,28 @@ pub async fn send_agent_message(
             error: Some("failed to store agent message".to_string()),
         }),
     }
+}
+
+pub async fn stream_agent_message(
+    Path(session_id): Path<String>,
+    Json(payload): Json<StreamAgentTextRequest>,
+) -> Json<serde_json::Value> {
+    if payload.delta.is_empty() {
+        return Json(serde_json::json!({ "ok": true }));
+    }
+    // Transient streaming overlay only: emit the delta so the frontend renders
+    // tokens live. The persisted message arrives later via `send_agent_message`
+    // reusing the same ids, which replaces these deltas with the full reply.
+    session_store().push_event(GlobalEvent::MessagePartDelta {
+        properties: crate::api::types::MessagePartDeltaProperties {
+            session_id: session_id.clone(),
+            message_id: payload.message_id,
+            part_id: payload.part_id,
+            field: "text".to_string(),
+            delta: payload.delta,
+        },
+    });
+    Json(serde_json::json!({ "ok": true, "session_id": session_id }))
 }
 
 fn sync_auto_session_name_from_agent_tool_call(
@@ -196,6 +220,20 @@ pub struct SendAgentMessageRequest {
     pub media: Vec<SendAgentMedia>,
     pub runtime_id: Option<String>,
     pub tool_call: Option<SendAgentToolCall>,
+    /// Stable id pair from the streamed assistant text so the persisted message
+    /// reuses the same ids and cleanly replaces the streamed `message.part.delta`s.
+    pub message_id: Option<String>,
+    pub part_id: Option<String>,
+}
+
+/// One incremental assistant text token streamed from the runtime, re-emitted by
+/// the gateway as a `message.part.delta` so the frontend renders tokens live.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct StreamAgentTextRequest {
+    pub message_id: String,
+    pub part_id: String,
+    pub delta: String,
+    pub runtime_id: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]

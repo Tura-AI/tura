@@ -124,7 +124,7 @@ pub fn process_manas_internal(
                     .clone()
                     .unwrap_or_else(|| format!("runtime-error-{}", session.session_id));
                 publish_runtime_failure_message(session, &runtime_id, &error);
-                if env_flag("TURA_FAIL_ON_RUNTIME_ERROR") {
+                if env_flag("TURA_RUNTIME_ERRORS_FATAL") {
                     return Err(error);
                 }
                 final_session_state = SessionState::Failed;
@@ -236,7 +236,7 @@ pub fn process_manas_internal(
                 "provider runtime failed"
             );
             publish_runtime_failure_message(session, &runtime.runtime_id, &error_text);
-            if env_flag("TURA_FAIL_ON_RUNTIME_ERROR") {
+            if env_flag("TURA_RUNTIME_ERRORS_FATAL") {
                 return Err(error_text);
             }
             final_session_state = SessionState::Failed;
@@ -244,10 +244,7 @@ pub fn process_manas_internal(
         }
 
         if !tool_calls.is_empty() {
-            if let Some(content) = user_visible_runtime_text(&runtime.text)
-                .map(|text| text.trim().to_string())
-                .filter(|text| !text.is_empty())
-            {
+            if let Some(content) = visible_runtime_reply(&runtime) {
                 if let Err(error) = publish_gateway_agent_message(
                     &session.session_id,
                     &runtime.runtime_id,
@@ -489,12 +486,7 @@ fn run_terminal_final_response_turn(
         true,
         true,
     )?;
-    let visible_text = user_visible_runtime_text(&runtime.text).or_else(|| {
-        runtime
-            .output
-            .as_ref()
-            .and_then(user_visible_runtime_output_text)
-    });
+    let visible_text = visible_runtime_reply(&runtime);
     let has_visible_text = visible_text
         .as_ref()
         .map(|text| !text.trim().is_empty())
@@ -519,6 +511,18 @@ fn run_terminal_final_response_turn(
     session.increment_turn(Utc::now());
     persist_session_checkpoint(session, "terminal_final_response");
     Ok(has_visible_text)
+}
+
+fn visible_runtime_reply(runtime: &RuntimeManagement) -> Option<String> {
+    user_visible_runtime_text(&runtime.text)
+        .or_else(|| {
+            runtime
+                .output
+                .as_ref()
+                .and_then(user_visible_runtime_output_text)
+        })
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
 }
 
 #[cfg(test)]

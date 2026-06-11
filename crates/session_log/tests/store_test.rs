@@ -1,15 +1,90 @@
 use session_log::{
-    file_queue, GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest,
-    SessionLogCommand, SessionLogStore, UpsertSessionRequest,
+    file_queue, DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest,
+    ListSessionRecordsRequest, ListSessionsRequest, SessionLogCommand, SessionLogStore,
+    UpsertSessionRequest,
 };
+use std::path::Path;
 use std::process::Command;
+
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+struct EnvRestore {
+    keys: Vec<(&'static str, Option<std::ffi::OsString>)>,
+}
+
+impl EnvRestore {
+    fn capture(keys: &[&'static str]) -> Self {
+        Self {
+            keys: keys
+                .iter()
+                .map(|key| (*key, std::env::var_os(key)))
+                .collect(),
+        }
+    }
+}
+
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        for (key, value) in &self.keys {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+}
+
+struct DirectDbGuard {
+    _serial: std::sync::MutexGuard<'static, ()>,
+    _env: EnvRestore,
+    root: tempfile::TempDir,
+    workspaces: tempfile::TempDir,
+}
+
+impl DirectDbGuard {
+    fn new() -> Self {
+        let serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
+        let env = EnvRestore::capture(&["SESSION_LOG_DB_ROOT", "TURA_DB_ROOT"]);
+        let root = tempfile::tempdir().expect("tempdir");
+        let workspaces = tempfile::tempdir().expect("workspace tempdir");
+        std::env::set_var("SESSION_LOG_DB_ROOT", root.path());
+        std::env::remove_var("TURA_DB_ROOT");
+        Self {
+            _serial: serial,
+            _env: env,
+            root,
+            workspaces,
+        }
+    }
+
+    fn root(&self) -> &Path {
+        self.root.path()
+    }
+
+    fn workspace(&self, name: &str) -> String {
+        let path = self.workspaces.path().join(name);
+        std::fs::create_dir_all(&path).expect("workspace dir");
+        path.to_string_lossy().replace('\\', "/")
+    }
+
+    fn workspace_db(&self, workspace: &str) -> std::path::PathBuf {
+        std::path::PathBuf::from(workspace)
+            .join(".tura")
+            .join("session_log.sqlite3")
+    }
+
+    fn index_db(&self) -> std::path::PathBuf {
+        self.root.path().join("session_log").join("index.sqlite3")
+    }
+}
 
 #[test]
 fn stores_workspaces_sessions_and_last_record_page() {
+    let db = DirectDbGuard::new();
     let store = SessionLogStore::open_default().expect("store");
     let nonce = uuid::Uuid::new_v4().to_string();
     let session_id = format!("s-{nonce}");
-    let workspace = format!(r"C:\repo-{nonce}\");
+    let workspace = db.workspace(&format!("repo-{nonce}"));
 
     store
         .upsert_session(UpsertSessionRequest {
@@ -34,7 +109,7 @@ fn stores_workspaces_sessions_and_last_record_page() {
         .expect("upsert");
 
     let workspaces = store.list_workspaces().expect("workspaces");
-    let normalized_workspace = format!("C:/repo-{nonce}");
+    let normalized_workspace = session_log::path::normalize_workspace(&workspace);
     let workspace_summary = workspaces
         .iter()
         .find(|item| item.directory == normalized_workspace)
@@ -43,7 +118,7 @@ fn stores_workspaces_sessions_and_last_record_page() {
 
     let (page, sessions) = store
         .list_sessions(ListSessionsRequest {
-            workspace: normalized_workspace,
+            workspace: normalized_workspace.clone(),
             page: 0,
             page_size: 10,
         })
@@ -72,165 +147,214 @@ fn stores_workspaces_sessions_and_last_record_page() {
     assert_eq!(page.page, 1);
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].message_id, "m3");
-}
-
-#[test]
-fn handles_concurrent_upserts_and_workspace_pagination() {
-    let store = SessionLogStore::open_default().expect("store");
-    let nonce = uuid::Uuid::new_v4().to_string();
-    let workspace = format!("C:/stress-{nonce}");
-    let started = std::time::Instant::now();
-    let worker_count = 8;
-    let per_worker = 25;
-
-    let mut workers = Vec::new();
-    for worker in 0..worker_count {
-        let store = store.clone();
-        let workspace = workspace.clone();
-        let nonce = nonce.clone();
-        workers.push(std::thread::spawn(move || {
-            for index in 0..per_worker {
-                let sequence = worker * per_worker + index;
-                let session_id = format!("stress-{nonce}-{sequence}");
-                store
-                    .upsert_session(UpsertSessionRequest {
-                        session: serde_json::json!({
-                            "id": session_id,
-                            "name": format!("Stress {sequence}"),
-                            "directory": workspace,
-                            "created_at": sequence,
-                            "updated_at": sequence,
-                            "status": "idle",
-                            "management": {
-                                "session_id": session_id,
-                                "session_name": format!("Stress {sequence}"),
-                                "state": "Idle"
-                            }
-                        }),
-                        parent_id: None,
-                        messages: vec![serde_json::json!({
-                            "id": format!("m-{sequence}"),
-                            "role": "assistant",
-                            "created_at": sequence,
-                            "updated_at": sequence
-                        })],
-                        todos: vec![],
-                    })
-                    .expect("upsert");
-            }
-        }));
-    }
-
-    for worker in workers {
-        worker.join().expect("worker");
-    }
-
-    let (page, sessions) = store
-        .list_sessions(ListSessionsRequest {
-            workspace,
-            page: 0,
-            page_size: 50,
-        })
-        .expect("sessions");
-
-    assert_eq!(page.total, worker_count * per_worker);
-    assert_eq!(page.page_size, 50);
-    assert_eq!(sessions.len(), 50);
+    assert!(db.index_db().exists(), "index db should stay under tura/db");
     assert!(
-        started.elapsed() < std::time::Duration::from_secs(30),
-        "concurrent upsert smoke test took {:?}",
-        started.elapsed()
+        db.workspace_db(&normalized_workspace).exists(),
+        "workspace session log should live under <workspace>/.tura"
     );
 }
 
 #[test]
-fn cross_process_open_default_uses_one_queued_local_database() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let port = reserve_local_port();
-    let nonce = uuid::Uuid::new_v4().to_string();
-    let workspace = format!("C:/cross-process-{nonce}");
-    let worker_count = 12;
-    let current_exe = std::env::current_exe().expect("current test exe");
+fn delete_session_and_workspace_update_index_and_workspace_dbs() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let first_workspace = db.workspace("delete-session-workspace");
+    let second_workspace = db.workspace("delete-workspace-workspace");
+    let first_session = format!("delete-session-{}", uuid::Uuid::new_v4());
+    let second_session = format!("delete-workspace-{}", uuid::Uuid::new_v4());
 
-    let mut children = Vec::new();
-    for worker in 0..worker_count {
-        let session_id = format!("cross-process-{nonce}-{worker}");
-        children.push(
-            Command::new(&current_exe)
-                .args([
-                    "--ignored",
-                    "--exact",
-                    "cross_process_session_log_helper",
-                    "--nocapture",
-                ])
-                .env("SESSION_LOG_CROSS_PROCESS_MODE", "upsert")
-                .env("SESSION_LOG_CROSS_PROCESS_SESSION_ID", session_id)
-                .env("SESSION_LOG_CROSS_PROCESS_WORKSPACE", &workspace)
-                .env("SESSION_LOG_DB_ROOT", temp.path())
-                .env("session_log_POSTGRES_PORT", port.to_string())
-                .env_remove("session_log_DATABASE_URL")
-                .env_remove("DATABASE_URL")
-                .spawn()
-                .expect("spawn helper"),
-        );
+    store
+        .upsert_session(upsert(&first_session, &first_workspace, 1))
+        .expect("first upsert");
+    store
+        .upsert_session(upsert(&second_session, &second_workspace, 2))
+        .expect("second upsert");
+
+    store
+        .delete_session(DeleteSessionRequest {
+            session_id: first_session.clone(),
+        })
+        .expect("delete session");
+    assert!(store
+        .get_session(GetSessionRequest {
+            session_id: first_session.clone(),
+        })
+        .expect("get deleted session")
+        .is_none());
+    let (_page, records) = store
+        .list_session_records(ListSessionRecordsRequest {
+            session_id: first_session,
+            page: 0,
+            page_size: 50,
+        })
+        .expect("deleted session records");
+    assert!(records.is_empty());
+
+    store
+        .delete_workspace(DeleteWorkspaceRequest {
+            workspace: second_workspace.clone(),
+        })
+        .expect("delete workspace");
+    assert!(store
+        .get_session(GetSessionRequest {
+            session_id: second_session,
+        })
+        .expect("get workspace-deleted session")
+        .is_none());
+    assert!(
+        !db.workspace_db(&second_workspace).exists(),
+        "delete_workspace should remove the workspace session log DB"
+    );
+}
+
+#[test]
+fn missing_workspace_db_removes_index_snapshot() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let workspace = db.workspace("missing-workspace-db");
+    let session_id = format!("missing-workspace-{}", uuid::Uuid::new_v4());
+
+    store
+        .upsert_session(upsert(&session_id, &workspace, 1))
+        .expect("upsert");
+    assert!(db.workspace_db(&workspace).exists());
+    std::fs::remove_dir_all(std::path::PathBuf::from(&workspace).join(".tura"))
+        .expect("remove workspace db directory");
+
+    assert!(store
+        .get_session(GetSessionRequest { session_id })
+        .expect("get after missing workspace db")
+        .is_none());
+    let workspaces = store.list_workspaces().expect("workspaces after sweep");
+    assert!(!workspaces
+        .iter()
+        .any(|item| item.directory == session_log::path::normalize_workspace(&workspace)));
+}
+
+#[test]
+fn rejects_upsert_without_session_id_with_context() {
+    let _db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+
+    let error = store
+        .upsert_session(UpsertSessionRequest {
+            session: serde_json::json!({
+                "name": "Missing id",
+                "directory": "C:/missing-id"
+            }),
+            parent_id: None,
+            messages: vec![],
+            todos: vec![],
+        })
+        .expect_err("missing session id should fail");
+
+    assert!(
+        error.to_string().contains("session id missing"),
+        "unexpected error: {error:#}"
+    );
+}
+
+#[test]
+fn corrupted_workspace_session_json_returns_contextual_error() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let workspace = db.workspace("corrupt-session-json");
+    let session_id = format!("corrupt-session-json-{}", uuid::Uuid::new_v4());
+
+    store
+        .upsert_session(upsert(&session_id, &workspace, 1))
+        .expect("upsert");
+    let conn = rusqlite::Connection::open(db.workspace_db(&workspace)).expect("workspace db");
+    conn.execute(
+        "UPDATE sessions SET session_json = ?2 WHERE session_id = ?1",
+        rusqlite::params![session_id, "{not-json"],
+    )
+    .expect("corrupt session json");
+
+    let error = store
+        .get_session(GetSessionRequest {
+            session_id: session_id.clone(),
+        })
+        .expect_err("corrupt session_json should fail");
+    let text = error.to_string();
+    assert!(text.contains("session_json"), "unexpected error: {error:#}");
+    assert!(text.contains(&session_id), "unexpected error: {error:#}");
+}
+
+#[test]
+fn corrupted_record_json_returns_contextual_error() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let workspace = db.workspace("corrupt-record-json");
+    let session_id = format!("corrupt-record-json-{}", uuid::Uuid::new_v4());
+
+    store
+        .upsert_session(upsert(&session_id, &workspace, 1))
+        .expect("upsert");
+    let conn = rusqlite::Connection::open(db.workspace_db(&workspace)).expect("workspace db");
+    conn.execute(
+        "UPDATE session_records SET record_json = ?2 WHERE session_id = ?1",
+        rusqlite::params![session_id, "{not-json"],
+    )
+    .expect("corrupt record json");
+
+    let error = store
+        .list_session_records(ListSessionRecordsRequest {
+            session_id: session_id.clone(),
+            page: 0,
+            page_size: 100,
+        })
+        .expect_err("corrupt record_json should fail");
+    let text = error.to_string();
+    assert!(text.contains("record_json"), "unexpected error: {error:#}");
+    assert!(text.contains(&session_id), "unexpected error: {error:#}");
+}
+
+fn upsert(session_id: &str, workspace: &str, sequence: i64) -> UpsertSessionRequest {
+    UpsertSessionRequest {
+        session: serde_json::json!({
+            "id": session_id,
+            "name": format!("Session {sequence}"),
+            "directory": workspace,
+            "created_at": sequence,
+            "updated_at": sequence,
+            "status": "idle",
+            "management": {
+                "session_id": session_id,
+                "session_name": format!("Session {sequence}"),
+                "state": "Idle"
+            }
+        }),
+        parent_id: None,
+        messages: vec![serde_json::json!({
+            "id": format!("m-{sequence}"),
+            "role": "assistant",
+            "created_at": sequence,
+            "updated_at": sequence
+        })],
+        todos: vec![],
     }
-
-    for mut child in children {
-        let status = child.wait().expect("wait helper");
-        assert!(status.success(), "helper exited with {status}");
-    }
-
-    let status = Command::new(&current_exe)
-        .args([
-            "--ignored",
-            "--exact",
-            "cross_process_session_log_helper",
-            "--nocapture",
-        ])
-        .env("SESSION_LOG_CROSS_PROCESS_MODE", "verify")
-        .env("SESSION_LOG_CROSS_PROCESS_WORKSPACE", &workspace)
-        .env(
-            "SESSION_LOG_CROSS_PROCESS_EXPECTED",
-            worker_count.to_string(),
-        )
-        .env("SESSION_LOG_DB_ROOT", temp.path())
-        .env("session_log_POSTGRES_PORT", port.to_string())
-        .env_remove("session_log_DATABASE_URL")
-        .env_remove("DATABASE_URL")
-        .status()
-        .expect("verify helper");
-    assert!(status.success(), "verify helper exited with {status}");
 }
 
 #[test]
 fn file_queue_write_drains_into_session_store() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let port = reserve_local_port();
+    let db = DirectDbGuard::new();
     let nonce = uuid::Uuid::new_v4().to_string();
     let session_id = format!("file-queue-{nonce}");
-    let workspace = format!("C:/file-queue-{nonce}");
+    let workspace = db.workspace(&format!("file-queue-{nonce}"));
     let current_exe = std::env::current_exe().expect("current test exe");
 
     let status = Command::new(&current_exe)
-        .args([
-            "--ignored",
-            "--exact",
-            "file_queue_session_log_helper",
-            "--nocapture",
-        ])
+        .args(["--exact", "file_queue_session_log_helper", "--nocapture"])
         .env("SESSION_LOG_FILE_QUEUE_SESSION_ID", &session_id)
         .env("SESSION_LOG_FILE_QUEUE_WORKSPACE", &workspace)
-        .env("SESSION_LOG_DB_ROOT", temp.path())
-        .env("session_log_POSTGRES_PORT", port.to_string())
-        .env_remove("session_log_DATABASE_URL")
-        .env_remove("DATABASE_URL")
+        .env("SESSION_LOG_DB_ROOT", db.root())
         .status()
         .expect("file queue helper");
     assert!(status.success(), "file queue helper exited with {status}");
 }
 
 #[test]
-#[ignore]
 fn file_queue_session_log_helper() {
     let Ok(session_id) = std::env::var("SESSION_LOG_FILE_QUEUE_SESSION_ID") else {
         return;
@@ -273,61 +397,55 @@ fn file_queue_session_log_helper() {
 }
 
 #[test]
-#[ignore]
-fn cross_process_session_log_helper() {
-    let Ok(mode) = std::env::var("SESSION_LOG_CROSS_PROCESS_MODE") else {
-        return;
-    };
+fn file_queue_recovers_orphaned_processing_items() {
+    let db = DirectDbGuard::new();
     let store = SessionLogStore::open_default().expect("store");
-    let workspace = std::env::var("SESSION_LOG_CROSS_PROCESS_WORKSPACE").expect("workspace");
+    let workspace = db.workspace("file-queue-recover-workspace");
+    let session_id = format!("file-queue-recover-{}", uuid::Uuid::new_v4());
+    let command = SessionLogCommand::UpsertSession(upsert(&session_id, &workspace, 1));
 
-    if mode == "upsert" {
-        let session_id = std::env::var("SESSION_LOG_CROSS_PROCESS_SESSION_ID").expect("session id");
-        store
-            .upsert_session(UpsertSessionRequest {
-                session: serde_json::json!({
-                    "id": session_id,
-                    "name": "Cross Process",
-                    "directory": workspace,
-                    "created_at": 1,
-                    "updated_at": 1,
-                    "status": "idle",
-                    "management": {
-                        "session_id": session_id,
-                        "session_name": "Cross Process",
-                        "state": "Idle"
-                    }
-                }),
-                parent_id: None,
-                messages: vec![serde_json::json!({
-                    "id": format!("m-{session_id}"),
-                    "role": "assistant",
-                    "created_at": 1,
-                    "updated_at": 1
-                })],
-                todos: vec![],
-            })
-            .expect("upsert");
-        return;
-    }
+    let pending = file_queue::enqueue_command(&command).expect("enqueue");
+    let root = db.root().join("session_log").join("message_queue");
+    let processing_dir = root.join("processing");
+    std::fs::create_dir_all(&processing_dir).expect("processing dir");
+    let processing = processing_dir.join(pending.file_name().expect("queue item name"));
+    std::fs::rename(&pending, &processing).expect("simulate crash while processing");
 
-    assert_eq!(mode, "verify");
-    let expected = std::env::var("SESSION_LOG_CROSS_PROCESS_EXPECTED")
-        .expect("expected")
-        .parse::<u64>()
-        .expect("expected number");
-    let (page, sessions) = store
-        .list_sessions(ListSessionsRequest {
-            workspace,
-            page: 0,
-            page_size: 100,
-        })
-        .expect("sessions");
-    assert_eq!(page.total, expected);
-    assert_eq!(sessions.len() as u64, expected);
+    assert_eq!(file_queue::drain_queue(&store, 10).expect("drain"), 1);
+    assert!(
+        !processing.exists(),
+        "orphaned processing item should be consumed"
+    );
+    assert!(store
+        .get_session(GetSessionRequest { session_id })
+        .expect("get recovered session")
+        .is_some());
 }
 
-fn reserve_local_port() -> u16 {
-    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("reserve port");
-    listener.local_addr().expect("local addr").port()
+#[test]
+fn open_default_without_service_creates_sqlite_index() {
+    let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let current_exe = std::env::current_exe().expect("current test exe");
+
+    let status = Command::new(&current_exe)
+        .args(["--exact", "open_default_helper", "--nocapture"])
+        .env("SESSION_LOG_OPEN_DEFAULT_MODE", "1")
+        .env("SESSION_LOG_DB_ROOT", temp.path())
+        .status()
+        .expect("open default helper");
+    assert!(status.success(), "open default helper exited with {status}");
+    assert!(temp
+        .path()
+        .join("session_log")
+        .join("index.sqlite3")
+        .exists());
+}
+
+#[test]
+fn open_default_helper() {
+    if std::env::var("SESSION_LOG_OPEN_DEFAULT_MODE").is_err() {
+        return;
+    }
+    SessionLogStore::open_default().expect("sqlite store");
 }

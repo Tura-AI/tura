@@ -122,7 +122,9 @@ fn anthropic_stream_emits_command_run_when_tool_block_stops() {
                 command_index,
                 command,
             } => Some((tool_call_id, command_index, command)),
-            ProviderStreamEvent::ProviderOutputStarted => None,
+            ProviderStreamEvent::ProviderOutputStarted | ProviderStreamEvent::TextDelta { .. } => {
+                None
+            }
         })
         .expect("command_run ready event");
     assert_eq!(ready.0, "toolu_1");

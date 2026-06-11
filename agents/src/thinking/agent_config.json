@@ -22,7 +22,7 @@
   },
   "agent_persona": [
     {
-      "persona_directory": "personas/src/tura/prompt",
+      "persona_directory": "personas/src/tura",
       "persona_name": "tura"
     }
   ],
@@ -44,6 +44,10 @@
     {
       "capability_directory": "crates/tools/src",
       "capability_name": "shell_command"
+    },
+    {
+      "capability_directory": "crates/tools/src",
+      "capability_name": "zsh"
     },
     {
       "capability_directory": "crates/tools/src",

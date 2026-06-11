@@ -63,7 +63,8 @@ pub fn command_run_stream_event_command(
             command_index,
             command,
         }),
-        tura_llm_rust::ProviderStreamEvent::ProviderOutputStarted => None,
+        tura_llm_rust::ProviderStreamEvent::ProviderOutputStarted
+        | tura_llm_rust::ProviderStreamEvent::TextDelta { .. } => None,
     }
 }
 
@@ -273,14 +274,7 @@ pub async fn publish_streamed_command_run_update(update: StreamedCommandRunUpdat
 }
 
 fn gateway_callbacks_disabled() -> bool {
-    std::env::var("TURA_DISABLE_GATEWAY_CALLBACKS")
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
+    crate::manas::constants::gateway_callbacks_disabled()
 }
 
 fn gateway_callback_base_url() -> String {
@@ -289,7 +283,7 @@ fn gateway_callback_base_url() -> String {
         .unwrap_or_else(|_| {
             let port = std::env::var("TURA_GATEWAY_PORT")
                 .or_else(|_| std::env::var("PORT"))
-                .unwrap_or_else(|_| "4096".to_string());
+                .unwrap_or_else(|_| "4156".to_string());
             format!("http://127.0.0.1:{port}")
         })
         .trim_end_matches('/')

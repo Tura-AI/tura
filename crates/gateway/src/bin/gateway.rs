@@ -1,4 +1,7 @@
+use std::io::{Read, Write};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 fn main() {
     configure_release_runtime_env();
@@ -13,19 +16,6 @@ fn main() {
         .build()
         .expect("gateway tokio runtime should start");
 
-    if std::env::var("TURA_ROLE").ok().as_deref() == Some("runtime_worker") {
-        runtime.block_on(async {
-            if let Err(error) = tokio::task::spawn_blocking(gateway::runtime_worker::run)
-                .await
-                .expect("runtime worker task panicked")
-            {
-                eprintln!("runtime worker exited with error: {error}");
-                std::process::exit(1);
-            }
-        });
-        return;
-    }
-
     if std::env::var("OPENAI_LOGIN")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -34,10 +24,41 @@ fn main() {
         std::env::set_var("OPENAI_LOGIN", "oauth");
     }
 
-    let port = std::env::var("PORT")
-        .unwrap_or_else(|_| "4096".to_string())
-        .parse::<u16>()
-        .unwrap_or(4096);
+    let desired_port = std::env::var("PORT")
+        .ok()
+        .and_then(|value| value.trim().parse::<u16>().ok())
+        .unwrap_or_else(default_port_for_exe);
+
+    let gateway_lock = match gateway::process_lock::ProcessLock::acquire(
+        &tura_path::instance_home(),
+        "gateway",
+        mode_for_exe(),
+        None,
+    ) {
+        Ok(lock) => lock,
+        Err(error) => {
+            if gateway_root_on_port(desired_port).as_deref() == Some(my_root().as_str()) {
+                println!("✅ Gateway for this home is already running on http://127.0.0.1:{desired_port}");
+                return;
+            }
+            eprintln!("gateway ownership lock refused startup: {error:#}");
+            std::process::exit(1);
+        }
+    };
+
+    let port = match select_listen_port(desired_port) {
+        PortDecision::Bind(port) => port,
+        PortDecision::AlreadyOwned(port) => {
+            println!("✅ Gateway for this directory is already running on http://127.0.0.1:{port}");
+            return;
+        }
+        PortDecision::Unavailable(port) => {
+            eprintln!("gateway port {port} is occupied by a foreign process; set PORT to an explicit free port or stop the foreign process");
+            std::process::exit(1);
+        }
+    };
+    // Keep the resolved port visible to children (runtime workers, callbacks).
+    std::env::set_var("PORT", port.to_string());
 
     runtime.block_on(async {
         if let Err(error) = gateway::router_process::start_global_router_process() {
@@ -48,6 +69,93 @@ fn main() {
             .await
             .expect("Server error");
     });
+    drop(gateway_lock);
+}
+
+/// Default gateway port for a bare invocation, derived from the compile-time
+/// build-kind so the two independent routes never collide:
+///   - `dev`     (the repo-local `bin/` dev package) → 4126
+///   - `release` (the portable `release/` package)   → 4156
+///
+/// dev/release are distinguished by build-kind (`TURA_BUILD_KIND`) and isolated
+/// by instance_home — never by the executable's file name. Launchers and the
+/// TUI/GUI spawners always pass an explicit `PORT`, so this is only the fallback.
+const DEV_GATEWAY_PORT: u16 = 4126;
+const RELEASE_GATEWAY_PORT: u16 = 4156;
+
+fn default_port_for_exe() -> u16 {
+    if mode_for_exe() == "dev" {
+        DEV_GATEWAY_PORT
+    } else {
+        RELEASE_GATEWAY_PORT
+    }
+}
+
+fn mode_for_exe() -> &'static str {
+    tura_path::build_kind()
+}
+
+enum PortDecision {
+    /// Bind and serve on this port.
+    Bind(u16),
+    /// A gateway for this same directory already owns the port; do nothing.
+    AlreadyOwned(u16),
+    /// A different process owns the desired port.
+    Unavailable(u16),
+}
+
+/// Resolve which port this standalone gateway should bind.
+///
+/// Prefer the fixed (per-package) port. If it is occupied by our own
+/// directory's gateway, report it as already-running. If it is occupied by a
+/// foreign process, fail instead of silently floating to another port.
+fn select_listen_port(desired_port: u16) -> PortDecision {
+    if port_is_free(desired_port) {
+        return PortDecision::Bind(desired_port);
+    }
+    if gateway_root_on_port(desired_port).as_deref() == Some(my_root().as_str()) {
+        return PortDecision::AlreadyOwned(desired_port);
+    }
+    PortDecision::Unavailable(desired_port)
+}
+
+fn port_is_free(port: u16) -> bool {
+    TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port))).is_ok()
+}
+
+fn my_root() -> String {
+    // Single source of truth for project-root resolution (TURA_PROJECT_ROOT or
+    // cwd, canonicalized + verbatim-stripped).
+    tura_path::canonical_root().to_string_lossy().to_string()
+}
+
+/// Probe `/global/health` on a loopback port and return the gateway's reported
+/// `root`, or `None` if the port is not a healthy Tura gateway.
+fn gateway_root_on_port(port: u16) -> Option<String> {
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(400)).ok()?;
+    stream
+        .set_read_timeout(Some(Duration::from_millis(900)))
+        .ok()?;
+    stream
+        .set_write_timeout(Some(Duration::from_millis(900)))
+        .ok()?;
+    let request = format!(
+        "GET /global/health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes()).ok()?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response).ok()?;
+    if !response.starts_with("HTTP/1.1 200") {
+        return None;
+    }
+    let body = response.split("\r\n\r\n").nth(1)?;
+    let value: serde_json::Value = serde_json::from_str(body.trim()).ok()?;
+    value
+        .get("root")
+        .and_then(serde_json::Value::as_str)
+        .filter(|root| !root.is_empty())
+        .map(str::to_string)
 }
 
 fn configure_release_runtime_env() {

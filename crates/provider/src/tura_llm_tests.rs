@@ -5,15 +5,7 @@ use super::{
 };
 use serde_json::json;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
-
-fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("env lock poisoned")
-}
 
 struct EnvRestore {
     keys: Vec<(&'static str, Option<String>)>,
@@ -138,7 +130,7 @@ fn provider_latency_global_timeout_state_is_configurable() {
 
 #[test]
 fn loads_codex_oauth_tokens_from_codex_home() {
-    let _lock = env_lock();
+    let _lock = crate::test_support::env_lock();
     let _env = EnvRestore::capture(&[
         "CODEX_HOME",
         "OPENAI_LOGIN",
@@ -194,7 +186,7 @@ fn loads_codex_oauth_tokens_from_codex_home() {
 
 #[test]
 fn openai_oauth_login_uses_provider_auth_config() {
-    let _lock = env_lock();
+    let _lock = crate::test_support::env_lock();
     let _env = EnvRestore::capture(&[
         "CODEX_HOME",
         "OPENAI_LOGIN",

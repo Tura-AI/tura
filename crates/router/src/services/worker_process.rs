@@ -1,4 +1,4 @@
-use std::{path::Path, process::Stdio, sync::Arc, time::Duration};
+use std::{fs::OpenOptions, path::Path, process::Stdio, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
@@ -13,7 +13,9 @@ use tracing::{error, info, warn};
 use super::models::{CallContext, WorkerEnvelope};
 
 const WORKER_HEALTH_TIMEOUT: Duration = Duration::from_secs(10);
-const DEFAULT_WORKER_INVOKE_TIMEOUT: Duration = Duration::from_secs(180);
+// 600s matches the TUI CLI default (timeoutSec: 600). Complex agent turns with
+// multiple tool calls and slow LLM API responses routinely exceed 3 minutes.
+const DEFAULT_WORKER_INVOKE_TIMEOUT: Duration = Duration::from_secs(600);
 
 pub enum WorkerMode {
     Persistent,
@@ -33,7 +35,7 @@ pub struct WorkerProcess {
 }
 
 impl WorkerProcess {
-    /// 声明式启动：任意 worker（可执行 + 启动参数 + env 契约）。
+    /// Start a worker from its executable, arguments, and env contract.
     pub async fn start_with(
         worker_id: String,
         service_name: String,
@@ -75,11 +77,21 @@ impl WorkerProcess {
         command
             .args(args)
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stdout(Stdio::piped());
+        command.env_remove("TURA_CLI_LIVE_JSONL");
+        command.env_remove("TURA_CLI_PROGRESS");
+        configure_worker_stderr(&mut command, worker_id, service_name, env);
         hide_child_window(&mut command);
         for (key, value) in env {
             command.env(key, value);
+        }
+        if debug_enabled(env) {
+            eprintln!(
+                "router debug: spawning worker service={} executable={} args={:?}",
+                service_name,
+                executable_path.display(),
+                args
+            );
         }
         let mut child = command.spawn().with_context(|| {
             format!(
@@ -98,37 +110,76 @@ impl WorkerProcess {
             .ok_or_else(|| anyhow!("worker stdout missing"))?;
         let mut reader = BufReader::new(stdout);
 
-        let health_req = WorkerEnvelope {
-            kind: "health_check".to_string(),
-            payload: json!({}),
-        };
-        let payload = format!("{}\n", serde_json::to_string(&health_req)?);
         let mut stdin_for_probe = stdin;
-        stdin_for_probe.write_all(payload.as_bytes()).await?;
-        stdin_for_probe.flush().await?;
+        let probe_result = async {
+            let health_req = WorkerEnvelope {
+                kind: "health_check".to_string(),
+                payload: json!({}),
+            };
+            let payload = format!("{}\n", serde_json::to_string(&health_req)?);
+            stdin_for_probe.write_all(payload.as_bytes()).await?;
+            stdin_for_probe.flush().await?;
 
-        let mut line = String::new();
-        timeout(WORKER_HEALTH_TIMEOUT, reader.read_line(&mut line))
-            .await
-            .map_err(|_| {
-                anyhow!(
-                    "worker health check timed out after {}s",
-                    WORKER_HEALTH_TIMEOUT.as_secs()
-                )
-            })??;
-        if line.trim().is_empty() {
-            return Err(anyhow!("worker health check returned empty response"));
+            let mut line = String::new();
+            timeout(WORKER_HEALTH_TIMEOUT, reader.read_line(&mut line))
+                .await
+                .map_err(|_| {
+                    anyhow!(
+                        "worker health check timed out after {}s",
+                        WORKER_HEALTH_TIMEOUT.as_secs()
+                    )
+                })??;
+            if line.trim().is_empty() {
+                return Err(anyhow!("worker health check returned empty response"));
+            }
+
+            let parsed: Value = serde_json::from_str(line.trim())?;
+            if parsed.get("ok").is_none() {
+                warn!(
+                    worker_id = worker_id,
+                    service_name = service_name,
+                    response = %line.trim(),
+                    "worker health check returned no ok flag"
+                );
+                return Err(anyhow!("worker health check failed"));
+            }
+
+            // Version handshake (codex-style): refuse a worker built from a
+            // different version than this router. A worker that publishes no
+            // version (older build) is tolerated during the transition.
+            if let Some(worker_version) = parsed.get("version").and_then(Value::as_str) {
+                let expected = tura_path::instance_version();
+                if worker_version != expected {
+                    warn!(
+                        worker_id,
+                        service_name, worker_version, %expected, "worker version mismatch; refusing"
+                    );
+                    return Err(anyhow!(
+                        "runtime worker version {worker_version} does not match router {expected}; \
+                         refusing to dispatch to a different build"
+                    ));
+                }
+            }
+
+            Ok::<(), anyhow::Error>(())
         }
-
-        let parsed: Value = serde_json::from_str(line.trim())?;
-        if parsed.get("ok").is_none() {
-            warn!(
-                worker_id = worker_id,
-                service_name = service_name,
-                response = %line.trim(),
-                "worker health check returned no ok flag"
+        .await;
+        if let Err(error) = probe_result {
+            if debug_enabled(env) {
+                eprintln!(
+                    "router debug: worker health failed service={} error={}",
+                    service_name, error
+                );
+            }
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Err(error);
+        }
+        if debug_enabled(env) {
+            eprintln!(
+                "router debug: worker health ok service={} worker_id={}",
+                service_name, worker_id
             );
-            return Err(anyhow!("worker health check failed"));
         }
 
         info!(worker_id, service_name, "persistent worker started");
@@ -210,6 +261,12 @@ impl WorkerProcess {
             stdin.write_all(line.as_bytes()).await?;
             stdin.flush().await?;
         }
+        if process_debug_enabled() {
+            eprintln!(
+                "router debug: worker request sent service={} worker_id={}",
+                self.service_name, self.worker_id
+            );
+        }
 
         let response_line = {
             let mut response_line = String::new();
@@ -228,6 +285,14 @@ impl WorkerProcess {
                 })??;
             response_line
         };
+        if process_debug_enabled() {
+            eprintln!(
+                "router debug: worker response received service={} worker_id={} bytes={}",
+                self.service_name,
+                self.worker_id,
+                response_line.len()
+            );
+        }
 
         if response_line.trim().is_empty() {
             warn!(
@@ -340,6 +405,105 @@ fn worker_invoke_timeout() -> Duration {
         .filter(|seconds| *seconds > 0)
         .map(Duration::from_secs)
         .unwrap_or(DEFAULT_WORKER_INVOKE_TIMEOUT)
+}
+
+fn configure_worker_stderr(
+    command: &mut Command,
+    worker_id: &str,
+    service_name: &str,
+    env: &[(String, String)],
+) {
+    let Some(path) = worker_stderr_log_path(worker_id, service_name, env) else {
+        command.stderr(Stdio::null());
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            warn!(
+                path = %path.display(),
+                error = %error,
+                "failed to create worker stderr log directory"
+            );
+        }
+    }
+    match OpenOptions::new().create(true).append(true).open(&path) {
+        Ok(file) => {
+            command.stderr(Stdio::from(file));
+        }
+        Err(error) => {
+            warn!(
+                path = %path.display(),
+                error = %error,
+                "failed to open worker stderr log"
+            );
+            command.stderr(Stdio::null());
+        }
+    }
+}
+
+fn worker_stderr_log_path(
+    worker_id: &str,
+    service_name: &str,
+    env: &[(String, String)],
+) -> Option<std::path::PathBuf> {
+    if let Some(path) = env_value(env, "TURA_RUNTIME_WORKER_STDERR_LOG")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("TURA_RUNTIME_WORKER_STDERR_LOG").map(Into::into))
+    {
+        return Some(path);
+    }
+    let debug_enabled = env_value(env, "TURA_DEBUG_RUNTIME").is_some_and(env_flag)
+        || std::env::var("TURA_DEBUG_RUNTIME")
+            .ok()
+            .is_some_and(|value| env_flag(&value));
+    if !debug_enabled {
+        return None;
+    }
+    let name = format!(
+        "{}-{}.stderr.log",
+        sanitize_log_component(service_name),
+        sanitize_log_component(worker_id)
+    );
+    Some(session_log::path::default_db_dir().join(name))
+}
+
+fn env_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    env.iter()
+        .find(|(candidate, _)| candidate == key)
+        .map(|(_, value)| value.as_str())
+}
+
+fn env_flag(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+fn sanitize_log_component(value: &str) -> String {
+    let mut sanitized = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+            sanitized.push(ch);
+        } else {
+            sanitized.push('_');
+        }
+    }
+    if sanitized.is_empty() {
+        "worker".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn debug_enabled(env: &[(String, String)]) -> bool {
+    env_value(env, "TURA_DEBUG_RUNTIME").is_some_and(env_flag) || process_debug_enabled()
+}
+
+fn process_debug_enabled() -> bool {
+    std::env::var("TURA_DEBUG_RUNTIME")
+        .ok()
+        .is_some_and(|value| env_flag(&value))
 }
 
 fn hide_child_window(command: &mut Command) {

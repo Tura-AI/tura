@@ -39,7 +39,8 @@ pub async fn execute_runtime_stream_event(
             code_tools::command_run::execute_streamed_command_value(command, session_directory)
                 .await,
         ),
-        tura_llm_rust::ProviderStreamEvent::ProviderOutputStarted => None,
+        tura_llm_rust::ProviderStreamEvent::ProviderOutputStarted
+        | tura_llm_rust::ProviderStreamEvent::TextDelta { .. } => None,
     }
 }
 
@@ -64,7 +65,8 @@ pub fn command_run_stream_event_command(
 ) -> Option<serde_json::Value> {
     match event {
         tura_llm_rust::ProviderStreamEvent::CommandRunCommandReady { command, .. } => Some(command),
-        tura_llm_rust::ProviderStreamEvent::ProviderOutputStarted => None,
+        tura_llm_rust::ProviderStreamEvent::ProviderOutputStarted
+        | tura_llm_rust::ProviderStreamEvent::TextDelta { .. } => None,
     }
 }
 

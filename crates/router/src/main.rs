@@ -10,6 +10,10 @@ use services::models::{CallContext, WorkerSpec};
 use services::{
     execution::ExecutionService, recovery::recover_after_start, session_db::SessionDbService,
 };
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tura_router::registry::agent::UpsertAgentRequest;
 use tura_router::registry::command::ExecuteCommandRequest;
 use tura_router::registry::persona::UpsertPersonaRequest;
@@ -26,6 +30,7 @@ struct AppState {
     registry: Registry,
     session_db: SessionDbService,
     execution: ExecutionService,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl Serialize for AppState {
@@ -61,6 +66,8 @@ struct RunAgentRequest {
     depth: Option<usize>,
     #[serde(default)]
     runtime_context: Option<String>,
+    #[serde(default)]
+    planning_mode_override: Option<bool>,
     /// Worker env contract computed by the gateway (model / planning /
     /// stall-guard / ...). The router injects it into the subprocess as-is.
     #[serde(default)]
@@ -73,6 +80,7 @@ fn build_state() -> AppState {
         registry: Registry::from_static(),
         session_db: SessionDbService::new(),
         execution: ExecutionService::new(),
+        shutdown: Arc::new(AtomicBool::new(false)),
     }
 }
 
@@ -221,29 +229,156 @@ fn registry_command_execute_cli() -> anyhow::Result<()> {
 }
 
 async fn serve_stdio() -> anyhow::Result<()> {
+    use std::sync::Arc;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     let state = build_state();
     let _ = recover_after_start(&state.session_db)?;
     let stdin = tokio::io::stdin();
-    let mut stdout = tokio::io::stdout();
+    // Shared, locked writer: each request is handled on its own task and writes
+    // its response (tagged with `request_id`) when ready, so a slow call (e.g. a
+    // long-running `execution.enqueue_turn`) never head-of-line blocks a
+    // concurrent `health_check`. The gateway client multiplexes responses back
+    // to per-call mailboxes by `request_id`.
+    let stdout = Arc::new(tokio::sync::Mutex::new(tokio::io::stdout()));
     let mut lines = BufReader::new(stdin).lines();
     while let Some(line) = lines.next_line().await? {
-        if line.trim().is_empty() {
+        let trimmed = line.trim().to_string();
+        if trimmed.is_empty() {
             continue;
         }
-        let response = match serde_json::from_str::<ipc::IpcRequest>(line.trim()) {
-            Ok(request) => handle_ipc_request(&state, request).await,
-            Err(error) => {
-                ipc::IpcResponse::error("invalid", format!("invalid ipc request: {error}"))
+        let state = state.clone();
+        let stdout = Arc::clone(&stdout);
+        tokio::spawn(async move {
+            let response = match serde_json::from_str::<ipc::IpcRequest>(&trimmed) {
+                Ok(request) => handle_ipc_request(&state, request).await,
+                Err(error) => {
+                    ipc::IpcResponse::error("invalid", format!("invalid ipc request: {error}"))
+                }
+            };
+            if let Ok(encoded) = serde_json::to_string(&response) {
+                let mut out = stdout.lock().await;
+                let _ = out.write_all(format!("{encoded}\n").as_bytes()).await;
+                let _ = out.flush().await;
             }
-        };
-        stdout
-            .write_all(format!("{}\n", serde_json::to_string(&response)?).as_bytes())
-            .await?;
-        stdout.flush().await?;
+        });
     }
     Ok(())
+}
+
+/// File (under the instance's db dir) recording the running router daemon's
+/// socket endpoint, so any front can probe-and-connect rather than spawn its own.
+fn router_addr_path() -> std::path::PathBuf {
+    session_log::path::default_db_dir().join("router.addr")
+}
+
+fn publish_router_addr(addr: &std::net::SocketAddr) -> anyhow::Result<()> {
+    let path = router_addr_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let record = json!({ "addr": addr.to_string(), "version": tura_path::instance_version() });
+    let tmp = path.with_extension("addr.tmp");
+    std::fs::write(&tmp, serde_json::to_string(&record)?)?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+async fn serve_socket() -> anyhow::Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpListener;
+    use tokio::sync::Mutex as AsyncMutex;
+    use tokio::time::{timeout, Duration};
+
+    let _router_lock = RouterDaemonLock::acquire()?;
+    let state = build_state();
+    let _ = recover_after_start(&state.session_db)?;
+    // The daemon owns the backend: bring up the single session_db owner now.
+    let _ = state.session_db.start();
+
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    publish_router_addr(&addr)?;
+    eprintln!("router socket daemon listening on {addr}");
+
+    while !state.shutdown.load(Ordering::SeqCst) {
+        let accepted = match timeout(Duration::from_millis(250), listener.accept()).await {
+            Ok(accepted) => accepted?,
+            Err(_) => continue,
+        };
+        let (stream, _) = accepted;
+        let state = state.clone();
+        tokio::spawn(async move {
+            let (read, write) = stream.into_split();
+            let write = Arc::new(AsyncMutex::new(write));
+            let mut lines = BufReader::new(read).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let trimmed = line.trim().to_string();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let state = state.clone();
+                let write = Arc::clone(&write);
+                tokio::spawn(async move {
+                    let response = match serde_json::from_str::<ipc::IpcRequest>(&trimmed) {
+                        Ok(req) => handle_ipc_request(&state, req).await,
+                        Err(e) => {
+                            ipc::IpcResponse::error("invalid", format!("invalid ipc request: {e}"))
+                        }
+                    };
+                    if let Ok(encoded) = serde_json::to_string(&response) {
+                        let mut w = write.lock().await;
+                        let _ = w.write_all(format!("{encoded}\n").as_bytes()).await;
+                        let _ = w.flush().await;
+                    }
+                });
+            }
+        });
+    }
+    let _ = std::fs::remove_file(router_addr_path());
+    Ok(())
+}
+
+struct RouterDaemonLock {
+    file: std::fs::File,
+    path: std::path::PathBuf,
+}
+
+impl RouterDaemonLock {
+    fn acquire() -> anyhow::Result<Self> {
+        use fs2::FileExt;
+        use std::io::{Seek, SeekFrom, Write};
+
+        let dir = tura_path::locks_dir();
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join(format!("router-{}.lock", tura_path::build_kind()));
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)?;
+        file.try_lock_exclusive().map_err(|error| {
+            anyhow::anyhow!(
+                "another router daemon already owns {}: {error}",
+                path.display()
+            )
+        })?;
+        file.set_len(0)?;
+        file.seek(SeekFrom::Start(0))?;
+        writeln!(file, "pid={}", std::process::id())?;
+        writeln!(file, "kind=router")?;
+        writeln!(file, "build_kind={}", tura_path::build_kind())?;
+        writeln!(file, "home={}", tura_path::instance_home().display())?;
+        Ok(Self { file, path })
+    }
+}
+
+impl Drop for RouterDaemonLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 async fn handle_ipc_request(state: &AppState, request: ipc::IpcRequest) -> ipc::IpcResponse {
@@ -290,8 +425,13 @@ async fn handle_ipc_request(state: &AppState, request: ipc::IpcRequest) -> ipc::
             Ok(json!({ "status": "stopped", "stopped": stopped }))
         }
         "execution.shutdown" => {
+            let stopped = state
+                .manager
+                .stop_workers_with_prefix("runtime_worker:")
+                .await;
             state.session_db.stop();
-            Ok(json!({ "status": "shutting_down" }))
+            state.shutdown.store(true, Ordering::SeqCst);
+            Ok(json!({ "status": "shutting_down", "runtime_workers_stopped": stopped }))
         }
         other => Err(anyhow::anyhow!("unknown router method: {other}")),
     };
@@ -306,8 +446,8 @@ fn main() -> anyhow::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "serve".to_string());
     match command.as_str() {
-        "session-db-service" => session_log::service::run_lifecycle_service(),
         "serve" => tokio_runtime()?.block_on(serve_stdio()),
+        "serve-socket" => tokio_runtime()?.block_on(serve_socket()),
         "run-agent" => tokio_runtime()?.block_on(run_agent_cli()),
         "registry-agents-list" => registry_agents_list_cli(),
         "registry-agent-get" => registry_agent_get_cli(),
@@ -346,12 +486,21 @@ fn tokio_runtime() -> anyhow::Result<tokio::runtime::Runtime> {
 /// worker subprocess (CLI/NDJSON), forward the call, and stream the result
 /// back. Gateway and child runtime dispatch use the `run-agent` CLI
 /// subcommand, never router HTTP.
+fn resolve_runtime_worker_binary(root: &std::path::Path) -> Option<std::path::PathBuf> {
+    resolve_binary_target(root, "tura_runtime")
+}
 async fn dispatch_run_agent(state: &AppState, req: RunAgentRequest) -> (u16, Value) {
     let session_id = req
         .session_id
         .clone()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| format!("router-{}", uuid::Uuid::new_v4()));
+    if router_debug_enabled() {
+        eprintln!(
+            "router debug: dispatch_run_agent start session_id={} agent={:?} model={:?}",
+            session_id, req.agent, req.model
+        );
+    }
 
     let prompt = req
         .prompt
@@ -405,7 +554,7 @@ async fn dispatch_run_agent(state: &AppState, req: RunAgentRequest) -> (u16, Val
         .agents
         .resolve(req.agent.as_deref(), req.session_type.as_deref());
 
-    let worker_binary = match resolve_binary_target(&repo_root(), "gateway") {
+    let worker_binary = match resolve_runtime_worker_binary(&repo_root()) {
         Some(path) => path,
         None => {
             return (
@@ -413,7 +562,7 @@ async fn dispatch_run_agent(state: &AppState, req: RunAgentRequest) -> (u16, Val
                 json!({
                     "ok": false,
                     "session_id": session_id,
-                    "error": "runtime worker binary (gateway) not found in target/{release,debug}"
+                    "error": "runtime worker binary (tura_runtime) not found in bin/ or target/{release,debug}"
                 }),
             );
         }
@@ -467,6 +616,12 @@ async fn dispatch_run_agent(state: &AppState, req: RunAgentRequest) -> (u16, Val
             );
         }
     };
+    if router_debug_enabled() {
+        eprintln!(
+            "router debug: dispatch_run_agent worker ready session_id={} worker_id={}",
+            session_id, worker.worker_id
+        );
+    }
 
     let call_input = json!({
         "session_id": session_id,
@@ -476,6 +631,7 @@ async fn dispatch_run_agent(state: &AppState, req: RunAgentRequest) -> (u16, Val
         "agent_spec": agent_spec,
         "prompt": prompt,
         "runtime_context": req.runtime_context,
+        "planning_mode_override": req.planning_mode_override,
     });
     let ctx = CallContext::new(
         "POST".to_string(),
@@ -484,11 +640,25 @@ async fn dispatch_run_agent(state: &AppState, req: RunAgentRequest) -> (u16, Val
     );
 
     let worker_id = worker.worker_id.clone();
+    if router_debug_enabled() {
+        eprintln!(
+            "router debug: dispatch_run_agent calling worker session_id={} worker_id={}",
+            session_id, worker_id
+        );
+    }
     let call_result = state.manager.call_worker(&worker_id, ctx).await;
     state.manager.stop_worker(&worker_id).await;
+    if router_debug_enabled() {
+        eprintln!(
+            "router debug: dispatch_run_agent worker returned session_id={} worker_id={} ok={}",
+            session_id,
+            worker_id,
+            call_result.is_ok()
+        );
+    }
     match call_result {
         Ok(result) => {
-            let ok = result.get("ok").and_then(Value::as_bool).unwrap_or(true);
+            let ok = result.get("ok").and_then(Value::as_bool).unwrap_or(false);
             let status = if ok { 200 } else { 502 };
             (
                 status,
@@ -510,5 +680,42 @@ async fn dispatch_run_agent(state: &AppState, req: RunAgentRequest) -> (u16, Val
                 "error": format!("runtime worker invocation failed: {error}")
             }),
         ),
+    }
+}
+
+fn router_debug_enabled() -> bool {
+    std::env::var("TURA_DEBUG_RUNTIME")
+        .ok()
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn execution_shutdown_sets_daemon_exit_flag() -> anyhow::Result<()> {
+        let state = build_state();
+        let response = tokio_runtime()?.block_on(handle_ipc_request(
+            &state,
+            ipc::IpcRequest {
+                request_id: "shutdown-test".to_string(),
+                kind: "call".to_string(),
+                method: "execution.shutdown".to_string(),
+                payload: json!({}),
+                deadline_ms: None,
+            },
+        ));
+
+        assert!(response.ok, "shutdown failed: {:?}", response.error);
+        assert!(state.shutdown.load(Ordering::SeqCst));
+        assert_eq!(response.payload["status"], "shutting_down");
+        assert_eq!(response.payload["runtime_workers_stopped"], 0);
+        Ok(())
     }
 }

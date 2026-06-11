@@ -101,61 +101,15 @@ impl SessionDbClient {
     }
 
     fn call_blocking(command: SessionLogCommand) -> Result<SessionLogResponse> {
-        #[cfg(test)]
-        {
-            if session_log::file_queue::is_async_write(&command) {
-                let store = session_log::SessionLogStore::open_default()?;
-                return handle_write_command(command, &store);
-            }
+        if session_log::ipc::service_is_running() {
+            return session_log::ipc::call_service(&command);
         }
-
         if session_log::file_queue::is_async_write(&command) {
             session_log::file_queue::enqueue_command(&command)?;
             return Ok(SessionLogResponse::Ok);
         }
-        let store = session_log::SessionLogStore::open_default()?;
-        let _ = session_log::file_queue::drain_queue(&store, 10_000)?;
-        handle_read_command(command, &store)
-    }
-}
-
-fn handle_read_command(
-    command: SessionLogCommand,
-    store: &session_log::SessionLogStore,
-) -> Result<SessionLogResponse> {
-    Ok(match command {
-        SessionLogCommand::ListWorkspaces => SessionLogResponse::Workspaces {
-            workspaces: store.list_workspaces()?,
-        },
-        SessionLogCommand::GetSession(payload) => SessionLogResponse::Session {
-            session: store.get_session(payload)?.map(Box::new),
-        },
-        SessionLogCommand::ListSessions(payload) => {
-            let (page, sessions) = store.list_sessions(payload)?;
-            SessionLogResponse::Sessions { page, sessions }
-        }
-        SessionLogCommand::ListSessionRecords(payload) => {
-            let (page, records) = store.list_session_records(payload)?;
-            SessionLogResponse::Records { page, records }
-        }
-        other => anyhow::bail!("unexpected session_db read command: {other:?}"),
-    })
-}
-
-#[cfg(test)]
-fn handle_write_command(
-    command: SessionLogCommand,
-    store: &session_log::SessionLogStore,
-) -> Result<SessionLogResponse> {
-    match command {
-        SessionLogCommand::UpsertSession(payload) => {
-            store.upsert_session(payload)?;
-            Ok(SessionLogResponse::Ok)
-        }
-        SessionLogCommand::ApplyCommandCheckpoint(payload) => {
-            store.apply_command_checkpoint(*payload)?;
-            Ok(SessionLogResponse::Ok)
-        }
-        other => anyhow::bail!("unexpected session_db write command: {other:?}"),
+        Err(anyhow!(
+            "session_db service is not running; start the per-home tura_router/tura_session_db owner before reading session data"
+        ))
     }
 }

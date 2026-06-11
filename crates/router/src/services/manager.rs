@@ -23,8 +23,8 @@ impl ServiceManager {
         }
     }
 
-    /// 声明式拉起任意 worker：按 `spec.key` 复用与探活，进程已亡则重建（自愈）。
-    /// 不绑定具体服务；供 runtime worker / 子 session 派发等场景复用。
+    /// Ensure a worker from a declarative spec, reusing by `spec.key` while the
+    /// process is healthy and replacing it after liveness checks fail.
     pub async fn ensure_worker(&self, spec: WorkerSpec) -> Result<WorkerHandle> {
         let existing_worker_id = {
             let service_to_worker = self.service_to_worker.read();
@@ -79,7 +79,7 @@ impl ServiceManager {
         })
     }
 
-    /// 统计当前以 `key_prefix` 开头注册的活跃 worker 数量（用于并发上限防 fork 爆炸）。
+    /// Count active workers under a key prefix for concurrency limits.
     pub fn count_workers_with_prefix(&self, key_prefix: &str) -> usize {
         self.service_to_worker
             .read()

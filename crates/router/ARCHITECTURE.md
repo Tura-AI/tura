@@ -40,6 +40,28 @@ crates/router/
 The current implementation is concentrated in the Axum entrypoint plus the agent
 registry, service manager, and utility modules above.
 
+## Transports: stdio child vs. detached socket daemon
+
+The router serves the same `IpcRequest`/`IpcResponse` contract over two
+transports:
+
+- **`tura_router serve`** — legacy stdin/stdout child owned by the gateway
+  (`RouterProcess`). One JSON request per line; the gateway multiplexes
+  responses back to per-call mailboxes by `request_id`.
+- **`tura_router serve-socket`** — a **detached daemon** (refactor 阶段 5 步骤 3):
+  binds a loopback socket, publishes its `host:port` + version to
+  `<db_dir>/router.addr`, **starts and owns the single `tura_session_db`**, and
+  serves every front. Fronts **probe `router.addr` and reuse** a live daemon, or
+  spawn one detached — so the backend (router + session_db) outlives any front
+  and is never torn down by a front's exit. `cli` (thin CLI) uses this:
+  probe-or-start, send `execution.enqueue_turn`, render the result from
+  session_db.
+
+Both transports handle requests **concurrently** (`tokio::spawn` per request,
+shared locked writer), so a slow `execution.enqueue_turn` never head-of-line
+blocks a concurrent `health_check`. Responses carry `request_id` so callers
+match them regardless of completion order.
+
 ## Responsibilities
 
 Router owns:
@@ -76,8 +98,10 @@ result JSON to stdout. Both entrypoints share the same core
 The router:
 
 1. Resolves the agent spec from the agent registry.
-2. Resolves the gateway binary target (the runtime worker is the gateway binary
-   re-invoked with `TURA_ROLE=runtime_worker`).
+2. Resolves the runtime worker binary: the standalone `tura_runtime` (legacy
+   `tura_runtime_worker`/`gateway` are transitional fallbacks), then performs a
+   **version handshake** — the worker's `health_check` reply carries
+   `tura_path::instance_version()` and the router refuses a mismatched build.
 3. Builds the worker environment contract: `TURA_ROLE`, `TURA_GATEWAY_URL`,
    `TURA_SESSION_MODEL_OVERRIDE`, `TURA_PARENT_SESSION_ID`,
    `TURA_PLANNING_DEPTH`, plus any caller-supplied session-config env
@@ -133,7 +157,7 @@ worker. The router does not keep a parallel command table.
 
 Router owns the lifecycle of runtime workers through `ServiceManager`
 (`services/manager.rs`) and `WorkerProcess` (`services/worker_process.rs`). A
-worker is the gateway binary re-invoked with `TURA_ROLE=runtime_worker`; it
+worker is the standalone `tura_runtime` binary (`TURA_ROLE=runtime_worker`); it
 speaks a line-delimited NDJSON protocol over stdio and must not require a fixed
 port.
 

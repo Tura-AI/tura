@@ -57,20 +57,11 @@ pub async fn load_settings() -> Result<Settings, TuraError> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, OnceLock};
-
     use super::config_path;
-
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("env lock")
-    }
 
     #[test]
     fn config_path_prefers_explicit_turallm_config() {
-        let _guard = env_lock();
+        let _guard = crate::test_support::env_lock();
         let previous_provider = std::env::var_os("TURA_PROVIDER_CONFIG");
         let previous = std::env::var_os("TURALLM_CONFIG");
         std::env::remove_var("TURA_PROVIDER_CONFIG");
@@ -93,11 +84,7 @@ mod tests {
 
     #[tokio::test]
     async fn bundled_config_exposes_six_model_tiers() {
-        static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-        let _guard = LOCK
-            .get_or_init(|| tokio::sync::Mutex::new(()))
-            .lock()
-            .await;
+        let _guard = crate::test_support::env_lock_async().await;
         let previous_provider = std::env::var_os("TURA_PROVIDER_CONFIG");
         let previous = std::env::var_os("TURALLM_CONFIG");
         std::env::remove_var("TURA_PROVIDER_CONFIG");

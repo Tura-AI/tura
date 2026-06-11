@@ -31,14 +31,18 @@ fn context_shell_name() -> &'static str {
         .as_deref()
     {
         Some("bash") => "bash",
+        Some("zsh") => "zsh",
         Some("shell") | Some("shell_command") | Some("shll") | Some("shall") => {
             if cfg!(windows) {
                 "powershell"
+            } else if cfg!(target_os = "macos") {
+                "zsh"
             } else {
                 "bash"
             }
         }
         _ if cfg!(windows) => "powershell",
+        _ if cfg!(target_os = "macos") => "zsh",
         _ => "bash",
     }
 }

@@ -269,7 +269,24 @@ impl SessionStore {
     }
 
     pub fn persist_session_ack(&self, session_id: &str) -> Result<(), String> {
-        self.persist_session_result(session_id)
+        // When the session is live in the in-memory store, flush it to session_db
+        // so the runtime worker can load it before the turn is enqueued.
+        if self.sessions.read().get(session_id).is_some() {
+            return self.persist_session_result(session_id);
+        }
+        // Otherwise the session may already be durable in session_db but not yet
+        // hydrated into this process's in-memory store (e.g. a persisted session
+        // opened after a gateway restart, or one still being hydrated in the
+        // background). An already-persisted session is a valid ACK — the worker
+        // loads it straight from session_db — so don't fail the enqueue.
+        match SessionDbClient::discover()
+            .map_err(|err| err.to_string())?
+            .get_session(session_id.to_string())
+        {
+            Ok(Some(_)) => Ok(()),
+            Ok(None) => Err("session not found".to_string()),
+            Err(err) => Err(err.to_string()),
+        }
     }
 
     fn persist_session_result(&self, session_id: &str) -> Result<(), String> {
@@ -934,13 +951,21 @@ fn persisted_record_from_session_log(
     }
     info.message_count = snapshot.message_count as usize;
 
+    // Only user/assistant/system records are conversation messages. The runtime
+    // also persists auxiliary records (log / tool / runtime / event checkpoints)
+    // that are not `Message`s; skip any record that does not deserialize rather
+    // than failing the whole session load (a single such record must not make a
+    // session invisible to the gateway).
     let messages = records
         .into_iter()
-        .map(|record| {
-            serde_json::from_value::<Message>(record.record)
-                .map_err(|err| format!("invalid session_log message record: {err}"))
+        .filter_map(|record| match serde_json::from_value::<Message>(record.record) {
+            Ok(message) => Some(message),
+            Err(err) => {
+                tracing::debug!(error = %err, "skipping non-message session_log record during hydration");
+                None
+            }
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<_>>();
 
     Ok(PersistedSessionRecord {
         info,

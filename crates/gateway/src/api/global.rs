@@ -23,7 +23,67 @@ pub async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         healthy: true,
         version: env!("CARGO_PKG_VERSION").to_string(),
+        root: gateway_identity_root(),
+        exe_dir: gateway_exe_dir(),
+        dev_log_path: gateway_dev_log_path(),
     })
+}
+
+/// Returns the provider LLM call log directory when dev logging is active.
+///
+/// Logging is active when `LOG_PATH` is explicitly set, or for `dev` build-kind
+/// (the repo-local `bin/` package always writes). A `release` build only logs
+/// via the explicit `LOG_PATH` opt-in. Uses TURA_PROJECT_ROOT for the default
+/// path so the reported location matches what the gateway actually writes to.
+fn gateway_dev_log_path() -> Option<String> {
+    let log_path_env = std::env::var("LOG_PATH").ok();
+    let dev_build = tura_path::build_kind() == "dev";
+    if log_path_env.is_none() && !dev_build {
+        return None;
+    }
+    let root = log_path_env.map(PathBuf::from).unwrap_or_else(|| {
+        std::env::var_os("TURA_PROJECT_ROOT")
+            .map(PathBuf::from)
+            .filter(|p| p.exists())
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_default()
+            .join("log")
+            .join("provider")
+    });
+    Some(canonical_string(&root))
+}
+
+/// Canonical runtime root the gateway is serving. Clients compare this against
+/// their own package root to decide whether a reachable gateway is "their own".
+pub(crate) fn gateway_identity_root() -> String {
+    let root = std::env::var_os("TURA_PROJECT_ROOT")
+        .map(PathBuf::from)
+        .filter(|path| path.exists())
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_default();
+    canonical_string(&root)
+}
+
+fn gateway_exe_dir() -> String {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(PathBuf::from))
+        .unwrap_or_default();
+    canonical_string(&exe_dir)
+}
+
+fn canonical_string(path: &std::path::Path) -> String {
+    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    strip_verbatim_prefix(&resolved.to_string_lossy())
+}
+
+/// Strip the Windows `\\?\` (and `\\?\UNC\`) verbatim prefix so paths compare
+/// equal to the plain forms other tools (Node `realpathSync`, etc.) produce.
+///
+/// Delegates to [`tura_path::strip_verbatim_prefix`] — the single source of
+/// truth for path normalization — and is re-exported here for existing callers.
+pub fn strip_verbatim_prefix(path: &str) -> String {
+    tura_path::strip_verbatim_prefix(path)
 }
 
 // ============================================================================

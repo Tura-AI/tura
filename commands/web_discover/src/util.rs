@@ -195,6 +195,57 @@ pub(super) fn find_on_path(exe: &str) -> Option<PathBuf> {
     None
 }
 
+pub(super) fn command_local_python(primary_env: &str) -> Option<PathBuf> {
+    command_configured_python(primary_env).or_else(|| {
+        find_on_path("python3")
+            .or_else(|| find_on_path("python"))
+            .or_else(|| find_on_path("py"))
+    })
+}
+
+pub(super) fn command_configured_python(primary_env: &str) -> Option<PathBuf> {
+    for env_name in [primary_env, "TURA_COMMAND_PYTHON"] {
+        if let Ok(value) = std::env::var(env_name) {
+            let path = PathBuf::from(value.trim());
+            if path.exists() {
+                return Some(path);
+            }
+        }
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let venv_python = if cfg!(windows) {
+        manifest_dir
+            .join(".venv")
+            .join("Scripts")
+            .join("python.exe")
+    } else {
+        manifest_dir.join(".venv").join("bin").join("python")
+    };
+    if venv_python.exists() {
+        return Some(venv_python);
+    }
+    None
+}
+
+pub(super) fn command_local_executable(exe: &str) -> Option<PathBuf> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let bin_dir = if cfg!(windows) {
+        manifest_dir.join(".venv").join("Scripts")
+    } else {
+        manifest_dir.join(".venv").join("bin")
+    };
+    let names = if cfg!(windows) {
+        vec![format!("{exe}.exe"), format!("{exe}.cmd"), exe.to_string()]
+    } else {
+        vec![exe.to_string()]
+    };
+    names
+        .into_iter()
+        .map(|name| bin_dir.join(name))
+        .find(|candidate| candidate.exists())
+}
+
 pub(super) fn env_value(name: &str) -> Option<String> {
     std::env::var(name)
         .ok()

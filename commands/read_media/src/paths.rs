@@ -61,6 +61,43 @@ pub(super) fn find_on_path(exe: &str) -> Option<PathBuf> {
     None
 }
 
+pub(super) fn command_local_python(primary_env: &str) -> Option<PathBuf> {
+    command_configured_python(primary_env).or_else(|| {
+        find_on_path("python3")
+            .or_else(|| find_on_path("python"))
+            .or_else(|| find_on_path("py"))
+    })
+}
+
+pub(super) fn command_configured_python(primary_env: &str) -> Option<PathBuf> {
+    for env_name in [primary_env, "TURA_COMMAND_PYTHON"] {
+        if let Ok(value) = std::env::var(env_name) {
+            let path = PathBuf::from(value.trim());
+            if path.exists() {
+                return Some(path);
+            }
+        }
+    }
+
+    if let Some(path) = command_venv_python() {
+        return Some(path);
+    }
+    None
+}
+
+pub(super) fn command_venv_python() -> Option<PathBuf> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let venv_python = if cfg!(windows) {
+        manifest_dir
+            .join(".venv")
+            .join("Scripts")
+            .join("python.exe")
+    } else {
+        manifest_dir.join(".venv").join("bin").join("python")
+    };
+    venv_python.exists().then_some(venv_python)
+}
+
 fn chrono_like_millis() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

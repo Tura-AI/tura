@@ -6,9 +6,58 @@ on:
   pull_request:
     branches: ["**"]
 
+# Cancel superseded runs on the same ref so pushes don't pile up.
+concurrency:
+  group: backend-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  backend-quality:
-    name: Backend quality checks
+  # Heavy clippy + test work, split per crate so the jobs run concurrently and
+  # no single job hits the GitHub Actions timeout. Runs in parallel with the
+  # frontend-quality workflow (separate workflow, same triggers).
+  backend-crate:
+    name: Backend (${{ matrix.crate }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate:
+          - agents
+          - personas
+          - read_media
+          - web_discover
+          - gateway
+          - provider
+          - router
+          - runtime
+          - session_log
+          - tools
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: backend-${{ matrix.crate }}
+
+      - name: Clippy and tests for ${{ matrix.crate }}
+        run: sh scripts/check-backend-quality.sh --crate ${{ matrix.crate }}
+
+  # Workspace-wide formatting, dependency policy and spelling. These do not
+  # compile the crates, so they are fast and need no system libraries.
+  backend-lint:
+    name: Backend lint & policy
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -17,28 +66,12 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy,rustfmt
-
-      - name: Install Linux system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            pkg-config \
-            libssl-dev \
-            libglib2.0-dev \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev
-
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+          components: rustfmt
 
       - name: Install backend quality tools
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit,cargo-deny,typos-cli
 
-      - name: Run backend quality checks
-        run: sh scripts/check-backend-quality.sh
+      - name: Formatting, dependency policy and spelling
+        run: sh scripts/check-backend-quality.sh --lint-only

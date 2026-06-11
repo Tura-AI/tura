@@ -1,0 +1,10 @@
+[package]
+name = "tura_path"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+name = "tura_path"
+path = "src/lib.rs"

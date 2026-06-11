@@ -1,4 +1,4 @@
-use super::paths::{find_on_path, temp_work_dir};
+use super::paths::{command_configured_python, command_local_python, find_on_path, temp_work_dir};
 use super::types::{MediaContent, ReadMediaArgs};
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
@@ -174,7 +174,10 @@ while len(frames) < max_frames:
 cap.release()
 print(json.dumps(frames))
 "#;
-    let output = std::process::Command::new("python")
+    let python = command_local_python("TURA_READ_MEDIA_PYTHON")
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "python".to_string());
+    let output = std::process::Command::new(&python)
         .arg("-c")
         .arg(script)
         .arg(path)
@@ -187,7 +190,7 @@ print(json.dumps(frames))
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
-            "video frame extraction unavailable: install ffmpeg or python cv2; {stderr}"
+            "video frame extraction unavailable: run commands/read_media/install.* or install ffmpeg; {stderr}"
         ));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -214,18 +217,21 @@ print(json.dumps(frames))
 }
 
 pub(super) fn resolve_ffmpeg() -> Option<String> {
-    if let Ok(path) = std::env::var("FFMPEG_PATH") {
-        if !path.trim().is_empty() && Path::new(&path).exists() {
-            return Some(path);
+    for env_name in ["TURA_READ_MEDIA_FFMPEG", "FFMPEG_PATH"] {
+        if let Ok(path) = std::env::var(env_name) {
+            if !path.trim().is_empty() && Path::new(&path).exists() {
+                return Some(path);
+            }
         }
     }
-    find_on_path("ffmpeg")
-        .map(|path| path.display().to_string())
-        .or_else(resolve_imageio_ffmpeg)
+    resolve_imageio_ffmpeg()
+        .or_else(|| find_on_path("ffmpeg").map(|path| path.display().to_string()))
 }
 
 fn resolve_imageio_ffmpeg() -> Option<String> {
-    let output = std::process::Command::new("python")
+    let python = command_configured_python("TURA_READ_MEDIA_PYTHON")
+        .map(|path| path.display().to_string())?;
+    let output = std::process::Command::new(python)
         .arg("-c")
         .arg("import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())")
         .output()

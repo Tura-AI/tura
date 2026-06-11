@@ -3,7 +3,7 @@ use crate::state_machine::session_management::SessionManagement;
 use std::io::Write;
 use tracing::warn;
 
-use crate::manas::constants::DISABLE_GATEWAY_CALLBACKS_ENV;
+use crate::manas::constants::gateway_callbacks_disabled;
 use crate::manas::final_response::summarize_tool_results_for_user;
 use crate::manas::tool_catalog::env_flag;
 
@@ -49,13 +49,57 @@ fn emit_cli_agent_message(reply_message: &str) {
     let _ = std::io::stdout().flush();
 }
 
+/// Stable message id for the streamed assistant text of a given provider turn.
+/// Both the incremental `message.part.delta` events and the final persisted
+/// message reuse this id so the full reply cleanly replaces the streamed deltas.
+pub(crate) fn stream_agent_message_id(runtime_id: &str) -> String {
+    format!("msg-stream-{runtime_id}")
+}
+
+/// Stable text part id paired with [`stream_agent_message_id`].
+pub(crate) fn stream_agent_part_id(runtime_id: &str) -> String {
+    format!("part-stream-{runtime_id}")
+}
+
+/// Publish one incremental assistant text delta to the gateway, which re-emits it
+/// as a `message.part.delta` so the frontend renders tokens as they arrive.
+pub(crate) async fn publish_streamed_agent_text(session_id: &str, runtime_id: &str, delta: &str) {
+    if gateway_callbacks_disabled() || delta.is_empty() {
+        return;
+    }
+    let target_session_id = gateway_callback_session_id(session_id);
+    let endpoint = format!(
+        "{}/session/{target_session_id}/message/agent/stream",
+        gateway_callback_base_url()
+    );
+    let payload = serde_json::json!({
+        "message_id": stream_agent_message_id(runtime_id),
+        "part_id": stream_agent_part_id(runtime_id),
+        "delta": delta,
+        "runtime_id": runtime_id,
+    });
+    if let Err(error) = reqwest::Client::new()
+        .post(endpoint)
+        .json(&payload)
+        .send()
+        .await
+    {
+        warn!(
+            session_id = %session_id,
+            runtime_id = %runtime_id,
+            error = %error,
+            "failed to publish streamed agent text delta"
+        );
+    }
+}
+
 pub(crate) fn publish_gateway_agent_message(
     session_id: &str,
     runtime_id: &str,
     reply_message: String,
     new_learning: String,
 ) -> Result<(), String> {
-    if env_flag(DISABLE_GATEWAY_CALLBACKS_ENV) {
+    if gateway_callbacks_disabled() {
         return Ok(());
     }
 
@@ -67,6 +111,8 @@ pub(crate) fn publish_gateway_agent_message(
         "new_learning": new_learning,
         "media": [],
         "runtime_id": runtime_id,
+        "message_id": stream_agent_message_id(runtime_id),
+        "part_id": stream_agent_part_id(runtime_id),
     });
 
     tokio::runtime::Runtime::new()
@@ -94,7 +140,7 @@ pub(super) fn gateway_callback_base_url() -> String {
         .unwrap_or_else(|_| {
             let port = std::env::var("TURA_GATEWAY_PORT")
                 .or_else(|_| std::env::var("PORT"))
-                .unwrap_or_else(|_| "4096".to_string());
+                .unwrap_or_else(|_| "4156".to_string());
             format!("http://127.0.0.1:{port}")
         })
         .trim_end_matches('/')

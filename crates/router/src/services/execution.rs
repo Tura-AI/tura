@@ -32,6 +32,12 @@ impl ExecutionService {
 
     pub async fn enqueue_turn(&self, state: &AppState, input: Value) -> Result<Value> {
         let request: EnqueueTurnRequest = serde_json::from_value(input)?;
+        if debug_runtime_enabled() {
+            eprintln!(
+                "router debug: enqueue_turn start session_id={} turn_id={}",
+                request.session_id, request.turn_id
+            );
+        }
         {
             let mut active = self.active_sessions.lock();
             if !active.insert(request.session_id.clone()) {
@@ -43,12 +49,25 @@ impl ExecutionService {
         }
 
         let run_request = payload_to_run_agent_request(&request)?;
+        if debug_runtime_enabled() {
+            eprintln!(
+                "router debug: enqueue_turn dispatch session_id={}",
+                request.session_id
+            );
+        }
         let (status, body) = dispatch_run_agent(state, run_request).await;
         self.active_sessions.lock().remove(&request.session_id);
+        if debug_runtime_enabled() {
+            eprintln!(
+                "router debug: enqueue_turn finished session_id={} status={} body={}",
+                request.session_id, status, body
+            );
+        }
         if status >= 400 {
             return Err(anyhow!(
                 "{}",
-                body.get("error")
+                body.pointer("/result/error")
+                    .or_else(|| body.get("error"))
                     .and_then(Value::as_str)
                     .unwrap_or("runtime worker failed")
             ));
@@ -89,4 +108,15 @@ fn payload_to_run_agent_request(request: &EnqueueTurnRequest) -> Result<RunAgent
         );
     }
     Ok(serde_json::from_value(value)?)
+}
+
+fn debug_runtime_enabled() -> bool {
+    std::env::var("TURA_DEBUG_RUNTIME")
+        .ok()
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
 }

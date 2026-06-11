@@ -199,7 +199,7 @@ pub fn default_agent_config(project_root: &Path, agent_id: &str) -> Result<Agent
         }),
         agent_persona: vec![serde_json::json!({
             "persona_name": "tura",
-            "persona_directory": "personas/src/tura/prompt"
+            "persona_directory": "personas/src/tura"
         })],
         agent_prompt: vec![serde_json::json!({
             "agent_prompt": normalize_agent_id(agent_id),
@@ -308,6 +308,7 @@ fn default_capabilities() -> Vec<serde_json::Value> {
         "command_run",
         "apply_patch",
         "shell_command",
+        "zsh",
         "read_media",
         "web_discover",
         "compact_context",

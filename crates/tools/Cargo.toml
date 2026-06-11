@@ -11,11 +11,17 @@ path = "src/lib.rs"
 
 [[test]]
 name = "web_discover_live_provider_check"
-path = "tests/web_discover_live_provider_check.rs"
-required-features = ["live-tests"]
+path = "tests/business/live/web_discover_live_provider_check.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "command_run_current_flow"
+path = "tests/business/flow/command_run_current_flow.rs"
+required-features = ["business-tests"]
 
 [features]
-live-tests = []
+business-tests = []
+live-tests = ["business-tests"]
 
 [dependencies]
 async-trait.workspace = true

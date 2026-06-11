@@ -1,7 +1,7 @@
 use chrono::Utc;
 use tracing::warn;
 
-use crate::manas::constants::DISABLE_GATEWAY_CALLBACKS_ENV;
+use crate::manas::constants::gateway_callbacks_disabled;
 use crate::manas::tool_catalog::env_flag;
 use crate::prompt_style::{runtime_fallback, tool_progress};
 use crate::runtime::types::ToolCallData;
@@ -379,7 +379,7 @@ fn publish_gateway_tool_message(
     state: serde_json::Value,
     metadata: serde_json::Value,
 ) -> Result<(), String> {
-    if env_flag(DISABLE_GATEWAY_CALLBACKS_ENV) {
+    if gateway_callbacks_disabled() {
         return Ok(());
     }
 
@@ -419,7 +419,7 @@ fn publish_gateway_tool_message(
 }
 
 pub(crate) fn publish_task_plan_todos(session: &SessionManagement) {
-    if env_flag(DISABLE_GATEWAY_CALLBACKS_ENV) || session.task_plan.detailed_tasks.is_empty() {
+    if gateway_callbacks_disabled() || session.task_plan.detailed_tasks.is_empty() {
         return;
     }
 

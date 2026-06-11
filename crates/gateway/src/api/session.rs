@@ -766,7 +766,7 @@ mod session_messages;
 use session_messages::{agent_message_content, agent_message_metadata, planning_todos};
 pub use session_messages::{
     get_message, get_message_part, get_todos, list_messages, send_agent_message, send_message,
-    session_command, update_todos, SendAgentMedia, SendAgentMessageRequest,
+    session_command, stream_agent_message, update_todos, SendAgentMedia, SendAgentMessageRequest,
     SendAgentMessageResponse, SendAgentToolCall,
 };
 pub async fn revert_session(Path(session_id): Path<String>) -> Json<bool> {

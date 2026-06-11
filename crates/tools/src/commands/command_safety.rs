@@ -1,4 +1,4 @@
-//! Command interception for the bash / shell_command tools.
+//! Command interception for the shell_command / bash / zsh tools.
 //!
 //! This module is a single self-contained command interceptor. It mirrors the
 //! "dangerous command detection" layer found in Codex and claude-code: before a
@@ -9,11 +9,11 @@
 //!
 //! Scope is intentionally limited to *interception* (detection + block). It does
 //! not implement sandboxing, approval UI, or a read-only allow list; those live
-//! elsewhere. Detection covers both POSIX/bash and Windows (PowerShell / CMD)
+//! elsewhere. Detection covers both POSIX shells and Windows (PowerShell / CMD)
 //! command shapes, and defends against common bypasses: connector chains
 //! (`;`, `&&`, `||`, `|`), command substitution (`$(...)`, backticks),
 //! wrapper commands (`sudo`, `timeout`, `env`, `xargs`, ...), and
-//! `bash -c "<script>"` / `eval "<script>"` indirection.
+//! `bash`/`zsh`/`sh -c "<script>"` / `eval "<script>"` indirection.
 
 /// Environment variable that turns the interceptor off entirely. Useful for
 /// trusted automation that opts out of the guardrail. Any of `0`/`false`/`off`
@@ -145,7 +145,7 @@ fn check_segment(segment: &str, depth: usize) -> Option<String> {
     let base = base_name(base_raw);
     let args = &tokens[1..];
 
-    // `bash -c "<script>"` / `sh -lc "<script>"` indirection.
+    // `bash`/`zsh`/`sh -c "<script>"` indirection.
     if NESTED_SHELLS.contains(&base.as_str()) {
         if let Some(script) = nested_shell_script(args) {
             return scan(&script, depth + 1);
@@ -791,6 +791,7 @@ mod tests {
     #[test]
     fn blocks_indirection() {
         blocked("bash -c \"rm -rf /tmp/x\"");
+        blocked("zsh -c \"rm -rf /tmp/zsh-x\"");
         blocked("sh -lc 'rm -rf build'");
         blocked("eval \"rm -rf /tmp/y\"");
         blocked("echo hi && rm -rf /tmp/z");

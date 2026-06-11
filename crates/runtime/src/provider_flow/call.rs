@@ -9,7 +9,10 @@ use std::sync::{
 use std::time::{Duration, Instant};
 use tracing::error;
 
-use crate::gateway_events::{emit_cli_live_command_run_results, emit_cli_live_command_run_started};
+use crate::gateway_events::{
+    emit_cli_live_command_run_results, emit_cli_live_command_run_started,
+    publish_streamed_agent_text,
+};
 use crate::provider_flow::errors::{
     finish_runtime_failure, finish_runtime_failure_with_usage, runtime_timeout,
 };
@@ -255,6 +258,23 @@ async fn call_runtime_streaming(
     let timeout_duration = runtime_timeout(runtime);
     let (stream_tx, stream_rx) = mpsc::channel::<tura_llm_rust::ProviderStreamEvent>();
     let final_response_stream_tx = stream_tx.clone();
+    // Forward incremental assistant text tokens to the gateway on a dedicated
+    // thread so the streaming HTTP POSTs never block the provider stream loop.
+    let (text_delta_tx, text_delta_rx) = mpsc::channel::<String>();
+    let text_delta_session_id = runtime.session_id.clone();
+    let text_delta_runtime_id = runtime.runtime_id.clone();
+    let _text_delta_thread = std::thread::spawn(move || {
+        let Ok(async_runtime) = tokio::runtime::Runtime::new() else {
+            return;
+        };
+        while let Ok(delta) = text_delta_rx.recv() {
+            async_runtime.block_on(publish_streamed_agent_text(
+                &text_delta_session_id,
+                &text_delta_runtime_id,
+                &delta,
+            ));
+        }
+    });
     let first_stream_output_at: Arc<Mutex<Option<DateTime<Utc>>>> = Arc::new(Mutex::new(None));
     let streamed_command_results: Arc<Mutex<Vec<serde_json::Value>>> =
         Arc::new(Mutex::new(Vec::new()));
@@ -284,6 +304,9 @@ async fn call_runtime_streaming(
             tura_llm_rust::ProviderStreamEvent::CommandRunCommandReady { .. }
         ) {
             streamed_command_seen_for_sink.store(true, Ordering::SeqCst);
+        }
+        if let tura_llm_rust::ProviderStreamEvent::TextDelta { text } = &event {
+            let _ = text_delta_tx.send(text.clone());
         }
         let _ = stream_tx.send(event);
     });

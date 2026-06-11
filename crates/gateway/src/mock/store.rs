@@ -430,7 +430,7 @@ impl Store {
     }
 
     // ========================================================================
-    // Gateway-specific Operations (保留原有功能)
+    // Gateway-specific operations.
     // ========================================================================
 
     pub fn add_outbound_action(&self, action: OutboundAction) {

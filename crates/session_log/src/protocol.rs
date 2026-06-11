@@ -95,6 +95,16 @@ pub struct GetSessionRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteSessionRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteWorkspaceRequest {
+    pub workspace: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum SessionLogCommand {
     UpsertSession(UpsertSessionRequest),
@@ -103,6 +113,9 @@ pub enum SessionLogCommand {
     ListWorkspaces,
     ListSessions(ListSessionsRequest),
     ListSessionRecords(ListSessionRecordsRequest),
+    DeleteSession(DeleteSessionRequest),
+    DeleteWorkspace(DeleteWorkspaceRequest),
+    Shutdown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

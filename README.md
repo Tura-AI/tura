@@ -12,8 +12,9 @@ startup, and CLI launcher registration.
 
 ## Quick Start
 
-Production install builds release binaries into `bin/` and registers the
-`tura-tui` / `tura-gateway` launchers on PATH:
+Install user-local dependency tools and package-owned dependencies first. This
+does not build binaries: it installs `uv`, `bun`, command-local Python `.venv`
+directories, and Bun workspaces in place.
 
 ```powershell
 .\scripts\install.ps1
@@ -23,15 +24,31 @@ Production install builds release binaries into `bin/` and registers the
 ./scripts/install.sh
 ```
 
-Development install builds debug binaries in `target/debug` and keeps frontend
-artifacts in their source workspaces:
+On macOS, the POSIX install/start scripts assert that zsh is available for the
+default shell surface. `scripts/register-cli.sh` updates `.zprofile` and
+`.zshrc` when needed so new Terminal sessions can find the release binaries.
+
+Production build writes release binaries into Cargo's standard
+`target/release` directory and registers that directory on PATH. The registered
+CLI command is `tura exec`; the TUI entry remains `tura`:
 
 ```powershell
-.\scripts\install.ps1 -Dev
+.\scripts\build-release.ps1; .\scripts\register-cli.ps1
 ```
 
 ```bash
-./scripts/install.sh dev
+./scripts/build-release.sh; scripts/register-cli.sh
+```
+
+Development build writes debug binaries into `target/debug` and keeps frontend
+artifacts in their source workspaces:
+
+```powershell
+.\scripts\build-debug.ps1
+```
+
+```bash
+./scripts/build-debug.sh
 ```
 
 Run a direct CLI prompt:
@@ -44,17 +61,16 @@ Run a direct CLI prompt:
 ./scripts/start.sh "Inspect the workspace"
 ```
 
-Start the gateway, TUI, GUI, or desktop shell:
+Start the TUI, GUI, or desktop shell (each auto-starts/attaches to its own
+`tura_gateway` on port 4126):
 
 ```powershell
-.\scripts\start.ps1 -Gateway -Port 4096
 .\scripts\start.ps1 -Tui --help
 .\scripts\start.ps1 -Gui
 .\scripts\start.ps1 -Desktop
 ```
 
 ```bash
-./scripts/start.sh --gateway --port 4096
 ./scripts/start.sh --tui --help
 ./scripts/start.sh --gui
 ./scripts/start.sh --desktop
@@ -72,25 +88,61 @@ Launcher maintenance:
 ./scripts/unregister-cli.sh
 ```
 
-## Benchmarks
+NPM package checks:
 
-The benchmark suite lives under `tests/business/`. It contains manual,
-long-running business benchmarks for frontend repair, ProgramBench-style
-cleanroom rebuilds, SWE-bench-style issue patching, source-port rewrites, media
-research, and TUI flows.
+```bash
+npm run install:deps -- --check-only
+npm run pack:check
+```
 
-For development, benchmark and debug flows should use the dev install path and
-debug gateway binaries (`target/debug`), not production `bin/` packaging.
+Script install/release checks:
 
 ```powershell
-.\scripts\install.ps1 -Dev
-$env:COMMAND_RUN_AGENT_SMOKE_ONLY='1'
-node .\tests\business\frontend-playwright\react_ops_board_playwright_repair_lite.mjs
+.\scripts\tests\scripts\test-install.ps1
+.\scripts\tests\scripts\test-build-release.ps1 -SkipTui -ReleaseProbe release-v0.0.0-ci
 ```
 
 ```bash
-./scripts/install.sh dev
-COMMAND_RUN_AGENT_SMOKE_ONLY=1 node ./tests/business/frontend-playwright/react_ops_board_playwright_repair_lite.mjs
+sh scripts/tests/scripts/test-install.sh
+sh scripts/tests/scripts/test-build-release.sh --skip-tui --release-probe release-v0.0.0-ci
+```
+
+## Business Tests And Benchmarks
+
+Business release-entry tests live under `tests/business/` and exercise the
+registered release command surfaces. The CLI scripts are under
+`tests/business/release-entry/`; TUI and GUI release-entry scripts live with
+their app-owned E2E suites under `apps/tui/e2e/business/` and
+`apps/gui/e2e/business/`.
+
+Backend Rust tests that need provider credentials, external network access, or
+long business flows live under `crates/*/tests/business/` and run only through
+`scripts/run-backend-business-tests.*`; their suite is the first directory under
+`tests/business` (`flow`, `live`, or `long-e2e`). Backend compatibility,
+concurrency, stress, and stability tests live under
+`crates/*/tests/performance/` and run through
+`scripts/run-backend-performance-tests.*`. CI and default `cargo test
+--workspace --exclude src-tauri` run only unit tests, default crate tests, and
+non-foldered root flow tests.
+
+Benchmark and comparison suites live under `tests/benchmark/`. They are manual,
+long-running flows for frontend repair, ProgramBench-style cleanroom rebuilds,
+SWE-bench-style issue patching, and source-port rewrites.
+
+Run the release-entry business suite after `build-release` and registration:
+
+```powershell
+.\scripts\build-release.ps1; .\scripts\register-cli.ps1
+node .\tests\business\release-entry\run_all_cli_release.mjs
+npm --prefix apps\tui run test:business:release
+bun run --cwd apps\gui e2e:business:release
+```
+
+```bash
+./scripts/build-release.sh; scripts/register-cli.sh
+node ./tests/business/release-entry/run_all_cli_release.mjs
+npm --prefix apps/tui run test:business:release
+bun run --cwd apps/gui e2e:business:release
 ```
 
 ## More Information
@@ -98,8 +150,10 @@ COMMAND_RUN_AGENT_SMOKE_ONLY=1 node ./tests/business/frontend-playwright/react_o
 - [Full operational overview](docs/overview.md)
 - [Architecture boundaries](ARCHITECTURE.md)
 - [Scripts architecture](scripts/ARCHITECTURE.md)
-- [Business benchmark guide](tests/business/README.md)
+- [Business test guide](tests/business/README.md)
+- [Benchmark guide](tests/benchmark/README.md)
 - [Test guide](tests/README.md)
 - [TUI guide](apps/tui/README.md)
 - [GUI guide](apps/gui/README.md)
 - [Project roles](docs/roles.md)
+- License: AGPL-3.0-or-later

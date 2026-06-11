@@ -371,6 +371,8 @@ async fn agent_tool_callback_updates_auto_session_name_from_last_task_summary() 
                 step_summary: None,
                 media: vec![],
                 runtime_id: Some("runtime-1".to_string()),
+                message_id: None,
+                part_id: None,
                 tool_call: Some(super::SendAgentToolCall {
                     tool_name: "command_run".to_string(),
                     call_id: "call-1".to_string(),
@@ -446,6 +448,8 @@ async fn agent_tool_callback_keeps_manual_session_name_when_auto_disabled() {
             step_summary: None,
             media: vec![],
             runtime_id: Some("runtime-1".to_string()),
+            message_id: None,
+            part_id: None,
             tool_call: Some(super::SendAgentToolCall {
                 tool_name: "command_run".to_string(),
                 call_id: "call-1".to_string(),
@@ -661,6 +665,8 @@ fn agent_message_metadata_keeps_step_summary_for_frontend() {
         step_summary: Some("send final response".to_string()),
         media: vec![],
         runtime_id: Some("runtime-1".to_string()),
+        message_id: None,
+        part_id: None,
         tool_call: None,
     })
     .expect("feedback metadata should be present");
@@ -682,6 +688,8 @@ fn agent_message_content_renders_media_as_rich_tokens() {
             media_type: Some("image/png".to_string()),
         }],
         runtime_id: Some("runtime-1".to_string()),
+        message_id: None,
+        part_id: None,
         tool_call: None,
     });
 

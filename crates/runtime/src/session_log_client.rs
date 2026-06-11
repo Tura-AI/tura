@@ -99,35 +99,26 @@ impl SessionLogClient {
     }
 
     fn call(&self, command: SessionLogCommand) -> Result<SessionLogResponse> {
+        if session_log::ipc::service_is_running() {
+            match session_log::ipc::call_service(&command) {
+                Ok(response) => return Ok(response),
+                Err(error) if session_log::file_queue::is_async_write(&command) => {
+                    tracing::warn!(
+                        error = %error,
+                        "session_db service call failed for async write; enqueueing for later drain"
+                    );
+                    session_log::file_queue::enqueue_command(&command)?;
+                    return Ok(SessionLogResponse::Ok);
+                }
+                Err(error) => return Err(error),
+            }
+        }
         if session_log::file_queue::is_async_write(&command) {
             session_log::file_queue::enqueue_command(&command)?;
             return Ok(SessionLogResponse::Ok);
         }
-        let store = session_log::SessionLogStore::open_default()?;
-        let _ = session_log::file_queue::drain_queue(&store, 10_000)?;
-        handle_read_command(command, &store)
+        Err(anyhow!(
+            "session_db service is not running; start the per-home tura_router/tura_session_db owner before reading session data"
+        ))
     }
-}
-
-fn handle_read_command(
-    command: SessionLogCommand,
-    store: &session_log::SessionLogStore,
-) -> Result<SessionLogResponse> {
-    Ok(match command {
-        SessionLogCommand::ListWorkspaces => SessionLogResponse::Workspaces {
-            workspaces: store.list_workspaces()?,
-        },
-        SessionLogCommand::GetSession(payload) => SessionLogResponse::Session {
-            session: store.get_session(payload)?.map(Box::new),
-        },
-        SessionLogCommand::ListSessions(payload) => {
-            let (page, sessions) = store.list_sessions(payload)?;
-            SessionLogResponse::Sessions { page, sessions }
-        }
-        SessionLogCommand::ListSessionRecords(payload) => {
-            let (page, records) = store.list_session_records(payload)?;
-            SessionLogResponse::Records { page, records }
-        }
-        other => anyhow::bail!("unexpected session_log read command: {other:?}"),
-    })
 }

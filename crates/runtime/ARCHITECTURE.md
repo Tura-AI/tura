@@ -9,7 +9,19 @@ Cargo target names:
 ```text
 package = runtime
 library = runtime
+binary  = tura_runtime   (src/bin/tura_runtime.rs -> runtime::worker::run)
 ```
+
+## Runtime worker binary (`tura_runtime`)
+
+The runtime is run as a per-session worker by the **standalone `tura_runtime`
+binary** (no longer the gateway binary re-invoked by role). `runtime::worker`
+hosts the line-protocol loop the router drives: read `{ "kind", "payload" }`,
+write one JSON reply per line. `health_check` carries `tura_path::instance_version()`
+so the router performs a **version handshake** before dispatching. The worker
+activates the agent spec, runs one prompt via `mano::process_from_gateway_session_in_directory`,
+and exits (complete-and-die). It reaches the database only through the single
+`tura_session_db` owner's socket — never `open_default()`.
 
 ## Layout
 
@@ -128,7 +140,12 @@ crates/runtime/
       send_calldata.rs
 
   tests/
-    coding_agent_live_test.rs
+    business/
+      live/
+        claude_code_live_e2e.rs
+      long-e2e/
+        claude_code_mock_e2e.rs
+        coding_agent_mock_e2e.rs
     override_manas_direct_test.rs
     override_mano_and_manas_test.rs
     process_from_user_default_test.rs
@@ -190,8 +207,8 @@ to avoid cross-workspace reuse of a repeated session id.
 Useful session-log queries while debugging runtime resume behavior:
 
 ```powershell
-'{"command":"get_session","session_id":"session-id"}' | target\debug\gateway.exe session-log
-'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\gateway.exe session-log
+'{"command":"get_session","session_id":"session-id"}' | target\debug\tura_gateway.exe session-log
+'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\tura_gateway.exe session-log
 ```
 
 ## MANAS Layer

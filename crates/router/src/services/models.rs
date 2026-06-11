@@ -31,13 +31,13 @@ pub struct WorkerHandle {
     pub worker_id: String,
 }
 
-/// 声明式 worker 描述：可执行 + 启动参数 + env 契约。
-/// 不绑定任何具体服务；以「key→worker」复用、探活、自愈。
+/// Declarative worker description: executable, startup arguments, and env.
+/// Workers are reused by key and can be replaced after liveness checks fail.
 #[derive(Debug, Clone)]
 pub struct WorkerSpec {
-    /// 复用维度的 key（session/agent 维度，非服务目录）。
+    /// Reuse key, usually at session or agent scope.
     pub key: String,
-    /// 用于 url/状态展示的逻辑名。
+    /// Logical name used in status output and URLs.
     pub service_name: String,
     pub executable: std::path::PathBuf,
     pub args: Vec<String>,

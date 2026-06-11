@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::auth_registry::OAuthAuthorizeKind;
 use crate::llm::providers;
-use crate::logging::{build_call_log, write_llm_log};
+use crate::logging::{build_call_log, logging_enabled, write_llm_log};
 use crate::tura_conf::TuraConfig;
 use crate::utils::{strip_text_tool_calls, text_tool_calls_value};
 
@@ -29,6 +29,11 @@ pub use tura_llm_config::{
 #[derive(Debug, Clone)]
 pub enum ProviderStreamEvent {
     ProviderOutputStarted,
+    /// Incremental assistant text token(s) emitted while the provider streams its
+    /// reply, used to surface real token-by-token streaming to the frontend.
+    TextDelta {
+        text: String,
+    },
     CommandRunCommandReady {
         tool_call_id: String,
         command_index: usize,
@@ -364,48 +369,52 @@ impl ProviderConfig {
 
         match result {
             Ok(response) => {
-                let log = build_call_log(
-                    &self.provider,
-                    &self.model,
-                    &self.base_url,
-                    Value::Array(messages.clone()),
-                    Some(response.raw.clone()),
-                    request_params,
-                    options.response_format.clone(),
-                    started_at,
-                    finished_at,
-                    duration_ms,
-                    true,
-                    &call_id,
-                    response.metrics.clone(),
-                    None,
-                    None,
-                );
-                if let Ok(path) = write_llm_log(&log, Some(&call_id)).await {
-                    info!(provider = %self.provider, model = %self.model, log_path = %path.display(), duration_ms = duration_ms, "provider call succeeded");
+                if logging_enabled() {
+                    let log = build_call_log(
+                        &self.provider,
+                        &self.model,
+                        &self.base_url,
+                        Value::Array(messages.clone()),
+                        Some(response.raw.clone()),
+                        request_params,
+                        options.response_format.clone(),
+                        started_at,
+                        finished_at,
+                        duration_ms,
+                        true,
+                        &call_id,
+                        response.metrics.clone(),
+                        None,
+                        None,
+                    );
+                    if let Ok(path) = write_llm_log(&log, Some(&call_id)).await {
+                        info!(provider = %self.provider, model = %self.model, log_path = %path.display(), duration_ms = duration_ms, "provider call succeeded");
+                    }
                 }
                 Ok(response)
             }
             Err(err) => {
-                let log = build_call_log(
-                    &self.provider,
-                    &self.model,
-                    &self.base_url,
-                    Value::Array(messages.clone()),
-                    None,
-                    request_params,
-                    options.response_format.clone(),
-                    started_at,
-                    finished_at,
-                    duration_ms,
-                    false,
-                    &call_id,
-                    None,
-                    Some(err.to_string()),
-                    None,
-                );
-                if let Ok(path) = write_llm_log(&log, Some(&call_id)).await {
-                    error!(provider = %self.provider, model = %self.model, log_path = %path.display(), error = %err, "provider call failed");
+                if logging_enabled() {
+                    let log = build_call_log(
+                        &self.provider,
+                        &self.model,
+                        &self.base_url,
+                        Value::Array(messages.clone()),
+                        None,
+                        request_params,
+                        options.response_format.clone(),
+                        started_at,
+                        finished_at,
+                        duration_ms,
+                        false,
+                        &call_id,
+                        None,
+                        Some(err.to_string()),
+                        None,
+                    );
+                    if let Ok(path) = write_llm_log(&log, Some(&call_id)).await {
+                        error!(provider = %self.provider, model = %self.model, log_path = %path.display(), error = %err, "provider call failed");
+                    }
                 }
                 Err(err)
             }

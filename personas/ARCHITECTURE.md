@@ -125,14 +125,14 @@ Agents reference personas through `agent_persona` in
   "agent_persona": [
     {
       "persona_name": "tura",
-      "persona_directory": "personas/src/tura/prompt"
+      "persona_directory": "personas/src/tura"
     }
   ]
 }
 ```
 
-`persona_directory` points at the prompt directory used by the runtime prompt
-assembly path. The persona config itself still lives at
+`persona_directory` points at the persona root. Runtime prompt assembly reads
+persona prompt files from that directory and its `prompt` subdirectory. The persona config itself still lives at
 `personas/src/<persona_id>/persona_config.json` for built-ins or
 `personas/<persona_id>/persona_config.json` for dynamic personas.
 

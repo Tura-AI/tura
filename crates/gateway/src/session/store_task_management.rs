@@ -133,6 +133,7 @@ fn apply_task_list_patch(
     info: &mut SessionInfo,
     tasks: &[serde_json::Value],
 ) -> Result<(), String> {
+    let mut requested_task_order = Vec::new();
     for value in tasks {
         let Some(object) = value.as_object() else {
             return Err("tasks entries must be objects".to_string());
@@ -144,6 +145,13 @@ fn apply_task_list_patch(
             .detailed_tasks
             .iter()
             .position(|task| task.task_id == task_id);
+        // Only tasks the patch explicitly references for reordering should drive
+        // the requested order. Newly created tasks append in iteration order via
+        // their existing position, so an untouched existing task is never pushed
+        // behind a freshly generated one.
+        if position.is_some() && !requested_task_order.contains(&task_id) {
+            requested_task_order.push(task_id.clone());
+        }
         let index = match position {
             Some(index) => index,
             None => {
@@ -174,8 +182,37 @@ fn apply_task_list_patch(
             info.management.task_plan.detailed_tasks[index].task_id = task_id;
         }
     }
+    reorder_tasks_by_patch_order(
+        &mut info.management.task_plan.detailed_tasks,
+        &requested_task_order,
+    );
     renumber_task_steps(&mut info.management.task_plan.detailed_tasks);
     Ok(())
+}
+
+fn reorder_tasks_by_patch_order(tasks: &mut [TaskStep], requested_task_order: &[String]) {
+    let requested_positions: HashMap<&str, usize> = requested_task_order
+        .iter()
+        .enumerate()
+        .map(|(index, task_id)| (task_id.as_str(), index))
+        .collect();
+    let existing_positions: HashMap<String, usize> = tasks
+        .iter()
+        .enumerate()
+        .map(|(index, task)| (task.task_id.clone(), index))
+        .collect();
+    tasks.sort_by_key(|task| {
+        (
+            requested_positions
+                .get(task.task_id.as_str())
+                .copied()
+                .unwrap_or(usize::MAX),
+            existing_positions
+                .get(&task.task_id)
+                .copied()
+                .unwrap_or(usize::MAX),
+        )
+    });
 }
 
 fn renumber_task_steps(tasks: &mut [TaskStep]) {

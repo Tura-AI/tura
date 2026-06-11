@@ -96,6 +96,13 @@ fn resolve_router_binary() -> Result<PathBuf, String> {
 
 /// Dispatch a single child agent through a router CLI subprocess; blocks on the result JSON.
 pub fn dispatch_child_agent(req: &ChildAgentRequest) -> Result<ChildAgentSummary, String> {
+    if std::env::var("TURA_ALLOW_CHILD_ROUTER_CLI_FOR_TEST")
+        .ok()
+        .as_deref()
+        != Some("1")
+    {
+        return Err("child dispatch must use the current gateway/router owner; direct router CLI spawning is disabled".to_string());
+    }
     let router_bin = resolve_router_binary()?;
 
     let payload = json!({

@@ -182,11 +182,7 @@ pub(super) fn user_new_command_message(session_id: &str) -> Option<String> {
 }
 
 pub(super) fn fetch_user_commands(session_id: &str) -> Vec<String> {
-    if std::env::var("TURA_DISABLE_GATEWAY_CALLBACKS")
-        .ok()
-        .as_deref()
-        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-    {
+    if super::constants::gateway_callbacks_disabled() {
         return Vec::new();
     }
     let endpoint = format!(

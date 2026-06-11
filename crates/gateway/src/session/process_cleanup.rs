@@ -120,13 +120,15 @@ fn control_plane_reason(process: &Process) -> Option<String> {
         .unwrap_or_default();
     let haystack = format!("{name} {cmd} {exe}");
 
-    // 受保护控制面进程：router、gateway 二进制（runtime worker 同一二进制 + TURA_ROLE）。
+    // Protected control-plane fronts and backend daemons.
     let protected = [
         "cargo run -p gateway",
-        "bin\\gateway",
-        "bin/gateway",
-        "\\gateway.exe",
-        "/gateway",
+        "target\\debug\\tura_gateway",
+        "target/debug/tura_gateway",
+        "target\\release\\tura_gateway",
+        "target/release/tura_gateway",
+        "\\tura_gateway.exe",
+        "/tura_gateway",
     ];
 
     if protected.iter().any(|needle| haystack.contains(needle)) {

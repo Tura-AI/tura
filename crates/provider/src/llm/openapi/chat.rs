@@ -19,7 +19,8 @@ use crate::streaming::{
 };
 use crate::tura_llm::{
     default_client, estimate_context_utilization, normalize_response_content, CallMetrics,
-    CallOptions, CostDetails, ProviderResponse, ProviderStreamEventSink, TuraError, UsageDetails,
+    CallOptions, CostDetails, ProviderResponse, ProviderStreamEvent, ProviderStreamEventSink,
+    TuraError, UsageDetails,
 };
 use crate::utils::{
     deep_merge_json, emit_command_run_stream_events_from_content, strip_json_fence,
@@ -101,7 +102,15 @@ pub async fn call_with_stream_events(
     let payload = build_chat_payload(provider, model, messages, options);
 
     if options.stream.unwrap_or(false) {
-        return stream_call(base_url, &client, url, payload, options.context_window).await;
+        return stream_call(
+            base_url,
+            &client,
+            url,
+            payload,
+            options.context_window,
+            stream_events.as_ref(),
+        )
+        .await;
     }
 
     let resp = send_provider_request_first_response(client.post(url).json(&payload)).await?;
@@ -357,6 +366,7 @@ async fn stream_call(
     url: String,
     payload: Value,
     context_window: Option<u64>,
+    stream_events: Option<&ProviderStreamEventSink>,
 ) -> Result<ProviderResponse, TuraError> {
     let resp = send_provider_request_first_response(client.post(url).json(&payload)).await?;
     let status = resp.status();
@@ -394,6 +404,7 @@ async fn stream_call(
                 &mut full_content,
                 &mut tool_calls,
                 &mut stream_state,
+                stream_events,
             ) {
                 saw_output = true;
                 last_output_at = Instant::now();
@@ -413,6 +424,7 @@ async fn stream_call(
             &mut full_content,
             &mut tool_calls,
             &mut stream_state,
+            stream_events,
         );
     }
 
@@ -496,7 +508,8 @@ pub(crate) fn process_chat_stream_line_for_test(line: &str) -> (bool, String, St
     let mut full = String::new();
     let mut tools = Vec::new();
     let mut state = OpenAiCompatibleStreamState::default();
-    let event = process_openai_compatible_stream_line(line, &mut full, &mut tools, &mut state);
+    let event =
+        process_openai_compatible_stream_line(line, &mut full, &mut tools, &mut state, None);
     (event, full, state.reasoning_buffer)
 }
 
@@ -505,6 +518,7 @@ fn process_openai_compatible_stream_line(
     full_content: &mut String,
     tool_calls: &mut Vec<Value>,
     state: &mut OpenAiCompatibleStreamState,
+    stream_events: Option<&ProviderStreamEventSink>,
 ) -> bool {
     let Some(line) = line.trim_start().strip_prefix("data:") else {
         return false;
@@ -533,6 +547,11 @@ fn process_openai_compatible_stream_line(
             {
                 if !text.is_empty() {
                     output_event = true;
+                    if let Some(sink) = stream_events {
+                        sink(ProviderStreamEvent::TextDelta {
+                            text: text.to_string(),
+                        });
+                    }
                 }
                 full_content.push_str(text);
                 if emit_minimax_streaming_tool_call(

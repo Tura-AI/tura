@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url"
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(scriptDir, "..", "..", "..", "..", "..")
 const runRoot = path.join(repoRoot, "target", "command-run-read-media-e2e", String(Date.now()))
-const turaExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura.exe" : "tura")
+const turaExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura_exec.exe" : "tura_exec")
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -86,7 +86,7 @@ function collectText(events) {
 
 function main() {
   writeFixtures()
-  run("cargo", ["build", "-p", "gateway", "--bin", "tura"], { cwd: repoRoot })
+  run("cargo", ["build", "-p", "gateway", "--bin", "tura_exec"], { cwd: repoRoot })
 
   const prompt = [
     "Use command_run read_media to inspect these three local media files, then describe them accurately and concisely:",

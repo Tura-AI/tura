@@ -18,6 +18,7 @@ pub mod state_machine;
 pub mod tool_flow;
 pub mod tool_router;
 pub mod turn_loop;
+pub mod worker;
 
 pub use agent_router::*;
 pub use context::*;

@@ -3,17 +3,93 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - "release-v*"
   workflow_dispatch:
+    inputs:
+      release_probe:
+        description: "Dry-run release detector. Must look like release-v0.0.0 or release-v0.0.0-ci."
+        required: true
+        default: "release-v0.0.0-ci"
+      build_tui:
+        description: "Build GUI/TUI release artifacts during the dry-run script test."
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
 
 jobs:
+  script-tests:
+    name: Install/build release script test (${{ matrix.release_os }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - release_os: windows
+            runner: windows-latest
+          - release_os: macos
+            runner: macos-latest
+          - release_os: linux
+            runner: ubuntu-latest
+    env:
+      TURA_RELEASE_PROBE: ${{ github.event.inputs.release_probe || github.ref_name || 'release-v0.0.0-ci' }}
+      TURA_BUILD_TUI: ${{ github.event.inputs.build_tui || 'false' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-script-test-${{ matrix.release_os }}
+
+      - name: Install Linux system dependencies
+        if: matrix.release_os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev
+
+      - name: Run install script tests (Windows)
+        if: matrix.release_os == 'windows'
+        shell: pwsh
+        run: .\scripts\tests\scripts\test-install.ps1 -Full
+
+      - name: Run install script tests (Unix)
+        if: matrix.release_os != 'windows'
+        run: sh scripts/tests/scripts/test-install.sh --full
+
+      - name: Run build-release script tests (Windows)
+        if: matrix.release_os == 'windows'
+        shell: pwsh
+        run: |
+          if ($env:TURA_BUILD_TUI -ne "true") {
+            .\scripts\tests\scripts\test-build-release.ps1 -ReleaseProbe $env:TURA_RELEASE_PROBE -SkipTui
+          } else {
+            .\scripts\tests\scripts\test-build-release.ps1 -ReleaseProbe $env:TURA_RELEASE_PROBE
+          }
+
+      - name: Run build-release script tests (Unix)
+        if: matrix.release_os != 'windows'
+        run: |
+          args="--release-probe $TURA_RELEASE_PROBE"
+          if [ "$TURA_BUILD_TUI" != "true" ]; then
+            args="$args --skip-tui"
+          fi
+          # shellcheck disable=SC2086
+          sh scripts/tests/scripts/test-build-release.sh $args
+
   source-package:
     name: Source package
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - script-tests
+    if: startsWith(github.ref, 'refs/tags/release-v')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,11 +97,11 @@ jobs:
       - name: Validate release tag
         run: |
           case "${GITHUB_REF_NAME}" in
-            v[0-9]*.[0-9]*.[0-9]*)
+            release-v[0-9]*.[0-9]*.[0-9]*)
               echo "release tag: ${GITHUB_REF_NAME}"
               ;;
             *)
-              echo "Release tags must look like v0.0.0, v1.2.3, etc." >&2
+              echo "Release tags must look like release-v0.0.0, release-v1.2.3, etc." >&2
               exit 1
               ;;
           esac
@@ -45,10 +121,12 @@ jobs:
           path: tura-${{ github.ref_name }}-source.tar.gz
           if-no-files-found: error
 
-  bin-package:
-    name: Bin package (${{ matrix.release_os }})
+  release-package:
+    name: Release package (${{ matrix.release_os }})
     runs-on: ${{ matrix.runner }}
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - script-tests
+    if: startsWith(github.ref, 'refs/tags/release-v')
     strategy:
       fail-fast: false
       matrix:
@@ -102,31 +180,79 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev
 
-      - name: Build bin directory (Windows)
+      - name: Install Tura dependencies (Windows)
         if: matrix.release_os == 'windows'
         shell: pwsh
-        run: .\scripts\build-bin.ps1 -SkipGui -SkipFrontendInstall -SkipCliRegister
+        run: .\scripts\install.ps1
 
-      - name: Build bin directory (Unix)
+      - name: Install Tura dependencies (Unix)
         if: matrix.release_os != 'windows'
-        run: sh scripts/build-bin.sh --skip-gui --skip-frontend-install --skip-cli-register
+        run: sh scripts/install.sh
 
-      - name: Compress bin directory (Windows)
+      - name: Build portable release (Windows)
+        if: matrix.release_os == 'windows'
+        shell: pwsh
+        run: .\scripts\build-release.ps1
+
+      - name: Build portable release (Unix)
+        if: matrix.release_os != 'windows'
+        run: sh scripts/build-release.sh
+
+      - name: Stage release artifacts (Windows)
+        if: matrix.release_os == 'windows'
+        shell: pwsh
+        run: |
+          Remove-Item -LiteralPath release -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path release -Force | Out-Null
+          foreach ($name in @(
+            "tura.exe",
+            "tura_exec.exe",
+            "tura_gateway.exe",
+            "tura_router.exe",
+            "tura_session_db.exe",
+            "tura_runtime.exe",
+            "tura-command-read-media.exe",
+            "tura-command-web-discover.exe"
+          )) {
+            Copy-Item -LiteralPath (Join-Path "target\release" $name) -Destination release -Force
+          }
+          Copy-Item -LiteralPath "target\release\gui" -Destination "release\gui" -Recurse -Force
+
+      - name: Stage release artifacts (Unix)
+        if: matrix.release_os != 'windows'
+        run: |
+          rm -rf release
+          mkdir -p release
+          for name in \
+            tura \
+            tura_exec \
+            tura_gateway \
+            tura_router \
+            tura_session_db \
+            tura_runtime \
+            tura-command-read-media \
+            tura-command-web-discover
+          do
+            cp "target/release/$name" release/
+          done
+          cp -R target/release/gui release/gui
+
+      - name: Compress release directory (Windows)
         if: matrix.archive == 'zip'
         shell: pwsh
-        run: Compress-Archive -Path bin -DestinationPath "tura-${{ github.ref_name }}-${{ matrix.release_os }}-bin.zip" -Force
+        run: Compress-Archive -Path release -DestinationPath "tura-${{ github.ref_name }}-${{ matrix.release_os }}-release.zip" -Force
 
-      - name: Compress bin directory (Unix)
+      - name: Compress release directory (Unix)
         if: matrix.archive == 'tar'
-        run: tar -czf "tura-${GITHUB_REF_NAME}-${{ matrix.release_os }}-bin.tar.gz" bin
+        run: tar -czf "tura-${GITHUB_REF_NAME}-${{ matrix.release_os }}-release.tar.gz" release
 
-      - name: Upload bin package
+      - name: Upload release package
         uses: actions/upload-artifact@v4
         with:
-          name: tura-${{ github.ref_name }}-${{ matrix.release_os }}-bin
+          name: tura-${{ github.ref_name }}-${{ matrix.release_os }}-release
           path: |
-            tura-${{ github.ref_name }}-${{ matrix.release_os }}-bin.zip
-            tura-${{ github.ref_name }}-${{ matrix.release_os }}-bin.tar.gz
+            tura-${{ github.ref_name }}-${{ matrix.release_os }}-release.zip
+            tura-${{ github.ref_name }}-${{ matrix.release_os }}-release.tar.gz
           if-no-files-found: error
 
   github-release:
@@ -134,8 +260,8 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - source-package
-      - bin-package
-    if: startsWith(github.ref, 'refs/tags/v')
+      - release-package
+    if: startsWith(github.ref, 'refs/tags/release-v')
     steps:
       - name: Download release artifacts
         uses: actions/download-artifact@v4

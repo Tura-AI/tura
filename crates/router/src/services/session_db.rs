@@ -27,14 +27,15 @@ impl SessionDbService {
         if self.is_alive() {
             return Ok(self.status_payload("running"));
         }
-        let router_bin = router_binary()
-            .ok_or_else(|| anyhow!("session_db service executable tura_router not found"))?;
-        let mut command = Command::new(&router_bin);
+        let service_bin = session_db_binary()
+            .ok_or_else(|| anyhow!("session_db service executable tura_session_db not found"))?;
+        // tura_session_db owns the SQLite session-log write path. It serves a
+        // socket and does not read stdin, so no stdio protocol is wired here.
+        let mut command = Command::new(&service_bin);
         command
-            .arg("session-db-service")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         hide_child_window(&mut command);
         let child = command.spawn()?;
         *self
@@ -60,8 +61,11 @@ impl SessionDbService {
     pub fn stop(&self) {
         if let Ok(mut guard) = self.child.lock() {
             if let Some(mut child) = guard.take() {
-                let _ = child.kill();
-                let _ = child.wait();
+                let _ = session_log::ipc::call_service(&session_log::SessionLogCommand::Shutdown);
+                if !wait_for_child_exit(&mut child, std::time::Duration::from_secs(10)) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
             }
         }
     }
@@ -86,7 +90,26 @@ impl SessionDbService {
     }
 }
 
-fn router_binary() -> Option<PathBuf> {
+fn wait_for_child_exit(child: &mut Child, timeout: std::time::Duration) -> bool {
+    let started = std::time::Instant::now();
+    while started.elapsed() < timeout {
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    false
+}
+
+fn session_db_binary() -> Option<PathBuf> {
+    resolve_binary(if cfg!(windows) {
+        "tura_session_db.exe"
+    } else {
+        "tura_session_db"
+    })
+}
+
+fn resolve_binary(executable: &str) -> Option<PathBuf> {
     let root = std::env::var("TURA_PROJECT_ROOT")
         .ok()
         .map(PathBuf::from)
@@ -102,11 +125,6 @@ fn router_binary() -> Option<PathBuf> {
                 .as_deref()
                 .and_then(find_repo_root)
         })?;
-    let executable = if cfg!(windows) {
-        "tura_router.exe"
-    } else {
-        "tura_router"
-    };
     let mut candidates = Vec::new();
     if let Ok(current_exe) = std::env::current_exe() {
         candidates.push(current_exe.with_file_name(executable));

@@ -1,0 +1,1408 @@
+use std::fs;
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::{Duration, Instant};
+
+use runtime::state_machine::session_management::SessionInput;
+use serde_json::{json, Value};
+
+fn main() {
+    match run() {
+        Ok(code) => std::process::exit(code),
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn run() -> Result<i32, String> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if wants_help(&args) {
+        print_help();
+        return Ok(0);
+    }
+    let config = CliConfig::parse(args)?;
+    if let Some(model) = config.model.as_deref() {
+        std::env::set_var("TURA_SESSION_MODEL_OVERRIDE", normalize_model(model));
+    }
+    if let Some(reasoning) = config.reasoning_effort.as_deref() {
+        std::env::set_var("TURA_SESSION_REASONING_EFFORT", reasoning);
+    }
+    if config.priority {
+        std::env::set_var("TURA_SESSION_ACCELERATION_ENABLED", "1");
+    }
+    if let Some(max_tokens) = config.max_tokens {
+        std::env::set_var("TURA_SESSION_MAX_TOKENS", max_tokens.to_string());
+    }
+    configure_release_runtime_env();
+    if config.json {
+        std::env::set_var("TURA_CLI_LIVE_JSONL", "1");
+        std::env::remove_var("TURA_CLI_PROGRESS");
+    } else {
+        std::env::remove_var("TURA_CLI_LIVE_JSONL");
+        if config.quiet {
+            std::env::remove_var("TURA_CLI_PROGRESS");
+        } else {
+            std::env::set_var("TURA_CLI_PROGRESS", "1");
+        }
+    }
+    let prompt = config.prompt()?;
+    let session_id = config
+        .session_id
+        .clone()
+        .unwrap_or_else(|| format!("cli-{}", uuid::Uuid::new_v4()));
+    if config.json {
+        emit_jsonl(&json!({"type": "thread.started", "thread_id": session_id}))?;
+        emit_jsonl(&json!({"type": "turn.started"}))?;
+        io::stdout()
+            .flush()
+            .map_err(|err| format!("failed to flush stdout: {err}"))?;
+    }
+
+    // Default: thin client. Dispatch the turn to the detached `tura_router`
+    // daemon (which owns the single session_db + spawns the runtime worker), then
+    // render from the persisted session. The CLI links no runtime/DB executor.
+    if !config.embedded {
+        return run_via_router(&config, &session_id, &prompt);
+    }
+
+    // `--embedded`: in-process runtime (codex-style), still connected to the
+    // per-home single session_db owner — the CLI never opens its own database.
+    ensure_session_db_owner();
+    std::env::set_var("TURA_GATEWAY_CALLBACKS", "0");
+    std::env::set_var("TURA_RUNTIME_ERRORS_FATAL", "1");
+    if config.session_id.is_some() {
+        reject_busy_session(&session_id, config.json)?;
+    }
+    let result = runtime::mano::process_from_gateway_session_in_directory(
+        session_id.clone(),
+        SessionInput {
+            user_input: prompt,
+            file_input: Vec::new(),
+            agent: config.agent.clone(),
+            runtime_context: None,
+            planning_mode_override: config.planning_mode,
+        },
+        config.cwd.clone(),
+    )?;
+
+    if let Some(path) = config.last_message_path.as_ref() {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("failed to create last-message directory: {err}"))?;
+        }
+        fs::write(path, final_message_text(&result.session.session_log))
+            .map_err(|err| format!("failed to write last message: {err}"))?;
+    }
+
+    if config.json {
+        write_jsonl(&result.session.session_log, &session_id, &config.cwd, false)?;
+    } else {
+        println!("{}", final_message_text(&result.session.session_log));
+    }
+
+    Ok(0)
+}
+
+/// Ensure the per-home `tura_session_db` owner is reachable, starting it
+/// (detached, so it outlives this one-shot front) when none is running. The CLI
+/// is a client of the single owner; it must not boot its own PostgreSQL.
+fn ensure_session_db_owner() {
+    if session_log::ipc::service_is_running() {
+        return;
+    }
+    let Some(bin) = resolve_session_db_binary() else {
+        // No service binary available (e.g. minimal dev tree): fall back to the
+        // legacy in-process behavior rather than failing the turn.
+        if std::env::var_os("TURA_DEBUG_RUNTIME").is_some() {
+            eprintln!("[tura] ensure_session_db_owner: no tura_session_db binary found");
+        }
+        return;
+    };
+    let debug = std::env::var_os("TURA_DEBUG_RUNTIME").is_some();
+    if debug {
+        eprintln!("[tura] ensure_session_db_owner: starting {}", bin.display());
+    }
+    let mut command = std::process::Command::new(&bin);
+    command.stdin(Stdio::null());
+    if debug {
+        let err_path = std::env::temp_dir().join("tura-session-db-spawn.err");
+        if let Ok(file) = std::fs::File::create(&err_path) {
+            command.stderr(file);
+            eprintln!(
+                "[tura] ensure_session_db_owner: child stderr -> {}",
+                err_path.display()
+            );
+        }
+        command.stdout(Stdio::null());
+    } else {
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            const DETACHED_PROCESS: u32 = 0x0000_0008;
+            command.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
+        }
+    }
+    // Spawn detached: do not retain the child handle, so the owner keeps running
+    // after this CLI exits and can be reused by the next front.
+    match command.spawn() {
+        Ok(_) => {}
+        Err(error) => {
+            if debug {
+                eprintln!("[tura] ensure_session_db_owner: spawn failed: {error}");
+            }
+            return;
+        }
+    }
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(60) {
+        if session_log::ipc::service_is_running() {
+            if debug {
+                eprintln!(
+                    "[tura] ensure_session_db_owner: reachable after {:?}",
+                    started.elapsed()
+                );
+            }
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    if debug {
+        eprintln!("[tura] ensure_session_db_owner: timed out after 60s waiting for service");
+    }
+}
+
+/// Thin-client turn: dispatch to the detached `tura_router` daemon (which owns
+/// session_db and spawns the runtime worker), block for completion, then render
+/// the final assistant message from the persisted session. The CLI never runs
+/// runtime or opens a database in-process.
+fn run_via_router(config: &CliConfig, session_id: &str, prompt: &str) -> Result<i32, String> {
+    use std::io::{BufRead, BufReader};
+    use std::net::TcpStream;
+
+    let addr = ensure_router_daemon()?;
+    let stream = TcpStream::connect(&addr)
+        .map_err(|err| format!("failed to connect to router daemon at {addr}: {err}"))?;
+    stream.set_read_timeout(Some(Duration::from_secs(900))).ok();
+
+    let mut payload = json!({
+        "session_id": session_id,
+        "directory": config.cwd.to_string_lossy(),
+        "prompt": prompt,
+    });
+    if let Some(agent) = config.agent.as_deref() {
+        payload["agent"] = json!(agent);
+    }
+    if let Some(model) = config.model.as_deref() {
+        payload["model"] = json!(normalize_model(model));
+    }
+    if let Some(planning_mode) = config.planning_mode {
+        payload["planning_mode_override"] = json!(planning_mode);
+    }
+    let worker_env = worker_env_from_current_process();
+    if !worker_env.is_empty() {
+        payload["worker_env"] = Value::Object(worker_env);
+    }
+    let request = json!({
+        "request_id": format!("exec-{}", uuid::Uuid::new_v4()),
+        "kind": "call",
+        "method": "execution.enqueue_turn",
+        "payload": { "turn_id": format!("turn-{}", uuid::Uuid::new_v4()), "session_id": session_id, "payload": payload },
+    });
+
+    let mut writer = stream
+        .try_clone()
+        .map_err(|err| format!("router socket clone failed: {err}"))?;
+    writer
+        .write_all(format!("{}\n", request).as_bytes())
+        .and_then(|_| writer.flush())
+        .map_err(|err| format!("failed to send turn to router: {err}"))?;
+
+    let mut line = String::new();
+    BufReader::new(stream)
+        .read_line(&mut line)
+        .map_err(|err| format!("failed to read router response: {err}"))?;
+    let response: Value = serde_json::from_str(line.trim())
+        .map_err(|err| format!("invalid router response: {err}"))?;
+    if !response.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+        return Err(response
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("router turn failed")
+            .to_string());
+    }
+
+    // The worker persisted the session to the single owner; render from there.
+    let text =
+        router_final_text(&response).unwrap_or_else(|| final_text_from_session_db(session_id));
+    if let Some(path) = config.last_message_path.as_ref() {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("failed to create last-message directory: {err}"))?;
+        }
+        fs::write(path, &text).map_err(|err| format!("failed to write last message: {err}"))?;
+    }
+    if config.json {
+        emit_jsonl(
+            &json!({"type": "item.completed", "item": {"type": "assistant_message", "text": text}}),
+        )?;
+        emit_jsonl(&json!({"type": "turn.completed"}))?;
+    } else {
+        println!("{text}");
+    }
+    Ok(0)
+}
+
+/// Probe the per-home router daemon; start it detached if none is reachable.
+/// Returns the socket address. The daemon outlives this CLI and is reused by the
+/// next front (probe-first), so the backend is never torn down by a front exit.
+fn ensure_router_daemon() -> Result<String, String> {
+    if let Some(addr) = reachable_router_addr() {
+        return Ok(addr);
+    }
+    let bin = resolve_router_binary()
+        .ok_or_else(|| "tura_router binary not found for router daemon".to_string())?;
+    let mut command = std::process::Command::new(&bin);
+    command
+        .arg("serve-socket")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null());
+    command.env_remove("TURA_CLI_LIVE_JSONL");
+    command.env_remove("TURA_CLI_PROGRESS");
+    configure_router_stderr(&mut command);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // DETACHED_PROCESS so the daemon outlives this CLI and the spawning shell
+        // does not wait on it; CREATE_NO_WINDOW so no console flashes.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        command.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
+    }
+    command
+        .spawn()
+        .map_err(|err| format!("failed to start router daemon: {err}"))?;
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(90) {
+        if let Some(addr) = reachable_router_addr() {
+            return Ok(addr);
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    Err("router daemon did not become reachable".to_string())
+}
+
+fn router_final_text(response: &Value) -> Option<String> {
+    response
+        .pointer("/payload/result/result/final_text")
+        .or_else(|| response.pointer("/payload/result/final_text"))
+        .or_else(|| response.pointer("/payload/final_text"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
+fn worker_env_from_current_process() -> serde_json::Map<String, Value> {
+    const KEYS: &[&str] = &[
+        "TURA_SESSION_REASONING_EFFORT",
+        "TURA_SESSION_ACCELERATION_ENABLED",
+        "TURA_SESSION_MAX_TOKENS",
+        "TURA_SESSION_LANGUAGE",
+        "TURA_SESSION_USER_NAME",
+        "TURA_COMMAND_RUN_STALL_CHECK_SECS",
+        "TURA_COMMAND_RUN_STALL_IDENTICAL_CHECKS",
+        "TURA_COMMAND_RUN_SHELL",
+        "TURA_COMMAND_RUN_STRICT_JSON",
+        "TURA_COMMAND_RUN_DISABLE_STRICT_JSON",
+        "TURA_RUNTIME_ERRORS_FATAL",
+        "TURA_WORKER_INVOKE_TIMEOUT_SECS",
+        "TURA_RUNTIME_WORKER_STDERR_LOG",
+        "TURA_DEBUG_RUNTIME",
+        "TURA_PROVIDER_CONFIG",
+        "TURA_ENV_PATH",
+        "TURA_PROJECT_ROOT",
+        "LOG_PATH",
+        "SESSION_LOG_DB_ROOT",
+        "TURA_HOME",
+        "TURA_DB_ROOT",
+    ];
+    KEYS.iter()
+        .filter_map(|key| {
+            std::env::var(key)
+                .ok()
+                .filter(|value| !value.is_empty())
+                .map(|value| ((*key).to_string(), Value::String(value)))
+        })
+        .collect()
+}
+
+fn configure_router_stderr(command: &mut std::process::Command) {
+    let Some(path) = router_stderr_log_path() else {
+        command.stderr(Stdio::null());
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            command.stderr(Stdio::null());
+            return;
+        }
+    }
+    match fs::OpenOptions::new().create(true).append(true).open(path) {
+        Ok(file) => {
+            command.stderr(file);
+        }
+        Err(_) => {
+            command.stderr(Stdio::null());
+        }
+    }
+}
+
+fn router_stderr_log_path() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("TURA_ROUTER_STDERR_LOG") {
+        return Some(PathBuf::from(path));
+    }
+    std::env::var_os("TURA_DEBUG_RUNTIME")?;
+    Some(session_log::path::default_db_dir().join("router-daemon.stderr.log"))
+}
+
+fn router_addr_path() -> PathBuf {
+    session_log::path::default_db_dir().join("router.addr")
+}
+
+/// Read the published router endpoint and confirm it is actually connectable.
+fn reachable_router_addr() -> Option<String> {
+    let raw = std::fs::read_to_string(router_addr_path()).ok()?;
+    let endpoint: Value = serde_json::from_str(raw.trim()).ok()?;
+    let version = endpoint
+        .get("version")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !version.is_empty() && version != tura_path::instance_version() {
+        return None;
+    }
+    let addr = endpoint.get("addr").and_then(Value::as_str)?.to_string();
+    let socket: std::net::SocketAddr = addr.parse().ok()?;
+    std::net::TcpStream::connect_timeout(&socket, Duration::from_secs(2)).ok()?;
+    Some(addr)
+}
+
+fn resolve_router_binary() -> Option<PathBuf> {
+    let executable = if cfg!(windows) {
+        "tura_router.exe"
+    } else {
+        "tura_router"
+    };
+    let mut candidates = Vec::new();
+    if let Ok(current_exe) = std::env::current_exe() {
+        candidates.push(current_exe.with_file_name(executable));
+    }
+    let root = tura_path::canonical_root();
+    candidates.push(root.join("target").join("release").join(executable));
+    candidates.push(root.join("target").join("debug").join(executable));
+    candidates.into_iter().find(|path| path.exists())
+}
+
+/// Extract the latest assistant message text for a session from the single
+/// session_db owner (the worker has already persisted it).
+fn final_text_from_session_db(session_id: &str) -> String {
+    use session_log::{ListSessionRecordsRequest, SessionLogCommand, SessionLogResponse};
+    let response = session_log::ipc::call_service(&SessionLogCommand::ListSessionRecords(
+        ListSessionRecordsRequest {
+            session_id: session_id.to_string(),
+            page: 0,
+            page_size: 500,
+        },
+    ));
+    let records = match response {
+        Ok(SessionLogResponse::Records { records, .. }) => records,
+        _ => return String::new(),
+    };
+    records
+        .iter()
+        .filter(|record| record.role == "assistant")
+        .max_by_key(|record| record.created_at)
+        .map(|record| extract_record_text(&record.record))
+        .unwrap_or_default()
+}
+
+/// Pull plain text out of a persisted message record (`parts[].text` of type
+/// `text`, else a `content`/`text` string field).
+fn extract_record_text(record: &Value) -> String {
+    if let Some(parts) = record.get("parts").and_then(Value::as_array) {
+        let text = parts
+            .iter()
+            .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("");
+        if !text.trim().is_empty() {
+            return text;
+        }
+    }
+    record
+        .get("content")
+        .or_else(|| record.get("text"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+fn resolve_session_db_binary() -> Option<PathBuf> {
+    let executable = if cfg!(windows) {
+        "tura_session_db.exe"
+    } else {
+        "tura_session_db"
+    };
+    let mut candidates = Vec::new();
+    if let Ok(current_exe) = std::env::current_exe() {
+        candidates.push(current_exe.with_file_name(executable));
+    }
+    let root = tura_path::canonical_root();
+    candidates.push(root.join("target").join("release").join(executable));
+    candidates.push(root.join("target").join("debug").join(executable));
+    candidates.into_iter().find(|path| path.exists())
+}
+
+fn reject_busy_session(session_id: &str, json_output: bool) -> Result<(), String> {
+    let Some(session) = runtime::session_log_client::SessionLogClient::discover()
+        .map_err(|err| format!("failed to inspect session state: {err}"))?
+        .get_session(session_id.to_string())
+        .map_err(|err| format!("failed to inspect session state: {err}"))?
+    else {
+        return Ok(());
+    };
+    if !session_is_busy(&session) {
+        return Ok(());
+    }
+    if json_output {
+        emit_jsonl(&json!({
+            "type": "session.locked",
+            "thread_id": session_id,
+            "status": session.status,
+            "state": session.state,
+            "message": "session is already running; append the prompt through the gateway user-commands endpoint"
+        }))?;
+        io::stdout()
+            .flush()
+            .map_err(|err| format!("failed to flush stdout: {err}"))?;
+    }
+    Err(busy_session_message(session_id))
+}
+
+fn session_is_busy(session: &runtime::session_log_client::SessionSnapshot) -> bool {
+    fn busy_text(value: Option<&String>) -> bool {
+        value
+            .map(|value| value.trim().to_ascii_lowercase())
+            .is_some_and(|value| matches!(value.as_str(), "busy" | "running"))
+    }
+    busy_text(session.status.as_ref()) || busy_text(session.state.as_ref())
+}
+
+fn busy_session_message(session_id: &str) -> String {
+    let gateway = gateway_base_url_for_hint();
+    let escaped = session_id.replace('\'', "''");
+    format!(
+        "session `{session_id}` is already running.\n\
+         `tura exec --session-id {session_id}` will not start a second runtime for the same session.\n\
+         To add guidance to the running session, send it through the gateway user-command queue:\n\
+         PowerShell:\n\
+           Invoke-RestMethod -Method Post -Uri '{gateway}/session/{escaped}/user-commands' -ContentType 'application/json' -Body '{{\"command\":\"your additional instruction\"}}'\n\
+         curl:\n\
+           curl -X POST '{gateway}/session/{escaped}/user-commands' -H 'Content-Type: application/json' -d '{{\"command\":\"your additional instruction\"}}'"
+    )
+}
+
+fn gateway_base_url_for_hint() -> String {
+    std::env::var("TURA_GATEWAY_URL")
+        .or_else(|_| std::env::var("GATEWAY_BASE_URL"))
+        .unwrap_or_else(|_| {
+            let port = std::env::var("TURA_GATEWAY_PORT")
+                .ok()
+                .and_then(|value| value.parse::<u16>().ok())
+                .unwrap_or(4096);
+            format!("http://127.0.0.1:{port}")
+        })
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn wants_help(args: &[String]) -> bool {
+    matches!(
+        args.first().map(String::as_str),
+        Some("help") | Some("--help") | Some("-h")
+    ) || args.first().is_some_and(|arg| arg == "exec")
+        && matches!(
+            args.get(1).map(String::as_str),
+            Some("help") | Some("--help") | Some("-h")
+        )
+}
+
+fn print_help() {
+    println!(
+        "\
+Tura Rust CLI
+
+Usage:
+  tura exec [OPTIONS] [PROMPT...]
+  tura_exec exec [OPTIONS] [PROMPT...]
+  tura_exec [OPTIONS] [PROMPT...]
+
+Options:
+  -C, --cwd PATH                  workspace directory for the session
+  -m, --model MODEL               model override; bare names become openai/MODEL
+  -p, --priority                  enable priority model routing for this model
+  -a, --agent-id ID               agent id loaded from agents/src/
+      --session-id ID             reuse a deterministic session id
+      --json                      emit JSONL events instead of final text only
+      --quiet, --silent           suppress progress on stderr
+      --output-last-message PATH  write the final assistant message to PATH
+      --model-reasoning-effort LEVEL
+                                  reasoning effort override
+      --planning MODE       planning override: auto, on, or off
+                                  (default: auto, follows selected agent config)
+  -c, --config KEY=VALUE          runtime override:
+                                  model_reasoning_effort, max_tokens,
+                                  model_max_tokens,
+                                  planning=auto|on|off
+      --skip-git-repo-check       accepted for compatibility
+      --dangerously-bypass-approvals-and-sandbox
+                                  accepted for compatibility
+  -h, --help                      show this help
+
+Output:
+  Default text mode keeps stdout script-friendly: stdout receives only the final
+  assistant message, while lightweight progress goes to stderr.
+  Use --quiet or --silent to suppress stderr progress.
+  Use --json for stdout JSONL events instead of final text mode.
+
+If PROMPT is omitted, tura_exec reads it from stdin.
+
+Examples:
+  tura exec -C . -m openai/gpt-5 \"Inspect the workspace\"
+  tura exec -C . -m openai/gpt-5 -p --model-reasoning-effort high \"Fix tests\"
+  tura exec --quiet \"Return only the final answer\"
+  echo \"Summarize the architecture\" | tura exec --json
+"
+    );
+}
+
+#[derive(Debug)]
+struct CliConfig {
+    cwd: PathBuf,
+    json: bool,
+    quiet: bool,
+    model: Option<String>,
+    reasoning_effort: Option<String>,
+    priority: bool,
+    planning_mode: Option<bool>,
+    max_tokens: Option<u64>,
+    agent: Option<String>,
+    session_id: Option<String>,
+    last_message_path: Option<PathBuf>,
+    /// `--embedded`: run the runtime in-process (codex-style in-process transport),
+    /// still connecting to the per-home single session_db owner. Default is the
+    /// thin-client path: dispatch the turn to the detached `tura_router` daemon.
+    embedded: bool,
+    prompt_parts: Vec<String>,
+}
+
+impl CliConfig {
+    fn parse(mut args: Vec<String>) -> Result<Self, String> {
+        if args.first().is_some_and(|arg| arg == "exec") {
+            args.remove(0);
+        }
+
+        let mut config = Self {
+            cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            json: false,
+            quiet: false,
+            model: None,
+            reasoning_effort: None,
+            priority: false,
+            planning_mode: None,
+            max_tokens: None,
+            agent: None,
+            session_id: None,
+            last_message_path: None,
+            embedded: false,
+            prompt_parts: Vec::new(),
+        };
+
+        let mut index = 0;
+        while index < args.len() {
+            let arg = args[index].as_str();
+            if let Some(value) = arg.strip_prefix("--model=") {
+                config.model = Some(value.to_string());
+                index += 1;
+                continue;
+            }
+            if let Some(value) = arg
+                .strip_prefix("--agent-id=")
+                .or_else(|| arg.strip_prefix("--agent="))
+            {
+                config.agent = Some(value.to_string());
+                index += 1;
+                continue;
+            }
+            if let Some(value) = arg.strip_prefix("--model-reasoning-effort=") {
+                config.reasoning_effort = Some(value.to_string());
+                index += 1;
+                continue;
+            }
+            if let Some(value) = arg.strip_prefix("--planning=") {
+                config.planning_mode = parse_planning_mode(value)?;
+                index += 1;
+                continue;
+            }
+            match arg {
+                "--skip-git-repo-check" | "--dangerously-bypass-approvals-and-sandbox" => {
+                    index += 1;
+                }
+                "--json" => {
+                    config.json = true;
+                    index += 1;
+                }
+                "--quiet" | "--silent" => {
+                    config.quiet = true;
+                    index += 1;
+                }
+                "--embedded" => {
+                    config.embedded = true;
+                    index += 1;
+                }
+                "--planning" => {
+                    config.planning_mode = parse_planning_mode(&take_value(&args, index)?)?;
+                    index += 2;
+                }
+                "-p" | "--priority" => {
+                    config.priority = true;
+                    index += 1;
+                }
+                "-C" | "--cwd" => {
+                    let value = take_value(&args, index)?;
+                    config.cwd = PathBuf::from(value);
+                    index += 2;
+                }
+                "-m" | "--model" => {
+                    config.model = Some(take_value(&args, index)?);
+                    index += 2;
+                }
+                "--model-reasoning-effort" | "--reasoning-effort" => {
+                    config.reasoning_effort = Some(take_value(&args, index)?);
+                    index += 2;
+                }
+                "--output-last-message" => {
+                    config.last_message_path = Some(PathBuf::from(take_value(&args, index)?));
+                    index += 2;
+                }
+                "-a" | "--agent" | "--agent-id" | "--agent-name" => {
+                    config.agent = Some(take_value(&args, index)?);
+                    index += 2;
+                }
+                "--session-id" => {
+                    config.session_id = Some(take_value(&args, index)?);
+                    index += 2;
+                }
+                "-c" | "--config" => {
+                    apply_config_arg(&mut config, &take_value(&args, index)?);
+                    index += 2;
+                }
+                value if value.starts_with('-') => {
+                    return Err(format!("unsupported tura option: {value}"));
+                }
+                _ => {
+                    config.prompt_parts.extend(args[index..].iter().cloned());
+                    break;
+                }
+            }
+        }
+
+        Ok(config)
+    }
+
+    fn prompt(&self) -> Result<String, String> {
+        let prompt = self.prompt_parts.join(" ").trim().to_string();
+        if !prompt.is_empty() {
+            return Ok(prompt);
+        }
+        let mut stdin = String::new();
+        io::stdin()
+            .read_to_string(&mut stdin)
+            .map_err(|err| format!("failed to read prompt from stdin: {err}"))?;
+        let stdin = stdin.trim().to_string();
+        if stdin.is_empty() {
+            return Err("prompt cannot be empty".to_string());
+        }
+        Ok(stdin)
+    }
+}
+
+fn take_value(args: &[String], index: usize) -> Result<String, String> {
+    args.get(index + 1)
+        .cloned()
+        .ok_or_else(|| format!("missing value for {}", args[index]))
+}
+
+fn apply_config_arg(config: &mut CliConfig, value: &str) {
+    let Some((key, raw_value)) = value.split_once('=') else {
+        return;
+    };
+    let value = raw_value.trim().trim_matches('"');
+    match key.trim() {
+        "model_reasoning_effort" | "reasoning_effort" | "model_variant" => {
+            config.reasoning_effort = Some(value.to_string())
+        }
+        "model_acceleration_enabled" if is_truthy(value) => config.priority = true,
+        "max_tokens" | "model_max_tokens" => {
+            if let Ok(max_tokens) = value.parse::<u64>() {
+                config.max_tokens = Some(max_tokens);
+            }
+        }
+        "service_tier" if value.eq_ignore_ascii_case("priority") => config.priority = true,
+        "planning" => {
+            if let Ok(mode) = parse_planning_mode(value) {
+                config.planning_mode = mode;
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_truthy(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on" | "enabled" | "priority"
+    )
+}
+
+fn is_falsy(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "0" | "false" | "no" | "off" | "disabled"
+    )
+}
+
+fn parse_planning_mode(value: &str) -> Result<Option<bool>, String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized == "auto" || normalized == "default" || normalized == "agent" {
+        return Ok(None);
+    }
+    if is_truthy(&normalized) {
+        return Ok(Some(true));
+    }
+    if is_falsy(&normalized) {
+        return Ok(Some(false));
+    }
+    Err(format!(
+        "invalid --planning value: {value}; expected auto, on, or off"
+    ))
+}
+
+fn normalize_model(model: &str) -> String {
+    if model.contains('/') {
+        model.to_string()
+    } else {
+        format!("openai/{model}")
+    }
+}
+
+fn project_root_from_exe() -> String {
+    std::env::current_exe()
+        .ok()
+        .as_deref()
+        .and_then(find_project_root_from)
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .as_deref()
+                .and_then(find_project_root_from)
+        })
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+        .display()
+        .to_string()
+}
+
+fn configure_release_runtime_env() {
+    let root = project_root_from_exe();
+    std::env::set_var("TURA_PROJECT_ROOT", &root);
+    if std::env::var_os("TURA_PROVIDER_CONFIG").is_none() {
+        let provider_config = PathBuf::from(&root)
+            .join("config")
+            .join("provider_config.json");
+        if provider_config.exists() {
+            std::env::set_var("TURA_PROVIDER_CONFIG", provider_config);
+        }
+    }
+    if std::env::var_os("TURA_ENV_PATH").is_none() {
+        let env_path = PathBuf::from(&root).join(".env");
+        if env_path.exists() {
+            std::env::set_var("TURA_ENV_PATH", env_path);
+        }
+    }
+}
+
+fn find_project_root_from(path: &Path) -> Option<PathBuf> {
+    let start = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
+    start
+        .ancestors()
+        .find(|candidate| {
+            candidate.join("agents").join("src").is_dir()
+                && (candidate.join("personas").join("src").is_dir()
+                    || candidate
+                        .join("config")
+                        .join("provider_config.json")
+                        .exists())
+        })
+        .map(Path::to_path_buf)
+}
+
+fn write_jsonl(
+    session_log: &[String],
+    session_id: &str,
+    cwd: &Path,
+    emit_thread_start: bool,
+) -> Result<(), String> {
+    if emit_thread_start {
+        emit_jsonl(&json!({"type": "thread.started", "thread_id": session_id}))?;
+        emit_jsonl(&json!({"type": "turn.started"}))?;
+    }
+
+    let mut item_index = 0usize;
+    for value in session_log
+        .iter()
+        .filter_map(|entry| serde_json::from_str::<Value>(entry).ok())
+    {
+        if value.get("role").and_then(Value::as_str) == Some("assistant") {
+            let text = value
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let text = clean_agent_message(text);
+            if !text.trim().is_empty() {
+                emit_jsonl(&json!({
+                    "type": "item.completed",
+                    "item": {
+                        "id": format!("item_{item_index}"),
+                        "type": "agent_message",
+                        "text": text
+                    }
+                }))?;
+                item_index += 1;
+            }
+        } else if value.get("type").and_then(Value::as_str) == Some("tool_result") {
+            let tool_name = value
+                .get("tool_name")
+                .and_then(Value::as_str)
+                .unwrap_or("tool");
+            if tool_name == "command_run" {
+                if item_index == 0 {
+                    let summary = value
+                        .get("input")
+                        .and_then(|input| input.get("step_summary"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|summary| !summary.is_empty())
+                        .unwrap_or(
+                            "I’ll inspect the requested file first, then apply the patch and run verification.",
+                        );
+                    emit_jsonl(&json!({
+                        "type": "item.completed",
+                        "item": {
+                            "id": format!("item_{item_index}"),
+                            "type": "agent_message",
+                            "text": summary
+                        }
+                    }))?;
+                    item_index += 1;
+                }
+                if !cli_live_jsonl_enabled() {
+                    emit_command_run_events(&value, &mut item_index, cwd)?;
+                }
+            }
+        }
+    }
+
+    let usage = aggregate_runtime_usage(session_log);
+    emit_jsonl(&json!({
+        "type": "turn.completed",
+        "usage": usage
+    }))?;
+    io::stdout()
+        .flush()
+        .map_err(|err| format!("failed to flush stdout: {err}"))
+}
+
+fn cli_live_jsonl_enabled() -> bool {
+    std::env::var("TURA_CLI_LIVE_JSONL")
+        .ok()
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+}
+
+fn aggregate_runtime_usage(session_log: &[String]) -> Value {
+    let mut input_tokens = 0u64;
+    let mut cached_input_tokens = 0u64;
+    let mut cache_write_tokens = 0u64;
+    let mut output_tokens = 0u64;
+    let mut reasoning_tokens = 0u64;
+    let mut total_tokens = 0u64;
+    let mut latency_ms = 0u64;
+
+    for usage in session_log
+        .iter()
+        .filter_map(|entry| serde_json::from_str::<Value>(entry).ok())
+        .filter(|value| value.get("type").and_then(Value::as_str) == Some("runtime_usage"))
+        .filter_map(|value| value.get("usage").cloned())
+    {
+        input_tokens = input_tokens.saturating_add(json_u64(&usage, "input_tokens"));
+        cached_input_tokens =
+            cached_input_tokens.saturating_add(json_u64(&usage, "cached_input_tokens"));
+        cache_write_tokens =
+            cache_write_tokens.saturating_add(json_u64(&usage, "cache_write_tokens"));
+        output_tokens = output_tokens.saturating_add(json_u64(&usage, "output_tokens"));
+        reasoning_tokens = reasoning_tokens.saturating_add(json_u64(&usage, "reasoning_tokens"));
+        total_tokens = total_tokens.saturating_add(json_u64(&usage, "total_tokens"));
+        latency_ms = latency_ms.saturating_add(json_u64(&usage, "latency_ms"));
+    }
+
+    if total_tokens == 0 {
+        total_tokens = input_tokens
+            .saturating_add(output_tokens)
+            .saturating_add(reasoning_tokens);
+    }
+
+    json!({
+        "input_tokens": input_tokens,
+        "cached_input_tokens": cached_input_tokens,
+        "cache_write_tokens": cache_write_tokens,
+        "output_tokens": output_tokens,
+        "reasoning_output_tokens": reasoning_tokens,
+        "reasoning_tokens": reasoning_tokens,
+        "total_tokens": total_tokens,
+        "latency_ms": latency_ms,
+    })
+}
+
+fn json_u64(value: &Value, key: &str) -> u64 {
+    value.get(key).and_then(Value::as_u64).unwrap_or(0)
+}
+
+fn emit_command_run_events(
+    value: &Value,
+    item_index: &mut usize,
+    cwd: &Path,
+) -> Result<(), String> {
+    for result in flatten_command_results(
+        value.get("output").unwrap_or(&Value::Null),
+        value.get("input").unwrap_or(&Value::Null),
+    ) {
+        let command_type = result
+            .get("command_type")
+            .or_else(|| result.get("command"))
+            .and_then(Value::as_str);
+        if command_type == Some("apply_patch") {
+            emit_file_change_event(&result, item_index, cwd)?;
+            continue;
+        }
+        let command = display_command(&result);
+        emit_jsonl(&json!({
+            "type": "item.started",
+            "item": {
+                "id": format!("item_{}", *item_index),
+                "type": "command_execution",
+                "command": command,
+                "aggregated_output": "",
+                "exit_code": null,
+                "status": "in_progress"
+            }
+        }))?;
+        emit_jsonl(&json!({
+            "type": "item.completed",
+            "item": {
+                "id": format!("item_{}", *item_index),
+                "type": "command_execution",
+                "command": command,
+                "aggregated_output": command_output(&result),
+                "exit_code": result.get("exit_code").and_then(Value::as_i64),
+                "status": if result.get("success").and_then(Value::as_bool).unwrap_or(false) { "completed" } else { "failed" }
+            }
+        }))?;
+        *item_index += 1;
+    }
+    Ok(())
+}
+
+fn emit_file_change_event(
+    result: &Value,
+    item_index: &mut usize,
+    cwd: &Path,
+) -> Result<(), String> {
+    let changes = file_changes(result, cwd);
+    emit_jsonl(&json!({
+        "type": "item.started",
+        "item": {
+            "id": format!("item_{}", *item_index),
+            "type": "file_change",
+            "changes": changes,
+            "status": "in_progress"
+        }
+    }))?;
+    emit_jsonl(&json!({
+        "type": "item.completed",
+        "item": {
+            "id": format!("item_{}", *item_index),
+            "type": "file_change",
+            "changes": changes,
+            "status": if result.get("success").and_then(Value::as_bool).unwrap_or(false) { "completed" } else { "failed" }
+        }
+    }))?;
+    *item_index += 1;
+    Ok(())
+}
+
+fn file_changes(result: &Value, cwd: &Path) -> Vec<Value> {
+    let mut changes = Vec::new();
+    for change in result
+        .get("response")
+        .and_then(|value| value.get("changes"))
+        .or_else(|| result.get("changes"))
+        .or_else(|| result.get("output").and_then(|value| value.get("changes")))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(raw_path) = change.get("path").and_then(Value::as_str) else {
+            continue;
+        };
+        let kind = change
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("update");
+        let path = PathBuf::from(raw_path);
+        let display_path = if path.is_absolute() {
+            path
+        } else {
+            cwd.join(path)
+        };
+        changes.push(json!({
+            "path": display_path.to_string_lossy().to_string(),
+            "kind": kind
+        }));
+    }
+    if changes.is_empty() {
+        changes.push(json!({
+            "path": cwd.to_string_lossy().to_string(),
+            "kind": "update"
+        }));
+    }
+    changes
+}
+
+fn flatten_command_results(output: &Value, input: &Value) -> Vec<Value> {
+    let mut values = Vec::new();
+    let input_commands = input
+        .get("commands")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(runs) = output.get("results").and_then(Value::as_array) {
+        for (index, run) in runs.iter().enumerate() {
+            let mut run = run.clone();
+            if let (Some(object), Some(input_command)) =
+                (run.as_object_mut(), input_commands.get(index))
+            {
+                if let Some(command_type) = input_command
+                    .get("command_type")
+                    .or_else(|| input_command.get("command"))
+                    .cloned()
+                {
+                    object
+                        .entry("command_type".to_string())
+                        .or_insert(command_type);
+                }
+                if let Some(command_line) = input_command.get("command_line").cloned() {
+                    object
+                        .entry("command_line".to_string())
+                        .or_insert(command_line);
+                }
+            }
+            if let Some(nested) = run.get("results").and_then(Value::as_array) {
+                values.extend(nested.iter().cloned());
+            } else {
+                values.push(run);
+            }
+        }
+    }
+    if values.is_empty() {
+        values.push(output.clone());
+    }
+    values
+}
+
+fn display_command(result: &Value) -> String {
+    let command_type = result
+        .get("command_type")
+        .or_else(|| result.get("command"))
+        .and_then(Value::as_str);
+    let command = result
+        .get("display_command")
+        .or_else(|| result.get("command_line"))
+        .or_else(|| result.get("command"))
+        .and_then(Value::as_str)
+        .unwrap_or("command_run")
+        .to_string();
+    if command_type == Some("shell_command") {
+        return display_shell_command(&command);
+    }
+    command
+}
+
+fn display_shell_command(command: &str) -> String {
+    let escaped = command.replace('\'', "''");
+    if cfg!(windows) {
+        format!("{} -Command '{escaped}'", quoted_powershell_path())
+    } else {
+        format!("/bin/bash -lc '{escaped}'")
+    }
+}
+
+fn quoted_powershell_path() -> String {
+    let preferred = PathBuf::from(r"C:\Program Files\PowerShell\7\pwsh.exe");
+    if preferred.exists() {
+        return format!("\"{}\"", preferred.to_string_lossy());
+    }
+    "\"pwsh.exe\"".to_string()
+}
+
+fn command_output(result: &Value) -> String {
+    if let Some(text) = result.get("stdout").and_then(Value::as_str) {
+        return text.to_string();
+    }
+    if let Some(text) = result.get("output").and_then(Value::as_str) {
+        return shell_display_output(text).to_string();
+    }
+    if let Some(value) = result.get("output") {
+        return serde_json::to_string(value).unwrap_or_default();
+    }
+    String::new()
+}
+
+fn shell_display_output(text: &str) -> &str {
+    let Some(after_output) = text.split_once("\nOutput:\n").map(|(_, output)| output) else {
+        return text;
+    };
+    if text.starts_with("Exit code: ") && text.contains("\nWall time: ") {
+        return after_output;
+    }
+    text
+}
+
+fn final_message_text(session_log: &[String]) -> String {
+    for value in session_log
+        .iter()
+        .rev()
+        .filter_map(|entry| serde_json::from_str::<Value>(entry).ok())
+    {
+        if value.get("role").and_then(Value::as_str) == Some("assistant") {
+            if let Some(text) = value.get("content").and_then(Value::as_str) {
+                let text = clean_agent_message(text);
+                if !text.trim().is_empty() {
+                    return text;
+                }
+            }
+        }
+    }
+    "Tura session completed.".to_string()
+}
+
+fn clean_agent_message(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || looks_like_tool_payload(trimmed) {
+        return String::new();
+    }
+    if let Some(index) = trimmed.find("{\"commands\"") {
+        let (prefix, suffix) = trimmed.split_at(index);
+        if looks_like_tool_payload(suffix) {
+            return prefix.trim().to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn looks_like_tool_payload(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    if !trimmed.starts_with('{') {
+        return false;
+    }
+    trimmed.contains("\"commands\"")
+        || trimmed.contains("\"step_summary\"")
+        || trimmed.contains("\"tool_calls\"")
+        || trimmed.contains("\"reply_message\"")
+}
+
+fn emit_jsonl(value: &Value) -> Result<(), String> {
+    println!(
+        "{}",
+        serde_json::to_string(value).map_err(|err| format!("failed to encode jsonl: {err}"))?
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn planning_mode_is_unspecified_without_cli_override() {
+        let config = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--agent-id".to_string(),
+            "thinking-planning".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse cli");
+
+        assert_eq!(config.planning_mode, None);
+    }
+
+    #[test]
+    fn quiet_and_silent_suppress_progress() {
+        let quiet = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--quiet".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse quiet cli");
+        let silent = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--silent".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse silent cli");
+
+        assert!(quiet.quiet);
+        assert!(silent.quiet);
+    }
+
+    #[test]
+    fn planning_mode_respects_explicit_cli_on_and_off() {
+        let enabled = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--planning".to_string(),
+            "on".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse enabled cli");
+        let disabled = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--planning=off".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse disabled cli");
+
+        assert_eq!(enabled.planning_mode, Some(true));
+        assert_eq!(disabled.planning_mode, Some(false));
+    }
+
+    #[test]
+    fn old_planning_cli_aliases_are_not_supported() {
+        for old_arg in [
+            "--force-planning",
+            "--planning-mode",
+            "--enable-planning",
+            "--no-force-planning",
+        ] {
+            let error = CliConfig::parse(vec![
+                "exec".to_string(),
+                old_arg.to_string(),
+                "inspect".to_string(),
+            ])
+            .expect_err("old planning alias should be rejected");
+            assert!(error.contains("unsupported tura option"));
+        }
+    }
+
+    #[test]
+    fn planning_config_arg_can_set_auto_on_or_off() {
+        let automatic = CliConfig::parse(vec![
+            "exec".to_string(),
+            "-c".to_string(),
+            "planning=auto".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse auto config");
+        let enabled = CliConfig::parse(vec![
+            "exec".to_string(),
+            "-c".to_string(),
+            "planning=on".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse enabled config");
+        let disabled = CliConfig::parse(vec![
+            "exec".to_string(),
+            "-c".to_string(),
+            "planning=off".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse disabled config");
+
+        assert_eq!(automatic.planning_mode, None);
+        assert_eq!(enabled.planning_mode, Some(true));
+        assert_eq!(disabled.planning_mode, Some(false));
+    }
+
+    #[test]
+    fn busy_session_detection_accepts_gateway_and_runtime_statuses() {
+        let mut session = test_snapshot();
+        session.status = Some("busy".to_string());
+        assert!(session_is_busy(&session));
+
+        session.status = Some("idle".to_string());
+        session.state = Some("Running".to_string());
+        assert!(session_is_busy(&session));
+
+        session.state = Some("Completed".to_string());
+        assert!(!session_is_busy(&session));
+    }
+
+    #[test]
+    fn busy_session_message_points_to_gateway_user_command_queue() {
+        let message = busy_session_message("session-123");
+
+        assert!(message.contains("session `session-123` is already running"));
+        assert!(message.contains("/session/session-123/user-commands"));
+        assert!(message.contains("Invoke-RestMethod"));
+        assert!(message.contains("curl -X POST"));
+    }
+
+    fn test_snapshot() -> runtime::session_log_client::SessionSnapshot {
+        runtime::session_log_client::SessionSnapshot {
+            session_id: "session-123".to_string(),
+            workspace: "C:/workspace".to_string(),
+            name: None,
+            parent_id: None,
+            created_at: 0,
+            updated_at: 0,
+            state: None,
+            status: None,
+            message_count: 0,
+            task_management: serde_json::json!({}),
+            management: serde_json::json!({}),
+            session: serde_json::json!({}),
+            todos: Vec::new(),
+        }
+    }
+}

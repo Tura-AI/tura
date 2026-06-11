@@ -10,7 +10,7 @@ const runId = process.env.COMMAND_RUN_AGENT_RUN_ID || `google-image-api-fallback
 const runRoot = path.join(repoRoot, "target", "command-run-google-image-api-fallback-e2e", runId)
 const workspace = path.join(runRoot, "workspace")
 const logs = path.join(runRoot, "logs")
-const turaExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura.exe" : "tura")
+const turaExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura_exec.exe" : "tura_exec")
 const timeoutMs = Number(process.env.COMMAND_RUN_AGENT_TIMEOUT_MS || 120_000)
 const model = process.env.COMMAND_RUN_AGENT_TURA_MODEL || "codex/gpt-5.1-codex-mini"
 const reasoning = process.env.COMMAND_RUN_AGENT_REASONING_EFFORT || "low"
@@ -100,7 +100,7 @@ function main() {
   fs.rmSync(runRoot, { recursive: true, force: true })
   fs.mkdirSync(workspace, { recursive: true })
   fs.mkdirSync(logs, { recursive: true })
-  runOk("cargo", ["build", "-p", "gateway", "--bin", "tura"], { cwd: repoRoot, timeoutMs: 300_000 })
+  runOk("cargo", ["build", "-p", "gateway", "--bin", "tura_exec"], { cwd: repoRoot, timeoutMs: 300_000 })
 
   const lastMessagePath = path.join(logs, "last-message.md")
   const started = Date.now()

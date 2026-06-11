@@ -25,3 +25,23 @@ pub use tura_conf::*;
 pub use tura_llm::*;
 pub use tura_llm_conf::*;
 pub use utils::*;
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::sync::OnceLock;
+
+    use tokio::sync::{Mutex, MutexGuard};
+
+    fn env_mutex() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    pub(crate) fn env_lock() -> MutexGuard<'static, ()> {
+        env_mutex().blocking_lock()
+    }
+
+    pub(crate) async fn env_lock_async() -> MutexGuard<'static, ()> {
+        env_mutex().lock().await
+    }
+}

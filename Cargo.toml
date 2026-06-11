@@ -6,6 +6,7 @@ members = [
   "commands/read_media",
   "commands/web_discover",
   "crates/gateway",
+  "crates/path",
   "crates/provider",
   "personas",
   "crates/router",
@@ -18,7 +19,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 authors = ["Tura"]
-license = "MIT"
+license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -38,11 +39,8 @@ pdfium-render = { version = "0.8", features = ["image"] }
 redis = { version = "0.25", features = ["tokio-comp"] }
 regex = "1"
 reqwest = { version = "0.12", features = ["json", "stream"] }
-r2d2 = "0.8"
-r2d2_postgres = "0.18"
-postgres = { version = "0.19", features = ["with-serde_json-1"] }
-postgresql_embedded = { version = "0.20.2", features = ["blocking"] }
 quick_html2md = "0.2.1"
+rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
@@ -63,8 +61,13 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 agents = { path = "agents" }
 provider = { path = "crates/provider" }
+tura_path = { path = "crates/path" }
 personas = { path = "personas" }
 router = { path = "crates/router" }
 runtime = { path = "crates/runtime" }
 session_log = { path = "crates/session_log" }
 tools = { path = "crates/tools" }
+
+[profile.test]
+debug = 0
+incremental = false

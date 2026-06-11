@@ -26,3 +26,5 @@ anyhow.workspace = true
 agents = { workspace = true }
 personas = { workspace = true }
 session_log = { workspace = true }
+tura_path = { workspace = true }
+fs2.workspace = true

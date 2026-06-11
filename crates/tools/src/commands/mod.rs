@@ -5,6 +5,7 @@ pub mod compact_context;
 pub mod planning;
 pub mod shell_command;
 pub mod task_status;
+pub mod zsh;
 
 use crate::runtime::file_locks::Access;
 use serde_json::Value;
@@ -34,6 +35,7 @@ pub fn execute(
         "read_media" => execute_external("read_media", command_line, session_dir),
         "shell_command" => shell_command::execute(command_line, session_dir, timeout_secs),
         "web_discover" => execute_external("web_discover", command_line, session_dir),
+        "zsh" => zsh::execute(command_line, session_dir, timeout_secs),
         other => CommandResponse {
             success: false,
             exit_code: 1,
@@ -52,10 +54,10 @@ pub fn access(command: &str, command_line: &str, session_dir: &Path) -> Access {
         "planning" if planning_command_enabled() => Access::default(),
         "read_media" => access_external("read_media", command_line, session_dir),
         "web_discover" => access_external("web_discover", command_line, session_dir),
-        "shell_command" | "bash" if shell_command::looks_read_only(command_line) => {
+        "shell_command" | "bash" | "zsh" if shell_command::looks_read_only(command_line) => {
             Access::default()
         }
-        "shell_command" | "bash" => Access {
+        "shell_command" | "bash" | "zsh" => Access {
             workspace_write: true,
             ..Access::default()
         },
@@ -94,7 +96,7 @@ pub fn result_command_name(command: &str) -> String {
 pub fn canonical_command(name: &str) -> String {
     let text = name.trim().to_ascii_lowercase().replace('-', "_");
     match text.as_str() {
-        "bash" | "shell" | "shell_command" | "shll" | "shall" => {
+        "bash" | "zsh" | "shell" | "shell_command" | "shll" | "shall" => {
             active_shell_command_name().to_string()
         }
         "apply_patch" => "apply_patch".to_string(),
@@ -118,8 +120,10 @@ pub fn active_shell_command_name() -> &'static str {
         .as_deref()
     {
         Some("bash") => "bash",
+        Some("zsh") => "zsh",
         Some("shell") | Some("shell_command") | Some("shll") | Some("shall") => "shell_command",
         _ if cfg!(windows) => "shell_command",
+        _ if cfg!(target_os = "macos") => "zsh",
         _ => "bash",
     }
 }

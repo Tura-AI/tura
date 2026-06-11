@@ -91,11 +91,26 @@ pub(super) fn execute_with_shell(
     if let Some(reason) = super::command_safety::is_dangerous_command(&request.command) {
         return response::blocked_command_response(&request.command, &reason);
     }
+    let shell_kind = shell_kind.trim().to_ascii_lowercase();
+    let use_zsh = shell_kind == "zsh";
     let use_bash = shell_kind == "bash"
         || (cfg!(windows) && shell::looks_posix_shell_script(&request.command));
-    let command_text = read_batch::space_batched_read_command(&request.command, use_bash)
+    let use_posix = use_zsh || use_bash || !cfg!(windows);
+    let command_text = read_batch::space_batched_read_command(&request.command, use_posix)
         .unwrap_or_else(|| request.command.clone());
-    let mut command = if use_bash {
+    let mut command = if use_zsh {
+        let Some(zsh) = shell::zsh_executable() else {
+            return response::failed_async_response(
+                "zsh executable was not found. Install zsh, set TURA_ZSH_PATH to a valid zsh binary, or use TURA_COMMAND_RUN_SHELL=bash.",
+                127,
+            );
+        };
+        let mut command = Command::new(zsh);
+        command
+            .arg("-lc")
+            .arg(shell::normalize_bash_command(&command_text));
+        command
+    } else if use_bash {
         let bash = shell::bash_executable();
         let mut command = Command::new(bash);
         command
@@ -107,8 +122,11 @@ pub(super) fn execute_with_shell(
         command.arg("-NoProfile").arg("-Command").arg(&command_text);
         command
     } else {
-        let mut command = Command::new("/bin/bash");
-        command.arg("-lc").arg(&command_text);
+        let (executable, kind) = shell::default_posix_shell_executable();
+        let mut command = Command::new(executable);
+        command
+            .arg(if kind == "sh" { "-c" } else { "-lc" })
+            .arg(&command_text);
         command
     };
     command.current_dir(&request.cwd);
@@ -133,11 +151,26 @@ pub(super) async fn execute_async_with_shell(
     if ctx.cancellation.is_cancelled() {
         return response::failed_async_response("tool task aborted", -1);
     }
+    let shell_kind = shell_kind.trim().to_ascii_lowercase();
+    let use_zsh = shell_kind == "zsh";
     let use_bash = shell_kind == "bash"
         || (cfg!(windows) && shell::looks_posix_shell_script(&request.command));
-    let command_text = read_batch::space_batched_read_command(&request.command, use_bash)
+    let use_posix = use_zsh || use_bash || !cfg!(windows);
+    let command_text = read_batch::space_batched_read_command(&request.command, use_posix)
         .unwrap_or_else(|| request.command.clone());
-    let mut command = if use_bash {
+    let mut command = if use_zsh {
+        let Some(zsh) = shell::zsh_executable() else {
+            return response::failed_async_response(
+                "zsh executable was not found. Install zsh, set TURA_ZSH_PATH to a valid zsh binary, or use TURA_COMMAND_RUN_SHELL=bash.",
+                127,
+            );
+        };
+        let mut command = tokio::process::Command::new(zsh);
+        command
+            .arg("-lc")
+            .arg(shell::normalize_bash_command(&command_text));
+        command
+    } else if use_bash {
         let bash = shell::bash_executable();
         let mut command = tokio::process::Command::new(bash);
         command
@@ -152,8 +185,11 @@ pub(super) async fn execute_async_with_shell(
             .arg(shell::prefix_powershell_script_with_utf8(&command_text));
         command
     } else {
-        let mut command = tokio::process::Command::new("/bin/bash");
-        command.arg("-lc").arg(&command_text);
+        let (executable, kind) = shell::default_posix_shell_executable();
+        let mut command = tokio::process::Command::new(executable);
+        command
+            .arg(if kind == "sh" { "-c" } else { "-lc" })
+            .arg(&command_text);
         command
     };
     command.current_dir(&request.cwd);
@@ -197,7 +233,16 @@ mod tests {
     use read_batch::space_batched_read_command;
     use request::{embedded_apply_patch_text, parse_shell_request};
     use shell::{looks_posix_shell_script, normalize_bash_command};
+    use std::ffi::OsString;
     use std::path::Path;
+
+    fn restore_env(name: &str, value: Option<OsString>) {
+        if let Some(value) = value {
+            std::env::set_var(name, value);
+        } else {
+            std::env::remove_var(name);
+        }
+    }
 
     #[test]
     fn parses_json_shell_request_with_escaped_quotes() {
@@ -456,6 +501,64 @@ mod tests {
         assert!(!looks_posix_shell_script(
             "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -Command 'for f in *.py; do echo $f; done'"
         ));
+    }
+
+    #[test]
+    fn zsh_surface_returns_clear_failure_when_configured_binary_is_missing() {
+        let previous = std::env::var_os("TURA_ZSH_PATH");
+        std::env::set_var(
+            "TURA_ZSH_PATH",
+            if cfg!(windows) {
+                r"C:\definitely\missing\tura-zsh.exe"
+            } else {
+                "/definitely/missing/tura-zsh"
+            },
+        );
+
+        let response = super::execute_with_shell(
+            r#"{"command":"print -r -- zsh-ok","timeout_ms":1000}"#,
+            Path::new("."),
+            120,
+            "zsh",
+        );
+
+        restore_env("TURA_ZSH_PATH", previous);
+        assert!(!response.success);
+        assert_eq!(response.exit_code, 127);
+        assert!(response.stderr.contains("zsh executable was not found"));
+    }
+
+    #[test]
+    fn supported_posix_shell_kind_recognizes_zsh_bash_and_sh() {
+        assert_eq!(
+            shell::supported_posix_shell_kind(Path::new("/bin/zsh")),
+            Some("zsh")
+        );
+        assert_eq!(
+            shell::supported_posix_shell_kind(Path::new("/bin/bash")),
+            Some("bash")
+        );
+        assert_eq!(
+            shell::supported_posix_shell_kind(Path::new("/bin/sh")),
+            Some("sh")
+        );
+        assert_eq!(
+            shell::supported_posix_shell_kind(Path::new("/bin/fish")),
+            None
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_zsh_candidates_assert_system_zsh_first() {
+        assert_eq!(
+            shell::zsh_candidate_paths().first().copied(),
+            Some("/bin/zsh")
+        );
+        assert!(
+            Path::new("/bin/zsh").exists(),
+            "macOS should provide /bin/zsh for the default zsh fallback"
+        );
     }
 }
 

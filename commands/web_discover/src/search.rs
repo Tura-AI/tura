@@ -6,8 +6,8 @@ use super::html::{
 use super::policy;
 use super::types::SearchResult;
 use super::util::{
-    clean_text, env_value, html_unescape, json_unescape, percent_decode, string_field,
-    string_field_at, truncate_chars, EmptyDefault,
+    clean_text, command_local_python, env_value, html_unescape, json_unescape, percent_decode,
+    string_field, string_field_at, truncate_chars, EmptyDefault,
 };
 use super::POLICY;
 use regex::Regex;
@@ -758,7 +758,10 @@ if not results and last_error is not None:
 
 sys.stdout.buffer.write(json.dumps({"results": results}, ensure_ascii=False).encode("utf-8"))
 "#;
-    let output = Command::new("python")
+    let python = command_local_python("TURA_WEB_DISCOVER_PYTHON")
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "python".to_string());
+    let output = Command::new(&python)
         .arg("-c")
         .arg(script)
         .arg(query)
@@ -782,7 +785,7 @@ sys.stdout.buffer.write(json.dumps({"results": results}, ensure_ascii=False).enc
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
-            "DuckDuckGo image library failed: {stderr}. Install with: python -m pip install ddgs"
+            "DuckDuckGo image library failed: {stderr}. Run commands/web_discover/install.* to install local dependencies."
         ));
     }
     let raw = serde_json::from_slice::<Value>(&output.stdout)
@@ -839,8 +842,9 @@ pub(super) fn search_ytdlp_links(
     query: &str,
     limit: usize,
 ) -> Result<Vec<SearchResult>, String> {
-    let output = Command::new(resolve_ytdlp_command().0)
-        .args(resolve_ytdlp_command().1)
+    let command_parts = resolve_ytdlp_command();
+    let output = Command::new(&command_parts.0)
+        .args(&command_parts.1)
         .args(["--dump-json", "--skip-download", "--flat-playlist"])
         .arg(format!("ytsearch{}:{query}", limit.clamp(1, 20)))
         .stdout(Stdio::piped())

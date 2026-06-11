@@ -250,6 +250,7 @@ pub trait ToolHandler: Send + Sync {
 pub struct ToolRouter {
     shell: crate::commands::shell_command::ShellCommandHandler,
     bash: crate::commands::bash::BashHandler,
+    zsh: crate::commands::zsh::ZshHandler,
     apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
     compact_context: crate::commands::compact_context::CompactContextHandler,
     planning: crate::commands::planning::PlanningHandler,
@@ -262,6 +263,7 @@ impl ToolRouter {
         Self {
             shell: crate::commands::shell_command::ShellCommandHandler,
             bash: crate::commands::bash::BashHandler,
+            zsh: crate::commands::zsh::ZshHandler,
             apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
             compact_context: crate::commands::compact_context::CompactContextHandler,
             planning: crate::commands::planning::PlanningHandler,
@@ -274,6 +276,7 @@ impl ToolRouter {
         match crate::commands::canonical_command(command).as_str() {
             "shell_command" => Some("shell_command"),
             "bash" => Some("bash"),
+            "zsh" => Some("zsh"),
             "apply_patch" => Some("apply_patch"),
             "compact_context" => Some("compact_context"),
             "planning" if planning_command_enabled() => Some("planning"),
@@ -287,6 +290,7 @@ impl ToolRouter {
         match tool_name {
             "shell_command" => Some(&self.shell),
             "bash" => Some(&self.bash),
+            "zsh" => Some(&self.zsh),
             "apply_patch" => Some(&self.apply_patch),
             "compact_context" => Some(&self.compact_context),
             "planning" if planning_command_enabled() => Some(&self.planning),

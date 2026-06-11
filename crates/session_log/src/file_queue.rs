@@ -1,7 +1,7 @@
 //! File-backed handoff queue for session DB writes.
 //!
-//! Runtime processes must not block on local PostgreSQL startup/connect. They
-//! enqueue JSON commands here and let the session DB owner drain them.
+//! Runtime processes must not block on session-log storage. They enqueue JSON
+//! commands here and let the session DB owner drain them.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -21,7 +21,10 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 pub fn is_async_write(command: &SessionLogCommand) -> bool {
     matches!(
         command,
-        SessionLogCommand::UpsertSession(_) | SessionLogCommand::ApplyCommandCheckpoint(_)
+        SessionLogCommand::UpsertSession(_)
+            | SessionLogCommand::ApplyCommandCheckpoint(_)
+            | SessionLogCommand::DeleteSession(_)
+            | SessionLogCommand::DeleteWorkspace(_)
     )
 }
 
@@ -52,11 +55,10 @@ pub fn enqueue_command(command: &SessionLogCommand) -> Result<PathBuf> {
 pub fn drain_queue(store: &SessionLogStore, limit: usize) -> Result<u64> {
     let root = queue_root();
     let pending = root.join(PENDING_DIR);
-    if !pending.exists() {
-        return Ok(0);
-    }
+    fs::create_dir_all(&pending)?;
     fs::create_dir_all(root.join(PROCESSING_DIR))?;
     fs::create_dir_all(root.join(FAILED_DIR))?;
+    recover_orphaned_processing(&root)?;
 
     let mut paths = fs::read_dir(&pending)?
         .flatten()
@@ -95,6 +97,37 @@ pub fn drain_queue(store: &SessionLogStore, limit: usize) -> Result<u64> {
     Ok(applied)
 }
 
+fn recover_orphaned_processing(root: &Path) -> Result<()> {
+    let processing = root.join(PROCESSING_DIR);
+    let pending = root.join(PENDING_DIR);
+    if !processing.exists() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(&processing)?.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(file_name) = path.file_name() else {
+            continue;
+        };
+        let recovered = pending.join(file_name);
+        if recovered.exists() {
+            continue;
+        }
+        if let Err(error) = fs::rename(&path, &recovered) {
+            tracing::warn!(
+                path = %path.display(),
+                target = %recovered.display(),
+                error = %error,
+                "failed to recover orphaned session queue item"
+            );
+        }
+    }
+    Ok(())
+}
+
 fn apply_file(store: &SessionLogStore, path: &Path) -> Result<()> {
     let raw = fs::read_to_string(path)
         .with_context(|| format!("failed to read session queue item {}", path.display()))?;
@@ -109,6 +142,8 @@ fn apply_command(store: &SessionLogStore, command: SessionLogCommand) -> Result<
         SessionLogCommand::ApplyCommandCheckpoint(payload) => {
             store.apply_command_checkpoint(*payload)
         }
+        SessionLogCommand::DeleteSession(payload) => store.delete_session(payload),
+        SessionLogCommand::DeleteWorkspace(payload) => store.delete_workspace(payload),
         other => anyhow::bail!("session queue only accepts write commands: {other:?}"),
     }
 }

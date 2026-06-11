@@ -3,8 +3,7 @@ pub mod cli;
 pub mod client;
 pub mod client_protocol;
 pub mod file_queue;
-mod local_postgres;
-pub mod migrations;
+pub mod ipc;
 pub mod path;
 pub mod protocol;
 pub mod queue;
@@ -13,7 +12,8 @@ pub mod store;
 
 pub use checkpoint::{CheckpointType, CommandCheckpoint};
 pub use protocol::{
-    GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, Page, SessionLogCommand,
-    SessionLogResponse, SessionRecord, SessionSnapshot, UpsertSessionRequest, WorkspaceSummary,
+    DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest, ListSessionRecordsRequest,
+    ListSessionsRequest, Page, SessionLogCommand, SessionLogResponse, SessionRecord,
+    SessionSnapshot, UpsertSessionRequest, WorkspaceSummary,
 };
 pub use store::SessionLogStore;
