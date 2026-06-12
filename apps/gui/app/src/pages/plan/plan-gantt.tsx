@@ -1,47 +1,32 @@
 import { type Session, type TaskManagement } from "@tura/gateway-sdk";
-import ChevronLeft from "lucide-solid/icons/chevron-left";
-import ChevronRight from "lucide-solid/icons/chevron-right";
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
+import { For, Show, createMemo, createSignal } from "solid-js";
 import { t } from "../../i18n";
 import { classNames } from "../../state/format";
 import { sessionTitle } from "../../state/global-store";
 
 import {
-  PlanDragGhost,
-  beginPlanPointerDrag,
-  dateWithPointerMinutes,
-  pointerScheduleFromElement,
-  type PlanDragState,
-} from "../../features/plan/drag";
-import {
+  planQueuedSessions,
   planSessionStatus,
   planTaskTitle,
-  planTimedSessions,
+  queuedSessionTasks,
   shortSessionId,
+  sortedSessionTasks,
   taskNonceId,
   taskPlanStatus,
-  taskPollInterval,
-  taskStartAt,
-  taskStartCondition,
   taskSummaryText,
-  timedSessionTasks,
 } from "../../features/plan/tasks";
-import {
-  DAY_MS,
-  HOUR_MS,
-  formatCalendarWeekTitle,
-  formatGanttDayTitle,
-  formatGanttMarkBottom,
-  formatGanttMarkTop,
-  planTimelineMarks,
-  startOfDay,
-  type PlanGanttMode,
-} from "../../features/plan/timeline";
 
-type GanttTaskOccurrence = {
+type PipelineDropTarget = {
+  sessionId: string;
+  index: number;
+};
+
+type PipelinePointerDrag = {
+  session: Session;
   task: TaskManagement;
-  startAt: Date;
-  sequence: number;
+  startX: number;
+  startY: number;
+  moved: boolean;
 };
 
 export function PlanGanttView(props: {
@@ -50,415 +35,247 @@ export function PlanGanttView(props: {
   selectedTaskNonceId?: string;
   onOpenSession: (session: Session) => void;
   onEditTask: (session: Session, task: TaskManagement) => void;
-  onSchedule: (session: Session, task: TaskManagement, startAt: string) => void;
+  onReorder: (session: Session, tasks: TaskManagement[]) => void;
 }) {
-  function currentTimelineStart(mode: PlanGanttMode): Date {
-    const now = new Date();
-    if (mode === "day") {
-      now.setSeconds(0, 0);
-      return now;
-    }
-    return startOfDay(now);
+  const [dropTarget, setDropTarget] = createSignal<PipelineDropTarget>();
+  let activeDragTask: { sessionId: string; taskId: string } | undefined;
+  let activePointerDrag: PipelinePointerDrag | undefined;
+  let suppressTaskClick: string | undefined;
+  const boundTrackElements = new WeakSet<HTMLElement>();
+  const boundTaskElements = new WeakSet<HTMLElement>();
+  const queuedRows = createMemo(() =>
+    planQueuedSessions(props.sessions).map((session) => ({
+      session,
+      tasks: queuedSessionTasks(session),
+    })),
+  );
+  const maxSteps = createMemo(() =>
+    Math.max(
+      1,
+      ...queuedRows().map((row) => Math.max(...row.tasks.map(taskStep), row.tasks.length)),
+    ),
+  );
+
+  function taskStep(task: TaskManagement): number {
+    return typeof task.step === "number" && task.step > 0 ? task.step : 1;
   }
-  const [dragState, setDragState] = createSignal<PlanDragState>();
-  const [timelineMode, setTimelineMode] = createSignal<PlanGanttMode>("week");
-  const timedSessions = createMemo(() => planTimedSessions(props.sessions));
-  const [timelineCursor, setTimelineCursor] = createSignal(currentTimelineStart("week"));
-  const [timelineWidth, setTimelineWidth] = createSignal(0);
-  const dayHourCount = createMemo(() => {
-    const width = timelineWidth();
-    if (width <= 0) {
-      return 6;
-    }
-    return Math.max(2, Math.min(12, Math.floor(width / 76)));
-  });
-  const timelineMarks = createMemo(() =>
-    planTimelineMarks(timelineCursor(), timelineMode(), dayHourCount()),
-  );
-  const timelineTitle = createMemo(() =>
-    timelineMode() === "day"
-      ? formatGanttDayTitle(timelineMarks())
-      : formatCalendarWeekTitle(timelineMarks()),
-  );
-  const timelineWindowMs = createMemo(() =>
-    timelineMode() === "day" ? dayHourCount() * HOUR_MS : 7 * DAY_MS,
-  );
-  let timelineSessionsKey = "";
-  createEffect(() => {
-    const key = timedSessions()
-      .map(
-        (session) =>
-          `${session.id}:${timedSessionTasks(session)
-            .map((task) => `${taskNonceId(task) ?? ""}:${String(taskStartAt(task) ?? "")}`)
-            .join(",")}`,
-      )
-      .join("|");
-    if (key !== timelineSessionsKey) {
-      timelineSessionsKey = key;
-      setTimelineCursor(currentTimelineStart(timelineMode()));
-    }
-  });
-  const todayPosition = createMemo(() => {
-    const marks = timelineMarks();
-    const start = marks[0]?.getTime();
-    if (!start) {
+
+  function pipelineDropFromPoint(
+    point: { x: number; y: number },
+    sourceSessionId: string,
+  ): PipelineDropTarget | undefined {
+    const element = document.elementFromPoint(point.x, point.y) as HTMLElement | undefined;
+    const row =
+      element?.closest<HTMLElement>(".plan-pipeline-row") ??
+      Array.from(document.querySelectorAll<HTMLElement>(".plan-pipeline-row")).find((item) => {
+        const rect = item.getBoundingClientRect();
+        return point.y >= rect.top && point.y <= rect.bottom;
+      });
+    const sessionId = row?.dataset.sessionId;
+    if (!row || !sessionId || sessionId !== sourceSessionId) {
       return undefined;
     }
-    const ratio = (Date.now() - start) / timelineWindowMs();
-    return ratio >= 0 && ratio <= 1 ? ratio : undefined;
-  });
-  let timelineEl: HTMLDivElement | undefined;
-  let lastEdgeMoveAt = 0;
-  let pixelMinuteRemainder = 0;
-  let holdScrollTimer: number | undefined;
-  const ganttRows = createMemo(() =>
-    timedSessions()
-      .map((session) => ({
-        session,
-        tasks: timedSessionTasks(session),
-        occurrences: timedSessionTasks(session)
-          .flatMap((task) => taskOccurrences(task))
-          .sort((left, right) => left.startAt.getTime() - right.startAt.getTime()),
-      }))
-      .filter((row) => row.occurrences.length > 0),
-  );
-  createEffect(() => {
-    if (!timelineEl) {
-      return;
+    const track = row.querySelector<HTMLElement>(".plan-pipeline-track");
+    if (!track) {
+      return undefined;
     }
-    const updateWidth = () => setTimelineWidth(timelineTrackWidth());
-    updateWidth();
-    const observer = new ResizeObserver(updateWidth);
-    observer.observe(timelineEl);
-    window.addEventListener("resize", updateWidth);
-    onCleanup(() => {
-      observer.disconnect();
-      window.removeEventListener("resize", updateWidth);
-    });
-  });
-  function pollingIntervalMs(task: TaskManagement): number {
-    const interval = taskPollInterval(task);
-    return (
-      (interval.d ?? 0) * DAY_MS +
-      (interval.h ?? 0) * HOUR_MS +
-      (interval.m ?? 0) * 60_000 +
-      (interval.s ?? 0) * 1_000
-    );
-  }
-  function taskOccurrences(task: TaskManagement): GanttTaskOccurrence[] {
-    const raw = taskStartAt(task);
-    const first = raw ? new Date(raw) : undefined;
-    const marks = timelineMarks();
-    const windowStart = marks[0]?.getTime();
-    if (
-      !first ||
-      Number.isNaN(first.getTime()) ||
-      windowStart === undefined ||
-      marks.length === 0
-    ) {
-      return [];
-    }
-    const windowEnd = windowStart + timelineWindowMs();
-    const intervalMs = taskStartCondition(task) === "polling_task" ? pollingIntervalMs(task) : 0;
-    if (intervalMs <= 0) {
-      const time = first.getTime();
-      return time >= windowStart && time < windowEnd ? [{ task, startAt: first, sequence: 0 }] : [];
-    }
-    const firstTime = first.getTime();
-    const now = Date.now();
-    const nextTime =
-      firstTime > now
-        ? firstTime
-        : firstTime + Math.ceil((now - firstTime) / intervalMs) * intervalMs;
-    if (nextTime < windowStart || nextTime >= windowEnd) {
-      return [];
-    }
-    return [
-      {
-        task,
-        startAt: new Date(nextTime),
-        sequence: Math.max(0, Math.round((nextTime - firstTime) / intervalMs)),
-      },
-    ];
-  }
-  function occurrenceTimelineStyle(
-    occurrence: GanttTaskOccurrence,
-    index: number,
-    total: number,
-  ): JSX.CSSProperties {
-    const marks = timelineMarks();
-    const windowStart = marks[0]?.getTime();
-    if (windowStart === undefined || marks.length === 0) {
-      return { display: "none" };
-    }
-    const windowEnd = windowStart + timelineWindowMs();
-    const time = occurrence.startAt.getTime();
-    if (time < windowStart || time >= windowEnd) {
-      return { display: "none" };
-    }
-    const position = ((time - windowStart) / (windowEnd - windowStart)) * 100;
     return {
-      left: `${position}%`,
-      "--plan-ticket-z": String(Math.max(1, total - index)),
-      "--plan-bar-width": "min(160px, calc(100% - 8px))",
+      sessionId,
+      index: pipelineStepFromPoint(track, point.x),
     };
   }
-  function taskTriggerClass(task: TaskManagement): string {
-    return `trigger-${taskStartCondition(task)}`;
-  }
-  function timelinePointerDate(point: { x: number }): string | undefined {
-    const marks = timelineMarks();
-    if (!timelineEl || marks.length === 0) {
-      return undefined;
-    }
-    const rect = timelineEl.getBoundingClientRect();
-    const axis = timelineEl.querySelector<HTMLElement>(".plan-timeline-left-head");
-    const start = axis?.getBoundingClientRect().right ?? rect.left;
-    const width = rect.width - (start - rect.left);
+
+  function pipelineStepFromPoint(track: HTMLElement, x: number): number {
+    const rect = track.getBoundingClientRect();
+    const width = rect.width / maxSteps();
     if (width <= 0) {
-      return undefined;
-    }
-    const ratio = Math.max(0, Math.min(1, (point.x - start) / width));
-    const windowStart = marks[0]!.getTime();
-    const minutes = Math.round((ratio * timelineWindowMs()) / 60_000);
-    const next = new Date(windowStart + minutes * 60_000);
-    return Number.isNaN(next.getTime()) ? undefined : next.toISOString();
-  }
-  function dropOnDay(event: DragEvent, day: Date) {
-    event.preventDefault();
-    const session = props.sessions.find(
-      (item) => item.id === event.dataTransfer?.getData("text/session-id"),
-    );
-    if (session) {
-      const task = timedSessionTasks(session)[0];
-      if (!task) {
-        return;
-      }
-      const startAt =
-        timelinePointerDate({ x: event.clientX }) ??
-        dateWithPointerMinutes(day, event.currentTarget as HTMLElement, {
-          axis: "x",
-          x: event.clientX,
-          y: event.clientY,
-        }).toISOString();
-      props.onSchedule(session, task, startAt);
-    }
-  }
-  function beginGanttTaskDrag(
-    event: PointerEvent | MouseEvent,
-    session: Session,
-    task: TaskManagement,
-  ) {
-    beginPlanPointerDrag({
-      event,
-      session,
-      setDragState,
-      onOpen: () => props.onEditTask(session, task),
-      onSchedule: (startAt) => props.onSchedule(session, task, startAt),
-      onMove: (point) => scrollTimelineAtEdge(point),
-      resolveSchedule: (point) =>
-        timelinePointerDate(point) ?? pointerScheduleFromElement(point, "x"),
-    });
-  }
-  function moveTimelineMinutes(minutesDelta: number) {
-    setTimelineCursor((cursor) => new Date(cursor.getTime() + minutesDelta * 60_000));
-  }
-  function moveTimelineWindow(direction: number) {
-    moveTimelineMinutes(direction * Math.round(timelineWindowMs() / 60_000 / 30));
-  }
-  function stopTimelineHold() {
-    if (holdScrollTimer !== undefined) {
-      window.clearInterval(holdScrollTimer);
-      holdScrollTimer = undefined;
-    }
-    window.removeEventListener("pointerup", stopTimelineHold);
-    window.removeEventListener("pointercancel", stopTimelineHold);
-    window.removeEventListener("mouseup", stopTimelineHold);
-  }
-  function beginTimelineHold(event: PointerEvent | MouseEvent, direction: number) {
-    event.preventDefault();
-    event.stopPropagation();
-    stopTimelineHold();
-    moveTimelineWindow(direction);
-    holdScrollTimer = window.setInterval(() => moveTimelineWindow(direction), 100);
-    window.addEventListener("pointerup", stopTimelineHold, { once: true });
-    window.addEventListener("pointercancel", stopTimelineHold, { once: true });
-    window.addEventListener("mouseup", stopTimelineHold, { once: true });
-  }
-  function timelineTrackWidth(): number {
-    if (!timelineEl) {
       return 0;
     }
-    const rect = timelineEl.getBoundingClientRect();
-    const axis = timelineEl.querySelector<HTMLElement>(".plan-timeline-left-head");
-    const leftWidth = axis?.getBoundingClientRect().width ?? 0;
-    return Math.max(0, rect.width - leftWidth);
+    return Math.max(0, Math.min(maxSteps() - 1, Math.floor((x - rect.left) / width)));
   }
-  function moveTimelineByPixels(deltaX: number) {
-    const width = timelineTrackWidth();
-    if (width <= 0 || deltaX === 0) {
-      return;
+
+  function reorderTaskTo(
+    session: Session,
+    sourceTask: TaskManagement,
+    target: PipelineDropTarget,
+  ): boolean {
+    if (target.sessionId !== session.id) {
+      return false;
     }
-    const rawMinutes = (-deltaX / width) * (timelineWindowMs() / 60_000) + pixelMinuteRemainder;
-    const minutes = rawMinutes < 0 ? Math.ceil(rawMinutes) : Math.floor(rawMinutes);
-    pixelMinuteRemainder = rawMinutes - minutes;
-    if (minutes !== 0) {
-      moveTimelineMinutes(minutes);
+    const sourceNonce = taskNonceId(sourceTask);
+    if (!sourceNonce) {
+      return false;
+    }
+    const current = queuedSessionTasks(session);
+    const sourceIndex = current.findIndex((task) => taskNonceId(task) === sourceNonce);
+    if (sourceIndex < 0) {
+      return false;
+    }
+    const next = current.filter((task) => taskNonceId(task) !== sourceNonce);
+    const source = current[sourceIndex];
+    if (!source) {
+      return false;
+    }
+    const insertIndex = Math.max(0, Math.min(target.index, next.length));
+    next.splice(insertIndex, 0, source);
+    const visibleTaskIds = new Set(next.map(taskNonceId).filter(Boolean));
+    const hiddenTasks = sortedSessionTasks(session).filter(
+      (task) => !visibleTaskIds.has(taskNonceId(task)),
+    );
+    props.onReorder(session, [...next, ...hiddenTasks]);
+    return true;
+  }
+
+  function beginTaskDrag(event: DragEvent, session: Session, task: TaskManagement) {
+    const taskId = taskNonceId(task) ?? "";
+    activeDragTask = taskId ? { sessionId: session.id, taskId } : undefined;
+    event.dataTransfer?.setData("text/session-id", session.id);
+    event.dataTransfer?.setData("text/task-id", taskId);
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
     }
   }
-  function wheelTimeline(event: WheelEvent) {
-    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
-    if (delta === 0) {
-      return;
-    }
+
+  function updateDropTarget(event: DragEvent, session: Session) {
     event.preventDefault();
-    moveTimelineByPixels(delta);
+    setDropTarget(pipelineDropFromPoint({ x: event.clientX, y: event.clientY }, session.id));
   }
-  function switchTimelineMode(mode: PlanGanttMode) {
-    setTimelineCursor(currentTimelineStart(mode));
-    setTimelineMode(mode);
-  }
-  function scrollTimelineAtEdge(point: { x: number }) {
-    if (!timelineEl) {
+
+  function dropTask(event: DragEvent, session: Session) {
+    event.preventDefault();
+    const sourceSessionId =
+      event.dataTransfer?.getData("text/session-id") || activeDragTask?.sessionId;
+    const sourceTaskId = event.dataTransfer?.getData("text/task-id") || activeDragTask?.taskId;
+    if (!sourceTaskId || sourceSessionId !== session.id) {
+      setDropTarget(undefined);
+      activeDragTask = undefined;
       return;
     }
-    const gridRect = timelineEl.getBoundingClientRect();
-    const trackRect =
-      timelineEl.querySelector<HTMLElement>(".plan-timeline-track")?.getBoundingClientRect() ??
-      gridRect;
-    const edge = 24;
-    const now = Date.now();
-    if (now - lastEdgeMoveAt < 60) {
-      return;
-    }
-    if (point.x <= trackRect.left + edge) {
-      const distance = trackRect.left + edge - point.x;
-      const minutes = Math.max(
-        1,
-        Math.round(
-          (Math.max(18, Math.min(48, distance)) / trackRect.width) * (timelineWindowMs() / 60_000),
-        ),
-      );
-      moveTimelineMinutes(-minutes);
-      lastEdgeMoveAt = now;
-    } else if (point.x >= trackRect.right - edge) {
-      const distance = point.x - (trackRect.right - edge);
-      const minutes = Math.max(
-        1,
-        Math.round(
-          (Math.max(18, Math.min(48, distance)) / trackRect.width) * (timelineWindowMs() / 60_000),
-        ),
-      );
-      moveTimelineMinutes(minutes);
-      lastEdgeMoveAt = now;
-    } else {
-      pixelMinuteRemainder = 0;
+    const sourceTask = queuedSessionTasks(session).find(
+      (task) => taskNonceId(task) === sourceTaskId,
+    );
+    const target = pipelineDropFromPoint({ x: event.clientX, y: event.clientY }, session.id);
+    setDropTarget(undefined);
+    activeDragTask = undefined;
+    if (sourceTask && target) {
+      reorderTaskTo(session, sourceTask, target);
     }
   }
-  function beginTimelinePan(event: PointerEvent | MouseEvent) {
+
+  function dropClass(session: Session, task: TaskManagement): string | undefined {
+    const target = dropTarget();
+    if (target?.sessionId !== session.id || target.index + 1 !== taskStep(task)) {
+      return undefined;
+    }
+    return "drop-step";
+  }
+
+  function bindTrackElement(element: HTMLElement, session: Session) {
+    if (boundTrackElements.has(element)) {
+      return;
+    }
+    boundTrackElements.add(element);
+    element.addEventListener("dragover", (event) => updateDropTarget(event, session));
+    element.addEventListener("drop", (event) => dropTask(event, session));
+    element.addEventListener("dragleave", () => setDropTarget(undefined));
+  }
+
+  function bindTaskElement(element: HTMLElement, session: Session, task: TaskManagement) {
+    if (boundTaskElements.has(element)) {
+      return;
+    }
+    boundTaskElements.add(element);
+    element.addEventListener("dragstart", (event) => beginTaskDrag(event, session, task));
+    element.addEventListener("dragend", () => {
+      setDropTarget(undefined);
+      activeDragTask = undefined;
+    });
+  }
+
+  function beginPointerDrag(event: PointerEvent, session: Session, task: TaskManagement) {
     if (event.button !== 0) {
       return;
     }
-    event.preventDefault();
-    let lastX = event.clientX;
-    const onMove = (move: PointerEvent | MouseEvent) => {
-      const delta = move.clientX - lastX;
-      moveTimelineByPixels(delta);
-      lastX = move.clientX;
+    activePointerDrag = {
+      session,
+      task,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
     };
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp, { once: true });
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp, { once: true });
+    elementFromEvent(event)?.setPointerCapture?.(event.pointerId);
   }
+
+  function updatePointerDrag(event: PointerEvent) {
+    const drag = activePointerDrag;
+    if (!drag) {
+      return;
+    }
+    const deltaX = Math.abs(event.clientX - drag.startX);
+    const deltaY = Math.abs(event.clientY - drag.startY);
+    if (!drag.moved && deltaX < 4 && deltaY < 4) {
+      return;
+    }
+    drag.moved = true;
+    setDropTarget(pipelineDropFromPoint({ x: event.clientX, y: event.clientY }, drag.session.id));
+  }
+
+  function finishPointerDrag(event: PointerEvent) {
+    const drag = activePointerDrag;
+    activePointerDrag = undefined;
+    if (!drag?.moved) {
+      setDropTarget(undefined);
+      return;
+    }
+    const target = pipelineDropFromPoint({ x: event.clientX, y: event.clientY }, drag.session.id);
+    setDropTarget(undefined);
+    if (target && reorderTaskTo(drag.session, drag.task, target)) {
+      suppressTaskClick = taskNonceId(drag.task);
+      window.setTimeout(() => {
+        suppressTaskClick = undefined;
+      }, 0);
+    }
+  }
+
+  function elementFromEvent(event: PointerEvent): HTMLElement | undefined {
+    return event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined;
+  }
+
   return (
-    <section class="plan-gantt">
-      <PlanDragGhost state={dragState()} />
+    <section class="plan-gantt plan-pipeline" aria-label={t("gantt")}>
       <div
-        ref={timelineEl}
-        class="plan-timeline-grid"
-        style={{ "--plan-days": String(timelineMarks().length) }}
-        onWheel={wheelTimeline}
+        class="plan-timeline-grid plan-pipeline-grid"
+        style={{ "--plan-days": String(maxSteps()) }}
       >
-        <div
-          class="plan-timeline-scale"
-          onPointerDown={beginTimelinePan}
-          onMouseDown={beginTimelinePan}
-        >
-          <header class="plan-calendar-title plan-timeline-title">
-            <div class="plan-calendar-nav">
-              <button
-                class="icon-action"
-                type="button"
-                title={t("previous")}
-                onPointerDown={(event) => beginTimelineHold(event, -1)}
-                onMouseDown={(event) => beginTimelineHold(event, -1)}
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <strong>{timelineTitle()}</strong>
-              <button
-                class="icon-action"
-                type="button"
-                title={t("next")}
-                onPointerDown={(event) => beginTimelineHold(event, 1)}
-                onMouseDown={(event) => beginTimelineHold(event, 1)}
-              >
-                <ChevronRight size={16} />
-              </button>
-            </div>
-            <div class="plan-calendar-view-toggle plan-gantt-view-toggle">
-              <button
-                type="button"
-                class={classNames(timelineMode() === "week" && "selected")}
-                onPointerDown={(event) => event.stopPropagation()}
-                onMouseDown={(event) => event.stopPropagation()}
-                onClick={() => switchTimelineMode("week")}
-              >
-                {t("week")}
-              </button>
-              <button
-                type="button"
-                class={classNames(timelineMode() === "day" && "selected")}
-                onPointerDown={(event) => event.stopPropagation()}
-                onMouseDown={(event) => event.stopPropagation()}
-                onClick={() => switchTimelineMode("day")}
-              >
-                {t("day")}
-              </button>
-            </div>
+        <div class="plan-timeline-scale plan-pipeline-scale">
+          <header class="plan-calendar-title plan-timeline-title plan-pipeline-title">
+            <strong>{t("gantt")}</strong>
           </header>
           <span class="plan-timeline-left-head" aria-hidden="true"></span>
-          <For each={timelineMarks()}>
-            {(mark, index) => (
+          <For each={Array.from({ length: maxSteps() })}>
+            {(_, index) => (
               <span
                 style={{
                   "grid-column": String(index() + 2),
                 }}
-                class="plan-timeline-day"
-                data-plan-timeline-day={mark.toISOString()}
+                class="plan-timeline-day plan-pipeline-step"
+                data-plan-step={String(index() + 1)}
               >
-                <small>{formatGanttMarkTop(mark, timelineMode())}</small>
-                <strong>{formatGanttMarkBottom(mark, timelineMode())}</strong>
+                <strong>步骤{index() + 1}</strong>
               </span>
             )}
           </For>
         </div>
-        <Show when={todayPosition() !== undefined}>
-          <i class="plan-today-line" style={{ "--today": String(todayPosition()) }} />
+        <Show when={queuedRows().length === 0}>
+          <div class="plan-pipeline-empty">{t("notScheduled")}</div>
         </Show>
-        <For each={ganttRows()}>
+        <For each={queuedRows()}>
           {(row) => {
             const session = row.session;
             return (
               <div
-                class="plan-timeline-row"
+                class="plan-timeline-row plan-pipeline-row"
+                data-session-id={session.id}
                 style={{
                   "--task-count": String(row.tasks.length),
                 }}
@@ -477,47 +294,54 @@ export function PlanGanttView(props: {
                   <strong>{sessionTitle(session)}</strong>
                   <small>{shortSessionId(session.id)}</small>
                 </button>
-                <div class="plan-timeline-track">
-                  <For each={row.occurrences}>
-                    {(occurrence, index) => (
+                <div
+                  ref={(element) => bindTrackElement(element, session)}
+                  class="plan-timeline-track plan-pipeline-track"
+                  onDragOver={(event) => updateDropTarget(event, session)}
+                  onDrop={(event) => dropTask(event, session)}
+                  onDragLeave={() => setDropTarget(undefined)}
+                >
+                  <For each={row.tasks}>
+                    {(task) => (
                       <button
+                        ref={(element) => bindTaskElement(element, session, task)}
                         class={classNames(
                           "plan-timeline-bar",
-                          `status-${taskPlanStatus(occurrence.task) ?? planSessionStatus(session)}`,
-                          taskTriggerClass(occurrence.task),
+                          "plan-pipeline-task",
+                          `status-${taskPlanStatus(task) ?? planSessionStatus(session)}`,
+                          dropClass(session, task),
                           props.selectedSessionId === session.id &&
-                            props.selectedTaskNonceId === taskNonceId(occurrence.task) &&
+                            props.selectedTaskNonceId === taskNonceId(task) &&
                             "selected",
                         )}
-                        style={occurrenceTimelineStyle(occurrence, index(), row.occurrences.length)}
-                        onPointerDown={(event) =>
-                          beginGanttTaskDrag(event, session, occurrence.task)
-                        }
-                        onMouseDown={(event) => beginGanttTaskDrag(event, session, occurrence.task)}
-                        onClick={(event) => event.preventDefault()}
+                        style={{
+                          "grid-column": String(taskStep(task)),
+                        }}
+                        draggable={true}
+                        onPointerDown={(event) => beginPointerDrag(event, session, task)}
+                        onPointerMove={updatePointerDrag}
+                        onPointerUp={finishPointerDrag}
+                        onPointerCancel={() => {
+                          activePointerDrag = undefined;
+                          setDropTarget(undefined);
+                        }}
+                        onDragStart={(event) => beginTaskDrag(event, session, task)}
+                        onDragEnd={() => setDropTarget(undefined)}
+                        onClick={() => {
+                          if (suppressTaskClick === taskNonceId(task)) {
+                            return;
+                          }
+                          props.onEditTask(session, task);
+                        }}
                         title={[
-                          taskSummaryText(occurrence.task) || planTaskTitle(session),
+                          taskSummaryText(task) || planTaskTitle(session),
                           sessionTitle(session),
                         ].join("\n")}
-                        data-task-nonce={taskNonceId(occurrence.task)}
-                        data-task-occurrence={occurrence.startAt.toISOString()}
+                        data-task-nonce={taskNonceId(task)}
+                        data-task-step={String(taskStep(task))}
                       >
-                        <strong>
-                          {taskSummaryText(occurrence.task) || planTaskTitle(session)}
-                        </strong>
+                        <strong>{taskSummaryText(task) || planTaskTitle(session)}</strong>
                       </button>
-                    )}
-                  </For>
-                  <For each={timelineMarks()}>
-                    {(day) => (
-                      <button
-                        class="plan-timeline-drop"
-                        type="button"
-                        title={day.toLocaleDateString()}
-                        onDragOver={(event) => event.preventDefault()}
-                        onDrop={(event) => dropOnDay(event, day)}
-                        data-plan-timeline-day={day.toISOString()}
-                      />
                     )}
                   </For>
                 </div>

@@ -147,7 +147,7 @@ pub fn accumulate_tool_result_with_provider_metadata(
 
     session.push_log(
         serde_json::to_string(&tool_result_json)
-            .unwrap_or_else(|_| format!("tool_result: {}", tool_name)),
+            .unwrap_or_else(|_| format!("tool_result: {tool_name}")),
         now,
     );
 
@@ -167,7 +167,7 @@ pub fn accumulate_message(
     });
 
     session.push_log(
-        serde_json::to_string(&message_json).unwrap_or_else(|_| format!("message: {}", role)),
+        serde_json::to_string(&message_json).unwrap_or_else(|_| format!("message: {role}")),
         now,
     );
 

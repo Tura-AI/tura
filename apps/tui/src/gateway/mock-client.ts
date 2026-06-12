@@ -6,6 +6,7 @@ import type {
   OAuthAuthorizeResponse,
   ProviderAuthMethodsResponse,
   ProviderAuthStatus,
+  ProviderAuthUpsert,
   ProviderListResponse,
 } from "../types/provider.js";
 import type { CreateSessionRequest, Message, PromptPayload, Session } from "../types/session.js";
@@ -26,9 +27,26 @@ export class MockGatewayClient {
     this.directory = options.directory;
     const session = this.mockSession("mock-session-1", "Mock TUI Session");
     this.sessions = [session];
-    this.messagesBySession.set(session.id, [
+    let messages = [
       this.message(session.id, "assistant", "Mock TUI 已启动。当前不会连接真实 gateway。"),
-    ]);
+    ];
+    if (process.env.TURA_TUI_MOCK_STREAM_ORDER === "1") {
+      messages = this.streamingOrderMessages(session.id);
+    } else if (process.env.TURA_TUI_MOCK_LONG_SESSION === "1") {
+      for (let index = 1; index <= 80; index += 1) {
+        messages.push(
+          this.message(
+            session.id,
+            index % 2 === 0 ? "assistant" : "user",
+            `Mock history ${String(index).padStart(3, "0")} full session load marker`,
+          ),
+        );
+      }
+    }
+    this.messagesBySession.set(session.id, messages);
+    this.sessions = this.sessions.map((item) =>
+      item.id === session.id ? { ...item, message_count: messages.length } : item,
+    );
   }
 
   async health(): Promise<{ healthy: boolean; version: string }> {
@@ -150,7 +168,28 @@ export class MockGatewayClient {
   }
 
   async listProviderAuthMethods(): Promise<ProviderAuthMethodsResponse> {
-    return {};
+    return {
+      mock: [
+        {
+          type: "oauth",
+          kind: "browser",
+          login: "oauth",
+          label: "Mock OAuth",
+          available: true,
+          supports_refresh: false,
+        },
+        {
+          type: "api_key",
+          kind: "key",
+          login: "api-key",
+          label: "Mock API key",
+          token_env: "MOCK_API_KEY",
+          docs_url: "https://example.test/mock-auth",
+          available: true,
+          supports_refresh: false,
+        },
+      ],
+    };
   }
 
   async providerAuthStatus(providerID: string): Promise<ProviderAuthStatus> {
@@ -172,6 +211,10 @@ export class MockGatewayClient {
   }
 
   async providerLogout(): Promise<unknown> {
+    return true;
+  }
+
+  async setProviderAuth(_providerID: string, _payload: ProviderAuthUpsert): Promise<boolean> {
     return true;
   }
 
@@ -241,6 +284,84 @@ export class MockGatewayClient {
     }
   }
 
+  private streamingOrderMessages(sessionID: string): Message[] {
+    const base = Date.now() - 10_000;
+    let index = 0;
+    const nextTime = () => base + index++ * 100;
+    const user = (id: string, text: string): Message => ({
+      id,
+      sessionID,
+      session_id: sessionID,
+      role: "user",
+      created_at: nextTime(),
+      updated_at: base,
+      parts: [{ id: `${id}:text`, sessionID, session_id: sessionID, type: "text", text }],
+    });
+    const assistant = (
+      id: string,
+      text: string,
+      command: string,
+      status = "completed",
+    ): Message => ({
+      id,
+      sessionID,
+      session_id: sessionID,
+      role: "assistant",
+      created_at: nextTime(),
+      updated_at: base,
+      parts: [
+        { id: `${id}:text`, sessionID, session_id: sessionID, type: "text", text },
+        {
+          id: `${id}:command`,
+          sessionID,
+          session_id: sessionID,
+          messageID: id,
+          type: "tool",
+          tool: "command_run",
+          state: { status, input: { command_line: command } },
+        },
+      ],
+    });
+    return [
+      user("mock-order-user-1", "User turn 1 asks for a zip-password CLI refactor."),
+      assistant(
+        "mock-order-agent-1",
+        "Agent block 1: inspect the legacy CLI and keep this text above its command only.",
+        "Get-ChildItem -Force",
+      ),
+      assistant(
+        "mock-order-agent-2",
+        "Agent block 2: inspect the source CLI behavior before rebuilding it.",
+        "node legacy_zip_password_cli/legacy_zip_password_finder.mjs --input fixtures/secret.zip.fixture.json --wordlist fixtures/candidates.txt",
+      ),
+      assistant(
+        "mock-order-agent-3",
+        "Agent block 3: create the refactored CLI while preserving the feed order.",
+        "node zip_password_refactor/bin/zip-password-finder.mjs --help",
+      ),
+      assistant(
+        "mock-order-agent-4",
+        "Agent block 4: summarize the first user turn without moving below the user message.",
+        "Get-Content zip_password_refactor/README.md",
+      ),
+      user("mock-order-user-2", "User turn 2 asks for acceptance coverage and final validation."),
+      assistant(
+        "mock-order-agent-5",
+        "Agent block 5: run dictionary and brute-force acceptance while composer remains pinned.",
+        "node acceptance/zip_password_cli_acceptance.mjs",
+      ),
+      assistant(
+        "mock-order-agent-6",
+        "Agent block 6: compare command output and password discovery status.",
+        "Get-Content zip_password_refactor/acceptance-report.json",
+      ),
+      assistant(
+        "mock-order-agent-7",
+        "Agent block 7: final zip-password verification stays after command six and before no later user text.",
+        "node zip_password_refactor/bin/zip-password-finder.mjs --input fixtures/secret.zip.fixture.json --wordlist fixtures/candidates.txt --json",
+      ),
+    ];
+  }
   private mockSession(id: string, name: string, payload: CreateSessionRequest = {}): Session {
     const now = Date.now();
     return {

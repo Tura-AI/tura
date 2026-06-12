@@ -1,8 +1,11 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use serde::Serialize;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use url::Url;
 
@@ -15,6 +18,8 @@ struct StartGatewayResponse {
     gateway_url: Option<String>,
 }
 
+static OWNED_GATEWAY: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![start_gateway])
@@ -24,23 +29,39 @@ fn main() {
 
 #[tauri::command]
 fn start_gateway(gateway_url: String) -> Result<StartGatewayResponse, String> {
-    let mut endpoint = GatewayEndpoint::parse(&gateway_url);
-    if gateway_tcp_reachable(&endpoint) {
-        return Ok(StartGatewayResponse {
-            ok: true,
-            status: "connected",
-            gateway_path: None,
-            gateway_url: Some(endpoint.url()),
-        });
+    let endpoint = GatewayEndpoint::parse(&gateway_url);
+    let my_root = current_runtime_root();
+    // Only reuse a reachable gateway if it belongs to *this* package directory.
+    // A gateway from another route (dev bin / release) on the same port must not
+    // be hijacked — we start our own on a free port instead.
+    if let Some(root) = gateway_identity(&endpoint) {
+        if root.is_empty() || same_root(&root, &my_root) {
+            return Ok(StartGatewayResponse {
+                ok: true,
+                status: "connected",
+                gateway_path: None,
+                gateway_url: Some(endpoint.url()),
+            });
+        }
     }
-    endpoint = endpoint_for_gateway_start(endpoint);
+    let endpoint = endpoint_for_gateway_start(endpoint);
+    if !gateway_port_available(&endpoint) {
+        return Err(format!(
+            "gateway port {} is occupied by a foreign process",
+            endpoint.port
+        ));
+    }
 
     let gateway = gateway_binary_path().ok_or_else(|| "gateway binary not found".to_string())?;
     let runtime_root = runtime_root_for_gateway(&gateway);
     let mut command = Command::new(&gateway);
     command
         .current_dir(&runtime_root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .env("TURA_PROJECT_ROOT", &runtime_root)
+        .env("TURA_GATEWAY_SHUTDOWN_ON_STDIN_EOF", "1")
         .env(
             "TURA_PROVIDER_CONFIG",
             provider_config_path_for_runtime_root(&runtime_root),
@@ -50,11 +71,15 @@ fn start_gateway(gateway_url: String) -> Result<StartGatewayResponse, String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
     }
-    command
+    let child = command
         .spawn()
         .map_err(|err| format!("failed to start gateway {}: {err}", gateway.display()))?;
+    *owned_gateway()
+        .lock()
+        .map_err(|_| "gateway child lock poisoned".to_string())? = Some(child);
 
     Ok(StartGatewayResponse {
         ok: true,
@@ -64,45 +89,32 @@ fn start_gateway(gateway_url: String) -> Result<StartGatewayResponse, String> {
     })
 }
 
+fn owned_gateway() -> &'static Mutex<Option<Child>> {
+    OWNED_GATEWAY.get_or_init(|| Mutex::new(None))
+}
+
 fn gateway_binary_path() -> Option<PathBuf> {
-    let file_name = if cfg!(windows) {
-        "gateway.exe"
+    let gateway_name = if cfg!(windows) {
+        "tura_gateway.exe"
     } else {
-        "gateway"
+        "tura_gateway"
     };
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
-    let candidates = [
-        exe_dir.join(file_name),
-        exe_dir.join("bin").join(file_name),
-        exe_dir
-            .parent()
-            .unwrap_or(exe_dir)
-            .join("bin")
-            .join(file_name),
-        exe_dir
-            .parent()
-            .unwrap_or(exe_dir)
-            .join("release")
-            .join(file_name),
-        exe_dir
-            .parent()
-            .unwrap_or(exe_dir)
-            .join("debug")
-            .join(file_name),
-        exe_dir
-            .parent()
-            .unwrap_or(exe_dir)
-            .join("target")
-            .join("release")
-            .join(file_name),
-        exe_dir
-            .parent()
-            .unwrap_or(exe_dir)
-            .join("target")
-            .join("debug")
-            .join(file_name),
+    let parent = exe_dir.parent().unwrap_or(exe_dir);
+    let mut candidates = vec![
+        exe_dir.join(gateway_name),
+        exe_dir.join("bin").join(gateway_name),
+        parent.join("bin").join(gateway_name),
+        parent.join("release").join("bin").join(gateway_name),
     ];
+    if let Some(root) = exe_dir
+        .ancestors()
+        .find(|candidate| is_runtime_root(candidate))
+    {
+        candidates.push(root.join("bin").join(gateway_name));
+        candidates.push(root.join("target").join("release").join(gateway_name));
+    }
     candidates.into_iter().find(|path| path.exists())
 }
 
@@ -142,15 +154,38 @@ fn provider_config_path_for_runtime_root(runtime_root: &Path) -> PathBuf {
     packaged
 }
 
-fn gateway_tcp_reachable(endpoint: &GatewayEndpoint) -> bool {
-    gateway_health_reachable(endpoint)
+/// Runtime root the running GUI belongs to (its own package directory).
+fn current_runtime_root() -> PathBuf {
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
+    let start = exe.parent().unwrap_or_else(|| Path::new("."));
+    start
+        .ancestors()
+        .find(|candidate| is_runtime_root(candidate))
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| start.to_path_buf())
 }
 
-fn endpoint_for_gateway_start(endpoint: GatewayEndpoint) -> GatewayEndpoint {
-    if gateway_port_available(&endpoint) {
-        return endpoint;
+fn same_root(left: &str, right: &Path) -> bool {
+    fn canonical(path: &Path) -> String {
+        let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let text = strip_verbatim(&resolved.to_string_lossy());
+        let text = text.trim_end_matches(['\\', '/']).to_string();
+        if cfg!(windows) {
+            text.to_lowercase()
+        } else {
+            text
+        }
     }
-    available_endpoint_on_same_host(&endpoint).unwrap_or(endpoint)
+    fn strip_verbatim(path: &str) -> String {
+        if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{rest}")
+        } else if let Some(rest) = path.strip_prefix(r"\\?\") {
+            rest.to_string()
+        } else {
+            path.to_string()
+        }
+    }
+    canonical(Path::new(left)) == canonical(right)
 }
 
 fn gateway_port_available(endpoint: &GatewayEndpoint) -> bool {
@@ -160,33 +195,58 @@ fn gateway_port_available(endpoint: &GatewayEndpoint) -> bool {
         .any(|addr| TcpListener::bind(addr).is_ok())
 }
 
-fn available_endpoint_on_same_host(endpoint: &GatewayEndpoint) -> Option<GatewayEndpoint> {
-    endpoint.bind_addrs().into_iter().find_map(|addr| {
-        TcpListener::bind(SocketAddr::new(addr.ip(), 0))
-            .ok()
-            .and_then(|listener| listener.local_addr().ok())
-            .map(|local| endpoint.with_port(local.port()))
-    })
+fn endpoint_for_gateway_start(endpoint: GatewayEndpoint) -> GatewayEndpoint {
+    if gateway_port_available(&endpoint) {
+        return endpoint;
+    }
+    available_endpoint_with_same_host(&endpoint).unwrap_or(endpoint)
 }
 
+fn available_endpoint_with_same_host(endpoint: &GatewayEndpoint) -> Option<GatewayEndpoint> {
+    use std::net::ToSocketAddrs;
+
+    (endpoint.host.as_str(), 0)
+        .to_socket_addrs()
+        .ok()?
+        .find_map(|addr| TcpListener::bind(addr).ok())
+        .and_then(|listener| listener.local_addr().ok())
+        .map(|addr| endpoint.with_port(addr.port()))
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 fn gateway_health_reachable(endpoint: &GatewayEndpoint) -> bool {
-    endpoint.socket_addrs().into_iter().any(|addr| {
-        let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(350)) else {
-            return false;
-        };
+    gateway_identity(endpoint).is_some()
+}
+
+/// Probe `/global/health`; on a healthy gateway return its reported `root`,
+/// otherwise `None`.
+fn gateway_identity(endpoint: &GatewayEndpoint) -> Option<String> {
+    endpoint.socket_addrs().into_iter().find_map(|addr| {
+        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(350)).ok()?;
         let _ = stream.set_read_timeout(Some(Duration::from_millis(900)));
         let _ = stream.set_write_timeout(Some(Duration::from_millis(900)));
         let request = format!(
             "GET /global/health HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n\r\n",
             endpoint.host, endpoint.port
         );
-        if stream.write_all(request.as_bytes()).is_err() {
-            return false;
-        }
+        stream.write_all(request.as_bytes()).ok()?;
         let mut response = String::new();
-        stream.read_to_string(&mut response).is_ok()
-            && response.starts_with("HTTP/1.1 200")
-            && response.contains("\"healthy\":true")
+        stream.read_to_string(&mut response).ok()?;
+        if !response.starts_with("HTTP/1.1 200") || !response.contains("\"healthy\":true") {
+            return None;
+        }
+        let root = response
+            .split("\r\n\r\n")
+            .nth(1)
+            .and_then(|body| serde_json::from_str::<serde_json::Value>(body.trim()).ok())
+            .and_then(|value| {
+                value
+                    .get("root")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_default();
+        Some(root)
     })
 }
 
@@ -219,7 +279,10 @@ impl GatewayEndpoint {
         let explicit_port = url.port();
         Self {
             host,
-            port: explicit_port.unwrap_or(4096),
+            // The packaged Tauri GUI is the release route, so the default port is
+            // the release gateway's 4156 (the dev GUI runs via the vite dev server,
+            // which targets 4126 explicitly).
+            port: explicit_port.unwrap_or(4156),
             explicit_port,
         }
     }
@@ -266,7 +329,7 @@ impl Default for GatewayEndpoint {
     fn default() -> Self {
         Self {
             host: "127.0.0.1".to_string(),
-            port: 4096,
+            port: 4156,
             explicit_port: None,
         }
     }
@@ -284,7 +347,7 @@ mod tests {
             GatewayEndpoint::parse("http://127.0.0.1"),
             GatewayEndpoint {
                 host: "127.0.0.1".to_string(),
-                port: 4096,
+                port: 4156,
                 explicit_port: None,
             }
         );
@@ -435,9 +498,9 @@ mod tests {
         fs::create_dir_all(bin.join("agents").join("src")).expect("create agents");
         fs::create_dir_all(bin.join("personas").join("src")).expect("create personas");
         let gateway = bin.join(if cfg!(windows) {
-            "gateway.exe"
+            "tura_gateway.exe"
         } else {
-            "gateway"
+            "tura_gateway"
         });
         fs::write(&gateway, "").expect("write gateway");
 
@@ -446,21 +509,21 @@ mod tests {
     }
 
     #[test]
-    fn runtime_root_walks_from_target_debug_to_workspace_root() {
-        let temp = test_temp_dir("target-debug-layout");
-        let target_debug = temp.join("target").join("debug");
-        fs::create_dir_all(&target_debug).expect("create target debug");
+    fn runtime_root_walks_from_target_release_to_workspace_root() {
+        let temp = test_temp_dir("target-release-layout");
+        let target_release = temp.join("target").join("release");
+        fs::create_dir_all(&target_release).expect("create target release");
         fs::write(temp.join("Cargo.toml"), "[workspace]\n").expect("write Cargo.toml");
         fs::create_dir_all(temp.join("crates").join("gateway")).expect("create gateway crate");
-        let gateway = target_debug.join(if cfg!(windows) {
-            "gateway.exe"
+        let gateway = target_release.join(if cfg!(windows) {
+            "tura_gateway.exe"
         } else {
-            "gateway"
+            "tura_gateway"
         });
         fs::write(&gateway, "").expect("write gateway");
 
         assert_eq!(runtime_root_for_gateway(&gateway), temp);
-        let _ = fs::remove_dir_all(test_temp_dir("target-debug-layout"));
+        let _ = fs::remove_dir_all(test_temp_dir("target-release-layout"));
     }
 
     #[test]

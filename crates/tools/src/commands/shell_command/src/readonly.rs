@@ -82,3 +82,91 @@ fn contains_shell_write_operator(command: &str) -> bool {
         || command.contains("cargo build")
         || command.contains("cargo check")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{contains_shell_write_operator, git_command_line_is_read_only, looks_read_only};
+
+    #[test]
+    fn read_only_detector_accepts_common_inspection_commands() {
+        for command in [
+            "rg needle src",
+            "grep -R needle src",
+            "find src -name '*.rs'",
+            "fd lib src",
+            "ls -la",
+            "dir",
+            "pwd",
+            "cat src/lib.rs",
+            "type src\\lib.rs",
+            "Get-Content src/lib.rs",
+            "Select-String needle src/lib.rs",
+            "Get-ChildItem -Recurse src",
+            "Get-Location",
+            "Test-Path src/lib.rs",
+            "Where-Object { $_.Name -like '*.rs' }",
+        ] {
+            assert!(looks_read_only(command), "{command}");
+        }
+    }
+
+    #[test]
+    fn read_only_detector_rejects_write_operators_and_build_commands() {
+        for command in [
+            "cat src/lib.rs > out.txt",
+            "rg needle src >> out.txt",
+            "Get-Content src/lib.rs | Set-Content out.txt",
+            "New-Item out.txt",
+            "Remove-Item out.txt",
+            "Move-Item a b",
+            "Copy-Item a b",
+            "Get-Content a | Tee-Object out.txt",
+            "apply_patch < patch.txt",
+            "cargo test -p tools",
+            "cargo build",
+            "cargo check",
+        ] {
+            assert!(!looks_read_only(command), "{command}");
+        }
+    }
+
+    #[test]
+    fn git_read_only_rules_allow_only_inspection_subcommands() {
+        for tokens in [
+            vec!["git", "status"],
+            vec!["git", "-c", "color.ui=false", "diff"],
+            vec!["git", "-C", "repo", "show"],
+            vec!["git", "branch", "--show-current"],
+            vec!["git", "branch", "--list"],
+            vec!["git", "branch", "-a"],
+        ] {
+            assert!(git_command_line_is_read_only(&tokens), "{tokens:?}");
+        }
+
+        for tokens in [
+            vec!["git", "checkout", "main"],
+            vec!["git", "branch", "new-branch"],
+            vec!["git", "commit", "-m", "msg"],
+            vec!["git", "reset", "--hard"],
+            vec!["git"],
+        ] {
+            assert!(!git_command_line_is_read_only(&tokens), "{tokens:?}");
+        }
+    }
+
+    #[test]
+    fn git_shell_command_must_not_contain_write_operator() {
+        assert!(looks_read_only("git status"));
+        assert!(!looks_read_only("git status > status.txt"));
+        assert!(!looks_read_only("git diff >> diff.txt"));
+    }
+
+    #[test]
+    fn contains_shell_write_operator_matches_case_insensitive_input_contract() {
+        assert!(contains_shell_write_operator(
+            "get-content a | set-content b"
+        ));
+        assert!(contains_shell_write_operator("cargo test"));
+        assert!(!contains_shell_write_operator("git status --short"));
+    }
+}

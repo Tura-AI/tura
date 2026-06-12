@@ -2,6 +2,8 @@
 # Register the release command directory. No wrapper directory is created:
 # `tura` and `tura_exec` resolve directly from target/release.
 set -eu
+PATH="/usr/bin:/bin:/mingw64/bin:/ucrt64/bin:$PATH"
+export PATH
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)

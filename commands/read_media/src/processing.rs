@@ -16,6 +16,9 @@ pub(super) fn process_media_file(
     args: &ReadMediaArgs,
     mode: ReadMode,
 ) -> Result<MediaContent, String> {
+    if !path.exists() {
+        return Err(format!("media path does not exist: {}", path.display()));
+    }
     if mode == ReadMode::ThumbnailOnly {
         return process_media_thumbnail(path, args);
     }
@@ -206,4 +209,68 @@ pub(super) fn media_result(path: &str, resolved: &Path, content: MediaContent) -
         "file_attachment_count": content.file_attachments.len(),
         "file_attachments": content.file_attachments,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{media_result, process_media_file};
+    use crate::types::{MediaContent, ReadMediaArgs, ReadMode};
+    use serde_json::json;
+
+    fn args() -> ReadMediaArgs {
+        ReadMediaArgs {
+            paths: vec!["sample.txt".to_string()],
+            include_text: true,
+            max_text_chars: 40_000,
+            max_visuals: 2,
+            max_side: 256,
+            max_files: 10,
+            pdf_max_pages: 2,
+            document_attachment_bytes: 1_000_000,
+            audio_preview_bytes: 1_000_000,
+        }
+    }
+
+    #[test]
+    fn missing_media_path_is_an_error_instead_of_synthetic_success() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("missing.txt");
+
+        let error = match process_media_file(&missing, &args(), ReadMode::Detailed) {
+            Ok(_) => panic!("missing file should be reported as an error"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error.contains("media path does not exist"),
+            "unexpected missing file error: {error}"
+        );
+    }
+
+    #[test]
+    fn media_result_records_metadata_counts_and_payloads() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("sample.txt");
+        std::fs::write(&file, "hello").expect("write sample");
+
+        let value = media_result(
+            "sample.txt",
+            &file,
+            MediaContent {
+                text: "hello".to_string(),
+                visual_previews: vec![json!({ "type": "image_url" })],
+                audio_previews: vec![json!({ "type": "input_audio" })],
+                file_attachments: vec![json!({ "type": "file" })],
+            },
+        );
+
+        assert_eq!(value["success"], true);
+        assert_eq!(value["path"], "sample.txt");
+        assert_eq!(value["media_type"], "document");
+        assert_eq!(value["size_bytes"], 5);
+        assert_eq!(value["visual_preview_count"], 1);
+        assert_eq!(value["audio_preview_count"], 1);
+        assert_eq!(value["file_attachment_count"], 1);
+        assert_eq!(value["extracted_text"], "hello");
+    }
 }

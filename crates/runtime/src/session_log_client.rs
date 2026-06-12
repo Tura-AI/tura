@@ -29,8 +29,8 @@ impl SessionLogClient {
             todos,
         }))? {
             SessionLogResponse::Ok => Ok(()),
-            SessionLogResponse::Error { error } => Err(anyhow!(error)),
-            other => Err(anyhow!("unexpected session_log response: {other:?}")),
+            SessionLogResponse::Error { error } => Err(session_log_error("upsert_session", error)),
+            other => Err(unexpected_session_log_response("upsert_session", other)),
         }
     }
 
@@ -39,16 +39,21 @@ impl SessionLogClient {
             checkpoint,
         )))? {
             SessionLogResponse::Ok => Ok(()),
-            SessionLogResponse::Error { error } => Err(anyhow!(error)),
-            other => Err(anyhow!("unexpected session_log response: {other:?}")),
+            SessionLogResponse::Error { error } => {
+                Err(session_log_error("apply_command_checkpoint", error))
+            }
+            other => Err(unexpected_session_log_response(
+                "apply_command_checkpoint",
+                other,
+            )),
         }
     }
 
     pub fn list_workspaces(&self) -> Result<Vec<WorkspaceSummary>> {
         match self.call(SessionLogCommand::ListWorkspaces)? {
             SessionLogResponse::Workspaces { workspaces } => Ok(workspaces),
-            SessionLogResponse::Error { error } => Err(anyhow!(error)),
-            other => Err(anyhow!("unexpected session_log response: {other:?}")),
+            SessionLogResponse::Error { error } => Err(session_log_error("list_workspaces", error)),
+            other => Err(unexpected_session_log_response("list_workspaces", other)),
         }
     }
 
@@ -64,8 +69,8 @@ impl SessionLogClient {
             page_size,
         }))? {
             SessionLogResponse::Sessions { page, sessions } => Ok((page, sessions)),
-            SessionLogResponse::Error { error } => Err(anyhow!(error)),
-            other => Err(anyhow!("unexpected session_log response: {other:?}")),
+            SessionLogResponse::Error { error } => Err(session_log_error("list_sessions", error)),
+            other => Err(unexpected_session_log_response("list_sessions", other)),
         }
     }
 
@@ -74,8 +79,8 @@ impl SessionLogClient {
             session_id,
         }))? {
             SessionLogResponse::Session { session } => Ok(session.map(|session| *session)),
-            SessionLogResponse::Error { error } => Err(anyhow!(error)),
-            other => Err(anyhow!("unexpected session_log response: {other:?}")),
+            SessionLogResponse::Error { error } => Err(session_log_error("get_session", error)),
+            other => Err(unexpected_session_log_response("get_session", other)),
         }
     }
 
@@ -93,8 +98,13 @@ impl SessionLogClient {
             },
         ))? {
             SessionLogResponse::Records { page, records } => Ok((page, records)),
-            SessionLogResponse::Error { error } => Err(anyhow!(error)),
-            other => Err(anyhow!("unexpected session_log response: {other:?}")),
+            SessionLogResponse::Error { error } => {
+                Err(session_log_error("list_session_records", error))
+            }
+            other => Err(unexpected_session_log_response(
+                "list_session_records",
+                other,
+            )),
         }
     }
 
@@ -121,4 +131,12 @@ impl SessionLogClient {
             "session_db service is not running; start the per-home tura_router/tura_session_db owner before reading session data"
         ))
     }
+}
+
+fn session_log_error(operation: &str, error: String) -> anyhow::Error {
+    anyhow!("session_log {operation} failed: {error}")
+}
+
+fn unexpected_session_log_response(operation: &str, response: SessionLogResponse) -> anyhow::Error {
+    anyhow!("unexpected session_log response for {operation}: {response:?}")
 }

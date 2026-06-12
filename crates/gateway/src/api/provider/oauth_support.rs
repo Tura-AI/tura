@@ -7,7 +7,7 @@ use uuid::Uuid;
 use super::config::config_value;
 
 pub(super) fn random_confirmation_code(provider: &str, method: usize) -> String {
-    format!("{}-{}", provider, method)
+    format!("{provider}-{method}")
 }
 
 pub(super) fn oauth_state() -> String {
@@ -157,26 +157,23 @@ pub(super) fn oauth_authorize_url(
     code_challenge: &str,
 ) -> Option<String> {
     match kind {
-        OAuthAuthorizeKind::OpenAiPkce => Some(openai_oauth_authorize_url(state, code_challenge)),
-        OAuthAuthorizeKind::AnthropicPkce => {
-            Some(anthropic_oauth_authorize_url(state, code_challenge))
+        OAuthAuthorizeKind::OpenAiPkce => openai_oauth_authorize_url(state, code_challenge),
+        OAuthAuthorizeKind::AnthropicPkce => anthropic_oauth_authorize_url(state, code_challenge),
+        OAuthAuthorizeKind::GooglePkce => {
+            google_oauth_authorize_url(provider_id, state, code_challenge)
         }
-        OAuthAuthorizeKind::GooglePkce => Some(google_oauth_authorize_url(
-            provider_id,
-            state,
-            code_challenge,
-        )?),
         OAuthAuthorizeKind::GithubDevice
         | OAuthAuthorizeKind::BrowserTokenPaste
         | OAuthAuthorizeKind::Unsupported => None,
     }
 }
 
-fn anthropic_oauth_authorize_url(state: &str, code_challenge: &str) -> String {
+fn anthropic_oauth_authorize_url(state: &str, code_challenge: &str) -> Option<String> {
     let client_id = anthropic_oauth_client_id();
     let redirect_uri = anthropic_oauth_redirect_uri();
     let scope = anthropic_oauth_scope();
-    Url::parse_with_params(
+    authorize_url_with_params(
+        "Anthropic",
         "https://claude.ai/oauth/authorize",
         &[
             ("code", "true"),
@@ -189,14 +186,13 @@ fn anthropic_oauth_authorize_url(state: &str, code_challenge: &str) -> String {
             ("state", state),
         ],
     )
-    .expect("static Anthropic OAuth authorize URL is valid")
-    .to_string()
 }
 
-fn openai_oauth_authorize_url(state: &str, code_challenge: &str) -> String {
+fn openai_oauth_authorize_url(state: &str, code_challenge: &str) -> Option<String> {
     let client_id = openai_oauth_client_id();
     let redirect_uri = openai_oauth_redirect_uri();
-    Url::parse_with_params(
+    authorize_url_with_params(
+        "OpenAI",
         "https://auth.openai.com/oauth/authorize",
         &[
             ("response_type", "code"),
@@ -211,8 +207,6 @@ fn openai_oauth_authorize_url(state: &str, code_challenge: &str) -> String {
             ("originator", "opencode"),
         ],
     )
-    .expect("static OpenAI OAuth authorize URL is valid")
-    .to_string()
 }
 
 fn google_oauth_authorize_url(
@@ -223,24 +217,40 @@ fn google_oauth_authorize_url(
     let client_id = google_oauth_client_id(provider_id)?;
     let redirect_uri = provider_google_oauth_redirect_uri(provider_id);
     let scope = provider_google_oauth_scope(provider_id);
-    Some(
-        Url::parse_with_params(
-            "https://accounts.google.com/o/oauth2/v2/auth",
-            &[
-                ("response_type", "code"),
-                ("client_id", client_id.as_str()),
-                ("redirect_uri", redirect_uri.as_str()),
-                ("scope", scope.as_str()),
-                ("state", state),
-                ("access_type", "offline"),
-                ("prompt", "consent"),
-                ("code_challenge", code_challenge),
-                ("code_challenge_method", "S256"),
-            ],
-        )
-        .expect("static Google OAuth authorize URL is valid")
-        .to_string(),
+    authorize_url_with_params(
+        "Google",
+        "https://accounts.google.com/o/oauth2/v2/auth",
+        &[
+            ("response_type", "code"),
+            ("client_id", client_id.as_str()),
+            ("redirect_uri", redirect_uri.as_str()),
+            ("scope", scope.as_str()),
+            ("state", state),
+            ("access_type", "offline"),
+            ("prompt", "consent"),
+            ("code_challenge", code_challenge),
+            ("code_challenge_method", "S256"),
+        ],
     )
+}
+
+fn authorize_url_with_params(
+    provider_name: &str,
+    base_url: &str,
+    params: &[(&str, &str)],
+) -> Option<String> {
+    match Url::parse_with_params(base_url, params) {
+        Ok(url) => Some(url.to_string()),
+        Err(error) => {
+            tracing::error!(
+                provider = provider_name,
+                base_url,
+                error = %error,
+                "failed to build OAuth authorize URL"
+            );
+            None
+        }
+    }
 }
 
 pub(super) fn oauth_callback_html(success: bool, message: &str) -> String {

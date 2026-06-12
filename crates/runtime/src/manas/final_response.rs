@@ -137,6 +137,7 @@ pub(super) fn looks_like_tool_payload(text: &str) -> bool {
         || trimmed.contains("\"input\"")
         || trimmed.contains("\"last_tool_call_status\"")
         || trimmed.contains("\"last_tool_call_summary\"")
+        || trimmed.contains("\"task_detail\"")
         || trimmed.contains("\"step_summary\"")
 }
 
@@ -145,6 +146,7 @@ pub(super) fn json_looks_like_tool_payload(value: &serde_json::Value) -> bool {
         serde_json::Value::Object(object) => {
             let has_reporting_fields = object.contains_key("last_tool_call_status")
                 || object.contains_key("last_tool_call_summary")
+                || object.contains_key("task_detail")
                 || object.contains_key("step_summary");
             let has_tool_shape = object.contains_key("requests")
                 || object.contains_key("commands")

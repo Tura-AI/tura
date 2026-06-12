@@ -461,9 +461,238 @@ pub fn initialize_agent_state_machine(
             crate::state_machine::session_management::SessionState::Cancelled => {
                 agent.state = AgentState::Failed;
             }
+            crate::state_machine::session_management::SessionState::Interrupted => {
+                agent.state = AgentState::Failed;
+            }
         }
         agent.updated_at = now;
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_agent_from_registry_entry, initialize_agent_state_machine, persona_prompt_directory,
+        provider_config_from_coding_agent, resolve_project_path, AgentRegistryEntry,
+        DEFAULT_PERSONA_NAME,
+    };
+    use crate::state_machine::agent_management::{
+        AgentCapabilityItem, AgentManagement, AgentPersonaItem, AgentPromptItem, AgentState,
+        ProviderConfig, ToolChoice, ValidatorConfig,
+    };
+    use crate::state_machine::session_management::{SessionInput, SessionManagement, SessionState};
+    use chrono::Utc;
+    use std::path::{Path, PathBuf};
+    use tura_agents::coding_agent::{CodingAgentProviderConfig, CodingAgentToolChoice};
+
+    fn provider_config() -> ProviderConfig {
+        ProviderConfig {
+            tura_llm_name: "fast".to_string(),
+            stream: true,
+            temperature: 0.0,
+            max_tokens: 1024,
+            tool_choice: ToolChoice::Auto,
+            time_out_ms: 30_000,
+        }
+    }
+
+    fn validator_config() -> ValidatorConfig {
+        ValidatorConfig {
+            need_validator: false,
+            validator_name: None,
+        }
+    }
+
+    fn agent(name: &str) -> AgentManagement {
+        let now = Utc::now();
+        AgentManagement::new(
+            format!("{name}-id"),
+            name.to_string(),
+            PathBuf::from("agents").join(name),
+            None,
+            true,
+            false,
+            provider_config(),
+            validator_config(),
+            now,
+        )
+    }
+
+    fn session_in_state(state: SessionState) -> SessionManagement {
+        let now = Utc::now();
+        let mut session = SessionManagement::new(
+            "session-agent-router".to_string(),
+            "Agent Router".to_string(),
+            PathBuf::from("workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "hello".to_string(),
+                file_input: Vec::new(),
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "goal".to_string(),
+            now,
+        );
+        session.state = state;
+        session
+    }
+
+    #[test]
+    fn provider_config_from_coding_agent_maps_tool_choice_and_keeps_timeout() {
+        for (choice, expected) in [
+            (CodingAgentToolChoice::Auto, ToolChoice::Auto),
+            (CodingAgentToolChoice::Strict, ToolChoice::Strict),
+            (CodingAgentToolChoice::Disable, ToolChoice::Disable),
+        ] {
+            let config = provider_config_from_coding_agent(CodingAgentProviderConfig {
+                tura_llm_name: "flagship_thinking".to_string(),
+                stream: false,
+                temperature: 0.3,
+                max_tokens: 4096,
+                tool_choice: choice,
+                time_out_ms: 1234,
+            });
+
+            assert_eq!(config.tura_llm_name, "flagship_thinking");
+            assert!(
+                config.stream,
+                "runtime provider config must force streaming"
+            );
+            assert_eq!(config.temperature, 0.3);
+            assert_eq!(config.max_tokens, 4096);
+            assert_eq!(config.tool_choice, expected);
+            assert_eq!(config.time_out_ms, 1234);
+        }
+    }
+
+    #[test]
+    fn registry_entry_build_resolves_relative_paths_and_adds_default_persona() {
+        let project = Path::new("C:/repo/tura");
+        let entry = AgentRegistryEntry {
+            agent_name: "custom".to_string(),
+            agent_directory: PathBuf::from("agents/custom"),
+            parent_agent_id: Some("parent".to_string()),
+            report_to_user: false,
+            default_config: true,
+            provider: provider_config(),
+            agent_persona: Vec::new(),
+            agent_prompt: vec![AgentPromptItem {
+                agent_prompt: "prompt".to_string(),
+                prompt_directory: PathBuf::from("prompts/custom"),
+            }],
+            agent_capabilities: vec![AgentCapabilityItem {
+                capability_name: "command_run".to_string(),
+                capability_directory: PathBuf::from("crates/tools/src"),
+            }],
+            validator: validator_config(),
+        };
+
+        let agent =
+            build_agent_from_registry_entry(project, entry).expect("registry entry should build");
+
+        assert_eq!(agent.agent_name, "custom");
+        assert_eq!(agent.parent_agent_id.as_deref(), Some("parent"));
+        assert!(!agent.report_to_user);
+        assert!(agent.default_config);
+        assert_eq!(agent.agent_directory, project.join("agents/custom"));
+        assert_eq!(
+            agent.agent_prompt[0].prompt_directory,
+            project.join("prompts/custom")
+        );
+        assert_eq!(
+            agent.agent_capabilities[0].capability_directory,
+            project.join("crates/tools/src")
+        );
+        assert_eq!(agent.agent_persona.len(), 1);
+        assert_eq!(agent.agent_persona[0].persona_name, DEFAULT_PERSONA_NAME);
+    }
+
+    #[test]
+    fn registry_entry_preserves_explicit_persona_instead_of_defaulting() {
+        let project = Path::new("C:/repo/tura");
+        let entry = AgentRegistryEntry {
+            agent_name: "custom".to_string(),
+            agent_directory: PathBuf::from("agents/custom"),
+            parent_agent_id: None,
+            report_to_user: true,
+            default_config: false,
+            provider: provider_config(),
+            agent_persona: vec![AgentPersonaItem {
+                persona_name: "precise".to_string(),
+                persona_directory: PathBuf::from("personas/precise"),
+            }],
+            agent_prompt: Vec::new(),
+            agent_capabilities: Vec::new(),
+            validator: validator_config(),
+        };
+
+        let agent =
+            build_agent_from_registry_entry(project, entry).expect("registry entry should build");
+
+        assert_eq!(agent.agent_persona.len(), 1);
+        assert_eq!(agent.agent_persona[0].persona_name, "precise");
+        assert_eq!(
+            agent.agent_persona[0].persona_directory,
+            project.join("personas/precise")
+        );
+    }
+
+    #[test]
+    fn project_path_resolution_keeps_absolute_paths_and_roots_relative_paths() {
+        let project = Path::new("C:/repo/tura");
+        let absolute = if cfg!(windows) {
+            PathBuf::from("C:/external/agent")
+        } else {
+            PathBuf::from("/external/agent")
+        };
+
+        assert_eq!(
+            resolve_project_path(project, PathBuf::from("agents/custom")),
+            project.join("agents/custom")
+        );
+        assert_eq!(resolve_project_path(project, absolute.clone()), absolute);
+    }
+
+    #[test]
+    fn default_persona_directory_uses_project_persona_prompt_layout() {
+        assert_eq!(
+            persona_prompt_directory(Path::new("C:/repo/tura"), "tura"),
+            Path::new("C:/repo/tura")
+                .join("personas")
+                .join("src")
+                .join("tura")
+                .join("prompt")
+        );
+    }
+
+    #[test]
+    fn initialize_agent_state_machine_maps_session_states_to_agent_states() {
+        for (session_state, expected_agent_state) in [
+            (SessionState::Created, AgentState::Idle),
+            (SessionState::Running, AgentState::Idle),
+            (SessionState::Paused, AgentState::Waiting),
+            (SessionState::Completed, AgentState::Completed),
+            (SessionState::Failed, AgentState::Failed),
+            (SessionState::Cancelled, AgentState::Failed),
+            (SessionState::Interrupted, AgentState::Failed),
+        ] {
+            let mut agents = vec![agent("agent-a"), agent("agent-b")];
+            let session = session_in_state(session_state);
+
+            initialize_agent_state_machine(&mut agents, &session)
+                .expect("agent state initialization should succeed");
+
+            assert!(
+                agents
+                    .iter()
+                    .all(|agent| agent.state == expected_agent_state),
+                "session state {session_state:?} should map all agents to {expected_agent_state:?}"
+            );
+        }
+    }
 }

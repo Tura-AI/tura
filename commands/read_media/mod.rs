@@ -1,3 +1,6 @@
+#![deny(clippy::unwrap_used)]
+#![forbid(unsafe_code)]
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::io::Read;
@@ -248,4 +251,107 @@ fn print_response(response: ProtocolResponse) {
             )
         })
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{access, execute, handle_envelope, Envelope};
+    use serde_json::json;
+
+    #[test]
+    fn execute_returns_summary_and_output_for_text_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("notes.txt"), "hello").expect("write notes");
+
+        let response = execute("notes.txt", dir.path());
+
+        assert!(response.success);
+        assert_eq!(response.exit_code, 0);
+        assert!(response.stdout.contains("notes.txt: document"));
+        assert_eq!(
+            response.output["media_results"][0]["extracted_text"],
+            "hello"
+        );
+        assert!(response.stderr.is_empty());
+    }
+
+    #[test]
+    fn execute_reports_argument_errors_without_panicking() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        let response = execute("--unknown file.txt", dir.path());
+
+        assert!(!response.success);
+        assert_eq!(response.exit_code, 1);
+        assert!(response.stderr.contains("unsupported read_media option"));
+        assert!(response.output["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("unsupported read_media option")));
+    }
+
+    #[test]
+    fn access_contract_tracks_only_read_paths() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        let access = access("read_media media/a.png media/b.png", dir.path());
+
+        assert_eq!(
+            access.read_paths,
+            vec!["media/a.png".to_string(), "media/b.png".to_string()]
+        );
+        assert!(access.write_paths.is_empty());
+        assert!(!access.workspace_write);
+    }
+
+    #[test]
+    fn protocol_health_capabilities_access_execute_and_unknown_kind_are_stable() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("notes.txt"), "hello").expect("write notes");
+
+        let health = handle_envelope(Envelope {
+            kind: "health_check".to_string(),
+            payload: json!({}),
+        });
+        assert!(health.ok);
+        assert_eq!(health.output["status"], "ok");
+
+        let capabilities = handle_envelope(Envelope {
+            kind: "capabilities".to_string(),
+            payload: json!({}),
+        });
+        assert!(capabilities.ok);
+        assert_eq!(capabilities.output["id"], "read_media");
+        assert_eq!(capabilities.output["mutating"], false);
+
+        let access = handle_envelope(Envelope {
+            kind: "access".to_string(),
+            payload: json!({
+                "session_dir": dir.path().display().to_string(),
+                "arguments": { "paths": ["notes.txt"] }
+            }),
+        });
+        assert!(access.ok);
+        assert_eq!(access.output["read_paths"][0], "notes.txt");
+
+        let execute = handle_envelope(Envelope {
+            kind: "execute".to_string(),
+            payload: json!({
+                "session_dir": dir.path().display().to_string(),
+                "arguments": { "paths": ["notes.txt"] }
+            }),
+        });
+        assert!(execute.ok);
+        assert!(execute.success);
+        assert_eq!(execute.output["media_results"][0]["success"], true);
+
+        let unknown = handle_envelope(Envelope {
+            kind: "mystery".to_string(),
+            payload: json!({}),
+        });
+        assert!(!unknown.ok);
+        assert_eq!(unknown.exit_code, 1);
+        assert!(unknown.output["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("unsupported protocol kind")));
+    }
 }

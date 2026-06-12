@@ -95,3 +95,159 @@ fn default_aliases(id: &str) -> Vec<String> {
         _ => Vec::new(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::registry::tools::manifest::{LimitsSection, PathsSection, RuntimeSection};
+
+    #[test]
+    fn view_for_core_manifest_is_enabled_without_external_binary() {
+        let manifest = manifest("shell_command", true, "");
+
+        let view = view_for_manifest(&manifest, Path::new("C:/repo"));
+
+        assert_eq!(view.id, "shell_command");
+        assert_eq!(view.name, "shell_command tool");
+        assert!(view.core);
+        assert!(view.enabled);
+        assert_eq!(view.state, ToolState::Enabled);
+        assert_eq!(view.binary, None);
+        assert_eq!(view.binary_path, None);
+        assert_eq!(
+            view.aliases,
+            vec!["shell".to_string(), "shll".to_string(), "shall".to_string()]
+        );
+    }
+
+    #[test]
+    fn view_for_external_manifest_is_unavailable_when_binary_is_missing() {
+        let manifest = manifest("read_media", false, "definitely-missing-tura-tool");
+
+        let view = view_for_manifest(&manifest, Path::new("C:/repo"));
+
+        assert_eq!(view.id, "read_media");
+        assert!(!view.core);
+        assert!(!view.enabled);
+        assert_eq!(view.state, ToolState::Unavailable);
+        assert_eq!(view.binary.as_deref(), Some("definitely-missing-tura-tool"));
+        assert_eq!(view.binary_path, None);
+        assert_eq!(
+            view.aliases,
+            vec!["view_media".to_string(), "inspect_media".to_string()]
+        );
+    }
+
+    #[test]
+    fn view_for_external_manifest_resolves_binary_from_repo_candidates() {
+        let temp = tempfile::tempdir().expect("temp repo");
+        let bin = temp.path().join("bin");
+        std::fs::create_dir_all(&bin).expect("create bin");
+        let file_name = if cfg!(windows) {
+            "tura-command-test.exe"
+        } else {
+            "tura-command-test"
+        };
+        let binary_path = bin.join(file_name);
+        std::fs::write(&binary_path, b"binary").expect("write binary");
+        let manifest = manifest("test_tool", false, "tura-command-test");
+
+        let view = view_for_manifest(&manifest, temp.path());
+
+        assert!(view.enabled);
+        assert_eq!(view.state, ToolState::Enabled);
+        assert_eq!(view.binary.as_deref(), Some("tura-command-test"));
+        assert_eq!(
+            view.binary_path.as_deref(),
+            Some(binary_path.display().to_string().as_str())
+        );
+    }
+
+    #[test]
+    fn config_for_manifest_projects_defaults_by_key() {
+        let mut manifest = manifest("web_discover", false, "tura-command-web-discover");
+        manifest.configurable = vec![
+            configurable(
+                "max_results",
+                "enum",
+                serde_json::json!("5"),
+                &["1", "5", "10"],
+            ),
+            configurable("safe_search", "boolean", serde_json::json!(true), &[]),
+        ];
+
+        let response = config_for_manifest(&manifest);
+
+        assert_eq!(response.id, "web_discover");
+        assert_eq!(response.configurable.len(), 2);
+        assert_eq!(response.values["max_results"], serde_json::json!("5"));
+        assert_eq!(response.values["safe_search"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn default_aliases_cover_known_tools_and_leave_unknown_empty() {
+        assert_eq!(
+            default_aliases("web_discover"),
+            vec![
+                "web_search".to_string(),
+                "web_fetch".to_string(),
+                "discover_web".to_string(),
+                "search_web".to_string()
+            ]
+        );
+        assert_eq!(default_aliases("unknown"), Vec::<String>::new());
+    }
+
+    fn manifest(id: &str, core: bool, binary: &str) -> ToolManifest {
+        ToolManifest {
+            id: id.to_string(),
+            name: format!("{id} tool"),
+            description: format!("{id} description"),
+            core,
+            category: "test".to_string(),
+            execution: if core {
+                "in_process".to_string()
+            } else {
+                "one_shot".to_string()
+            },
+            state_machine: "default".to_string(),
+            supports_macro_command: true,
+            mutating: false,
+            network: false,
+            runtime: RuntimeSection {
+                binary: binary.to_string(),
+                entry: String::new(),
+                language: "rust".to_string(),
+            },
+            limits: LimitsSection {
+                default_timeout_ms: 1_000,
+                max_timeout_ms: 2_000,
+            },
+            paths: PathsSection {
+                prompt: "prompt.md".to_string(),
+                schema: "schema.json".to_string(),
+                policy: "policy.toml".to_string(),
+            },
+            configurable: Vec::new(),
+            manifest_path: Path::new("tool.json").to_path_buf(),
+        }
+    }
+
+    fn configurable(
+        key: &str,
+        value_type: &str,
+        default: serde_json::Value,
+        enum_values: &[&str],
+    ) -> ConfigurableEntry {
+        ConfigurableEntry {
+            key: key.to_string(),
+            label: key.to_string(),
+            description: format!("{key} setting"),
+            value_type: value_type.to_string(),
+            default,
+            enum_values: enum_values.iter().map(|value| value.to_string()).collect(),
+            required: false,
+            scope: "workspace".to_string(),
+        }
+    }
+}

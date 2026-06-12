@@ -51,7 +51,8 @@ fn emit_cli_agent_message(reply_message: &str) {
 
 /// Stable message id for the streamed assistant text of a given provider turn.
 /// Both the incremental `message.part.delta` events and the final persisted
-/// message reuse this id so the full reply cleanly replaces the streamed deltas.
+/// message reuse this id so the frontend can merge them without dropping
+/// already-visible text.
 pub(crate) fn stream_agent_message_id(runtime_id: &str) -> String {
     format!("msg-stream-{runtime_id}")
 }
@@ -166,4 +167,280 @@ fn planning_child_depth_from_env() -> usize {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn stream_message_ids_are_stable_and_runtime_scoped() {
+        assert_eq!(
+            stream_agent_message_id("runtime-123"),
+            "msg-stream-runtime-123"
+        );
+        assert_eq!(
+            stream_agent_part_id("runtime-123"),
+            "part-stream-runtime-123"
+        );
+        assert_ne!(
+            stream_agent_message_id("runtime-123"),
+            stream_agent_message_id("runtime-456")
+        );
+    }
+
+    #[test]
+    fn gateway_callback_base_url_prefers_explicit_urls_then_port_defaults() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_gateway_env();
+
+        std::env::set_var("TURA_GATEWAY_URL", "http://127.0.0.1:9000///");
+        std::env::set_var("GATEWAY_BASE_URL", "http://127.0.0.1:8000");
+        std::env::set_var("TURA_GATEWAY_PORT", "7000");
+        assert_eq!(gateway_callback_base_url(), "http://127.0.0.1:9000");
+
+        std::env::remove_var("TURA_GATEWAY_URL");
+        assert_eq!(gateway_callback_base_url(), "http://127.0.0.1:8000");
+
+        std::env::remove_var("GATEWAY_BASE_URL");
+        assert_eq!(gateway_callback_base_url(), "http://127.0.0.1:7000");
+
+        std::env::remove_var("TURA_GATEWAY_PORT");
+        std::env::set_var("PORT", "6000");
+        assert_eq!(gateway_callback_base_url(), "http://127.0.0.1:6000");
+
+        clear_gateway_env();
+        assert_eq!(gateway_callback_base_url(), "http://127.0.0.1:4156");
+    }
+
+    #[test]
+    fn callback_session_id_uses_parent_only_for_planning_child_depth() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_gateway_env();
+
+        std::env::set_var("TURA_PARENT_SESSION_ID", " parent-session ");
+        assert_eq!(
+            gateway_callback_session_id("child-session"),
+            "child-session"
+        );
+
+        std::env::set_var("TURA_PLANNING_DEPTH", "1");
+        assert_eq!(
+            gateway_callback_session_id("child-session"),
+            "parent-session"
+        );
+
+        std::env::set_var("TURA_PARENT_SESSION_ID", "   ");
+        assert_eq!(
+            gateway_callback_session_id("child-session"),
+            "child-session"
+        );
+
+        std::env::remove_var("TURA_PLANNING_DEPTH");
+        std::env::set_var("TURA_EXECUTE_TOOLS_DEPTH", "2");
+        std::env::set_var("TURA_PARENT_SESSION_ID", "execute-parent");
+        assert_eq!(
+            gateway_callback_session_id("child-session"),
+            "execute-parent"
+        );
+
+        std::env::set_var("TURA_EXECUTE_TOOLS_DEPTH", "not-a-number");
+        assert_eq!(
+            gateway_callback_session_id("child-session"),
+            "child-session"
+        );
+    }
+
+    #[test]
+    fn publish_gateway_agent_message_returns_ok_when_callbacks_are_disabled() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_gateway_env();
+        std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
+        std::env::set_var("TURA_GATEWAY_URL", "http://127.0.0.1:9");
+
+        let result = publish_gateway_agent_message(
+            "session-1",
+            "runtime-1",
+            "reply".to_string(),
+            "learning".to_string(),
+        );
+
+        assert_eq!(result, Ok(()));
+    }
+
+    #[test]
+    fn publish_gateway_agent_message_posts_visible_reply_payload() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_gateway_env();
+        let server = TestServer::spawn(200, r#"{"ok":true}"#);
+        std::env::set_var("TURA_GATEWAY_URL", server.base_url());
+        std::env::set_var("TURA_PLANNING_DEPTH", "1");
+        std::env::set_var("TURA_PARENT_SESSION_ID", "parent-session");
+
+        let result = publish_gateway_agent_message(
+            "child-session",
+            "runtime-42",
+            "visible reply".to_string(),
+            "new learning".to_string(),
+        );
+
+        assert_eq!(result, Ok(()));
+        let request = server.join();
+        assert!(
+            request.starts_with("POST /session/parent-session/message/agent "),
+            "{request}"
+        );
+        let body = request_body(&request);
+        let payload: serde_json::Value = serde_json::from_str(body).expect("json body");
+        assert_eq!(payload["reply_message"], "visible reply");
+        assert_eq!(payload["new_learning"], "new learning");
+        assert_eq!(payload["runtime_id"], "runtime-42");
+        assert_eq!(payload["message_id"], "msg-stream-runtime-42");
+        assert_eq!(payload["part_id"], "part-stream-runtime-42");
+        assert_eq!(payload["media"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn publish_gateway_agent_message_reports_non_success_status_and_body() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_gateway_env();
+        let server = TestServer::spawn(503, "gateway unavailable");
+        std::env::set_var("TURA_GATEWAY_URL", server.base_url());
+
+        let error = publish_gateway_agent_message(
+            "session-1",
+            "runtime-1",
+            "reply".to_string(),
+            "learning".to_string(),
+        )
+        .expect_err("gateway failure should be reported");
+
+        assert!(error.contains("gateway returned 503 Service Unavailable"));
+        assert!(error.contains("gateway unavailable"));
+        let request = server.join();
+        assert!(
+            request.starts_with("POST /session/session-1/message/agent "),
+            "{request}"
+        );
+    }
+
+    #[test]
+    fn publish_streamed_agent_text_posts_delta_payload_and_skips_empty_delta() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_gateway_env();
+        let server = TestServer::spawn(200, r#"{"ok":true}"#);
+        std::env::set_var("TURA_GATEWAY_URL", server.base_url());
+
+        tokio_test::block_on(async {
+            publish_streamed_agent_text("session-1", "runtime-7", "").await;
+            publish_streamed_agent_text("session-1", "runtime-7", "hello").await;
+        });
+
+        let request = server.join();
+        assert!(
+            request.starts_with("POST /session/session-1/message/agent/stream "),
+            "{request}"
+        );
+        let body = request_body(&request);
+        let payload: serde_json::Value = serde_json::from_str(body).expect("json body");
+        assert_eq!(payload["delta"], "hello");
+        assert_eq!(payload["runtime_id"], "runtime-7");
+        assert_eq!(payload["message_id"], "msg-stream-runtime-7");
+        assert_eq!(payload["part_id"], "part-stream-runtime-7");
+    }
+
+    struct TestServer {
+        addr: std::net::SocketAddr,
+        handle: std::thread::JoinHandle<String>,
+    }
+
+    impl TestServer {
+        fn spawn(status: u16, body: &'static str) -> Self {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind gateway");
+            let addr = listener.local_addr().expect("local addr");
+            let handle = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().expect("accept gateway request");
+                let request = read_http_request(&mut stream);
+                let reason = match status {
+                    200 => "OK",
+                    503 => "Service Unavailable",
+                    _ => "Test",
+                };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("write response");
+                request
+            });
+            Self { addr, handle }
+        }
+
+        fn base_url(&self) -> String {
+            format!("http://{}", self.addr)
+        }
+
+        fn join(self) -> String {
+            self.handle.join().expect("server thread")
+        }
+    }
+
+    fn read_http_request(stream: &mut std::net::TcpStream) -> String {
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .expect("set read timeout");
+        let mut data = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        loop {
+            let size = stream.read(&mut buffer).expect("read request");
+            assert!(size > 0, "request stream closed before body completed");
+            data.extend_from_slice(&buffer[..size]);
+            if http_request_complete(&data) {
+                return String::from_utf8_lossy(&data).into_owned();
+            }
+        }
+    }
+
+    fn http_request_complete(data: &[u8]) -> bool {
+        let request = String::from_utf8_lossy(data);
+        let Some((headers, body)) = request.split_once("\r\n\r\n") else {
+            return false;
+        };
+        let content_length = headers
+            .lines()
+            .find_map(|line| line.split_once(':'))
+            .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+            .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        body.len() >= content_length
+    }
+
+    fn request_body(request: &str) -> &str {
+        request
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body)
+            .unwrap_or_default()
+    }
+
+    fn clear_gateway_env() {
+        for key in [
+            "TURA_GATEWAY_URL",
+            "GATEWAY_BASE_URL",
+            "TURA_GATEWAY_PORT",
+            "PORT",
+            "TURA_PARENT_SESSION_ID",
+            "TURA_PLANNING_DEPTH",
+            "TURA_EXECUTE_TOOLS_DEPTH",
+            "TURA_GATEWAY_CALLBACKS",
+            "TURA_CLI_LIVE_JSONL",
+        ] {
+            std::env::remove_var(key);
+        }
+    }
 }

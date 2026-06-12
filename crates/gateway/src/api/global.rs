@@ -4,7 +4,7 @@ use crate::api::types::*;
 use crate::mock::global_store;
 use crate::session::session_store;
 use axum::{
-    http::{header, StatusCode},
+    http::{header, HeaderValue, StatusCode},
     response::sse::{Event as SseEvent, KeepAlive, Sse},
     response::Response,
     Json,
@@ -12,7 +12,7 @@ use axum::{
 use serde_json::Value;
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 // ============================================================================
@@ -173,10 +173,7 @@ pub struct TuraConfigOption {
 
 fn read_tura_config_response() -> TuraConfigResponse {
     let path = crate::api::provider::config::provider_config_path();
-    match std::fs::read_to_string(&path)
-        .map_err(|err| err.to_string())
-        .and_then(|content| serde_json::from_str::<Value>(&content).map_err(|err| err.to_string()))
-    {
+    match read_json_config(&path) {
         Ok(root) => tura_config_response_from_value(path, root),
         Err(error) => TuraConfigResponse {
             path: path.to_string_lossy().to_string(),
@@ -184,6 +181,21 @@ fn read_tura_config_response() -> TuraConfigResponse {
             error: Some(error),
         },
     }
+}
+
+fn read_json_config(path: &Path) -> Result<Value, String> {
+    let content = std::fs::read_to_string(path).map_err(|err| {
+        format!(
+            "failed to read Tura provider config {}: {err}",
+            path.display()
+        )
+    })?;
+    serde_json::from_str::<Value>(&content).map_err(|err| {
+        format!(
+            "failed to parse Tura provider config {}: {err}",
+            path.display()
+        )
+    })
 }
 
 fn tura_config_response_from_value(path: PathBuf, root: Value) -> TuraConfigResponse {
@@ -368,9 +380,19 @@ fn config_key_exists(key: &str) -> bool {
         .is_some_and(|value| !value.trim().is_empty())
 }
 
-fn update_tura_config_tier(path: &PathBuf, payload: &TuraConfigUpdate) -> Result<(), String> {
-    let content = std::fs::read_to_string(path).map_err(|err| err.to_string())?;
-    let mut root: Value = serde_json::from_str(&content).map_err(|err| err.to_string())?;
+fn update_tura_config_tier(path: &Path, payload: &TuraConfigUpdate) -> Result<(), String> {
+    let content = std::fs::read_to_string(path).map_err(|err| {
+        format!(
+            "failed to read Tura provider config {}: {err}",
+            path.display()
+        )
+    })?;
+    let mut root: Value = serde_json::from_str(&content).map_err(|err| {
+        format!(
+            "failed to parse Tura provider config {}: {err}",
+            path.display()
+        )
+    })?;
     if !option_exists(&root, &payload.tier, &payload.provider, &payload.model) {
         return Err(format!(
             "{} / {} is not available for tier {} with configured credentials",
@@ -402,8 +424,14 @@ fn update_tura_config_tier(path: &PathBuf, payload: &TuraConfigUpdate) -> Result
     } else {
         providers.push(next);
     }
-    let formatted = serde_json::to_string_pretty(&root).map_err(|err| err.to_string())?;
-    std::fs::write(path, format!("{formatted}\n")).map_err(|err| err.to_string())
+    let formatted = serde_json::to_string_pretty(&root)
+        .map_err(|err| format!("failed to serialize Tura provider config: {err}"))?;
+    std::fs::write(path, format!("{formatted}\n")).map_err(|err| {
+        format!(
+            "failed to write Tura provider config {}: {err}",
+            path.display()
+        )
+    })
 }
 
 fn option_exists(root: &Value, tier: &str, provider_id: &str, model: &str) -> bool {
@@ -420,11 +448,13 @@ fn gui_config_path() -> PathBuf {
 }
 
 fn text_response(status: StatusCode, body: String) -> Response<String> {
-    Response::builder()
-        .status(status)
-        .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-        .body(body)
-        .expect("text response is valid")
+    let mut response = Response::new(body);
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    response
 }
 
 // ============================================================================
@@ -558,4 +588,54 @@ pub async fn upgrade(Json(_payload): Json<UpgradeRequest>) -> Json<UpgradeRespon
         version: Some(env!("CARGO_PKG_VERSION").to_string()),
         error: Some("Self-upgrade is not implemented by this gateway build.".to_string()),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_json_config, update_tura_config_tier, TuraConfigUpdate};
+
+    #[test]
+    fn read_json_config_reports_missing_path_context() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("missing-provider.json");
+
+        let error = read_json_config(&path).expect_err("missing config should fail");
+
+        let message = &error;
+        assert!(
+            message.contains("failed to read Tura provider config"),
+            "error should describe the failed operation: {message}"
+        );
+        assert!(
+            message.contains(&path.to_string_lossy().to_string()),
+            "error should include the config path: {message}"
+        );
+    }
+
+    #[test]
+    fn update_tura_config_tier_reports_parse_path_context() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("provider.json");
+        std::fs::write(&path, "{not-json").expect("write invalid config");
+
+        let error = update_tura_config_tier(
+            &path,
+            &TuraConfigUpdate {
+                tier: "fast".to_string(),
+                provider: "codex".to_string(),
+                model: "gpt-5.5".to_string(),
+            },
+        )
+        .expect_err("invalid config should fail");
+
+        let message = &error;
+        assert!(
+            message.contains("failed to parse Tura provider config"),
+            "error should describe the failed operation: {message}"
+        );
+        assert!(
+            message.contains(&path.to_string_lossy().to_string()),
+            "error should include the config path: {message}"
+        );
+    }
 }

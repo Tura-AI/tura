@@ -1,4 +1,5 @@
 import { t } from "../i18n.js";
+import { isInternalTaskStatusPayload } from "../types/session.js";
 import {
   activeCapabilities,
   bold,
@@ -20,6 +21,13 @@ import {
 
 const osc8FullPattern = /\x1b\]8;;[^\x1b]*\x1b\\[\s\S]*?\x1b\]8;;\x1b\\/g;
 const ansiSequencePattern = /\x1b\[[0-9;]*m|\x1b\]8;;[^\x1b]*\x1b\\/g;
+const rawAnsiControlPattern =
+  /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x1b]*(?:\x07|\x1b\\)|[PX^_][\s\S]*?\x1b\\|.)/gu;
+
+// Keep whole assistant answers (lists, multi-step plans) intact. The transcript
+// window bounds the visible height on its own, so this is only a sanity cap that
+// prevents a pathological multi-thousand-line dump from being materialized.
+const MAX_ASSISTANT_LINES = 200;
 
 export function displayMessageText(role: string, value: string): string {
   const text = cleanMessageText(value);
@@ -33,16 +41,23 @@ export function displayMessageText(role: string, value: string): string {
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
     .filter((line) => line.trim())
-    .slice(0, activeCapabilities.level === "rich" ? 8 : 10);
+    .slice(0, MAX_ASSISTANT_LINES);
   return lines.join("\n");
 }
 
 function cleanMessageText(value: string): string {
-  const text = value
+  if (stringIsTaskStatusPayload(value)) return "";
+  const text = sanitizeRawTerminalText(value)
     .replace(/<br\s*\/?>/g, "\n")
+    .replace(/^\s*\[command_run:\s*[^\r\n\]]*\]\s*$/gimu, "")
+    .replace(/\[command_run:\s*[^\r\n\]]*\]/giu, "")
     .replace(/data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi, `[${t("imageData")}]`)
     .replace(/[A-Za-z0-9+/]{180,}={0,2}/g, `[${t("encodedData")}]`);
   return compactInlinePayloads(text).trim();
+}
+
+export function sanitizeRawTerminalText(value: string): string {
+  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(rawAnsiControlPattern, "");
 }
 
 export function compactInlinePayloads(value: string): string {
@@ -134,10 +149,7 @@ function renderHtmlSubset(source: string): string {
   output = output.replace(
     /<pre(?:\s[^>]*)?>\s*<code(?:\s+class=['"]language-([^'"]+)['"])?>([\s\S]*?)<\/code>\s*<\/pre>/giu,
     (_match, language, body) => {
-      const title = language
-        ? blockRegion(`[${t("code")}: ${decodeHtml(language)}]`)
-        : blockRegion(`[${t("code")}]`);
-      return `${title}\n${renderCodeBlock(decodeHtml(body))}`;
+      return renderCodeFence(decodeHtml(body), language ? decodeHtml(language) : undefined);
     },
   );
   output = output.replace(/<blockquote>([\s\S]*?)<\/blockquote>/giu, (_match, body) =>
@@ -181,12 +193,13 @@ function renderHtmlSubset(source: string): string {
   return decodeHtml(stripUnsupportedHtml(output));
 }
 
-function renderCodeBlock(value: string): string {
-  return value
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .map((line) => blockRegion(`  ${line}`))
-    .join("\n");
+function renderCodeFence(value: string, language?: string): string {
+  const fence = `\`\`\`${language ?? ""}`;
+  return [fence, ...codeBlockLines(value), "```"].map(blockRegion).join("\n");
+}
+
+function codeBlockLines(value: string): string[] {
+  return value.replace(/\r\n/g, "\n").replace(/\n$/u, "").split("\n");
 }
 
 function renderMarkdownRegions(source: string): string {
@@ -196,12 +209,13 @@ function renderMarkdownRegions(source: string): string {
   for (let index = 0; index < lines.length; index += 1) {
     const fence = lines[index].match(/^\s*```([A-Za-z0-9_-]+)?\s*$/u);
     if (fence) {
-      output.push(blockRegion(fence[1] ? `[${t("code")}: ${fence[1]}]` : `[${t("code")}]`));
+      output.push(blockRegion(lines[index]));
       index += 1;
       while (index < lines.length && !/^\s*```\s*$/u.test(lines[index])) {
-        output.push(blockRegion(`  ${lines[index]}`));
+        output.push(blockRegion(lines[index]));
         index += 1;
       }
+      if (index < lines.length) output.push(blockRegion(lines[index]));
       continue;
     }
     const heading = lines[index].match(/^\s{0,3}(#{1,6})\s+(.+)$/u);
@@ -460,7 +474,7 @@ function summarizePayloadText(value: string): string | undefined {
 }
 
 export function extractCommandsFromText(value: string): string[] {
-  const text = value.trim();
+  const text = sanitizeRawTerminalText(value).trim();
   if (!text) return [];
   const commands: string[] = [];
   for (const pattern of [
@@ -486,10 +500,12 @@ export function extractCommandsFromUnknown(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(extractCommandsFromUnknown);
   if (typeof value !== "object") return [];
   const object = value as Record<string, unknown>;
+  if (isTaskStatusPayload(object)) return [];
   const commands: string[] = [];
   for (const key of ["command_line", "command"]) {
     const command = object[key];
-    if (typeof command === "string" && looksLikeCommand(command)) commands.push(command);
+    if (typeof command === "string" && looksLikeCommand(command))
+      commands.push(firstCommandLine(command));
   }
   for (const key of ["commands", "results", "steps", "input", "output"]) {
     commands.push(...extractCommandsFromUnknown(object[key]));
@@ -498,7 +514,7 @@ export function extractCommandsFromUnknown(value: unknown): string[] {
 }
 
 export function firstCommandLine(value: string): string {
-  return value.trim().split(/\r?\n/)[0]?.trim() ?? "";
+  return sanitizeRawTerminalText(value).trim().split(/\n/)[0]?.trim() ?? "";
 }
 
 function looksLikeCommand(value: string): boolean {
@@ -515,15 +531,17 @@ function looksLikeCommand(value: string): boolean {
 
 function decodeJsonString(value: string): string {
   try {
-    return JSON.parse(`"${value.replace(/"/g, '\\"')}"`) as string;
+    return sanitizeRawTerminalText(JSON.parse(`"${value.replace(/"/g, '\\"')}"`) as string);
   } catch {
-    return value.replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+    return sanitizeRawTerminalText(value.replace(/\\"/g, '"').replace(/\\\\/g, "\\"));
   }
 }
 
 export function toolSummary(state: Record<string, unknown>): string {
   const output = state.output;
+  if (isTaskStatusPayload(output)) return "";
   if (typeof output === "string") {
+    if (stringIsTaskStatusPayload(output)) return "";
     const clean = cleanMessageText(output);
     return (
       compactPayloadField(clean) ??
@@ -548,11 +566,12 @@ export function toolSummary(state: Record<string, unknown>): string {
     }
   }
   const input = state.input;
+  if (isTaskStatusPayload(input)) return "";
   if (input && typeof input === "object") {
     const object = input as Record<string, unknown>;
-    for (const key of ["step_summary", "task_summary", "summary", "status", "label"]) {
+    for (const key of ["step_summary", "task_detail", "summary", "status", "label"]) {
       const value = object[key];
-      if (typeof value === "string" && value.trim()) return value.trim();
+      if (typeof value === "string" && value.trim()) return sanitizeRawTerminalText(value).trim();
     }
     for (const key of ["command_line", "command"]) {
       const value = object[key];
@@ -564,15 +583,17 @@ export function toolSummary(state: Record<string, unknown>): string {
         | Record<string, unknown>
         | undefined;
       const command = first?.command_line ?? first?.command ?? first?.command_type;
-      if (typeof command === "string" && command.trim()) return command.trim();
+      if (typeof command === "string" && command.trim())
+        return sanitizeRawTerminalText(command).trim();
     }
   }
   return "";
 }
 
 export function compactPayloadField(value: string): string | undefined {
+  if (stringIsTaskStatusPayload(value)) return undefined;
   const normalized = normalizePayloadText(value);
-  for (const key of ["task_summary", "summary", "status", "label"]) {
+  for (const key of ["task_detail", "summary", "status", "label"]) {
     const index = normalized.indexOf(key);
     if (index < 0) continue;
     const colon = normalized.indexOf(":", index + key.length);
@@ -587,7 +608,7 @@ export function compactPayloadField(value: string): string | undefined {
         90,
       );
   }
-  for (const key of ["task_summary", "summary", "status", "label"]) {
+  for (const key of ["task_detail", "summary", "status", "label"]) {
     const direct = normalized.match(new RegExp(`${key}\\\\*"?\\s*:\\s*\\\\*"([^"\\\\]+)`, "u"));
     if (direct?.[1]?.trim()) return truncate(direct[1].trim().replace(/\s+/g, " "), 90);
   }
@@ -597,12 +618,12 @@ export function compactPayloadField(value: string): string | undefined {
     const compact = compactCommandJson(normalized.slice(start, end + 1));
     if (compact) return compact;
   }
-  for (const key of ["task_summary", "summary", "status", "label"]) {
+  for (const key of ["task_detail", "summary", "status", "label"]) {
     const match = normalized.match(new RegExp(`\\\\*"${key}\\\\*"\\s*:\\s*\\\\*"([^"\\\\]+)`, "u"));
     if (match?.[1]?.trim()) return truncate(match[1].trim().replace(/\s+/g, " "), 90);
   }
   const loose = normalized.replace(/[\\"]/g, "");
-  for (const key of ["task_summary", "summary", "status", "label"]) {
+  for (const key of ["task_detail", "summary", "status", "label"]) {
     const index = loose.indexOf(`${key}:`);
     if (index < 0) continue;
     const rest = loose.slice(index + key.length + 1);
@@ -614,7 +635,7 @@ export function compactPayloadField(value: string): string | undefined {
 }
 
 function normalizePayloadText(value: string): string {
-  let normalized = value;
+  let normalized = sanitizeRawTerminalText(value);
   for (let index = 0; index < 5; index += 1) {
     const next = normalized.replace(/\\\\/g, "\\").replace(/\\"/g, '"');
     if (next === normalized) return normalized;
@@ -641,12 +662,13 @@ function compactCommandValue(value: unknown): string | undefined {
   }
   if (!value || typeof value !== "object") return undefined;
   const object = value as Record<string, unknown>;
+  if (isTaskStatusPayload(object)) return undefined;
   const command = object.command ?? object.command_line;
   if (typeof command === "string" && command.trim()) return `[${t("bash")}: ${command.trim()}]`;
   const commandType = object.command_type;
   if (typeof commandType === "string" && commandType.trim())
     return `[${t("tool")}: ${commandType.trim()}]`;
-  for (const key of ["task_summary", "summary", "status", "label"]) {
+  for (const key of ["task_detail", "summary", "status", "label"]) {
     const value = object[key];
     if (typeof value === "string" && value.trim())
       return truncate(value.trim().replace(/\s+/g, " "), 90);
@@ -663,4 +685,13 @@ function compactCommandValue(value: unknown): string | undefined {
     if (nested) return nested;
   }
   return undefined;
+}
+
+export function isTaskStatusPayload(value: unknown): boolean {
+  if (isInternalTaskStatusPayload(value)) return true;
+  return false;
+}
+
+function stringIsTaskStatusPayload(value: string): boolean {
+  return isInternalTaskStatusPayload(sanitizeRawTerminalText(value));
 }

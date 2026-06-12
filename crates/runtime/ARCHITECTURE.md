@@ -101,7 +101,6 @@ crates/runtime/
     session_state/
       mod.rs
       task_plan.rs
-      transitions.rs
 
     state_machine/
       session_management.rs
@@ -141,11 +140,10 @@ crates/runtime/
 
   tests/
     business/
-      live/
-        claude_code_live_e2e.rs
-      long-e2e/
-        claude_code_mock_e2e.rs
-        coding_agent_mock_e2e.rs
+      claude_code_mock_e2e.rs
+      coding_agent_mock_e2e.rs
+    live/
+      claude_code_live_e2e.rs
     override_manas_direct_test.rs
     override_mano_and_manas_test.rs
     process_from_user_default_test.rs
@@ -235,8 +233,10 @@ final response details. Gateway-visible publishing lives in `gateway_events/`.
 ### Session
 
 The data model is defined in `state_machine/session_management.rs`.
-Transition rules live in `session_state/transitions.rs`; task-management JSON
-projection lives in `session_state/task_plan.rs`.
+The lifecycle enum and transition rules are shared from
+`session_log::SessionState` so runtime and the SQLite owner use one
+vocabulary. Task-management JSON projection lives in
+`session_state/task_plan.rs`.
 
 States:
 
@@ -246,6 +246,7 @@ States:
 - `completed`
 - `failed`
 - `cancelled`
+- `interrupted`
 
 ### Agent
 
@@ -319,7 +320,7 @@ Multi-task mode serializes `task_management.tasks[]`.
 
 `task_status` is not a standalone top-level model tool. It is an internal
 `command_run` command. Its model-visible JSON has only optional
-`task_summary` and optional `status`; `status` accepts `question` or `done`.
+`task_summary` and optional `status`; `status` accepts `doing`, `question`, or `done`.
 The runtime may create the first single task from this state update. After a
 task summary already exists, rename attempts are rejected and reported back in
 the tool result unless the user clearly changed the task.
@@ -335,7 +336,9 @@ from the compaction summary, workspace snapshot, environment context, and active
 planning objective. Runtime owns this prompt state; gateway should not assemble
 runtime prompts.
 
-Task-status guidance should use `done` or `completed` for finished work.
+Task-status guidance should use `doing` only when more `command_run` calls are
+required, `done` for finished work, and `question` when
+the active task is blocked on user input.
 
 ## Agent Loading
 

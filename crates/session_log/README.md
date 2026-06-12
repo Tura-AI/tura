@@ -19,6 +19,10 @@ records. dev and release builds share the same workspace log for a project
 because it lives in the workspace `.tura` directory; each `TURA_HOME` still has
 its own sockets, locks, and index database.
 
+Pending SQLite write-queue items are replayed on service startup for session
+upserts, command checkpoints, and delete operations. Command checkpoint replay
+is idempotent by the checkpoint idempotency key.
+
 Runtime and gateway fronts do not open SQLite directly. They probe
 `service.addr` with a short timeout; an unreachable endpoint file is removed so
 later writes fall back to the file queue immediately instead of blocking on a
@@ -57,15 +61,18 @@ GET /session-log/{sessionID}/records?page=0&page_size=100
 
 ## Data Shape
 
-The index `sessions` table stores session id, workspace, parent id, timestamps,
-status, message count, and the path of the workspace database.
+The index `sessions` table stores lookup metadata and the path of the
+workspace database. Reads hydrate the session snapshot from the workspace
+database; the index must not be treated as the authoritative lifecycle source.
 
 The workspace `sessions` table stores the full persisted session snapshot:
 workspace, parent id, timestamps, status, message count,
 `task_management_json`, `management_json`, `session_json`, and `todos_json`.
 
 The workspace `session_records` table stores ordered message/event records for
-a session. Use `get_session` for the full snapshot and todos. Use
+a session. Records are keyed by `session_id + message_id`; upserts update the
+same record idempotently and keep earlier records that are absent from a later
+partial write. Use `get_session` for the full snapshot and todos. Use
 `list_session_records` for replay/history records.
 
 If a workspace `.tura/session_log.sqlite3` database disappears, the service
@@ -86,3 +93,5 @@ cargo check -p session_log
 cargo test -p session_log
 .\scripts\run-backend-performance-tests.ps1 -Crate session_log
 ```
+
+The last command is the compatibility-named runner for `tests/benchmark`.

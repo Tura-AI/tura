@@ -621,7 +621,7 @@ export function fixtureFileContent(
       null,
       2,
     ),
-    "apps/app.config.ts": 'export default {\n  name: "tura",\n  workspace: "tura workspace",\n};\n',
+    "apps/app.config.ts": 'export default {\n  name: "tura",\n  workspace: "tura_workspace",\n};\n',
     "apps/gui/package.json": JSON.stringify(
       {
         name: "@tura/gui",
@@ -1044,7 +1044,7 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
   const base = initialAppState(gatewayUrl);
   const now = Date.now();
   if (fixture === "plan-sessions") {
-    const directory = "C:\\Users\\liuliu\\Documents\\tura workspace";
+    const directory = "C:\\Users\\liuliu\\Documents\\tura_workspace";
     const sessions = fixtureGatewaySessions(now, directory);
     const messagesForSession = (session: Session, index: number): Message[] => {
       const title = sessionTitle(session);
@@ -1192,8 +1192,77 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       projects: [
         {
           id: "fixture-project-default",
-          name: "tura workspace",
+          name: "tura_workspace",
           worktree: directory,
+        },
+      ],
+    };
+  }
+  if (fixture === "long-transcript") {
+    const session: Session = {
+      id: "fixture-long-transcript",
+      name: "Long transcript virtualization",
+      directory: "C:\\Users\\liuliu\\Documents\\tura",
+      model: "openai/gpt-5.5",
+      agent: "coding_agent",
+      session_type: "coding",
+      status: "idle",
+      created_at: now - 3_600_000,
+      updated_at: now,
+      message_count: 2_200,
+      model_variant: "low",
+      model_acceleration_enabled: true,
+    };
+    const messages: Message[] = Array.from({ length: 2_200 }, (_, index) => {
+      const role = index % 2 === 0 ? "user" : "assistant";
+      const createdAt = now - 3_600_000 + index * 1_000;
+      return {
+        id: `fixture-long-transcript-${index}`,
+        session_id: session.id,
+        role,
+        providerID: role === "assistant" ? "openai" : undefined,
+        modelID: role === "assistant" ? "gpt-5.5" : undefined,
+        created_at: createdAt,
+        updated_at: createdAt,
+        parts: [
+          {
+            id: `fixture-long-transcript-${index}-part`,
+            type: "text",
+            text:
+              role === "user"
+                ? `第 ${index + 1} 条用户消息：这是一条用于长会话虚拟化验收的稳定 mock 内容。`
+                : `第 ${index + 1} 条助手消息：渲染窗口应该保持有界，滚动、贴底按钮和头像跟随都应该继续工作。${" 补充上下文。".repeat(index % 5)}`,
+          },
+        ],
+      };
+    });
+    return {
+      ...base,
+      loading: false,
+      bootstrapped: true,
+      connection: "connected",
+      activeTab: "conversation",
+      directory: session.directory ?? undefined,
+      selectedSessionId: session.id,
+      sessions: [session],
+      messagesBySession: {
+        [session.id]: messages,
+      },
+      messagePagingBySession: {
+        [session.id]: { hasEarlier: false, loadingEarlier: false },
+      },
+      selectedModel: "openai/gpt-5.5",
+      agents: FIXTURE_AGENTS,
+      personas: FIXTURE_PERSONAS,
+      selectedProviderId: "openai",
+      modelVariant: "low",
+      accelerationEnabled: true,
+      ...FIXTURE_PROVIDER_STATE,
+      projects: [
+        {
+          id: "fixture-project",
+          name: "tura",
+          worktree: session.directory ?? "",
         },
       ],
     };

@@ -280,12 +280,16 @@ impl SessionStore {
         // background). An already-persisted session is a valid ACK — the worker
         // loads it straight from session_db — so don't fail the enqueue.
         match SessionDbClient::discover()
-            .map_err(|err| err.to_string())?
+            .map_err(|err| {
+                format!("failed to discover session_db while ACKing session {session_id}: {err}")
+            })?
             .get_session(session_id.to_string())
         {
             Ok(Some(_)) => Ok(()),
-            Ok(None) => Err("session not found".to_string()),
-            Err(err) => Err(err.to_string()),
+            Ok(None) => Err(format!("session {session_id} not found in session_db")),
+            Err(err) => Err(format!(
+                "failed to read session {session_id} from session_db during ACK: {err}"
+            )),
         }
     }
 
@@ -295,7 +299,7 @@ impl SessionStore {
             .read()
             .get(session_id)
             .cloned()
-            .ok_or_else(|| "session not found".to_string())?;
+            .ok_or_else(|| format!("session {session_id} not found in memory"))?;
         let messages = self
             .messages
             .read()
@@ -317,19 +321,26 @@ impl SessionStore {
         };
 
         SessionDbClient::discover()
-            .map_err(|err| err.to_string())?
+            .map_err(|err| {
+                format!(
+                    "failed to discover session_db while persisting session {session_id}: {err}"
+                )
+            })?
             .upsert_session(
-                serde_json::to_value(&record.info).map_err(|err| err.to_string())?,
+                serde_json::to_value(&record.info)
+                    .map_err(|err| format!("failed to serialize session {session_id}: {err}"))?,
                 record.parent_id,
                 record
                     .messages
                     .into_iter()
                     .map(serde_json::to_value)
                     .collect::<Result<Vec<_>, _>>()
-                    .map_err(|err| err.to_string())?,
+                    .map_err(|err| {
+                        format!("failed to serialize messages for session {session_id}: {err}")
+                    })?,
                 record.todos,
             )
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| format!("failed to upsert session {session_id}: {err}"))?;
         Ok(())
     }
 
@@ -467,14 +478,15 @@ impl SessionStore {
     ) -> ApiSession {
         let now = Utc::now().timestamp_millis();
         if let Some(existing) = self.sessions.write().get_mut(child_session_id) {
-            existing.status = SessionStatusMano::Busy;
+            let _ = existing.transition(SessionState::Running);
+            existing.status = SessionStatusMano::from_state(existing.management.state);
             existing.updated_at = now;
             if existing.directory.is_none() {
                 existing.directory = directory;
             }
             if existing.management.session_name.trim().is_empty() {
                 existing.management.session_name =
-                    name.unwrap_or_else(|| format!("Subtask {}", child_session_id));
+                    name.unwrap_or_else(|| format!("Subtask {child_session_id}"));
             }
             {
                 let mut children = self.children.write();
@@ -494,11 +506,12 @@ impl SessionStore {
         );
         info.id = child_session_id.to_string();
         info.management.session_name =
-            name.unwrap_or_else(|| format!("Subtask {}", child_session_id));
-        info.status = SessionStatusMano::Busy;
+            name.unwrap_or_else(|| format!("Subtask {child_session_id}"));
         info.created_at = now;
         info.updated_at = now;
         info.management.session_id = child_session_id.to_string();
+        let _ = info.transition(SessionState::Running);
+        info.status = SessionStatusMano::from_state(info.management.state);
         if let Some(parent) = self.sessions.read().get(parent_session_id) {
             info.disable_permission_restrictions = parent.disable_permission_restrictions;
             info.management.disable_permission_restrictions =
@@ -648,6 +661,7 @@ impl SessionStore {
             let mut patched = info.clone();
             match apply_task_management_patch(&mut patched, task_management) {
                 Ok(()) => {
+                    preserve_busy_doing_tasks(info, &mut patched);
                     info.management.session_name = patched.management.session_name;
                     info.management.task_plan = patched.management.task_plan;
                 }
@@ -721,22 +735,41 @@ impl SessionStore {
         if let Some(info) = self.sessions.write().get_mut(session_id) {
             let now = Utc::now();
             let target_state = match status {
-                SessionStatusMano::Idle => SessionState::Created,
+                SessionStatusMano::Idle => match info.management.state {
+                    SessionState::Created | SessionState::Completed => SessionState::Created,
+                    SessionState::Running | SessionState::Paused => SessionState::Completed,
+                    SessionState::Failed | SessionState::Cancelled | SessionState::Interrupted => {
+                        info.management.state
+                    }
+                },
                 SessionStatusMano::Busy => SessionState::Running,
                 SessionStatusMano::Error => SessionState::Failed,
             };
-            if info.transition(target_state).is_err() && matches!(status, SessionStatusMano::Idle) {
-                info.management.state = SessionState::Created;
-                info.management.session_last_update_at = now;
+            if target_state != info.management.state {
+                if let Err(err) = info.transition(target_state) {
+                    tracing::warn!(
+                        session_id,
+                        current_state = ?info.management.state,
+                        target_state = ?target_state,
+                        error = %err,
+                        "session status update rejected by state machine"
+                    );
+                }
             }
-            info.status = status;
+            info.status = SessionStatusMano::from_state(info.management.state);
             info.updated_at = now.timestamp_millis();
         }
         self.persist_session_background(session_id);
         self.push_event(GlobalEvent::SessionStatus {
             properties: crate::api::types::SessionStatusProperties {
                 session_id: session_id.to_string(),
-                status: match status {
+                status: match self
+                    .sessions
+                    .read()
+                    .get(session_id)
+                    .map(|info| info.status)
+                    .unwrap_or(status)
+                {
                     SessionStatusMano::Idle => serde_json::json!({ "type": "idle" }),
                     SessionStatusMano::Busy => serde_json::json!({ "type": "busy" }),
                     SessionStatusMano::Error => serde_json::json!({ "type": "error" }),
@@ -764,6 +797,15 @@ impl SessionStore {
                 else {
                     continue;
                 };
+                if let Err(err) = info.transition(SessionState::Running) {
+                    tracing::warn!(
+                        session_id = %info.id,
+                        current_state = ?info.management.state,
+                        error = %err,
+                        "scheduled task claim rejected by state machine"
+                    );
+                    continue;
+                }
 
                 let plan_summary = info.management.task_plan.plan_summary.clone();
                 let task = &mut info.management.task_plan.detailed_tasks[task_index];
@@ -774,10 +816,8 @@ impl SessionStore {
                     task.start_at = next_polling_start(task.start_at, task.poll_interval, now);
                 }
 
-                info.status = SessionStatusMano::Busy;
+                info.status = SessionStatusMano::from_state(info.management.state);
                 info.updated_at = now.timestamp_millis();
-                info.management.state = SessionState::Running;
-                info.management.session_last_update_at = now;
                 claimed.push(ScheduledTaskRun {
                     session_id: info.id.clone(),
                     task_summary,
@@ -930,6 +970,33 @@ fn api_session_from_info(info: &SessionInfo, parent_id: Option<String>) -> ApiSe
         task_management: info.management.task_management_json(),
         plan_summary,
         session_display_name,
+    }
+}
+
+fn preserve_busy_doing_tasks(current: &SessionInfo, patched: &mut SessionInfo) {
+    if !matches!(current.status, SessionStatusMano::Busy) {
+        return;
+    }
+
+    for current_task in current
+        .management
+        .task_plan
+        .detailed_tasks
+        .iter()
+        .filter(|task| task.status == PlanStatus::Doing)
+    {
+        let Some(patched_task) = patched
+            .management
+            .task_plan
+            .detailed_tasks
+            .iter_mut()
+            .find(|task| task.task_id == current_task.task_id)
+        else {
+            continue;
+        };
+        if matches!(patched_task.status, PlanStatus::Todo | PlanStatus::Question) {
+            patched_task.status = PlanStatus::Doing;
+        }
     }
 }
 

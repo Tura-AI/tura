@@ -10,6 +10,16 @@ name = "session_log"
 path = "src/lib.rs"
 
 [[test]]
+name = "router_adopts_live_session_db_flow"
+path = "tests/business/router_adopts_live_session_db_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "session_db_discards_dirty_queue_flow"
+path = "tests/business/session_db_discards_dirty_queue_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
 name = "process_management_test"
 path = "tests/performance/process_management_test.rs"
 required-features = ["performance-tests"]
@@ -24,6 +34,7 @@ name = "tura_session_db"
 path = "src/bin/tura_session_db.rs"
 
 [features]
+business-tests = []
 performance-tests = []
 
 [dependencies]
@@ -37,5 +48,6 @@ tracing.workspace = true
 tura_path.workspace = true
 
 [dev-dependencies]
+sysinfo.workspace = true
 tempfile.workspace = true
 uuid.workspace = true

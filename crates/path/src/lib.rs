@@ -1,17 +1,15 @@
+#![deny(clippy::unwrap_used)]
+#![deny(unsafe_code)]
+
 //! `tura_path` — the single source of truth for instance/home/path resolution.
 //!
-//! Refactor stage 2: an *instance_home* is one isolated Tura instance (modelled
-//! on codex's `CODEX_HOME`). Every per-instance path — control sockets, flock
-//! files, the private database directory, the version used for the connection
-//! handshake — derives from one `instance_home()`. dev / release / debug are
-//! simply different homes (selected by `TURA_HOME`), so they coexist with no
-//! shared ports or locks.
-//!
-//! This crate replaces the previously scattered `find_repo_root` / `my_root` /
-//! `default_db_dir` helpers so there is exactly one normalization and one
-//! derivation path.
+//! An instance home is one isolated Tura runtime root. Control sockets, locks,
+//! endpoint files, database paths, and versioned handshakes derive from that
+//! root so debug, release, and development instances do not share process state.
 
 use std::path::{Path, PathBuf};
+
+pub mod process_hardening;
 
 /// Directory name used for the embedded database, kept stable for back-compat.
 pub const DB_DIR_NAME: &str = "session_log";
@@ -98,10 +96,10 @@ pub fn locks_dir() -> PathBuf {
 
 /// The private database directory for this instance.
 ///
-/// Legacy `SESSION_LOG_DB_ROOT` / `TURA_DB_ROOT` overrides are still honored for
-/// now (they are redundant with the home and slated for retirement), and a repo
-/// checkout keeps its existing `<repo>/db/session_log` layout so dev databases
-/// are not relocated. Otherwise the directory derives from the instance home.
+/// `SESSION_LOG_DB_ROOT` / `TURA_DB_ROOT` overrides are honored for explicit
+/// test and tool runs. A repo checkout keeps its `<repo>/db/session_log` layout
+/// so dev databases are not relocated. Otherwise the directory derives from the
+/// instance home.
 pub fn home_db_dir() -> PathBuf {
     for key in ["SESSION_LOG_DB_ROOT", "TURA_DB_ROOT"] {
         if let Ok(value) = std::env::var(key) {
@@ -260,5 +258,150 @@ mod tests {
         let version = instance_version();
         assert!(version.contains(package_version()));
         assert!(version.ends_with(build_kind()));
+    }
+
+    #[test]
+    fn repo_root_from_accepts_file_or_directory_start_points() {
+        let temp = tempfile::tempdir().expect("temp repo");
+        std::fs::write(temp.path().join("Cargo.toml"), "[workspace]\n").expect("cargo toml");
+        std::fs::create_dir_all(temp.path().join("crates/demo/src")).expect("crate dir");
+        let source = temp.path().join("crates/demo/src/lib.rs");
+        std::fs::write(&source, "").expect("source file");
+
+        assert_eq!(repo_root_from(temp.path()), Some(temp.path().to_path_buf()));
+        assert_eq!(
+            repo_root_from(temp.path().join("crates/demo")),
+            Some(temp.path().to_path_buf())
+        );
+        assert_eq!(repo_root_from(&source), Some(temp.path().to_path_buf()));
+        assert_eq!(
+            repo_root_from(temp.path().join("missing/file.rs")),
+            Some(temp.path().to_path_buf())
+        );
+    }
+
+    #[test]
+    fn repo_root_from_returns_none_outside_workspace_shape() {
+        let temp = tempfile::tempdir().expect("temp");
+        std::fs::write(temp.path().join("Cargo.toml"), "[package]\n").expect("cargo toml");
+
+        assert_eq!(repo_root_from(temp.path()), None);
+    }
+
+    #[test]
+    fn canonical_root_prefers_existing_project_root_env() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let temp = tempfile::tempdir().expect("temp root");
+        let previous = std::env::var_os("TURA_PROJECT_ROOT");
+        std::env::set_var("TURA_PROJECT_ROOT", temp.path());
+
+        let root = canonical_root();
+
+        assert_eq!(root, normalize_path(temp.path()));
+        restore_env("TURA_PROJECT_ROOT", previous);
+    }
+
+    #[test]
+    fn canonical_root_ignores_missing_project_root_env() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = std::env::var_os("TURA_PROJECT_ROOT");
+        std::env::set_var("TURA_PROJECT_ROOT", "Z:/definitely/missing/tura/root");
+
+        let root = canonical_root();
+
+        assert!(root.exists() || root.as_os_str().is_empty());
+        assert_ne!(root, PathBuf::from("Z:/definitely/missing/tura/root"));
+        restore_env("TURA_PROJECT_ROOT", previous);
+    }
+
+    #[test]
+    fn home_socket_and_locks_have_stable_runtime_layout() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let temp = tempfile::tempdir().expect("temp home");
+        let previous = std::env::var_os("TURA_HOME");
+        std::env::set_var("TURA_HOME", temp.path());
+
+        assert_eq!(
+            home_runtime_dir(),
+            normalize_path(temp.path()).join(".tura")
+        );
+        assert_eq!(
+            home_socket("gateway"),
+            normalize_path(temp.path()).join(".tura/sockets/gateway.sock")
+        );
+        assert_eq!(locks_dir(), normalize_path(temp.path()).join(".tura/locks"));
+
+        restore_env("TURA_HOME", previous);
+    }
+
+    #[test]
+    fn home_db_dir_prefers_session_log_override_then_tura_db_override() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let temp = tempfile::tempdir().expect("temp");
+        let session_root = temp.path().join("session-root");
+        let tura_root = temp.path().join("tura-root");
+        let previous_session = std::env::var_os("SESSION_LOG_DB_ROOT");
+        let previous_tura = std::env::var_os("TURA_DB_ROOT");
+        std::env::set_var("SESSION_LOG_DB_ROOT", &session_root);
+        std::env::set_var("TURA_DB_ROOT", &tura_root);
+
+        assert_eq!(home_db_dir(), session_root.join(DB_DIR_NAME));
+
+        std::env::remove_var("SESSION_LOG_DB_ROOT");
+        assert_eq!(home_db_dir(), tura_root.join(DB_DIR_NAME));
+
+        restore_env("SESSION_LOG_DB_ROOT", previous_session);
+        restore_env("TURA_DB_ROOT", previous_tura);
+    }
+
+    #[test]
+    fn home_db_dir_uses_instance_home_when_tura_home_is_explicit() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let temp = tempfile::tempdir().expect("temp home");
+        let previous_home = std::env::var_os("TURA_HOME");
+        let previous_session = std::env::var_os("SESSION_LOG_DB_ROOT");
+        let previous_tura = std::env::var_os("TURA_DB_ROOT");
+        std::env::remove_var("SESSION_LOG_DB_ROOT");
+        std::env::remove_var("TURA_DB_ROOT");
+        std::env::set_var("TURA_HOME", temp.path());
+
+        assert_eq!(
+            home_db_dir(),
+            normalize_path(temp.path()).join("db").join(DB_DIR_NAME)
+        );
+
+        restore_env("TURA_HOME", previous_home);
+        restore_env("SESSION_LOG_DB_ROOT", previous_session);
+        restore_env("TURA_DB_ROOT", previous_tura);
+    }
+
+    #[test]
+    fn normalize_workspace_preserves_unc_and_relative_paths_without_trailing_slash() {
+        assert_eq!(
+            normalize_workspace(r"\\server\share\project\"),
+            "//server/share/project"
+        );
+        assert_eq!(normalize_workspace(r"relative\path\"), "relative/path");
+        assert_eq!(normalize_workspace("relative/path///"), "relative/path");
+        assert_eq!(normalize_workspace("  C:/Repo/Sub  "), "C:/Repo/Sub");
+    }
+
+    #[test]
+    fn normalize_path_keeps_nonexistent_paths_comparable() {
+        let temp = tempfile::tempdir().expect("temp");
+        let missing = temp.path().join("missing").join("child");
+
+        assert_eq!(
+            normalize_path(&missing),
+            PathBuf::from(strip_verbatim_prefix(&missing.to_string_lossy()))
+        );
+    }
+
+    fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
+        if let Some(value) = previous {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
     }
 }

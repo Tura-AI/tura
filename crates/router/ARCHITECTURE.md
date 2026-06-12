@@ -45,17 +45,33 @@ registry, service manager, and utility modules above.
 The router serves the same `IpcRequest`/`IpcResponse` contract over two
 transports:
 
-- **`tura_router serve`** — legacy stdin/stdout child owned by the gateway
+- **`tura_router serve`** — stdin/stdout child owned by the gateway
   (`RouterProcess`). One JSON request per line; the gateway multiplexes
   responses back to per-call mailboxes by `request_id`.
-- **`tura_router serve-socket`** — a **detached daemon** (refactor 阶段 5 步骤 3):
-  binds a loopback socket, publishes its `host:port` + version to
+- **`tura_router serve-socket`** — a **detached daemon**:
+  binds a loopback socket, publishes `addr`, `version`, `pid`, and
+  `process_start_time` to
   `<db_dir>/router.addr`, **starts and owns the single `tura_session_db`**, and
-  serves every front. Fronts **probe `router.addr` and reuse** a live daemon, or
-  spawn one detached — so the backend (router + session_db) outlives any front
-  and is never torn down by a front's exit. `cli` (thin CLI) uses this:
-  probe-or-start, send `execution.enqueue_turn`, render the result from
-  session_db.
+  serves every front. Fronts **probe `router.addr`, health-check the daemon, and
+  reuse** it, or spawn one if no compatible healthy daemon answers. `cli`
+  (thin CLI) uses this: probe-or-start, send `execution.enqueue_turn`, render
+  the result from session_db.
+
+Gateway-owned GUI/TUI launches keep a stdin lifetime lease to the gateway and
+send periodic `lifecycle.front_heartbeat` leases to router. When that pipe
+reaches EOF, gateway exits without killing router; router prunes the expired
+gateway lease and self-shuts down after `TURA_ROUTER_IDLE_SHUTDOWN_SECS` when
+no valid gateway lease, exec socket, active runtime worker, or active turn
+remains. If a CLI or runtime connection drops mid-request, the router aborts
+that connection's unfinished request tasks and cancels any active
+`execution.enqueue_turn` session. This prevents router-owned `command_run`
+subprocesses from continuing after their caller is gone.
+
+When a compatible `service.addr` already points to a live `tura_session_db`
+(for example after a router crash where the DB owner survived), router
+adopts that service instead of spawning a second owner. `execution.shutdown`
+always sends the session_db shutdown command, including for an adopted service,
+then removes the router endpoint as the socket daemon exits.
 
 Both transports handle requests **concurrently** (`tokio::spawn` per request,
 shared locked writer), so a slow `execution.enqueue_turn` never head-of-line
@@ -70,6 +86,9 @@ Router owns:
 - CLI forwarding rules (`/run_tool`: resolve a tool binary and forward stdio).
 - Runtime-worker dispatch (`POST /run_agent`): agent resolution, worker
   environment contract assembly, and worker subprocess lifecycle.
+- Router-owned `command_run` execution. Runtime workers request
+  `execution.command_run` over router IPC; runtime never falls back to local
+  shell execution when the router is unavailable.
 - Concurrency guards for runtime workers (depth and active-worker limits).
 - Worker status monitoring (`/services/status`).
 - Health checks that do not depend on port allocation.
@@ -80,9 +99,10 @@ Router does not own:
 - Prompt assembly.
 - Provider request formatting.
 - Provider credentials (owned by gateway OAuth).
-- Command handler logic.
+- Command handler logic above the ownership boundary; command handlers execute
+  in router-owned tasks and inherit router process-scope cleanup.
 - Command alias canonicalization (owned by `crates/tools`).
-- Shell execution.
+- Shell execution ownership and process-tree cleanup.
 - File locks.
 - Port allocation.
 
@@ -98,9 +118,8 @@ result JSON to stdout. Both entrypoints share the same core
 The router:
 
 1. Resolves the agent spec from the agent registry.
-2. Resolves the runtime worker binary: the standalone `tura_runtime` (legacy
-   `tura_runtime_worker`/`gateway` are transitional fallbacks), then performs a
-   **version handshake** — the worker's `health_check` reply carries
+2. Resolves the runtime worker binary: the standalone `tura_runtime`, then
+   performs a **version handshake** — the worker's `health_check` reply carries
    `tura_path::instance_version()` and the router refuses a mismatched build.
 3. Builds the worker environment contract: `TURA_ROLE`, `TURA_GATEWAY_URL`,
    `TURA_SESSION_MODEL_OVERRIDE`, `TURA_PARENT_SESSION_ID`,
@@ -111,6 +130,22 @@ The router:
    `MAX_RUNTIME_WORKERS`. Either breach returns `429 Too Many Requests`.
 5. Ensures the worker is live and forwards the call over the worker NDJSON
    protocol.
+
+Worker subprocesses are spawned through the shared process-scope helper:
+
+- every Tokio worker command enables `kill_on_drop(true)` so cancellation,
+  panic, early return, or timeout drops do not leave the direct child running;
+- Windows workers are assigned to a Job Object with
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so router exit closes the scope and
+  tears down the worker tree;
+- Unix workers start in their own process group, and Linux additionally sets
+  `PR_SET_PDEATHSIG=SIGTERM` before exec with a parent-pid race check;
+- router stop and one-shot timeout paths terminate the scope before reaping the
+  direct child, so worker-spawned subprocesses are included in cleanup.
+
+Persistent worker stdout is protocol-owned. Non-JSON stdout lines are treated
+as worker noise, logged, and skipped before parsing the JSON response; stderr is
+still redirected to the worker log path.
 
 The worker owns its own session state and reports progress back to the gateway
 through callbacks; the router does not replay or merge agent state.
@@ -184,4 +219,5 @@ Use:
 ```text
 cargo fmt -p router
 cargo check -p router
+cargo test -p tura_workspace --test process_state_management_e2e -- --nocapture
 ```

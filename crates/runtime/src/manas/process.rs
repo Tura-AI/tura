@@ -32,12 +32,14 @@ use crate::turn_loop::no_tool_policy::no_tool_retry_limit;
 use crate::turn_loop::provider_step::accumulate_session_from_runtime;
 use crate::turn_loop::retry_policy::env_flag;
 use crate::turn_loop::task_progress::{
-    active_task_user_message, active_todo_task_user_message,
-    command_run_result_terminal_task_status, command_run_turn_has_write_or_status,
-    record_task_focus_message, record_task_focus_message_for_terminal_done,
-    terminal_task_status_final_message, NO_WRITE_COMMAND_RUN_NUDGE_THRESHOLD,
+    active_doing_task_user_message, active_task_user_message,
+    command_run_result_has_non_status_command, command_run_result_terminal_task_status,
+    command_run_turn_has_write_or_status, record_task_focus_message,
+    record_task_focus_message_for_terminal_done, NO_WRITE_COMMAND_RUN_NUDGE_THRESHOLD,
 };
 use crate::turn_loop::tool_step::{apply_compact_context_results, command_run_results_empty};
+
+const DEFAULT_MANAS_MAX_TURNS: u64 = 64;
 
 pub struct ManasInput<'a> {
     pub agents: &'a mut [AgentManagement],
@@ -50,6 +52,7 @@ pub struct ManasResult {
     pub agents: Vec<AgentManagement>,
     pub session: SessionManagement,
     pub final_runtime: RuntimeManagement,
+    pub final_error: Option<String>,
 }
 
 pub fn process_manas_internal(
@@ -74,9 +77,7 @@ pub fn process_manas_internal(
         agents
     };
 
-    let now = Utc::now();
-
-    session.transition(SessionState::Running, now)?;
+    session.transition(SessionState::Running, Utc::now())?;
     persist_session_checkpoint(session, "running");
 
     let mut current_messages = initial_messages.clone();
@@ -86,6 +87,7 @@ pub fn process_manas_internal(
     let mut provider_timeout_retries = 0_u8;
     let mut no_tool_retries = 0_u8;
     let mut final_session_state = SessionState::Completed;
+    let mut final_error: Option<String> = None;
     let supports_task_status = agents
         .first()
         .map(command_run_commands_for_agent)
@@ -93,10 +95,30 @@ pub fn process_manas_internal(
     // Count consecutive command_run turns that neither wrote (apply_patch) nor
     // settled task state (task_status). After the threshold, inject the
     // task_status nudge so a model stuck re-running read-only/verification
-    // commands is reminded to mark done or ask a question.
+    // commands is reminded to mark doing, done, or question.
     let mut no_write_command_run_turns = 0_u64;
     loop {
         turn = turn.saturating_add(1);
+        if turn > manas_max_turns() {
+            warn!(
+                session_id = %session.session_id,
+                turn = turn,
+                max_turns = manas_max_turns(),
+                "manas turn limit reached; failing session"
+            );
+            let error = format!(
+                "Session stopped after reaching the maximum turn limit of {}.",
+                manas_max_turns()
+            );
+            publish_runtime_failure_message(
+                session,
+                last_runtime_id.as_deref().unwrap_or_default(),
+                &error,
+            );
+            final_error = Some(error);
+            final_session_state = SessionState::Failed;
+            break;
+        }
         info!(
             session_id = %session.session_id,
             turn = turn,
@@ -127,6 +149,7 @@ pub fn process_manas_internal(
                 if env_flag("TURA_RUNTIME_ERRORS_FATAL") {
                     return Err(error);
                 }
+                final_error = Some(error);
                 final_session_state = SessionState::Failed;
                 break;
             }
@@ -139,7 +162,7 @@ pub fn process_manas_internal(
 
         accumulate_session_from_runtime(session, &runtime, true)?;
         publish_runtime_usage_record(session, &runtime);
-        session.increment_turn(now);
+        increment_turn_with_fresh_timestamp(session);
         persist_session_checkpoint(session, "runtime");
 
         if runtime.call_result_status == RuntimeCallResultStatus::TimedOut
@@ -159,13 +182,11 @@ pub fn process_manas_internal(
                         error = %error_text,
                         "provider rejected required media content; not retrying without media"
                     );
-                    publish_runtime_failure_message(
-                        session,
-                        &runtime.runtime_id,
-                        &format!(
-                            "Provider/model does not support `{content_type}` media input for this request. Use an image-capable model or a route whose model metadata includes that input modality. Original provider error: {error_text}"
-                        ),
+                    let error = format!(
+                        "Provider/model does not support `{content_type}` media input for this request. Use an image-capable model or a route whose model metadata includes that input modality. Original provider error: {error_text}"
                     );
+                    publish_runtime_failure_message(session, &runtime.runtime_id, &error);
+                    final_error = Some(error);
                     final_session_state = SessionState::Failed;
                     break;
                 }
@@ -215,13 +236,11 @@ pub fn process_manas_internal(
                 retries = provider_timeout_retries,
                 "provider runtime failed transiently after retries; publishing visible failure"
             );
-            publish_runtime_failure_message(
-                session,
-                &runtime.runtime_id,
-                &format!(
-                    "Provider runtime failed after 3 retries before completing the task: {error_text}"
-                ),
+            let error = format!(
+                "Provider runtime failed after 3 retries before completing the task: {error_text}"
             );
+            publish_runtime_failure_message(session, &runtime.runtime_id, &error);
+            final_error = Some(error);
             final_session_state = SessionState::Failed;
             break;
         }
@@ -239,12 +258,16 @@ pub fn process_manas_internal(
             if env_flag("TURA_RUNTIME_ERRORS_FATAL") {
                 return Err(error_text);
             }
+            final_error = Some(error_text);
             final_session_state = SessionState::Failed;
             break;
         }
 
         if !tool_calls.is_empty() {
-            if let Some(content) = visible_runtime_reply(&runtime) {
+            let visible_reply_before_tool = visible_runtime_reply(&runtime);
+            let visible_reply_published_before_terminal_status =
+                visible_reply_before_tool.is_some();
+            if let Some(content) = visible_reply_before_tool {
                 if let Err(error) = publish_gateway_agent_message(
                     &session.session_id,
                     &runtime.runtime_id,
@@ -268,6 +291,9 @@ pub fn process_manas_internal(
                 .iter()
                 .find_map(|result| command_run_result_terminal_task_status(&result.result));
             let terminal_task_status_seen = terminal_task_status.is_some();
+            let terminal_status_followed_real_command = tool_results
+                .iter()
+                .any(|result| command_run_result_has_non_status_command(&result.result));
 
             // Track consecutive command_run turns with no write/state command.
             if command_run_turn_has_write_or_status(&tool_calls) || terminal_task_status_seen {
@@ -308,47 +334,29 @@ pub fn process_manas_internal(
                 context_output.messages,
                 &original_user_task,
             );
-            let next_task = if terminal_task_status.as_deref() == Some("done") {
-                active_todo_task_user_message(session)
-            } else {
-                active_task_user_message(session)
-            };
-            if let Some(next_task) = next_task {
-                record_task_focus_message_for_terminal_done(
-                    session,
-                    &next_task,
-                    terminal_task_status.as_deref() == Some("done"),
-                );
-                persist_session_checkpoint(session, "task_focus");
-                current_messages.push(next_task);
-            } else if matches!(terminal_task_status.as_deref(), Some("done" | "question")) {
-                let final_response_published = run_terminal_final_response_turn(
-                    agents,
-                    session,
-                    &current_messages,
-                    redis_url,
-                    &original_user_task,
-                )?;
-                if !final_response_published {
-                    if let Some(content) = terminal_task_status_final_message(
+            if matches!(terminal_task_status.as_deref(), Some("done" | "question")) {
+                let final_response_published = if terminal_status_needs_final_response_turn(
+                    terminal_task_status.as_deref(),
+                    visible_reply_published_before_terminal_status,
+                    terminal_status_followed_real_command,
+                ) {
+                    run_terminal_final_response_turn(
+                        agents,
                         session,
-                        terminal_task_status.as_deref().unwrap_or("done"),
+                        &current_messages,
+                        redis_url,
                         &original_user_task,
-                    ) {
-                        if let Err(error) = publish_gateway_agent_message(
-                            &session.session_id,
-                            &runtime.runtime_id,
-                            content,
-                            String::new(),
-                        ) {
-                            warn!(
-                                session_id = %session.session_id,
-                                runtime_id = %runtime.runtime_id,
-                                error = %error,
-                                "failed to publish terminal task_status assistant message"
-                            );
-                        }
-                    }
+                    )?
+                } else {
+                    true
+                };
+                if !final_response_published {
+                    warn!(
+                        session_id = %session.session_id,
+                        runtime_id = %runtime.runtime_id,
+                        status = terminal_task_status.as_deref().unwrap_or("unknown"),
+                        "terminal task_status produced no user-facing reply; suppressing internal fallback text"
+                    );
                 }
                 info!(
                     session_id = %session.session_id,
@@ -357,10 +365,20 @@ pub fn process_manas_internal(
                     "terminal task_status returned and no next executable task exists; ending loop"
                 );
                 break;
+            } else if terminal_task_status.as_deref() == Some("doing") {
+                if let Some(next_task) = active_doing_task_user_message(session) {
+                    record_task_focus_message_for_terminal_done(session, &next_task, false);
+                    persist_session_checkpoint(session, "task_focus");
+                    current_messages.push(next_task);
+                }
+            } else if let Some(next_task) = active_task_user_message(session) {
+                record_task_focus_message_for_terminal_done(session, &next_task, false);
+                persist_session_checkpoint(session, "task_focus");
+                current_messages.push(next_task);
             }
 
             // The model keeps running command_run without writing or settling
-            // task state; remind it to mark done or ask a question.
+            // task state; remind it to mark doing, done, or question.
             if supports_task_status
                 && no_write_command_run_turns >= NO_WRITE_COMMAND_RUN_NUDGE_THRESHOLD
             {
@@ -393,10 +411,19 @@ pub fn process_manas_internal(
                 break;
             }
 
+            if active_doing_task_user_message(session).is_none() {
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    "turn completed without command_run and no task_status doing marker; ending session"
+                );
+                break;
+            }
+
             if no_tool_retries < no_tool_retry_limit() {
                 no_tool_retries = no_tool_retries.saturating_add(1);
                 push_no_tool_task_status_retry_message(&mut current_messages, session);
-                if let Some(next_task) = active_task_user_message(session) {
+                if let Some(next_task) = active_doing_task_user_message(session) {
                     record_task_focus_message(session, &next_task);
                     persist_session_checkpoint(session, "task_focus");
                     current_messages.push(next_task);
@@ -420,7 +447,7 @@ pub fn process_manas_internal(
         }
     }
 
-    session.transition(final_session_state, now)?;
+    session.transition(final_session_state, Utc::now())?;
     persist_session_checkpoint(
         session,
         if final_session_state == SessionState::Failed {
@@ -439,13 +466,26 @@ pub fn process_manas_internal(
         agent.updated_at = Utc::now();
     }
 
-    let final_runtime = create_dummy_runtime(last_runtime_id.unwrap_or_default(), session);
+    let final_runtime = create_dummy_runtime(last_runtime_id.unwrap_or_default(), session)?;
 
     Ok(ManasResult {
         agents: agents.to_vec(),
         session: session.clone(),
         final_runtime,
+        final_error,
     })
+}
+
+fn manas_max_turns() -> u64 {
+    std::env::var("TURA_MANAS_MAX_TURNS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MANAS_MAX_TURNS)
+}
+
+fn increment_turn_with_fresh_timestamp(session: &mut SessionManagement) {
+    session.increment_turn(Utc::now());
 }
 
 fn messages_with_initial_context_prefix(
@@ -525,10 +565,33 @@ fn visible_runtime_reply(runtime: &RuntimeManagement) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
+fn terminal_status_needs_final_response_turn(
+    terminal_task_status: Option<&str>,
+    visible_reply_already_published: bool,
+    terminal_status_followed_real_command: bool,
+) -> bool {
+    match terminal_task_status {
+        Some("done") => !visible_reply_already_published || terminal_status_followed_real_command,
+        Some("question") => {
+            !visible_reply_already_published || terminal_status_followed_real_command
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::messages_with_initial_context_prefix;
+    use super::{
+        increment_turn_with_fresh_timestamp, manas_max_turns, messages_with_initial_context_prefix,
+        terminal_status_needs_final_response_turn, DEFAULT_MANAS_MAX_TURNS,
+    };
+    use crate::state_machine::session_management::{SessionInput, SessionManagement};
+    use chrono::{Duration, Utc};
     use serde_json::json;
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn initial_context_prefix_keeps_only_developer_prefix_without_replaying_history() {
@@ -552,5 +615,97 @@ mod tests {
         assert!(!messages.iter().any(|message| {
             message.get("call_id").and_then(serde_json::Value::as_str) == Some("call_old")
         }));
+    }
+
+    #[test]
+    fn manas_max_turns_uses_positive_env_override_and_ignores_invalid_values() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let previous = std::env::var_os("TURA_MANAS_MAX_TURNS");
+
+        std::env::set_var("TURA_MANAS_MAX_TURNS", "3");
+        assert_eq!(manas_max_turns(), 3);
+
+        std::env::set_var("TURA_MANAS_MAX_TURNS", "0");
+        assert_eq!(manas_max_turns(), DEFAULT_MANAS_MAX_TURNS);
+
+        std::env::set_var("TURA_MANAS_MAX_TURNS", "not-a-number");
+        assert_eq!(manas_max_turns(), DEFAULT_MANAS_MAX_TURNS);
+
+        if let Some(previous) = previous {
+            std::env::set_var("TURA_MANAS_MAX_TURNS", previous);
+        } else {
+            std::env::remove_var("TURA_MANAS_MAX_TURNS");
+        }
+    }
+
+    #[test]
+    fn completed_turn_timestamp_does_not_regress_after_runtime_log_update() {
+        let started_at = Utc::now() - Duration::minutes(5);
+        let mut session = SessionManagement::new(
+            "session-timestamp".to_string(),
+            "Timestamp".to_string(),
+            PathBuf::from("C:/workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "work".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "work".to_string(),
+            started_at,
+        );
+        let runtime_log_at = Utc::now();
+        session.push_log("runtime output", runtime_log_at);
+
+        increment_turn_with_fresh_timestamp(&mut session);
+
+        assert_eq!(session.session_current_turn, 1);
+        assert!(
+            session.session_last_update_at >= runtime_log_at,
+            "turn completion must not restore the stale session start timestamp"
+        );
+    }
+
+    #[test]
+    fn terminal_done_skips_final_response_turn_when_reply_is_already_visible() {
+        assert!(!terminal_status_needs_final_response_turn(
+            Some("done"),
+            true,
+            false,
+        ));
+        assert!(terminal_status_needs_final_response_turn(
+            Some("done"),
+            false,
+            false,
+        ));
+        assert!(terminal_status_needs_final_response_turn(
+            Some("done"),
+            true,
+            true,
+        ));
+        assert!(!terminal_status_needs_final_response_turn(
+            Some("question"),
+            true,
+            false,
+        ));
+        assert!(terminal_status_needs_final_response_turn(
+            Some("question"),
+            false,
+            false,
+        ));
+        assert!(terminal_status_needs_final_response_turn(
+            Some("question"),
+            true,
+            true,
+        ));
+        assert!(!terminal_status_needs_final_response_turn(
+            Some("doing"),
+            false,
+            true,
+        ));
+        assert!(!terminal_status_needs_final_response_turn(None, true, true));
     }
 }

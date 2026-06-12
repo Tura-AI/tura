@@ -53,11 +53,87 @@ path = "src/bin/gateway.rs"
 tempfile.workspace = true
 
 [features]
+business-tests = []
 performance-tests = []
+
+[[test]]
+name = "provider_oauth_local_flow"
+path = "tests/business/provider_oauth_local_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "session_db_local_flow"
+path = "tests/business/session_db_local_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "session_log_api_flow"
+path = "tests/business/session_log_api_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "session_prompt_busy_flow"
+path = "tests/business/session_prompt_busy_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "session_prompt_router_flow"
+path = "tests/business/session_prompt_router_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "agent_persona_settings_flow"
+path = "tests/business/agent_persona_settings_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "session_shell_path_flow"
+path = "tests/business/session_shell_path_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "session_messages_flow"
+path = "tests/business/session_messages_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "file_api_local_flow"
+path = "tests/business/file_api_local_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "process_snapshot_flow"
+path = "tests/business/process_snapshot_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "process_router_cleanup_flow"
+path = "tests/business/process_router_cleanup_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "service_status_flow"
+path = "tests/business/service_status_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "task_scheduler_flow"
+path = "tests/business/task_scheduler_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "workspace_config_api_flow"
+path = "tests/business/workspace_config_api_flow.rs"
+required-features = ["business-tests"]
 
 [[test]]
 name = "process_lifecycle_e2e"
 path = "tests/performance/process_lifecycle_e2e.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "provider_auth_churn_test"
+path = "tests/performance/provider_auth_churn_test.rs"
 required-features = ["performance-tests"]
 
 [target.'cfg(windows)'.build-dependencies]

@@ -20,9 +20,10 @@ if ($Help) {
 Usage:
   .\scripts\install.ps1 [OPTIONS]
 
-Installs project dependencies without building Tura. The root installer only
-ensures user-local uv/bun are available, runs command-owned installers under
-commands/*, and installs Bun workspaces in their own directories.
+Installs project dependencies without building Tura. The root installer verifies
+shell_command/bash/zsh coverage, installs missing bash/zsh dependencies when
+possible, ensures user-local uv/bun are available, runs command-owned installers
+under commands/*, and installs Bun workspaces in their own directories.
 
 Options:
   -SkipCommands  skip commands/*/install.* scripts
@@ -44,6 +45,10 @@ function Write-Step {
 
 function Test-IsWindows {
   return ($IsWindows -or $env:OS -eq "Windows_NT")
+}
+
+function Test-IsMacOS {
+  return ($IsMacOS -eq $true)
 }
 
 function Add-PathEntry {
@@ -77,9 +82,270 @@ function Add-UserToolPaths {
   Add-PathEntry (Join-Path $HOME ".bun\bin")
 }
 
+function Add-ShellToolPaths {
+  if (Test-IsWindows) {
+    foreach ($path in @(
+      "C:\Program Files\Git\bin",
+      "C:\Program Files\Git\usr\bin",
+      "C:\Program Files (x86)\Git\bin",
+      "C:\Program Files (x86)\Git\usr\bin",
+      "C:\msys64\usr\bin",
+      "C:\msys64\ucrt64\bin"
+    )) {
+      Add-PathEntry $path
+    }
+    return
+  }
+
+  foreach ($path in @("/opt/homebrew/bin", "/usr/local/bin", "$HOME/.local/bin")) {
+    Add-PathEntry $path
+  }
+}
+
 function Test-CommandAvailable {
   param([string]$Name)
   return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Resolve-ExistingCommand {
+  param([string[]]$Candidates)
+  foreach ($candidate in $Candidates) {
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+      continue
+    }
+    $isPath = [IO.Path]::IsPathRooted($candidate) -or $candidate.Contains("\") -or $candidate.Contains("/")
+    if ($isPath) {
+      if (Test-Path -LiteralPath $candidate) {
+        return (Resolve-Path -LiteralPath $candidate).ProviderPath
+      }
+    } else {
+      $command = Get-Command $candidate -ErrorAction SilentlyContinue
+      if ($command) {
+        return $command.Source
+      }
+    }
+  }
+  return $null
+}
+
+function Find-PowerShellTool {
+  Resolve-ExistingCommand @("pwsh", "powershell.exe", "powershell")
+}
+
+function Find-BashTool {
+  if (Test-IsWindows) {
+    return Resolve-ExistingCommand @(
+      "bash",
+      "C:\msys64\usr\bin\bash.exe",
+      "C:\msys64\ucrt64\bin\bash.exe",
+      "C:\Program Files\Git\bin\bash.exe",
+      "C:\Program Files\Git\usr\bin\bash.exe",
+      "C:\Program Files (x86)\Git\bin\bash.exe",
+      "C:\Program Files (x86)\Git\usr\bin\bash.exe"
+    )
+  }
+  Resolve-ExistingCommand @("bash", "/bin/bash", "/usr/bin/bash", "/usr/local/bin/bash", "/opt/homebrew/bin/bash")
+}
+
+function Find-ZshTool {
+  if (-not [string]::IsNullOrWhiteSpace($env:TURA_ZSH_PATH)) {
+    if (Test-Path -LiteralPath $env:TURA_ZSH_PATH) {
+      return (Resolve-Path -LiteralPath $env:TURA_ZSH_PATH).ProviderPath
+    }
+    Write-Warning "TURA_ZSH_PATH is set but does not point to an existing file: $env:TURA_ZSH_PATH"
+  }
+  if (Test-IsWindows) {
+    return Resolve-ExistingCommand @(
+      "zsh",
+      "C:\msys64\usr\bin\zsh.exe",
+      "C:\msys64\ucrt64\bin\zsh.exe",
+      "C:\Program Files\Git\usr\bin\zsh.exe",
+      "C:\Program Files\Git\bin\zsh.exe"
+    )
+  }
+  Resolve-ExistingCommand @("zsh", "/bin/zsh", "/usr/bin/zsh", "/usr/local/bin/zsh", "/opt/homebrew/bin/zsh")
+}
+
+function Find-PosixShellTool {
+  if (-not [string]::IsNullOrWhiteSpace($env:SHELL) -and (Test-Path -LiteralPath $env:SHELL)) {
+    return (Resolve-Path -LiteralPath $env:SHELL).ProviderPath
+  }
+  Resolve-ExistingCommand @("sh", "/bin/sh", "/usr/bin/sh")
+}
+
+function Find-Msys2Pacman {
+  Resolve-ExistingCommand @(
+    "pacman",
+    "C:\msys64\usr\bin\pacman.exe",
+    "C:\msys64\ucrt64\bin\pacman.exe"
+  )
+}
+
+function Invoke-NativeCommand {
+  param([string]$FilePath, [string[]]$Arguments)
+  & $FilePath @Arguments
+  if ($LASTEXITCODE -ne 0) {
+    throw "$FilePath failed with exit code $LASTEXITCODE."
+  }
+}
+
+function Ensure-WindowsMsys2ShellTools {
+  if ($CheckOnly) {
+    return
+  }
+
+  $missingPackages = @()
+  if (-not (Find-BashTool)) { $missingPackages += "bash" }
+  if (-not (Find-ZshTool)) { $missingPackages += "zsh" }
+  if ($missingPackages.Count -eq 0) {
+    return
+  }
+  if ($Offline) {
+    throw "Shell tools are missing ($($missingPackages -join ', ')) and -Offline was supplied. Install MSYS2 bash/zsh manually, then rerun."
+  }
+
+  $pacman = Find-Msys2Pacman
+  if (-not $pacman) {
+    $winget = Resolve-ExistingCommand @("winget")
+    if (-not $winget) {
+      throw "MSYS2 pacman was not found and winget is unavailable. Install MSYS2, then rerun this script."
+    }
+    Write-Step "Installing MSYS2 for bash/zsh support"
+    Invoke-NativeCommand $winget @(
+      "install",
+      "--id", "MSYS2.MSYS2",
+      "--exact",
+      "--source", "winget",
+      "--accept-package-agreements",
+      "--accept-source-agreements"
+    )
+    Add-ShellToolPaths
+    $pacman = Find-Msys2Pacman
+  }
+
+  if (-not $pacman) {
+    throw "MSYS2 installation completed, but pacman was not found. Open a new shell or add C:\msys64\usr\bin to PATH, then rerun."
+  }
+
+  Write-Step "Installing MSYS2 shell tools: $($missingPackages -join ', ')"
+  Invoke-NativeCommand $pacman (@("-Sy", "--noconfirm", "--needed") + $missingPackages)
+  Add-ShellToolPaths
+
+  if (-not (Find-BashTool)) {
+    throw "bash was installed but is still not discoverable. Add C:\msys64\usr\bin to PATH and rerun."
+  }
+  if (-not (Find-ZshTool)) {
+    throw "zsh was installed but is still not discoverable. Add C:\msys64\usr\bin to PATH or set TURA_ZSH_PATH and rerun."
+  }
+}
+
+function Ensure-UnixShellTools {
+  if ($CheckOnly) {
+    return
+  }
+
+  $missingPackages = @()
+  if (-not (Find-BashTool)) { $missingPackages += "bash" }
+  if (-not (Find-ZshTool)) { $missingPackages += "zsh" }
+  if ($missingPackages.Count -eq 0) {
+    return
+  }
+  if ($Offline) {
+    throw "Shell tools are missing ($($missingPackages -join ', ')) and -Offline was supplied. Install them manually, then rerun."
+  }
+
+  $installer = $null
+  $installerArgs = @()
+  if (Test-IsMacOS) {
+    $brew = Resolve-ExistingCommand @("brew", "/opt/homebrew/bin/brew", "/usr/local/bin/brew")
+    if (-not $brew) {
+      throw "Homebrew was not found. Install Homebrew or install missing shell tools manually: $($missingPackages -join ', ')."
+    }
+    $installer = $brew
+    $installerArgs = @("install") + $missingPackages
+  } elseif (Test-CommandAvailable "apt-get") {
+    $installer = (Get-Command "apt-get").Source
+    $installerArgs = @("install", "-y") + $missingPackages
+    if (Get-Command "sudo" -ErrorAction SilentlyContinue) {
+      $installerArgs = @($installer) + $installerArgs
+      $installer = (Get-Command "sudo").Source
+    }
+  } elseif (Test-CommandAvailable "dnf") {
+    $installer = (Get-Command "dnf").Source
+    $installerArgs = @("install", "-y") + $missingPackages
+  } elseif (Test-CommandAvailable "yum") {
+    $installer = (Get-Command "yum").Source
+    $installerArgs = @("install", "-y") + $missingPackages
+  } elseif (Test-CommandAvailable "pacman") {
+    $installer = (Get-Command "pacman").Source
+    $installerArgs = @("-Sy", "--noconfirm", "--needed") + $missingPackages
+  } elseif (Test-CommandAvailable "apk") {
+    $installer = (Get-Command "apk").Source
+    $installerArgs = @("add") + $missingPackages
+  } elseif (Test-CommandAvailable "zypper") {
+    $installer = (Get-Command "zypper").Source
+    $installerArgs = @("--non-interactive", "install") + $missingPackages
+  }
+
+  if (-not $installer) {
+    throw "No supported package manager was found to install shell tools: $($missingPackages -join ', ')."
+  }
+
+  Write-Step "Installing shell tools: $($missingPackages -join ', ')"
+  Invoke-NativeCommand $installer $installerArgs
+}
+
+function Test-StrictShellCoverage {
+  $value = "$env:TURA_STRICT_SHELL_TOOL_COVERAGE".Trim().ToLowerInvariant()
+  return @("1", "true", "yes", "on") -contains $value
+}
+
+function Write-ShellToolStatus {
+  param([string]$Name, [string]$Path, [string]$Hint)
+  if ($Path) {
+    Write-Host "${Name}: $Path"
+    return
+  }
+  Write-Warning "${Name}: missing. $Hint"
+  if (Test-StrictShellCoverage) {
+    throw "$Name is missing. $Hint"
+  }
+}
+
+function Require-ShellToolStatus {
+  param([string]$Name, [string]$Path, [string]$Hint)
+  if ($Path) {
+    Write-Host "${Name}: $Path"
+    return
+  }
+  throw "$Name is missing. $Hint"
+}
+
+function Ensure-ShellToolCoverage {
+  Add-ShellToolPaths
+  if (Test-IsWindows) {
+    Ensure-WindowsMsys2ShellTools
+  } else {
+    Ensure-UnixShellTools
+  }
+  Write-Step "Checking shell tool coverage"
+
+  if (Test-IsWindows) {
+    Require-ShellToolStatus "shell_command/PowerShell" (Find-PowerShellTool) "Install PowerShell or run from a PowerShell-capable environment."
+    Write-ShellToolStatus "bash" (Find-BashTool) "Run this installer without -CheckOnly/-Offline or install MSYS2 bash manually."
+    Write-ShellToolStatus "zsh" (Find-ZshTool) "Run this installer without -CheckOnly/-Offline or set TURA_ZSH_PATH to a valid zsh.exe."
+  } elseif (Test-IsMacOS) {
+    Require-ShellToolStatus "shell_command/POSIX shell" (Find-PosixShellTool) "Install sh, bash, or zsh."
+    Require-ShellToolStatus "zsh" (Find-ZshTool) "macOS requires zsh for the default Tura shell surface. Install zsh or set TURA_ZSH_PATH to a valid zsh binary."
+    Require-ShellToolStatus "bash" (Find-BashTool) "Install bash for bash command_run coverage."
+    Write-ShellToolStatus "powershell" (Find-PowerShellTool) "Install PowerShell 7 (`pwsh`) if you want to run PowerShell install/debug scripts on macOS."
+  } else {
+    Require-ShellToolStatus "shell_command/POSIX shell" (Find-PosixShellTool) "Install sh, bash, or zsh for shell_command debugging."
+    Require-ShellToolStatus "bash" (Find-BashTool) "Install bash for the default Linux command_run shell surface."
+    Write-ShellToolStatus "zsh" (Find-ZshTool) "Install zsh or set TURA_ZSH_PATH to a valid zsh binary for zsh command_run coverage."
+  }
+
+  Write-Host "Shell debug: set TURA_COMMAND_RUN_SHELL=shell_command, bash, or zsh to force a surface."
 }
 
 function Get-CommandOutputLine {
@@ -241,6 +507,7 @@ function Invoke-BunWorkspaceInstall {
 Set-Location $RepoRoot
 
 Write-Step "Checking root dependency installers"
+Ensure-ShellToolCoverage
 Ensure-Uv
 Ensure-Bun
 

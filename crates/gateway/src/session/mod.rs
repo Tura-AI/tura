@@ -9,7 +9,6 @@
 pub mod config;
 pub mod docker_snapshot;
 pub mod manager;
-pub mod process_cleanup;
 pub mod process_snapshot;
 pub mod store;
 

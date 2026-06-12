@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
+import { createServer } from "node:net"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { defineConfig, type Plugin } from "vite"
@@ -14,13 +15,21 @@ export default defineConfig({
   },
 })
 
-const gatewayBinaryName = process.platform === "win32" ? "gateway.exe" : "gateway"
+// The GUI dev server starts the repo-local target/debug/tura_gateway on port 4126.
+const isWindows = process.platform === "win32"
+const gatewayBinaryName = isWindows ? "tura_gateway.exe" : "tura_gateway"
+const DEV_GATEWAY_URL = "http://127.0.0.1:4126"
 let gatewayStartupPromise: Promise<void> | undefined
+let ownedGatewayChild: ReturnType<typeof spawn> | undefined
+let ownedGatewayShutdownMode: "stdin-eof" | "kill" | undefined
 
 function turaGatewayStartupPlugin(): Plugin {
   return {
     name: "tura-gateway-startup",
     configureServer(server) {
+      server.httpServer?.once("close", () => {
+        killOwnedGateway()
+      })
       server.middlewares.use("/__tura/start-gateway", async (req, res) => {
         if (req.method !== "POST") {
           res.statusCode = 405
@@ -29,15 +38,14 @@ function turaGatewayStartupPlugin(): Plugin {
         }
         try {
           const body = await readJsonBody(req)
-          const gatewayUrl = typeof body.gatewayUrl === "string" ? body.gatewayUrl : "http://127.0.0.1:4096"
+          const gatewayUrl = typeof body.gatewayUrl === "string" ? body.gatewayUrl : DEV_GATEWAY_URL
           if (await healthOk(gatewayUrl)) {
             writeJson(res, { ok: true, status: "connected" })
             return
           }
           const root = repoRoot()
-          const binary = join(root, "target", "debug", gatewayBinaryName)
-          const status = existsSync(binary) ? "starting" : "building"
-          gatewayStartupPromise ??= startGatewayTask(root, binary, gatewayUrl).finally(() => {
+          const status = resolveGatewayBinary(root) ? "starting" : "building"
+          gatewayStartupPromise ??= startGatewayTask(root, gatewayUrl).finally(() => {
             gatewayStartupPromise = undefined
           })
           writeJson(res, { ok: true, status })
@@ -50,21 +58,56 @@ function turaGatewayStartupPlugin(): Plugin {
   }
 }
 
-async function startGatewayTask(root: string, binary: string, gatewayUrl: string): Promise<void> {
+function resolveGatewayBinary(root: string): string | undefined {
+  const candidates = [
+    join(root, "target", "debug", gatewayBinaryName),
+    join(root, "target", "release", gatewayBinaryName),
+  ]
+  return candidates.find((candidate) => existsSync(candidate))
+}
+
+async function startGatewayTask(root: string, gatewayUrl: string): Promise<void> {
   if (await healthOk(gatewayUrl)) return
-  if (!existsSync(binary)) {
-    await runProcess("cargo", ["build", "-p", "gateway", "--bin", "gateway"], root)
+  if (!(await canBindGatewayUrl(gatewayUrl))) {
+    throw new Error(`gateway port ${gatewayPort(gatewayUrl) ?? "unknown"} is occupied by an unknown or foreign process`)
   }
+  let binary = resolveGatewayBinary(root)
+  if (!binary) {
+    // No dev gateway yet: build target/debug/tura_gateway.
+    if (isWindows) {
+      await runProcess(
+        "powershell",
+        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(root, "scripts", "build-debug.ps1"), "-SkipTui"],
+        root,
+      )
+    } else {
+      await runProcess("sh", [join(root, "scripts", "build-debug.sh"), "--skip-tui"], root)
+    }
+    binary = resolveGatewayBinary(root)
+  }
+  if (!binary) throw new Error("tura_gateway binary not found after build")
   if (await healthOk(gatewayUrl)) return
+  if (!(await canBindGatewayUrl(gatewayUrl))) {
+    throw new Error(`gateway port ${gatewayPort(gatewayUrl) ?? "unknown"} is occupied by an unknown or foreign process`)
+  }
   const port = gatewayPort(gatewayUrl)
   const child = spawn(binary, [], {
     cwd: root,
-    detached: true,
-    stdio: "ignore",
+    stdio: ["pipe", "ignore", "ignore"],
     windowsHide: true,
-    env: { ...process.env, ...(port ? { PORT: port } : {}) },
+    env: {
+      ...process.env,
+      ...(port ? { PORT: port } : {}),
+      TURA_GATEWAY_SHUTDOWN_ON_STDIN_EOF: "1",
+    },
   })
-  child.unref()
+  ownedGatewayChild = child
+  ownedGatewayShutdownMode = "stdin-eof"
+  ;(child.stdin as (NodeJS.WritableStream & { unref?: () => void }) | null)?.unref?.()
+  child.once("exit", () => {
+    if (ownedGatewayChild === child) ownedGatewayChild = undefined
+    if (ownedGatewayChild === undefined) ownedGatewayShutdownMode = undefined
+  })
 }
 
 async function healthOk(gatewayUrl: string): Promise<boolean> {
@@ -101,6 +144,18 @@ function repoRoot(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..")
 }
 
+
+function canBindGatewayUrl(gatewayUrl: string): Promise<boolean> {
+  const port = Number(gatewayPort(gatewayUrl))
+  if (!Number.isInteger(port) || port <= 0) return Promise.resolve(false)
+  return new Promise((resolveBind) => {
+    const server = createServer()
+    server.once("error", () => resolveBind(false))
+    server.listen(port, "127.0.0.1", () => {
+      server.close(() => resolveBind(true))
+    })
+  })
+}
 function gatewayPort(gatewayUrl: string): string | undefined {
   try {
     return new URL(gatewayUrl).port || undefined
@@ -132,4 +187,25 @@ function readJsonBody(req: import("node:http").IncomingMessage): Promise<Record<
 function writeJson(res: import("node:http").ServerResponse, payload: unknown): void {
   res.setHeader("content-type", "application/json")
   res.end(JSON.stringify(payload))
+}
+
+function killOwnedGateway(): void {
+  const child = ownedGatewayChild
+  if (!child) return
+  ownedGatewayChild = undefined
+  const shutdownMode = ownedGatewayShutdownMode
+  ownedGatewayShutdownMode = undefined
+  try {
+    if (shutdownMode === "stdin-eof") {
+      child.stdin?.end()
+      const timer = setTimeout(() => {
+        if (child.exitCode === null && !child.killed) child.kill()
+      }, 5_000)
+      timer.unref()
+    } else {
+      child.kill()
+    }
+  } catch {
+    // Already exited.
+  }
 }

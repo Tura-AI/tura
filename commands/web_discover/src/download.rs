@@ -22,7 +22,7 @@ pub(super) fn download_images(
         .timeout(Duration::from_secs(45))
         .user_agent("Tura web_discover/1.0")
         .build()
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| format!("failed to create web_discover download client: {err}"))?;
     let mut handles = Vec::new();
     for (index, result) in results.iter().cloned().enumerate() {
         let client = client.clone();

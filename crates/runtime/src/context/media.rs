@@ -102,6 +102,8 @@ fn strip_read_media_payload_data(value: &mut serde_json::Value) {
 fn command_run_media_image_urls(value: &serde_json::Value) -> Vec<String> {
     let mut urls = Vec::new();
     collect_command_run_media_image_urls(value.get("output").unwrap_or(value), &mut urls);
+    let mut seen = std::collections::HashSet::new();
+    urls.retain(|url| seen.insert(url.clone()));
     urls
 }
 
@@ -133,6 +135,11 @@ fn collect_command_run_media_image_urls(value: &serde_json::Value, urls: &mut Ve
 fn command_run_media_input_files(value: &serde_json::Value) -> Vec<serde_json::Value> {
     let mut inputs = Vec::new();
     collect_command_run_media_input_files(value.get("output").unwrap_or(value), &mut inputs);
+    let mut seen = std::collections::HashSet::new();
+    inputs.retain(|input| {
+        let key = serde_json::to_string(input).unwrap_or_else(|_| input.to_string());
+        seen.insert(key)
+    });
     inputs
 }
 
@@ -179,26 +186,229 @@ fn collect_command_run_media_input_files(
 }
 
 fn command_run_media_audio_preview_count(value: &serde_json::Value) -> usize {
-    let mut count = 0;
-    collect_command_run_media_audio_preview_count(value.get("output").unwrap_or(value), &mut count);
-    count
+    let mut previews = Vec::new();
+    collect_command_run_media_audio_previews(value.get("output").unwrap_or(value), &mut previews);
+    let mut seen = std::collections::HashSet::new();
+    previews
+        .into_iter()
+        .filter(|preview| seen.insert(preview.clone()))
+        .count()
 }
 
-fn collect_command_run_media_audio_preview_count(value: &serde_json::Value, count: &mut usize) {
+fn collect_command_run_media_audio_previews(value: &serde_json::Value, previews: &mut Vec<String>) {
     match value {
         serde_json::Value::Object(object) => {
             if object.get("type").and_then(serde_json::Value::as_str) == Some("audio_url") {
-                *count += 1;
+                previews.push(serde_json::to_string(value).unwrap_or_else(|_| value.to_string()));
             }
             for child in object.values() {
-                collect_command_run_media_audio_preview_count(child, count);
+                collect_command_run_media_audio_previews(child, previews);
             }
         }
         serde_json::Value::Array(items) => {
             for item in items {
-                collect_command_run_media_audio_preview_count(item, count);
+                collect_command_run_media_audio_previews(item, previews);
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        command_run_media_audio_preview_count, command_run_media_content_items_for_context,
+        command_run_media_image_urls, command_run_media_input_files,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn non_read_media_command_run_does_not_create_media_context_items() {
+        let value = json!({
+            "tool_name": "command_run",
+            "input": {
+                "commands": [
+                    {"step": 1, "command_type": "shell_command", "command_line": "echo ok"}
+                ]
+            },
+            "output": {
+                "results": [{
+                    "step": 1,
+                    "command_type": "shell_command",
+                    "response": {"ok": true, "stdout": "ok\n", "stderr": ""}
+                }]
+            }
+        });
+
+        assert!(command_run_media_content_items_for_context(&value).is_none());
+        assert!(command_run_media_image_urls(&value).is_empty());
+        assert!(command_run_media_input_files(&value).is_empty());
+        assert_eq!(command_run_media_audio_preview_count(&value), 0);
+    }
+
+    #[test]
+    fn read_media_context_strips_large_payload_data_but_keeps_media_references() {
+        let value = json!({
+            "tool_name": "command_run",
+            "input": {
+                "commands": [
+                    {"step": 1, "command_type": "read_media", "command_line": "read_media image.png"}
+                ]
+            },
+            "output": {
+                "results": [{
+                    "step": 1,
+                    "command_type": "read_media",
+                    "output": {
+                        "summary": "image and document previews",
+                        "visual_preview_count": 2,
+                        "visual_previews": [
+                            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}},
+                            {"nested": {"type": "image_url", "image_url": {"url": "https://cdn.example.com/preview.jpg"}}}
+                        ],
+                        "audio_preview_count": 1,
+                        "audio_previews": [
+                            {"type": "audio_url", "audio_url": {"url": "data:audio/wav;base64,BBB"}}
+                        ],
+                        "file_attachment_count": 2,
+                        "file_attachments": [
+                            {
+                                "type": "file",
+                                "file_name": "report.pdf",
+                                "mime_type": "application/pdf",
+                                "data_base64": "PDFDATA"
+                            },
+                            {
+                                "type": "file",
+                                "file_name": "raw.bin",
+                                "mime_type": "application/octet-stream",
+                                "data_base64": "BINDATA"
+                            }
+                        ]
+                    },
+                    "response": {
+                        "ok": true,
+                        "stdout": "",
+                        "stderr": "",
+                        "output": {
+                            "summary": "image and document previews",
+                            "visual_preview_count": 2,
+                            "visual_previews": [
+                                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}},
+                                {"nested": {"type": "image_url", "image_url": {"url": "https://cdn.example.com/preview.jpg"}}}
+                            ],
+                            "audio_preview_count": 1,
+                            "audio_previews": [
+                                {"type": "audio_url", "audio_url": {"url": "data:audio/wav;base64,BBB"}}
+                            ],
+                            "file_attachment_count": 2,
+                            "file_attachments": [
+                                {
+                                    "type": "file",
+                                    "file_name": "report.pdf",
+                                    "mime_type": "application/pdf",
+                                    "data_base64": "PDFDATA"
+                                },
+                                {
+                                    "type": "file",
+                                    "file_name": "raw.bin",
+                                    "mime_type": "application/octet-stream",
+                                    "data_base64": "BINDATA"
+                                }
+                            ]
+                        }
+                    }
+                }]
+            }
+        });
+
+        let content = command_run_media_content_items_for_context(&value).expect("media content");
+
+        assert_eq!(content[0]["type"], "input_text");
+        let text = content[0]["text"].as_str().expect("text item");
+        assert!(text.contains("omitted_from_text"));
+        assert!(text.contains("\"count\": 2"));
+        assert!(!text.contains("AAA"));
+        assert!(!text.contains("BBB"));
+        assert!(!text.contains("PDFDATA"));
+        assert!(!text.contains("BINDATA"));
+
+        assert!(content.iter().any(|item| {
+            item["type"] == "input_image" && item["image_url"] == "data:image/png;base64,AAA"
+        }));
+        assert!(content.iter().any(|item| {
+            item["type"] == "input_image"
+                && item["image_url"] == "https://cdn.example.com/preview.jpg"
+        }));
+        assert!(content.iter().any(|item| {
+            item["type"] == "input_text"
+                && item["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("Audio media omitted: 1"))
+        }));
+        assert!(content.iter().any(|item| {
+            item["type"] == "input_file"
+                && item["filename"] == "report.pdf"
+                && item["file_data"] == "data:application/pdf;base64,PDFDATA"
+        }));
+        assert!(!content.iter().any(|item| item["filename"] == "raw.bin"));
+    }
+
+    #[test]
+    fn read_media_context_limits_images_and_input_files() {
+        let image_items = (0..30)
+            .map(|index| {
+                json!({
+                    "type": "image_url",
+                    "image_url": {"url": format!("https://cdn.example.com/{index}.jpg")}
+                })
+            })
+            .collect::<Vec<_>>();
+        let file_items = (0..12)
+            .map(|index| {
+                json!({
+                    "type": "file",
+                    "file_name": format!("file-{index}.txt"),
+                    "mime_type": "text/plain",
+                    "data_base64": format!("DATA{index}")
+                })
+            })
+            .collect::<Vec<_>>();
+        let value = json!({
+            "output": {
+                "results": [{
+                    "step": 1,
+                    "command_type": "read_media",
+                    "response": {
+                        "ok": true,
+                        "output": {
+                            "visual_previews": image_items,
+                            "file_attachments": file_items
+                        }
+                    }
+                }]
+            }
+        });
+
+        let content = command_run_media_content_items_for_context(&value).expect("media content");
+        let image_count = content
+            .iter()
+            .filter(|item| item["type"] == "input_image")
+            .count();
+        let file_count = content
+            .iter()
+            .filter(|item| item["type"] == "input_file")
+            .count();
+
+        assert_eq!(image_count, 24);
+        assert_eq!(file_count, 8);
+        assert!(content
+            .iter()
+            .any(|item| item["image_url"] == "https://cdn.example.com/23.jpg"));
+        assert!(!content
+            .iter()
+            .any(|item| item["image_url"] == "https://cdn.example.com/24.jpg"));
+        assert!(content.iter().any(|item| item["filename"] == "file-7.txt"));
+        assert!(!content.iter().any(|item| item["filename"] == "file-8.txt"));
     }
 }

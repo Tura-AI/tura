@@ -114,10 +114,26 @@
 }
 
 .transcript-inner {
+  position: relative;
   display: grid;
   align-content: start;
   min-height: 100%;
   padding: var(--space-4) 0 var(--space-2);
+}
+
+.transcript-virtual-space {
+  position: relative;
+  width: 100%;
+  min-height: 1px;
+}
+
+.transcript-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  contain: layout paint;
+  will-change: transform;
 }
 
 .conversation-bottom {

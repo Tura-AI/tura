@@ -265,33 +265,6 @@ fn gui_dist_candidates_for(
     candidates
 }
 
-#[cfg(test)]
-mod tests {
-    use super::gui_dist_candidates_for;
-    use std::path::PathBuf;
-
-    #[test]
-    fn gui_dist_candidates_cover_release_and_repo_builds() {
-        let candidates = gui_dist_candidates_for(
-            Some(PathBuf::from("explicit")),
-            Some(PathBuf::from("target/release/tura_gateway")),
-            Some(PathBuf::from("repo")),
-            Some(PathBuf::from("cwd")),
-        );
-
-        assert_eq!(
-            candidates,
-            vec![
-                PathBuf::from("explicit"),
-                PathBuf::from("target/release/gui"),
-                PathBuf::from("repo/apps/gui/app/dist"),
-                PathBuf::from("repo/gui"),
-                PathBuf::from("cwd/gui"),
-            ]
-        );
-    }
-}
-
 fn build_oauth_callback_router() -> Router {
     Router::new()
         .route(
@@ -318,8 +291,8 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     api::session::start_task_scheduler();
     api::provider::start_provider_auth_scheduler();
 
-    println!("🚀 Gateway server starting on http://{}", addr);
-    println!("📡 Health check: http://{}/global/health", addr);
+    println!("🚀 Gateway server starting on http://{addr}");
+    println!("📡 Health check: http://{addr}/global/health");
 
     start_openai_oauth_callback_server(port).await;
 
@@ -371,5 +344,35 @@ pub async fn main() {
         .and_then(|value| value.trim().parse::<u16>().ok())
         .unwrap_or(4156);
 
-    run_server(port).await.expect("Server error");
+    if let Err(error) = run_server(port).await {
+        eprintln!("gateway server stopped with error: {error}");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gui_dist_candidates_for;
+    use std::path::PathBuf;
+
+    #[test]
+    fn gui_dist_candidates_cover_release_and_repo_builds() {
+        let candidates = gui_dist_candidates_for(
+            Some(PathBuf::from("explicit")),
+            Some(PathBuf::from("target/release/tura_gateway")),
+            Some(PathBuf::from("repo")),
+            Some(PathBuf::from("cwd")),
+        );
+
+        assert_eq!(
+            candidates,
+            vec![
+                PathBuf::from("explicit"),
+                PathBuf::from("target/release/gui"),
+                PathBuf::from("repo/apps/gui/app/dist"),
+                PathBuf::from("repo/gui"),
+                PathBuf::from("cwd/gui"),
+            ]
+        );
+    }
 }

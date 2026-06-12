@@ -79,9 +79,12 @@ impl FileLockManager {
     }
 
     fn acquire_one(&self, key: &str, mode: LockMode) {
-        let mut state = self.state.lock().expect("file lock state poisoned");
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         while !can_acquire(&state, key, mode) {
-            state = self.condvar.wait(state).expect("file lock wait poisoned");
+            state = self
+                .condvar
+                .wait(state)
+                .unwrap_or_else(|error| error.into_inner());
         }
         match mode {
             LockMode::Read => {
@@ -94,7 +97,7 @@ impl FileLockManager {
     }
 
     fn release_one(&self, key: &str, mode: LockMode) {
-        let mut state = self.state.lock().expect("file lock state poisoned");
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         match mode {
             LockMode::Read => {
                 let count = state

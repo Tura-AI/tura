@@ -108,7 +108,7 @@ fn upsert(session_id: &str, workspace: &str) -> SessionLogCommand {
             "created_at": 1,
             "updated_at": 1,
             "status": "idle",
-            "management": { "session_id": session_id, "session_name": "PM", "state": "Idle" }
+            "management": { "session_id": session_id, "session_name": "PM", "state": "created" }
         }),
         parent_id: None,
         messages: vec![serde_json::json!({

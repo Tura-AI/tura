@@ -242,9 +242,8 @@ pub(super) fn args_from_parts(
 
 pub(super) fn normalize_kind(value: &str) -> String {
     match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
-        "web" | "page" | "pages" | "site" | "website" | "webpage" | "webpages" => {
-            "website".to_string()
-        }
+        "web" | "page" | "pages" | "site" | "website" | "webpage" | "webpages" | "web_page"
+        | "web_pages" => "website".to_string(),
         "img" | "images" | "photo" | "photos" => "image".to_string(),
         "videos" | "movie" | "movies" => "video".to_string(),
         "sound" | "music" => "audio".to_string(),

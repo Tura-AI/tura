@@ -1,9 +1,11 @@
+use serde_json::json;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 fn main() {
+    tura_path::process_hardening::harden_current_process("gateway");
     configure_release_runtime_env();
 
     if std::env::args().nth(1).as_deref() == Some("session-log") {
@@ -11,10 +13,16 @@ fn main() {
         return;
     }
 
-    let runtime = tokio::runtime::Builder::new_multi_thread()
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .expect("gateway tokio runtime should start");
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("gateway tokio runtime failed to start: {error}");
+            std::process::exit(1);
+        }
+    };
 
     if std::env::var("OPENAI_LOGIN")
         .ok()
@@ -54,22 +62,26 @@ fn main() {
         }
         PortDecision::Unavailable(port) => {
             eprintln!("gateway port {port} is occupied by a foreign process; set PORT to an explicit free port or stop the foreign process");
+            drop(gateway_lock);
             std::process::exit(1);
         }
     };
     // Keep the resolved port visible to children (runtime workers, callbacks).
     std::env::set_var("PORT", port.to_string());
 
-    runtime.block_on(async {
-        if let Err(error) = gateway::router_process::start_global_router_process() {
-            eprintln!("gateway failed to start persistent router: {error:#}");
-            std::process::exit(1);
-        }
-        gateway::web::server::run_server(port)
-            .await
-            .expect("Server error");
-    });
+    if let Err(error) = gateway::router_process::start_global_router_process() {
+        eprintln!("gateway failed to start persistent router: {error:#}");
+        drop(gateway_lock);
+        std::process::exit(1);
+    }
+    start_router_front_heartbeat();
+    install_stdin_eof_shutdown_watcher();
+    let server_result = runtime.block_on(gateway::web::server::run_server(port));
     drop(gateway_lock);
+    if let Err(error) = server_result {
+        eprintln!("gateway server stopped with error: {error}");
+        std::process::exit(1);
+    }
 }
 
 /// Default gateway port for a bare invocation, derived from the compile-time
@@ -179,6 +191,56 @@ fn configure_release_runtime_env() {
     }
 }
 
+fn install_stdin_eof_shutdown_watcher() {
+    if std::env::var("TURA_GATEWAY_SHUTDOWN_ON_STDIN_EOF")
+        .ok()
+        .as_deref()
+        != Some("1")
+    {
+        return;
+    }
+    std::thread::spawn(|| {
+        let mut stdin = std::io::stdin();
+        let mut buffer = [0_u8; 1];
+        loop {
+            match stdin.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
+        std::process::exit(0);
+    });
+}
+
+fn start_router_front_heartbeat() {
+    let front_id = format!("gateway-{}-{}", std::process::id(), uuid::Uuid::new_v4());
+    let ttl = gateway_router_lease_ttl();
+    let interval = ttl.div_f64(3.0).max(Duration::from_secs(1));
+    std::thread::spawn(move || loop {
+        if let Ok(router_process) = gateway::router_process::global_router_process() {
+            let _ = router_process.call(
+                "lifecycle.front_heartbeat",
+                json!({
+                    "front_id": front_id,
+                    "kind": "gateway",
+                    "ttl_ms": ttl.as_millis() as u64,
+                }),
+            );
+        }
+        std::thread::sleep(interval);
+    });
+}
+
+fn gateway_router_lease_ttl() -> Duration {
+    std::env::var("TURA_GATEWAY_ROUTER_LEASE_TTL_SECS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(15))
+}
+
 fn project_root_from_exe() -> PathBuf {
     std::env::current_exe()
         .ok()
@@ -227,7 +289,13 @@ fn run_session_log_command() {
     match result {
         Ok(response) => println!(
             "{}",
-            serde_json::to_string(&response).expect("session_log response should serialize")
+            match serde_json::to_string(&response) {
+                Ok(encoded) => encoded,
+                Err(error) => {
+                    eprintln!("session-log response serialization failed: {error}");
+                    std::process::exit(1);
+                }
+            }
         ),
         Err(error) => {
             eprintln!("session-log session_db command failed: {error:#}");

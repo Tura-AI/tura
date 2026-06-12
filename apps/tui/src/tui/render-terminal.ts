@@ -187,6 +187,14 @@ function graphemeWidth(segment: string): number {
     (code >= 0xfe30 && code <= 0xfe6f) ||
     (code >= 0xff00 && code <= 0xff60) ||
     (code >= 0xffe0 && code <= 0xffe6) ||
+    (code >= 0x16fe0 && code <= 0x16fff) ||
+    (code >= 0x17000 && code <= 0x187ff) ||
+    (code >= 0x18800 && code <= 0x18aff) ||
+    (code >= 0x18b00 && code <= 0x18cff) ||
+    (code >= 0x18d00 && code <= 0x18d8f) ||
+    (code >= 0x1aff0 && code <= 0x1afff) ||
+    (code >= 0x20000 && code <= 0x2fffd) ||
+    (code >= 0x30000 && code <= 0x3fffd) ||
     (code >= 0x1f300 && code <= 0x1faff)
   ) {
     return 2;

@@ -138,14 +138,12 @@ fn loads_codex_oauth_tokens_from_codex_home() {
         "OPENAI_REFRESH_TOKEN",
         "OPENAI_ACCOUNT_ID",
         "TURA_PROVIDER_CONFIG",
-        "TURALLM_CONFIG",
     ]);
     std::env::remove_var("OPENAI_LOGIN");
     std::env::remove_var("OPENAI_API_KEY");
     std::env::remove_var("OPENAI_REFRESH_TOKEN");
     std::env::remove_var("OPENAI_ACCOUNT_ID");
     std::env::remove_var("TURA_PROVIDER_CONFIG");
-    std::env::remove_var("TURALLM_CONFIG");
 
     let codex_home = unique_temp_dir("codex-home");
     std::fs::write(
@@ -192,7 +190,6 @@ fn openai_oauth_login_uses_provider_auth_config() {
         "OPENAI_LOGIN",
         "OPENAI_API_KEY",
         "TURA_PROVIDER_CONFIG",
-        "TURALLM_CONFIG",
     ]);
     std::env::remove_var("CODEX_HOME");
     std::env::remove_var("OPENAI_LOGIN");
@@ -203,7 +200,7 @@ fn openai_oauth_login_uses_provider_auth_config() {
     let config = dir.join("provider_config.json");
     std::fs::write(&config, r#"{"provider_auth":{"openai":{"login":"oauth"}}}"#)
         .expect("provider config");
-    std::env::set_var("TURALLM_CONFIG", &config);
+    std::env::set_var("TURA_PROVIDER_CONFIG", &config);
 
     assert!(openai_login_is_oauth(
         &crate::tura_conf::TuraConfig::default()

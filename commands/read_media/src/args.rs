@@ -316,3 +316,109 @@ fn u64_value(value: &Value, keys: &[&str]) -> Option<u64> {
             .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()))
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        bool_value, parse_args_text, parse_args_value, split_cli_assignment, split_cli_words,
+        string_list, u64_value,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn cli_parser_accepts_command_name_quotes_assignments_and_clamps_limits() {
+        let args = parse_args_text(
+            "read_media --path \"docs/a file.txt\" --max-side=2048 --max-files 0 --max-text-chars 50 --max-visuals 999 --pdf-pages 99 --no-text",
+        )
+        .expect("cli args should parse");
+
+        assert_eq!(args.paths, vec!["docs/a file.txt"]);
+        assert!(!args.include_text);
+        assert_eq!(args.max_side, 1024);
+        assert_eq!(args.max_files, 1);
+        assert_eq!(args.max_text_chars, 1_000);
+        assert_eq!(args.max_visuals, crate::types::MAX_VISUALS);
+        assert_eq!(args.pdf_max_pages, 50);
+    }
+
+    #[test]
+    fn value_parser_accepts_aliases_and_string_booleans() {
+        let args = parse_args_value(json!({
+            "files": ["a.png", "b.pdf"],
+            "includeText": "off",
+            "maxVisuals": "3",
+            "maxSide": "64",
+            "maxDirectoryFiles": "250",
+            "pdfPages": "0",
+            "documentAttachmentBytes": "1",
+            "audioPreviewBytes": "9000000"
+        }))
+        .expect("json args should parse");
+
+        assert_eq!(args.paths, vec!["a.png", "b.pdf"]);
+        assert!(!args.include_text);
+        assert_eq!(args.max_visuals, 3);
+        assert_eq!(args.max_side, 128);
+        assert_eq!(args.max_files, 100);
+        assert_eq!(args.pdf_max_pages, 1);
+        assert_eq!(args.document_attachment_bytes, 100_000);
+        assert_eq!(args.audio_preview_bytes, 5_000_000);
+    }
+
+    #[test]
+    fn array_value_is_treated_as_path_list() {
+        let args =
+            parse_args_value(json!(["one.txt", "", "two.txt"])).expect("array args should parse");
+
+        assert_eq!(args.paths, vec!["one.txt", "two.txt"]);
+    }
+
+    #[test]
+    fn parser_rejects_empty_paths_and_unknown_options() {
+        let no_path = parse_args_text("").expect_err("empty input should fail");
+        assert!(no_path.contains("requires at least one path"));
+
+        let unsupported =
+            parse_args_text("--unknown file.txt").expect_err("unknown option should fail");
+        assert!(unsupported.contains("unsupported read_media option"));
+    }
+
+    #[test]
+    fn json_text_errors_are_reported_with_context() {
+        let error = parse_args_text("{not-json").expect_err("invalid JSON should fail");
+        assert!(error.contains("invalid read_media command_line JSON"));
+    }
+
+    #[test]
+    fn helper_parsers_cover_bool_number_lists_and_shell_words() {
+        assert_eq!(
+            split_cli_words("cat 'a b.txt' \"c d.txt\""),
+            vec!["cat", "a b.txt", "c d.txt"]
+        );
+        assert_eq!(
+            split_cli_assignment("--max-side=512"),
+            ("--max-side".to_string(), Some("512".to_string()))
+        );
+        assert_eq!(
+            string_list(&json!({ "path": " a.txt " }), &["path"]),
+            vec!["a.txt"]
+        );
+        assert_eq!(
+            string_list(&json!(["a.txt", 1, " b.txt "]), &[]),
+            vec!["a.txt", "b.txt"]
+        );
+        assert_eq!(
+            bool_value(&json!({ "includeText": "yes" }), &["includeText"]),
+            Some(true)
+        );
+        assert_eq!(
+            bool_value(&json!({ "includeText": "no" }), &["includeText"]),
+            Some(false)
+        );
+        assert_eq!(
+            bool_value(&json!({ "includeText": "maybe" }), &["includeText"]),
+            None
+        );
+        assert_eq!(u64_value(&json!({ "max": "42" }), &["max"]), Some(42));
+    }
+}

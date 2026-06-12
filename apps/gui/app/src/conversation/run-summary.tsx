@@ -1,6 +1,6 @@
 import type { MessagePart } from "@tura/gateway-sdk";
 import SquareTerminal from "lucide-solid/icons/square-terminal";
-import { createMemo } from "solid-js";
+import { Show, createMemo } from "solid-js";
 import { t } from "../i18n";
 import { asRecord, toolRecords } from "./message-tools";
 
@@ -53,22 +53,24 @@ export function RunSummary(props: {
     }),
   );
   return (
-    <button
-      class="run-summary"
-      type="button"
-      title={`${label()} · ${props.duration}`}
-      onClick={() => {
-        const part = selectedPart();
-        if (part) {
-          props.onTool(part);
-        }
-      }}
-    >
-      <SquareTerminal size={14} strokeWidth={1.8} />
-      <span class="run-summary-label">{label()}</span>
-      <span class="run-summary-time">{props.duration}</span>
-      <span class="run-summary-chevron">›</span>
-    </button>
+    <Show when={recordCount() > 0}>
+      <button
+        class="run-summary"
+        type="button"
+        title={`${label()} · ${props.duration}`}
+        onClick={() => {
+          const part = selectedPart();
+          if (part) {
+            props.onTool(part);
+          }
+        }}
+      >
+        <SquareTerminal size={14} strokeWidth={1.8} />
+        <span class="run-summary-label">{label()}</span>
+        <span class="run-summary-time">{props.duration}</span>
+        <span class="run-summary-chevron">›</span>
+      </button>
+    </Show>
   );
 }
 

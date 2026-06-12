@@ -226,3 +226,119 @@ pub(super) fn supported_posix_shell_kind(path: &Path) -> Option<&'static str> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        default_posix_shell_executable, looks_posix_shell_script, normalize_bash_command,
+        powershell_executable, prefix_powershell_script_with_utf8, supported_posix_shell_kind,
+        zsh_candidate_paths,
+    };
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn utf8_prefix_is_idempotent() {
+        let script = "Write-Output ok";
+        let prefixed = prefix_powershell_script_with_utf8(script);
+        assert!(prefixed.contains("[Console]::InputEncoding"));
+        assert!(prefixed.ends_with(script));
+
+        let already_prefixed = prefix_powershell_script_with_utf8(&prefixed);
+        assert_eq!(already_prefixed, prefixed);
+    }
+
+    #[test]
+    fn default_shell_executables_have_stable_cross_platform_fallbacks() {
+        let (posix_path, kind) = default_posix_shell_executable();
+        assert!(matches!(kind, "bash" | "zsh" | "sh"));
+        assert!(!posix_path.as_os_str().is_empty());
+
+        let powershell = powershell_executable();
+        assert!(!powershell.as_os_str().is_empty());
+        if cfg!(windows) {
+            let name = powershell
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            assert!(
+                matches!(
+                    name.to_ascii_lowercase().as_str(),
+                    "pwsh" | "pwsh.exe" | "powershell" | "powershell.exe"
+                ) || powershell.is_absolute()
+            );
+        } else {
+            assert_eq!(powershell, PathBuf::from("pwsh"));
+        }
+    }
+
+    #[test]
+    fn zsh_candidates_are_platform_specific_and_ordered() {
+        let candidates = zsh_candidate_paths();
+        assert!(!candidates.is_empty());
+        if cfg!(target_os = "macos") {
+            assert_eq!(candidates[0], "/bin/zsh");
+        } else if cfg!(windows) {
+            assert!(candidates
+                .iter()
+                .all(|candidate| candidate.ends_with(".exe")));
+        } else {
+            assert!(candidates
+                .iter()
+                .all(|candidate| candidate.contains("/zsh")));
+        }
+    }
+
+    #[test]
+    fn supported_posix_shell_kind_normalizes_case_and_exe_suffix() {
+        assert_eq!(
+            supported_posix_shell_kind(Path::new(r"C:\Tools\ZSH.EXE")),
+            Some("zsh")
+        );
+        assert_eq!(
+            supported_posix_shell_kind(Path::new("/usr/local/bin/Bash")),
+            Some("bash")
+        );
+        assert_eq!(supported_posix_shell_kind(Path::new("sh")), Some("sh"));
+        assert_eq!(supported_posix_shell_kind(Path::new("fish.exe")), None);
+        assert_eq!(supported_posix_shell_kind(Path::new("")), None);
+    }
+
+    #[test]
+    fn posix_script_detection_accepts_common_bash_shapes_and_rejects_powershell() {
+        for script in [
+            "python - <<'PY'\nprint('ok')\nPY",
+            "python3 - <<'PY'\nprint('ok')\nPY",
+            "for file in src/*.rs; do cat \"$file\"; done",
+            "cd src && sed -n '1,20p' lib.rs",
+            "echo $(basename src/lib.rs)",
+            "#!/usr/bin/env bash\nset -e",
+            "#!/bin/bash\nset -e",
+        ] {
+            assert!(looks_posix_shell_script(script), "{script}");
+        }
+
+        for script in [
+            "PowerShell -Command \"Write-Output ok\"",
+            "pwsh -NoProfile -Command \"Write-Output ok\"",
+            "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -Command \"Write-Output ok\"",
+            "Get-Content src/lib.rs; Write-Output done",
+            "$env:PYTHONPATH='src'; python -c \"print('ok')\"",
+        ] {
+            assert!(!looks_posix_shell_script(script), "{script}");
+        }
+    }
+
+    #[test]
+    fn normalize_bash_command_rewrites_only_wsl_mount_prefixes_on_windows() {
+        let command = "/mnt/c/Users/me/project && echo /mnt/not-drive && echo /mnt/z";
+        let normalized = normalize_bash_command(command);
+
+        if cfg!(windows) {
+            assert!(normalized.starts_with("C:/Users/me/project"));
+            assert!(normalized.contains("/mnt/not-drive"));
+            assert!(normalized.ends_with("/mnt/z"));
+        } else {
+            assert_eq!(normalized, command);
+        }
+    }
+}

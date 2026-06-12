@@ -1,4 +1,5 @@
-#![warn(clippy::unwrap_used)]
+#![deny(clippy::unwrap_used)]
+#![forbid(unsafe_code)]
 
 pub mod api;
 pub mod channel;
@@ -22,3 +23,12 @@ pub use runtime::GatewayRuntime;
 pub use session::{session_store, SessionInfo, SessionManager, SessionStatus, SessionStore};
 pub use simple_runtime::{SimpleGatewayRuntime, SimpleMessageHandler};
 pub use types::*;
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    pub(crate) fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner())
+    }
+}

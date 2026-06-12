@@ -169,6 +169,7 @@ export const en = {
   gatewayBuilding: "Gateway binary is missing; building Gateway...",
   gatewayResponseTimeout:
     "Gateway did not respond within 5 seconds. Check whether Gateway is running.",
+  devModeActive: "Dev mode active — provider LLM call logs: ",
   gatewayStarting: "Trying to start Gateway...",
   gatewayWaiting: "Waiting for Gateway health...",
   fullscreen: "Fullscreen",
@@ -241,7 +242,7 @@ export const en = {
   providerType: "Provider type",
   previous: "Previous",
   question: "Question",
-  gantt: "Gantt",
+  gantt: "Pipeline",
   calendar: "Calendar",
   todoList: "Todo list",
   splitCollaboration: "Split",

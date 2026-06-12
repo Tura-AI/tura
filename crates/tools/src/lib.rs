@@ -1,3 +1,6 @@
+#![deny(clippy::unwrap_used)]
+#![deny(unsafe_code)]
+
 pub mod command_run;
 pub mod commands;
 pub mod external;

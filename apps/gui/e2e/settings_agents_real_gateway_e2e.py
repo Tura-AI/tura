@@ -111,7 +111,7 @@ def start_gateway() -> subprocess.Popen | None:
     env = os.environ.copy()
     env["PORT"] = port
     return subprocess.Popen(
-        [cargo, "run", "-p", "gateway", "--bin", "gateway"],
+        [cargo, "run", "-p", "gateway", "--bin", "tura_gateway"],
         cwd=ROOT,
         env=env,
         stdout=(OUT / "gateway.log").open("w", encoding="utf-8"),

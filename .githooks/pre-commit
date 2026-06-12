@@ -1,8 +1,0 @@
-#!/usr/bin/env sh
-set -eu
-
-ROOT=$(git rev-parse --show-toplevel)
-cd "$ROOT"
-
-echo "Running backend quality checks before commit..."
-exec sh scripts/check-backend-quality.sh

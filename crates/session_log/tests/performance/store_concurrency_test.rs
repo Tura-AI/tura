@@ -198,7 +198,7 @@ fn upsert(session_id: &str, workspace: &str, sequence: i64) -> UpsertSessionRequ
             "management": {
                 "session_id": session_id,
                 "session_name": format!("Stress {sequence}"),
-                "state": "Idle"
+                "state": "created"
             }
         }),
         parent_id: None,

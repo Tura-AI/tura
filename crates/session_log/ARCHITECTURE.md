@@ -23,8 +23,12 @@ crates/session_log/
     path.rs
     protocol.rs
     service.rs
+    session_state.rs
     store.rs
   tests/
+    business/
+      router_adopts_live_session_db_flow.rs
+    process_lifecycle_e2e.rs
     performance/
       process_management_test.rs
       store_concurrency_test.rs
@@ -57,8 +61,8 @@ written under the workspace `.tura` directory.
 service's `tura_path::instance_version()`. `call_service` refuses to talk to a
 service whose version does not match this build (`ensure_version_compatible`),
 implementing the codex-style handshake so a dev client never drives a release
-service (or vice versa). A legacy endpoint with no published version is treated
-as compatible.
+service (or vice versa). Endpoint files without a published version are accepted
+only long enough to probe or replace the service record.
 
 ### Single Store Owner
 
@@ -68,6 +72,11 @@ queued through the file queue and reads fail fast instead of opening the store
 inside the front process. This keeps process ownership predictable and avoids
 multi-writer startup races.
 
+The service also holds an exclusive per-home owner lock under
+`<TURA_HOME>/.tura/locks/session-db-<build_kind>.lock`. A second
+`tura_session_db` for the same home must fail before it can replace the
+published endpoint.
+
 Clients treat the published `service.addr` as a hint, not as proof that the
 owner still exists. `service_is_running` uses a short loopback probe and removes
 an unreachable address file; async runtime writes then enqueue locally instead
@@ -75,6 +84,20 @@ of paying the full service connection timeout on every checkpoint. The file
 queue also moves orphaned `message_queue/processing/*.json` files back to
 `pending` at the start of each drain, which recovers writes left behind by a
 killed session-db process.
+
+The SQLite `session_write_queue` replays pending write commands on service
+startup. It accepts `upsert_session`, `apply_command_checkpoint`,
+`delete_session`, and `delete_workspace`; checkpoint replay is idempotent by the
+checkpoint idempotency key.
+
+Mandatory crate tests cover the service owner rule directly:
+`tests/process_lifecycle_e2e.rs` starts a real `tura_session_db`, verifies that a
+second owner is rejected, checks bad-input recovery and idempotent upsert, then
+performs graceful shutdown and asserts endpoint/lock cleanup.
+`tests/business/router_adopts_live_session_db_flow.rs` kills a real router while
+leaving session_db alive, verifies queued and direct writes continue, and then
+starts a new router that adopts the existing session_db endpoint. Higher-level
+workspace process tests live in root `tests/business/process_state_management_e2e.rs`.
 
 ## Tables
 
@@ -135,6 +158,29 @@ session_records
 `management_json` is the runtime `SessionManagement` payload used for resume.
 `session_json` is the gateway `SessionInfo` snapshot used for hydration.
 `todos_json` keeps UI todo projections with the session snapshot.
+
+The workspace `sessions` row is the authoritative snapshot for reads and
+resume. The index row locates that workspace database and supports listing, but
+`get_session` and `list_sessions` hydrate lifecycle fields and management JSON
+from the workspace row so stale index state cannot resurrect an old FSM value.
+
+`session_records` is append/update oriented. Records are uniquely identified by
+`session_id + message_id`; an upsert updates an existing record with the same
+message id and inserts new records, but it does not delete the whole session's
+record history before writing. This keeps earlier replay records available if a
+later process crash only flushes a partial turn.
+
+`state` is the only authoritative session lifecycle value. It is the canonical
+`session_log::SessionState` enum serialized in snake_case:
+`created`, `running`, `paused`, `completed`, `failed`, `cancelled`, and
+`interrupted`. `status` is only a derived UI projection:
+`idle`, `busy`, or `error`. Store writes must derive `status` from `state`;
+callers must not provide a second lifecycle vocabulary.
+
+Startup recovery marks `running` and `paused` sessions as `interrupted` through
+the shared state transition rules and updates both `management_json` and
+`session_json`. Invalid internal state strings are rejected instead of being
+silently coerced or dropped.
 
 If a workspace database is missing, reads remove stale index snapshots and
 return only sessions that still have an authoritative workspace log.

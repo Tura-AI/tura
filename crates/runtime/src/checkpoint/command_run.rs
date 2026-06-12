@@ -30,6 +30,7 @@ pub(super) struct RuntimeCheckpoint<'a> {
 }
 
 pub(super) fn checkpoint_runtime_event(input: RuntimeCheckpoint<'_>) -> Result<(), String> {
+    let operation = input.event_type;
     let checkpoint = CommandCheckpoint {
         session_id: input.session_id.to_string(),
         turn_id: input.turn_id.to_string(),
@@ -46,10 +47,7 @@ pub(super) fn checkpoint_runtime_event(input: RuntimeCheckpoint<'_>) -> Result<(
         started_at: Some(Utc::now().to_rfc3339()),
         finished_at: None,
     };
-    CheckpointClient::discover()
-        .map_err(|error| error.to_string())?
-        .checkpoint_command_finished(checkpoint)
-        .map_err(|error| error.to_string())
+    write_checkpoint(operation, checkpoint)
 }
 
 pub fn checkpoint_command_run_started(
@@ -198,8 +196,30 @@ pub fn checkpoint_streamed_command_finished(
         started_at: None,
         finished_at: Some(Utc::now().to_rfc3339()),
     };
+    write_checkpoint(status, checkpoint)
+}
+
+fn write_checkpoint(operation: &str, checkpoint: CommandCheckpoint) -> Result<(), String> {
     CheckpointClient::discover()
-        .map_err(|error| error.to_string())?
+        .map_err(|error| checkpoint_error("discover", operation, &error.to_string()))?
         .checkpoint_command_finished(checkpoint)
-        .map_err(|error| error.to_string())
+        .map_err(|error| checkpoint_error("write", operation, &error.to_string()))
+}
+
+fn checkpoint_error(stage: &str, operation: &str, error: &str) -> String {
+    format!("failed to {stage} runtime checkpoint for {operation}: {error}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::checkpoint_error;
+
+    #[test]
+    fn checkpoint_error_keeps_stage_operation_and_source_error() {
+        let error = checkpoint_error("write", "command_ready", "sqlite busy");
+
+        assert!(error.contains("failed to write runtime checkpoint"));
+        assert!(error.contains("command_ready"));
+        assert!(error.contains("sqlite busy"));
+    }
 }

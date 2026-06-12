@@ -97,6 +97,10 @@ impl ExecutionService {
             "stopped_worker": stopped_worker
         })
     }
+
+    pub fn active_session_count(&self) -> usize {
+        self.active_sessions.lock().len()
+    }
 }
 
 fn payload_to_run_agent_request(request: &EnqueueTurnRequest) -> Result<RunAgentRequest> {
@@ -107,7 +111,13 @@ fn payload_to_run_agent_request(request: &EnqueueTurnRequest) -> Result<RunAgent
             Value::String(request.session_id.clone()),
         );
     }
-    Ok(serde_json::from_value(value)?)
+    serde_json::from_value(value).map_err(|error| {
+        anyhow!(
+            "invalid run-agent payload for turn {} session {}: {error}",
+            request.turn_id,
+            request.session_id
+        )
+    })
 }
 
 fn debug_runtime_enabled() -> bool {
@@ -119,4 +129,97 @@ fn debug_runtime_enabled() -> bool {
                 "1" | "true" | "yes" | "on"
             )
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{payload_to_run_agent_request, EnqueueTurnRequest, ExecutionService};
+    use crate::{build_state, services::manager::ServiceManager};
+    use serde_json::json;
+
+    #[test]
+    fn payload_to_run_agent_request_injects_authoritative_session_id() {
+        let request = EnqueueTurnRequest {
+            turn_id: "turn-1".to_string(),
+            session_id: "session-authoritative".to_string(),
+            payload: json!({
+                "session_id": "stale-session",
+                "prompt": "hello",
+                "model": "openai/gpt-test",
+                "worker_env": { "TURA_REASONING_EFFORT": "low" }
+            }),
+        };
+
+        let run = payload_to_run_agent_request(&request)
+            .expect("valid enqueue payload should become run-agent request");
+
+        assert_eq!(run.session_id.as_deref(), Some("session-authoritative"));
+        assert_eq!(run.prompt.as_deref(), Some("hello"));
+        assert_eq!(run.model.as_deref(), Some("openai/gpt-test"));
+        assert_eq!(
+            run.worker_env
+                .get("TURA_REASONING_EFFORT")
+                .map(String::as_str),
+            Some("low")
+        );
+    }
+
+    #[test]
+    fn payload_to_run_agent_request_reports_invalid_payload_shape() {
+        let request = EnqueueTurnRequest {
+            turn_id: "turn-invalid".to_string(),
+            session_id: "session-invalid".to_string(),
+            payload: json!({
+                "worker_env": "not-an-object"
+            }),
+        };
+
+        let error = payload_to_run_agent_request(&request)
+            .expect_err("invalid worker_env shape should be rejected");
+
+        assert!(
+            error.to_string().contains("invalid run-agent payload")
+                && error.to_string().contains("turn-invalid")
+                && error.to_string().contains("session-invalid"),
+            "invalid payload error should include turn and session context: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_idle_turn_reports_idle_without_worker_stop() {
+        let state = build_state();
+        let response = ExecutionService::new()
+            .cancel_turn(&state, json!({ "session_id": "idle-session" }))
+            .await;
+
+        assert_eq!(response["status"], "idle");
+        assert_eq!(response["session_id"], "idle-session");
+        assert_eq!(response["stopped_worker"], false);
+    }
+
+    #[tokio::test]
+    async fn cancel_active_turn_clears_active_session_without_worker() {
+        let state = build_state();
+        let service = ExecutionService::new();
+        service
+            .active_sessions
+            .lock()
+            .insert("active-session".to_string());
+
+        let response = service
+            .cancel_turn(&state, json!({ "session_id": "active-session" }))
+            .await;
+
+        assert_eq!(response["status"], "cancelling");
+        assert_eq!(response["session_id"], "active-session");
+        assert_eq!(response["stopped_worker"], false);
+        assert!(!service.active_sessions.lock().contains("active-session"));
+    }
+
+    #[test]
+    fn execution_service_starts_with_no_active_runtime_workers() {
+        let manager = ServiceManager::new();
+
+        assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 0);
+    }
 }

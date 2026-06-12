@@ -14,6 +14,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -1122,6 +1123,16 @@ checksum = "38e2275cc4e4fc009b0669731a1e5ab7ebf11f469eaede2bab9309a5b4d6057f"
 dependencies = [
  "memoffset",
  "rustc_version",
+]
+
+[[package]]
+name = "filetime"
+version = "0.2.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759"
+dependencies = [
+ "cfg-if",
+ "libc",
 ]
 
 [[package]]
@@ -3067,6 +3078,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -3312,6 +3324,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-test",
@@ -3490,10 +3503,12 @@ name = "read_media"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "filetime",
  "image",
  "pdfium-render",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -3696,11 +3711,15 @@ dependencies = [
  "serde",
  "serde_json",
  "session_log",
+ "sysinfo",
+ "tempfile",
  "tokio",
  "toml 0.8.2",
+ "tools",
  "tracing",
  "tura_path",
  "uuid",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3714,6 +3733,7 @@ dependencies = [
  "redis",
  "reqwest 0.12.28",
  "router",
+ "rusqlite",
  "serde",
  "serde_json",
  "session_log",
@@ -4150,6 +4170,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sysinfo",
  "tempfile",
  "tracing",
  "tura_path",
@@ -5114,6 +5135,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5280,6 +5302,25 @@ dependencies = [
 [[package]]
 name = "tura_path"
 version = "0.1.0"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
+name = "tura_workspace"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "router",
+ "runtime",
+ "rusqlite",
+ "serde_json",
+ "session_log",
+ "sysinfo",
+ "tempfile",
+ "tokio",
+ "tools",
+]
 
 [[package]]
 name = "typeid"
@@ -5676,6 +5717,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

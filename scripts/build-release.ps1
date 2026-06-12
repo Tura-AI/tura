@@ -48,6 +48,52 @@ function Copy-GuiDist {
   Copy-Item -Path (Join-Path $Source "*") -Destination $Destination -Recurse -Force
 }
 
+function Test-PathUnderRepo {
+  param([string]$Path)
+  $Full = [System.IO.Path]::GetFullPath($Path)
+  $Root = [System.IO.Path]::GetFullPath($RepoRoot).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+  return $Full.Equals($Root, [System.StringComparison]::OrdinalIgnoreCase) -or
+    $Full.StartsWith($Root + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase) -or
+    $Full.StartsWith($Root + [System.IO.Path]::AltDirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Stop-RepoTuraBackends {
+  $Names = @("tura", "tura_gateway", "tura_router", "tura_session_db", "tura_runtime", "tura_exec")
+  $Processes = Get-Process -ErrorAction SilentlyContinue |
+    Where-Object { $Names -contains $_.ProcessName } |
+    Where-Object {
+      try {
+        $Path = $_.Path
+        $Path -and (Test-PathUnderRepo $Path)
+      } catch {
+        $false
+      }
+    }
+  foreach ($Process in $Processes) {
+    Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+  }
+  foreach ($Process in $Processes) {
+    Wait-Process -Id $Process.Id -Timeout 5 -ErrorAction SilentlyContinue
+  }
+}
+
+function Remove-SessionDbDirtyData {
+  $Targets = @(
+    (Join-Path $RepoRoot "db\session_log"),
+    (Join-Path $RepoRoot ".tura\session_log.sqlite3"),
+    (Join-Path $RepoRoot ".tura\session_log.sqlite3-wal"),
+    (Join-Path $RepoRoot ".tura\session_log.sqlite3-shm"),
+    (Join-Path $RepoRoot ".tura\session_log.sqlite3.init.lock")
+  )
+  foreach ($Target in $Targets) {
+    $Full = [System.IO.Path]::GetFullPath($Target)
+    if (-not (Test-PathUnderRepo $Full)) {
+      throw "Refusing to delete session DB path outside repository: $Full"
+    }
+    Remove-Item -LiteralPath $Full -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
 Require-Command "cargo" "Install Rust, then rerun this script."
 if ($BuildTui) {
   Require-Command "bun" "Install Bun, then rerun this script or pass -SkipTui."
@@ -57,6 +103,8 @@ if ($IsWindows -or $env:OS -eq "Windows_NT") {
   Add-RustFlag "-C link-arg=/DEBUG:NONE"
 }
 
+Stop-RepoTuraBackends
+Remove-SessionDbDirtyData
 Remove-Item -LiteralPath (Join-Path $TargetDir "cli.exe") -Force -ErrorAction SilentlyContinue
 
 Invoke-Checked "cargo" @("build", "--release", "-p", "gateway", "--bin", "tura_exec", "--bin", "tura_gateway")

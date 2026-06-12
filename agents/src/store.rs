@@ -154,6 +154,7 @@ pub fn save_dynamic_agent(
 }
 
 pub fn delete_dynamic_agent(project_root: &Path, agent_id: &str) -> Result<bool, String> {
+    let mut canonical_id = None;
     if let Some(agent) = load_agent(project_root, agent_id) {
         if agent.config.default_config {
             return Err(format!(
@@ -167,8 +168,9 @@ pub fn delete_dynamic_agent(project_root: &Path, agent_id: &str) -> Result<bool,
                 agent.summary.id
             ));
         }
+        canonical_id = Some(agent.summary.id);
     }
-    let agent_dir = dynamic_agent_path(project_root, agent_id)?;
+    let agent_dir = dynamic_agent_path(project_root, canonical_id.as_deref().unwrap_or(agent_id))?;
     if !agent_dir.exists() {
         return Ok(false);
     }
@@ -330,4 +332,233 @@ fn normalize_agent_id(agent_id: &str) -> String {
 
 fn path_relative_to(root: &Path, path: &Path) -> PathBuf {
     path.strip_prefix(root).unwrap_or(path).to_path_buf()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn project() -> tempfile::TempDir {
+        let temp = tempfile::tempdir().expect("temp project");
+        fs::create_dir_all(temp.path().join(AGENTS_DIR)).expect("agents dir");
+        temp
+    }
+
+    fn test_config(root: &Path, name: &str) -> AgentConfig {
+        let mut config = default_agent_config(root, name).expect("default config");
+        config.description = Some("Does useful work".to_string());
+        config.aliases = vec!["helper".to_string(), "coder".to_string()];
+        config
+    }
+
+    #[test]
+    fn default_agent_config_normalizes_id_and_declares_runtime_contract() {
+        let temp = project();
+
+        let config = default_agent_config(temp.path(), "  Custom-Agent  ").expect("config");
+
+        assert_eq!(config.agent_name, "custom-agent");
+        assert_eq!(
+            config.agent_directory,
+            PathBuf::from("agents/src/custom-agent")
+        );
+        assert_eq!(config.description.as_deref(), Some("Custom Tura agent"));
+        assert_eq!(config.report_to_user, true);
+        assert_eq!(config.default_config, false);
+        assert_eq!(config.provider["tura_llm_name"], "flagship_thinking");
+        assert_eq!(config.provider["tool_choice"], "Auto");
+        assert!(config
+            .agent_capabilities
+            .iter()
+            .any(|capability| capability["capability_name"] == "command_run"));
+        assert!(config
+            .agent_capabilities
+            .iter()
+            .any(|capability| capability["capability_name"] == "web_discover"));
+        assert_eq!(config.validator["need_validator"], false);
+    }
+
+    #[test]
+    fn dynamic_agent_path_rejects_empty_traversal_and_non_identifier_ids() {
+        let temp = project();
+        for invalid in [
+            "",
+            "  ",
+            ".",
+            "..",
+            "../x",
+            "a/b",
+            r"a\b",
+            "has space",
+            "中文",
+        ] {
+            let error = dynamic_agent_path(temp.path(), invalid)
+                .expect_err("invalid agent id should be rejected");
+            assert!(error.contains("invalid agent id"), "{error}");
+        }
+
+        assert_eq!(
+            dynamic_agent_path(temp.path(), " Agent_01 ").expect("valid path"),
+            temp.path().join("agents/src/agent_01")
+        );
+    }
+
+    #[test]
+    fn save_dynamic_agent_writes_config_prompt_and_loads_summary() {
+        let temp = project();
+        let config = test_config(temp.path(), "coding-helper");
+
+        let saved = save_dynamic_agent(temp.path(), &config, Some("Use careful tests."))
+            .expect("save agent");
+
+        assert_eq!(saved.summary.id, "coding-helper");
+        assert_eq!(saved.summary.name, "Coding Helper");
+        assert_eq!(saved.summary.description, "Does useful work");
+        assert_eq!(saved.summary.source, AgentSource::Dynamic);
+        assert_eq!(
+            saved.summary.path,
+            PathBuf::from("agents/src/coding-helper")
+        );
+        assert_eq!(saved.summary.aliases, vec!["helper", "coder"]);
+        assert_eq!(saved.summary.provider.as_deref(), Some("flagship_thinking"));
+        assert!(saved
+            .summary
+            .capabilities
+            .iter()
+            .any(|capability| capability == "apply_patch"));
+        assert_eq!(saved.prompt.as_deref(), Some("Use careful tests."));
+
+        let config_path = temp
+            .path()
+            .join("agents/src/coding-helper")
+            .join(AGENT_CONFIG_FILE);
+        assert!(config_path.exists());
+        assert!(temp
+            .path()
+            .join("agents/src/coding-helper")
+            .join(AGENT_PROMPT_FILE)
+            .exists());
+    }
+
+    #[test]
+    fn discover_agents_sorts_by_id_and_load_agent_matches_alias_case_insensitively() {
+        let temp = project();
+        save_dynamic_agent(temp.path(), &test_config(temp.path(), "Zulu"), None)
+            .expect("save zulu");
+        save_dynamic_agent(temp.path(), &test_config(temp.path(), "Alpha"), None)
+            .expect("save alpha");
+
+        let discovered = discover_agents(temp.path());
+        let ids = discovered
+            .iter()
+            .map(|agent| agent.summary.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, vec!["alpha", "zulu"]);
+        assert_eq!(
+            load_agent(temp.path(), "HELPER")
+                .expect("alias load")
+                .summary
+                .id,
+            "alpha"
+        );
+        assert!(load_agent(temp.path(), "missing").is_none());
+    }
+
+    #[test]
+    fn discover_agents_skips_missing_and_malformed_configs() {
+        let temp = project();
+        fs::create_dir_all(temp.path().join("agents/src/no-config")).expect("no config dir");
+        fs::create_dir_all(temp.path().join("agents/src/bad-json")).expect("bad json dir");
+        fs::write(
+            temp.path()
+                .join("agents/src/bad-json")
+                .join(AGENT_CONFIG_FILE),
+            "{not-json",
+        )
+        .expect("bad config");
+        save_dynamic_agent(temp.path(), &test_config(temp.path(), "valid"), None)
+            .expect("valid agent");
+
+        let discovered = discover_agents(temp.path());
+
+        assert_eq!(discovered.len(), 1);
+        assert_eq!(discovered[0].summary.id, "valid");
+    }
+
+    #[test]
+    fn save_dynamic_agent_adds_prompt_binding_when_missing() {
+        let temp = project();
+        let mut config = test_config(temp.path(), "promptless");
+        config.agent_prompt.clear();
+
+        let saved = save_dynamic_agent(temp.path(), &config, None).expect("save");
+
+        assert_eq!(saved.config.agent_prompt.len(), 1);
+        assert_eq!(saved.config.agent_prompt[0]["agent_prompt"], "promptless");
+        assert_eq!(
+            saved.config.agent_prompt[0]["prompt_directory"]
+                .as_str()
+                .map(|value| value.replace('\\', "/")),
+            Some("agents/src/promptless".to_string())
+        );
+    }
+
+    #[test]
+    fn delete_dynamic_agent_is_idempotent_for_missing_agents_and_removes_existing() {
+        let temp = project();
+
+        assert_eq!(
+            delete_dynamic_agent(temp.path(), "missing").expect("missing delete"),
+            false
+        );
+        save_dynamic_agent(temp.path(), &test_config(temp.path(), "remove-me"), None)
+            .expect("save");
+
+        assert_eq!(
+            delete_dynamic_agent(temp.path(), "remove-me").expect("delete"),
+            true
+        );
+        assert!(load_agent(temp.path(), "remove-me").is_none());
+        assert_eq!(
+            delete_dynamic_agent(temp.path(), "remove-me").expect("second delete"),
+            false
+        );
+    }
+
+    #[test]
+    fn delete_dynamic_agent_rejects_default_config_even_when_user_requests_alias() {
+        let temp = project();
+        let mut config = test_config(temp.path(), "built-in");
+        config.default_config = true;
+        config.aliases = vec!["builtin".to_string()];
+        save_dynamic_agent(temp.path(), &config, None).expect("save default");
+
+        let error = delete_dynamic_agent(temp.path(), "BUILTIN")
+            .expect_err("default config should be protected");
+
+        assert!(error.contains("default_config and cannot be deleted"));
+        assert!(load_agent(temp.path(), "built-in").is_some());
+    }
+
+    #[test]
+    fn source_and_summary_defaults_derive_from_config_fields() {
+        let temp = project();
+        let mut config = test_config(temp.path(), "summary_case");
+        config.description = None;
+        config.aliases.clear();
+        config.agent_capabilities = vec![
+            serde_json::json!({"capability_name":"shell_command"}),
+            serde_json::json!({"ignored":"missing-name"}),
+        ];
+        config.provider = serde_json::json!({});
+
+        let saved = save_dynamic_agent(temp.path(), &config, None).expect("save");
+
+        assert_eq!(saved.summary.name, "Summary Case");
+        assert_eq!(saved.summary.description, "Tura agent summary_case");
+        assert_eq!(saved.summary.capabilities, vec!["shell_command"]);
+        assert_eq!(saved.summary.provider, None);
+        assert!(!saved.summary.hidden);
+    }
 }

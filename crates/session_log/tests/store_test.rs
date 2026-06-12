@@ -1,5 +1,5 @@
 use session_log::{
-    file_queue, DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest,
+    file_queue, CommandCheckpoint, DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest,
     ListSessionRecordsRequest, ListSessionsRequest, SessionLogCommand, SessionLogStore,
     UpsertSessionRequest,
 };
@@ -96,7 +96,7 @@ fn stores_workspaces_sessions_and_last_record_page() {
                 "updated_at": 20,
                 "status": "idle",
                 "task_management": { "plan_summary": "Plan" },
-                "management": { "session_id": session_id, "session_name": "Build", "state": "Running" }
+                "management": { "session_id": session_id, "session_name": "Build", "state": "running" }
             }),
             parent_id: None,
             messages: vec![
@@ -152,6 +152,429 @@ fn stores_workspaces_sessions_and_last_record_page() {
         db.workspace_db(&normalized_workspace).exists(),
         "workspace session log should live under <workspace>/.tura"
     );
+}
+
+#[test]
+fn rejects_non_canonical_internal_session_state() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let session_id = format!("bad-state-{}", uuid::Uuid::new_v4());
+    let workspace = db.workspace("bad-state-workspace");
+
+    let error = store
+        .upsert_session(UpsertSessionRequest {
+            session: serde_json::json!({
+                "id": session_id,
+                "name": "Bad State",
+                "directory": workspace,
+                "created_at": 1,
+                "updated_at": 1,
+                "management": {
+                    "session_id": session_id,
+                    "session_name": "Bad State",
+                    "state": "Running"
+                }
+            }),
+            parent_id: None,
+            messages: vec![],
+            todos: vec![],
+        })
+        .expect_err("internal PascalCase SessionState must be rejected");
+
+    assert!(
+        error
+            .to_string()
+            .contains("invalid canonical session state"),
+        "unexpected error: {error:#}"
+    );
+}
+
+#[test]
+fn running_sessions_are_marked_interrupted_with_one_canonical_state_source() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let session_id = format!("interrupted-{}", uuid::Uuid::new_v4());
+    let workspace = db.workspace("interrupted-workspace");
+
+    store
+        .upsert_session(UpsertSessionRequest {
+            session: serde_json::json!({
+                "id": session_id,
+                "name": "Interrupted",
+                "directory": workspace,
+                "created_at": 1,
+                "updated_at": 2,
+                "status": "idle",
+                "management": {
+                    "session_id": session_id,
+                    "session_name": "Interrupted",
+                    "session_created_at": "2026-06-11T00:00:00.000Z",
+                    "session_last_update_at": "2026-06-11T00:00:01.000Z",
+                    "state": "running"
+                }
+            }),
+            parent_id: None,
+            messages: vec![serde_json::json!({
+                "id": "m-running",
+                "role": "assistant",
+                "created_at": 1,
+                "updated_at": 1
+            })],
+            todos: vec![],
+        })
+        .expect("running upsert");
+
+    assert_eq!(
+        store
+            .get_session(GetSessionRequest {
+                session_id: session_id.clone()
+            })
+            .expect("get before mark")
+            .expect("session exists")
+            .status
+            .as_deref(),
+        Some("busy"),
+        "status must be derived from running state, not copied from session.status"
+    );
+
+    assert_eq!(
+        store
+            .mark_running_sessions_interrupted()
+            .expect("mark interrupted"),
+        1
+    );
+    let loaded = store
+        .get_session(GetSessionRequest { session_id })
+        .expect("get after mark")
+        .expect("session exists");
+
+    assert_eq!(loaded.state.as_deref(), Some("interrupted"));
+    assert_eq!(loaded.status.as_deref(), Some("error"));
+    assert_eq!(loaded.management["state"], "interrupted");
+    assert_eq!(loaded.session["status"], "error");
+    assert_eq!(
+        serde_json::from_value::<session_log::SessionState>(loaded.management["state"].clone())
+            .expect("persisted interrupted state should deserialize"),
+        session_log::SessionState::Interrupted
+    );
+}
+
+#[test]
+fn reads_authoritative_workspace_snapshot_when_index_is_stale() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let session_id = format!("workspace-authority-{}", uuid::Uuid::new_v4());
+    let workspace = db.workspace("workspace-authority");
+
+    store
+        .upsert_session(UpsertSessionRequest {
+            session: serde_json::json!({
+                "id": session_id,
+                "name": "Workspace Authority",
+                "directory": workspace,
+                "created_at": 1,
+                "updated_at": 2,
+                "management": {
+                    "session_id": session_id,
+                    "session_name": "Workspace Authority",
+                    "state": "running"
+                }
+            }),
+            parent_id: None,
+            messages: vec![],
+            todos: vec![],
+        })
+        .expect("upsert");
+
+    let conn = rusqlite::Connection::open(db.workspace_db(&workspace)).expect("workspace db");
+    let (session_json, management_json): (String, String) = conn
+        .query_row(
+            "SELECT session_json, management_json FROM sessions WHERE session_id = ?1",
+            rusqlite::params![session_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("workspace snapshot");
+    let mut session: serde_json::Value = serde_json::from_str(&session_json).expect("session json");
+    let mut management: serde_json::Value =
+        serde_json::from_str(&management_json).expect("management json");
+    session["status"] = serde_json::json!("error");
+    session["updated_at"] = serde_json::json!(99);
+    management["state"] = serde_json::json!("interrupted");
+    conn.execute(
+        "UPDATE sessions
+         SET state = ?2, status = ?3, updated_at = ?4, session_json = ?5, management_json = ?6
+         WHERE session_id = ?1",
+        rusqlite::params![
+            session_id,
+            "interrupted",
+            "error",
+            99_i64,
+            serde_json::to_string(&session).expect("session to json"),
+            serde_json::to_string(&management).expect("management to json"),
+        ],
+    )
+    .expect("make workspace authoritative");
+
+    let loaded = store
+        .get_session(GetSessionRequest {
+            session_id: session_id.clone(),
+        })
+        .expect("get session")
+        .expect("session exists");
+    assert_eq!(loaded.state.as_deref(), Some("interrupted"));
+    assert_eq!(loaded.status.as_deref(), Some("error"));
+    assert_eq!(loaded.updated_at, 99);
+    assert_eq!(loaded.management["state"], "interrupted");
+
+    let (_page, sessions) = store
+        .list_sessions(ListSessionsRequest {
+            workspace: session_log::path::normalize_workspace(&workspace),
+            page: 0,
+            page_size: 10,
+        })
+        .expect("list sessions");
+    let listed = sessions
+        .iter()
+        .find(|snapshot| snapshot.session_id == session_id)
+        .expect("listed session");
+    assert_eq!(listed.state.as_deref(), Some("interrupted"));
+    assert_eq!(listed.management["state"], "interrupted");
+}
+
+#[test]
+fn upsert_session_records_are_idempotent_without_deleting_absent_records() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let session_id = format!("record-upsert-{}", uuid::Uuid::new_v4());
+    let workspace = db.workspace("record-upsert-workspace");
+
+    let session = |updated_at| {
+        serde_json::json!({
+            "id": session_id,
+            "name": "Record Upsert",
+            "directory": workspace,
+            "created_at": 1,
+            "updated_at": updated_at,
+            "management": {
+                "session_id": session_id,
+                "session_name": "Record Upsert",
+                "state": "running"
+            }
+        })
+    };
+
+    store
+        .upsert_session(UpsertSessionRequest {
+            session: session(10),
+            parent_id: None,
+            messages: vec![
+                serde_json::json!({
+                    "id": "m1",
+                    "role": "user",
+                    "created_at": 1,
+                    "updated_at": 1,
+                    "content": "first"
+                }),
+                serde_json::json!({
+                    "id": "m2",
+                    "role": "assistant",
+                    "created_at": 2,
+                    "updated_at": 2,
+                    "content": "second"
+                }),
+            ],
+            todos: vec![],
+        })
+        .expect("initial upsert");
+
+    store
+        .upsert_session(UpsertSessionRequest {
+            session: session(20),
+            parent_id: None,
+            messages: vec![
+                serde_json::json!({
+                    "id": "m2",
+                    "role": "assistant",
+                    "created_at": 2,
+                    "updated_at": 22,
+                    "content": "second revision"
+                }),
+                serde_json::json!({
+                    "id": "m3",
+                    "role": "tool",
+                    "created_at": 3,
+                    "updated_at": 3,
+                    "content": "third"
+                }),
+            ],
+            todos: vec![],
+        })
+        .expect("partial upsert");
+
+    let (page, records) = store
+        .list_session_records(ListSessionRecordsRequest {
+            session_id,
+            page: 0,
+            page_size: 10,
+        })
+        .expect("records");
+
+    assert_eq!(page.total, 3);
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.message_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["m1", "m2", "m3"]
+    );
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| record.message_id == "m2")
+            .count(),
+        1,
+        "same message_id must update in place instead of duplicating"
+    );
+    let updated_m2 = records
+        .iter()
+        .find(|record| record.message_id == "m2")
+        .expect("m2 should exist");
+    assert_eq!(updated_m2.updated_at, 22);
+    assert_eq!(updated_m2.record["content"], "second revision");
+}
+
+#[test]
+fn pending_checkpoint_queue_items_replay_and_ack_idempotently() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let session_id = format!("checkpoint-replay-{}", uuid::Uuid::new_v4());
+    let checkpoint = CommandCheckpoint {
+        session_id: session_id.clone(),
+        turn_id: "turn-1".to_string(),
+        runtime_worker_id: Some("worker-1".to_string()),
+        provider_call_id: Some("provider-1".to_string()),
+        command_run_id: Some("run-1".to_string()),
+        command_id: Some("cmd-1".to_string()),
+        event_seq: Some(1),
+        command_type: Some("shell_command".to_string()),
+        command_line: Some("echo ok".to_string()),
+        status: "command_finished".to_string(),
+        output_summary: Some("ok".to_string()),
+        changes: serde_json::json!({ "files": [] }),
+        started_at: Some("2026-06-11T00:00:00Z".to_string()),
+        finished_at: Some("2026-06-11T00:00:01Z".to_string()),
+    };
+    let key = checkpoint.idempotency_key();
+    let payload = serde_json::to_string(&checkpoint).expect("checkpoint json");
+    let conn = rusqlite::Connection::open(db.index_db()).expect("index db");
+    conn.execute(
+        "INSERT INTO session_write_queue(
+            idempotency_key, session_id, turn_id, runtime_worker_id, command_run_id,
+            command_id, event_seq, event_type, payload_json, status, retry_count, created_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'apply_command_checkpoint', ?8, 'pending', 0, 1)",
+        rusqlite::params![
+            key,
+            &session_id,
+            "turn-1",
+            "worker-1",
+            "run-1",
+            "cmd-1",
+            1_i64,
+            payload,
+        ],
+    )
+    .expect("insert pending checkpoint");
+
+    assert_eq!(store.replay_pending_write_queue().expect("replay"), 1);
+    assert_eq!(
+        store.replay_pending_write_queue().expect("second replay"),
+        0
+    );
+
+    let (status, retry_count, last_error): (String, i64, Option<String>) = conn
+        .query_row(
+            "SELECT status, retry_count, last_error
+             FROM session_write_queue
+             WHERE idempotency_key = ?1",
+            rusqlite::params![checkpoint.idempotency_key()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("checkpoint queue row");
+    assert_eq!(status, "applied");
+    assert_eq!(retry_count, 0);
+    assert_eq!(last_error, None);
+}
+
+#[test]
+fn pending_delete_session_queue_item_replays_without_unsupported_event_error() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let workspace = db.workspace("delete-replay-workspace");
+    let session_id = format!("delete-replay-{}", uuid::Uuid::new_v4());
+
+    store
+        .upsert_session(upsert(&session_id, &workspace, 1))
+        .expect("upsert");
+    assert!(store
+        .get_session(GetSessionRequest {
+            session_id: session_id.clone(),
+        })
+        .expect("get before delete")
+        .is_some());
+
+    let request = DeleteSessionRequest {
+        session_id: session_id.clone(),
+    };
+    let conn = rusqlite::Connection::open(db.index_db()).expect("index db");
+    conn.execute(
+        "INSERT INTO session_write_queue(
+            idempotency_key, session_id, event_type, payload_json, status, retry_count, created_at
+        ) VALUES (?1, ?2, 'delete_session', ?3, 'pending', 0, 1)",
+        rusqlite::params![
+            format!("delete:{session_id}"),
+            &session_id,
+            serde_json::to_string(&request).expect("delete json"),
+        ],
+    )
+    .expect("insert pending delete");
+
+    assert_eq!(store.replay_pending_write_queue().expect("replay"), 1);
+    assert!(store
+        .get_session(GetSessionRequest { session_id })
+        .expect("get after delete")
+        .is_none());
+}
+
+#[test]
+fn dirty_session_write_queue_items_are_deleted_instead_of_blocking_service_start() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let conn = rusqlite::Connection::open(db.index_db()).expect("index db");
+    let bad_state_session_id = format!("dirty-state-{}", uuid::Uuid::new_v4());
+    let workspace = db.workspace("dirty-state-workspace");
+    let bad_state_payload = serde_json::to_string(&upsert(&bad_state_session_id, &workspace, 1))
+        .expect("upsert json")
+        .replace("\"state\":\"created\"", "\"state\":\"Created\"");
+
+    conn.execute(
+        "INSERT INTO session_write_queue(
+            idempotency_key, session_id, event_type, payload_json, status, retry_count, created_at
+        ) VALUES
+            ('dirty-json', 'dirty-json-session', 'upsert_session', '{not-json', 'pending', 0, 1),
+            ('dirty-state', ?1, 'upsert_session', ?2, 'pending', 0, 2)",
+        rusqlite::params![bad_state_session_id, bad_state_payload],
+    )
+    .expect("insert dirty queue rows");
+
+    assert_eq!(store.replay_pending_write_queue().expect("replay"), 0);
+    let remaining: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM session_write_queue WHERE status = 'pending'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("pending count");
+    assert_eq!(remaining, 0);
 }
 
 #[test]
@@ -322,7 +745,7 @@ fn upsert(session_id: &str, workspace: &str, sequence: i64) -> UpsertSessionRequ
             "management": {
                 "session_id": session_id,
                 "session_name": format!("Session {sequence}"),
-                "state": "Idle"
+                "state": "created"
             }
         }),
         parent_id: None,
@@ -373,7 +796,7 @@ fn file_queue_session_log_helper() {
             "management": {
                 "session_id": session_id,
                 "session_name": "File Queue",
-                "state": "Idle"
+                "state": "created"
             }
         }),
         parent_id: None,
@@ -420,6 +843,25 @@ fn file_queue_recovers_orphaned_processing_items() {
         .get_session(GetSessionRequest { session_id })
         .expect("get recovered session")
         .is_some());
+}
+
+#[test]
+fn dirty_file_queue_item_is_deleted_instead_of_moved_to_failed() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let root = db.root().join("session_log").join("message_queue");
+    let pending = root.join("pending");
+    let failed = root.join("failed");
+    std::fs::create_dir_all(&pending).expect("pending dir");
+    let dirty = pending.join("00000000000000000001-1-00000000000000000001.json");
+    std::fs::write(&dirty, "{not-json").expect("dirty queue item");
+
+    assert_eq!(file_queue::drain_queue(&store, 10).expect("drain"), 0);
+    assert!(!dirty.exists(), "dirty pending file should be deleted");
+    let failed_files = std::fs::read_dir(&failed)
+        .map(|entries| entries.flatten().count())
+        .unwrap_or(0);
+    assert_eq!(failed_files, 0, "dirty parse failures must not accumulate");
 }
 
 #[test]

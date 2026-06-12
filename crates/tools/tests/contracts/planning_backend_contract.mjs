@@ -120,7 +120,7 @@ addCheck("prompt describes ordered replacement tasks without plan mutation or pa
 
 addCheck("command_run routes planning through the shared command consumer path", () => {
   const handler = read("crates/tools/src/command_run/handler.rs")
-  const commandRunTests = read("crates/tools/tests/business/flow/command_run_current_flow.rs")
+  const commandRunTests = read("crates/tools/tests/business/command_run_current_flow.rs")
   const commandRunSchema = JSON.parse(read("crates/tools/src/command_run/schema.json"))
   assert.equal(commandRunSchema.input_schema.properties.commands.minItems, 5)
   assert.match(handler, /"planning"\s*=>\s*ToolPayload::Function/)

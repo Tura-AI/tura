@@ -137,6 +137,16 @@ pub struct ProviderConfig {
 
 impl ProviderConfig {
     pub fn validate(&self) -> Result<(), TuraError> {
+        if self.provider.trim().is_empty() {
+            return Err(TuraError::Validation {
+                message: "provider must not be empty".into(),
+            });
+        }
+        if self.base_url.trim().is_empty() {
+            return Err(TuraError::Validation {
+                message: "base_url must not be empty".into(),
+            });
+        }
         if self.model.trim().is_empty() {
             return Err(TuraError::Validation {
                 message: "model must not be empty".into(),
@@ -854,43 +864,8 @@ fn provider_config_json_path() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("TURA_PROVIDER_CONFIG").filter(|value| !value.is_empty()) {
         return Some(PathBuf::from(path));
     }
-    if let Some(path) = std::env::var_os("TURALLM_CONFIG").filter(|value| !value.is_empty()) {
-        return Some(PathBuf::from(path));
-    }
-    for path in default_provider_config_candidates() {
-        if path.exists() {
-            return Some(path);
-        }
-    }
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    Some(manifest_dir.join("src").join("provider_config.json"))
-}
-
-fn default_provider_config_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Ok(root) = std::env::var("TURA_PROJECT_ROOT") {
-        let root = PathBuf::from(root);
-        candidates.push(root.join("config").join("provider_config.json"));
-        candidates.push(
-            root.join("crates")
-                .join("provider")
-                .join("config")
-                .join("provider_config.json"),
-        );
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(bin_dir) = exe.parent() {
-            candidates.push(bin_dir.join("config").join("provider_config.json"));
-            candidates.push(bin_dir.join("provider_config.json"));
-            if let Some(root) = bin_dir.parent() {
-                candidates.push(root.join("config").join("provider_config.json"));
-            }
-        }
-    }
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    candidates.push(manifest_dir.join("config").join("provider_config.json"));
-    candidates.push(manifest_dir.join("config").join("tura_llm_config.json"));
-    candidates
+    Some(manifest_dir.join("config").join("provider_config.json"))
 }
 
 pub fn default_client(api_key: &str) -> Result<reqwest::Client, TuraError> {

@@ -101,8 +101,31 @@ connects to (or detaches) the per-home `tura_router` **socket daemon**, sends
 `execution.enqueue_turn`, and renders the final assistant message from the
 single `tura_session_db` owner. `--embedded` instead runs the runtime in-process
 (codex-style) while still connecting to that same shared owner — it never opens
-its own database. The detached router + session_db outlive the CLI and are
-reused by the next invocation.
+its own database. If the CLI request socket closes before the turn finishes,
+router cancels the active session and aborts unfinished router-owned
+`command_run` work for that connection.
+
+Gateway startup must also adopt a compatible already-running router for the same
+home rather than starting a second backend owner. The published router endpoint
+contains `addr`, `version`, `pid`, and `process_start_time`; gateway health
+checks the socket before reuse and only force-terminates a stuck daemon when the
+PID start-time fingerprint still matches. GUI/TUI launchers pass
+`TURA_GATEWAY_SHUTDOWN_ON_STDIN_EOF=1` and keep gateway stdin piped; when the
+front closes that pipe, gateway exits without killing router. Router receives
+periodic `lifecycle.front_heartbeat` leases from live gateways and self-shuts
+down after its idle grace when no valid gateway lease, exec socket, active
+runtime worker, or active turn remains.
+Process/state regressions are
+covered by the mandatory root test
+`tests/business/process_state_management_e2e.rs`: stale endpoints, gateway
+restart, same-home gateway lock conflict, orphan router adoption, orphan
+session_db adoption through router, router-owned command_run cancellation on
+socket disconnect, stdin-EOF gateway exit followed by router idle self-shutdown,
+and endpoint cleanup after graceful shutdown.
+`tests/business/process_lifecycle_policy_matrix.rs` pins the same lifecycle
+contract for Windows, Linux, macOS, and fallback OS families so front leases,
+detached reusable owners, process-group cleanup, and Job Object cleanup remain
+explicit.
 
 Its output contract is:
 
@@ -441,6 +464,11 @@ user_action
 scheduled_task
 polling_task
 ```
+
+`status` and `start_condition` are separate fields. Do not pass
+`session_idle`, `user_action`, `scheduled_task`, or `polling_task` through the
+`status` field; invalid task-management patches are ignored and the previous
+state is kept.
 
 Single-task `task_management` is an object. Object patches apply to the active
 single task and may set the task `task_id`. Multi-task updates that need

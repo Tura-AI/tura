@@ -57,7 +57,7 @@ fn explicit_start_condition_round_trips_and_idle_scheduler_claims_it() {
 }
 
 #[test]
-fn legacy_status_start_condition_still_round_trips() {
+fn status_field_does_not_accept_start_condition_values() {
     let store = SessionStore::new();
     let session = store.create_session(
         Some("C:/workspace".to_string()),
@@ -71,6 +71,7 @@ fn legacy_status_start_condition_still_round_trips() {
         false,
         false,
     );
+    let before = session.task_management.clone();
 
     let updated = store
         .update_session(
@@ -84,12 +85,11 @@ fn legacy_status_start_condition_still_round_trips() {
             None,
             None,
             Some(serde_json::json!({
-                "task_summary": "Legacy queued task",
+                "task_summary": "Invalid queued task",
                 "status": "session_idle"
             })),
         )
-        .expect("legacy task management should update");
+        .expect("invalid task management remains non-fatal");
 
-    assert!(updated.task_management.get("status").is_none());
-    assert_eq!(updated.task_management["start_condition"], "session_idle");
+    assert_eq!(updated.task_management, before);
 }

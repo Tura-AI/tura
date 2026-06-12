@@ -1,4 +1,5 @@
-#![warn(clippy::unwrap_used)]
+#![deny(clippy::unwrap_used)]
+#![forbid(unsafe_code)]
 #![allow(ambiguous_glob_reexports)]
 
 pub mod agent_router;
@@ -9,6 +10,7 @@ pub mod manas;
 pub mod mano;
 pub mod prompt_style;
 pub mod provider_flow;
+pub mod router_command_run;
 pub mod runtime;
 pub mod session;
 pub mod session_bootstrap;

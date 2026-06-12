@@ -11,35 +11,44 @@ path = "src/lib.rs"
 
 [[test]]
 name = "provider_tool_call_live_smoke"
-path = "tests/business/live/provider_tool_call_live_smoke.rs"
+path = "tests/live/provider_tool_call_live_smoke.rs"
 harness = false
-required-features = ["business-tests"]
+required-features = ["live-tests"]
 
 [[test]]
 name = "claude_code_live_smoke"
-path = "tests/business/live/claude_code_live_smoke.rs"
-harness = false
-required-features = ["business-tests"]
+path = "tests/live/claude_code_live_smoke.rs"
+required-features = ["live-tests"]
 
 [[test]]
 name = "responses_tier_live_smoke"
-path = "tests/business/live/responses_tier_live_smoke.rs"
+path = "tests/live/responses_tier_live_smoke.rs"
 harness = false
-required-features = ["business-tests"]
+required-features = ["live-tests"]
 
 [[test]]
 name = "codex_priority_tps_live"
-path = "tests/business/live/codex_priority_tps_live.rs"
-required-features = ["business-tests"]
+path = "tests/live/codex_priority_tps_live.rs"
+required-features = ["live-tests"]
 
 [[test]]
 name = "live_model_smoke"
-path = "tests/business/live/live_model_smoke.rs"
-required-features = ["business-tests"]
+path = "tests/live/live_model_smoke.rs"
+required-features = ["live-tests"]
 
 [features]
 business-tests = []
-live-tests = ["business-tests"]
+live-tests = []
+
+[[test]]
+name = "openai_compatible_local_flow"
+path = "tests/business/openai_compatible_local_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "google_local_flow"
+path = "tests/business/google_local_flow.rs"
+required-features = ["business-tests"]
 
 [dependencies]
 tokio.workspace = true
@@ -58,3 +67,4 @@ tura_path.workspace = true
 [dev-dependencies]
 tokio-test.workspace = true
 futures.workspace = true
+tempfile.workspace = true

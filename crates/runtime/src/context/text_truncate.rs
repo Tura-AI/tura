@@ -226,16 +226,20 @@ fn extract_read_targets(command_line: &str) -> Vec<String> {
             && index + 1 < tokens.len()
         {
             let mut next = index + 1;
-            while next < tokens.len() && tokens[next].starts_with('-') {
-                next += 1;
-            }
-            if let Some(path) = tokens
-                .get(next)
-                .and_then(|value| normalize_read_target(value))
-            {
-                if !targets.iter().any(|existing| existing == &path) {
-                    targets.push(path);
+            while next < tokens.len() {
+                if tokens[next] == ";" || tokens[next] == "|" {
+                    break;
                 }
+                if tokens[next].starts_with('-') {
+                    next += 1;
+                    continue;
+                }
+                if let Some(path) = normalize_read_target(&tokens[next]) {
+                    if !targets.iter().any(|existing| existing == &path) {
+                        targets.push(path);
+                    }
+                }
+                next += 1;
             }
             index = next;
         }
@@ -294,17 +298,7 @@ fn shell_like_tokens(value: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     let mut quote = None::<char>;
-    let mut escaped = false;
     for ch in value.chars() {
-        if escaped {
-            current.push(ch);
-            escaped = false;
-            continue;
-        }
-        if ch == '\\' && quote.is_some() {
-            escaped = true;
-            continue;
-        }
         if let Some(active) = quote {
             if ch == active {
                 quote = None;
@@ -318,6 +312,9 @@ fn shell_like_tokens(value: &str) -> Vec<String> {
         } else if ch.is_whitespace() || ch == ';' {
             if !current.is_empty() {
                 tokens.push(std::mem::take(&mut current));
+            }
+            if ch == ';' {
+                tokens.push(";".to_string());
             }
         } else {
             current.push(ch);
@@ -523,4 +520,106 @@ fn ripgrep_result_path(line: &str) -> Option<String> {
         return None;
     }
     Some(path.replace('\\', "/"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        extract_query_terms, extract_read_targets, ripgrep_result_path, shell_like_tokens,
+    };
+
+    #[test]
+    fn marker_truncation_rewrites_bare_file_sections_from_read_targets() {
+        let content = "Output:\nfirst-file-body-line-one\nfirst-file-body-line-two\n---FILE---\nsecond-file-body-line-one\nsecond-file-body-line-two\n";
+        let command_line = r#"cat src/first.rs src/second.rs"#;
+
+        let output =
+            super::truncate_marker_sections_for_command_run(content, 20, Some(command_line))
+                .expect("marker sections should be recognized");
+
+        assert!(
+            output.contains("---FILE--- src/first.rs"),
+            "first bare section should be labelled from the first read target: {output}"
+        );
+        assert!(
+            output.contains("---FILE--- src/second.rs"),
+            "second bare section should be labelled from the second read target: {output}"
+        );
+    }
+
+    #[test]
+    fn query_truncation_groups_multi_term_search_output() {
+        let content =
+            "intro\nalpha result line one\nnoise\nbeta result line one\nbeta result line two\n";
+        let command_line = r#"rg "alpha beta" crates/runtime"#;
+
+        let output =
+            super::truncate_query_sections_for_command_run(content, 12, Some(command_line))
+                .expect("query sections should be recognized");
+
+        assert!(output.contains("---QUERY--- alpha"), "{output}");
+        assert!(output.contains("---QUERY--- beta"), "{output}");
+        assert!(output.contains("intro"), "{output}");
+    }
+
+    #[test]
+    fn ripgrep_truncation_groups_matches_by_file() {
+        let content = "searching\nsrc/a.rs:10:alpha\nsrc/b.rs:20:beta\nsrc/a.rs:11:alpha again\n";
+
+        let output = super::truncate_ripgrep_file_sections_for_command_run(content, 14)
+            .expect("ripgrep file sections should be recognized");
+
+        assert!(output.contains("---MATCHES--- src/a.rs"), "{output}");
+        assert!(output.contains("---MATCHES--- src/b.rs"), "{output}");
+        assert!(output.contains("searching"), "{output}");
+    }
+
+    #[test]
+    fn read_targets_are_extracted_from_json_wrapped_commands() {
+        let command_line = r#"{"command":"Get-Content -LiteralPath 'src\\main.rs'; cat crates/runtime/src/lib.rs"}"#;
+
+        let targets = extract_read_targets(command_line);
+
+        assert_eq!(
+            targets,
+            vec![
+                "src/main.rs".to_string(),
+                "crates/runtime/src/lib.rs".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn shell_like_tokens_preserve_quoted_paths_and_split_semicolon_commands() {
+        let tokens = shell_like_tokens(r#"cat "src/main.rs"; rg 'hello world' crates/runtime"#);
+
+        assert_eq!(
+            tokens,
+            vec![
+                "cat".to_string(),
+                "src/main.rs".to_string(),
+                ";".to_string(),
+                "rg".to_string(),
+                "hello world".to_string(),
+                "crates/runtime".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn query_terms_reject_globs_and_keep_distinct_terms() {
+        let terms = extract_query_terms(r#"rg "alpha|**/*.rs|beta|*.md|alpha" ."#);
+
+        assert_eq!(terms, vec!["alpha".to_string(), "beta".to_string()]);
+    }
+
+    #[test]
+    fn ripgrep_result_path_accepts_windows_paths_and_rejects_non_matches() {
+        assert_eq!(
+            ripgrep_result_path(r#"src\main.rs:12:fn main()"#).as_deref(),
+            Some("src/main.rs")
+        );
+        assert_eq!(ripgrep_result_path("not-a-match"), None);
+        assert_eq!(ripgrep_result_path("README:abc:text"), None);
+    }
 }

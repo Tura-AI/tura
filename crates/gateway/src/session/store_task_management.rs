@@ -1,6 +1,6 @@
 use super::*;
 
-fn ensure_first_task(info: &mut SessionInfo) -> &mut TaskStep {
+fn ensure_first_task(info: &mut SessionInfo) -> Result<&mut TaskStep, String> {
     if info.management.task_plan.detailed_tasks.is_empty() {
         let summary = info
             .management
@@ -26,7 +26,7 @@ fn ensure_first_task(info: &mut SessionInfo) -> &mut TaskStep {
         .task_plan
         .detailed_tasks
         .first_mut()
-        .expect("first task should exist")
+        .ok_or_else(|| "failed to create default task".to_string())
 }
 
 trait EmptyStringExt {
@@ -97,11 +97,11 @@ pub(super) fn apply_task_management_patch(
                             .task_plan
                             .detailed_tasks
                             .last_mut()
-                            .expect("new task should exist")
+                            .ok_or_else(|| "failed to create task_management task".to_string())?
                     }
                 }
             }
-            None => ensure_first_task(info),
+            None => ensure_first_task(info)?,
         };
         let updated_task_summary = apply_single_task_patch(task, object)?;
         (task.task_summary.clone(), updated_task_summary)
@@ -281,33 +281,9 @@ fn set_auto_session_name(info: &mut SessionInfo, task_summary: &str) {
 }
 
 fn apply_status_patch(task: &mut TaskStep, value: &serde_json::Value) -> Result<(), String> {
-    match value.as_str() {
-        Some("session_idle") => {
-            task.status = PlanStatus::Todo;
-            task.start_condition = StartCondition::SessionIdle;
-            Ok(())
-        }
-        Some("user_action") => {
-            task.status = PlanStatus::Todo;
-            task.start_condition = StartCondition::UserAction;
-            Ok(())
-        }
-        Some("scheduled_task") => {
-            task.status = PlanStatus::Todo;
-            task.start_condition = StartCondition::ScheduledTask;
-            Ok(())
-        }
-        Some("polling_task") => {
-            task.status = PlanStatus::Todo;
-            task.start_condition = StartCondition::PollingTask;
-            Ok(())
-        }
-        _ => {
-            task.status = serde_json::from_value(value.clone())
-                .map_err(|err| format!("invalid status: {err}"))?;
-            Ok(())
-        }
-    }
+    task.status =
+        serde_json::from_value(value.clone()).map_err(|err| format!("invalid status: {err}"))?;
+    Ok(())
 }
 
 fn apply_start_condition_patch(

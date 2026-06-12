@@ -128,8 +128,8 @@ crates/tools/
     business/
       flow/
         command_run_current_flow.rs
-      live/
-        web_discover_live_provider_check.rs
+    live/
+      web_discover_live_provider_check.rs
     docker/
       Dockerfile
     contracts/

@@ -13,6 +13,7 @@
 //! [`call_service`] / [`serve_blocking`].
 
 use std::io::{BufRead, BufReader, Write};
+use std::io::{Error as IoError, ErrorKind};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -28,6 +29,7 @@ const ADDR_FILE: &str = "service.addr";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const PROBE_CONNECT_TIMEOUT: Duration = Duration::from_millis(100);
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
+const EMPTY_RESPONSE_RETRIES: usize = 3;
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// The published endpoint record for a running session_db service: where to
@@ -52,8 +54,8 @@ fn read_endpoint() -> Result<ServiceEndpoint> {
         )
     })?;
     let trimmed = raw.trim();
-    // Current format is a JSON endpoint record; tolerate the legacy bare
-    // `host:port` form so a half-upgraded instance still resolves.
+    // Current format is a JSON endpoint record; accept an unversioned bare
+    // `host:port` form long enough to probe or replace it during startup.
     if let Ok(endpoint) = serde_json::from_str::<ServiceEndpoint>(trimmed) {
         return Ok(endpoint);
     }
@@ -71,8 +73,8 @@ fn parse_addr(endpoint: &ServiceEndpoint) -> Result<SocketAddr> {
 }
 
 /// Refuse to use a service from a different build (codex-style version
-/// handshake). An empty published version comes from a legacy endpoint file and
-/// is treated as compatible so a half-upgraded instance is not bricked.
+/// handshake). An empty published version comes from an unversioned endpoint
+/// file and is treated as compatible for startup cleanup.
 fn ensure_version_compatible(endpoint: &ServiceEndpoint) -> Result<()> {
     if endpoint.version.is_empty() {
         return Ok(());
@@ -100,6 +102,10 @@ pub fn service_is_running() -> bool {
         Ok(endpoint) => endpoint,
         Err(_) => return false,
     };
+    if ensure_version_compatible(&endpoint).is_err() {
+        let _ = std::fs::remove_file(service_addr_path());
+        return false;
+    }
     let addr = match parse_addr(&endpoint) {
         Ok(addr) => addr,
         Err(_) => {
@@ -129,6 +135,25 @@ fn probe_connect_timeout() -> Duration {
 /// response. Returns `Err` when no service is reachable or its version does not
 /// match this build.
 pub fn call_service(command: &SessionLogCommand) -> Result<SessionLogResponse> {
+    let mut last_transient_response_error = None;
+    for attempt in 0..EMPTY_RESPONSE_RETRIES {
+        match call_service_once(command) {
+            Ok(response) => return Ok(response),
+            Err(error) if is_transient_response_error(&error) => {
+                last_transient_response_error = Some(error);
+                if attempt + 1 < EMPTY_RESPONSE_RETRIES {
+                    std::thread::sleep(Duration::from_millis(20));
+                    continue;
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_transient_response_error
+        .unwrap_or_else(|| anyhow!("session_db service call did not run")))
+}
+
+fn call_service_once(command: &SessionLogCommand) -> Result<SessionLogResponse> {
     let endpoint = read_endpoint()?;
     ensure_version_compatible(&endpoint)?;
     let addr = parse_addr(&endpoint)?;
@@ -146,10 +171,27 @@ pub fn call_service(command: &SessionLogCommand) -> Result<SessionLogResponse> {
     let mut response_line = String::new();
     let read = reader.read_line(&mut response_line)?;
     if read == 0 || response_line.trim().is_empty() {
-        return Err(anyhow!("session_db service closed without a response"));
+        return Err(anyhow!(
+            "session_db service at {addr} closed without a response"
+        ));
     }
     serde_json::from_str(response_line.trim())
         .with_context(|| "failed to decode session_db service response")
+}
+
+fn is_transient_response_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause.to_string().contains("closed without a response")
+            || cause.downcast_ref::<IoError>().is_some_and(|io_error| {
+                matches!(
+                    io_error.kind(),
+                    ErrorKind::ConnectionAborted
+                        | ErrorKind::ConnectionReset
+                        | ErrorKind::UnexpectedEof
+                        | ErrorKind::BrokenPipe
+                )
+            })
+    })
 }
 
 /// Execute a command against an owned store. Shared by the socket server and the
@@ -343,12 +385,12 @@ mod tests {
             ensure_version_compatible(&mismatched).expect_err("a different build must be refused");
         assert!(error.to_string().contains("different build"));
 
-        // A legacy endpoint with no published version stays compatible.
-        let legacy = ServiceEndpoint {
+        // An unversioned endpoint remains compatible for startup cleanup.
+        let unversioned = ServiceEndpoint {
             addr: "127.0.0.1:1234".to_string(),
             version: String::new(),
         };
-        assert!(ensure_version_compatible(&legacy).is_ok());
+        assert!(ensure_version_compatible(&unversioned).is_ok());
     }
 
     #[test]
@@ -385,6 +427,79 @@ mod tests {
         assert!(
             !path.exists(),
             "unreachable session_db addr should be removed"
+        );
+    }
+
+    #[test]
+    fn service_probe_removes_foreign_version_addr_file() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let root = tempfile::tempdir().expect("temp db root");
+        let _env = EnvGuard::set(&[
+            ("SESSION_LOG_DB_ROOT", Some(root.path())),
+            ("TURA_DB_ROOT", None),
+        ]);
+
+        let path = service_addr_path();
+        std::fs::create_dir_all(path.parent().expect("addr parent")).expect("addr dir");
+        std::fs::write(
+            &path,
+            serde_json::to_string(&ServiceEndpoint {
+                addr: "127.0.0.1:1".to_string(),
+                version: "0.0.0-foreign+release".to_string(),
+            })
+            .expect("endpoint json"),
+        )
+        .expect("write foreign addr");
+
+        assert!(!service_is_running());
+        assert!(
+            !path.exists(),
+            "foreign-version session_db addr should be removed"
+        );
+    }
+
+    #[test]
+    fn transient_response_retry_includes_windows_connection_aborted() {
+        for kind in [
+            ErrorKind::ConnectionAborted,
+            ErrorKind::ConnectionReset,
+            ErrorKind::UnexpectedEof,
+            ErrorKind::BrokenPipe,
+        ] {
+            let error = anyhow::Error::new(IoError::from(kind));
+            assert!(
+                is_transient_response_error(&error),
+                "{kind:?} should be retried as a transient session_db response error"
+            );
+        }
+    }
+
+    #[test]
+    fn call_service_reports_version_mismatch_before_connecting() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let root = tempfile::tempdir().expect("temp db root");
+        let _env = EnvGuard::set(&[
+            ("SESSION_LOG_DB_ROOT", Some(root.path())),
+            ("TURA_DB_ROOT", None),
+        ]);
+
+        let path = service_addr_path();
+        std::fs::create_dir_all(path.parent().expect("addr parent")).expect("addr dir");
+        std::fs::write(
+            &path,
+            serde_json::to_string(&ServiceEndpoint {
+                addr: "127.0.0.1:1".to_string(),
+                version: "0.0.0-foreign+release".to_string(),
+            })
+            .expect("endpoint json"),
+        )
+        .expect("write foreign addr");
+
+        let error = call_service(&SessionLogCommand::ListWorkspaces)
+            .expect_err("foreign version must be refused");
+        assert!(
+            error.to_string().contains("different build"),
+            "unexpected error: {error:#}"
         );
     }
 }

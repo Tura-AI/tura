@@ -96,11 +96,11 @@ fn resolve_router_binary() -> Result<PathBuf, String> {
 
 /// Dispatch a single child agent through a router CLI subprocess; blocks on the result JSON.
 pub fn dispatch_child_agent(req: &ChildAgentRequest) -> Result<ChildAgentSummary, String> {
-    if std::env::var("TURA_ALLOW_CHILD_ROUTER_CLI_FOR_TEST")
-        .ok()
-        .as_deref()
-        != Some("1")
-    {
+    if !child_router_cli_allowed(
+        std::env::var("TURA_ALLOW_CHILD_ROUTER_CLI_FOR_TEST")
+            .ok()
+            .as_deref(),
+    ) {
         return Err("child dispatch must use the current gateway/router owner; direct router CLI spawning is disabled".to_string());
     }
     let router_bin = resolve_router_binary()?;
@@ -158,6 +158,10 @@ pub fn dispatch_child_agent(req: &ChildAgentRequest) -> Result<ChildAgentSummary
     })
 }
 
+fn child_router_cli_allowed(value: Option<&str>) -> bool {
+    value == Some("1")
+}
+
 fn hide_child_window(_command: &mut Command) {
     #[cfg(windows)]
     {
@@ -201,4 +205,70 @@ fn summarize_child_result(raw: &Value) -> String {
         return format!("error: {error}");
     }
     result.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{child_router_cli_allowed, summarize_child_result, unique_suffix};
+    use serde_json::json;
+
+    #[test]
+    fn summarize_child_result_prefers_nested_summary_fields_in_order() {
+        assert_eq!(
+            summarize_child_result(&json!({
+                "result": {
+                    "summary": "  direct summary  ",
+                    "message": "message fallback"
+                }
+            })),
+            "direct summary"
+        );
+        assert_eq!(
+            summarize_child_result(&json!({
+                "result": {
+                    "summary": "",
+                    "message": "message fallback"
+                }
+            })),
+            "message fallback"
+        );
+        assert_eq!(
+            summarize_child_result(&json!({
+                "result": {
+                    "output_text": "output fallback"
+                }
+            })),
+            "output fallback"
+        );
+    }
+
+    #[test]
+    fn summarize_child_result_uses_top_level_error_before_raw_json() {
+        assert_eq!(
+            summarize_child_result(&json!({ "ok": false, "error": "router failed" })),
+            "error: router failed"
+        );
+        assert_eq!(
+            summarize_child_result(&json!({ "result": { "value": 1 } })),
+            json!({ "value": 1 }).to_string()
+        );
+    }
+
+    #[test]
+    fn child_router_cli_gate_accepts_only_explicit_test_value() {
+        assert!(child_router_cli_allowed(Some("1")));
+        assert!(!child_router_cli_allowed(None));
+        assert!(!child_router_cli_allowed(Some("true")));
+        assert!(!child_router_cli_allowed(Some("0")));
+    }
+
+    #[test]
+    fn unique_suffix_changes_between_calls() {
+        let first = unique_suffix();
+        let second = unique_suffix();
+
+        assert_ne!(first, second);
+        assert!(!first.is_empty());
+        assert!(!second.is_empty());
+    }
 }

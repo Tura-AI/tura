@@ -80,11 +80,11 @@ fn fallback_pdf_text(path: &Path, args: &ReadMediaArgs) -> Result<String, String
     let mut index = 0usize;
     while let Some(start) = raw[index..].find('(') {
         let start = index + start + 1;
-        let Some(end) = raw[start..].find(')') else {
+        let Some(end_relative) = find_pdf_literal_string_end(&raw[start..]) else {
             break;
         };
-        let end = start + end;
-        let candidate = raw[start..end].replace("\\)", ")").replace("\\(", "(");
+        let end = start + end_relative;
+        let candidate = decode_pdf_literal_string(&raw[start..end]);
         if candidate.chars().any(|ch| ch.is_alphabetic()) {
             text.push_str(&candidate);
             text.push('\n');
@@ -98,6 +98,50 @@ fn fallback_pdf_text(path: &Path, args: &ReadMediaArgs) -> Result<String, String
         text.push_str("[PDF text extraction unavailable: pdfium not installed and no plain text objects found]");
     }
     Ok(truncate_chars(&text, args.max_text_chars))
+}
+
+fn find_pdf_literal_string_end(text: &str) -> Option<usize> {
+    let mut escaped = false;
+    for (index, ch) in text.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            ')' => return Some(index),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn decode_pdf_literal_string(text: &str) -> String {
+    let mut decoded = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            decoded.push(ch);
+            continue;
+        }
+        let Some(next) = chars.next() else {
+            decoded.push('\\');
+            break;
+        };
+        match next {
+            '(' | ')' | '\\' => decoded.push(next),
+            'n' => decoded.push('\n'),
+            'r' => decoded.push('\r'),
+            't' => decoded.push('\t'),
+            'b' => decoded.push('\u{0008}'),
+            'f' => decoded.push('\u{000c}'),
+            other => {
+                decoded.push('\\');
+                decoded.push(other);
+            }
+        }
+    }
+    decoded
 }
 
 fn extract_pdf_text_with_python_fitz(
@@ -139,4 +183,106 @@ sys.stdout.write("\n".join(parts))
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(truncate_chars(&stdout, max_text_chars))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_pdf_literal_string, fallback_pdf_text, find_pdf_literal_string_end};
+    use crate::types::ReadMediaArgs;
+
+    fn args(include_text: bool, max_text_chars: usize) -> ReadMediaArgs {
+        ReadMediaArgs {
+            paths: vec!["document.pdf".to_string()],
+            include_text,
+            max_text_chars,
+            max_visuals: 2,
+            max_side: 320,
+            max_files: 10,
+            pdf_max_pages: 2,
+            document_attachment_bytes: 1_000_000,
+            audio_preview_bytes: 1_000_000,
+        }
+    }
+
+    #[test]
+    fn fallback_pdf_text_returns_empty_when_text_is_disabled() {
+        let file = tempfile::NamedTempFile::new().expect("pdf file");
+        std::fs::write(file.path(), b"(Visible text)").expect("write fake pdf");
+
+        let text = fallback_pdf_text(file.path(), &args(false, 100)).expect("fallback text");
+
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn fallback_pdf_text_extracts_plain_pdf_string_objects() {
+        let file = tempfile::NamedTempFile::new().expect("pdf file");
+        std::fs::write(
+            file.path(),
+            b"%PDF-1.4\n(Hello world) Tj\n(12345) Tj\n(Second line with letters) Tj\n",
+        )
+        .expect("write fake pdf");
+
+        let text = fallback_pdf_text(file.path(), &args(true, 500)).expect("fallback text");
+
+        assert!(text.contains("Hello world"));
+        assert!(text.contains("Second line with letters"));
+        assert!(!text.contains("12345\n"));
+    }
+
+    #[test]
+    fn fallback_pdf_text_unescapes_parentheses_and_truncates_to_limit() {
+        let file = tempfile::NamedTempFile::new().expect("pdf file");
+        std::fs::write(
+            file.path(),
+            b"(Alpha \\(inside\\) Beta Gamma Delta Epsilon Zeta Eta Theta Iota Kappa)",
+        )
+        .expect("write fake pdf");
+
+        let text = fallback_pdf_text(file.path(), &args(true, 30)).expect("fallback text");
+
+        assert!(text.contains("Alpha"));
+        assert!(text.contains("inside"));
+        assert!(text.contains("...[read_media text truncated]..."));
+        assert!(
+            text.chars().count() > 30,
+            "marker is added around retained text"
+        );
+    }
+
+    #[test]
+    fn pdf_literal_string_helpers_skip_escaped_closing_parentheses() {
+        let raw = r"Alpha \(inside\) Beta)";
+        let end = find_pdf_literal_string_end(raw).expect("literal end");
+
+        assert_eq!(&raw[end..=end], ")");
+        assert_eq!(
+            decode_pdf_literal_string(&raw[..end]),
+            "Alpha (inside) Beta"
+        );
+        assert_eq!(
+            decode_pdf_literal_string(r"line\nnext\tindent"),
+            "line\nnext\tindent"
+        );
+    }
+
+    #[test]
+    fn fallback_pdf_text_reports_missing_file_with_path_context() {
+        let missing = std::env::temp_dir().join("missing-read-media-pdf-for-test.pdf");
+
+        let error = fallback_pdf_text(&missing, &args(true, 100)).expect_err("missing file");
+
+        assert!(error.contains("failed to read pdf"));
+    }
+
+    #[test]
+    fn fallback_pdf_text_returns_explanatory_message_when_no_text_objects_exist() {
+        let file = tempfile::NamedTempFile::new().expect("pdf file");
+        std::fs::write(file.path(), b"%PDF-1.4\nstream\n123456\nendstream\n")
+            .expect("write fake pdf");
+
+        let text = fallback_pdf_text(file.path(), &args(true, 500)).expect("fallback text");
+
+        assert!(text.contains("PDF text extraction unavailable"));
+    }
 }

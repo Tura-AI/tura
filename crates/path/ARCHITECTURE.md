@@ -1,10 +1,9 @@
 # tura_path
 
 `tura_path` is the single source of truth for instance / home / path resolution
-across the Tura backend. It replaces the previously duplicated helpers
-(`find_repo_root`, `my_root`, `default_db_dir`, `strip_verbatim_prefix`,
-`normalize_workspace`) that had drifted across the gateway, router, and
-session_log crates.
+across the Tura backend. Gateway, router, runtime, and session_log use it for
+home selection, socket paths, lock paths, database directories, and workspace
+key normalization.
 
 ## instance_home model
 
@@ -38,12 +37,22 @@ symlink hop resolve to the same instance. `normalize_workspace` canonicalizes a
 session's workspace key (forward slashes, trimmed trailing separators, bare
 drive/`/` roots preserved).
 
+## Process hardening
+
+`process_hardening` removes dynamic-loader and diagnostic injection environment
+variables at backend process startup. The removed set includes `LD_PRELOAD`,
+`LD_AUDIT`, `LD_LIBRARY_PATH`, `DYLD_*`, and malloc stack-logging controls. When
+`TURA_PROCESS_HARDENING_LOG` or `TURA_DEBUG_RUNTIME` is enabled, the backend
+logs the removed key names without logging their values.
+
 ## Consumers
 
 - `session_log::path` re-exports `default_db_dir` / `repo_root_from` /
   `normalize_workspace` from here.
 - `gateway` resolves its reported project root via `canonical_root()` and its
   verbatim stripping via `strip_verbatim_prefix`.
+- `gateway`, `router`, `session_db`, and `runtime_worker` call
+  `process_hardening::harden_current_process` at binary startup.
 
 > Binary-location fallbacks (`target/{debug,release}` lookups) are a separate
 > concern, consolidated in later stages, and intentionally not owned here.

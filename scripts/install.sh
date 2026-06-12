@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
 set -eu
+PATH="/usr/bin:/bin:/mingw64/bin:/ucrt64/bin:$PATH"
+export PATH
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
@@ -25,9 +27,10 @@ while [ "$#" -gt 0 ]; do
 Usage:
   scripts/install.sh [OPTIONS]
 
-Installs project dependencies without building Tura. The root installer only
-ensures user-local uv/bun are available, runs command-owned installers under
-commands/*, and installs Bun workspaces in their own directories.
+Installs project dependencies without building Tura. The root installer verifies
+shell_command/bash/zsh coverage, installs missing bash/zsh dependencies when
+possible, ensures user-local uv/bun are available, runs command-owned installers
+under commands/*, and installs Bun workspaces in their own directories.
 
 Options:
   --skip-commands  skip commands/*/install.* scripts
@@ -90,10 +93,107 @@ find_bash() {
 find_zsh() {
   if [ -n "${TURA_ZSH_PATH:-}" ]; then
     [ -x "$TURA_ZSH_PATH" ] && { printf '%s\n' "$TURA_ZSH_PATH"; return 0; }
-    return 1
+    echo "TURA_ZSH_PATH is set but does not point to an executable file: $TURA_ZSH_PATH" >&2
   fi
   find_first_executable zsh /bin/zsh /usr/bin/zsh /usr/local/bin/zsh /opt/homebrew/bin/zsh \
     /usr/bin/zsh.exe /mingw64/bin/zsh.exe /ucrt64/bin/zsh.exe /c/msys64/usr/bin/zsh.exe
+}
+
+find_msys2_pacman() {
+  find_first_executable pacman /usr/bin/pacman.exe /c/msys64/usr/bin/pacman.exe /c/msys64/ucrt64/bin/pacman.exe
+}
+
+run_as_root() {
+  if [ "$(id -u 2>/dev/null || echo 1)" != "0" ] && have sudo; then
+    sudo "$@"
+  else
+    "$@"
+  fi
+}
+
+ensure_windows_shell_tools() {
+  [ "$CHECK_ONLY" -eq 1 ] && return
+
+  missing_packages=""
+  find_bash >/dev/null 2>&1 || missing_packages="$missing_packages bash"
+  find_zsh >/dev/null 2>&1 || missing_packages="$missing_packages zsh"
+  [ -n "$missing_packages" ] || return
+  if [ "$OFFLINE" -eq 1 ]; then
+    echo "Shell tools are missing ($missing_packages) and --offline was supplied. Install MSYS2 bash/zsh manually, then rerun." >&2
+    exit 1
+  fi
+
+  pacman_path=$(find_msys2_pacman || true)
+  if [ -z "$pacman_path" ]; then
+    winget_path=$(find_first_executable winget winget.exe /c/Windows/System32/winget.exe || true)
+    if [ -z "$winget_path" ]; then
+      echo "MSYS2 pacman was not found and winget is unavailable. Install MSYS2, then rerun this script." >&2
+      exit 1
+    fi
+    step "Installing MSYS2 for bash/zsh support"
+    "$winget_path" install --id MSYS2.MSYS2 --exact --source winget --accept-package-agreements --accept-source-agreements
+    PATH="/c/msys64/usr/bin:/c/msys64/ucrt64/bin:$PATH"
+    export PATH
+    pacman_path=$(find_msys2_pacman || true)
+  fi
+
+  if [ -z "$pacman_path" ]; then
+    echo "MSYS2 installation completed, but pacman was not found. Open a new shell or add C:\\msys64\\usr\\bin to PATH, then rerun." >&2
+    exit 1
+  fi
+
+  step "Installing MSYS2 shell tools:$missing_packages"
+  # shellcheck disable=SC2086
+  "$pacman_path" -Sy --noconfirm --needed $missing_packages
+  PATH="/c/msys64/usr/bin:/c/msys64/ucrt64/bin:$PATH"
+  export PATH
+}
+
+ensure_unix_shell_tools() {
+  [ "$CHECK_ONLY" -eq 1 ] && return
+
+  missing_packages=""
+  find_bash >/dev/null 2>&1 || missing_packages="$missing_packages bash"
+  find_zsh >/dev/null 2>&1 || missing_packages="$missing_packages zsh"
+  [ -n "$missing_packages" ] || return
+  if [ "$OFFLINE" -eq 1 ]; then
+    echo "Shell tools are missing ($missing_packages) and --offline was supplied. Install them manually, then rerun." >&2
+    exit 1
+  fi
+
+  os_name=$(uname -s 2>/dev/null || echo unknown)
+  step "Installing shell tools:$missing_packages"
+  case "$os_name" in
+    Darwin)
+      have brew || { echo "Homebrew was not found. Install Homebrew or install missing shell tools manually:$missing_packages." >&2; exit 1; }
+      # shellcheck disable=SC2086
+      brew install $missing_packages
+      ;;
+    *)
+      if have apt-get; then
+        # shellcheck disable=SC2086
+        run_as_root apt-get install -y $missing_packages
+      elif have dnf; then
+        # shellcheck disable=SC2086
+        run_as_root dnf install -y $missing_packages
+      elif have yum; then
+        # shellcheck disable=SC2086
+        run_as_root yum install -y $missing_packages
+      elif have pacman; then
+        # shellcheck disable=SC2086
+        run_as_root pacman -Sy --noconfirm --needed $missing_packages
+      elif have apk; then
+        # shellcheck disable=SC2086
+        run_as_root apk add $missing_packages
+      elif have zypper; then
+        # shellcheck disable=SC2086
+        run_as_root zypper --non-interactive install $missing_packages
+      else
+        echo "No supported package manager was found to install shell tools:$missing_packages." >&2
+        exit 1
+      fi
+      ;;
+  esac
 }
 
 find_powershell() {
@@ -137,13 +237,17 @@ ensure_shell_tool_coverage() {
   step "Checking shell tool coverage"
   os_name=$(uname -s 2>/dev/null || echo unknown)
   case "$os_name" in
+    MINGW*|MSYS*|CYGWIN*) ensure_windows_shell_tools ;;
+    *) ensure_unix_shell_tools ;;
+  esac
+  case "$os_name" in
     MINGW*|MSYS*|CYGWIN*)
       ps_path=$(find_powershell || true)
       bash_path=$(find_bash || true)
       zsh_path=$(find_zsh || true)
       require_shell_tool "shell_command/PowerShell" "$ps_path" "Install PowerShell or run from a PowerShell-capable environment."
-      report_shell_tool "bash" "$bash_path" "Install Git for Windows/MSYS2 bash for bash command_run coverage."
-      report_shell_tool "zsh" "$zsh_path" "Install MSYS2 zsh or set TURA_ZSH_PATH to a valid zsh.exe."
+      report_shell_tool "bash" "$bash_path" "Run this installer without --check-only/--offline or install MSYS2 bash manually."
+      report_shell_tool "zsh" "$zsh_path" "Run this installer without --check-only/--offline or set TURA_ZSH_PATH to a valid zsh.exe."
       ;;
     Darwin)
       shell_path=$(find_posix_shell || true)

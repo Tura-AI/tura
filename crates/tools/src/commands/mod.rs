@@ -145,16 +145,18 @@ fn planning_command_enabled() -> bool {
 }
 
 fn execute_external(command: &str, command_line: &str, session_dir: &Path) -> CommandResponse {
-    let command = command.to_string();
+    let command_for_run = command.to_string();
+    let command_for_error = command.to_string();
     let payload = Value::String(command_line.to_string());
-    let session_dir = session_dir.display().to_string();
+    let session_dir_for_run = session_dir.display().to_string();
+    let session_dir_for_error = session_dir_for_run.clone();
     let run = async move {
         crate::external::launcher::invoke(
-            &command,
+            &command_for_run,
             "execute",
             serde_json::json!({
                 "arguments": payload,
-                "session_dir": session_dir,
+                "session_dir": session_dir_for_run,
                 "call_id": "command_run",
             }),
         )
@@ -165,18 +167,36 @@ fn execute_external(command: &str, command_line: &str, session_dir: &Path) -> Co
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .map_err(|err| err.to_string())?
+                .map_err(|err| {
+                    format!(
+                        "failed to create runtime for external command {command_for_error} in {session_dir_for_error}: {err}"
+                    )
+                })?
                 .block_on(run)
-                .map_err(|err| err.to_string())
+                .map_err(|err| {
+                    format!(
+                        "external command {command_for_error} execute failed in {session_dir_for_error}: {err}"
+                    )
+                })
         })
         .join()
-        .unwrap_or_else(|_| Err("external command thread panicked".to_string()))
+        .unwrap_or_else(|_| Err("external command worker thread panicked".to_string()))
     } else {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .map_err(|err| err.to_string())
-            .and_then(|runtime| runtime.block_on(run).map_err(|err| err.to_string()))
+            .map_err(|err| {
+                format!(
+                    "failed to create runtime for external command {command_for_error} in {session_dir_for_error}: {err}"
+                )
+            })
+            .and_then(|runtime| {
+                runtime.block_on(run).map_err(|err| {
+                    format!(
+                        "external command {command_for_error} execute failed in {session_dir_for_error}: {err}"
+                    )
+                })
+            })
     };
     match response {
         Ok(response) => CommandResponse {
@@ -226,4 +246,36 @@ fn access_external(command: &str, command_line: &str, session_dir: &Path) -> Acc
     response
         .and_then(|response| serde_json::from_value(response.output).ok())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{execute_external, CommandResponse};
+    use std::path::Path;
+
+    fn assert_failed(response: CommandResponse) -> String {
+        assert!(!response.success);
+        assert_eq!(response.exit_code, 1);
+        response.stderr
+    }
+
+    #[test]
+    fn external_command_error_includes_command_and_workspace() {
+        let workspace = Path::new("workspace-for-external-error");
+
+        let stderr = assert_failed(execute_external("missing_external", "{}", workspace));
+
+        assert!(
+            stderr.contains("external command missing_external execute failed"),
+            "error should include command and operation: {stderr}"
+        );
+        assert!(
+            stderr.contains("workspace-for-external-error"),
+            "error should include workspace context: {stderr}"
+        );
+        assert!(
+            stderr.contains("unsupported external command: missing_external"),
+            "error should preserve the launcher error: {stderr}"
+        );
+    }
 }

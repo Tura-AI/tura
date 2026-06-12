@@ -276,3 +276,170 @@ fn resize_dynamic_image(image: DynamicImage, max_side: u32) -> DynamicImage {
     let new_height = ((height as f32) * scale).round().max(1.0) as u32;
     image.resize(new_width, new_height, FilterType::Lanczos3)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        compact_visual_previews, draw_text, encode_preview_jpeg, image_from_data_url,
+        preview_data_url, resize_dynamic_image,
+    };
+    use base64::{engine::general_purpose, Engine as _};
+    use image::{DynamicImage, GenericImageView, ImageFormat, Rgb, RgbImage};
+    use serde_json::json;
+
+    fn data_url(width: u32, height: u32, color: [u8; 3]) -> String {
+        let image = DynamicImage::ImageRgb8(RgbImage::from_pixel(width, height, Rgb(color)));
+        let mut bytes = Vec::new();
+        image
+            .write_to(&mut std::io::Cursor::new(&mut bytes), ImageFormat::Png)
+            .expect("encode png");
+        format!(
+            "data:image/png;base64,{}",
+            general_purpose::STANDARD.encode(bytes)
+        )
+    }
+
+    #[test]
+    fn preview_data_url_reads_nested_image_url_only() {
+        let preview = json!({"image_url": {"url": "data:image/png;base64,abc"}});
+        assert_eq!(
+            preview_data_url(&preview),
+            Some("data:image/png;base64,abc")
+        );
+        assert_eq!(preview_data_url(&json!({"url": "missing nesting"})), None);
+    }
+
+    #[test]
+    fn image_from_data_url_reports_missing_separator_and_bad_base64() {
+        assert!(image_from_data_url("data:image/png;base64").is_err());
+        let error =
+            image_from_data_url("data:image/png;base64,%%%%").expect_err("bad base64 should fail");
+        assert!(error.contains("invalid base64 image preview"));
+    }
+
+    #[test]
+    fn jpeg_encoding_resizes_large_images_and_returns_base64_payload() {
+        let image = DynamicImage::ImageRgb8(RgbImage::from_pixel(400, 200, Rgb([10, 20, 30])));
+
+        let encoded = encode_preview_jpeg(image, 100, 80).expect("jpeg encode");
+        let bytes = general_purpose::STANDARD
+            .decode(encoded)
+            .expect("base64 jpeg");
+        let decoded = image::load_from_memory(&bytes).expect("decode jpeg");
+
+        assert_eq!(decoded.width(), 100);
+        assert_eq!(decoded.height(), 50);
+    }
+
+    #[test]
+    fn resize_dynamic_image_keeps_small_images_and_scales_long_side() {
+        let small = DynamicImage::ImageRgb8(RgbImage::from_pixel(20, 10, Rgb([1, 2, 3])));
+        let resized_small = resize_dynamic_image(small.clone(), 100);
+        assert_eq!(resized_small.dimensions(), small.dimensions());
+
+        let wide = DynamicImage::ImageRgb8(RgbImage::from_pixel(300, 150, Rgb([1, 2, 3])));
+        let resized_wide = resize_dynamic_image(wide, 120);
+        assert_eq!(resized_wide.dimensions(), (120, 60));
+    }
+
+    #[test]
+    fn compact_visual_previews_leaves_zero_or_one_preview_in_place() {
+        let mut output = json!({
+            "media_results": [
+                {
+                    "path": "one.png",
+                    "visual_preview_count": 1,
+                    "visual_previews": [
+                        {"label": "one", "image_url": {"url": data_url(10, 10, [255, 0, 0])}}
+                    ]
+                },
+                {
+                    "path": "none.png",
+                    "visual_preview_count": 0,
+                    "visual_previews": []
+                }
+            ]
+        });
+
+        compact_visual_previews(&mut output).expect("compact");
+
+        assert!(output.get("visual_previews").is_none());
+        assert_eq!(output["media_results"][0]["visual_preview_count"], 1);
+        assert_eq!(output["media_results"][1]["visual_preview_count"], 0);
+    }
+
+    #[test]
+    fn compact_visual_previews_creates_result_and_top_level_contact_sheets() {
+        let red = data_url(16, 16, [255, 0, 0]);
+        let green = data_url(16, 16, [0, 255, 0]);
+        let blue = data_url(16, 16, [0, 0, 255]);
+        let mut output = json!({
+            "media_results": [
+                {
+                    "path": "first.png",
+                    "visual_preview_count": 2,
+                    "visual_previews": [
+                        {"label": "red", "image_url": {"url": red}},
+                        {"label": "green", "image_url": {"url": green}}
+                    ]
+                },
+                {
+                    "path": "second.png",
+                    "visual_preview_count": 1,
+                    "visual_previews": [
+                        {"label": "blue", "image_url": {"url": blue}}
+                    ]
+                }
+            ]
+        });
+
+        compact_visual_previews(&mut output).expect("compact");
+
+        assert_eq!(output["visual_contact_sheet"], true);
+        assert_eq!(output["visual_preview_count"], 1);
+        assert_eq!(output["visual_previews"][0]["contact_sheet"], true);
+        assert_eq!(output["visual_previews"][0]["item_count"], 2);
+        assert!(output["visual_previews"][0]["image_url"]["url"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("data:image/jpeg;base64,"));
+        assert_eq!(
+            output["media_results"][0]["visual_previews_compacted_into"],
+            "top_level_contact_sheet"
+        );
+        assert_eq!(output["media_results"][0]["visual_preview_count"], 0);
+        assert_eq!(output["media_results"][1]["visual_preview_count"], 0);
+    }
+
+    #[test]
+    fn compact_visual_previews_propagates_invalid_preview_errors() {
+        let mut output = json!({
+            "media_results": [{
+                "path": "broken.png",
+                "visual_previews": [
+                    {"label": "bad-one", "image_url": {"url": "data:image/png;base64,%%%%"}},
+                    {"label": "bad-two", "image_url": {"url": "data:image/png;base64,%%%%"}}
+                ]
+            }]
+        });
+
+        let error = compact_visual_previews(&mut output).expect_err("bad preview should fail");
+
+        assert!(error.contains("invalid base64 image preview"));
+    }
+
+    #[test]
+    fn draw_text_is_clipped_to_canvas_without_panicking() {
+        let mut canvas = RgbImage::from_pixel(12, 12, Rgb([255, 255, 255]));
+
+        draw_text(
+            &mut canvas,
+            8,
+            8,
+            "STATUS: 1234567890 EXTRA",
+            Rgb([0, 0, 0]),
+        );
+
+        assert!(canvas.pixels().any(|pixel| *pixel == Rgb([0, 0, 0])));
+    }
+}

@@ -51,11 +51,13 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
       }
       const sessions = next.sessions.filter((session) => session.id !== sessionId);
       const { [sessionId]: _messages, ...messagesBySession } = next.messagesBySession;
+      const { [sessionId]: _paging, ...messagePagingBySession } = next.messagePagingBySession;
       const { [sessionId]: _todos, ...todosBySession } = next.todosBySession;
       return {
         ...next,
         sessions,
         messagesBySession,
+        messagePagingBySession,
         todosBySession,
         selectedSessionId:
           next.selectedSessionId === sessionId ? sessions[0]?.id : next.selectedSessionId,

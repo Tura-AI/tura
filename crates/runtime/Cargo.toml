@@ -27,21 +27,56 @@ path = "tests/prompt_injection_e2e.rs"
 
 [[test]]
 name = "claude_code_live_e2e"
-path = "tests/business/live/claude_code_live_e2e.rs"
-required-features = ["business-tests"]
+path = "tests/live/claude_code_live_e2e.rs"
+required-features = ["live-tests"]
 
 [features]
 business-tests = []
-live-tests = ["business-tests"]
+live-tests = []
 
 [[test]]
 name = "claude_code_mock_e2e"
-path = "tests/business/long-e2e/claude_code_mock_e2e.rs"
+path = "tests/business/claude_code_mock_e2e.rs"
 required-features = ["business-tests"]
 
 [[test]]
 name = "coding_agent_mock_e2e"
-path = "tests/business/long-e2e/coding_agent_mock_e2e.rs"
+path = "tests/business/coding_agent_mock_e2e.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "session_log_queue_recovery_flow"
+path = "tests/business/session_log_queue_recovery_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "streamed_command_run_flow"
+path = "tests/business/streamed_command_run_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "checkpoint_ack_flow"
+path = "tests/business/checkpoint_ack_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "provider_timeout_flow"
+path = "tests/business/provider_timeout_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "provider_boundary_flow"
+path = "tests/business/provider_boundary_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "create_runtime_flow"
+path = "tests/business/create_runtime_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "runtime_context_business_flow"
+path = "tests/business/runtime_context_business_flow.rs"
 required-features = ["business-tests"]
 
 [[test]]
@@ -76,3 +111,4 @@ uuid.workspace = true
 [dev-dependencies]
 tokio-test.workspace = true
 tempfile.workspace = true
+rusqlite.workspace = true

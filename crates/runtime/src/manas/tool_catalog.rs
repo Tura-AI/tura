@@ -22,9 +22,9 @@ pub(super) fn load_agent_capabilities(
     }
 
     let content = std::fs::read_to_string(&interface_path)
-        .map_err(|e| format!("failed to read tool interface: {}", e))?;
+        .map_err(|e| format!("failed to read tool interface: {e}"))?;
     let interface = serde_json::from_str::<serde_json::Value>(&content)
-        .map_err(|e| format!("failed to parse tool interface: {}", e))?;
+        .map_err(|e| format!("failed to parse tool interface: {e}"))?;
 
     Ok(vec![tool_interface_to_provider_schema_for_agent(
         interface, agent,
@@ -620,15 +620,15 @@ mod tests {
             "description missing task_status command"
         );
         assert!(
-            description
-                .contains("Reminder: settle the task state with the last task_status command")
+            description.contains("Reminder: task_status only updates internal task state")
                 && description
-                    .contains("Mark `done` only after the task is complete and verified."),
+                    .contains("Mark `done` only after the task is complete and verified.")
+                && description.contains("if the user says hello or asks a simple question"),
             "description missing task_status reminder"
         );
         // The schema enum is injected too.
         assert!(
-            description.contains("\"enum\":[\"question\",\"done\"]"),
+            description.contains("\"enum\":[\"doing\",\"question\",\"done\"]"),
             "description missing task_status schema enum"
         );
     }
@@ -648,9 +648,9 @@ mod tests {
             .unwrap_or_default();
 
         assert!(description.contains("task_status"));
-        assert!(description
-            .contains("Reminder: settle the task state with the last task_status command"));
+        assert!(description.contains("Reminder: task_status only updates internal task state"));
         assert!(description.contains("Mark `done` only after the task is complete and verified."));
+        assert!(description.contains("if the user says hello or asks a simple question"));
         assert!(!description.contains("Continue working toward the active thread goal."));
         assert!(!description.contains("[current objective]:"));
         assert!(!description.to_ascii_lowercase().contains("budget"));
@@ -849,6 +849,9 @@ mod tests {
         assert!(description.contains("\"workdir\":{\"type\":\"string\""));
         assert!(description.contains("\"timeout_ms\":{\"type\":\"number\""));
         assert!(description.contains("Default timeout is 15 seconds"));
+        assert!(description.contains("bash-specific syntax"));
+        assert!(description.contains("Bash arrays are zero-indexed"));
+        assert!(description.contains("Do not use zsh-only glob qualifiers"));
         assert!(description
             .contains("Persistent services must never be used as blocking foreground commands"));
         assert!(description.contains(
@@ -883,6 +886,9 @@ mod tests {
         assert!(description.contains("- zsh:"));
         assert!(description.contains("zsh-specific syntax"));
         assert!(description.contains("/bin/zsh"));
+        assert!(description.contains("Zsh arrays are one-indexed"));
+        assert!(description.contains("unmatched globs can fail"));
+        assert!(description.contains("Do not use bash-only helpers"));
         assert!(!description.contains("- bash:"));
         assert!(!description.contains("- shell_command:"));
 

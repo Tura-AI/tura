@@ -17,7 +17,7 @@ This crate owns current Tura provider behavior:
 - route-based provider configuration
 - `provider_config.json`
 - `.env` / `TURA_ENV_PATH`
-- `TURA_PROVIDER_CONFIG`, `TURALLM_CONFIG`
+- `TURA_PROVIDER_CONFIG`
 - provider call logs under project-root `log/provider/`
 - OpenAI-compatible, Google, and Bedrock providers
 - usage/cost extraction already present in provider responses
@@ -39,12 +39,13 @@ crates/provider/
     provider_config.json
   tests/
     business/
-      live/
-        claude_code_live_smoke.rs
-        codex_priority_tps_live.rs
-        live_model_smoke.rs
-        provider_tool_call_live_smoke.rs
-        responses_tier_live_smoke.rs
+      openai_compatible_local_flow.rs
+    live/
+      claude_code_live_smoke.rs
+      codex_priority_tps_live.rs
+      live_model_smoke.rs
+      provider_tool_call_live_smoke.rs
+      responses_tier_live_smoke.rs
 
   src/
     lib.rs
@@ -217,8 +218,6 @@ from `tura_path` for project-root-aware paths.
 Accepted path inputs:
 
 - `TURA_ENV_PATH`
-- `TURA_PROVIDER_CONFIG`, `TURALLM_CONFIG`
-- project config from `tura_path`
 - provider `config/provider_config.json`
 - project-root `log/provider/YYYY-MM-DD/...json`
 
@@ -291,7 +290,6 @@ crates/provider/config/provider_config.json
 Override the file path only when needed:
 
 - `TURA_PROVIDER_CONFIG`: explicit provider config path.
-- `TURALLM_CONFIG`: explicit provider config path.
 
 Runtime environment values are loaded from the project-root `.env` by default.
 `TURA_ENV_PATH` can point to another dotenv file, but normal project setup
@@ -781,9 +779,8 @@ Sources:
 
 - environment
 - `TURA_ENV_PATH`
-- `TURA_PROVIDER_CONFIG`, `TURALLM_CONFIG`
+- `TURA_PROVIDER_CONFIG`
 - provider `config/provider_config.json`
-- future global Tura config from `tura_path`
 
 ### `storage/secret_store/`
 
@@ -843,7 +840,7 @@ Gateway should not inspect raw provider secrets.
 
 Minimum tests when implementation begins:
 
-- config path resolution including `TURA_ENV_PATH`, `TURA_PROVIDER_CONFIG`, and `TURALLM_CONFIG`
+- config path resolution including `TURA_ENV_PATH` and `TURA_PROVIDER_CONFIG`
 - route loading from provider JSON
 - API key resolution and masking
 - OAuth state transitions

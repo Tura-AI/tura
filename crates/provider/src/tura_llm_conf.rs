@@ -12,22 +12,8 @@ fn config_path() -> PathBuf {
             return PathBuf::from(trimmed);
         }
     }
-    if let Ok(env_path) = env::var("TURALLM_CONFIG") {
-        let trimmed = env_path.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed);
-        }
-    }
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let config_dir_path = manifest_dir.join("config").join("provider_config.json");
-    if config_dir_path.exists() {
-        return config_dir_path;
-    }
-    let legacy_config_dir_path = manifest_dir.join("config").join("tura_llm_config.json");
-    if legacy_config_dir_path.exists() {
-        return legacy_config_dir_path;
-    }
-    manifest_dir.join("src").join("provider_config.json")
+    manifest_dir.join("config").join("provider_config.json")
 }
 
 pub async fn load_settings() -> Result<Settings, TuraError> {
@@ -60,22 +46,16 @@ mod tests {
     use super::config_path;
 
     #[test]
-    fn config_path_prefers_explicit_turallm_config() {
+    fn config_path_prefers_explicit_provider_config() {
         let _guard = crate::test_support::env_lock();
         let previous_provider = std::env::var_os("TURA_PROVIDER_CONFIG");
-        let previous = std::env::var_os("TURALLM_CONFIG");
-        std::env::remove_var("TURA_PROVIDER_CONFIG");
-        std::env::set_var("TURALLM_CONFIG", "C:/tmp/tura-test-config.json");
+        std::env::set_var("TURA_PROVIDER_CONFIG", "C:/tmp/tura-test-config.json");
 
         assert_eq!(
             config_path(),
             std::path::PathBuf::from("C:/tmp/tura-test-config.json")
         );
 
-        match previous {
-            Some(value) => std::env::set_var("TURALLM_CONFIG", value),
-            None => std::env::remove_var("TURALLM_CONFIG"),
-        }
         match previous_provider {
             Some(value) => std::env::set_var("TURA_PROVIDER_CONFIG", value),
             None => std::env::remove_var("TURA_PROVIDER_CONFIG"),
@@ -86,9 +66,7 @@ mod tests {
     async fn bundled_config_exposes_six_model_tiers() {
         let _guard = crate::test_support::env_lock_async().await;
         let previous_provider = std::env::var_os("TURA_PROVIDER_CONFIG");
-        let previous = std::env::var_os("TURALLM_CONFIG");
         std::env::remove_var("TURA_PROVIDER_CONFIG");
-        std::env::remove_var("TURALLM_CONFIG");
 
         let settings = super::load_settings().await.expect("load bundled config");
         for route in [
@@ -109,10 +87,6 @@ mod tests {
             .configured_model_catalog()
             .contains_key("openrouter"));
 
-        match previous {
-            Some(value) => std::env::set_var("TURALLM_CONFIG", value),
-            None => std::env::remove_var("TURALLM_CONFIG"),
-        }
         match previous_provider {
             Some(value) => std::env::set_var("TURA_PROVIDER_CONFIG", value),
             None => std::env::remove_var("TURA_PROVIDER_CONFIG"),

@@ -46,7 +46,9 @@ pub(super) fn run_session_shell_command(directory: &str, input: &str) -> Result<
         command
     };
     command.current_dir(directory);
-    let output = command.output().map_err(|error| error.to_string())?;
+    let output = command.output().map_err(|error| {
+        format!("failed to spawn session shell command in {directory}: {error}")
+    })?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let mut combined = String::new();

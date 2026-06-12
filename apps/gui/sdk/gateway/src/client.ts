@@ -12,6 +12,7 @@ import type {
   HealthResponse,
   FileInfo,
   Message,
+  MessageListInput,
   MessageListItem,
   PathResponse,
   ProviderAuthActionResponse,
@@ -239,9 +240,14 @@ export class GatewayClient {
     });
   }
 
-  async messages(sessionId: string): Promise<Message[]> {
+  async messages(sessionId: string, input: MessageListInput = {}): Promise<Message[]> {
     const items = await this.get<MessageListItem[]>(
       `/session/${encodeURIComponent(sessionId)}/message`,
+      {
+        limit: input.limit,
+        before: input.before,
+        after: input.after,
+      },
     );
     return items
       .map(normalizeMessageListItem)
@@ -495,7 +501,7 @@ export function defaultGatewayUrl(): string {
   const fromVite = meta.env?.VITE_TURA_GATEWAY_URL;
   return (
     [fromQuery, fromWindow, fromVite].find((value) => isValidGatewayUrl(value)) ||
-    "http://127.0.0.1:4096"
+    "http://127.0.0.1:4126"
   );
 }
 

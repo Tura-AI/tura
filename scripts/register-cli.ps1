@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir ".."))
 $ReleaseDir = Join-Path $RepoRoot "target\release"
-$LegacyCliBin = Join-Path $RepoRoot "cli-bin"
+$StaleCliBin = Join-Path $RepoRoot "cli-bin"
 $DocumentsDir = [Environment]::GetFolderPath("MyDocuments")
 $ProfilePaths = @(
   $PROFILE.CurrentUserAllHosts,
@@ -35,7 +35,7 @@ function Remove-PathEntry {
 function Add-UserPathEntry {
   param([string]$PathEntry)
   $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-  $cleanUserPath = Remove-PathEntry $userPath $LegacyCliBin
+  $cleanUserPath = Remove-PathEntry $userPath $StaleCliBin
   $entries = @()
   if ($cleanUserPath) {
     $entries = @($cleanUserPath -split [IO.Path]::PathSeparator | Where-Object { $_ -and $_.Trim() })
@@ -47,7 +47,7 @@ function Add-UserPathEntry {
   } elseif ($cleanUserPath -ne $userPath) {
     [Environment]::SetEnvironmentVariable("Path", $cleanUserPath, "User")
   }
-  $env:Path = Remove-PathEntry $env:Path $LegacyCliBin
+  $env:Path = Remove-PathEntry $env:Path $StaleCliBin
   if (($env:Path -split [IO.Path]::PathSeparator) -notcontains $PathEntry) {
     $env:Path = "$PathEntry$([IO.Path]::PathSeparator)$env:Path"
   }
@@ -61,8 +61,8 @@ if (-not (Test-Path (Join-Path $ReleaseDir "tura.exe"))) {
   throw "Missing $ReleaseDir\tura.exe. Run scripts\build-release.ps1 first."
 }
 
-if (Test-Path -LiteralPath $LegacyCliBin) {
-  Remove-Item -LiteralPath $LegacyCliBin -Recurse -Force
+if (Test-Path -LiteralPath $StaleCliBin) {
+  Remove-Item -LiteralPath $StaleCliBin -Recurse -Force
 }
 
 foreach ($profilePath in $ProfilePaths) {
@@ -75,7 +75,7 @@ foreach ($profilePath in $ProfilePaths) {
     )
     if ($updated -ne $existing) {
       Set-Content -LiteralPath $profilePath -Value $updated.TrimEnd() -Encoding utf8
-      Say "Removed legacy Tura PowerShell profile block from $profilePath."
+      Say "Removed stale Tura PowerShell profile block from $profilePath."
     }
   }
 }

@@ -16,7 +16,8 @@ use std::path::PathBuf;
 
 use serde_json::{json, Value};
 
-use crate::state_machine::session_management::SessionInput;
+use crate::mano::ManoProcessResult;
+use crate::state_machine::session_management::{SessionInput, SessionState};
 
 /// Run the runtime worker loop: blocking read on stdin, write on stdout, until
 /// the peer closes.
@@ -121,28 +122,50 @@ fn handle_call(payload: &Value) -> Value {
         input,
         directory,
     ) {
-        Ok(result) => {
-            let final_text = final_assistant_text(&result.session.session_log).unwrap_or_default();
-            let message_count = result.session.session_log.len();
-            if final_text.trim().is_empty() {
-                return json!({
-                    "ok": false,
-                    "session_id": session_id,
-                    "session_state": result.session.state,
-                    "message_count": message_count,
-                    "error": "runtime completed without a final assistant message",
-                });
-            }
-            json!({
-                "ok": true,
-                "session_id": session_id,
-                "session_state": result.session.state,
-                "message_count": message_count,
-                "final_text": final_text,
-            })
-        }
+        Ok(result) => response_from_mano_result(&session_id, result),
         Err(error) => json!({ "ok": false, "session_id": session_id, "error": error }),
     }
+}
+
+fn response_from_mano_result(session_id: &str, result: ManoProcessResult) -> Value {
+    let final_text = final_assistant_text(&result.session.session_log).unwrap_or_default();
+    let message_count = result.session.session_log.len();
+    if result.session.state == SessionState::Failed {
+        let error = result
+            .final_error
+            .filter(|error| !error.trim().is_empty())
+            .or_else(|| {
+                final_text
+                    .trim()
+                    .is_empty()
+                    .then_some("runtime session failed without a final provider error".to_string())
+            })
+            .unwrap_or_else(|| final_text.clone());
+        return json!({
+            "ok": false,
+            "session_id": session_id,
+            "session_state": result.session.state,
+            "message_count": message_count,
+            "final_text": final_text,
+            "error": error,
+        });
+    }
+    if final_text.trim().is_empty() {
+        return json!({
+            "ok": false,
+            "session_id": session_id,
+            "session_state": result.session.state,
+            "message_count": message_count,
+            "error": "runtime completed without a final assistant message",
+        });
+    }
+    json!({
+        "ok": true,
+        "session_id": session_id,
+        "session_state": result.session.state,
+        "message_count": message_count,
+        "final_text": final_text,
+    })
 }
 
 fn final_assistant_text(session_log: &[String]) -> Option<String> {
@@ -180,6 +203,7 @@ fn looks_like_tool_payload(text: &str) -> bool {
     let trimmed = text.trim_start();
     trimmed.starts_with('{')
         && (trimmed.contains("\"commands\"")
+            || trimmed.contains("\"task_detail\"")
             || trimmed.contains("\"step_summary\"")
             || trimmed.contains("\"tool_calls\"")
             || trimmed.contains("\"reply_message\""))
@@ -188,6 +212,9 @@ fn looks_like_tool_payload(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state_machine::session_management::SessionManagement;
+    use chrono::Utc;
+    use std::path::PathBuf;
 
     #[test]
     fn health_check_reports_role_and_version() {
@@ -223,5 +250,58 @@ mod tests {
         ];
 
         assert_eq!(final_assistant_text(&log), Some("done".to_string()));
+    }
+
+    #[test]
+    fn failed_mano_result_preserves_provider_error_for_router_response() {
+        let mut session = test_session("failed-provider-session");
+        session
+            .transition(SessionState::Running, Utc::now())
+            .expect("running transition");
+        session
+            .transition(SessionState::Failed, Utc::now())
+            .expect("failed transition");
+        session
+            .session_log
+            .push(json!({"role":"assistant","content":"stale fallback"}).to_string());
+
+        let reply = response_from_mano_result(
+            "failed-provider-session",
+            ManoProcessResult {
+                session,
+                agents: Vec::new(),
+                final_error: Some(
+                    "Provider runtime failed after 3 retries before completing the task: rate_limit_exceeded"
+                        .to_string(),
+                ),
+            },
+        );
+
+        assert_eq!(reply["ok"], false);
+        assert_eq!(reply["session_id"], "failed-provider-session");
+        assert_eq!(reply["session_state"], "failed");
+        assert!(reply["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("rate_limit_exceeded")));
+        assert_eq!(reply["final_text"], "stale fallback");
+    }
+
+    fn test_session(session_id: &str) -> SessionManagement {
+        SessionManagement::new(
+            session_id.to_string(),
+            "worker response test".to_string(),
+            PathBuf::from("C:/workspace/worker-response-test"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "test prompt".to_string(),
+                file_input: Vec::new(),
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "test prompt".to_string(),
+            Utc::now(),
+        )
     }
 }

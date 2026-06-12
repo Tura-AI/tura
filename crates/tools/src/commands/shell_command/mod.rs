@@ -18,6 +18,8 @@ mod response;
 #[path = "src/shell.rs"]
 mod shell;
 
+pub use process::{current_shell_process_scope_strategy, ShellProcessScopeStrategy};
+
 use super::{apply_patch, CommandResponse};
 use crate::runtime::file_locks::Access;
 use crate::runtime::tool::{

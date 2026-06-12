@@ -449,3 +449,103 @@ fn shell_quote(value: &str) -> String {
     }
     format!("'{}'", value.replace('\'', "'\\''"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{command_run_display_command, command_run_llm_streams};
+    use serde_json::json;
+
+    #[test]
+    fn display_command_renders_structured_cat_as_sed_range() {
+        let command_line = json!({
+            "path": "src/main.rs",
+            "start_line": 10,
+            "end_line": 12
+        })
+        .to_string();
+
+        assert_eq!(
+            command_run_display_command("cat", &command_line),
+            "sed -n '10,12p' src/main.rs"
+        );
+    }
+
+    #[test]
+    fn display_command_renders_apply_patch_as_here_doc() {
+        let patch = "*** Begin Patch\n*** Add File: a.txt\n+ok\n*** End Patch\n";
+
+        assert_eq!(
+            command_run_display_command("apply_patch", patch),
+            "apply_patch <<'PATCH'\n*** Begin Patch\n*** Add File: a.txt\n+ok\n*** End Patch\nPATCH"
+        );
+    }
+
+    #[test]
+    fn display_command_renders_structured_rg_with_fixed_string_defaults() {
+        let command_line = json!({
+            "query": "hello world",
+            "directory": "crates/runtime",
+            "glob": "*.rs"
+        })
+        .to_string();
+
+        assert_eq!(
+            command_run_display_command("ripgrep", &command_line),
+            "rg -n -i --fixed-strings -g '*.rs' 'hello world' crates/runtime"
+        );
+    }
+
+    #[test]
+    fn llm_streams_render_verify_json_with_failed_command_details() {
+        let stdout = json!({
+            "ok": false,
+            "returncodes": { "fmt": 0, "test": 101 },
+            "stdout": { "test": "running tests\nfailed" },
+            "stderr": { "test": "panic details" }
+        })
+        .to_string();
+
+        let (out, err) = command_run_llm_streams("shell_command", &stdout);
+
+        assert!(out.contains("verify.ps1 ok: false"), "{out}");
+        assert!(out.contains("fmt: passed"), "{out}");
+        assert!(err.contains("test stdout:"), "{err}");
+        assert!(err.contains("panic details"), "{err}");
+    }
+
+    #[test]
+    fn llm_streams_render_structured_rg_results_and_diagnostics() {
+        let stdout = json!({
+            "warnings": [{ "path": "src/a.rs", "code": "W1", "message": "partial scan" }],
+            "results": [{
+                "matches": [
+                    { "path": "src/a.rs", "line": 7, "content": "alpha" },
+                    { "path": "src/b.rs", "line_number": 9, "text": "beta" }
+                ]
+            }]
+        })
+        .to_string();
+
+        let (out, err) = command_run_llm_streams("rg", &stdout);
+
+        assert!(out.contains("src/a.rs:7:alpha"), "{out}");
+        assert!(out.contains("src/b.rs:9:beta"), "{out}");
+        assert_eq!(err, "src/a.rs: W1: partial scan");
+    }
+
+    #[test]
+    fn llm_streams_render_apply_patch_mutation_errors() {
+        let stdout = json!({
+            "results": [{
+                "path": "src/lib.rs",
+                "error": "context not found"
+            }]
+        })
+        .to_string();
+
+        let (out, err) = command_run_llm_streams("apply_patch", &stdout);
+
+        assert_eq!(out, "src/lib.rs: context not found");
+        assert_eq!(err, "context not found");
+    }
+}

@@ -6,6 +6,7 @@ import type { ProviderAuthUpsert } from "../types/provider.js";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { t } from "../i18n.js";
+import { userFacingError } from "../gateway/errors.js";
 
 export async function providerCommand(context: CliContext, args: string[]): Promise<void> {
   const client = new GatewayClient({
@@ -36,7 +37,7 @@ export async function providerCommand(context: CliContext, args: string[]): Prom
         list.all.map((item) =>
           client
             .providerAuthStatus(item.id)
-            .catch((error) => ({ provider_id: item.id, error: String(error) })),
+            .catch((error) => ({ provider_id: item.id, error: userFacingError(error) })),
         ),
       );
       printJson(statuses);
@@ -123,7 +124,7 @@ async function waitForProviderAuth(client: GatewayClient, provider: string): Pro
   while (Date.now() < deadline) {
     lastStatus = await client
       .providerAuthStatus(provider)
-      .catch((error) => ({ error: String(error) }));
+      .catch((error) => ({ error: userFacingError(error) }));
     if (
       lastStatus &&
       typeof lastStatus === "object" &&
@@ -174,7 +175,7 @@ function readJsonValue<T>(value: string, option: string): T {
     throw new CliUsageError(
       t("jsonOrFileRequired", {
         option,
-        error: error instanceof Error ? error.message : String(error),
+        error: userFacingError(error),
       }),
     );
   }
@@ -187,7 +188,7 @@ function readTextFile(path: string, option: string): string {
     throw new CliUsageError(
       t("jsonFileReadFailed", {
         option,
-        error: error instanceof Error ? error.message : String(error),
+        error: userFacingError(error),
       }),
     );
   }

@@ -7,6 +7,10 @@ use anyhow::Result;
 use fs2::FileExt;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use crate::{file_queue, SessionLogStore};
 
@@ -23,17 +27,55 @@ pub fn run_socket_service() -> Result<()> {
         interrupted_running_sessions = interrupted,
         "session_db service starting"
     );
-    start_file_queue_drain(store.clone());
-    crate::ipc::serve_blocking(store)
+    let drain = FileQueueDrainThread::start(store.clone());
+    let result = crate::ipc::serve_blocking(store);
+    drain.stop();
+    result
 }
 
-fn start_file_queue_drain(store: SessionLogStore) {
-    std::thread::spawn(move || loop {
-        if let Err(error) = file_queue::drain_queue(&store, 1000) {
-            tracing::warn!(error = %error, "failed to drain session file queue");
+struct FileQueueDrainThread {
+    stop: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl FileQueueDrainThread {
+    fn start(store: SessionLogStore) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let handle = std::thread::spawn(move || {
+            while !thread_stop.load(Ordering::SeqCst) {
+                if let Err(error) = file_queue::drain_queue(&store, 1000) {
+                    tracing::warn!(error = %error, "failed to drain session file queue");
+                }
+                for _ in 0..25 {
+                    if thread_stop.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
+        });
+        Self {
+            stop,
+            handle: Some(handle),
         }
-        std::thread::sleep(std::time::Duration::from_millis(250));
-    });
+    }
+
+    fn stop(mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for FileQueueDrainThread {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
 }
 
 struct SessionDbOwnerLock {

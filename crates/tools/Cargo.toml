@@ -11,17 +11,27 @@ path = "src/lib.rs"
 
 [[test]]
 name = "web_discover_live_provider_check"
-path = "tests/business/live/web_discover_live_provider_check.rs"
-required-features = ["business-tests"]
+path = "tests/live/web_discover_live_provider_check.rs"
+required-features = ["live-tests"]
 
 [[test]]
 name = "command_run_current_flow"
-path = "tests/business/flow/command_run_current_flow.rs"
+path = "tests/business/command_run_current_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "command_interceptor_e2e"
+path = "tests/business/command_interceptor_e2e.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "command_interceptor_static_flow"
+path = "tests/business/command_interceptor_static_flow.rs"
 required-features = ["business-tests"]
 
 [features]
 business-tests = []
-live-tests = ["business-tests"]
+live-tests = []
 
 [dependencies]
 async-trait.workspace = true
@@ -31,6 +41,9 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 provider.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
 
 [dev-dependencies]
 image.workspace = true

@@ -13,6 +13,8 @@ target/
 
 # Portable self-contained package produced by scripts/build-release.*
 release/
+!tests/release/
+!tests/release/**
 
 # Generated CLI launchers (scripts/install.* registers tura-tui / tura-gateway here)
 cli-bin/

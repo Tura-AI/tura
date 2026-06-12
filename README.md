@@ -5,6 +5,9 @@ direct Rust CLI, an HTTP/SSE gateway, router-managed background processes,
 agent/persona orchestration, provider integration, command execution tools, a
 TypeScript terminal client, and a Bun/Solid GUI.
 
+Rust builds use the pinned toolchain in `rust-toolchain.toml`. The repository is
+licensed under AGPL-3.0-or-later; see `LICENSE`.
+
 The repository is organized by ownership boundaries: Rust crates own runtime,
 gateway, provider, router, tools, agents, and session logging; `apps/tui` and
 `apps/gui` provide the interactive clients; `scripts/` owns install, build,
@@ -24,8 +27,12 @@ directories, and Bun workspaces in place.
 ./scripts/install.sh
 ```
 
-On macOS, the POSIX install/start scripts assert that zsh is available for the
-default shell surface. `scripts/register-cli.sh` updates `.zprofile` and
+Install/start scripts check all shell command-run surfaces on every platform:
+`shell_command`, `bash`, and `zsh`. The install scripts try to install missing
+bash/zsh dependencies with the platform package manager: Windows uses MSYS2
+through winget/pacman, macOS uses Homebrew, and Linux uses common system package
+managers. Set `TURA_STRICT_SHELL_TOOL_COVERAGE=1` to turn optional shell
+warnings into failures. `scripts/register-cli.sh` updates `.zprofile` and
 `.zshrc` when needed so new Terminal sessions can find the release binaries.
 
 Production build writes release binaries into Cargo's standard
@@ -38,6 +45,15 @@ CLI command is `tura exec`; the TUI entry remains `tura`:
 
 ```bash
 ./scripts/build-release.sh; scripts/register-cli.sh
+```
+
+Per-run command tool shell overrides are available as CLI commands and flags:
+
+```powershell
+tura bash "Inspect the workspace using bash command tools"
+tura zsh "Inspect shell startup files with zsh command tools"
+tura shll "Use the system shell_command surface"
+tura exec --zsh "Run through the Rust CLI front with zsh command tools"
 ```
 
 Development build writes debug binaries into `target/debug` and keeps frontend
@@ -109,40 +125,38 @@ sh scripts/tests/scripts/test-build-release.sh --skip-tui --release-probe releas
 
 ## Business Tests And Benchmarks
 
-Business release-entry tests live under `tests/business/` and exercise the
-registered release command surfaces. The CLI scripts are under
-`tests/business/release-entry/`; TUI and GUI release-entry scripts live with
-their app-owned E2E suites under `apps/tui/e2e/business/` and
-`apps/gui/e2e/business/`.
+Workspace tests are classified by top-level peer directory:
+`tests/business`, `tests/performance`, `tests/live`, `tests/release`, and
+`tests/benchmark`.
+Crate-owned Rust tests use the same peer names under each package `tests/`
+directory. Business tests are required local business/link flows and must not
+depend on third-party services, provider tokens, API keys, paid providers, or
+public live systems. Live tests contain those external/key-dependent checks and
+are opt-in. Performance tests contain stress, load, soak, and stability checks.
+Benchmark tests contain scoring and comparison suites.
 
-Backend Rust tests that need provider credentials, external network access, or
-long business flows live under `crates/*/tests/business/` and run only through
-`scripts/run-backend-business-tests.*`; their suite is the first directory under
-`tests/business` (`flow`, `live`, or `long-e2e`). Backend compatibility,
-concurrency, stress, and stability tests live under
-`crates/*/tests/performance/` and run through
-`scripts/run-backend-performance-tests.*`. CI and default `cargo test
---workspace --exclude src-tauri` run only unit tests, default crate tests, and
-non-foldered root flow tests.
+Backend business and performance runners discover tests by package and
+directory type; keep typed test files directly under `business`, `performance`,
+`live`, or `benchmark`, do not add empty type directories, and do not hard-code
+individual test script paths when a one-level directory scan can select the
+suite. CI and default
+`cargo test --workspace --exclude src-tauri` run only unit tests, default crate
+tests, and required non-foldered integration tests.
 
-Benchmark and comparison suites live under `tests/benchmark/`. They are manual,
-long-running flows for frontend repair, ProgramBench-style cleanroom rebuilds,
-SWE-bench-style issue patching, and source-port rewrites.
-
-Run the release-entry business suite after `build-release` and registration:
+Run the release binary suite after `build-release` and registration:
 
 ```powershell
 .\scripts\build-release.ps1; .\scripts\register-cli.ps1
-node .\tests\business\release-entry\run_all_cli_release.mjs
-npm --prefix apps\tui run test:business:release
-bun run --cwd apps\gui e2e:business:release
+.\scripts\run-backend-release-tests.ps1
+npm --prefix apps\tui run test:live:release
+bun run --cwd apps\gui e2e:live:release
 ```
 
 ```bash
 ./scripts/build-release.sh; scripts/register-cli.sh
-node ./tests/business/release-entry/run_all_cli_release.mjs
-npm --prefix apps/tui run test:business:release
-bun run --cwd apps/gui e2e:business:release
+./scripts/run-backend-release-tests.sh
+npm --prefix apps/tui run test:live:release
+bun run --cwd apps/gui e2e:live:release
 ```
 
 ## More Information
@@ -151,9 +165,10 @@ bun run --cwd apps/gui e2e:business:release
 - [Architecture boundaries](ARCHITECTURE.md)
 - [Scripts architecture](scripts/ARCHITECTURE.md)
 - [Business test guide](tests/business/README.md)
+- [Live test guide](tests/live/README.md)
+- [Release test guide](tests/release/README.md)
 - [Benchmark guide](tests/benchmark/README.md)
 - [Test guide](tests/README.md)
 - [TUI guide](apps/tui/README.md)
 - [GUI guide](apps/gui/README.md)
-- [Project roles](docs/roles.md)
 - License: AGPL-3.0-or-later

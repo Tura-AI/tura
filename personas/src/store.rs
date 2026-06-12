@@ -383,3 +383,347 @@ impl PersonaConfig {
         project_root.join(&self.prompt_directory)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn project() -> tempfile::TempDir {
+        let temp = tempfile::tempdir().expect("temp project");
+        fs::create_dir_all(temp.path().join(DYNAMIC_PERSONAS_DIR)).expect("dynamic personas dir");
+        fs::create_dir_all(temp.path().join(STATIC_PERSONAS_DIR)).expect("static personas dir");
+        temp
+    }
+
+    fn test_config(root: &Path, name: &str) -> PersonaConfig {
+        let mut config = default_persona_config(root, name).expect("default persona");
+        config.description = Some("Long persona description".to_string());
+        config.short_description = Some("Short persona".to_string());
+        config.metadata = serde_json::json!({"tone":"focused"});
+        config
+    }
+
+    #[test]
+    fn default_persona_config_normalizes_name_and_paths() {
+        let temp = project();
+
+        let config = default_persona_config(temp.path(), " Helpful Persona ")
+            .expect("default persona config");
+
+        assert_eq!(config.persona_name, "helpful_persona");
+        assert_eq!(config.display_name.as_deref(), Some(" Helpful Persona "));
+        assert_eq!(config.description.as_deref(), Some("Custom persona"));
+        assert_eq!(config.short_description.as_deref(), Some("Custom"));
+        assert_eq!(
+            config.persona_directory,
+            PathBuf::from("personas/helpful_persona")
+        );
+        assert_eq!(
+            config.prompt_directory,
+            PathBuf::from("personas/helpful_persona/prompt")
+        );
+        assert_eq!(
+            config.prompt_directory(temp.path()),
+            temp.path().join("personas/helpful_persona/prompt")
+        );
+        assert!(!config.default_config);
+        assert!(config.media.is_none());
+    }
+
+    #[test]
+    fn dynamic_persona_path_rejects_invalid_ids_and_accepts_space_normalized_ids() {
+        let temp = project();
+        for invalid in ["", "  ", ".", "..", "../x", "a/b", r"a\b", "中文"] {
+            let error = dynamic_persona_path(temp.path(), invalid)
+                .expect_err("invalid persona id should be rejected");
+            assert!(error.contains("invalid persona id"), "{error}");
+        }
+
+        assert_eq!(
+            dynamic_persona_path(temp.path(), "Helpful Persona").expect("valid path"),
+            temp.path().join("personas/helpful_persona")
+        );
+    }
+
+    #[test]
+    fn save_dynamic_persona_writes_config_prompts_and_management_state() {
+        let temp = project();
+        let config = test_config(temp.path(), "Helpful Persona");
+
+        let saved = save_dynamic_persona(
+            temp.path(),
+            &config,
+            Some("Persona prompt"),
+            Some("Short and direct"),
+        )
+        .expect("save persona");
+
+        assert_eq!(saved.summary.id, "helpful_persona");
+        assert_eq!(saved.summary.display_name, "Helpful Persona");
+        assert_eq!(saved.summary.description, "Long persona description");
+        assert_eq!(saved.summary.short_description, "Short persona");
+        assert_eq!(saved.summary.source, PersonaSource::Dynamic);
+        assert_eq!(
+            saved.summary.path,
+            PathBuf::from("personas/helpful_persona")
+        );
+        assert_eq!(saved.summary.state, PersonaState::Active);
+        assert_eq!(saved.persona.as_deref(), Some("Persona prompt"));
+        assert_eq!(
+            saved.communication_style.as_deref(),
+            Some("Short and direct")
+        );
+        assert_eq!(saved.management.persona_id, "helpful_persona");
+        assert_eq!(saved.management.persona_name, "Helpful Persona");
+        assert_eq!(saved.management.state, PersonaState::Active);
+
+        assert!(temp
+            .path()
+            .join("personas/helpful_persona")
+            .join(PERSONA_CONFIG_FILE)
+            .exists());
+        assert!(temp
+            .path()
+            .join("personas/helpful_persona/prompt/persona.md")
+            .exists());
+        assert!(temp
+            .path()
+            .join("personas/helpful_persona/prompt/communication_style.md")
+            .exists());
+    }
+
+    #[test]
+    fn save_dynamic_persona_rejects_user_default_config_flag() {
+        let temp = project();
+        let mut config = test_config(temp.path(), "bad");
+        config.default_config = true;
+
+        let error = save_dynamic_persona(temp.path(), &config, None, None)
+            .expect_err("user personas cannot set default_config");
+
+        assert_eq!(
+            error,
+            "user-created personas cannot set default_config=true"
+        );
+    }
+
+    #[test]
+    fn discover_personas_prefers_dynamic_over_static_with_same_id_and_sorts() {
+        let temp = project();
+        save_dynamic_persona(temp.path(), &test_config(temp.path(), "Zulu"), None, None)
+            .expect("save zulu");
+        save_dynamic_persona(temp.path(), &test_config(temp.path(), "Alpha"), None, None)
+            .expect("save alpha");
+        write_static_persona(temp.path(), "alpha", "Static Alpha", false);
+
+        let discovered = discover_personas(temp.path());
+        let ids = discovered
+            .iter()
+            .map(|persona| persona.summary.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, vec!["alpha", "zulu"]);
+        let alpha = load_persona(temp.path(), "ALPHA").expect("load alpha");
+        assert_eq!(alpha.summary.source, PersonaSource::Dynamic);
+        assert_eq!(alpha.summary.display_name, "Alpha");
+    }
+
+    #[test]
+    fn discover_personas_skips_missing_and_malformed_configs() {
+        let temp = project();
+        fs::create_dir_all(temp.path().join("personas/no-config")).expect("no config dir");
+        fs::create_dir_all(temp.path().join("personas/bad-json")).expect("bad json dir");
+        fs::write(
+            temp.path()
+                .join("personas/bad-json")
+                .join(PERSONA_CONFIG_FILE),
+            "{not-json",
+        )
+        .expect("bad config");
+        save_dynamic_persona(temp.path(), &test_config(temp.path(), "valid"), None, None)
+            .expect("valid persona");
+
+        let discovered = discover_personas(temp.path());
+
+        assert_eq!(discovered.len(), 1);
+        assert_eq!(discovered[0].summary.id, "valid");
+    }
+
+    #[test]
+    fn expression_manifest_enriches_media_without_overwriting_existing_direction_order() {
+        let temp = project();
+        fs::write(
+            temp.path().join(EXPRESSION_MANIFEST_FILE),
+            serde_json::json!({
+                "directionOrder": ["front", "left"],
+                "expressions": [
+                    {"id":"happy","name":"Happy","emojiAliases":[":happy:"]},
+                    {"id":"sad","name":"Sad","emojiAliases":[":sad:"]}
+                ]
+            })
+            .to_string(),
+        )
+        .expect("manifest");
+        let mut config = test_config(temp.path(), "media-persona");
+        config.media = Some(PersonaMediaConfig {
+            name: "Media".to_string(),
+            root_directory: PathBuf::from("assets"),
+            expression_directory: PathBuf::from("assets/expressions"),
+            direction_order: Vec::new(),
+            default_expression: "happy".to_string(),
+            default_direction: "front".to_string(),
+            expression_manifest: None,
+            expressions: vec![
+                PersonaExpression {
+                    id: "happy".to_string(),
+                    name: String::new(),
+                    emoji_aliases: Vec::new(),
+                    source_directory: PathBuf::from("happy"),
+                    grid_path: PathBuf::from("happy/grid.png"),
+                    frames: BTreeMap::new(),
+                },
+                PersonaExpression {
+                    id: "unknown".to_string(),
+                    name: String::new(),
+                    emoji_aliases: Vec::new(),
+                    source_directory: PathBuf::from("unknown"),
+                    grid_path: PathBuf::from("unknown/grid.png"),
+                    frames: BTreeMap::new(),
+                },
+            ],
+        });
+
+        let saved = save_dynamic_persona(temp.path(), &config, None, None).expect("save");
+        let media = saved.summary.media.expect("media");
+
+        assert_eq!(
+            media.expression_manifest,
+            Some(PathBuf::from(EXPRESSION_MANIFEST_FILE))
+        );
+        assert_eq!(media.direction_order, vec!["front", "left"]);
+        assert_eq!(media.expressions[0].name, "Happy");
+        assert_eq!(media.expressions[0].emoji_aliases, vec![":happy:"]);
+        assert_eq!(media.expressions[1].name, "unknown");
+        assert!(media.expressions[1].emoji_aliases.is_empty());
+    }
+
+    #[test]
+    fn expression_manifest_keeps_existing_direction_order_and_missing_manifest_is_nonfatal() {
+        let temp = project();
+        let mut config = test_config(temp.path(), "media-persona");
+        config.media = Some(PersonaMediaConfig {
+            name: "Media".to_string(),
+            root_directory: PathBuf::from("assets"),
+            expression_directory: PathBuf::from("assets/expressions"),
+            direction_order: vec!["custom".to_string()],
+            default_expression: "happy".to_string(),
+            default_direction: "custom".to_string(),
+            expression_manifest: Some(PathBuf::from("missing-manifest.json")),
+            expressions: vec![PersonaExpression {
+                id: "happy".to_string(),
+                name: String::new(),
+                emoji_aliases: Vec::new(),
+                source_directory: PathBuf::from("happy"),
+                grid_path: PathBuf::from("happy/grid.png"),
+                frames: BTreeMap::new(),
+            }],
+        });
+
+        let saved = save_dynamic_persona(temp.path(), &config, None, None).expect("save");
+        let media = saved.summary.media.expect("media");
+
+        assert_eq!(media.direction_order, vec!["custom"]);
+        assert_eq!(
+            media.expression_manifest,
+            Some(PathBuf::from("missing-manifest.json"))
+        );
+        assert_eq!(media.expressions[0].name, "");
+    }
+
+    #[test]
+    fn delete_dynamic_persona_is_idempotent_for_missing_and_removes_existing() {
+        let temp = project();
+
+        assert_eq!(
+            delete_dynamic_persona(temp.path(), "missing").expect("missing delete"),
+            false
+        );
+        save_dynamic_persona(
+            temp.path(),
+            &test_config(temp.path(), "remove-me"),
+            None,
+            None,
+        )
+        .expect("save");
+
+        assert_eq!(
+            delete_dynamic_persona(temp.path(), "remove-me").expect("delete"),
+            true
+        );
+        assert!(load_persona(temp.path(), "remove-me").is_none());
+        assert_eq!(
+            delete_dynamic_persona(temp.path(), "remove-me").expect("second delete"),
+            false
+        );
+    }
+
+    #[test]
+    fn delete_dynamic_persona_rejects_static_and_default_personas() {
+        let temp = project();
+        write_static_persona(temp.path(), "tura", "Tura", false);
+        let static_error =
+            delete_dynamic_persona(temp.path(), "tura").expect_err("static protected");
+        assert!(static_error.contains("static and cannot be deleted"));
+
+        write_static_persona(temp.path(), "builtin", "Built In", true);
+        let default_error =
+            delete_dynamic_persona(temp.path(), "builtin").expect_err("default protected");
+        assert!(default_error.contains("default_config and cannot be deleted"));
+    }
+
+    #[test]
+    fn summary_fallbacks_use_description_then_persona_name() {
+        let temp = project();
+        let mut config = default_persona_config(temp.path(), "fallback").expect("config");
+        config.display_name = None;
+        config.description = Some("Long fallback description".to_string());
+        config.short_description = None;
+
+        let saved = save_dynamic_persona(temp.path(), &config, None, None).expect("save");
+
+        assert_eq!(saved.summary.display_name, "fallback");
+        assert_eq!(saved.summary.description, "Long fallback description");
+        assert_eq!(saved.summary.short_description, "Long fallback description");
+
+        let mut config = default_persona_config(temp.path(), "bare").expect("config");
+        config.display_name = None;
+        config.description = None;
+        config.short_description = None;
+        let saved = save_dynamic_persona(temp.path(), &config, None, None).expect("save bare");
+        assert_eq!(saved.summary.description, "");
+        assert_eq!(saved.summary.short_description, "bare");
+    }
+
+    fn write_static_persona(root: &Path, id: &str, display_name: &str, default_config: bool) {
+        let dir = root.join(STATIC_PERSONAS_DIR).join(id);
+        fs::create_dir_all(dir.join(PERSONA_PROMPT_DIR)).expect("static persona dir");
+        let config = PersonaConfig {
+            persona_name: id.to_string(),
+            display_name: Some(display_name.to_string()),
+            description: Some(format!("{display_name} description")),
+            short_description: None,
+            default_config,
+            persona_directory: PathBuf::from(STATIC_PERSONAS_DIR).join(id),
+            prompt_directory: PathBuf::from(STATIC_PERSONAS_DIR)
+                .join(id)
+                .join(PERSONA_PROMPT_DIR),
+            media: None,
+            metadata: serde_json::json!({}),
+        };
+        fs::write(
+            dir.join(PERSONA_CONFIG_FILE),
+            serde_json::to_string_pretty(&config).expect("encode config"),
+        )
+        .expect("write static persona");
+    }
+}

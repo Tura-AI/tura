@@ -3,14 +3,15 @@ use std::{fs::OpenOptions, path::Path, process::Stdio, sync::Arc, time::Duration
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
     sync::Mutex,
-    time::timeout,
+    time::{timeout, Instant},
 };
 use tracing::{error, info, warn};
 
 use super::models::{CallContext, WorkerEnvelope};
+use super::process_scope::{attach_child_scope, configure_scoped_spawn, WorkerProcessScope};
 
 const WORKER_HEALTH_TIMEOUT: Duration = Duration::from_secs(10);
 // 600s matches the TUI CLI default (timeoutSec: 600). Complex agent turns with
@@ -30,8 +31,10 @@ pub struct WorkerProcess {
     spawn_args: Vec<String>,
     spawn_env: Vec<(String, String)>,
     child: Mutex<Option<Child>>,
+    process_scope: Mutex<Option<WorkerProcessScope>>,
     stdin: Mutex<Option<ChildStdin>>,
     stdout: Mutex<Option<BufReader<ChildStdout>>>,
+    round_trip: Mutex<()>,
 }
 
 impl WorkerProcess {
@@ -59,8 +62,10 @@ impl WorkerProcess {
                     spawn_args: args.to_vec(),
                     spawn_env: env.to_vec(),
                     child: Mutex::new(None),
+                    process_scope: Mutex::new(None),
                     stdin: Mutex::new(None),
                     stdout: Mutex::new(None),
+                    round_trip: Mutex::new(()),
                 }))
             }
         }
@@ -81,7 +86,7 @@ impl WorkerProcess {
         command.env_remove("TURA_CLI_LIVE_JSONL");
         command.env_remove("TURA_CLI_PROGRESS");
         configure_worker_stderr(&mut command, worker_id, service_name, env);
-        hide_child_window(&mut command);
+        configure_scoped_spawn(&mut command);
         for (key, value) in env {
             command.env(key, value);
         }
@@ -99,6 +104,17 @@ impl WorkerProcess {
                 executable_path.display()
             )
         })?;
+        let process_scope = attach_child_scope(&child)
+            .inspect_err(|error| {
+                warn!(
+                    worker_id,
+                    service_name,
+                    error = %error,
+                    "failed to attach worker process scope; direct child cleanup remains active"
+                );
+            })
+            .ok()
+            .flatten();
 
         let stdin = child
             .stdin
@@ -120,15 +136,9 @@ impl WorkerProcess {
             stdin_for_probe.write_all(payload.as_bytes()).await?;
             stdin_for_probe.flush().await?;
 
-            let mut line = String::new();
-            timeout(WORKER_HEALTH_TIMEOUT, reader.read_line(&mut line))
-                .await
-                .map_err(|_| {
-                    anyhow!(
-                        "worker health check timed out after {}s",
-                        WORKER_HEALTH_TIMEOUT.as_secs()
-                    )
-                })??;
+            let line =
+                read_worker_json_response_line(&mut reader, WORKER_HEALTH_TIMEOUT, "health check")
+                    .await?;
             if line.trim().is_empty() {
                 return Err(anyhow!("worker health check returned empty response"));
             }
@@ -167,9 +177,11 @@ impl WorkerProcess {
         if let Err(error) = probe_result {
             if debug_enabled(env) {
                 eprintln!(
-                    "router debug: worker health failed service={} error={}",
-                    service_name, error
+                    "router debug: worker health failed service={service_name} error={error}"
                 );
+            }
+            if let Some(scope) = process_scope.as_ref() {
+                scope.terminate();
             }
             let _ = child.kill().await;
             let _ = child.wait().await;
@@ -177,8 +189,7 @@ impl WorkerProcess {
         }
         if debug_enabled(env) {
             eprintln!(
-                "router debug: worker health ok service={} worker_id={}",
-                service_name, worker_id
+                "router debug: worker health ok service={service_name} worker_id={worker_id}"
             );
         }
 
@@ -192,8 +203,10 @@ impl WorkerProcess {
             spawn_args: args.to_vec(),
             spawn_env: env.to_vec(),
             child: Mutex::new(Some(child)),
+            process_scope: Mutex::new(process_scope),
             stdin: Mutex::new(Some(stdin_for_probe)),
             stdout: Mutex::new(Some(reader)),
+            round_trip: Mutex::new(()),
         })
     }
 
@@ -233,20 +246,27 @@ impl WorkerProcess {
         if matches!(self.mode, WorkerMode::Persistent) {
             let mut child = self.child.lock().await;
             if let Some(mut child) = child.take() {
+                if let Some(scope) = self.process_scope.lock().await.as_ref() {
+                    scope.terminate();
+                }
                 let _ = child.kill().await;
                 let _ = child.wait().await;
             }
+            self.process_scope.lock().await.take();
         }
         self.stdin.lock().await.take();
         self.stdout.lock().await.take();
     }
 
     async fn invoke_persistent(&self, ctx: CallContext) -> Result<Value> {
+        let _round_trip = self.round_trip.lock().await;
         let envelope = WorkerEnvelope {
             kind: "call".to_string(),
             payload: json!({
                 "input": {
+                    "request_id": ctx.request_id,
                     "method": ctx.method,
+                    "path": ctx.path,
                     "input": ctx.input
                 }
             }),
@@ -258,8 +278,20 @@ impl WorkerProcess {
             let stdin = stdin_guard
                 .as_mut()
                 .ok_or_else(|| anyhow!("persistent worker stdin unavailable"))?;
-            stdin.write_all(line.as_bytes()).await?;
-            stdin.flush().await?;
+            if let Err(error) = stdin.write_all(line.as_bytes()).await {
+                drop(stdin_guard);
+                self.stop().await;
+                return Err(anyhow!(
+                    "persistent worker write failed; worker stopped: {error}"
+                ));
+            }
+            if let Err(error) = stdin.flush().await {
+                drop(stdin_guard);
+                self.stop().await;
+                return Err(anyhow!(
+                    "persistent worker flush failed; worker stopped: {error}"
+                ));
+            }
         }
         if process_debug_enabled() {
             eprintln!(
@@ -269,21 +301,27 @@ impl WorkerProcess {
         }
 
         let response_line = {
-            let mut response_line = String::new();
             let mut stdout_guard = self.stdout.lock().await;
             let stdout = stdout_guard
                 .as_mut()
                 .ok_or_else(|| anyhow!("persistent worker stdout unavailable"))?;
-            let invoke_timeout = worker_invoke_timeout();
-            timeout(invoke_timeout, stdout.read_line(&mut response_line))
-                .await
-                .map_err(|_| {
-                    anyhow!(
-                        "worker invocation timed out after {}s",
-                        invoke_timeout.as_secs()
-                    )
-                })??;
-            response_line
+            let invoke_timeout = worker_invoke_timeout(&self.spawn_env);
+            read_worker_json_response_line(stdout, invoke_timeout, "invocation").await
+        };
+        let response_line = match response_line {
+            Ok(line) => line,
+            Err(error) => {
+                warn!(
+                    worker_id = self.worker_id,
+                    service_name = self.service_name,
+                    error = %error,
+                    "persistent worker invocation failed; stopping worker before reuse"
+                );
+                self.stop().await;
+                return Err(anyhow!(
+                    "persistent worker invocation failed; worker stopped: {error}"
+                ));
+            }
         };
         if process_debug_enabled() {
             eprintln!(
@@ -300,6 +338,7 @@ impl WorkerProcess {
                 service_name = self.service_name,
                 "persistent worker returned empty response"
             );
+            self.stop().await;
             return Err(anyhow!("worker returned empty response"));
         }
 
@@ -313,6 +352,7 @@ impl WorkerProcess {
                     error = %err,
                     "persistent worker returned invalid json"
                 );
+                self.stop().await;
                 Err(anyhow!("worker returned invalid response"))
             }
         }
@@ -325,7 +365,7 @@ impl WorkerProcess {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        hide_child_window(&mut command);
+        configure_scoped_spawn(&mut command);
         for (key, value) in &self.spawn_env {
             command.env(key, value);
         }
@@ -335,24 +375,69 @@ impl WorkerProcess {
                 self.executable_path.display()
             )
         })?;
+        let process_scope = attach_child_scope(&child).inspect_err(|error| {
+            warn!(
+                worker_id = self.worker_id,
+                service_name = self.service_name,
+                error = %error,
+                "failed to attach one-shot worker process scope; direct child cleanup remains active"
+            );
+        }).ok().flatten();
 
         let input = serde_json::to_vec(&ctx.input)?;
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(&input).await?;
             stdin.flush().await?;
         }
+        let mut stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("one-shot worker stdout missing"))?;
+        let mut stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow!("one-shot worker stderr missing"))?;
+        let stdout_task = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            stdout.read_to_end(&mut bytes).await.map(|_| bytes)
+        });
+        let stderr_task = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            stderr.read_to_end(&mut bytes).await.map(|_| bytes)
+        });
 
-        let invoke_timeout = worker_invoke_timeout();
-        let out = timeout(invoke_timeout, child.wait_with_output())
-            .await
-            .map_err(|_| {
-                anyhow!(
-                    "one-shot worker timed out after {}s",
-                    invoke_timeout.as_secs()
-                )
-            })??;
-        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        let invoke_timeout = worker_invoke_timeout(&self.spawn_env);
+        let status = match timeout(invoke_timeout, child.wait()).await.map_err(|_| {
+            if let Some(scope) = process_scope.as_ref() {
+                scope.terminate();
+            }
+            let _ = child.start_kill();
+            anyhow!(
+                "one-shot worker timed out after {}s",
+                invoke_timeout.as_secs()
+            )
+        })? {
+            Ok(status) => status,
+            Err(error) => {
+                if let Some(scope) = process_scope.as_ref() {
+                    scope.terminate();
+                }
+                return Err(error.into());
+            }
+        };
+        drop(process_scope);
+        let stdout = String::from_utf8_lossy(
+            &stdout_task
+                .await
+                .map_err(|err| anyhow!("failed to join one-shot stdout reader: {err}"))??,
+        )
+        .to_string();
+        let stderr = String::from_utf8_lossy(
+            &stderr_task
+                .await
+                .map_err(|err| anyhow!("failed to join one-shot stderr reader: {err}"))??,
+        )
+        .to_string();
 
         if !stdout.trim().is_empty() {
             info!(
@@ -372,11 +457,11 @@ impl WorkerProcess {
             );
         }
 
-        if !out.status.success() {
+        if !status.success() {
             warn!(
                 worker_id = self.worker_id,
                 service_name = self.service_name,
-                exit_code = out.status.code().unwrap_or(-1),
+                exit_code = status.code().unwrap_or(-1),
                 "one-shot worker exited with failure"
             );
             return Err(anyhow!("worker execution failed"));
@@ -398,13 +483,70 @@ impl WorkerProcess {
     }
 }
 
-fn worker_invoke_timeout() -> Duration {
-    std::env::var("TURA_WORKER_INVOKE_TIMEOUT_SECS")
-        .ok()
+fn worker_invoke_timeout(env: &[(String, String)]) -> Duration {
+    env_value(env, "TURA_WORKER_INVOKE_TIMEOUT_SECS")
+        .map(ToString::to_string)
+        .or_else(|| std::env::var("TURA_WORKER_INVOKE_TIMEOUT_SECS").ok())
         .and_then(|value| value.trim().parse::<u64>().ok())
         .filter(|seconds| *seconds > 0)
         .map(Duration::from_secs)
         .unwrap_or(DEFAULT_WORKER_INVOKE_TIMEOUT)
+}
+
+async fn read_worker_json_response_line<R>(
+    reader: &mut R,
+    duration: Duration,
+    operation: &str,
+) -> Result<String>
+where
+    R: AsyncBufRead + Unpin,
+{
+    let deadline = Instant::now() + duration;
+    let mut skipped = 0usize;
+    loop {
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(anyhow!(
+                "worker {operation} timed out after {}s",
+                duration.as_secs()
+            ));
+        }
+        let mut line = String::new();
+        let bytes_read = timeout(deadline - now, reader.read_line(&mut line))
+            .await
+            .map_err(|_| anyhow!("worker {operation} timed out after {}s", duration.as_secs()))??;
+        if bytes_read == 0 {
+            return Err(anyhow!("worker {operation} closed stdout before response"));
+        }
+        if line.trim().is_empty() {
+            skipped = skipped.saturating_add(1);
+            if skipped >= 16 {
+                return Err(anyhow!(
+                    "worker {operation} produced too many non-protocol stdout lines"
+                ));
+            }
+            continue;
+        }
+        let trimmed = line.trim();
+        if serde_json::from_str::<Value>(trimmed).is_ok()
+            || trimmed.starts_with('{')
+            || trimmed.starts_with('[')
+        {
+            return Ok(line);
+        }
+        skipped = skipped.saturating_add(1);
+        warn!(
+            operation,
+            skipped,
+            line = %line.trim(),
+            "skipping non-protocol worker stdout line"
+        );
+        if skipped >= 16 {
+            return Err(anyhow!(
+                "worker {operation} produced too many non-protocol stdout lines"
+            ));
+        }
+    }
 }
 
 fn configure_worker_stderr(
@@ -506,12 +648,229 @@ fn process_debug_enabled() -> bool {
         .is_some_and(|value| env_flag(&value))
 }
 
-fn hide_child_window(command: &mut Command) {
-    #[cfg(windows)]
-    {
-        #[allow(unused_imports)]
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        command.creation_flags(CREATE_NO_WINDOW);
+#[cfg(test)]
+mod tests {
+    use super::super::models::CallContext;
+    use super::{
+        env_flag, env_value, sanitize_log_component, worker_invoke_timeout, worker_stderr_log_path,
+        WorkerMode, WorkerProcess,
+    };
+    use serde_json::json;
+    use std::path::PathBuf;
+    use tokio::{io::AsyncWriteExt, sync::Mutex};
+
+    #[tokio::test]
+    async fn missing_persistent_worker_falls_back_to_one_shot_and_preserves_spec() {
+        let executable = PathBuf::from("definitely-missing-runtime-worker-for-test");
+        let args = vec!["--serve".to_string(), "--jsonl".to_string()];
+        let env = vec![("TURA_DEBUG_RUNTIME".to_string(), "0".to_string())];
+
+        let worker = WorkerProcess::start_with(
+            "worker-id".to_string(),
+            "runtime".to_string(),
+            &executable,
+            &args,
+            &env,
+        )
+        .await
+        .expect("missing persistent worker should fall back to one-shot mode");
+
+        assert!(matches!(worker.mode, WorkerMode::OneShot));
+        assert_eq!(worker.worker_id, "worker-id");
+        assert_eq!(worker.service_name, "runtime");
+        assert_eq!(worker.executable_path, executable);
+        assert_eq!(worker.spawn_args, args);
+        assert_eq!(worker.spawn_env, env);
+        assert!(worker.is_alive().await);
+    }
+
+    #[test]
+    fn worker_timeout_is_always_positive() {
+        assert!(worker_invoke_timeout(&[]) >= std::time::Duration::from_secs(1));
+        assert_eq!(
+            worker_invoke_timeout(&[(
+                "TURA_WORKER_INVOKE_TIMEOUT_SECS".to_string(),
+                "2".to_string()
+            )]),
+            std::time::Duration::from_secs(2)
+        );
+    }
+
+    #[test]
+    fn worker_stderr_log_path_prefers_explicit_env_path() {
+        let explicit = PathBuf::from("target/test-worker.stderr.log");
+        let env = vec![(
+            "TURA_RUNTIME_WORKER_STDERR_LOG".to_string(),
+            explicit.display().to_string(),
+        )];
+
+        assert_eq!(
+            worker_stderr_log_path("worker", "runtime", &env),
+            Some(explicit)
+        );
+    }
+
+    #[test]
+    fn worker_stderr_log_path_sanitizes_debug_default_filename() {
+        let env = vec![("TURA_DEBUG_RUNTIME".to_string(), "true".to_string())];
+        let path = worker_stderr_log_path("worker/one", "runtime service", &env)
+            .expect("debug stderr path should be created");
+
+        assert!(
+            path.ends_with("runtime_service-worker_one.stderr.log"),
+            "unexpected debug stderr log path: {}",
+            path.display()
+        );
+    }
+
+    #[test]
+    fn env_helpers_parse_flags_and_exact_keys() {
+        let env = vec![
+            ("TURA_DEBUG_RUNTIME".to_string(), "yes".to_string()),
+            ("OTHER".to_string(), "1".to_string()),
+        ];
+
+        assert_eq!(env_value(&env, "TURA_DEBUG_RUNTIME"), Some("yes"));
+        assert_eq!(env_value(&env, "MISSING"), None);
+        assert!(env_flag("ON"));
+        assert!(env_flag(" true "));
+        assert!(!env_flag("disabled"));
+    }
+
+    #[test]
+    fn log_component_sanitization_keeps_stable_ascii_names() {
+        assert_eq!(
+            sanitize_log_component("runtime/service 1"),
+            "runtime_service_1"
+        );
+        assert_eq!(sanitize_log_component(""), "worker");
+    }
+
+    #[tokio::test]
+    async fn one_shot_invoke_reports_spawn_failure_with_executable_path() {
+        let executable = PathBuf::from("definitely-missing-one-shot-worker-for-test");
+        let worker = WorkerProcess {
+            worker_id: "worker-one-shot".to_string(),
+            service_name: "runtime".to_string(),
+            mode: WorkerMode::OneShot,
+            executable_path: executable.clone(),
+            spawn_args: vec!["--serve".to_string()],
+            spawn_env: Vec::new(),
+            child: Mutex::new(None),
+            process_scope: Mutex::new(None),
+            stdin: Mutex::new(None),
+            stdout: Mutex::new(None),
+            round_trip: Mutex::new(()),
+        };
+
+        let error = worker
+            .invoke(CallContext {
+                request_id: "request-one-shot".to_string(),
+                method: "run".to_string(),
+                path: "/runtime".to_string(),
+                input: json!({ "prompt": "hello" }),
+            })
+            .await
+            .expect_err("missing one-shot executable should fail");
+
+        let text = error.to_string();
+        assert!(
+            text.contains("failed to spawn one-shot executable"),
+            "spawn failure should include operation context: {text}"
+        );
+        assert!(
+            text.contains(executable.to_string_lossy().as_ref()),
+            "spawn failure should include executable path: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn worker_json_response_reader_skips_bounded_stdout_noise() {
+        let (mut writer, reader) = tokio::io::duplex(256);
+        let mut reader = tokio::io::BufReader::new(reader);
+        writer
+            .write_all(b"library debug log\n{\"ok\":true,\"result\":42}\n")
+            .await
+            .expect("write mock worker stdout");
+        drop(writer);
+
+        let line = super::read_worker_json_response_line(
+            &mut reader,
+            std::time::Duration::from_secs(1),
+            "test",
+        )
+        .await
+        .expect("json line should be found after noise");
+
+        assert_eq!(line.trim(), r#"{"ok":true,"result":42}"#);
+    }
+
+    #[tokio::test]
+    async fn worker_json_response_reader_skips_blank_stdout_lines() {
+        let (mut writer, reader) = tokio::io::duplex(256);
+        let mut reader = tokio::io::BufReader::new(reader);
+        writer
+            .write_all(b"\n\r\n{\"ok\":true,\"result\":\"after-blank\"}\n")
+            .await
+            .expect("write mock worker stdout");
+        drop(writer);
+
+        let line = super::read_worker_json_response_line(
+            &mut reader,
+            std::time::Duration::from_secs(1),
+            "test",
+        )
+        .await
+        .expect("json line should be found after blank lines");
+
+        assert_eq!(line.trim(), r#"{"ok":true,"result":"after-blank"}"#);
+    }
+
+    #[tokio::test]
+    async fn worker_json_response_reader_reports_eof_before_response() {
+        let (_writer, reader) = tokio::io::duplex(256);
+        let mut reader = tokio::io::BufReader::new(reader);
+        drop(_writer);
+
+        let error = super::read_worker_json_response_line(
+            &mut reader,
+            std::time::Duration::from_secs(1),
+            "test",
+        )
+        .await
+        .expect_err("eof before json should reject the worker protocol");
+
+        assert!(
+            error.to_string().contains("closed stdout before response"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn worker_json_response_reader_rejects_too_much_stdout_noise() {
+        let (mut writer, reader) = tokio::io::duplex(512);
+        let mut reader = tokio::io::BufReader::new(reader);
+        for index in 0..17 {
+            writer
+                .write_all(format!("noise-{index}\n").as_bytes())
+                .await
+                .expect("write mock noise");
+        }
+        drop(writer);
+
+        let error = super::read_worker_json_response_line(
+            &mut reader,
+            std::time::Duration::from_secs(1),
+            "test",
+        )
+        .await
+        .expect_err("excess stdout noise should reject the worker protocol");
+
+        assert!(
+            error
+                .to_string()
+                .contains("too many non-protocol stdout lines"),
+            "unexpected error: {error:#}"
+        );
     }
 }

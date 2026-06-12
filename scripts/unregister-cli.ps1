@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir ".."))
 $ReleaseDir = Join-Path $RepoRoot "target\release"
-$LegacyCliBin = Join-Path $RepoRoot "cli-bin"
+$StaleCliBin = Join-Path $RepoRoot "cli-bin"
 $DocumentsDir = [Environment]::GetFolderPath("MyDocuments")
 $ProfilePaths = @(
   $PROFILE.CurrentUserAllHosts,
@@ -31,7 +31,7 @@ function Remove-PathEntry {
 }
 
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-$newUserPath = Remove-PathEntry (Remove-PathEntry $userPath $ReleaseDir) $LegacyCliBin
+$newUserPath = Remove-PathEntry (Remove-PathEntry $userPath $ReleaseDir) $StaleCliBin
 if ($newUserPath -ne $userPath) {
   [Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
   Say "Removed Tura release entries from your user PATH."
@@ -39,9 +39,9 @@ if ($newUserPath -ne $userPath) {
   Say "$ReleaseDir was not on your user PATH."
 }
 
-$env:Path = Remove-PathEntry (Remove-PathEntry $env:Path $ReleaseDir) $LegacyCliBin
-if (Test-Path -LiteralPath $LegacyCliBin) {
-  Remove-Item -LiteralPath $LegacyCliBin -Recurse -Force
+$env:Path = Remove-PathEntry (Remove-PathEntry $env:Path $ReleaseDir) $StaleCliBin
+if (Test-Path -LiteralPath $StaleCliBin) {
+  Remove-Item -LiteralPath $StaleCliBin -Recurse -Force
 }
 foreach ($profilePath in $ProfilePaths) {
   if (Test-Path -LiteralPath $profilePath) {

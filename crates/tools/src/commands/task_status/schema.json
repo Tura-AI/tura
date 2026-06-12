@@ -2,14 +2,14 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "task_summary": {
+    "task_detail": {
       "type": "string",
-      "description": "Optional task title/summary."
+      "description": "Optional few-word description of the current task. This is an internal task label, not a user-visible reply."
     },
     "status": {
       "type": "string",
-      "enum": ["question", "done"],
-      "description": "question when blocked on user feedback; done when the task is complete and verified."
+      "enum": ["doing", "question", "done"],
+      "description": "doing only when more command_run calls are required; question when blocked on user feedback; done when the task is complete and verified."
     }
   }
 }

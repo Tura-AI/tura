@@ -1,3 +1,6 @@
+#![deny(clippy::unwrap_used)]
+#![forbid(unsafe_code)]
+
 pub mod checkpoint;
 pub mod cli;
 pub mod client;
@@ -8,6 +11,7 @@ pub mod path;
 pub mod protocol;
 pub mod queue;
 pub mod service;
+pub mod session_state;
 pub mod store;
 
 pub use checkpoint::{CheckpointType, CommandCheckpoint};
@@ -16,4 +20,5 @@ pub use protocol::{
     ListSessionsRequest, Page, SessionLogCommand, SessionLogResponse, SessionRecord,
     SessionSnapshot, UpsertSessionRequest, WorkspaceSummary,
 };
+pub use session_state::SessionState;
 pub use store::SessionLogStore;

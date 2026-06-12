@@ -20,6 +20,8 @@ fn router_ipc_has_supervision_methods_but_no_session_db_data_call() {
         "session_db.lifecycle.start",
         "session_db.lifecycle.status",
         "session_db.lifecycle.restart",
+        "lifecycle.front_heartbeat",
+        "lifecycle.status",
         "execution.enqueue_turn",
         "execution.cancel_turn",
         "execution.get_status",
@@ -104,11 +106,14 @@ fn runtime_and_gateway_session_db_clients_use_file_queue_without_one_shot_proces
 #[test]
 fn session_db_service_replays_durable_queue_on_startup() {
     let store = read("crates/session_log/src/store.rs");
+    let store_queue = read("crates/session_log/src/store/queue.rs");
+    let store_write = read("crates/session_log/src/store/write.rs");
     let service = read("crates/session_log/src/service.rs");
     assert!(
-        store.contains("pub fn replay_pending_write_queue")
-            && store.contains("FROM session_write_queue")
-            && store.contains("WHERE status = 'pending'")
+        store.contains("mod queue;")
+            && store_queue.contains("pub fn replay_pending_write_queue")
+            && store_queue.contains("FROM session_write_queue")
+            && store_queue.contains("WHERE status = 'pending'")
             && service.contains("store.replay_pending_write_queue()?"),
         "session_db service must replay the durable write queue during startup"
     );
@@ -117,7 +122,8 @@ fn session_db_service_replays_durable_queue_on_startup() {
         "session_db service must own draining the file-backed runtime write queue"
     );
     assert!(
-        store.contains("pub fn mark_running_sessions_interrupted")
+        store.contains("mod write;")
+            && store_write.contains("pub fn mark_running_sessions_interrupted")
             && service.contains("store.mark_running_sessions_interrupted()?"),
         "session_db service startup must mark non-reattachable running work interrupted"
     );

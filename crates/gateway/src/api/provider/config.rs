@@ -7,12 +7,6 @@ pub(crate) fn provider_config_path() -> PathBuf {
         .ok()
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var("TURALLM_CONFIG")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-                .map(PathBuf::from)
-        })
         .unwrap_or_else(|| {
             std::env::current_dir()
                 .unwrap_or_default()

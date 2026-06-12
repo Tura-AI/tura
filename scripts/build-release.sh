@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
 set -eu
+PATH="/usr/bin:/bin:/mingw64/bin:/ucrt64/bin:$PATH"
+export PATH
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
@@ -51,6 +53,48 @@ copy_gui_dist() {
   mkdir -p "$dst"
   cp -R "$src"/. "$dst"/
 }
+
+is_under_repo() {
+  case "$1" in
+    "$REPO_ROOT"|"$REPO_ROOT"/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+stop_repo_tura_backends() {
+  command -v pgrep >/dev/null 2>&1 || return 0
+  for name in tura tura_gateway tura_router tura_session_db tura_runtime tura_exec; do
+    pids=$(pgrep -f "$REPO_ROOT/target/.*/$name" 2>/dev/null || true)
+    [ -n "$pids" ] || continue
+    # shellcheck disable=SC2086
+    kill $pids 2>/dev/null || true
+    sleep 1
+    for pid in $pids; do
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+      fi
+    done
+  done
+}
+
+remove_session_db_dirty_data() {
+  for target in \
+    "$REPO_ROOT/db/session_log" \
+    "$REPO_ROOT/.tura/session_log.sqlite3" \
+    "$REPO_ROOT/.tura/session_log.sqlite3-wal" \
+    "$REPO_ROOT/.tura/session_log.sqlite3-shm" \
+    "$REPO_ROOT/.tura/session_log.sqlite3.init.lock"
+  do
+    if ! is_under_repo "$target"; then
+      echo "Refusing to delete session DB path outside repository: $target" >&2
+      exit 1
+    fi
+    rm -rf -- "$target"
+  done
+}
+
+stop_repo_tura_backends
+remove_session_db_dirty_data
 
 (cd "$REPO_ROOT" && cargo build --release -p gateway --bin tura_exec --bin tura_gateway)
 (cd "$REPO_ROOT" && cargo build --release -p router --bin tura_router)

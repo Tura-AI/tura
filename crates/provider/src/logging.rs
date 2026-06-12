@@ -172,16 +172,10 @@ mod tests {
     }
 
     fn set_env(key: &str, value: &str) {
-        // SAFETY: these tests serialize environment mutation through ENV_LOCK.
-        unsafe {
-            std::env::set_var(key, value);
-        }
+        std::env::set_var(key, value);
     }
 
     fn remove_env(key: &str) {
-        // SAFETY: these tests serialize environment mutation through ENV_LOCK.
-        unsafe {
-            std::env::remove_var(key);
-        }
+        std::env::remove_var(key);
     }
 }

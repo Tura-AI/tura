@@ -103,7 +103,7 @@ pub async fn call_with_stream_events(
 
     if options.stream.unwrap_or(false) {
         return stream_call(
-            base_url,
+            provider,
             &client,
             url,
             payload,
@@ -132,6 +132,7 @@ pub async fn call_with_stream_events(
     if let Some(text) = content.as_str() {
         content = Value::String(strip_json_fence(text));
     }
+    validate_chat_success_content(provider, &data, &content)?;
     emit_command_run_stream_events_from_content(&content, stream_events.as_ref());
 
     let mut metrics = extract_openapi_metrics(&data, options.context_window);
@@ -142,6 +143,49 @@ pub async fn call_with_stream_events(
         raw: data,
         metrics: Some(metrics),
     })
+}
+
+fn validate_chat_success_content(
+    provider: &str,
+    data: &Value,
+    content: &Value,
+) -> Result<(), TuraError> {
+    let Some(choices) = data.get("choices").and_then(Value::as_array) else {
+        return Err(TuraError::ProviderRequest {
+            provider: provider.to_string(),
+            message: "missing choices in chat completion response".to_string(),
+        });
+    };
+    if choices.is_empty() {
+        return Err(TuraError::ProviderRequest {
+            provider: provider.to_string(),
+            message: "empty choices in chat completion response".to_string(),
+        });
+    }
+    let Some(message) = choices.first().and_then(|choice| choice.get("message")) else {
+        return Err(TuraError::ProviderRequest {
+            provider: provider.to_string(),
+            message: "missing message in chat completion response".to_string(),
+        });
+    };
+    let has_content = message.get("content").is_some_and(|value| !value.is_null());
+    let has_tool_calls = message
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .is_some_and(|value| !value.is_empty());
+    if !has_content && !has_tool_calls {
+        return Err(TuraError::ProviderRequest {
+            provider: provider.to_string(),
+            message: "missing response content in chat completion response".to_string(),
+        });
+    }
+    if content.is_null() {
+        return Err(TuraError::ProviderRequest {
+            provider: provider.to_string(),
+            message: "missing response content after normalization".to_string(),
+        });
+    }
+    Ok(())
 }
 
 pub(crate) fn build_chat_payload(
@@ -361,7 +405,7 @@ fn should_pass_chat_tool_choice(provider: &str, model: &str, options: &CallOptio
 }
 
 async fn stream_call(
-    _base_url: &str,
+    provider: &str,
     client: &reqwest::Client,
     url: String,
     payload: Value,
@@ -405,7 +449,7 @@ async fn stream_call(
                 &mut tool_calls,
                 &mut stream_state,
                 stream_events,
-            ) {
+            )? {
                 saw_output = true;
                 last_output_at = Instant::now();
             }
@@ -425,7 +469,7 @@ async fn stream_call(
             &mut tool_calls,
             &mut stream_state,
             stream_events,
-        );
+        )?;
     }
 
     let content = if !full_content.is_empty() && !tool_calls.is_empty() {
@@ -445,6 +489,7 @@ async fn stream_call(
     } else {
         Value::Null
     };
+    validate_stream_success_content(provider, &content)?;
 
     let mut metrics = if let Some(usage) = stream_state.stream_usage.clone() {
         let mut metrics = extract_openapi_metrics(&json!({ "usage": usage }), context_window);
@@ -486,6 +531,26 @@ async fn stream_call(
     })
 }
 
+fn validate_stream_success_content(provider: &str, content: &Value) -> Result<(), TuraError> {
+    let has_content = content.as_str().is_some_and(|text| !text.is_empty())
+        || content
+            .get("text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.is_empty());
+    let has_tool_calls = content
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .is_some_and(|calls| !calls.is_empty());
+    if has_content || has_tool_calls {
+        return Ok(());
+    }
+
+    Err(TuraError::ProviderRequest {
+        provider: provider.to_string(),
+        message: "missing response content in chat completion stream".to_string(),
+    })
+}
+
 #[derive(Default)]
 struct OpenAiCompatibleStreamState {
     tool_call_buffers: BTreeMap<String, StreamingToolCall>,
@@ -509,7 +574,8 @@ pub(crate) fn process_chat_stream_line_for_test(line: &str) -> (bool, String, St
     let mut tools = Vec::new();
     let mut state = OpenAiCompatibleStreamState::default();
     let event =
-        process_openai_compatible_stream_line(line, &mut full, &mut tools, &mut state, None);
+        process_openai_compatible_stream_line(line, &mut full, &mut tools, &mut state, None)
+            .unwrap_or(false);
     (event, full, state.reasoning_buffer)
 }
 
@@ -519,18 +585,16 @@ fn process_openai_compatible_stream_line(
     tool_calls: &mut Vec<Value>,
     state: &mut OpenAiCompatibleStreamState,
     stream_events: Option<&ProviderStreamEventSink>,
-) -> bool {
+) -> Result<bool, TuraError> {
     let Some(line) = line.trim_start().strip_prefix("data:") else {
-        return false;
+        return Ok(false);
     };
     let line = line.trim_start();
     if line == "[DONE]" {
         state.stream_done = true;
-        return false;
+        return Ok(false);
     }
-    let Ok(delta) = serde_json::from_str::<Value>(line) else {
-        return false;
-    };
+    let delta = serde_json::from_str::<Value>(line)?;
     let mut output_event = false;
     if let Some(usage) = delta.get("usage").filter(|usage| !usage.is_null()) {
         state.stream_usage = Some(usage.clone());
@@ -632,7 +696,7 @@ fn process_openai_compatible_stream_line(
             state.finish_reason = Some(reason.to_string());
         }
     }
-    output_event
+    Ok(output_event)
 }
 
 #[derive(Default)]

@@ -5,6 +5,7 @@ import {
   sessionTasks,
   taskStartAt,
   taskStartCondition,
+  timedTaskDisplayDate,
 } from "./tasks";
 export const HOUR_MS = 3_600_000;
 export const DAY_MS = 86_400_000;
@@ -14,12 +15,13 @@ export function startOfDay(date: Date): Date {
 }
 
 export function planSessionDate(session: Session): Date | undefined {
-  const raw = sessionTaskState(session).start_at;
+  const rootTask = sessionTaskState(session);
+  const raw = timedTaskDisplayDate(rootTask);
   const fallback = sessionTasks(session)
     .filter((task) => isTimedStartCondition(taskStartCondition(task)))
-    .map((task) => taskStartAt(task))
+    .map((task) => timedTaskDisplayDate(task) ?? taskStartAt(task))
     .find(Boolean);
-  const date = raw ? new Date(raw) : fallback ? new Date(fallback) : undefined;
+  const date = raw ?? (fallback ? new Date(fallback) : undefined);
   return date && !Number.isNaN(date.getTime()) ? date : undefined;
 }
 
