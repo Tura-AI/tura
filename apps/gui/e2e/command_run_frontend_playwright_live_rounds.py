@@ -40,10 +40,7 @@ MODEL_PROVIDER = os.environ.get("TURA_LIVE_MODEL_PROVIDER", "codex")
 MODEL_NAME = os.environ.get("TURA_LIVE_MODEL_NAME", "gpt-5.5")
 REASONING_EFFORT = os.environ.get("TURA_LIVE_REASONING", "low")
 ROUND_TIMEOUT_MS = int(os.environ.get("TURA_LIVE_ROUND_TIMEOUT_MS", "900000"))
-BUSINESS_SCRIPT = (
-    "tests/business/command-run-agent-benchmarks/"
-    "command_run_frontend_playwright_lite_business_test.mjs"
-)
+BUSINESS_SCRIPT = "tests/benchmark/frontend-playwright/react_ops_board_playwright_repair_lite.mjs"
 
 
 def api(method: str, path: str, payload: dict | None = None):

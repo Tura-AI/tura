@@ -1,9 +1,9 @@
 use super::{
-    agent_message_content, agent_message_metadata, api_message_from_store, filter_list_sessions,
-    first_prompt_part_id, frontend_safe_reply_message, frontend_safe_value, planning_todos,
-    prompt_message_id, prompt_model_acceleration, prompt_model_variant, prompt_text,
-    user_facing_completion_fallback, workspace_key, SendAgentMedia, SendAgentMessageRequest,
-    SendAgentToolCall, SessionListParams,
+    agent_message_content, agent_message_metadata, api_message_from_store, apply_single_change,
+    filter_list_sessions, first_prompt_part_id, frontend_safe_reply_message, frontend_safe_value,
+    planning_todos, prompt_command_run_shell, prompt_message_id, prompt_model_acceleration,
+    prompt_model_variant, prompt_text, workspace_key, SendAgentMedia, SendAgentMessageRequest,
+    SendAgentToolCall, SessionChangeRecord, SessionListParams,
 };
 use crate::api::types::{Session, SessionStatus};
 use crate::session_store;
@@ -47,30 +47,26 @@ fn prompt_payload_extracts_model_runtime_options() {
 }
 
 #[test]
+fn prompt_payload_extracts_documented_command_run_shell_surfaces() {
+    let zsh = serde_json::json!({ "command_run_shell": "zsh" });
+    let shll = serde_json::json!({ "commandRunShell": "shell_command" });
+    let typo = serde_json::json!({ "command_run_shell": "zash" });
+
+    assert_eq!(prompt_command_run_shell(&zsh).as_deref(), Some("zsh"));
+    assert_eq!(
+        prompt_command_run_shell(&shll).as_deref(),
+        Some("shell_command")
+    );
+    assert_eq!(prompt_command_run_shell(&typo), None);
+}
+
+#[test]
 fn prompt_payload_treats_default_model_variant_as_unset() {
     let payload = serde_json::json!({
         "variant": " default ",
     });
 
     assert_eq!(prompt_model_variant(&payload), None);
-}
-
-#[test]
-fn completion_fallback_preserves_exact_reply_requests() {
-    assert_eq!(
-        user_facing_completion_fallback(
-            "TUI real business test: reply with exactly TUI_BUSINESS_OK and no extra text."
-        ),
-        "TUI_BUSINESS_OK"
-    );
-    assert_eq!(
-        user_facing_completion_fallback("只回复这一行，不要解释：TUI_WEB_OK"),
-        "TUI_WEB_OK"
-    );
-    assert_eq!(
-        user_facing_completion_fallback("Summarize the repository"),
-        "Done: Summarize the repository"
-    );
 }
 
 fn test_session(id: &str, directory: &str, parent_id: Option<&str>, updated_at: i64) -> Session {
@@ -345,7 +341,7 @@ async fn task_management_route_patches_session_and_returns_session_fields() {
 }
 
 #[tokio::test]
-async fn agent_tool_callback_updates_auto_session_name_from_last_task_summary() {
+async fn agent_tool_callback_updates_auto_session_name_from_last_task_detail() {
     let directory = std::env::temp_dir()
         .join(format!("auto-session-name-{}", uuid::Uuid::new_v4()))
         .to_string_lossy()
@@ -364,40 +360,39 @@ async fn agent_tool_callback_updates_auto_session_name_from_last_task_summary() 
     );
 
     let Json(response) = super::send_agent_message(
-            Path(session.id.clone()),
-            Json(super::SendAgentMessageRequest {
-                reply_message: String::new(),
-                new_learning: String::new(),
-                step_summary: None,
-                media: vec![],
-                runtime_id: Some("runtime-1".to_string()),
-                tool_call: Some(super::SendAgentToolCall {
-                    tool_name: "command_run".to_string(),
-                    call_id: "call-1".to_string(),
-                    state: serde_json::json!({
-                        "status": "completed",
-                        "metadata": {
-                            "output": {
-                                "results": [
-                                    { "output": { "task_status": { "task_summary": "First summary" } } },
-                                    { "output": { "status": { "task_summary": "Last summary" } } }
-                                ]
-                            }
+        Path(session.id.clone()),
+        Json(super::SendAgentMessageRequest {
+            reply_message: String::new(),
+            new_learning: String::new(),
+            step_summary: None,
+            media: vec![],
+            runtime_id: Some("runtime-1".to_string()),
+            message_id: None,
+            part_id: None,
+            tool_call: Some(super::SendAgentToolCall {
+                tool_name: "command_run".to_string(),
+                call_id: "call-1".to_string(),
+                state: serde_json::json!({
+                    "status": "completed",
+                    "metadata": {
+                        "output": {
+                            "results": [
+                                { "output": { "task_status": { "task_detail": "First detail" } } },
+                                { "output": { "status": { "task_detail": "Last detail" } } }
+                            ]
                         }
-                    }),
-                    metadata: None,
+                    }
                 }),
+                metadata: None,
             }),
-        )
-        .await;
+        }),
+    )
+    .await;
 
     assert!(response.ok);
     let Json(updated) = super::get_session(Path(session.id)).await;
-    assert_eq!(updated.name.as_deref(), Some("Last summary"));
-    assert_eq!(
-        updated.session_display_name.as_deref(),
-        Some("Last summary")
-    );
+    assert_eq!(updated.name.as_deref(), Some("Last detail"));
+    assert_eq!(updated.session_display_name.as_deref(), Some("Last detail"));
 
     let _ = fs::remove_dir_all(directory);
 }
@@ -446,6 +441,8 @@ async fn agent_tool_callback_keeps_manual_session_name_when_auto_disabled() {
             step_summary: None,
             media: vec![],
             runtime_id: Some("runtime-1".to_string()),
+            message_id: None,
+            part_id: None,
             tool_call: Some(super::SendAgentToolCall {
                 tool_name: "command_run".to_string(),
                 call_id: "call-1".to_string(),
@@ -455,7 +452,7 @@ async fn agent_tool_callback_keeps_manual_session_name_when_auto_disabled() {
                         "output": {
                             "results": [{
                                 "output": {
-                                    "status": { "task_summary": "Generated summary" }
+                                    "status": { "task_detail": "Generated detail" }
                                 }
                             }]
                         }
@@ -661,6 +658,8 @@ fn agent_message_metadata_keeps_step_summary_for_frontend() {
         step_summary: Some("send final response".to_string()),
         media: vec![],
         runtime_id: Some("runtime-1".to_string()),
+        message_id: None,
+        part_id: None,
         tool_call: None,
     })
     .expect("feedback metadata should be present");
@@ -682,11 +681,42 @@ fn agent_message_content_renders_media_as_rich_tokens() {
             media_type: Some("image/png".to_string()),
         }],
         runtime_id: Some("runtime-1".to_string()),
+        message_id: None,
+        part_id: None,
         tool_call: None,
     });
 
     assert_eq!(
         content,
         "screens\n\n[MEDIA:C:\\Users\\liuliu\\Documents\\tura\\shot.png:MEDIA]\n"
+    );
+}
+
+#[test]
+fn apply_single_change_reports_target_directory_context() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let blocking_parent = temp.path().join("blocked");
+    std::fs::write(&blocking_parent, "file blocks child directory").expect("write blocking file");
+    let target = blocking_parent.join("child.txt");
+    let record = SessionChangeRecord {
+        path: target.to_string_lossy().to_string(),
+        before_exists: true,
+        before_content: Some("before".to_string()),
+        after_exists: true,
+        after_content: None,
+        reverted: false,
+    };
+
+    let error = apply_single_change(&record, true)
+        .expect_err("blocked parent path should fail directory creation");
+
+    let message = &error;
+    assert!(
+        message.contains("failed to create change target directory"),
+        "error should describe the failed operation: {message}"
+    );
+    assert!(
+        message.contains(&blocking_parent.to_string_lossy().to_string()),
+        "error should include the target directory path: {message}"
     );
 }

@@ -46,12 +46,12 @@ describe("gateway startup wrapper", () => {
     }) as typeof fetch;
     const { state, setState } = stateHarness();
 
-    await expect(tryStartGateway("http://127.0.0.1:4096", setState)).resolves.toBe(true);
+    await expect(tryStartGateway("http://127.0.0.1:4126", setState)).resolves.toBe(true);
 
     expect(fetchCalls).toHaveLength(1);
     expect(fetchCalls[0]?.url).toBe("/__tura/start-gateway");
     expect(JSON.parse(String(fetchCalls[0]?.init?.body))).toEqual({
-      gatewayUrl: "http://127.0.0.1:4096",
+      gatewayUrl: "http://127.0.0.1:4126",
     });
     expect(state().connection).toBe("connecting");
     expect(state().gatewayStartupNotice).toBeTruthy();
@@ -107,7 +107,7 @@ describe("gateway startup wrapper", () => {
     invokeResult = { status: "starting", gatewayUrl: "http://127.0.0.1:49231" };
     const { state, setState } = stateHarness();
 
-    await expect(tryStartGateway("http://127.0.0.1:4096", setState)).resolves.toBe(true);
+    await expect(tryStartGateway("http://127.0.0.1:4126", setState)).resolves.toBe(true);
 
     expect(state().gatewayUrl).toBe("http://127.0.0.1:49231");
   });
@@ -117,7 +117,7 @@ describe("gateway startup wrapper", () => {
     invokeError = new Error("command denied");
     const { setState } = stateHarness();
 
-    await expect(tryStartGateway("http://localhost:4096", setState)).resolves.toBe(false);
+    await expect(tryStartGateway("http://localhost:4126", setState)).resolves.toBe(false);
   });
 
   test("recognizes abort, timeout, and fetch failures as gateway timeouts", () => {
@@ -140,9 +140,9 @@ describe("gateway startup wrapper", () => {
     }) as typeof fetch;
     const { setState } = stateHarness();
 
-    await waitForGatewayHealth("http://127.0.0.1:4096///", 1000, setState);
+    await waitForGatewayHealth("http://127.0.0.1:4126///", 1000, setState);
 
-    expect(urls).toEqual(["http://127.0.0.1:4096/global/health"]);
+    expect(urls).toEqual(["http://127.0.0.1:4126/global/health"]);
   });
 });
 
@@ -150,7 +150,7 @@ function stateHarness() {
   let current = {
     loading: false,
     connection: "offline",
-    gatewayUrl: "http://127.0.0.1:4096",
+    gatewayUrl: "http://127.0.0.1:4126",
     error: "previous",
     settingsNotice: undefined,
     gatewayStartupNotice: undefined,

@@ -1,7 +1,7 @@
-import { type Session } from "@tura/gateway-sdk";
+import { type Session, type TaskManagement } from "@tura/gateway-sdk";
 import ChevronLeft from "lucide-solid/icons/chevron-left";
 import ChevronRight from "lucide-solid/icons/chevron-right";
-import { For, Show, createMemo, createSignal } from "solid-js";
+import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import { t } from "../../i18n";
 import { classNames } from "../../state/format";
 import { sessionTitle } from "../../state/global-store";
@@ -19,8 +19,12 @@ import {
   planInitialCalendarDate,
   planSessionStatus,
   planTimedSessions,
-  planTriggerClass,
-  sessionTaskState,
+  taskNonceId,
+  taskPlanStatus,
+  taskStartCondition,
+  taskSummaryText,
+  timedSessionTasks,
+  timedTaskDisplayDate,
   type PlanCalendarMode,
 } from "../../features/plan/tasks";
 import {
@@ -29,7 +33,6 @@ import {
   calendarWeekDays,
   formatCalendarWeekTitle,
   hourStartIso,
-  planSessionDate,
   sameCalendarDay,
   startOfDay,
 } from "../../features/plan/timeline";
@@ -38,10 +41,23 @@ export function PlanCalendarView(props: {
   selectedSessionId?: string;
   onOpenSession: (session: Session) => void;
   onCreateAt: (startAt: string) => void;
-  onSchedule: (session: Session, startAt: string) => void;
+  onSchedule: (session: Session, task: TaskManagement, startAt: string) => void;
 }) {
   const [dragState, setDragState] = createSignal<PlanDragState>();
+  const [nowMs, setNowMs] = createSignal(Date.now());
+  const refreshTimer = window.setInterval(() => setNowMs(Date.now()), 30_000);
+  onCleanup(() => window.clearInterval(refreshTimer));
   const timedSessions = createMemo(() => planTimedSessions(props.sessions));
+  const timedOccurrences = createMemo(() =>
+    timedSessions()
+      .flatMap((session) =>
+        timedSessionTasks(session).flatMap((task) => {
+          const date = timedTaskDisplayDate(task, nowMs());
+          return date ? [{ session, task, date }] : [];
+        }),
+      )
+      .sort((left, right) => left.date.getTime() - right.date.getTime()),
+  );
   const [calendarView, setCalendarView] = createSignal<PlanCalendarMode>("month");
   const [calendarCursor, setCalendarCursor] = createSignal(
     planInitialCalendarDate(timedSessions()),
@@ -79,16 +95,14 @@ export function PlanCalendarView(props: {
           }),
   );
   let hourGridEl: HTMLDivElement | undefined;
-  function sessionsForDay(day: Date): Session[] {
-    return timedSessions().filter((session) => {
-      const date = planSessionDate(session);
-      return date ? sameCalendarDay(date, day) : false;
+  function occurrencesForDay(day: Date): PlanCalendarOccurrence[] {
+    return timedOccurrences().filter((occurrence) => {
+      return sameCalendarDay(occurrence.date, day);
     });
   }
-  function sessionsForDayHour(day: Date, hour: number): Session[] {
-    return sessionsForDay(day).filter((session) => {
-      const date = planSessionDate(session);
-      return date ? date.getHours() === hour : false;
+  function occurrencesForDayHour(day: Date, hour: number): PlanCalendarOccurrence[] {
+    return occurrencesForDay(day).filter((occurrence) => {
+      return occurrence.date.getHours() === hour;
     });
   }
   function dropOnDay(event: DragEvent, day: Date) {
@@ -96,9 +110,11 @@ export function PlanCalendarView(props: {
     const session = timedSessions().find(
       (item) => item.id === event.dataTransfer?.getData("text/session-id"),
     );
-    if (session) {
+    const task = session ? timedSessionTasks(session)[0] : undefined;
+    if (session && task) {
       props.onSchedule(
         session,
+        task,
         dateWithPointerMinutes(day, event.currentTarget as HTMLElement, {
           axis: "y",
           x: event.clientX,
@@ -112,20 +128,21 @@ export function PlanCalendarView(props: {
     const session = timedSessions().find(
       (item) => item.id === event.dataTransfer?.getData("text/session-id"),
     );
-    if (session) {
+    const task = session ? timedSessionTasks(session)[0] : undefined;
+    if (session && task) {
       const next = new Date(day);
       const minuteRatio = pointerRatio(event.currentTarget as HTMLElement, event.clientY, "y");
       next.setHours(hour, Math.round(minuteRatio * 59), 0, 0);
-      props.onSchedule(session, next.toISOString());
+      props.onSchedule(session, task, next.toISOString());
     }
   }
-  function beginCalendarDrag(event: PointerEvent | MouseEvent, session: Session) {
+  function beginCalendarDrag(event: PointerEvent | MouseEvent, occurrence: PlanCalendarOccurrence) {
     beginPlanPointerDrag({
       event,
-      session,
+      session: occurrence.session,
       setDragState,
-      onOpen: () => props.onOpenSession(session),
-      onSchedule: (startAt) => props.onSchedule(session, startAt),
+      onOpen: () => props.onOpenSession(occurrence.session),
+      onSchedule: (startAt) => props.onSchedule(occurrence.session, occurrence.task, startAt),
       onMove: (point) => scrollCalendarAtEdge(point),
       resolveSchedule: (point) => pointerScheduleFromElement(point, "y"),
     });
@@ -254,11 +271,11 @@ export function PlanCalendarView(props: {
                     <header>
                       <span>{day.getDate()}</span>
                     </header>
-                    <For each={sessionsForDay(day)}>
-                      {(session) => (
+                    <For each={occurrencesForDay(day)}>
+                      {(occurrence) => (
                         <PlanCalendarEvent
-                          session={session}
-                          selected={props.selectedSessionId === session.id}
+                          occurrence={occurrence}
+                          selected={props.selectedSessionId === occurrence.session.id}
                           onOpenSession={props.onOpenSession}
                           onPointerDragStart={beginCalendarDrag}
                         />
@@ -313,11 +330,11 @@ export function PlanCalendarView(props: {
                         onDrop={(event) => dropOnDayHour(event, day, hour)}
                         data-plan-hour-start={hourStartIso(day, hour)}
                       >
-                        <For each={sessionsForDayHour(day, hour)}>
-                          {(session) => (
+                        <For each={occurrencesForDayHour(day, hour)}>
+                          {(occurrence) => (
                             <PlanCalendarEvent
-                              session={session}
-                              selected={props.selectedSessionId === session.id}
+                              occurrence={occurrence}
+                              selected={props.selectedSessionId === occurrence.session.id}
                               onOpenSession={props.onOpenSession}
                               onPointerDragStart={beginCalendarDrag}
                             />
@@ -336,30 +353,46 @@ export function PlanCalendarView(props: {
   );
 }
 
-export function PlanCalendarEvent(props: {
+type PlanCalendarOccurrence = {
   session: Session;
+  task: TaskManagement;
+  date: Date;
+};
+
+export function PlanCalendarEvent(props: {
+  occurrence: PlanCalendarOccurrence;
   selected?: boolean;
   onOpenSession: (session: Session) => void;
-  onPointerDragStart: (event: PointerEvent | MouseEvent, session: Session) => void;
+  onPointerDragStart: (
+    event: PointerEvent | MouseEvent,
+    occurrence: PlanCalendarOccurrence,
+  ) => void;
 }) {
   return (
     <button
       class={classNames(
         "plan-calendar-event",
-        `status-${planSessionStatus(props.session)}`,
-        planTriggerClass(props.session),
+        `status-${taskPlanStatus(props.occurrence.task) ?? planSessionStatus(props.occurrence.session)}`,
+        `trigger-${taskStartCondition(props.occurrence.task)}`,
         props.selected && "selected",
       )}
       type="button"
-      onPointerDown={(event) => props.onPointerDragStart(event, props.session)}
-      onMouseDown={(event) => props.onPointerDragStart(event, props.session)}
+      onPointerDown={(event) => props.onPointerDragStart(event, props.occurrence)}
+      onMouseDown={(event) => props.onPointerDragStart(event, props.occurrence)}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
       }}
+      title={[taskSummaryText(props.occurrence.task), sessionTitle(props.occurrence.session)]
+        .filter(Boolean)
+        .join("\n")}
+      data-task-nonce={taskNonceId(props.occurrence.task)}
+      data-task-occurrence={props.occurrence.date.toISOString()}
     >
-      <span>{sessionTitle(props.session)}</span>
-      <small>{formatCalendarEventTime(sessionTaskState(props.session).start_at)}</small>
+      <span>
+        {taskSummaryText(props.occurrence.task) || sessionTitle(props.occurrence.session)}
+      </span>
+      <small>{formatCalendarEventTime(props.occurrence.date.toISOString())}</small>
     </button>
   );
 }

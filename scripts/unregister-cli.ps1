@@ -1,6 +1,4 @@
 #!/usr/bin/env pwsh
-# Remove the tura CLI launchers and their PATH registration for the current user.
-# Reverses scripts/register-cli.ps1 (and tolerates a sh-registered profile too).
 param(
   [switch]$Quiet
 )
@@ -8,50 +6,55 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$RepoRoot = Resolve-Path (Join-Path $ScriptDir "..")
-$CliBinDir = Join-Path $RepoRoot "cli-bin"
+$RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir ".."))
+$ReleaseDir = Join-Path $RepoRoot "target\release"
+$StaleCliBin = Join-Path $RepoRoot "cli-bin"
+$DocumentsDir = [Environment]::GetFolderPath("MyDocuments")
+$ProfilePaths = @(
+  $PROFILE.CurrentUserAllHosts,
+  (Join-Path $DocumentsDir "PowerShell\profile.ps1"),
+  (Join-Path $DocumentsDir "WindowsPowerShell\profile.ps1")
+) | Sort-Object -Unique
 
 function Say {
   param([string]$Message)
-  if (-not $Quiet) {
-    Write-Host $Message
-  }
+  if (-not $Quiet) { Write-Host $Message }
 }
 
 function Remove-PathEntry {
   param([string]$Value, [string]$Entry)
-  if (-not $Value) {
-    return $Value
-  }
+  if (-not $Value) { return $Value }
   $kept = $Value -split [IO.Path]::PathSeparator | Where-Object {
     $_ -and ($_.TrimEnd('\') -ine $Entry.TrimEnd('\'))
   }
   return ($kept -join [IO.Path]::PathSeparator)
 }
 
-# 1. Drop cli-bin from the persistent user PATH and the current process PATH.
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-$newUserPath = Remove-PathEntry $userPath $CliBinDir
+$newUserPath = Remove-PathEntry (Remove-PathEntry $userPath $ReleaseDir) $StaleCliBin
 if ($newUserPath -ne $userPath) {
   [Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
-  Say "Removed $CliBinDir from your user PATH."
+  Say "Removed Tura release entries from your user PATH."
 } else {
-  Say "$CliBinDir was not on your user PATH."
-}
-$env:Path = Remove-PathEntry $env:Path $CliBinDir
-
-# 2. Remove launcher files (both .cmd and bare sh launchers) and the dir if empty.
-foreach ($name in @("tura-tui.cmd", "tura-gateway.cmd", "tura-tui", "tura-gateway")) {
-  $path = Join-Path $CliBinDir $name
-  if (Test-Path -LiteralPath $path) {
-    Remove-Item -LiteralPath $path -Force
-  }
-}
-if (Test-Path -LiteralPath $CliBinDir) {
-  if (-not (Get-ChildItem -LiteralPath $CliBinDir -Force -ErrorAction SilentlyContinue)) {
-    Remove-Item -LiteralPath $CliBinDir -Force
-  }
-  Say "Removed tura CLI launchers from $CliBinDir."
+  Say "$ReleaseDir was not on your user PATH."
 }
 
-Say "Done. Open a new terminal for PATH changes to take effect."
+$env:Path = Remove-PathEntry (Remove-PathEntry $env:Path $ReleaseDir) $StaleCliBin
+if (Test-Path -LiteralPath $StaleCliBin) {
+  Remove-Item -LiteralPath $StaleCliBin -Recurse -Force
+}
+foreach ($profilePath in $ProfilePaths) {
+  if (Test-Path -LiteralPath $profilePath) {
+    $existing = Get-Content -Raw -LiteralPath $profilePath
+    $updated = [regex]::Replace(
+      $existing,
+      "(?s)\r?\n?# >>> tura release commands >>>.*?# <<< tura release commands <<<\r?\n?",
+      ""
+    )
+    if ($updated -ne $existing) {
+      Set-Content -LiteralPath $profilePath -Value $updated.TrimEnd() -Encoding utf8
+      Say "Removed Tura PowerShell profile block from $profilePath."
+    }
+  }
+}
+Say "Done."

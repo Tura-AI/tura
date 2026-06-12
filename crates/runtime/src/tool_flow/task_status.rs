@@ -96,16 +96,17 @@ fn apply_status_result(session: &mut SessionManagement, result: &mut serde_json:
         }) else {
             continue;
         };
-        let requested_summary = status
-            .get("task_summary")
+        let requested_detail = status
+            .get("task_detail")
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToString::to_string);
-        if let Some(summary) = requested_summary {
-            changed |= apply_task_summary(session, status, summary);
+        if let Some(detail) = requested_detail {
+            changed |= apply_task_detail(session, status, detail);
         }
         match status.get("status").and_then(serde_json::Value::as_str) {
+            Some("doing") => changed |= mark_active_task_doing(session),
             Some("done") => changed |= complete_active_task(session),
             Some("question") => changed |= question_active_task(session),
             _ => {}
@@ -114,29 +115,29 @@ fn apply_status_result(session: &mut SessionManagement, result: &mut serde_json:
     changed
 }
 
-fn apply_task_summary(
+fn apply_task_detail(
     session: &mut SessionManagement,
     output: &mut serde_json::Map<String, serde_json::Value>,
-    summary: String,
+    detail: String,
 ) -> bool {
     let mut changed = false;
-    if session.auto_session_name && session.session_name.trim() != summary.trim() {
-        session.session_name = summary.clone();
+    if session.auto_session_name && session.session_name.trim() != detail.trim() {
+        session.session_name = detail.clone();
         changed = true;
     }
     if session.task_plan.plan_summary.trim().is_empty() {
-        session.task_plan.plan_summary = summary.clone();
+        session.task_plan.plan_summary = detail.clone();
         ensure_single_task(session, Utc::now());
         if let Some(task) = session.task_plan.detailed_tasks.first_mut() {
-            task.task_summary = summary;
+            task.task_summary = detail;
         }
         return true;
     }
-    if session.task_plan.plan_summary.trim() != summary.trim() {
+    if session.task_plan.plan_summary.trim() != detail.trim() {
         output.insert(
             "warning".to_string(),
             serde_json::Value::String(
-                "task_summary rename ignored because the task already has a name; no other task-management parameter needs updating for this rename".to_string(),
+                "task_detail rename ignored because the task already has a name; no other task-management parameter needs updating for this rename".to_string(),
             ),
         );
     }
@@ -157,6 +158,23 @@ fn complete_active_task(session: &mut SessionManagement) -> bool {
         )
     }) {
         current.status = PlanStatus::Done;
+        return true;
+    }
+    false
+}
+
+fn mark_active_task_doing(session: &mut SessionManagement) -> bool {
+    ensure_single_task(session, Utc::now());
+    if let Some(current) = session.task_plan.detailed_tasks.iter_mut().find(|task| {
+        matches!(
+            task.status,
+            PlanStatus::Doing | PlanStatus::Todo | PlanStatus::Question
+        )
+    }) {
+        if current.status == PlanStatus::Doing {
+            return false;
+        }
+        current.status = PlanStatus::Doing;
         return true;
     }
     false
@@ -425,7 +443,7 @@ mod tests {
                 "success": true,
                 "output": {
                     "status": {
-                        "task_summary": "Fix startup crash",
+                        "task_detail": "Fix startup crash",
                         "status": "done"
                     }
                 }
@@ -468,7 +486,7 @@ mod tests {
                 "success": true,
                 "output": {
                     "task_status": {
-                        "task_summary": "Inspect available behavior clues",
+                        "task_detail": "Inspect available behavior clues",
                         "status": "done"
                     }
                 }
@@ -484,7 +502,7 @@ mod tests {
     }
 
     #[test]
-    fn task_summary_does_not_rename_session_when_auto_name_disabled() {
+    fn task_detail_does_not_rename_session_when_auto_name_disabled() {
         let mut session = session();
         session.session_name = "Manual title".to_string();
         session.auto_session_name = false;
@@ -494,7 +512,7 @@ mod tests {
                 "success": true,
                 "output": {
                     "status": {
-                        "task_summary": "Generated task"
+                        "task_detail": "Generated task"
                     }
                 }
             }]
@@ -543,6 +561,39 @@ mod tests {
     }
 
     #[test]
+    fn status_doing_marks_current_task_doing() {
+        let mut session = session();
+        session.task_plan.plan_summary = "Continue implementation".to_string();
+        session.task_plan.detailed_tasks.push(TaskStep {
+            task_id: "nonce-1".to_string(),
+            step: 1,
+            task_summary: "Continue implementation".to_string(),
+            status: PlanStatus::Todo,
+            ..TaskStep::default()
+        });
+        let mut result = json!({
+            "results": [{
+                "command_type": "task_status",
+                "success": true,
+                "output": {
+                    "task_status": {
+                        "status": "doing"
+                    }
+                }
+            }]
+        });
+
+        let changed =
+            apply_tool_result_session_state_update(&mut session, COMMAND_RUN_TOOL, &mut result);
+
+        assert!(changed);
+        assert_eq!(
+            session.task_plan.detailed_tasks[0].status,
+            PlanStatus::Doing
+        );
+    }
+
+    #[test]
     fn status_summary_refreshes_auto_session_name_after_summary_exists() {
         let mut session = session();
         session.task_plan.plan_summary = "Existing task".to_string();
@@ -560,7 +611,7 @@ mod tests {
                 "success": true,
                 "output": {
                     "status": {
-                        "task_summary": "New task name"
+                        "task_detail": "New task name"
                     }
                 }
             }]

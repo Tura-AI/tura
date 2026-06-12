@@ -127,6 +127,9 @@ pub(super) fn move_unique_download(
             format!("-{copy}")
         };
         let path = output_dir.join(format!("{base_name}{suffix}.{extension}"));
+        if path.exists() {
+            continue;
+        }
         match std::fs::rename(source, &path) {
             Ok(()) => return Ok(path),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,

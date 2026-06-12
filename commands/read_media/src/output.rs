@@ -38,3 +38,36 @@ pub(super) fn summary_text(value: &Value) -> String {
         .unwrap_or_default()
         .to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{results_summary, summary_text};
+    use serde_json::json;
+
+    #[test]
+    fn results_summary_includes_success_counts_and_failures() {
+        let summary = results_summary(&[
+            json!({
+                "path": "image.png",
+                "success": true,
+                "media_type": "image",
+                "visual_preview_count": 2,
+                "audio_preview_count": 0
+            }),
+            json!({
+                "path": "missing.txt",
+                "success": false,
+                "error": "media path does not exist"
+            }),
+        ]);
+
+        assert!(summary.contains("image.png: image, 2 visual previews, 0 audio previews"));
+        assert!(summary.contains("missing.txt: failed: media path does not exist"));
+    }
+
+    #[test]
+    fn summary_text_defaults_to_empty_string_when_absent() {
+        assert_eq!(summary_text(&json!({ "summary_markdown": "ok" })), "ok");
+        assert_eq!(summary_text(&json!({})), "");
+    }
+}

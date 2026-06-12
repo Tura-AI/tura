@@ -5,7 +5,7 @@ import { initialAppState, sessionTitle } from "./global-store";
 
 describe("applyGatewayEvent", () => {
   test("upserts sessions and messages", () => {
-    let state: AppState = initialAppState("http://127.0.0.1:4096");
+    let state: AppState = initialAppState("http://127.0.0.1:4126");
     state = applyGatewayEvent(state, {
       directory: "C:/repo",
       payload: {
@@ -45,7 +45,7 @@ describe("applyGatewayEvent", () => {
 
   test("applies part deltas", () => {
     let state: AppState = {
-      ...initialAppState("http://127.0.0.1:4096"),
+      ...initialAppState("http://127.0.0.1:4126"),
       messagesBySession: {
         s1: [
           {
@@ -75,7 +75,7 @@ describe("applyGatewayEvent", () => {
   });
 
   test("keeps streaming deltas that arrive before full message hydration", () => {
-    let state: AppState = initialAppState("http://127.0.0.1:4096");
+    let state: AppState = initialAppState("http://127.0.0.1:4126");
 
     state = applyGatewayEvent(state, {
       payload: {
@@ -108,7 +108,7 @@ describe("applyGatewayEvent", () => {
 
   test("adds delta parts to existing messages before part hydration", () => {
     let state: AppState = {
-      ...initialAppState("http://127.0.0.1:4096"),
+      ...initialAppState("http://127.0.0.1:4126"),
       messagesBySession: {
         s1: [
           {
@@ -139,7 +139,7 @@ describe("applyGatewayEvent", () => {
 
   test("applies gateway status objects", () => {
     let state: AppState = {
-      ...initialAppState("http://127.0.0.1:4096"),
+      ...initialAppState("http://127.0.0.1:4126"),
       sessions: [{ id: "s1", title: "Build", status: "idle" }],
     };
 
@@ -158,7 +158,7 @@ describe("applyGatewayEvent", () => {
 
   test("keeps local fallback name when gateway event has no session name", () => {
     let state: AppState = {
-      ...initialAppState("http://127.0.0.1:4096"),
+      ...initialAppState("http://127.0.0.1:4126"),
       sessions: [
         {
           id: "s1",
@@ -191,7 +191,7 @@ describe("applyGatewayEvent", () => {
   });
 
   test("adds updated parts that arrive before message hydration", () => {
-    let state: AppState = initialAppState("http://127.0.0.1:4096");
+    let state: AppState = initialAppState("http://127.0.0.1:4126");
 
     state = applyGatewayEvent(state, {
       payload: {
@@ -216,7 +216,7 @@ describe("applyGatewayEvent", () => {
 
   test("removes matching optimistic user prompt when gateway echoes real message", () => {
     let state: AppState = {
-      ...initialAppState("http://127.0.0.1:4096"),
+      ...initialAppState("http://127.0.0.1:4126"),
       messagesBySession: {
         s1: [
           {
@@ -251,7 +251,7 @@ describe("applyGatewayEvent", () => {
 
   test("removes a deleted conversation and selects the next available session", () => {
     let state: AppState = {
-      ...initialAppState("http://127.0.0.1:4096"),
+      ...initialAppState("http://127.0.0.1:4126"),
       selectedSessionId: "s1",
       sessions: [
         { id: "s1", status: "idle", updated_at: 2 },
@@ -282,7 +282,7 @@ describe("applyGatewayEvent", () => {
   });
 
   test("hydrates assistant messages over previously streamed placeholder parts", () => {
-    let state: AppState = initialAppState("http://127.0.0.1:4096");
+    let state: AppState = initialAppState("http://127.0.0.1:4126");
 
     state = applyGatewayEvent(state, {
       payload: {

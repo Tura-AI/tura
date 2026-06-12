@@ -110,6 +110,11 @@ crates/tools/
         schema.json
         prompt.md
         policy.toml
+      zsh/
+        mod.rs
+        schema.json
+        prompt.md
+        policy.toml
 
     modes/
       mod.rs
@@ -119,9 +124,12 @@ crates/tools/
         policy.toml
 
   tests/
-    command_run_current_flow.rs
     command_interceptor_e2e.rs
-    web_discover_live_provider_check.rs
+    business/
+      flow/
+        command_run_current_flow.rs
+    live/
+      web_discover_live_provider_check.rs
     docker/
       Dockerfile
     contracts/
@@ -202,8 +210,9 @@ managed service/process lifecycle. Tools owns executable command handlers.
 Examples:
 
 - `powershell` -> router alias -> `shell_command`
-- `bash` -> router alias -> `shell_command`
 - `shell_command` -> router command id -> tools handler
+- `bash` -> router command id -> tools handler
+- `zsh` -> router command id -> tools handler
 - `apply_patch` -> router command id -> tools handler
 - `read_media` -> router command id -> tools handler
 - `web_discover` -> router command id -> tools handler
@@ -211,10 +220,16 @@ Examples:
 - `task_status` -> internal command-run status command
 - `planning` -> optional planning/multiple-task state handler
 
-Only `shell_command`, `bash`, `apply_patch`, read-only `read_media`,
+Only `shell_command`, `bash`, `zsh`, `apply_patch`, read-only `read_media`,
 `web_discover`, `compact_context`, and internal `task_status` are enabled for
 normal command-run coding-agent sessions in this version. `planning` is
 injected only by the explicit multiple-task runtime mode.
+
+Shell surface selection is controlled by `TURA_COMMAND_RUN_SHELL`. Windows
+defaults to `shell_command`/PowerShell, macOS defaults to `zsh`, and other Unix
+systems default to `bash`. On macOS the executor prefers the user's supported
+shell, then zsh, bash, and sh; explicit zsh execution can be overridden with
+`TURA_ZSH_PATH`.
 
 `command_run/` must not contain a command registry. New command registration
 belongs in `crates/router`.
@@ -318,7 +333,7 @@ model-visible failure (`success = false`, `exit_code = 126`, output
 instead of executing. The env var `TURA_COMMAND_INTERCEPTOR_DISABLED=1` turns the
 guardrail off entirely for trusted automation.
 
-Detection covers POSIX/bash, PowerShell, and CMD command shapes:
+Detection covers POSIX shell, PowerShell, and CMD command shapes:
 
 - Unix: `rm -r/-f` or `rm`/`rmdir` against a system path; `shutdown`/`reboot`/
   `halt`/`poweroff`; `init`/`telinit 0|6`; `dd of=/dev/…`; `mkfs`/`wipefs`/
@@ -332,7 +347,7 @@ Detection covers POSIX/bash, PowerShell, and CMD command shapes:
 Anti-bypass: connector splitting (`;` `&&` `||` `|` `\n`), command substitution
 (`$(…)` / backticks), wrapper stripping (`sudo`/`timeout`/`env`/`nice`/`xargs`/
 …), path normalization (`/bin/rm`, `rm.exe`), and recursion through
-`bash -c`/`eval`. A one-level library-exec layer also extracts command-line
+`bash -c`, `zsh -c`, `sh -c`, and `eval`. A one-level library-exec layer also extracts command-line
 strings smuggled through interpreter calls (`os.system(`, `subprocess.run(`,
 `child_process.exec(`, `shell_exec(`, …) and re-scans them against the same
 blacklist; whitespace-stripped marker matching defeats `os . system(` spacing,
@@ -344,7 +359,8 @@ Tests: unit tests live in `command_safety.rs`; `tests/command_interceptor_e2e.rs
 (Unix-gated) drives the real `command_run` entry point and *actually executes*
 commands inside the Linux Docker harness under `tests/docker/`, asserting that
 dangerous commands' destructive side effects never happen while safe commands
-still run.
+still run. The Docker harness installs zsh so zsh-specific interceptor coverage
+can run instead of being skipped.
 
 ## File Locks
 
@@ -413,6 +429,7 @@ read_media
 shell_command
 task_status
 web_discover
+zsh
 ```
 
 `planning` is compiled but only exposed when `TURA_FORCE_PLANNING` or

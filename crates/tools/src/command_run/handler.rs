@@ -188,6 +188,7 @@ impl StreamingCommandRunExecutor {
             self.macro_command_batch.push(tokio::spawn(async move {
                 run_command_run_item(&router, command, ctx, false, allowed_commands.as_ref()).await
             }));
+            self.flush_macro_command_batch().await;
             return self.drain_finished_results();
         }
 
@@ -521,7 +522,7 @@ fn command_run_task_status_result(command: CommandItem) -> CommandRunItemResult 
 }
 
 fn command_run_model_output(command_name: &str, value: Value) -> Value {
-    if !matches!(command_name, "shell_command" | "bash") {
+    if !matches!(command_name, "shell_command" | "bash" | "zsh") {
         return value;
     }
     value
@@ -643,6 +644,7 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
             canonical_command.as_str(),
             "shell_command"
                 | "bash"
+                | "zsh"
                 | "apply_patch"
                 | "planning"
                 | "read_media"

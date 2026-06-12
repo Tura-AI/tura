@@ -124,7 +124,7 @@ Minimal custom agent example:
   "agent_persona": [
     {
       "persona_name": "tura",
-      "persona_directory": "personas/src/tura/prompt"
+      "persona_directory": "personas/src/tura"
     }
   ],
   "agent_capabilities": [
@@ -138,6 +138,10 @@ Minimal custom agent example:
     },
     {
       "capability_name": "shell_command",
+      "capability_directory": "crates/tools/src"
+    },
+    {
+      "capability_name": "zsh",
       "capability_directory": "crates/tools/src"
     },
     {

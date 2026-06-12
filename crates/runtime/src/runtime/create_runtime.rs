@@ -118,23 +118,23 @@ fn provider_base_url(settings: &tura_llm_rust::Settings, provider: &str) -> Opti
 
 pub async fn enqueue_runtime(queue_item: RuntimeQueueItem, redis_url: &str) -> Result<(), String> {
     let client = redis::Client::open(redis_url)
-        .map_err(|e| format!("failed to create redis client: {}", e))?;
+        .map_err(|e| format!("failed to create redis client: {e}"))?;
 
     let mut con = client
         .get_multiplexed_async_connection()
         .await
-        .map_err(|e| format!("failed to get redis connection: {}", e))?;
+        .map_err(|e| format!("failed to get redis connection: {e}"))?;
 
     let queue_key = format!("runtime:queue:{}", queue_item.session_id);
     let payload = serde_json::to_string(&queue_item)
-        .map_err(|e| format!("failed to serialize queue item: {}", e))?;
+        .map_err(|e| format!("failed to serialize queue item: {e}"))?;
 
     redis::cmd("RPUSH")
         .arg(&queue_key)
         .arg(&payload)
         .query_async::<_, ()>(&mut con)
         .await
-        .map_err(|e| format!("failed to enqueue runtime: {}", e))?;
+        .map_err(|e| format!("failed to enqueue runtime: {e}"))?;
 
     Ok(())
 }

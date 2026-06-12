@@ -10,7 +10,7 @@ const page = path.join(__dirname, "oauth_business_page.html");
 const port = Number(process.env.TURA_OAUTH_BUSINESS_PORT || await freePort());
 const pageServer = await startPageServer();
 
-const gateway = spawn("cargo", ["run", "-p", "gateway", "--bin", "gateway"], {
+const gateway = spawn("cargo", ["run", "-p", "gateway", "--bin", "tura_gateway"], {
   cwd: repoRoot,
   stdio: ["ignore", "pipe", "pipe"],
   env: {

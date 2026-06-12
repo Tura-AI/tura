@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,11 +9,29 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..");
 const repoRoot = path.resolve(appRoot, "..", "..");
 const port = Number(process.env.PORT || "8799");
-const gatewayUrl = process.env.TURA_GATEWAY_URL || "http://127.0.0.1:4096";
+const gatewayUrl = process.env.TURA_GATEWAY_URL || "http://127.0.0.1:4126";
 const workspace = process.env.TURA_CWD || repoRoot;
-const shell = process.platform === "win32" ? "powershell.exe" : "bash";
+const mockMode = process.env.TURA_TUI_MOCK === "1";
+const shell = process.env.TURA_WEB_TERMINAL_SHELL || defaultShell();
 const nodeBin = process.execPath;
 const tuiBin = path.join(appRoot, "dist", "index.js");
+const tuiCommand = process.env.TURA_TUI_BIN || nodeBin;
+const tuiBaseArgs = process.env.TURA_TUI_BIN ? [] : [tuiBin];
+
+function defaultShell() {
+  if (process.platform === "win32") return "powershell.exe";
+  const userShell = process.env.SHELL?.trim();
+  if (userShell && shellPathUsable(userShell)) return userShell;
+  if (process.platform === "darwin" && fs.existsSync("/bin/zsh")) return "/bin/zsh";
+  for (const candidate of ["/bin/bash", "/usr/bin/bash", "/bin/sh", "/usr/bin/sh"]) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return "bash";
+}
+
+function shellPathUsable(value) {
+  return !path.isAbsolute(value) || fs.existsSync(value);
+}
 
 const profiles = new Map([
   [
@@ -275,8 +294,14 @@ function startTui(profile, runtime, size = undefined) {
   const cols = Number(size?.cols) || 120;
   const rows = Number(size?.rows) || 22;
   const term = pty.spawn(
-    nodeBin,
-    [tuiBin, "--gateway-url", gatewayUrl, "--cwd", workspace, ...profile.args],
+    tuiCommand,
+    [
+      ...tuiBaseArgs,
+      ...(mockMode ? ["--mock"] : ["--gateway-url", gatewayUrl]),
+      "--cwd",
+      workspace,
+      ...profile.args,
+    ],
     {
       name: profile.termName,
       cols,

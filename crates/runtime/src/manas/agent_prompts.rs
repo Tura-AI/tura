@@ -81,21 +81,34 @@ fn ordered_agent_prompt_paths(prompt_item: &AgentPromptItem) -> Vec<PathBuf> {
 fn ordered_persona_prompt_paths(persona_item: &AgentPersonaItem) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     for prompt_name in ["persona.md", "communication_style.md"] {
-        let path = persona_item.persona_directory.join(prompt_name);
-        if path.exists() {
+        if let Some(path) = first_existing_persona_prompt_path(persona_item, prompt_name) {
             paths.push(path);
             continue;
         }
         if prompt_name == "communication_style.md" {
-            let typo_compatible_path = persona_item
-                .persona_directory
-                .join("communication_stlye.md");
-            if typo_compatible_path.exists() {
-                paths.push(typo_compatible_path);
+            if let Some(path) =
+                first_existing_persona_prompt_path(persona_item, "communication_stlye.md")
+            {
+                paths.push(path);
             }
         }
     }
     paths
+}
+
+fn first_existing_persona_prompt_path(
+    persona_item: &AgentPersonaItem,
+    prompt_name: &str,
+) -> Option<PathBuf> {
+    [
+        persona_item.persona_directory.join(prompt_name),
+        persona_item
+            .persona_directory
+            .join("prompt")
+            .join(prompt_name),
+    ]
+    .into_iter()
+    .find(|path| path.exists())
 }
 
 #[cfg(test)]

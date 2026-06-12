@@ -26,21 +26,58 @@ name = "prompt_injection_e2e"
 path = "tests/prompt_injection_e2e.rs"
 
 [[test]]
-name = "coding_agent_live_test"
-path = "tests/coding_agent_live_test.rs"
-required-features = ["live-tests"]
-
-[[test]]
 name = "claude_code_live_e2e"
-path = "tests/claude_code_live_e2e.rs"
+path = "tests/live/claude_code_live_e2e.rs"
 required-features = ["live-tests"]
 
 [features]
+business-tests = []
 live-tests = []
 
 [[test]]
 name = "claude_code_mock_e2e"
-path = "tests/claude_code_mock_e2e.rs"
+path = "tests/business/claude_code_mock_e2e.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "coding_agent_mock_e2e"
+path = "tests/business/coding_agent_mock_e2e.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "session_log_queue_recovery_flow"
+path = "tests/business/session_log_queue_recovery_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "streamed_command_run_flow"
+path = "tests/business/streamed_command_run_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "checkpoint_ack_flow"
+path = "tests/business/checkpoint_ack_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "provider_timeout_flow"
+path = "tests/business/provider_timeout_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "provider_boundary_flow"
+path = "tests/business/provider_boundary_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "create_runtime_flow"
+path = "tests/business/create_runtime_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "runtime_context_business_flow"
+path = "tests/business/runtime_context_business_flow.rs"
+required-features = ["business-tests"]
 
 [[test]]
 name = "child_dispatch_test"
@@ -49,6 +86,10 @@ path = "tests/child_dispatch_test.rs"
 [[bin]]
 name = "mock_router_for_test"
 path = "src/bin/mock_router_for_test.rs"
+
+[[bin]]
+name = "tura_runtime"
+path = "src/bin/tura_runtime.rs"
 
 [dependencies]
 anyhow.workspace = true
@@ -61,6 +102,7 @@ redis.workspace = true
 provider = { workspace = true }
 agents = { workspace = true }
 router = { workspace = true }
+tura_path = { workspace = true }
 tools = { workspace = true }
 reqwest.workspace = true
 session_log = { workspace = true }
@@ -69,3 +111,4 @@ uuid.workspace = true
 [dev-dependencies]
 tokio-test.workspace = true
 tempfile.workspace = true
+rusqlite.workspace = true

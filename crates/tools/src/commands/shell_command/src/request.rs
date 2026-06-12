@@ -60,15 +60,6 @@ pub(super) fn parse_shell_request(
 }
 
 fn normalize_shell_command_text(command: &str) -> String {
-    let trimmed = command.trim_start();
-    for prefix in ["command:", "cmd:", "shell:", "bash:"] {
-        if trimmed
-            .get(..prefix.len())
-            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
-        {
-            return trimmed[prefix.len()..].trim_start().to_string();
-        }
-    }
     let normalized_lines = command
         .lines()
         .map(|line| {
@@ -249,4 +240,129 @@ fn decode_loose_json_string(raw: &str) -> Option<String> {
         }
     }
     Some(decoded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{embedded_apply_patch_text, parse_shell_request};
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn parses_single_quoted_json_request() {
+        let request = parse_shell_request(
+            r#"'{"command":"echo quoted","cwd":"sub","timeout_secs":7}'"#,
+            Path::new("workspace"),
+            120,
+        );
+
+        assert_eq!(request.command, "echo quoted");
+        assert!(request.cwd.ends_with("sub"));
+        assert_eq!(request.timeout_secs, 7);
+    }
+
+    #[test]
+    fn parses_nested_json_string_until_object_is_found() {
+        let request = parse_shell_request(
+            r#""{\"command\":\"cmd: echo nested\",\"timeout_ms\":1}""#,
+            Path::new("workspace"),
+            120,
+        );
+
+        assert_eq!(request.command, "echo nested");
+        assert_eq!(request.cwd, PathBuf::from("workspace"));
+        assert_eq!(request.timeout_secs, 1);
+    }
+
+    #[test]
+    fn preserves_absolute_workdir_without_joining_workspace() {
+        let absolute = if cfg!(windows) {
+            r#"C:\Users\liuliu\Documents\tura"#
+        } else {
+            "/tmp/tura"
+        };
+        let payload = serde_json::json!({"command":"pwd","workdir": absolute}).to_string();
+        let request = parse_shell_request(&payload, Path::new("workspace"), 120);
+
+        assert_eq!(request.command, "pwd");
+        assert_eq!(request.cwd, PathBuf::from(absolute));
+    }
+
+    #[test]
+    fn falls_back_to_raw_text_when_json_has_no_command_field() {
+        let request = parse_shell_request(
+            r#"{"workdir":"sub","timeout_ms":1000}"#,
+            Path::new("workspace"),
+            42,
+        );
+
+        assert_eq!(request.command, r#"{"workdir":"sub","timeout_ms":1000}"#);
+        assert_eq!(request.cwd, PathBuf::from("workspace"));
+        assert_eq!(request.timeout_secs, 42);
+    }
+
+    #[test]
+    fn timeout_ms_rounds_up_and_never_becomes_zero() {
+        let one_millis = parse_shell_request(
+            r#"{"command":"echo ok","timeout_ms":1}"#,
+            Path::new("workspace"),
+            120,
+        );
+        let exact_second = parse_shell_request(
+            r#"{"command":"echo ok","timeout_ms":1000}"#,
+            Path::new("workspace"),
+            120,
+        );
+        let rounded_up = parse_shell_request(
+            r#"{"command":"echo ok","timeout_ms":1001}"#,
+            Path::new("workspace"),
+            120,
+        );
+
+        assert_eq!(one_millis.timeout_secs, 1);
+        assert_eq!(exact_second.timeout_secs, 1);
+        assert_eq!(rounded_up.timeout_secs, 2);
+    }
+
+    #[test]
+    fn normalizes_prefix_case_and_keeps_indentation_inside_multiline_script() {
+        let request = parse_shell_request(
+            "CoMmAnD: echo first\n    SHELL: echo second\n\tbash: echo third\n",
+            Path::new("workspace"),
+            120,
+        );
+
+        assert_eq!(
+            request.command,
+            "echo first\n    echo second\n\techo third\n"
+        );
+    }
+
+    #[test]
+    fn loose_json_parser_decodes_common_escapes() {
+        let request = parse_shell_request(
+            "{\"command\":\"printf \\\"a\\\\nb\\\\t\\\\\\\\\\\"\",\"timeout_secs\":3}",
+            Path::new("workspace"),
+            120,
+        );
+
+        assert_eq!(request.command, "printf \"a\\nb\\t\\\\\"");
+        assert_eq!(request.timeout_secs, 3);
+    }
+
+    #[test]
+    fn embedded_apply_patch_requires_complete_patch_markers() {
+        assert!(embedded_apply_patch_text("*** Begin Patch\n*** Update File: a\n").is_none());
+        assert!(embedded_apply_patch_text("*** End Patch").is_none());
+    }
+
+    #[test]
+    fn embedded_apply_patch_ignores_shell_output_search_commands_before_patch() {
+        for command in [
+            "rg needle\n*** Begin Patch\n*** End Patch",
+            "grep needle file\n*** Begin Patch\n*** End Patch",
+            "Get-Content file\n*** Begin Patch\n*** End Patch",
+        ] {
+            assert!(embedded_apply_patch_text(command).is_none(), "{command}");
+        }
+    }
 }

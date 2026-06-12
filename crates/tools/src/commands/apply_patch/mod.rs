@@ -352,11 +352,10 @@ fn parse_patch(patch_text: &str) -> Result<Vec<PatchChange>, String> {
                 return Err("hunk is only valid for update file changes".to_string());
             }
             if let Some(hunk_lines) = hunk.take() {
-                current
-                    .as_mut()
-                    .expect("change exists")
-                    .hunks
-                    .push(hunk_lines);
+                let Some(change) = current.as_mut() else {
+                    return Err("hunk without file".to_string());
+                };
+                change.hunks.push(hunk_lines);
             }
             hunk = Some(Vec::new());
         } else if line.starts_with("*** End Patch") {
@@ -577,7 +576,9 @@ fn replacement_lines_for_hunk(hunk: &[String], actual_old_lines: &[String]) -> V
 }
 
 fn safe_path(root: &Path, raw: &str) -> Result<PathBuf, String> {
-    let root = root.canonicalize().map_err(|err| err.to_string())?;
+    let root = root
+        .canonicalize()
+        .map_err(|err| format!("failed to resolve patch root {}: {err}", root.display()))?;
     let raw_path = patch_path(raw);
     let path = if raw_path.is_absolute() {
         raw_path

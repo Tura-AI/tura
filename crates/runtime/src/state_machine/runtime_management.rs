@@ -62,7 +62,6 @@ pub struct RuntimeProviderConfig {
     /// Provider URL alias/name.
     pub provider_url_name: String,
     /// Underlying LLM provider name, such as openai, google, or anthropic.
-    #[serde(alias = "provider_router_name")]
     pub llm_provider_name: String,
 }
 
@@ -297,5 +296,206 @@ impl RuntimeManagement {
         self.error = Some(error);
         self.usage = usage;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        RuntimeCallResultStatus, RuntimeError, RuntimeManagement, RuntimeProviderConfig,
+        RuntimeState, UsageReport,
+    };
+    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
+    use chrono::{Duration, Utc};
+
+    fn provider_config() -> RuntimeProviderConfig {
+        RuntimeProviderConfig {
+            base: ProviderConfig {
+                tura_llm_name: "fast".to_string(),
+                stream: true,
+                temperature: 0.0,
+                max_tokens: 1024,
+                tool_choice: ToolChoice::Auto,
+                time_out_ms: 30_000,
+            },
+            thinking: false,
+            provider_name: "openai".to_string(),
+            model_name: "gpt-test".to_string(),
+            provider_url_name: "openai".to_string(),
+            llm_provider_name: "openai".to_string(),
+        }
+    }
+
+    fn runtime() -> RuntimeManagement {
+        RuntimeManagement::new(
+            "runtime-test".to_string(),
+            "session-test".to_string(),
+            "agent-test".to_string(),
+            provider_config(),
+            Utc::now(),
+        )
+    }
+
+    #[test]
+    fn runtime_state_transition_matrix_rejects_illegal_and_terminal_edges() {
+        use RuntimeState::*;
+
+        let states = [
+            Created,
+            Dispatching,
+            WaitingFirstToken,
+            Streaming,
+            Finished,
+            Failed,
+        ];
+        for from in states {
+            for to in states {
+                let expected = matches!(
+                    (from, to),
+                    (Created, Created | Dispatching | Failed)
+                        | (Dispatching, Dispatching | WaitingFirstToken | Failed)
+                        | (
+                            WaitingFirstToken,
+                            WaitingFirstToken | Streaming | Finished | Failed
+                        )
+                        | (Streaming, Streaming | Finished | Failed)
+                );
+                assert_eq!(
+                    from.can_transition_to(to),
+                    expected,
+                    "unexpected RuntimeState transition verdict for {from:?} -> {to:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn runtime_mark_methods_apply_ordered_state_and_timestamps() {
+        let mut runtime = runtime();
+        let called_at = runtime.created_at + Duration::milliseconds(10);
+        let first_token_at = called_at + Duration::milliseconds(25);
+
+        runtime
+            .mark_called(called_at)
+            .expect("mark_called should transition Created -> Dispatching");
+        assert_eq!(runtime.state, RuntimeState::Dispatching);
+        assert_eq!(runtime.called_at, Some(called_at));
+
+        runtime
+            .mark_waiting_first_token()
+            .expect("mark_waiting_first_token should transition Dispatching -> WaitingFirstToken");
+        assert_eq!(runtime.state, RuntimeState::WaitingFirstToken);
+
+        runtime
+            .mark_first_token(first_token_at)
+            .expect("mark_first_token should transition WaitingFirstToken -> Streaming");
+        assert_eq!(runtime.state, RuntimeState::Streaming);
+        assert_eq!(runtime.first_token_at, Some(first_token_at));
+        assert_eq!(
+            runtime.call_result_status,
+            RuntimeCallResultStatus::Streaming
+        );
+    }
+
+    #[test]
+    fn runtime_finish_success_requires_reachable_finished_state() {
+        let mut runtime = runtime();
+        let error = runtime
+            .finish_success(runtime.created_at, None)
+            .expect_err("Created -> Finished should be rejected");
+        assert!(error.contains("invalid runtime state transition"));
+        assert_eq!(runtime.state, RuntimeState::Created);
+
+        runtime
+            .mark_called(runtime.created_at)
+            .expect("mark_called should succeed");
+        runtime
+            .mark_waiting_first_token()
+            .expect("mark_waiting_first_token should succeed");
+        runtime
+            .mark_first_token(runtime.created_at)
+            .expect("mark_first_token should succeed");
+        let usage = UsageReport {
+            input_tokens: 10,
+            output_tokens: 5,
+            total_tokens: 15,
+            cached_input_tokens: 0,
+            cache_write_tokens: 0,
+            reasoning_tokens: 0,
+            attachment_input_tokens: 0,
+            input_cost: 0.0,
+            output_cost: 0.0,
+            total_cost: 0.0,
+            currency: "USD".to_string(),
+            pricing_source: "test".to_string(),
+            latency_ms: 20,
+            time_to_first_token_ms: 5,
+            token_per_second: 250.0,
+        };
+
+        runtime
+            .finish_success(runtime.created_at, Some(usage.clone()))
+            .expect("Streaming -> Finished should succeed");
+        assert_eq!(runtime.state, RuntimeState::Finished);
+        assert_eq!(
+            runtime.call_result_status,
+            RuntimeCallResultStatus::Succeeded
+        );
+        assert_eq!(runtime.usage, Some(usage));
+
+        let terminal_error = runtime
+            .transition(RuntimeState::Failed)
+            .expect_err("Finished should be terminal");
+        assert!(terminal_error.contains("Finished -> Failed"));
+    }
+
+    #[test]
+    fn runtime_finish_failure_sets_error_status_usage_and_terminal_state() {
+        let mut runtime = runtime();
+        let usage = UsageReport {
+            input_tokens: 2,
+            output_tokens: 1,
+            total_tokens: 3,
+            cached_input_tokens: 0,
+            cache_write_tokens: 0,
+            reasoning_tokens: 0,
+            attachment_input_tokens: 0,
+            input_cost: 0.0,
+            output_cost: 0.0,
+            total_cost: 0.0,
+            currency: "USD".to_string(),
+            pricing_source: "runtime_estimate_timeout".to_string(),
+            latency_ms: 1000,
+            time_to_first_token_ms: 0,
+            token_per_second: 1.0,
+        };
+        let error = RuntimeError {
+            error_code: Some("CALL_TIMED_OUT".to_string()),
+            error_text: Some("runtime call timed out after 1000 ms".to_string()),
+            retry_allowed: true,
+            fallback_allowed: true,
+            fallback_to_id: None,
+        };
+
+        runtime
+            .finish_failure(
+                runtime.created_at,
+                error.clone(),
+                RuntimeCallResultStatus::TimedOut,
+                Some(usage.clone()),
+            )
+            .expect("Created -> Failed is the allowed failure shortcut");
+        assert_eq!(runtime.state, RuntimeState::Failed);
+        assert_eq!(
+            runtime.call_result_status,
+            RuntimeCallResultStatus::TimedOut
+        );
+        assert_eq!(runtime.error, Some(error));
+        assert_eq!(runtime.usage, Some(usage));
+
+        let terminal_error = runtime
+            .mark_called(runtime.created_at)
+            .expect_err("Failed should be terminal");
+        assert!(terminal_error.contains("Failed -> Dispatching"));
     }
 }

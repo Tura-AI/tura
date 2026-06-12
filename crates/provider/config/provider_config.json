@@ -3927,7 +3927,7 @@
       "status": "connected",
       "token_env": "CLAUDE_CODE_OAUTH_TOKEN",
       "type": "oauth",
-      "updated_at": "2026-06-07T16:26:36.330461200+00:00"
+      "updated_at": "2026-06-08T13:24:27.965080300+00:00"
     },
     "codex": {
       "account_env": "OPENAI_ACCOUNT_ID",

@@ -134,9 +134,10 @@ fn git_status_snapshot(root: &Path, relative_path: &str) -> GitStatusSnapshot {
         .arg(root)
         .arg("status")
         .arg("--porcelain=v1")
-        .arg("--ignored=matching")
-        .arg("--")
-        .arg(relative_path);
+        .arg("--ignored=matching");
+    if !relative_path.trim().is_empty() {
+        command.arg("--").arg(relative_path);
+    }
 
     let Ok(output) = command.output() else {
         return GitStatusSnapshot {
@@ -191,7 +192,11 @@ fn git_status_label(status: &str) -> &'static str {
 }
 
 fn normalize_git_path(path: &str) -> String {
-    path.replace('\\', "/").trim_matches('/').to_string()
+    path.replace('\\', "/")
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 // ============================================================================
@@ -401,6 +406,11 @@ fn media_mime_type(path: &Path) -> Option<&'static str> {
 }
 
 fn open_with_system_default(path: &Path) -> std::io::Result<()> {
+    #[cfg(any(test, feature = "business-tests"))]
+    if let Some(command) = test_open_command("TURA_FILE_OPEN_COMMAND") {
+        return spawn_command(command.as_str(), std::iter::empty::<&str>(), Some(path));
+    }
+
     #[cfg(target_os = "windows")]
     {
         // `start` asks Windows Shell to use the registered default app.
@@ -427,6 +437,11 @@ fn open_with_system_default(path: &Path) -> std::io::Result<()> {
 }
 
 fn open_with_system_file_manager(path: &Path) -> std::io::Result<()> {
+    #[cfg(any(test, feature = "business-tests"))]
+    if let Some(command) = test_open_command("TURA_FILE_OPEN_LOCATION_COMMAND") {
+        return spawn_command(command.as_str(), std::iter::empty::<&str>(), Some(path));
+    }
+
     #[cfg(target_os = "windows")]
     {
         if path.is_file() {
@@ -491,6 +506,14 @@ impl<'a> OpenAttempt<'a> {
     }
 }
 
+#[cfg(any(test, feature = "business-tests"))]
+fn test_open_command(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn spawn_command<I, S>(command: &str, args: I, path: Option<&Path>) -> std::io::Result<()>
 where
     I: IntoIterator<Item = S>,
@@ -540,4 +563,263 @@ fn relative_display_path(root: &Path, path: &Path) -> String {
 
 fn display_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::extract::Query;
+
+    struct CurrentDirectoryGuard(Option<String>);
+
+    impl CurrentDirectoryGuard {
+        fn clear() -> Self {
+            let previous = global_store().get_current_directory();
+            global_store().clear_current_directory();
+            Self(previous)
+        }
+    }
+
+    impl Drop for CurrentDirectoryGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(directory) => global_store().set_current_directory(directory),
+                None => global_store().clear_current_directory(),
+            }
+        }
+    }
+
+    #[test]
+    fn safe_join_rejects_absolute_escape_parent_and_prefix_components() {
+        let temp = tempfile::tempdir().expect("temp workspace");
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("src")).expect("src dir");
+        std::fs::write(root.join("src/lib.rs"), "fn main() {}\n").expect("source file");
+
+        assert_eq!(
+            safe_join(root, "src/./lib.rs").expect("safe relative path"),
+            root.join("src/lib.rs")
+        );
+        assert!(safe_join(root, "../outside.rs").is_none());
+        assert!(safe_join(root, "/absolute/outside.rs").is_none());
+        assert!(safe_join(root, r"C:\outside.rs").is_none());
+
+        let absolute_inside = root.join("src/lib.rs");
+        assert_eq!(
+            safe_join(root, absolute_inside.to_string_lossy().as_ref())
+                .expect("absolute inside workspace"),
+            absolute_inside.canonicalize().expect("canonical source")
+        );
+    }
+
+    #[test]
+    fn display_and_relative_paths_are_forward_slash_normalized() {
+        let root = PathBuf::from(r"C:\repo");
+        let path = PathBuf::from(r"C:\repo\src\main.rs");
+
+        assert_eq!(display_path(&path), "C:/repo/src/main.rs");
+        assert_eq!(relative_display_path(&root, &path), "src/main.rs");
+        assert_eq!(
+            relative_display_path(&root, &PathBuf::from(r"D:\other\file.txt")),
+            "D:/other/file.txt"
+        );
+    }
+
+    #[test]
+    fn git_status_lines_parse_status_labels_renames_and_paths() {
+        assert_eq!(
+            parse_git_status_line(" M src/main.rs"),
+            Some(("src/main.rs".to_string(), "modified".to_string()))
+        );
+        assert_eq!(
+            parse_git_status_line("R  old.rs -> src/new.rs"),
+            Some(("src/new.rs".to_string(), "renamed".to_string()))
+        );
+        assert_eq!(
+            parse_git_status_line("?? \"src/windows\\\\path.rs\""),
+            Some(("src/windows/path.rs".to_string(), "untracked".to_string()))
+        );
+        assert_eq!(parse_git_status_line(""), None);
+        assert_eq!(parse_git_status_line("M"), None);
+    }
+
+    #[test]
+    fn git_status_label_covers_porcelain_statuses() {
+        for status in ["M", "MM", "AM", "RM"] {
+            assert_eq!(git_status_label(status), "modified");
+        }
+        assert_eq!(git_status_label("A"), "added");
+        assert_eq!(git_status_label("D"), "deleted");
+        assert_eq!(git_status_label("R"), "renamed");
+        assert_eq!(git_status_label("C"), "copied");
+        assert_eq!(git_status_label("??"), "untracked");
+        assert_eq!(git_status_label("!!"), "ignored");
+        assert_eq!(git_status_label("UU"), "changed");
+    }
+
+    #[test]
+    fn should_hide_filters_build_cache_and_dependency_directories_only() {
+        for hidden in [
+            ".git",
+            ".turbo",
+            ".next",
+            ".vite",
+            ".solid",
+            ".cache",
+            "node_modules",
+            "target",
+            "dist",
+            "build",
+        ] {
+            assert!(should_hide(hidden), "{hidden} should be hidden");
+        }
+        for visible in ["src", "target-notes", "build.rs", ".github"] {
+            assert!(!should_hide(visible), "{visible} should remain visible");
+        }
+    }
+
+    #[test]
+    fn media_mime_type_is_case_insensitive_for_supported_types() {
+        let cases = [
+            ("photo.PNG", "image/png"),
+            ("photo.jpeg", "image/jpeg"),
+            ("photo.JPG", "image/jpeg"),
+            ("anim.GIF", "image/gif"),
+            ("asset.webp", "image/webp"),
+            ("icon.svg", "image/svg+xml"),
+            ("doc.PDF", "application/pdf"),
+            ("clip.mp4", "video/mp4"),
+            ("clip.webm", "video/webm"),
+            ("clip.mov", "video/quicktime"),
+            ("sound.mp3", "audio/mpeg"),
+            ("sound.wav", "audio/wav"),
+            ("sound.ogg", "audio/ogg"),
+        ];
+        for (name, expected) in cases {
+            assert_eq!(media_mime_type(Path::new(name)), Some(expected));
+        }
+        assert_eq!(media_mime_type(Path::new("archive.zip")), None);
+    }
+
+    #[tokio::test]
+    async fn get_file_content_reads_text_media_binary_and_reports_errors() {
+        let temp = tempfile::tempdir().expect("temp workspace");
+        let root = temp.path();
+        std::fs::write(root.join("hello.txt"), "hello\n").expect("text file");
+        std::fs::write(root.join("image.png"), [0x89, b'P', b'N', b'G']).expect("png file");
+        std::fs::write(root.join("blob.bin"), [0xff, 0x00, 0x80]).expect("binary file");
+
+        let text = get_file_content(Query(FileContentQuery {
+            directory: Some(root.display().to_string()),
+            path: "hello.txt".to_string(),
+        }))
+        .await
+        .expect("text read")
+        .0;
+        assert_eq!(text.content_type, "text");
+        assert_eq!(text.content, "hello\n");
+        assert_eq!(text.encoding, None);
+
+        let media = get_file_content(Query(FileContentQuery {
+            directory: Some(root.display().to_string()),
+            path: "image.png".to_string(),
+        }))
+        .await
+        .expect("media read")
+        .0;
+        assert_eq!(media.content_type, "media");
+        assert_eq!(media.encoding.as_deref(), Some("base64"));
+        assert_eq!(media.mime_type.as_deref(), Some("image/png"));
+        assert_eq!(media.content, "iVBORw==");
+
+        let binary = get_file_content(Query(FileContentQuery {
+            directory: Some(root.display().to_string()),
+            path: "blob.bin".to_string(),
+        }))
+        .await
+        .expect("binary read")
+        .0;
+        assert_eq!(binary.content_type, "binary");
+        assert!(binary.content.is_empty());
+
+        let missing = get_file_content(Query(FileContentQuery {
+            directory: Some(root.display().to_string()),
+            path: "missing.txt".to_string(),
+        }))
+        .await
+        .expect_err("missing file");
+        assert_eq!(missing.0, StatusCode::NOT_FOUND);
+
+        let escape = get_file_content(Query(FileContentQuery {
+            directory: Some(root.display().to_string()),
+            path: "../escape.txt".to_string(),
+        }))
+        .await
+        .expect_err("path escape");
+        assert_eq!(escape.0, StatusCode::BAD_REQUEST);
+        assert!(escape.1.contains("inside the workspace"));
+    }
+
+    #[tokio::test]
+    async fn list_files_sorts_directories_before_files_and_hides_noise() {
+        let temp = tempfile::tempdir().expect("temp workspace");
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("src")).expect("src dir");
+        std::fs::create_dir_all(root.join("target")).expect("target dir");
+        std::fs::write(root.join("b.txt"), "b").expect("b file");
+        std::fs::write(root.join("a.txt"), "a").expect("a file");
+
+        let entries = list_files(Query(ListFilesQuery {
+            directory: Some(root.display().to_string()),
+            path: None,
+        }))
+        .await
+        .0;
+
+        let names = entries
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.file_type.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![("src", "directory"), ("a.txt", "file"), ("b.txt", "file")]
+        );
+        assert!(entries
+            .iter()
+            .all(|entry| entry.git_status.as_deref() == Some("not_git")));
+        assert!(entries
+            .iter()
+            .find(|entry| entry.name == "a.txt")
+            .and_then(|entry| entry.size_bytes)
+            .is_some());
+    }
+
+    #[test]
+    fn resolve_workspace_file_path_handles_absolute_and_relative_inputs() {
+        let _current_directory = CurrentDirectoryGuard::clear();
+        let temp = tempfile::tempdir().expect("temp workspace");
+        let root = temp.path();
+        std::fs::write(root.join("file.txt"), "text").expect("file");
+
+        let (resolved_root, resolved_path) = resolve_workspace_file_path(
+            Some(root.display().to_string()),
+            "file.txt",
+            "test action",
+        )
+        .expect("relative path");
+        assert_eq!(resolved_root, root);
+        assert_eq!(resolved_path, root.join("file.txt"));
+
+        let absolute = root.join("file.txt");
+        let (absolute_root, absolute_path) =
+            resolve_workspace_file_path(None, absolute.to_string_lossy().as_ref(), "test action")
+                .expect("absolute path");
+        assert_eq!(absolute_path, absolute);
+        assert_eq!(absolute_root, root);
+
+        let error = resolve_workspace_file_path(None, "file.txt", "test action")
+            .expect_err("relative path needs workspace");
+        assert_eq!(error.0, StatusCode::BAD_REQUEST);
+        assert!(error.1.contains("No workspace directory was provided"));
+    }
 }

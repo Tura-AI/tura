@@ -1,5 +1,86 @@
 use super::*;
 
+struct EnvRestore {
+    keys: Vec<(&'static str, Option<std::ffi::OsString>)>,
+}
+
+impl EnvRestore {
+    fn capture(keys: &[&'static str]) -> Self {
+        Self {
+            keys: keys
+                .iter()
+                .map(|key| (*key, std::env::var_os(key)))
+                .collect(),
+        }
+    }
+}
+
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        for (key, value) in &self.keys {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+}
+
+struct SessionDbTestService {
+    _guard: std::sync::MutexGuard<'static, ()>,
+    _env: EnvRestore,
+    _root: tempfile::TempDir,
+    handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
+}
+
+impl SessionDbTestService {
+    fn start() -> Self {
+        let guard = crate::test_support::env_lock();
+        let env = EnvRestore::capture(&["TURA_HOME", "SESSION_LOG_DB_ROOT", "TURA_DB_ROOT"]);
+        let root = tempfile::tempdir().expect("session db root");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(&home).expect("session db home");
+        std::env::set_var("TURA_HOME", &home);
+        std::env::set_var("SESSION_LOG_DB_ROOT", root.path());
+        std::env::remove_var("TURA_DB_ROOT");
+
+        let handle = std::thread::spawn(session_log::service::run_socket_service);
+        let started = std::time::Instant::now();
+        while started.elapsed() < std::time::Duration::from_secs(10) {
+            if handle.is_finished() {
+                let detail = match handle.join() {
+                    Ok(Ok(())) => "service exited without publishing service.addr".to_string(),
+                    Ok(Err(error)) => format!("service exited with error: {error:#}"),
+                    Err(_) => "service thread panicked before publishing service.addr".to_string(),
+                };
+                panic!("session_db test service did not become reachable: {detail}");
+            }
+            if session_log::ipc::service_is_running() {
+                return Self {
+                    _guard: guard,
+                    _env: env,
+                    _root: root,
+                    handle: Some(handle),
+                };
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!(
+            "session_db test service did not become reachable within 10s; addr_path={}",
+            session_log::ipc::service_addr_path().display()
+        );
+    }
+}
+
+impl Drop for SessionDbTestService {
+    fn drop(&mut self) {
+        let _ = session_log::ipc::call_service(&session_log::SessionLogCommand::Shutdown);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 #[test]
 fn update_session_status_updates_stored_status() {
     let store = SessionStore::new();
@@ -27,6 +108,21 @@ fn update_session_status_updates_stored_status() {
         .get_session(&session.id)
         .expect("session should exist");
     assert_eq!(updated.status, ApiSessionStatus::Idle);
+}
+
+#[test]
+fn persist_session_ack_reports_missing_session_id() {
+    let _service = SessionDbTestService::start();
+    let store = SessionStore::new();
+
+    let error = store
+        .persist_session_ack("missing-session-for-ack")
+        .expect_err("missing session should fail ACK");
+
+    assert!(
+        error.contains("session missing-session-for-ack not found in session_db"),
+        "ACK error should include session id and durable store context: {error}"
+    );
 }
 
 #[test]
@@ -202,6 +298,7 @@ fn user_commands_are_shared_from_parent_to_child_sessions() {
 
 #[test]
 fn hydrated_child_session_keeps_parent_mapping() {
+    let _service = SessionDbTestService::start();
     let root = std::env::temp_dir().join(format!("tura-child-session-{}", Uuid::new_v4()));
     let directory = root.to_string_lossy().to_string();
     let store = SessionStore::new();
@@ -668,6 +765,78 @@ fn multi_task_patch_matches_task_id_and_creates_defaulted_tasks() {
 }
 
 #[test]
+fn multi_task_patch_reorders_tasks_by_request_order() {
+    let store = SessionStore::new();
+    let session = store.create_session(
+        Some("C:/workspace".to_string()),
+        None,
+        None,
+        Some("coding".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    store
+        .update_session(
+            &session.id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(serde_json::json!({
+                "tasks": [
+                    { "task_id": "alpha", "step": 1, "task_summary": "Alpha" },
+                    { "task_id": "bravo", "step": 2, "task_summary": "Bravo" },
+                    { "task_id": "charlie", "step": 3, "task_summary": "Charlie" }
+                ]
+            })),
+        )
+        .expect("initial multi-task patch should update");
+
+    let updated = store
+        .update_session(
+            &session.id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(serde_json::json!({
+                "tasks": [
+                    { "task_id": "charlie", "task_summary": "Charlie" },
+                    { "task_id": "alpha", "task_summary": "Alpha" }
+                ]
+            })),
+        )
+        .expect("reorder patch should update");
+
+    let tasks = updated.task_management["tasks"]
+        .as_array()
+        .expect("multi-task state should serialize as tasks array");
+    let order: Vec<_> = tasks
+        .iter()
+        .map(|task| {
+            (
+                task["task_id"].as_str().expect("task_id should be text"),
+                task["step"].as_u64().expect("step should be numeric"),
+            )
+        })
+        .collect();
+    assert_eq!(order, vec![("charlie", 1), ("alpha", 2), ("bravo", 3)]);
+}
+
+#[test]
 fn task_management_patch_accepts_all_contract_enums() {
     let store = SessionStore::new();
     let session = store.create_session(
@@ -729,31 +898,10 @@ fn task_management_patch_accepts_all_contract_enums() {
                 None,
                 None,
                 None,
-                Some(serde_json::json!({ "status": start_condition })),
-            )
-            .expect("session should update");
-        assert_eq!(updated.task_management["start_condition"], start_condition);
-        assert!(updated.task_management.get("status").is_none());
-    }
-
-    for start_condition in [
-        "session_idle",
-        "user_action",
-        "scheduled_task",
-        "polling_task",
-    ] {
-        let updated = store
-            .update_session(
-                &session.id,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(serde_json::json!({ "start_condition": start_condition })),
+                Some(serde_json::json!({
+                    "status": "todo",
+                    "start_condition": start_condition
+                })),
             )
             .expect("session should update");
         assert_eq!(updated.task_management["start_condition"], start_condition);
@@ -763,6 +911,7 @@ fn task_management_patch_accepts_all_contract_enums() {
 
 #[test]
 fn invalid_task_management_patch_keeps_previous_state() {
+    let _service = SessionDbTestService::start();
     let root = std::env::temp_dir().join(format!("tura-invalid-task-{}", Uuid::new_v4()));
     let directory = root.to_string_lossy().to_string();
     let store = SessionStore::new();
@@ -900,6 +1049,7 @@ fn user_messages_are_recorded_in_session_management_log() {
 
 #[test]
 fn user_messages_preserve_and_hydrate_pending_task_management_state() {
+    let _service = SessionDbTestService::start();
     let root = std::env::temp_dir().join(format!("tura-message-task-{}", Uuid::new_v4()));
     let directory = root.to_string_lossy().to_string();
     let store = SessionStore::new();
@@ -1143,7 +1293,8 @@ fn scheduler_claims_due_idle_tasks_and_skips_ineligible_tasks() {
         None,
         Some(serde_json::json!({
             "task_summary": "idle pending",
-            "status": "session_idle"
+            "status": "todo",
+            "start_condition": "session_idle"
         })),
     );
 
@@ -1200,6 +1351,7 @@ fn scheduler_claims_due_idle_tasks_and_skips_ineligible_tasks() {
 
 #[test]
 fn scheduler_claim_persists_next_polling_start() {
+    let _service = SessionDbTestService::start();
     let root = std::env::temp_dir().join(format!("tura-polling-task-{}", Uuid::new_v4()));
     let directory = root.to_string_lossy().to_string();
     let store = SessionStore::new();

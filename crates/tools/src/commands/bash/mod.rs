@@ -80,3 +80,97 @@ fn payload_command_line(payload: &ToolPayload) -> String {
         ToolPayload::Freeform { input } => input.clone(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{payload_command_line, BashHandler};
+    use crate::runtime::tool::{ToolCall, ToolContext, ToolHandler, ToolPayload};
+    use serde_json::json;
+
+    fn call(payload: ToolPayload) -> ToolCall {
+        ToolCall {
+            tool_name: "bash".into(),
+            call_id: "call-bash".into(),
+            payload,
+        }
+    }
+
+    #[test]
+    fn payload_command_line_accepts_freeform_string_and_object_arguments() {
+        assert_eq!(
+            payload_command_line(&ToolPayload::Freeform {
+                input: "cat src/lib.rs".into()
+            }),
+            "cat src/lib.rs"
+        );
+        assert_eq!(
+            payload_command_line(&ToolPayload::Function {
+                arguments: json!("echo ok")
+            }),
+            "echo ok"
+        );
+        assert_eq!(
+            payload_command_line(&ToolPayload::Function {
+                arguments: json!({"command":"echo ok","timeout_ms":1000})
+            }),
+            r#"{"command":"echo ok","timeout_ms":1000}"#
+        );
+        assert_eq!(
+            payload_command_line(&ToolPayload::Function {
+                arguments: json!(42)
+            }),
+            ""
+        );
+    }
+
+    #[tokio::test]
+    async fn mutating_and_access_follow_shell_read_only_detection() {
+        let handler = BashHandler;
+        let ctx = ToolContext::new(std::env::temp_dir());
+
+        let read = call(ToolPayload::Freeform {
+            input: "cat src/lib.rs".into(),
+        });
+        assert!(!handler.is_mutating(&read, &ctx).await);
+        let read_access = handler.access(&read, &ctx).await;
+        assert!(read_access.is_read_only());
+        assert!(!read_access.workspace_write);
+
+        let write = call(ToolPayload::Freeform {
+            input: "echo ok > out.txt".into(),
+        });
+        assert!(handler.is_mutating(&write, &ctx).await);
+        let write_access = handler.access(&write, &ctx).await;
+        assert!(write_access.workspace_write);
+        assert!(!write_access.is_read_only());
+    }
+
+    #[tokio::test]
+    async fn handler_metadata_matches_bash_command_contract() {
+        let handler = BashHandler;
+        let ctx = ToolContext::new(std::env::temp_dir());
+        let read = call(ToolPayload::Function {
+            arguments: json!({"command":"git status --short"}),
+        });
+
+        assert_eq!(handler.tool_name(), "bash");
+        assert!(handler.supports_macro_command());
+        assert!(!handler.is_mutating(&read, &ctx).await);
+        assert!(handler.access(&read, &ctx).await.is_read_only());
+    }
+
+    #[tokio::test]
+    async fn object_payload_write_command_is_treated_as_mutating() {
+        let handler = BashHandler;
+        let ctx = ToolContext::new(std::env::temp_dir());
+        let write = call(ToolPayload::Function {
+            arguments: json!({"command":"printf ok > out.txt","timeout_ms":1000}),
+        });
+
+        assert!(handler.is_mutating(&write, &ctx).await);
+        let access = handler.access(&write, &ctx).await;
+        assert!(access.workspace_write);
+        assert!(access.read_paths.is_empty());
+        assert!(access.write_paths.is_empty());
+    }
+}

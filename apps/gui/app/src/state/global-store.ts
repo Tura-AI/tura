@@ -102,6 +102,7 @@ export type AppState = {
   projects: Project[];
   sessions: Session[];
   messagesBySession: Record<string, Message[]>;
+  messagePagingBySession: Record<string, { hasEarlier: boolean; loadingEarlier: boolean }>;
   todosBySession: Record<string, TodoItem[]>;
   permissions: PermissionRequest[];
   questions: QuestionRequest[];
@@ -166,6 +167,7 @@ export function initialAppState(gatewayUrl: string): AppState {
     mainFontSize: 12,
     codeFontSize: 11,
     messagesBySession: {},
+    messagePagingBySession: {},
     todosBySession: {},
     permissions: [],
     questions: [],

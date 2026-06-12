@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::auth_registry::OAuthAuthorizeKind;
 use crate::llm::providers;
-use crate::logging::{build_call_log, write_llm_log};
+use crate::logging::{build_call_log, logging_enabled, write_llm_log};
 use crate::tura_conf::TuraConfig;
 use crate::utils::{strip_text_tool_calls, text_tool_calls_value};
 
@@ -29,6 +29,11 @@ pub use tura_llm_config::{
 #[derive(Debug, Clone)]
 pub enum ProviderStreamEvent {
     ProviderOutputStarted,
+    /// Incremental assistant text token(s) emitted while the provider streams its
+    /// reply, used to surface real token-by-token streaming to the frontend.
+    TextDelta {
+        text: String,
+    },
     CommandRunCommandReady {
         tool_call_id: String,
         command_index: usize,
@@ -132,6 +137,16 @@ pub struct ProviderConfig {
 
 impl ProviderConfig {
     pub fn validate(&self) -> Result<(), TuraError> {
+        if self.provider.trim().is_empty() {
+            return Err(TuraError::Validation {
+                message: "provider must not be empty".into(),
+            });
+        }
+        if self.base_url.trim().is_empty() {
+            return Err(TuraError::Validation {
+                message: "base_url must not be empty".into(),
+            });
+        }
         if self.model.trim().is_empty() {
             return Err(TuraError::Validation {
                 message: "model must not be empty".into(),
@@ -364,48 +379,52 @@ impl ProviderConfig {
 
         match result {
             Ok(response) => {
-                let log = build_call_log(
-                    &self.provider,
-                    &self.model,
-                    &self.base_url,
-                    Value::Array(messages.clone()),
-                    Some(response.raw.clone()),
-                    request_params,
-                    options.response_format.clone(),
-                    started_at,
-                    finished_at,
-                    duration_ms,
-                    true,
-                    &call_id,
-                    response.metrics.clone(),
-                    None,
-                    None,
-                );
-                if let Ok(path) = write_llm_log(&log, Some(&call_id)).await {
-                    info!(provider = %self.provider, model = %self.model, log_path = %path.display(), duration_ms = duration_ms, "provider call succeeded");
+                if logging_enabled() {
+                    let log = build_call_log(
+                        &self.provider,
+                        &self.model,
+                        &self.base_url,
+                        Value::Array(messages.clone()),
+                        Some(response.raw.clone()),
+                        request_params,
+                        options.response_format.clone(),
+                        started_at,
+                        finished_at,
+                        duration_ms,
+                        true,
+                        &call_id,
+                        response.metrics.clone(),
+                        None,
+                        None,
+                    );
+                    if let Ok(path) = write_llm_log(&log, Some(&call_id)).await {
+                        info!(provider = %self.provider, model = %self.model, log_path = %path.display(), duration_ms = duration_ms, "provider call succeeded");
+                    }
                 }
                 Ok(response)
             }
             Err(err) => {
-                let log = build_call_log(
-                    &self.provider,
-                    &self.model,
-                    &self.base_url,
-                    Value::Array(messages.clone()),
-                    None,
-                    request_params,
-                    options.response_format.clone(),
-                    started_at,
-                    finished_at,
-                    duration_ms,
-                    false,
-                    &call_id,
-                    None,
-                    Some(err.to_string()),
-                    None,
-                );
-                if let Ok(path) = write_llm_log(&log, Some(&call_id)).await {
-                    error!(provider = %self.provider, model = %self.model, log_path = %path.display(), error = %err, "provider call failed");
+                if logging_enabled() {
+                    let log = build_call_log(
+                        &self.provider,
+                        &self.model,
+                        &self.base_url,
+                        Value::Array(messages.clone()),
+                        None,
+                        request_params,
+                        options.response_format.clone(),
+                        started_at,
+                        finished_at,
+                        duration_ms,
+                        false,
+                        &call_id,
+                        None,
+                        Some(err.to_string()),
+                        None,
+                    );
+                    if let Ok(path) = write_llm_log(&log, Some(&call_id)).await {
+                        error!(provider = %self.provider, model = %self.model, log_path = %path.display(), error = %err, "provider call failed");
+                    }
                 }
                 Err(err)
             }
@@ -845,43 +864,8 @@ fn provider_config_json_path() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("TURA_PROVIDER_CONFIG").filter(|value| !value.is_empty()) {
         return Some(PathBuf::from(path));
     }
-    if let Some(path) = std::env::var_os("TURALLM_CONFIG").filter(|value| !value.is_empty()) {
-        return Some(PathBuf::from(path));
-    }
-    for path in default_provider_config_candidates() {
-        if path.exists() {
-            return Some(path);
-        }
-    }
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    Some(manifest_dir.join("src").join("provider_config.json"))
-}
-
-fn default_provider_config_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Ok(root) = std::env::var("TURA_PROJECT_ROOT") {
-        let root = PathBuf::from(root);
-        candidates.push(root.join("config").join("provider_config.json"));
-        candidates.push(
-            root.join("crates")
-                .join("provider")
-                .join("config")
-                .join("provider_config.json"),
-        );
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(bin_dir) = exe.parent() {
-            candidates.push(bin_dir.join("config").join("provider_config.json"));
-            candidates.push(bin_dir.join("provider_config.json"));
-            if let Some(root) = bin_dir.parent() {
-                candidates.push(root.join("config").join("provider_config.json"));
-            }
-        }
-    }
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    candidates.push(manifest_dir.join("config").join("provider_config.json"));
-    candidates.push(manifest_dir.join("config").join("tura_llm_config.json"));
-    candidates
+    Some(manifest_dir.join("config").join("provider_config.json"))
 }
 
 pub fn default_client(api_key: &str) -> Result<reqwest::Client, TuraError> {

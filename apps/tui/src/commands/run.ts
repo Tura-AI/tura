@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient } from "../gateway/client.js";
+import { ensureGatewayAvailable } from "../gateway/autostart.js";
 import { sameDirectory } from "../gateway/directory.js";
 import { normalizeEvent } from "../gateway/events.js";
+import { plainCapabilities } from "../tui/capabilities.js";
 import {
   GatewayUnavailableError,
   TimeoutError,
@@ -11,6 +13,7 @@ import {
 } from "../types/common.js";
 import {
   hasUserFacingAssistantText,
+  sessionStatusText,
   type PromptPayload,
   type RunResult,
   type Session,
@@ -19,6 +22,8 @@ import { buildRunResult, writeLastMessage } from "../output/final-result.js";
 import { HumanOutput } from "../output/human.js";
 import { printRunJson } from "../output/json.js";
 import { NdjsonOutput } from "../output/ndjson.js";
+import { userFacingError } from "../gateway/errors.js";
+import type { CommandRunShell } from "./config-values.js";
 
 export interface RunOptions {
   prompt: string;
@@ -30,6 +35,7 @@ export interface RunOptions {
   modelAccelerationEnabled?: boolean;
   killProcessesOnStart?: boolean;
   validatorEnabled?: boolean;
+  commandRunShell?: CommandRunShell;
   output: OutputMode;
   stream: boolean;
   timeoutSec: number;
@@ -38,8 +44,20 @@ export interface RunOptions {
 }
 
 export async function runPrompt(context: CliContext, options: RunOptions): Promise<RunResult> {
+  return withCommandRunShellEnv(options.commandRunShell, () =>
+    runPromptWithShellEnv(context, options),
+  );
+}
+
+async function runPromptWithShellEnv(context: CliContext, options: RunOptions): Promise<RunResult> {
+  const gatewayUrl = await ensureGatewayAvailable(
+    context.gatewayUrl,
+    plainCapabilities(),
+    context.dev,
+    context.gatewayUrlExplicit,
+  );
   const client = new GatewayClient({
-    baseUrl: context.gatewayUrl,
+    baseUrl: gatewayUrl,
     directory: context.cwd,
     verbose: context.verbose,
   });
@@ -47,7 +65,7 @@ export async function runPrompt(context: CliContext, options: RunOptions): Promi
     await client.health();
     await client.syncWorkspace();
   } catch (error) {
-    throw new GatewayUnavailableError(error instanceof Error ? error.message : String(error));
+    throw new GatewayUnavailableError(userFacingError(error));
   }
 
   const session = options.sessionID
@@ -71,6 +89,7 @@ export async function runPrompt(context: CliContext, options: RunOptions): Promi
     modelVariant: options.modelVariant ?? session.model_variant ?? undefined,
     modelAccelerationEnabled:
       options.modelAccelerationEnabled ?? session.model_acceleration_enabled,
+    commandRunShell: options.commandRunShell,
   });
 
   const human = options.output === "text" ? new HumanOutput(context.color) : undefined;
@@ -96,11 +115,26 @@ export async function runPrompt(context: CliContext, options: RunOptions): Promi
   return result;
 }
 
+async function withCommandRunShellEnv<T>(
+  shell: CommandRunShell | undefined,
+  callback: () => Promise<T>,
+): Promise<T> {
+  if (!shell) return callback();
+  const previous = process.env.TURA_COMMAND_RUN_SHELL;
+  process.env.TURA_COMMAND_RUN_SHELL = shell;
+  try {
+    return await callback();
+  } finally {
+    if (previous === undefined) delete process.env.TURA_COMMAND_RUN_SHELL;
+    else process.env.TURA_COMMAND_RUN_SHELL = previous;
+  }
+}
+
 export function promptPayload(
   prompt: string,
   options: Pick<
     RunOptions,
-    "model" | "agent" | "source" | "modelVariant" | "modelAccelerationEnabled"
+    "model" | "agent" | "source" | "modelVariant" | "modelAccelerationEnabled" | "commandRunShell"
   >,
 ): PromptPayload {
   const messageID = `msg_${options.source}_${randomUUID()}`;
@@ -115,6 +149,7 @@ export function promptPayload(
     ...(options.modelAccelerationEnabled !== undefined
       ? { model_acceleration_enabled: options.modelAccelerationEnabled }
       : {}),
+    ...(options.commandRunShell ? { command_run_shell: options.commandRunShell } : {}),
     source: options.source,
   };
 }
@@ -176,9 +211,15 @@ async function completionResult(
   sessionID: string,
   initialCount: number,
 ): Promise<RunResult | undefined> {
+  const session = await client.getSession(sessionID).catch(() => undefined);
   const messages = await client.listMessages(sessionID);
   const hasNewAssistant = hasUserFacingAssistantText(messages, initialCount);
-  if (hasNewAssistant) {
+  const status = sessionStatusText(session?.status);
+  if (status === "busy") return undefined;
+  if (status === "error" && hasNewAssistant) {
+    return buildRunResult(sessionID, messages, "failed");
+  }
+  if (status === "idle" && hasNewAssistant) {
     return buildRunResult(sessionID, messages, "completed");
   }
   return undefined;

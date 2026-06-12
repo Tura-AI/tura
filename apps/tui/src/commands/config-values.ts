@@ -2,6 +2,8 @@ import { CliUsageError } from "../types/common.js";
 import type { SessionConfig } from "../types/config.js";
 import { t } from "../i18n.js";
 
+export type CommandRunShell = "bash" | "zsh" | "shell_command";
+
 export interface RuntimeConfigOverrides {
   model?: string;
   agent?: string;
@@ -10,6 +12,7 @@ export interface RuntimeConfigOverrides {
   modelAccelerationEnabled?: boolean;
   killProcessesOnStart?: boolean;
   validatorEnabled?: boolean;
+  commandRunShell?: CommandRunShell;
 }
 
 export function parseConfigAssignment(entry: string): [string, unknown] {
@@ -113,6 +116,7 @@ function assignRuntimeConfigValue(
   else if (canonical === "kill_processes_on_start")
     overrides.killProcessesOnStart = booleanValue(value, key);
   else if (canonical === "validator_enabled") overrides.validatorEnabled = booleanValue(value, key);
+  else if (canonical === "command_run_shell") overrides.commandRunShell = shellValue(value, key);
 }
 
 function canonicalKey(key: string): string {
@@ -162,4 +166,12 @@ function booleanValue(value: unknown, key: string): boolean {
 
 function serviceTierAcceleration(value: unknown): boolean {
   return booleanValue(value, "service_tier");
+}
+
+export function shellValue(value: unknown, key = "command_run_shell"): CommandRunShell {
+  const normalized = String(value).trim();
+  if (normalized === "bash") return "bash";
+  if (normalized === "zsh") return "zsh";
+  if (normalized === "shll") return "shell_command";
+  throw new CliUsageError(t("unsupportedCommandRunShell", { key, value: normalized }));
 }

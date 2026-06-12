@@ -3,10 +3,10 @@
 use crate::api::product::current_user_snapshot;
 use crate::api::types::*;
 use crate::mock::global_store;
+use crate::router_client::RouterClient;
 use crate::session::config::{load_config, merge_config, TuraSessionConfig};
 use crate::session::{
-    process_cleanup::kill_processes_in_directory, session_store, MessageRole as SessionMessageRole,
-    SessionStatus as SessionStatusMano,
+    session_store, MessageRole as SessionMessageRole, SessionStatus as SessionStatusMano,
 };
 use axum::{
     extract::{Path, Query},
@@ -15,7 +15,6 @@ use axum::{
     Json,
 };
 use serde::Deserialize;
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
@@ -200,20 +199,9 @@ pub async fn create_session(
     let disable_permission_restrictions = payload.disable_permission_restrictions.unwrap_or(false);
     let auto_session_name = payload.auto_session_name.unwrap_or(true);
     if kill_processes_on_start {
-        if let Some(directory) = directory.as_deref() {
-            let cleanup = tokio::task::spawn_blocking({
-                let directory = directory.to_string();
-                move || {
-                    if let Err(err) = kill_processes_in_directory(&directory) {
-                        tracing::warn!(directory, error = %err, "session startup process cleanup failed");
-                    }
-                }
-            })
-            .await;
-            if let Err(err) = cleanup {
-                tracing::warn!(error = %err, "session startup process cleanup task failed");
-            }
-        }
+        tracing::info!(
+            "kill_processes_on_start requested; workspace-wide process scanning is disabled, router-owned workers are stopped by session id"
+        );
     }
     let requested_session_type = payload
         .session_type
@@ -320,31 +308,6 @@ pub async fn patch_session_config(
             Json(TuraSessionConfig::default())
         }
     }
-}
-
-fn repo_root_for_router() -> Option<PathBuf> {
-    let mut starts = Vec::new();
-    if let Ok(current) = std::env::current_dir() {
-        starts.push(current);
-    }
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(parent) = current_exe.parent() {
-            starts.push(parent.to_path_buf());
-        }
-    }
-
-    starts.into_iter().find_map(|start| {
-        start
-            .ancestors()
-            .find(|candidate| {
-                candidate
-                    .join("crates")
-                    .join("router")
-                    .join("Cargo.toml")
-                    .exists()
-            })
-            .map(PathBuf::from)
-    })
 }
 
 fn encoded_header(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -522,24 +485,30 @@ pub struct UpdateSessionRequest {
 
 pub async fn abort_session(Path(session_id): Path<String>) -> Json<AbortResponse> {
     let aborted_sessions = session_store().cancellation_scope_session_ids(&session_id);
-
-    let directories = aborted_sessions
-        .iter()
-        .filter_map(|id| session_store().get_session(id))
-        .filter_map(|session| session.directory)
-        .map(PathBuf::from)
-        .filter(|directory| directory.exists())
-        .collect::<BTreeSet<_>>();
     let mut cleanups = Vec::new();
-    for directory in directories {
-        if let Some(cleanup) =
-            tokio::task::spawn_blocking(move || kill_processes_in_directory(directory))
-                .await
-                .ok()
-                .and_then(Result::ok)
-        {
-            cleanups.push(cleanup);
-        }
+    let router = RouterClient::global();
+    for id in &aborted_sessions {
+        cleanups.push(match router.cancel_turn(id, None) {
+            Ok(payload) => AbortCleanup {
+                session_id: id.clone(),
+                status: payload
+                    .get("status")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_string(),
+                stopped_worker: payload
+                    .get("stopped_worker")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+                error: None,
+            },
+            Err(error) => AbortCleanup {
+                session_id: id.clone(),
+                status: "error".to_string(),
+                stopped_worker: false,
+                error: Some(error.to_string()),
+            },
+        });
     }
 
     for id in &aborted_sessions {
@@ -560,8 +529,16 @@ pub async fn abort_session(Path(session_id): Path<String>) -> Json<AbortResponse
 pub struct AbortResponse {
     pub aborted: bool,
     pub sessions: Vec<String>,
-    pub cleanup: Option<crate::session::process_cleanup::DirectoryProcessCleanup>,
-    pub cleanups: Vec<crate::session::process_cleanup::DirectoryProcessCleanup>,
+    pub cleanup: Option<AbortCleanup>,
+    pub cleanups: Vec<AbortCleanup>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AbortCleanup {
+    pub session_id: String,
+    pub status: String,
+    pub stopped_worker: bool,
+    pub error: Option<String>,
 }
 
 pub async fn fork_session(
@@ -652,7 +629,7 @@ pub(crate) fn session_status_value(status: &SessionStatus) -> serde_json::Value 
 
 pub async fn share_session(Path(session_id): Path<String>) -> Json<ShareResponse> {
     Json(ShareResponse {
-        url: format!("https://share.example.com/session/{}", session_id),
+        url: format!("https://share.example.com/session/{session_id}"),
     })
 }
 
@@ -716,11 +693,33 @@ pub async fn register_child_session(
 pub async fn update_session_status_for_runtime(
     Path(session_id): Path<String>,
     Json(payload): Json<RuntimeSessionStatusRequest>,
-) -> Json<SessionStatusResponse> {
+) -> impl IntoResponse {
+    if session_store().get_session(&session_id).is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "session_not_found",
+                "session_id": session_id,
+            })),
+        )
+            .into_response();
+    }
     let status = match payload.status.as_str() {
-        "busy" | "running" => SessionStatusMano::Busy,
-        "error" | "failed" => SessionStatusMano::Error,
-        _ => SessionStatusMano::Idle,
+        "idle" => SessionStatusMano::Idle,
+        "busy" => SessionStatusMano::Busy,
+        "error" => SessionStatusMano::Error,
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "error": "invalid_session_status",
+                    "allowed": ["idle", "busy", "error"],
+                })),
+            )
+                .into_response();
+        }
     };
     session_store().update_session_status(&session_id, status);
     let api_status = match status {
@@ -729,18 +728,45 @@ pub async fn update_session_status_for_runtime(
         SessionStatusMano::Error => SessionStatus::Error,
     };
     let session = session_store().get_session(&session_id);
-    Json(SessionStatusResponse {
-        session_id,
-        status: api_status,
-        task_management: session
-            .as_ref()
-            .map(|session| session.task_management.clone())
-            .unwrap_or_else(|| serde_json::json!({})),
-        plan_summary: session
-            .as_ref()
-            .and_then(|session| session.plan_summary.clone()),
-        session_display_name: session.and_then(|session| session.session_display_name),
-    })
+    if session
+        .as_ref()
+        .is_none_or(|session| session.status != api_status)
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "session_status_transition_rejected",
+                "requested": payload.status,
+                "actual": session.as_ref().map(|session| session.status.clone()),
+            })),
+        )
+            .into_response();
+    }
+    (
+        StatusCode::OK,
+        Json(
+            serde_json::to_value(SessionStatusResponse {
+                session_id,
+                status: api_status,
+                task_management: session
+                    .as_ref()
+                    .map(|session| session.task_management.clone())
+                    .unwrap_or_else(|| serde_json::json!({})),
+                plan_summary: session
+                    .as_ref()
+                    .and_then(|session| session.plan_summary.clone()),
+                session_display_name: session.and_then(|session| session.session_display_name),
+            })
+            .unwrap_or_else(|_| {
+                serde_json::json!({
+                    "ok": false,
+                    "error": "session_status_response_encode_failed",
+                })
+            }),
+        ),
+    )
+        .into_response()
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -766,8 +792,8 @@ mod session_messages;
 use session_messages::{agent_message_content, agent_message_metadata, planning_todos};
 pub use session_messages::{
     get_message, get_message_part, get_todos, list_messages, send_agent_message, send_message,
-    session_command, update_todos, SendAgentMedia, SendAgentMessageRequest,
-    SendAgentMessageResponse, SendAgentToolCall,
+    session_command, stream_agent_message, update_todos, MessageListParams, SendAgentMedia,
+    SendAgentMessageRequest, SendAgentMessageResponse, SendAgentToolCall, StreamAgentTextRequest,
 };
 pub async fn revert_session(Path(session_id): Path<String>) -> Json<bool> {
     Json(
@@ -897,11 +923,26 @@ fn apply_single_change(record: &SessionChangeRecord, revert: bool) -> Result<boo
 
     if target_exists {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "failed to create change target directory {}: {error}",
+                    parent.display()
+                )
+            })?;
         }
-        fs::write(&path, target_content.unwrap_or_default()).map_err(|error| error.to_string())?;
+        fs::write(&path, target_content.unwrap_or_default()).map_err(|error| {
+            format!(
+                "failed to write change target file {}: {error}",
+                path.display()
+            )
+        })?;
     } else if path.exists() {
-        fs::remove_file(&path).map_err(|error| error.to_string())?;
+        fs::remove_file(&path).map_err(|error| {
+            format!(
+                "failed to remove change target file {}: {error}",
+                path.display()
+            )
+        })?;
     }
     Ok(true)
 }
@@ -939,10 +980,15 @@ mod session_prompt;
 use session_prompt::{final_agent_message, frontend_safe_reply_message, run_mano_for_prompt};
 #[cfg(test)]
 use session_prompt::{
-    first_prompt_part_id, prompt_message_id, prompt_model_acceleration, prompt_model_variant,
-    prompt_text, user_facing_completion_fallback,
+    first_prompt_part_id, prompt_command_run_shell, prompt_message_id, prompt_model_acceleration,
+    prompt_model_variant, prompt_text,
 };
 pub use session_prompt::{prompt_async, start_task_scheduler};
+#[cfg(feature = "business-tests")]
+pub use session_prompt::{
+    run_due_task_scheduler_tick_for_business_test,
+    run_due_task_scheduler_tick_for_store_business_test,
+};
 #[path = "session_format.rs"]
 mod session_format;
 pub(crate) use session_format::api_message_from_store;

@@ -9,9 +9,12 @@ use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
 
 use super::process::{
-    configure_process_group, configure_tokio_process_group, kill_child_process_tree,
+    attach_shell_process_scope, configure_process_scope, configure_tokio_process_scope,
 };
 use super::response::failed_async_response;
+
+const EXEC_OUTPUT_MAX_BYTES: usize = 1024 * 1024;
+const MAX_EXEC_OUTPUT_DELTAS_PER_CALL: usize = 512;
 
 pub(super) fn run_command_with_timeout(mut command: Command, timeout_secs: u64) -> CommandResponse {
     let started = Instant::now();
@@ -19,9 +22,10 @@ pub(super) fn run_command_with_timeout(mut command: Command, timeout_secs: u64) 
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    configure_process_group(&mut command);
+    configure_process_scope(&mut command);
     match command.spawn() {
         Ok(mut child) => {
+            let scope = attach_shell_process_scope(child.id());
             let stdout_task = child
                 .stdout
                 .take()
@@ -33,6 +37,9 @@ pub(super) fn run_command_with_timeout(mut command: Command, timeout_secs: u64) 
             loop {
                 match child.try_wait() {
                     Ok(Some(status)) => {
+                        if let Some(scope) = &scope {
+                            scope.terminate();
+                        }
                         let (stdout, stderr) = drain_blocking_stream_tasks(
                             stdout_task,
                             stderr_task,
@@ -42,7 +49,9 @@ pub(super) fn run_command_with_timeout(mut command: Command, timeout_secs: u64) 
                     }
                     Ok(None) => {
                         if started.elapsed() >= Duration::from_secs(timeout_secs) {
-                            kill_child_process_tree(child.id());
+                            if let Some(scope) = &scope {
+                                scope.terminate();
+                            }
                             let _ = child.kill();
                             let _ = child.wait();
                             let (stdout, stderr) = drain_blocking_stream_tasks(
@@ -91,9 +100,18 @@ pub(super) fn run_command_with_timeout(mut command: Command, timeout_secs: u64) 
 }
 
 fn read_blocking_stream<R: Read>(mut stream: R) -> String {
-    let mut output = Vec::new();
-    let _ = stream.read_to_end(&mut output);
-    String::from_utf8_lossy(&output).to_string()
+    let mut output = CappedOutput::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => {
+                output.push(&buffer[..n]);
+            }
+            Err(_) => break,
+        }
+    }
+    output.finish()
 }
 
 fn drain_blocking_stream_tasks(
@@ -112,8 +130,10 @@ fn drain_blocking_stream_tasks(
 
     fn take_if_finished(task: &mut Option<JoinHandle<String>>) -> String {
         if task.as_ref().is_some_and(JoinHandle::is_finished) {
-            let task = task.take().expect("task was checked as present");
-            task.join().unwrap_or_default()
+            match task.take() {
+                Some(task) => task.join().unwrap_or_default(),
+                None => String::new(),
+            }
         } else {
             String::new()
         }
@@ -132,10 +152,8 @@ fn command_response_from_status(
 ) -> CommandResponse {
     let wall = started.elapsed().as_secs_f32();
     let exit_code = status.code().unwrap_or(1);
-    let mut text = format!(
-        "Exit code: {exit_code}\nWall time: {:.1} seconds\nOutput:\n{}",
-        wall, stdout
-    );
+    let mut text =
+        format!("Exit code: {exit_code}\nWall time: {wall:.1} seconds\nOutput:\n{stdout}");
     if !stderr.is_empty() {
         text.push_str("\nStderr:\n");
         text.push_str(&stderr);
@@ -166,12 +184,13 @@ pub(super) async fn run_tokio_command_with_timeout(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    configure_tokio_process_group(&mut command);
+    configure_tokio_process_scope(&mut command);
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(err) => return failed_async_response(&err.to_string(), 1),
     };
     let pid = child.id();
+    let scope = pid.and_then(attach_shell_process_scope);
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let call_id = ctx.current_call_id().unwrap_or("command_run").to_string();
@@ -195,8 +214,8 @@ pub(super) async fn run_tokio_command_with_timeout(
     let mut expiration = None;
     let status = if ctx.cancellation.is_cancelled() {
         expiration = Some("tool task aborted".to_string());
-        if let Some(pid) = pid {
-            kill_child_process_tree(pid);
+        if let Some(scope) = &scope {
+            scope.terminate();
         }
         None
     } else {
@@ -204,20 +223,23 @@ pub(super) async fn run_tokio_command_with_timeout(
             output = &mut wait_task => output.ok().and_then(Result::ok),
             _ = tokio::time::sleep(Duration::from_secs(timeout_secs)) => {
                 expiration = Some(format!("Timed out after {timeout_secs} seconds"));
-                if let Some(pid) = pid {
-                    kill_child_process_tree(pid);
+                if let Some(scope) = &scope {
+                    scope.terminate();
                 }
                 None
             }
             _ = ctx.cancellation.cancelled() => {
                 expiration = Some("tool task aborted".to_string());
-                if let Some(pid) = pid {
-                    kill_child_process_tree(pid);
+                if let Some(scope) = &scope {
+                    scope.terminate();
                 }
                 None
             }
         }
     };
+    if let Some(scope) = &scope {
+        scope.terminate();
+    }
     if status.is_none() {
         wait_task.abort();
     }
@@ -227,10 +249,8 @@ pub(super) async fn run_tokio_command_with_timeout(
     match status {
         Some(status) => {
             let exit_code = status.code().unwrap_or(1);
-            let mut text = format!(
-                "Exit code: {exit_code}\nWall time: {:.1} seconds\nOutput:\n{}",
-                wall, stdout
-            );
+            let mut text =
+                format!("Exit code: {exit_code}\nWall time: {wall:.1} seconds\nOutput:\n{stdout}");
             if !stderr.is_empty() {
                 text.push_str("\nStderr:\n");
                 text.push_str(&stderr);
@@ -246,12 +266,22 @@ pub(super) async fn run_tokio_command_with_timeout(
         }
         None => {
             let message = expiration.unwrap_or_else(|| "tool task aborted".to_string());
+            let stderr = if stderr.is_empty() {
+                message.clone()
+            } else {
+                format!("{stderr}\n{message}")
+            };
+            let mut text = format!("{message}\nWall time: {wall:.1} seconds\nOutput:\n{stdout}");
+            if !stderr.is_empty() {
+                text.push_str("\nStderr:\n");
+                text.push_str(&stderr);
+            }
             CommandResponse {
                 success: false,
                 exit_code: -1,
-                stdout: String::new(),
-                stderr: message.clone(),
-                output: Value::String(message),
+                stdout,
+                stderr,
+                output: Value::String(text),
                 changes: Vec::new(),
             }
         }
@@ -267,23 +297,81 @@ async fn read_stream_with_deltas<R>(
 where
     R: tokio::io::AsyncRead + Unpin,
 {
-    let mut output = Vec::new();
+    let mut output = CappedOutput::new();
     let mut buffer = [0_u8; 8192];
+    let mut emitted_deltas = 0_usize;
+    let mut truncation_delta_emitted = false;
     loop {
         match reader.read(&mut buffer).await {
             Ok(0) => break,
             Ok(n) => {
-                output.extend_from_slice(&buffer[..n]);
-                ctx.record_event(crate::runtime::tool::ToolRuntimeEvent::OutputDelta {
-                    call_id: call_id.clone(),
-                    stream: stream.to_string(),
-                    text: String::from_utf8_lossy(&buffer[..n]).to_string(),
-                });
+                let accepted = output.push(&buffer[..n]);
+                if emitted_deltas < MAX_EXEC_OUTPUT_DELTAS_PER_CALL && accepted > 0 {
+                    emitted_deltas += 1;
+                    ctx.record_event(crate::runtime::tool::ToolRuntimeEvent::OutputDelta {
+                        call_id: call_id.clone(),
+                        stream: stream.to_string(),
+                        text: String::from_utf8_lossy(&buffer[..accepted]).to_string(),
+                    });
+                } else if output.truncated() && !truncation_delta_emitted {
+                    truncation_delta_emitted = true;
+                    ctx.record_event(crate::runtime::tool::ToolRuntimeEvent::OutputDelta {
+                        call_id: call_id.clone(),
+                        stream: stream.to_string(),
+                        text: format!(
+                            "\n[{stream} output truncated after {EXEC_OUTPUT_MAX_BYTES} bytes]\n"
+                        ),
+                    });
+                }
             }
             Err(_) => break,
         }
     }
-    String::from_utf8_lossy(&output).to_string()
+    output.finish()
+}
+
+struct CappedOutput {
+    bytes: Vec<u8>,
+    total_bytes: usize,
+    truncated: bool,
+}
+
+impl CappedOutput {
+    fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+            total_bytes: 0,
+            truncated: false,
+        }
+    }
+
+    fn push(&mut self, chunk: &[u8]) -> usize {
+        self.total_bytes = self.total_bytes.saturating_add(chunk.len());
+        let remaining = EXEC_OUTPUT_MAX_BYTES.saturating_sub(self.bytes.len());
+        let accepted = remaining.min(chunk.len());
+        if accepted > 0 {
+            self.bytes.extend_from_slice(&chunk[..accepted]);
+        }
+        if accepted < chunk.len() {
+            self.truncated = true;
+        }
+        accepted
+    }
+
+    fn truncated(&self) -> bool {
+        self.truncated
+    }
+
+    fn finish(self) -> String {
+        let mut text = String::from_utf8_lossy(&self.bytes).to_string();
+        if self.truncated {
+            text.push_str(&format!(
+                "\n[output truncated after {} bytes; {} bytes were read]\n",
+                EXEC_OUTPUT_MAX_BYTES, self.total_bytes
+            ));
+        }
+        text
+    }
 }
 
 async fn drain_stream_tasks(
@@ -312,5 +400,223 @@ async fn drain_stream_tasks(
             }
             (String::new(), String::new())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        read_stream_with_deltas, run_command_with_timeout, run_tokio_command_with_timeout,
+        tail_chars,
+    };
+    use crate::runtime::tool::{ToolContext, ToolRuntimeEvent};
+    use std::path::PathBuf;
+    use std::process::Command;
+    use tokio::io::AsyncWriteExt;
+
+    fn success_command() -> Command {
+        if cfg!(windows) {
+            let mut command = Command::new("powershell");
+            command.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Write-Output shell-ok",
+            ]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "printf shell-ok"]);
+            command
+        }
+    }
+
+    fn failing_command() -> Command {
+        if cfg!(windows) {
+            let mut command = Command::new("powershell");
+            command.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Write-Error shell-bad; exit 7",
+            ]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "printf shell-bad >&2; exit 7"]);
+            command
+        }
+    }
+
+    fn slow_command() -> Command {
+        if cfg!(windows) {
+            let mut command = Command::new("powershell");
+            command.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Start-Sleep -Seconds 5",
+            ]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 5"]);
+            command
+        }
+    }
+
+    fn tokio_slow_command() -> tokio::process::Command {
+        let command = slow_command();
+        let mut tokio_command = tokio::process::Command::new(command.get_program());
+        tokio_command.args(command.get_args());
+        tokio_command
+    }
+
+    fn tokio_output_then_sleep_command() -> tokio::process::Command {
+        if cfg!(windows) {
+            let mut command = tokio::process::Command::new("powershell");
+            command.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Write-Output retained-output; Start-Sleep -Seconds 5",
+            ]);
+            command
+        } else {
+            let mut command = tokio::process::Command::new("sh");
+            command.args(["-c", "printf retained-output; sleep 5"]);
+            command
+        }
+    }
+
+    #[test]
+    fn tail_chars_preserves_unicode_boundaries() {
+        assert_eq!(tail_chars("alpha", 10), "alpha");
+        assert_eq!(tail_chars("aébc", 3), "ébc");
+        assert_eq!(tail_chars("abcdef", 0), "");
+    }
+
+    #[test]
+    fn run_command_with_timeout_captures_success_output_and_exit_code() {
+        let response = run_command_with_timeout(success_command(), 10);
+
+        assert!(response.success, "{}", response.stderr);
+        assert_eq!(response.exit_code, 0);
+        assert!(response.stdout.contains("shell-ok"), "{response:?}");
+        assert!(response
+            .output
+            .as_str()
+            .unwrap_or_default()
+            .contains("Exit code: 0"));
+    }
+
+    #[test]
+    fn run_command_with_timeout_captures_failure_stderr() {
+        let response = run_command_with_timeout(failing_command(), 10);
+
+        assert!(!response.success);
+        assert_eq!(response.exit_code, 7);
+        assert!(response.stderr.contains("shell-bad"), "{response:?}");
+        assert!(response
+            .output
+            .as_str()
+            .unwrap_or_default()
+            .contains("Stderr:"));
+    }
+
+    #[test]
+    fn run_command_with_timeout_reports_spawn_error() {
+        let response = run_command_with_timeout(Command::new("__tura_missing_shell_binary__"), 1);
+
+        assert!(!response.success);
+        assert_eq!(response.exit_code, 1);
+        assert!(!response.stderr.is_empty());
+        assert_eq!(
+            response.output.as_str().unwrap_or_default(),
+            response.stderr.as_str()
+        );
+    }
+
+    #[test]
+    fn run_command_with_timeout_kills_slow_command() {
+        let response = run_command_with_timeout(slow_command(), 1);
+
+        assert!(!response.success);
+        assert_eq!(response.exit_code, -1);
+        assert!(response
+            .output
+            .as_str()
+            .unwrap_or_default()
+            .contains("Timed out after 1 seconds"));
+    }
+
+    #[tokio::test]
+    async fn read_stream_with_deltas_returns_output_and_records_each_chunk() {
+        let (mut writer, reader) = tokio::io::duplex(64);
+        let context = ToolContext::new(PathBuf::from("workspace"));
+        let read_context = context.clone();
+        let task = tokio::spawn(async move {
+            read_stream_with_deltas(reader, read_context, "call-1".to_string(), "stdout").await
+        });
+
+        writer.write_all(b"alpha").await.expect("write first chunk");
+        writer
+            .write_all(b"bravo")
+            .await
+            .expect("write second chunk");
+        drop(writer);
+
+        assert_eq!(task.await.expect("reader task"), "alphabravo");
+        let events = context.events();
+        assert!(!events.is_empty());
+        let mut combined = String::new();
+        for event in events {
+            let ToolRuntimeEvent::OutputDelta {
+                call_id,
+                stream,
+                text,
+            } = event
+            else {
+                panic!("unexpected event: {event:?}");
+            };
+            assert_eq!(call_id, "call-1");
+            assert_eq!(stream, "stdout");
+            combined.push_str(&text);
+        }
+        assert_eq!(combined, "alphabravo");
+    }
+
+    #[tokio::test]
+    async fn run_tokio_command_with_timeout_honors_pre_cancelled_context() {
+        let context = ToolContext::new(PathBuf::from("workspace"));
+        context.cancellation.cancel();
+
+        let response = run_tokio_command_with_timeout(tokio_slow_command(), 10, &context).await;
+
+        assert!(!response.success);
+        assert_eq!(response.exit_code, -1);
+        assert_eq!(response.stderr, "tool task aborted");
+        assert!(context.events().is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_tokio_command_with_timeout_retains_stdout_on_timeout() {
+        let context = ToolContext::new(PathBuf::from("workspace"));
+
+        let response =
+            run_tokio_command_with_timeout(tokio_output_then_sleep_command(), 1, &context).await;
+
+        assert!(!response.success);
+        assert_eq!(response.exit_code, -1);
+        assert!(
+            response.stdout.contains("retained-output"),
+            "stdout should keep bytes read before timeout: {response:?}"
+        );
+        assert!(response.stderr.contains("Timed out after 1 seconds"));
+        assert!(response
+            .output
+            .as_str()
+            .unwrap_or_default()
+            .contains("retained-output"));
     }
 }

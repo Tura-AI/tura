@@ -3,6 +3,7 @@ export type JsonObject = Record<string, unknown>;
 export type HealthResponse = {
   healthy: boolean;
   version: string;
+  dev_log_path?: string;
 };
 
 export type GatewayConfig = {
@@ -181,6 +182,12 @@ export type MessageListItem =
       info: Message;
       parts?: MessagePart[];
     };
+
+export type MessageListInput = {
+  limit?: number;
+  before?: string;
+  after?: string;
+};
 
 export type SendMessageResponse = {
   message: Message;

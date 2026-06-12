@@ -15,6 +15,7 @@ pub type ManasEntry = fn(&SessionManagement) -> Result<Vec<AgentManagement>, Str
 pub struct ManoProcessResult {
     pub session: SessionManagement,
     pub agents: Vec<AgentManagement>,
+    pub final_error: Option<String>,
 }
 
 #[derive(Clone, Copy, Default)]

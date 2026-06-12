@@ -15,7 +15,8 @@ fn strip_command_run_context_noise(value: serde_json::Value) -> serde_json::Valu
                 .filter(|(key, _)| {
                     !matches!(
                         key.as_str(),
-                        "step_summary"
+                        "task_detail"
+                            | "step_summary"
                             | "last_tool_call_status"
                             | "last_tool_call_summary"
                             | "summary"
@@ -461,7 +462,8 @@ pub(super) fn strip_tool_reporting_fields(value: serde_json::Value) -> serde_jso
         serde_json::Value::Object(map) => serde_json::Value::Object(
             map.into_iter()
                 .filter(|(key, _)| {
-                    key != "step_summary"
+                    key != "task_detail"
+                        && key != "step_summary"
                         && key != "last_tool_call_status"
                         && key != "last_tool_call_summary"
                         && key != "summary"

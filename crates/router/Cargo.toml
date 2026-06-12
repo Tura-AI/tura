@@ -26,3 +26,36 @@ anyhow.workspace = true
 agents = { workspace = true }
 personas = { workspace = true }
 session_log = { workspace = true }
+tura_path = { workspace = true }
+tools = { workspace = true }
+fs2.workspace = true
+sysinfo.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[features]
+business-tests = []
+
+[[test]]
+name = "worker_lifecycle_flow"
+path = "tests/business/worker_lifecycle_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "worker_oneshot_fallback_flow"
+path = "tests/business/worker_oneshot_fallback_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "worker_malformed_output_flow"
+path = "tests/business/worker_malformed_output_flow.rs"
+required-features = ["business-tests"]
+
+[[test]]
+name = "registry_lifecycle_flow"
+path = "tests/business/registry_lifecycle_flow.rs"
+required-features = ["business-tests"]

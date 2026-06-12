@@ -36,7 +36,7 @@ through gateway HTTP and SSE calls.
 
 ## Session Log And Provider Diagnostics
 
-The CLI/TUI queries historical sessions through gateway APIs or the gateway
+The CLI/TUI queries past sessions through gateway APIs or the gateway
 CLI bridge. It must not read `.tura/sessions`, `db/session_log`, provider logs,
 or backend config files directly.
 
@@ -51,8 +51,8 @@ GET /session-log/{sessionID}/records?page=0&page_size=100
 Raw CLI bridge for scripts:
 
 ```powershell
-'{"command":"get_session","session_id":"session-id"}' | target\debug\gateway.exe session-log
-'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\gateway.exe session-log
+'{"command":"get_session","session_id":"session-id"}' | target\debug\tura_gateway.exe session-log
+'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\tura_gateway.exe session-log
 ```
 
 Provider call logs are backend diagnostics under
@@ -107,7 +107,14 @@ apps/tui/
   scripts/
     web-terminal.mjs
   e2e/
+    business/
+      run_all_release.mjs
+      tui_single_request_release.mjs
+      tui_snake_release.mjs
+      tui_password_zip_release.mjs
     tui_gateway_cli_e2e.mjs
+    tui_real_gateway_snake_playwright.mjs
+    tui_zip_password_playwright.mjs
   src/
     index.ts
     cli.ts
@@ -167,7 +174,7 @@ Default gateway URL resolution:
 
 1. `--gateway-url`
 2. `TURA_GATEWAY_URL`
-3. `http://127.0.0.1:4096`
+3. `http://127.0.0.1:4126`
 
 Every request that is workspace-scoped must send the current directory through
 both compatible mechanisms until the API is fully documented:
@@ -222,6 +229,10 @@ paths                          GET    /path
 The `/tui/*` routes in gateway are shortcuts. The TypeScript CLI/TUI should
 prefer the richer session/message/config endpoints, and only use `/tui/*` for
 very small smoke tests.
+
+`scripts/web-terminal.mjs` is a browser debugging wrapper around the built TUI.
+Its pty shell can be forced with `TURA_WEB_TERMINAL_SHELL`; otherwise it uses
+the user's shell, macOS `/bin/zsh`, then bash/sh fallbacks.
 
 ## Session Plan Commands
 
@@ -470,6 +481,62 @@ UI surfaces to port from the Codex TUI idea:
 The TUI should not invent hidden state. Every durable choice should be reflected
 through gateway config APIs.
 
+## Long-Conversation Rendering (Bounded Transcript Scroll)
+
+Requirement: the transcript must stay responsive and fully navigable for
+sessions with thousands of messages. A long history must never make the TUI
+unresponsive or force the user to switch/abandon the session to recover.
+
+Existing scroll system — preserve exactly, do not regress:
+
+- `tui/render.ts:transcriptLines()` builds lines only from a tail of the message
+  array, then `viewportLines()` / `smartViewportLines()` window the rows by
+  `state.scrollOffset`.
+- Scroll input: the reducer `scroll` action (`tui/reducer.ts`) clamps
+  `scrollOffset >= 0`; Up/Down = ±1 line, PageUp/PageDown = ±10.
+- `draw()` (`tui/app.ts`) repaints absolute per-line
+  (`\x1b[{row};1H\x1b[2K{line}`) and emits **no newlines**, so the screen can
+  never push lines into terminal scrollback.
+
+These three properties — tail-bounded render, `scrollOffset` row windowing, and
+newline-free absolute repaint — are the scroll contract. Do not switch to
+newline-emitting frames, alternate-screen scroll regions, or unbounded line
+building.
+
+Gap to close: the render tail is a fixed `state.messages.slice(-100)`. It bounds
+cost but makes older history unreachable — the user cannot scroll above the last
+100 messages and `scrollOffset` saturates at the top of that window even though
+the history exists in `state.messages` and in the gateway. For long sessions
+that is the failure this requirement targets.
+
+Required design:
+
+- Replace the fixed `slice(-100)` tail with a **sliding message window** anchored
+  on scroll position. The window keeps a fixed render budget (enough messages to
+  fill a few screens), but its start index moves earlier as `scrollOffset`
+  reaches the top of the rendered set and later as the user scrolls back toward
+  the bottom.
+- Per-frame line building stays bounded: never wrap/lay out more than the
+  windowed message set, regardless of `state.messages.length`. Frame cost must be
+  O(window), not O(history).
+- When the window reaches messages not yet held locally, fetch older messages
+  from gateway (`GET /session/{sessionID}/message`, paged) and splice them into
+  `state.messages` **without moving the visible anchor** (no scroll jump). Until
+  paged message retrieval exists, cap the in-memory window and document the cap,
+  but never block the render loop on history size.
+- Keep "stick to bottom on new activity" exactly: `scrollOffset === 0` keeps
+  meaning "follow the latest", and streaming `message.updated` while at the
+  bottom must keep the newest content visible with no jump.
+
+Acceptance criteria:
+
+- A session with 5,000+ messages keeps keystroke-to-repaint latency flat and
+  equal to a short session.
+- The user can scroll continuously from the latest message back to the first
+  with no hard stop at 100 and no freeze.
+- No regression in `npm run test:e2e` / `npm run test:stream` or the
+  absolute-repaint no-scrollback guarantee.
+
 ## Config And Settings
 
 Use the current Tura architecture:
@@ -543,6 +610,11 @@ Later interactive tests:
 - reducer tests for gateway event ingestion
 - terminal UI snapshot tests for transcript/status/permission panes
 - resize tests for compact and wide terminal widths
+
+Release-entry acceptance tests that validate the registered release
+command surface belong in `apps/tui/e2e/business/` for the TUI surface. Root
+`tests/release/release_entry_*.mjs` owns CLI release-entry scripts;
+`tests/benchmark/` owns comparison and scoring benchmarks.
 
 ## Implementation Phases
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { assertDictionaryParity, setLanguage, t } from "../i18n.js";
 import { initialState, reducer } from "./reducer.js";
-import { render } from "./render.js";
+import { render, renderFrame } from "./render.js";
 import { ansiCapabilities, plainCapabilities, richCapabilities } from "./capabilities.js";
 import { stripAnsi, truncate, truncateAnsi, visibleTextWidth, wrap } from "./render-terminal.js";
 
@@ -28,6 +28,16 @@ function withTerminalSize<T>(cols: number, rows: number, fn: () => T): T {
     else Reflect.deleteProperty(process.stdout, "columns");
     if (stdoutRows) Object.defineProperty(process.stdout, "rows", stdoutRows);
     else Reflect.deleteProperty(process.stdout, "rows");
+  }
+}
+
+function withNow<T>(now: number, fn: () => T): T {
+  const original = Date.now;
+  Date.now = () => now;
+  try {
+    return fn();
+  } finally {
+    Date.now = original;
   }
 }
 
@@ -77,6 +87,7 @@ test("TUI language selection reads external locale files", () => {
 
 test("terminal width helpers count CJK and emoji as double-width", () => {
   assert.equal(visibleTextWidth("空闲"), 4);
+  assert.equal(visibleTextWidth("𠀀𠀁𠀂"), 6);
   assert.equal(visibleTextWidth("ok👍"), 4);
   assert.equal(visibleTextWidth("🇨🇳"), 2);
   assert.equal(visibleTextWidth("👨‍💻"), 2);
@@ -88,6 +99,35 @@ test("terminal width helpers count CJK and emoji as double-width", () => {
     "空闲".repeat(5),
     "空闲".repeat(2),
   ]);
+  assert.deepEqual(wrap("𠀀".repeat(12), 22), ["𠀀".repeat(10), "𠀀".repeat(2)]);
+});
+
+test("render wraps long CJK assistant lines without terminal-spawned blank rows", () => {
+  const session = { id: "sess-cjk-width", title: "CJK Width", status: "idle" as const };
+  const text = "𠀀𠀁𠀂𠀃𠀄𠀅𠀆𠀇𠀈𠀉".repeat(4);
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-cjk-width",
+        sessionID: "sess-cjk-width",
+        role: "assistant",
+        parts: [{ id: "part-cjk-width", type: "text", text }],
+      },
+    ],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+  });
+
+  const output = withTerminalSize(48, 24, () => render(state, richCapabilities()));
+  assertFitsTerminal(output, 48, 24);
+  const contentLines = output
+    .split("\n")
+    .filter((line) => stripAnsi(line).includes("𠀀") || stripAnsi(line).includes("𠀁"));
+  assert.ok(contentLines.length > 1);
+  for (const line of contentLines) assert.ok(visibleTextWidth(line) < 48);
 });
 
 test("render includes core TUI panels without throwing", () => {
@@ -151,13 +191,11 @@ test("render includes core TUI panels without throwing", () => {
     /\x1b\[48;2;32;32;34m\x1b\[38;2;128;128;128m▏\x1b\[0m\x1b\[48;2;32;32;34m/,
   );
   assert.doesNotMatch(transcript, /(?:assistant|user|system)/);
-  assert.match(transcript, /\[runtime: checked\]/);
+  assert.doesNotMatch(transcript, /\[runtime:/);
   assert.match(transcript, /permission/);
   assert.match(transcript, /question/);
-  assert.match(
-    transcript,
-    /\x1b\[48;2;38;38;40m\x1b\[38;2;238;238;238m▏\x1b\[0m\x1b\[48;2;38;38;40m \x1b\[38;2;250;178;131m>\x1b\[0m\x1b\[48;2;38;38;40m/,
-  );
+  assert.match(stripAnsi(transcript), /> Enter to send/);
+  assert.doesNotMatch(transcript, /\x1b\[48;2;38;38;40m/);
 
   state = reducer(state, { type: "toggle-models" });
   assert.match(render(state, richCapabilities()), /openai\/gpt-5\.5/);
@@ -165,14 +203,74 @@ test("render includes core TUI panels without throwing", () => {
   state = reducer(state, { type: "toggle-models" });
   state = reducer(state, { type: "toggle-sessions" });
   const sessions = render(state, richCapabilities());
-  assert.match(sessions, /sess-1/);
   assert.match(sessions, /Work/);
+  assert.match(sessions, /Sys…/);
   assert.match(sessions, /─── .*Sessions.* ─────────/);
-  assert.match(sessions, /> sess-1/);
+  assert.match(sessions, /> Work/);
+  assert.doesNotMatch(sessions, /\/resume <id>/);
   assert.match(sessions, /\x1b\[48;2;32;32;34m/);
-  const sessionLine = sessions.split("\n").find((line) => stripAnsi(line).includes("sess-1"));
+  assert.doesNotMatch(sessions, /Enter to send/);
+  const sessionLine = sessions.split("\n").find((line) => stripAnsi(line).includes("Sys…"));
   assert.ok(sessionLine);
-  assertWideMenuGap(sessionLine, "sess-1", "current");
+  assertWideMenuGap(sessionLine, "Work", "Sys…");
+});
+
+test("sessions panel shows names, previews, and status diamonds", () => {
+  const active = {
+    id: "sess-active",
+    session_display_name: "Active Chat",
+    status: "idle" as const,
+    message_count: 1,
+  };
+  const busy = {
+    id: "sess-busy",
+    session_display_name: "Running Chat",
+    status: "busy" as const,
+    message_count: 3,
+  };
+  const unread = {
+    id: "sess-unread",
+    session_display_name: "Finished Chat",
+    status: "idle" as const,
+    message_count: 4,
+  };
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: active,
+    messages: [
+      {
+        id: "msg-active",
+        sessionID: "sess-active",
+        role: "assistant",
+        parts: [{ id: "part-active", type: "text", text: "Active preview" }],
+      },
+    ],
+    permissions: [],
+    sessions: [active, busy, unread],
+  });
+  state = {
+    ...state,
+    sessionsOpen: true,
+    sessionPreviews: {
+      ...state.sessionPreviews,
+      "sess-busy": "Still working",
+      "sess-unread": "Finished result with extra text that should not wrap",
+    },
+    seenSessionMessageCounts: {
+      ...state.seenSessionMessageCounts,
+      "sess-busy": 3,
+      "sess-unread": 3,
+    },
+  };
+
+  const output = render(state, richCapabilities());
+  const plain = stripAnsi(output);
+  assert.match(plain, /Active Chat\s+Active pre…/);
+  assert.match(plain, /Running Chat [◆◇]\s+Still working/);
+  assert.match(plain, /Finished Chat ◆\s+Finished resul…/);
+  assert.doesNotMatch(plain, /extra text that should not wrap/);
+  assert.doesNotMatch(plain, /sess-active|sess-busy|sess-unread/);
+  assert.doesNotMatch(plain, /Enter to send/);
 });
 
 test("render applies communication style rich text without leaking protocol markup", () => {
@@ -220,7 +318,9 @@ test("render applies communication style rich text without leaking protocol mark
   assert.match(transcript, /👍/u);
   assert.doesNotMatch(transcript, /\[EMOJI:/);
   assert.match(transcript, /\x1b\[48;5;235m│ quoted/);
-  assert.match(transcript, /\x1b\[48;5;235m\x1b\[38;2;128;128;128m\[code: python\]/);
+  assert.match(transcript, /\x1b\[48;5;235m\x1b\[38;2;128;128;128m```python/);
+  assert.match(transcript, /\x1b\[48;5;235m\x1b\[38;2;128;128;128mprint\('hello'\)/);
+  assert.match(transcript, /\x1b\[48;5;235m\x1b\[38;2;128;128;128m```/);
   assert.doesNotMatch(transcript, /<b>|<\/code>/);
 });
 
@@ -382,13 +482,13 @@ test("render shows agent persona summary and persona panel", () => {
   const top = render(state, richCapabilities());
   assert.doesNotMatch(top, /Agent:.*fast/);
   assert.doesNotMatch(top, /persona:.*tura/);
-  assert.match(top, /Enter to send, \/help commands \/settings settings/);
+  assert.match(top, /Tab sessions/);
+  assert.match(top, /\/stop stop agent/);
+  assert.doesNotMatch(top, /↑\/↓ view sessions/);
   assert.doesNotMatch(top, /[┌┐└┘]/u);
-  assert.match(
-    top,
-    /^\x1b\[48;2;38;38;40m\x1b\[38;2;238;238;238m▏\x1b\[0m\x1b\[48;2;38;38;40m +…?\x1b\[0m$/m,
-  );
-  assert.match(top, /^\x1b\[48;2;38;38;40m\x1b\[38;2;238;238;238m▏\x1b\[0m.*Enter to send/m);
+  assert.match(top, /^\x1b\[48;2;32;32;34m\x1b\[38;2;238;238;238m▏\x1b\[0m/m);
+  assert.match(top, /^\x1b\[48;2;32;32;34m\x1b\[38;2;238;238;238m▏\x1b\[0m.*Enter to send/m);
+  assert.doesNotMatch(top, /\x1b\[38;2;250;178;131m█\x1b\[0m/);
   assert.match(top, /tokens -/);
 
   state = reducer(state, { type: "toggle-personas" });
@@ -402,6 +502,27 @@ test("render shows agent persona summary and persona panel", () => {
   const personaLine = panel.split("\n").find((line) => stripAnsi(line).includes("> tura"));
   assert.ok(personaLine);
   assertWideMenuGap(personaLine, "tura", "current");
+});
+
+test("render reports composer cursor without drawing an inline fake cursor", () => {
+  const session = { id: "sess-cursor", title: "Cursor", status: "idle" as const };
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+  });
+  const rendered = renderFrame(state, richCapabilities());
+  for (let index = 0; index < 5; index += 1) state = reducer(state, { type: "tick" });
+  const afterTicks = renderFrame(state, richCapabilities());
+
+  assert.doesNotMatch(rendered.frame, /\x1b\[38;2;250;178;131m█\x1b\[0m/);
+  assert.doesNotMatch(rendered.frame, /TURA_COMPOSER_CURSOR/);
+  assert.match(stripAnsi(rendered.frame), /> ?Enter to send/u);
+  assert.equal(rendered.frame, afterTicks.frame);
+  assert.deepEqual(rendered.cursor, afterTicks.cursor);
 });
 
 test("render bottom meta sums current gateway token usage", () => {
@@ -450,8 +571,8 @@ test("render bottom meta sums current gateway token usage", () => {
   const rich = render(state, richCapabilities());
   assert.match(rich, expected);
   assert.match(rich, /\x1b\[38;2;128;128;128mtokens 100/);
-  const ansiMeta = ansi.split("\n").at(-1) ?? "";
-  const richMeta = rich.split("\n").at(-1) ?? "";
+  const ansiMeta = ansi.split("\n").find((line) => stripAnsi(line).includes("tokens 100")) ?? "";
+  const richMeta = rich.split("\n").find((line) => stripAnsi(line).includes("tokens 100")) ?? "";
   assert.equal(stripAnsi(ansiMeta), "◇ │ codex/gpt-5.5 low │ tokens 100");
   assert.equal(stripAnsi(richMeta), stripAnsi(ansiMeta));
   assert.match(ansiMeta, /\x1b\[38;2;128;128;128m/);
@@ -555,7 +676,7 @@ test("render applies rich text cleanup to tool summaries", () => {
           {
             id: "tool-rich",
             type: "tool",
-            tool: "runtime",
+            tool: "browser",
             state: {
               status: "completed",
               output: {
@@ -586,6 +707,13 @@ test("render shows assistant command summaries, command details setting, and thi
     session,
     messages: [
       {
+        id: "msg-command-user",
+        sessionID: "sess-commands",
+        role: "user",
+        created_at: 1_000_000,
+        parts: [{ id: "part-command-user", type: "text", text: "Run checks" }],
+      },
+      {
         id: "msg-command-summary",
         sessionID: "sess-commands",
         role: "assistant",
@@ -598,7 +726,7 @@ test("render shows assistant command summaries, command details setting, and thi
           {
             id: "part-inline-payload",
             type: "text",
-            text: '[command_run: {"task_summary":"inline payload summary should be readable"}]\n[command_run: {"status":"done"}]',
+            text: '[command_run: {"task_detail":"inline payload summary should be readable"}]\n[command_run: {"status":"done"}]',
           },
           {
             id: "tool-command-1",
@@ -637,7 +765,7 @@ test("render shows assistant command summaries, command details setting, and thi
             state: {
               status: "completed",
               output:
-                '[command_run: {\\"task_summary\\":\\"provide concise final verification summary\\"}]',
+                '[command_run: {\\"task_detail\\":\\"provide concise final verification summary\\"}]',
             },
           },
           {
@@ -661,49 +789,132 @@ test("render shows assistant command summaries, command details setting, and thi
     sessionConfig: { show_command_instructions: false },
   });
 
-  const collapsed = render(state, richCapabilities());
+  const collapsed = withNow(1_012_300, () => render(state, richCapabilities()));
   assert.match(collapsed, /Checking the app/);
   assert.match(collapsed, /Commands: 4/);
-  assert.match(collapsed, /◇.*Commands: 4/);
+  assert.match(collapsed, /[◆◇].*Commands: 4/);
   const collapsedCommandLine = collapsed
     .split("\n")
     .find((line) => stripAnsi(line).includes("Commands: 4"));
   assert.ok(collapsedCommandLine);
-  assert.equal(stripAnsi(collapsedCommandLine), "◇ Commands: 4");
+  assert.match(stripAnsi(collapsedCommandLine), /^[◆◇] Commands: 4$/u);
   assert.doesNotMatch(collapsedCommandLine, /\x1b\[48;2;32;32;34m/);
   assert.match(collapsed, /\x1b\[90m/);
   assert.doesNotMatch(collapsed, /last.*Get-ChildItem -Force/);
   assert.doesNotMatch(collapsed, /show commands/);
   assert.doesNotMatch(collapsed, /click \/ Ctrl\+O/);
   const collapsedText = stripAnsi(collapsed).replace(/\s*\n\s*/g, "");
-  assert.match(collapsedText, /inline payload summary should be r/);
-  assert.match(collapsedText, /eadable/);
-  assert.match(collapsed, /\[command_run: done\]/);
+  assert.doesNotMatch(collapsedText, /inline payload summary should be readable/);
+  assert.doesNotMatch(collapsed, /\[command_run:/);
   assert.doesNotMatch(collapsed, /bash: npm test -- --runInBand/);
-  assert.doesNotMatch(collapsed, /task_summary/);
+  assert.doesNotMatch(collapsed, /task_detail/);
   assert.doesNotMatch(collapsed, /\{"status"/);
-  assert.match(collapsed, /thinking/);
+  assert.match(collapsed, /thinking\s+12s/);
+  assert.doesNotMatch(collapsed, /thinking.*Commands:/);
 
-  state = reducer(state, { type: "toggle-command-details" });
-  const expanded = render(state, richCapabilities());
+  state = reducer(state, {
+    type: "session-config",
+    value: { show_command_instructions: true },
+  });
+  const expanded = withNow(1_012_300, () => render(state, richCapabilities()));
   assert.doesNotMatch(expanded, /hide commands/);
   const expandedCommandLine = expanded
     .split("\n")
     .find((line) => stripAnsi(line).includes("Commands: 4"));
   assert.ok(expandedCommandLine);
-  assert.equal(stripAnsi(expandedCommandLine), "◇ Commands: 4");
+  assert.match(stripAnsi(expandedCommandLine), /^[◆◇] Commands: 4$/u);
   assert.doesNotMatch(expandedCommandLine, /\x1b\[48;2;32;32;34m/);
-  assert.match(expanded, /\$.*npm test -- --runInBand/);
-  assert.match(expanded, /\$.*node tools\/snake_playwright\.mjs/);
-  assert.match(expanded, /\$.*Get-ChildItem -Force/);
-  assert.match(expanded, /\$.*pnpm test --watch/);
-  assert.match(expanded, /\x1b\[90m\$ pnpm test --watch/);
+  assert.match(expanded, /#1 runtime completed\s+\$ npm test -- --runInBand/);
+  assert.match(expanded, /#2 runtime completed\s+\$ node tools\/snake_playwright\.mjs/);
+  assert.match(expanded, /#3 command_run completed\s+\$ Get-ChildItem -Force/);
+  assert.match(expanded, /#4 command_run running\s+\$ pnpm test --watch/);
+  assert.doesNotMatch(expanded, /provide concise final verification summary/);
+  assert.doesNotMatch(expanded, /\$ done/);
+  assert.match(expanded, /\x1b\[90m.*\$ pnpm test --watch/);
   const npmTestLine = expanded
     .split("\n")
     .find((line) => stripAnsi(line).includes("$ npm test -- --runInBand"));
   assert.ok(npmTestLine);
   assert.doesNotMatch(npmTestLine, /\x1b\[48;2;32;32;34m/);
   assert.doesNotMatch(expanded, /\{"command_line"/);
+  assert.equal(
+    expanded
+      .split("\n")
+      .filter((line) =>
+        /\$ (?:npm test|node tools\/snake_playwright|Get-ChildItem|pnpm test)/.test(
+          stripAnsi(line),
+        ),
+      ).length,
+    4,
+  );
+
+  const solid = stripAnsi(render({ ...state, thinkingFrame: 0 }, richCapabilities()));
+  const hollow = stripAnsi(render({ ...state, thinkingFrame: 1 }, richCapabilities()));
+  assert.match(solid, /^◆ Commands: 4$/mu);
+  assert.match(hollow, /^◇ Commands: 4$/mu);
+  assert.match(solid, /^└─ ■ #4 command_run running\s+\$ pnpm test --watch$/mu);
+  assert.match(hollow, /^└─ □ #4 command_run running\s+\$ pnpm test --watch$/mu);
+  assert.doesNotMatch(solid, /task_status|provide concise final verification summary|\$ done/u);
+});
+
+test("render filters internal task_status command updates from command sections", () => {
+  const session = { id: "sess-task-status-hidden", title: "Task Status Hidden", status: "idle" as const };
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-agent",
+        sessionID: session.id,
+        role: "assistant",
+        parts: [
+          { id: "text", type: "text", text: "吃碗牛肉面吧。" },
+          {
+            id: "task-status-json",
+            type: "tool",
+            tool: "command_run",
+            state: {
+              status: "completed",
+              output: {
+                results: [
+                  {
+                    command_type: "task_status",
+                    success: true,
+                    output: {
+                      task_status: {
+                        status: "done",
+                        task_detail: "用户要求随机推荐食物",
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          {
+            id: "task-status-summary",
+            type: "tool",
+            tool: "command_run",
+            state: {
+              status: "completed",
+              output: '[command_run: {\\"task_detail\\":\\"用户要求随机推荐食物（中文：有点饿要推荐吃什么）\\"}]',
+            },
+          },
+        ],
+      },
+    ],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+    sessionConfig: { show_command_instructions: true },
+  });
+
+  const plain = stripAnsi(render(state, richCapabilities()));
+
+  assert.match(plain, /吃碗牛肉面吧。/u);
+  assert.doesNotMatch(plain, /Commands:/u);
+  assert.doesNotMatch(plain, /command_run completed/u);
+  assert.doesNotMatch(plain, /task_status|用户要求随机推荐食物/u);
 });
 
 test("render keeps L1 L2 L3 readable without overflow across terminal sizes", () => {
@@ -770,7 +981,6 @@ test("render keeps L1 L2 L3 readable without overflow across terminal sizes", ()
       if (capabilities.level === "plain") assert.doesNotMatch(output, /\x1b/u);
       if (capabilities.level === "ansi") {
         assert.match(output, /[◆◇▏]/u);
-        assert.match(output, /\x1b\]8/u);
         assert.doesNotMatch(stripAnsi(output), /^─{8,}$/mu);
         assertOpencodePalette(output);
       }
@@ -782,11 +992,12 @@ test("render keeps L1 L2 L3 readable without overflow across terminal sizes", ()
         assert.doesNotMatch(output, /\x1b\[38;2;127;216;143m/);
         assertOpencodePalette(output);
       }
+      assert.doesNotMatch(stripAnsi(output), /earlier output hidden|更早的内容已隐藏/u);
     }
   }
 });
 
-test("render uses opencode-style turn spacing and compact command disclosure in L1 L2 L3", () => {
+test("render uses opencode-style turn spacing and configured command disclosure in L1 L2 L3", () => {
   const session = { id: "sess-turns", title: "Turn Layout", status: "idle" as const };
   const state = reducer(initialState("C:/repo"), {
     type: "hydrate",
@@ -806,7 +1017,7 @@ test("render uses opencode-style turn spacing and compact command disclosure in 
           {
             id: "part-turn-assistant",
             type: "text",
-            text: "Feedback first. Details stay folded unless commands are expanded.",
+            text: "Feedback first. Command details follow the session setting.",
           },
           {
             id: "tool-turn",
@@ -838,8 +1049,8 @@ test("render uses opencode-style turn spacing and compact command disclosure in 
   assert.ok(plainCommandIndex >= 0);
   assert.equal(plainLines[plainCommandIndex], "* Commands: 1");
   assert.equal(plainLines[plainCommandIndex - 1], "");
-  assert.equal(plainLines[plainCommandIndex + 1], "");
-  assert.doesNotMatch(plain, /\$ npm run test:e2e/);
+  assert.match(plainLines[plainCommandIndex + 1] ?? "", /\$ npm run test:e2e/);
+  assert.match(plain, /\|- \+ #1 command_run completed\s+\$ npm run test:e2e/);
   assert.doesNotMatch(plain, /\x1b|▏|◆|◇/u);
 
   const ansi = render(state, ansiCapabilities());
@@ -851,11 +1062,10 @@ test("render uses opencode-style turn spacing and compact command disclosure in 
   assert.ok(ansiCommandIndex >= 0);
   assert.equal(stripAnsi(ansiLines[ansiCommandIndex]), "◇ Commands: 1");
   assert.equal(stripAnsi(ansiLines[ansiCommandIndex - 1] ?? ""), "");
-  assert.equal(stripAnsi(ansiLines[ansiCommandIndex + 1] ?? ""), "");
+  assert.match(stripAnsi(ansiLines[ansiCommandIndex + 1] ?? ""), /\$ npm run test:e2e/);
   assert.notEqual(stripAnsi(ansiLines[ansiCommandIndex - 2] ?? ""), "");
-  assert.notEqual(stripAnsi(ansiLines[ansiCommandIndex + 2] ?? ""), "");
   assert.doesNotMatch(ansiLines[ansiCommandIndex], /\x1b\[48;2;32;32;34m/);
-  assert.doesNotMatch(ansi, /\$ npm run test:e2e/);
+  assert.match(ansi, /└─ ✓ #1 command_run completed\s+\$ npm run test:e2e/u);
   assertOpencodePalette(ansi);
 
   const rich = render(state, richCapabilities());
@@ -873,12 +1083,328 @@ test("render uses opencode-style turn spacing and compact command disclosure in 
   assert.ok(richCommandIndex >= 0);
   assert.equal(stripAnsi(richLines[richCommandIndex]), "◇ Commands: 1");
   assert.equal(stripAnsi(richLines[richCommandIndex - 1] ?? ""), "");
-  assert.equal(stripAnsi(richLines[richCommandIndex + 1] ?? ""), "");
+  assert.match(stripAnsi(richLines[richCommandIndex + 1] ?? ""), /\$ npm run test:e2e/);
   assert.notEqual(stripAnsi(richLines[richCommandIndex - 2] ?? ""), "");
-  assert.notEqual(stripAnsi(richLines[richCommandIndex + 2] ?? ""), "");
   assert.doesNotMatch(richLines[richCommandIndex], /\x1b\[48;2;32;32;34m/);
-  assert.doesNotMatch(rich, /\$ npm run test:e2e/);
+  assert.match(rich, /└─ ✓ #1 command_run completed\s+\$ npm run test:e2e/u);
   assertOpencodePalette(rich);
+});
+
+test("render keeps adjacent command_run tool messages in message order", () => {
+  const session = { id: "sess-command-group", title: "Command Group", status: "idle" as const };
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-group-user",
+        sessionID: "sess-command-group",
+        role: "user",
+        parts: [{ id: "part-group-user", type: "text", text: "你好啊" }],
+      },
+      {
+        id: "msg-group-command-1",
+        sessionID: "sess-command-group",
+        role: "assistant",
+        parts: [
+          {
+            id: "tool-group-command-1",
+            type: "tool",
+            tool: "command_run",
+            state: { status: "completed", output: "Greeted the user" },
+          },
+        ],
+      },
+      {
+        id: "msg-group-command-2",
+        sessionID: "sess-command-group",
+        role: "assistant",
+        parts: [
+          {
+            id: "tool-group-command-2",
+            type: "tool",
+            tool: "command_run",
+            state: { status: "completed", output: "Greeted the user again" },
+          },
+        ],
+      },
+    ],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+  });
+
+  const rich = render(state, richCapabilities());
+  const plain = stripAnsi(rich);
+  assert.match(plain, /你好啊/);
+  assert.doesNotMatch(plain, /◆\s+你好啊/u);
+  assert.equal(plain.match(/Commands: 1/g)?.length, 2);
+  assert.match(plain, /#1 command_run completed\s+\$ Greeted the user/u);
+  assert.match(plain, /#1 command_run completed\s+\$ Greeted the user again/u);
+  assert.doesNotMatch(plain, /\[command_run:/u);
+  const lines = plain.split("\n");
+  const userIndex = lines.findIndex((line) => line.includes("你好啊"));
+  const firstCommandIndex = lines.findIndex((line) => line.includes("Greeted the user"));
+  const secondCommandIndex = lines.findIndex((line) => line.includes("Greeted the user again"));
+  assert.ok(userIndex >= 0);
+  assert.ok(firstCommandIndex > userIndex);
+  assert.ok(secondCommandIndex > firstCommandIndex);
+  assert.ok(lines.slice(userIndex + 1, firstCommandIndex).some((line) => line.trim() === ""));
+});
+
+test("render keeps command-only updates at their exact message position", () => {
+  const session = { id: "sess-command-order", title: "Command Order", status: "idle" as const };
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-order-user",
+        sessionID: "sess-command-order",
+        role: "user",
+        parts: [{ id: "part-order-user", type: "text", text: "Fix it" }],
+      },
+      {
+        id: "msg-order-first",
+        sessionID: "sess-command-order",
+        role: "assistant",
+        parts: [{ id: "part-order-first", type: "text", text: "First visible reply." }],
+      },
+      {
+        id: "msg-order-tool",
+        sessionID: "sess-command-order",
+        role: "assistant",
+        parts: [
+          {
+            id: "tool-order-command",
+            type: "tool",
+            tool: "command_run",
+            state: { status: "completed", input: { command_line: "npm test" } },
+          },
+        ],
+      },
+      {
+        id: "msg-order-final",
+        sessionID: "sess-command-order",
+        role: "assistant",
+        parts: [{ id: "part-order-final", type: "text", text: "Final visible reply." }],
+      },
+    ],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+  });
+
+  for (const capabilities of [plainCapabilities(), richCapabilities()]) {
+    const output = withTerminalSize(100, 30, () => stripAnsi(render(state, capabilities)));
+    const firstIndex = output.indexOf("First visible reply.");
+    const finalIndex = output.indexOf("Final visible reply.");
+    const commandIndex = output.indexOf("$ npm test");
+    assert.ok(firstIndex >= 0);
+    assert.ok(commandIndex > firstIndex, output);
+    assert.ok(finalIndex > commandIndex, output);
+  }
+});
+
+test("render keeps assistant text above command parts even when tool part arrives first", () => {
+  const session = { id: "sess-part-order", title: "Part Order", status: "idle" as const };
+  const state = {
+    ...initialState("C:/repo"),
+    session,
+    messages: [
+      {
+        id: "msg-part-order",
+        sessionID: "sess-part-order",
+        role: "assistant" as const,
+        parts: [
+          {
+            id: "tool-part-order",
+            type: "tool",
+            tool: "command_run",
+            state: {
+              status: "completed",
+              output: '{"status":"done","task_detail":"Greeting answered"}',
+            },
+          },
+          {
+            id: "text-part-order",
+            type: "text",
+            text: "你好，问候已经回复。",
+          },
+        ],
+      },
+    ],
+    sessionConfig: { show_command_instructions: true },
+  };
+
+  const output = withTerminalSize(100, 30, () => stripAnsi(render(state, plainCapabilities())));
+  const textIndex = output.indexOf("你好，问候已经回复。");
+  assert.ok(textIndex >= 0, output);
+  assert.doesNotMatch(output, /Commands:|command_run completed|\$ Greeting answered/u);
+});
+
+test("render normalizes command progress carriage returns into new lines", () => {
+  const session = {
+    id: "sess-command-progress",
+    title: "Command Progress",
+    status: "idle" as const,
+  };
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-progress-user",
+        sessionID: "sess-command-progress",
+        role: "user",
+        parts: [{ id: "part-progress-user", type: "text", text: "run progress" }],
+      },
+      {
+        id: "msg-progress-assistant",
+        sessionID: "sess-command-progress",
+        role: "assistant",
+        parts: [
+          {
+            id: "part-progress-text",
+            type: "text",
+            text: "started\rstill running\x1b[2K\rfinished",
+          },
+          {
+            id: "tool-progress",
+            type: "tool",
+            tool: "command_run",
+            state: {
+              status: "completed",
+              output: "Downloading 10%\rDownloading 90%\x1b[1Gdone",
+            },
+          },
+        ],
+      },
+    ],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+  });
+
+  const plain = stripAnsi(render(state, richCapabilities()));
+  assert.doesNotMatch(plain, /\r/u);
+  assert.doesNotMatch(plain, /\x1b\[(?:2K|1G)/u);
+  assert.match(plain, /started/);
+  assert.match(plain, /still running/);
+  assert.match(plain, /finished/);
+  assert.match(plain, /Commands: 1/);
+  assert.match(plain, /#1 command_run completed\s+\$ Downloading 10%/u);
+});
+
+test("render keeps composer and bottom meta visible after large command blocks", () => {
+  const session = { id: "sess-command-footer", title: "Command Footer", status: "idle" as const };
+  const commandParts = Array.from({ length: 8 }, (_, index) => ({
+    id: `tool-footer-${index + 1}`,
+    type: "tool",
+    tool: "command_run",
+    state: {
+      status: "completed",
+      input: {
+        command: `Get-Content -Raw target/tui-snake-playwright/very-long-run-${index + 1}/summary.json`,
+      },
+    },
+  }));
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-footer-user",
+        sessionID: "sess-command-footer",
+        role: "user",
+        parts: [{ id: "part-footer-user", type: "text", text: "read summaries" }],
+      },
+      {
+        id: "msg-footer-commands",
+        sessionID: "sess-command-footer",
+        role: "assistant",
+        parts: commandParts,
+      },
+      {
+        id: "msg-footer-reply",
+        sessionID: "sess-command-footer",
+        role: "assistant",
+        parts: [
+          {
+            id: "part-footer-reply",
+            type: "text",
+            text: "这段新的回复必须在命令块下面的新行显示，不能覆盖命令。",
+          },
+        ],
+      },
+    ],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+  });
+
+  // Default view (scrollOffset=0) shows the most recent content — command section fills
+  // the viewport, footer is always pinned.
+  const output = withTerminalSize(106, 18, () => render(state, richCapabilities()));
+  const plain = stripAnsi(output);
+  const lines = plain.split("\n");
+  assert.ok(lines.some((line) => line.includes("Enter to send")));
+  assert.ok(lines.some((line) => line.includes("tokens")));
+  assert.ok(lines.some((line) => line.includes("这段新的回复必须")));
+  assertFitsTerminal(output, 106, 18);
+  // The command block remains accessible by scrolling up; the latest assistant text stays newest.
+  const scrolled = reducer(state, { type: "scroll", delta: 8 });
+  const scrolledOutput = withTerminalSize(106, 18, () =>
+    stripAnsi(render(scrolled, richCapabilities())),
+  );
+  assert.match(scrolledOutput, /Commands:/);
+});
+
+test("render prioritizes current content over overflow marker in very short terminals", () => {
+  const session = { id: "sess-short-height", title: "Short Height", status: "idle" as const };
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-short-user",
+        sessionID: "sess-short-height",
+        role: "user",
+        parts: [{ id: "part-short-user", type: "text", text: "summarize" }],
+      },
+      {
+        id: "msg-short-assistant",
+        sessionID: "sess-short-height",
+        role: "assistant",
+        parts: [
+          {
+            id: "part-short-assistant",
+            type: "text",
+            text: Array.from({ length: 14 }, (_item, index) => `old detail ${index + 1}`).join(
+              "\n",
+            ),
+          },
+        ],
+      },
+      {
+        id: "msg-short-current",
+        sessionID: "sess-short-height",
+        role: "assistant",
+        parts: [{ id: "part-short-current", type: "text", text: "CURRENT RESULT READY" }],
+      },
+    ],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+  });
+
+  const output = withTerminalSize(82, 10, () => render(state, richCapabilities()));
+  const plain = stripAnsi(output);
+  assertFitsTerminal(output, 82, 10);
+  assert.match(plain, /CURRENT RESULT READY/);
+  assert.match(plain, /Enter to send/);
+  assert.ok(plain.split("\n").some((line) => line.includes("tokens")));
+  assert.doesNotMatch(plain, /earlier output hidden|更早的内容已隐藏/u);
 });
 
 test("plain L1 uses whitespace instead of decorative lines", () => {
@@ -949,10 +1475,13 @@ test("settings renders with help-style section rails and no command hint copy", 
     ansi,
     /^\x1b\[48;2;32;32;34m\x1b\[38;2;128;128;128m▏\x1b\[0m\x1b\[48;2;32;32;34m +…?\x1b\[0m$/m,
   );
-  assert.match(ansi, /^\x1b\[48;2;32;32;34m\x1b\[38;2;128;128;128m▏\x1b\[0m.*> \/model/m);
-  assert.match(ansi, /\/model <provider\/model>/);
-  assert.match(ansi, /\/commands/);
+  assert.match(ansi, /Enter opens; Esc returns to chat/);
+  assert.match(ansi, /^\x1b\[48;2;32;32;34m\x1b\[38;2;128;128;128m▏\x1b\[0m.*> Model/m);
+  assert.match(ansi, /Expand executed commands/);
+  assert.doesNotMatch(ansi, /Session type|Validator|Context messages/);
   assert.doesNotMatch(ansi, /\/config get|\/config set|\/model provider\/model/);
+  assert.doesNotMatch(ansi, /\/model <provider\/model>|\/commands/);
+  assert.doesNotMatch(ansi, /Enter to send/);
   assert.doesNotMatch(ansi, /system|assistant|user/);
 
   const rich = withTerminalSize(72, 20, () => render(state, richCapabilities()));
@@ -971,24 +1500,122 @@ test("settings renders with help-style section rails and no command hint copy", 
     rich,
     /^\x1b\[48;2;32;32;34m\x1b\[38;2;128;128;128m▏\x1b\[0m\x1b\[48;2;32;32;34m .*Session Settings/m,
   );
-  assert.match(
-    rich,
-    /\x1b\[38;2;250;178;131m> \/model <provider\/model>\s+\x1b\[0m.*\x1b\[38;2;128;128;128mgpt-5\.5/,
-  );
+  assert.match(rich, /\x1b\[38;2;250;178;131m> Model\s+\x1b\[0m.*gpt-5\.5/);
   const richSettingInstructionLine = richLines.find((line) =>
-    stripAnsi(line).includes("/commands"),
+    stripAnsi(line).includes("Expand executed commands"),
   );
   assert.ok(richSettingInstructionLine);
-  assert.match(richSettingInstructionLine, /\x1b\[38;2;250;178;131m {2}\/commands/);
-  assert.match(richSettingInstructionLine, /\x1b\[38;2;128;128;128mfalse/);
-  const richSettingModelLine = richLines.find((line) => stripAnsi(line).includes("/model"));
+  assert.match(richSettingInstructionLine, /\x1b\[38;2;250;178;131m {2}Expand executed commands/);
+  assert.match(richSettingInstructionLine, /false/);
+  const richSettingModelLine = richLines.find((line) => stripAnsi(line).includes("Model"));
   assert.ok(richSettingModelLine);
-  assert.match(stripAnsi(richSettingModelLine), /\/model <provider\/model>/);
-  assertWideMenuGap(richSettingModelLine, "/model <provider/model>", "gpt-5.5", 12);
-  assert.doesNotMatch(richSettingInstructionLine, /\x1b\[90m/);
-  assert.doesNotMatch(rich, /\x1b\[90m(?:gpt-5\.5|false)/);
+  assert.match(stripAnsi(richSettingModelLine), /Model/);
+  assertWideMenuGap(richSettingModelLine, "Model", "gpt-5.5", 12);
   assert.doesNotMatch(rich, /\/config get|\/config set|\/model provider\/model/);
+  assert.doesNotMatch(rich, /\/model <provider\/model>|\/commands|Enter to send/);
   assertOpencodePalette(rich);
+});
+
+test("settings provider menus show status and auth actions without replacing descriptions", () => {
+  const session = {
+    id: "sess-provider-settings",
+    title: "Provider Settings",
+    status: "idle" as const,
+  };
+  const base = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [],
+    permissions: [],
+    providers: {
+      all: [
+        {
+          id: "openai",
+          name: "OpenAI",
+          source: "builtin",
+          env: ["OPENAI_API_KEY"],
+          options: { domains: ["llm"], capabilities: ["llm.chat"] },
+          models: { "gpt-5": { id: "gpt-5", name: "GPT-5" } },
+        },
+        {
+          id: "anthropic",
+          name: "Anthropic",
+          source: "builtin",
+          options: { domains: ["llm"] },
+          models: { claude: { id: "claude", name: "Claude" } },
+        },
+        {
+          id: "airtable",
+          name: "Airtable",
+          source: "builtin",
+          options: { domains: ["productivity"] },
+          models: {},
+        },
+      ],
+      default: {},
+      connected: ["openai"],
+      enums: providerEnums,
+    },
+    authMethods: {
+      openai: [
+        {
+          type: "oauth",
+          kind: "browser",
+          login: "oauth",
+          label: "Browser OAuth",
+          available: true,
+          supports_refresh: true,
+        },
+        {
+          type: "api_key",
+          kind: "key",
+          login: "api-key",
+          label: "API key",
+          token_env: "OPENAI_API_KEY",
+          docs_url: "https://docs.example.test/openai",
+          available: true,
+          supports_refresh: false,
+        },
+      ],
+    },
+    authStatuses: {
+      openai: { configured: true, authenticated: true, auth_state: "authenticated" },
+      anthropic: { configured: false, authenticated: false, auth_state: "missing" },
+    },
+    sessions: [session],
+    sessionConfig: {
+      model: "openai/gpt-5",
+      active_provider: "openai",
+      active_agent: "build",
+    },
+  });
+
+  const root = reducer(base, { type: "toggle-settings" });
+  const rootOutput = withTerminalSize(82, 24, () => render(root, richCapabilities()));
+  assertFitsTerminal(rootOutput, 82, 24);
+  assert.match(stripAnsi(rootOutput), /Provider\s+\(1\/2\) configured/);
+  assert.doesNotMatch(stripAnsi(rootOutput), /Provider\s+openai/);
+
+  const providerList = reducer(root, { type: "open-setting-detail", detail: "provider" });
+  const providerOutput = withTerminalSize(92, 24, () => render(providerList, richCapabilities()));
+  assertFitsTerminal(providerOutput, 92, 24);
+  assert.match(stripAnsi(providerOutput), /openai \(authenticated\) ✓\s+OpenAI builtin/);
+  assert.match(stripAnsi(providerOutput), /Auth:oauth\/api_key/);
+  assert.match(stripAnsi(providerOutput), /anthropic \(missing\)\s+Anthropic\s+builtin/);
+  assert.doesNotMatch(stripAnsi(providerOutput), /airtable/i);
+  assert.doesNotMatch(stripAnsi(providerOutput), /openai \(authenticated\)\s+current/);
+
+  const providerAuth = reducer(providerList, {
+    type: "open-setting-detail",
+    detail: "providerAuth",
+    providerID: "openai",
+  });
+  const authOutput = withTerminalSize(92, 24, () => render(providerAuth, richCapabilities()));
+  assertFitsTerminal(authOutput, 92, 24);
+  assert.match(stripAnsi(authOutput), /Session Settings \/ Provider \/ openai/);
+  assert.match(stripAnsi(authOutput), /OAuth login: Browser OAuth/);
+  assert.match(stripAnsi(authOutput), /API key\s+key\s+env:OPENAI_API_KEY/);
+  assert.match(stripAnsi(authOutput), /Log out\s+authenticated/);
 });
 
 test("help renders as a system dialogue instead of a separate command panel", () => {
@@ -1104,11 +1731,11 @@ test("rich opencode rails and composer size themselves to terminal columns", () 
   }
 });
 
-test("render defaults to compact feedback and keeps extra assistant text hidden", () => {
+test("render keeps a full assistant list visible alongside command details", () => {
   const session = { id: "sess-compact", title: "Compact", status: "idle" as const };
   const text = Array.from(
     { length: 16 },
-    (_item, index) => `visible-policy-line-${index + 1}`,
+    (_item, index) => `- visible-policy-line-${index + 1}`,
   ).join("\n");
   const state = reducer(initialState("C:/repo"), {
     type: "hydrate",
@@ -1134,13 +1761,14 @@ test("render defaults to compact feedback and keeps extra assistant text hidden"
     sessions: [session],
   });
 
-  const collapsed = render(state, richCapabilities());
-  assert.match(collapsed, /visible-policy-line-8/);
-  assert.doesNotMatch(collapsed, /visible-policy-line-9/);
-  assert.match(collapsed, /◇ Commands: 1/);
-  assert.doesNotMatch(collapsed, /\$ npm test/);
-
-  const expanded = render(reducer(state, { type: "toggle-command-details" }), richCapabilities());
+  // A tall terminal must show every list item (the bug capped assistant text at
+  // 8 lines, so long lists were silently cut off) while the command section
+  // remains visible beneath it.
+  const expanded = withTerminalSize(100, 40, () => render(state, richCapabilities()));
+  assert.match(expanded, /visible-policy-line-8/);
+  assert.match(expanded, /visible-policy-line-9/);
+  assert.match(expanded, /visible-policy-line-16/);
+  assert.doesNotMatch(expanded, /earlier output hidden|更早的内容已隐藏/u);
   assert.match(expanded, /◇ Commands: 1/);
   assert.match(expanded, /\$ npm test/);
   const commandLine = expanded.split("\n").find((line) => stripAnsi(line).includes("Commands: 1"));
@@ -1149,6 +1777,164 @@ test("render defaults to compact feedback and keeps extra assistant text hidden"
   assert.doesNotMatch(commandLine, /\x1b\[48;2;32;32;34m/);
   const npmTestLine = expanded.split("\n").find((line) => stripAnsi(line).includes("$ npm test"));
   assert.ok(npmTestLine);
-  assert.match(stripAnsi(npmTestLine), /^[└├│ ]/u);
+  assert.match(stripAnsi(npmTestLine), /^└─ ✓ #1 command_run completed\s+\$ npm test/u);
   assert.doesNotMatch(npmTestLine, /\x1b\[48;2;32;32;34m/);
+
+  const collapsed = render(
+    reducer(state, {
+      type: "session-config",
+      value: { show_command_instructions: false },
+    }),
+    richCapabilities(),
+  );
+  assert.match(collapsed, /◇ Commands: 1/);
+  assert.doesNotMatch(collapsed, /\$ npm test/);
+});
+
+test("render places composer at the bottom and reports its terminal cursor", () => {
+  const session = { id: "sess-bottom-input", title: "Bottom Input", status: "idle" as const };
+  const state = reducer(
+    reducer(initialState("C:/repo"), {
+      type: "hydrate",
+      session,
+      messages: [
+        {
+          id: "msg-bottom-input",
+          sessionID: "sess-bottom-input",
+          role: "assistant",
+          parts: [{ id: "part-bottom-input", type: "text", text: "Ready." }],
+        },
+      ],
+      permissions: [],
+      providers: { all: [], default: {}, connected: [], enums: providerEnums },
+      sessions: [session],
+    }),
+    { type: "composer", value: "hello" },
+  );
+
+  const rendered = withTerminalSize(80, 18, () => renderFrame(state, richCapabilities()));
+  assertFitsTerminal(rendered.frame, 80, 18);
+  const lines = rendered.frame.split("\n");
+  const composerIndex = lines.findIndex((line) => stripAnsi(line).includes("> hello"));
+  const metaIndex = lines.findIndex((line) => stripAnsi(line).includes("tokens"));
+  assert.ok(metaIndex >= 0);
+  assert.ok(composerIndex > metaIndex, "composer should be below the meta/status line");
+  assert.equal(composerIndex, lines.length - 2, "composer body should sit at the bottom edge");
+  assert.deepEqual(rendered.cursor, { row: composerIndex + 1, column: 10 });
+  assert.doesNotMatch(rendered.frame, /TURA_COMPOSER_CURSOR/);
+});
+
+// ─── Scroll viewport ─────────────────────────────────────────────────────────
+
+test("scroll offset 0 shows bottom content (default view)", () => {
+  const session = { id: "sess-scroll-default", title: "Scroll Default", status: "idle" as const };
+  const messages = Array.from({ length: 6 }, (_, i) => ({
+    id: `msg-scroll-${i}`,
+    sessionID: "sess-scroll-default",
+    role: i % 2 === 0 ? ("user" as const) : ("assistant" as const),
+    parts: [{ id: `part-scroll-${i}`, type: "text", text: `Message ${i + 1}` }],
+  }));
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages,
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+  });
+  // Default scrollOffset=0 should show the latest message
+  const output = withTerminalSize(80, 18, () => stripAnsi(render(state, richCapabilities())));
+  assert.match(output, /Message 6/, "latest message must be visible at scrollOffset=0");
+});
+
+test("scroll offset > 0 shows older content via strict continuous viewport", () => {
+  const session = { id: "sess-scroll-up", title: "Scroll Up", status: "idle" as const };
+  const messages = Array.from({ length: 10 }, (_, i) => ({
+    id: `msg-su-${i}`,
+    sessionID: "sess-scroll-up",
+    role: i % 2 === 0 ? ("user" as const) : ("assistant" as const),
+    parts: [
+      {
+        id: `part-su-${i}`,
+        type: "text",
+        text: Array.from({ length: 3 }, (__, j) => `Line ${i + 1}.${j + 1}`).join("\n"),
+      },
+    ],
+  }));
+  const base = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages,
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+  });
+  // Scroll way up — should show older messages
+  const scrolled = reducer(base, { type: "scroll", delta: 40 });
+  assert.ok(scrolled.scrollOffset > 0, "scroll state must be updated");
+  const output = withTerminalSize(80, 24, () => stripAnsi(render(scrolled, richCapabilities())));
+  assert.match(output, /Line 1\./, "early content must appear when scrolled up");
+});
+
+test("scroll offset clamps so it cannot exceed content length", () => {
+  const session = { id: "sess-scroll-clamp", title: "Clamp", status: "idle" as const };
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-clamp-1",
+        sessionID: "sess-scroll-clamp",
+        role: "user" as const,
+        parts: [{ id: "p1", type: "text", text: "Hello" }],
+      },
+    ],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+  });
+  // Scroll far beyond content — should not crash and must still render
+  const scrolled = reducer(state, { type: "scroll", delta: 9999 });
+  const output = withTerminalSize(80, 18, () => render(scrolled, richCapabilities()));
+  assertFitsTerminal(output, 80, 18);
+  assert.match(stripAnsi(output), /Hello/, "content must still be reachable after over-scroll");
+});
+
+test("dispatch scroll resets to zero via large negative delta", () => {
+  const state0 = reducer(initialState("C:/repo"), { type: "scroll", delta: 20 });
+  assert.equal(state0.scrollOffset, 20);
+  const state1 = reducer(state0, { type: "scroll", delta: -Number.MAX_SAFE_INTEGER });
+  assert.equal(state1.scrollOffset, 0, "large negative delta must bottom-out at zero");
+});
+
+// ─── Differential rendering (no full-screen clear in frame string) ─────────
+
+test("renderFrame does not embed a screen-clear escape sequence", () => {
+  const session = { id: "sess-no-clear", title: "No Clear", status: "idle" as const };
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-nc-1",
+        sessionID: "sess-no-clear",
+        role: "user" as const,
+        parts: [{ id: "p-nc-1", type: "text", text: "test" }],
+      },
+    ],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+  });
+  const { frame } = withTerminalSize(80, 20, () => renderFrame(state, richCapabilities()));
+  // The frame must NOT start with or contain the full-screen-clear sequence
+  // (\x1b[3J\x1b[2J\x1b[H). The draw() function handles the initial clear
+  // separately; embedding it inside the frame string would cause every
+  // differential repaint to flash.
+  assert.doesNotMatch(
+    frame,
+    /\x1b\[2J/,
+    "frame must not contain full-screen clear (causes flicker)",
+  );
+  assert.doesNotMatch(frame, /\x1b\[3J/, "frame must not contain scrollback-clear");
 });

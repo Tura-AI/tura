@@ -6,9 +6,12 @@ import {
   firstRunnableTask,
   materializeComposerContent,
   planSessionStatus,
+  queuedSessionTasks,
   reorderTasksInSession,
   sortedSessionTasks,
   taskStartCondition,
+  timedSessionTasks,
+  timedTaskDisplayDate,
   timedTaskPatch,
 } from "./tasks";
 
@@ -173,6 +176,89 @@ describe("plan task contract", () => {
         ["B updated", 3],
       ],
     );
+  });
+
+  test("pipeline queue includes scheduled and polling tasks ordered by step", () => {
+    const tasks = queuedSessionTasks(
+      session("idle", {
+        tasks: [
+          {
+            task_id: "scheduled",
+            step: 1,
+            status: "todo",
+            task_summary: "Scheduled",
+            start_condition: "scheduled_task",
+            start_at: "2026-06-08T10:00:00Z",
+          },
+          { task_id: "queued-b", step: 3, status: "todo", task_summary: "Queued B" },
+          {
+            task_id: "polling",
+            step: 2,
+            status: "todo",
+            task_summary: "Polling",
+            start_condition: "polling_task",
+            start_at: "2026-06-08T10:00:00Z",
+            poll_interval: { h: 1 },
+          },
+          {
+            task_id: "queued-a",
+            step: 2,
+            status: "todo",
+            task_summary: "Queued A",
+            start_condition: "session_idle",
+          },
+        ],
+      }),
+    );
+
+    expect(tasks.map((task) => task.task_id)).toEqual([
+      "scheduled",
+      "polling",
+      "queued-a",
+      "queued-b",
+    ]);
+  });
+
+  test("polling task display date advances from start_at by interval", () => {
+    const date = timedTaskDisplayDate(
+      {
+        status: "todo",
+        task_summary: "Poll",
+        start_condition: "polling_task",
+        start_at: "2026-06-08T10:00:00Z",
+        poll_interval: { h: 2 },
+      },
+      new Date("2026-06-08T15:10:00Z").getTime(),
+    );
+
+    expect(date?.toISOString()).toBe("2026-06-08T16:00:00.000Z");
+  });
+
+  test("timed session tasks keeps multiple scheduled tasks for calendar rendering", () => {
+    const tasks = timedSessionTasks(
+      session("idle", {
+        tasks: [
+          {
+            task_id: "first",
+            step: 1,
+            status: "todo",
+            task_summary: "First",
+            start_condition: "scheduled_task",
+            start_at: "2026-06-08T10:00:00Z",
+          },
+          {
+            task_id: "second",
+            step: 2,
+            status: "todo",
+            task_summary: "Second",
+            start_condition: "scheduled_task",
+            start_at: "2026-06-09T10:00:00Z",
+          },
+        ],
+      }),
+    );
+
+    expect(tasks.map((task) => task.task_id)).toEqual(["first", "second"]);
   });
 
   test("materializes composer image and file attachments in prompt order", () => {

@@ -79,7 +79,7 @@ fn orchestrate_with_config_and_session(
     )
     .map_err(|e| {
         error!(error = %e, "failed to bootstrap session");
-        format!("failed to bootstrap session: {}", e)
+        format!("failed to bootstrap session: {e}")
     })?;
 
     info!(
@@ -92,7 +92,7 @@ fn orchestrate_with_config_and_session(
         Ok(a) => a,
         Err(e) => {
             error!(error = %e, "failed to activate agents");
-            return Err(format!("failed to activate agents: {}", e));
+            return Err(format!("failed to activate agents: {e}"));
         }
     };
     apply_planning_capability_override(&mut agents, &session);
@@ -100,7 +100,7 @@ fn orchestrate_with_config_and_session(
 
     if let Err(e) = initialize_agent_state_machine(&mut agents, &session) {
         error!(error = %e, "failed to initialize agent state machine");
-        return Err(format!("failed to initialize agent state machine: {}", e));
+        return Err(format!("failed to initialize agent state machine: {e}"));
     }
 
     info!(
@@ -127,7 +127,7 @@ fn orchestrate_with_config_and_session(
             Ok(r) => r,
             Err(e) => {
                 error!(error = %e, "manas processing failed");
-                return Err(format!("manas processing failed: {}", e));
+                return Err(format!("manas processing failed: {e}"));
             }
         };
 
@@ -141,6 +141,7 @@ fn orchestrate_with_config_and_session(
     Ok(ManoProcessResult {
         session: manas_result.session,
         agents: manas_result.agents,
+        final_error: manas_result.final_error,
     })
 }
 
@@ -205,7 +206,11 @@ pub fn process_from_user_internal(
         }
     };
 
-    Ok(ManoProcessResult { session, agents })
+    Ok(ManoProcessResult {
+        session,
+        agents,
+        final_error: None,
+    })
 }
 
 #[cfg(test)]

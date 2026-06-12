@@ -1,45 +1,45 @@
 #!/usr/bin/env sh
 set -eu
+PATH="/usr/bin:/bin:/mingw64/bin:/ucrt64/bin:$PATH"
+export PATH
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-PYTHON_PACKAGES_DIR="$SCRIPT_DIR/packages/python"
-TUI_DIR="$REPO_ROOT/apps/tui"
-GUI_DIR="$REPO_ROOT/apps/gui"
+COMMANDS_DIR="$REPO_ROOT/commands"
 
-SKIP_PYTHON_PACKAGES=0
-SKIP_FRONTEND=0
-SKIP_PLAYWRIGHT=0
-SKIP_RUST_BUILD=0
-SKIP_CLI_REGISTER=0
-DEV=0
+SKIP_COMMANDS=0
+SKIP_APPS=0
+SKIP_UV=0
+SKIP_BUN=0
 CHECK_ONLY=0
+OFFLINE=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    dev|--dev) DEV=1 ;;
-    --skip-python-packages) SKIP_PYTHON_PACKAGES=1 ;;
-    --skip-frontend) SKIP_FRONTEND=1 ;;
-    --skip-playwright) SKIP_PLAYWRIGHT=1 ;;
-    --skip-rust-build) SKIP_RUST_BUILD=1 ;;
-    --skip-cli-register) SKIP_CLI_REGISTER=1 ;;
+    --skip-commands) SKIP_COMMANDS=1 ;;
+    --skip-apps) SKIP_APPS=1 ;;
+    --skip-uv) SKIP_UV=1 ;;
+    --skip-bun) SKIP_BUN=1 ;;
     --check-only) CHECK_ONLY=1 ;;
+    --offline) OFFLINE=1 ;;
     -h|--help)
       cat <<'EOF'
-Usage: scripts/install.sh [dev] [OPTIONS]
+Usage:
+  scripts/install.sh [OPTIONS]
 
-By default this builds the production (release) binaries into bin/ — a
-self-contained runtime directory. Pass `dev` for a debug build instead.
+Installs project dependencies without building Tura. The root installer verifies
+shell_command/bash/zsh coverage, installs missing bash/zsh dependencies when
+possible, ensures user-local uv/bun are available, runs command-owned installers
+under commands/*, and installs Bun workspaces in their own directories.
 
 Options:
-  dev                     debug build (target/debug + apps/tui/dist) instead of release into bin/
-  --skip-python-packages  skip project-local Python fallback packages
-  --skip-frontend         skip apps/tui and apps/gui dependency setup
-  --skip-playwright       skip Playwright Chromium installation
-  --skip-rust-build       (dev only) fetch Rust dependencies but do not build
-  --skip-cli-register     do not generate tura-tui/tura-gateway launchers or touch PATH
-  --check-only            only verify required toolchains
-  -h, --help              show this help
+  --skip-commands  skip commands/*/install.* scripts
+  --skip-apps      skip Bun installs for apps/tui, apps/gui, and apps/tauri
+  --skip-uv        do not install or verify uv
+  --skip-bun       do not install or verify bun
+  --check-only     verify expected tools/environments without installing
+  --offline        pass offline/cache-only flags where supported
+  -h, --help       show this help
 EOF
       exit 0
       ;;
@@ -56,511 +56,384 @@ have() {
   command -v "$1" >/dev/null 2>&1
 }
 
-require() {
-  if ! have "$1"; then
-    echo "$1 was not found on PATH. $2" >&2
-    exit 1
-  fi
-}
-
-command_version() {
-  if have "$1"; then
-    "$@" 2>/dev/null | sed -n '1p' || true
-  fi
-}
-
-version_at_least() {
-  text=$1
-  need_major=$2
-  need_minor=${3:-0}
-  parsed=$(printf '%s\n' "$text" | sed -n 's/[^0-9]*\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p' | sed -n '1p')
-  if [ -z "$parsed" ]; then
-    return 1
-  fi
-  set -- $parsed
-  major=$1
-  minor=$2
-  [ "$major" -gt "$need_major" ] || { [ "$major" -eq "$need_major" ] && [ "$minor" -ge "$need_minor" ]; }
-}
-
 print_version() {
   name=$1
   shift
-  text=$(command_version "$@")
-  if [ -n "$text" ]; then
-    printf '%s: %s\n' "$name" "$text"
+  if have "$1"; then
+    version=$("$@" 2>/dev/null | sed -n '1p' || true)
+    [ -n "$version" ] && printf '%s: %s\n' "$name" "$version"
   fi
 }
 
-run_privileged() {
-  if [ "$(id -u 2>/dev/null || echo 1)" = "0" ]; then
-    "$@"
-  elif have sudo; then
+strict_shell_coverage() {
+  value=$(printf '%s' "${TURA_STRICT_SHELL_TOOL_COVERAGE:-}" | tr '[:upper:]' '[:lower:]')
+  [ "$value" = "1" ] || [ "$value" = "true" ] || [ "$value" = "yes" ] || [ "$value" = "on" ]
+}
+
+find_first_executable() {
+  for candidate in "$@"; do
+    [ -n "$candidate" ] || continue
+    case "$candidate" in
+      */*)
+        [ -x "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+        ;;
+      *)
+        command -v "$candidate" 2>/dev/null && return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+find_bash() {
+  find_first_executable bash /bin/bash /usr/bin/bash /usr/local/bin/bash /opt/homebrew/bin/bash \
+    /usr/bin/bash.exe /mingw64/bin/bash.exe /ucrt64/bin/bash.exe /c/Program\ Files/Git/bin/bash.exe
+}
+
+find_zsh() {
+  if [ -n "${TURA_ZSH_PATH:-}" ]; then
+    [ -x "$TURA_ZSH_PATH" ] && { printf '%s\n' "$TURA_ZSH_PATH"; return 0; }
+    echo "TURA_ZSH_PATH is set but does not point to an executable file: $TURA_ZSH_PATH" >&2
+  fi
+  find_first_executable zsh /bin/zsh /usr/bin/zsh /usr/local/bin/zsh /opt/homebrew/bin/zsh \
+    /usr/bin/zsh.exe /mingw64/bin/zsh.exe /ucrt64/bin/zsh.exe /c/msys64/usr/bin/zsh.exe
+}
+
+find_msys2_pacman() {
+  find_first_executable pacman /usr/bin/pacman.exe /c/msys64/usr/bin/pacman.exe /c/msys64/ucrt64/bin/pacman.exe
+}
+
+run_as_root() {
+  if [ "$(id -u 2>/dev/null || echo 1)" != "0" ] && have sudo; then
     sudo "$@"
   else
-    echo "sudo was not found; cannot install system package: $*" >&2
-    return 1
+    "$@"
   fi
 }
 
-install_system_package() {
-  pkg=$1
-  brew_pkg=${2:-$pkg}
-  if have brew; then
-    brew install "$brew_pkg"
-  elif have apt-get; then
-    run_privileged apt-get update
-    run_privileged apt-get install -y "$pkg"
-  elif have dnf; then
-    run_privileged dnf install -y "$pkg"
-  elif have yum; then
-    run_privileged yum install -y "$pkg"
-  elif have pacman; then
-    run_privileged pacman -Sy --noconfirm "$pkg"
-  elif have apk; then
-    run_privileged apk add --no-cache "$pkg"
-  else
-    echo "No supported package manager found to install $pkg." >&2
-    return 1
-  fi
-}
+ensure_windows_shell_tools() {
+  [ "$CHECK_ONLY" -eq 1 ] && return
 
-ensure_git() {
-  if have git; then
-    print_version git git --version
-    return
-  fi
-  step "Installing Git"
-  install_system_package git git || {
-    echo "Install Git from https://git-scm.com/downloads and rerun this script." >&2
+  missing_packages=""
+  find_bash >/dev/null 2>&1 || missing_packages="$missing_packages bash"
+  find_zsh >/dev/null 2>&1 || missing_packages="$missing_packages zsh"
+  [ -n "$missing_packages" ] || return
+  if [ "$OFFLINE" -eq 1 ]; then
+    echo "Shell tools are missing ($missing_packages) and --offline was supplied. Install MSYS2 bash/zsh manually, then rerun." >&2
     exit 1
-  }
-  print_version git git --version
-}
+  fi
 
-ensure_node() {
-  node_version=$(command_version node --version)
-  if ! have node || ! have npm || ! version_at_least "$node_version" 20 0; then
-    step "Installing Node.js and npm"
-    if have brew; then
-      brew install node
-    elif have apt-get; then
-      run_privileged apt-get update
-      run_privileged apt-get install -y nodejs npm
-    elif have dnf; then
-      run_privileged dnf install -y nodejs npm
-    elif have yum; then
-      run_privileged yum install -y nodejs npm
-    elif have pacman; then
-      run_privileged pacman -Sy --noconfirm nodejs npm
-    elif have apk; then
-      run_privileged apk add --no-cache nodejs npm
-    else
-      echo "No supported package manager found to install Node.js. Install Node.js 20 or newer from https://nodejs.org/." >&2
+  pacman_path=$(find_msys2_pacman || true)
+  if [ -z "$pacman_path" ]; then
+    winget_path=$(find_first_executable winget winget.exe /c/Windows/System32/winget.exe || true)
+    if [ -z "$winget_path" ]; then
+      echo "MSYS2 pacman was not found and winget is unavailable. Install MSYS2, then rerun this script." >&2
       exit 1
     fi
-  fi
-  require node "Install Node.js 20 or newer."
-  require npm "Install npm with Node.js 20 or newer."
-  node_version=$(command_version node --version)
-  if ! version_at_least "$node_version" 20 0; then
-    echo "Node.js version is too old ($node_version). Install Node.js 20 or newer from https://nodejs.org/." >&2
-    exit 1
-  fi
-  print_version node node --version
-  print_version npm npm --version
-}
-
-ensure_python_toolchain() {
-  if PYTHON_EXISTING=$(python_cmd 2>/dev/null); then
-    python_version=$(command_version "$PYTHON_EXISTING" --version)
-    if version_at_least "$python_version" 3 10; then
-      printf 'python: %s\n' "$python_version"
-      return
-    fi
-    echo "Python version is too old ($python_version); installing Python 3.10+." >&2
-  else
-    step "Installing Python"
-  fi
-  if have brew; then
-    brew install python
-  elif have apt-get; then
-    run_privileged apt-get update
-    run_privileged apt-get install -y python3 python3-pip
-  elif have dnf; then
-    run_privileged dnf install -y python3 python3-pip
-  elif have yum; then
-    run_privileged yum install -y python3 python3-pip
-  elif have pacman; then
-    run_privileged pacman -Sy --noconfirm python python-pip
-  elif have apk; then
-    run_privileged apk add --no-cache python3 py3-pip
-  else
-    echo "No supported package manager found to install Python. Install Python from https://www.python.org/downloads/." >&2
-    exit 1
-  fi
-  PYTHON_INSTALLED=$(python_cmd 2>/dev/null || true)
-  python_version=$(command_version "$PYTHON_INSTALLED" --version)
-  if [ -z "$PYTHON_INSTALLED" ] || ! version_at_least "$python_version" 3 10; then
-    echo "Python 3.10+ was not found after automatic installation. Install Python from https://www.python.org/downloads/." >&2
-    exit 1
-  fi
-  printf 'python: %s\n' "$python_version"
-}
-
-ensure_rust_toolchain() {
-  if [ -d "$HOME/.cargo/bin" ]; then
-    PATH="$HOME/.cargo/bin:$PATH"
+    step "Installing MSYS2 for bash/zsh support"
+    "$winget_path" install --id MSYS2.MSYS2 --exact --source winget --accept-package-agreements --accept-source-agreements
+    PATH="/c/msys64/usr/bin:/c/msys64/ucrt64/bin:$PATH"
     export PATH
+    pacman_path=$(find_msys2_pacman || true)
   fi
-  if have cargo; then
-    print_version cargo cargo --version
-    return
-  fi
-  step "Installing Rust toolchain"
-  if ! have curl; then
-    install_system_package curl curl || {
-      echo "curl was not found. Install Rust with rustup from https://rustup.rs/ and rerun this script." >&2
-      exit 1
-    }
-  fi
-  if ! curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable; then
-    echo "Automatic Rust installation failed. Install Rust with rustup from https://rustup.rs/, reopen the terminal, then rerun this script." >&2
+
+  if [ -z "$pacman_path" ]; then
+    echo "MSYS2 installation completed, but pacman was not found. Open a new shell or add C:\\msys64\\usr\\bin to PATH, then rerun." >&2
     exit 1
   fi
-  PATH="$HOME/.cargo/bin:$PATH"
+
+  step "Installing MSYS2 shell tools:$missing_packages"
+  # shellcheck disable=SC2086
+  "$pacman_path" -Sy --noconfirm --needed $missing_packages
+  PATH="/c/msys64/usr/bin:/c/msys64/ucrt64/bin:$PATH"
   export PATH
-  require cargo "Cargo was not found after Rust installation. Add $HOME/.cargo/bin to PATH or reopen the terminal."
-  print_version cargo cargo --version
 }
 
-ensure_native_build_tools() {
-  if have brew; then
-    if ! xcode-select -p >/dev/null 2>&1; then
-      echo "Xcode Command Line Tools are required for native builds. Run: xcode-select --install" >&2
-    fi
-    brew install pkg-config openssl || true
-  elif have apt-get; then
-    run_privileged apt-get update
-    run_privileged apt-get install -y build-essential pkg-config libssl-dev
-  elif have dnf; then
-    run_privileged dnf install -y gcc gcc-c++ make pkgconf-pkg-config openssl-devel
-  elif have yum; then
-    run_privileged yum install -y gcc gcc-c++ make pkgconfig openssl-devel
-  elif have pacman; then
-    run_privileged pacman -Sy --noconfirm base-devel pkgconf openssl
-  elif have apk; then
-    run_privileged apk add --no-cache build-base pkgconfig openssl-dev
-  else
-    echo "No supported package manager found for native build tools. If cargo build fails, install a C/C++ compiler, make, pkg-config, and OpenSSL headers." >&2
+ensure_unix_shell_tools() {
+  [ "$CHECK_ONLY" -eq 1 ] && return
+
+  missing_packages=""
+  find_bash >/dev/null 2>&1 || missing_packages="$missing_packages bash"
+  find_zsh >/dev/null 2>&1 || missing_packages="$missing_packages zsh"
+  [ -n "$missing_packages" ] || return
+  if [ "$OFFLINE" -eq 1 ]; then
+    echo "Shell tools are missing ($missing_packages) and --offline was supplied. Install them manually, then rerun." >&2
+    exit 1
   fi
+
+  os_name=$(uname -s 2>/dev/null || echo unknown)
+  step "Installing shell tools:$missing_packages"
+  case "$os_name" in
+    Darwin)
+      have brew || { echo "Homebrew was not found. Install Homebrew or install missing shell tools manually:$missing_packages." >&2; exit 1; }
+      # shellcheck disable=SC2086
+      brew install $missing_packages
+      ;;
+    *)
+      if have apt-get; then
+        # shellcheck disable=SC2086
+        run_as_root apt-get install -y $missing_packages
+      elif have dnf; then
+        # shellcheck disable=SC2086
+        run_as_root dnf install -y $missing_packages
+      elif have yum; then
+        # shellcheck disable=SC2086
+        run_as_root yum install -y $missing_packages
+      elif have pacman; then
+        # shellcheck disable=SC2086
+        run_as_root pacman -Sy --noconfirm --needed $missing_packages
+      elif have apk; then
+        # shellcheck disable=SC2086
+        run_as_root apk add $missing_packages
+      elif have zypper; then
+        # shellcheck disable=SC2086
+        run_as_root zypper --non-interactive install $missing_packages
+      else
+        echo "No supported package manager was found to install shell tools:$missing_packages." >&2
+        exit 1
+      fi
+      ;;
+  esac
+}
+
+find_powershell() {
+  find_first_executable pwsh powershell.exe powershell
+}
+
+find_posix_shell() {
+  if [ -n "${SHELL:-}" ] && [ -x "$SHELL" ]; then
+    printf '%s\n' "$SHELL"
+    return 0
+  fi
+  find_first_executable sh /bin/sh /usr/bin/sh
+}
+
+report_shell_tool() {
+  label=$1
+  path=$2
+  hint=$3
+  if [ -n "$path" ]; then
+    printf '%s: %s\n' "$label" "$path"
+    return 0
+  fi
+  echo "$label: missing. $hint" >&2
+  strict_shell_coverage && return 1
+  return 0
+}
+
+require_shell_tool() {
+  label=$1
+  path=$2
+  hint=$3
+  if [ -n "$path" ]; then
+    printf '%s: %s\n' "$label" "$path"
+    return 0
+  fi
+  echo "$label: missing. $hint" >&2
+  exit 1
+}
+
+ensure_shell_tool_coverage() {
+  step "Checking shell tool coverage"
+  os_name=$(uname -s 2>/dev/null || echo unknown)
+  case "$os_name" in
+    MINGW*|MSYS*|CYGWIN*) ensure_windows_shell_tools ;;
+    *) ensure_unix_shell_tools ;;
+  esac
+  case "$os_name" in
+    MINGW*|MSYS*|CYGWIN*)
+      ps_path=$(find_powershell || true)
+      bash_path=$(find_bash || true)
+      zsh_path=$(find_zsh || true)
+      require_shell_tool "shell_command/PowerShell" "$ps_path" "Install PowerShell or run from a PowerShell-capable environment."
+      report_shell_tool "bash" "$bash_path" "Run this installer without --check-only/--offline or install MSYS2 bash manually."
+      report_shell_tool "zsh" "$zsh_path" "Run this installer without --check-only/--offline or set TURA_ZSH_PATH to a valid zsh.exe."
+      ;;
+    Darwin)
+      shell_path=$(find_posix_shell || true)
+      zsh_path=$(find_zsh || true)
+      bash_path=$(find_bash || true)
+      pwsh_path=$(find_powershell || true)
+      require_shell_tool "shell_command/POSIX shell" "$shell_path" "Install sh, bash, or zsh."
+      require_shell_tool "zsh" "$zsh_path" "macOS requires zsh for the default Tura shell surface. Install zsh or set TURA_ZSH_PATH to a valid zsh binary."
+      require_shell_tool "bash" "$bash_path" "Install bash for bash command_run coverage."
+      report_shell_tool "powershell" "$pwsh_path" "Install PowerShell 7 (`pwsh`) if you want to run PowerShell install/debug scripts on macOS."
+      ;;
+    *)
+      shell_path=$(find_posix_shell || true)
+      bash_path=$(find_bash || true)
+      zsh_path=$(find_zsh || true)
+      require_shell_tool "shell_command/POSIX shell" "$shell_path" "Install sh, bash, or zsh for shell_command debugging."
+      require_shell_tool "bash" "$bash_path" "Install bash for the default Linux command_run shell surface."
+      report_shell_tool "zsh" "$zsh_path" "Install zsh or set TURA_ZSH_PATH to a valid zsh binary for zsh command_run coverage."
+      ;;
+  esac
+  echo "Shell debug: set TURA_COMMAND_RUN_SHELL=shell_command, bash, or zsh to force a surface."
+}
+
+add_user_tool_paths() {
+  for tool_path_dir in "$HOME/.local/bin" "$HOME/.cargo/bin" "$HOME/.bun/bin"; do
+    if [ -d "$tool_path_dir" ]; then
+      case ":$PATH:" in
+        *":$tool_path_dir:"*) ;;
+        *) PATH="$tool_path_dir:$PATH" ;;
+      esac
+      if [ -n "${GITHUB_PATH:-}" ] && [ -f "$GITHUB_PATH" ] && ! grep -Fxq "$tool_path_dir" "$GITHUB_PATH"; then
+        printf '%s\n' "$tool_path_dir" >>"$GITHUB_PATH"
+      fi
+    fi
+  done
+  export PATH
+}
+
+download_to() {
+  url=$1
+  out=$2
+  if have curl; then
+    curl -fsSL "$url" -o "$out"
+  elif have wget; then
+    wget -q "$url" -O "$out"
+  else
+    echo "curl or wget is required to download installers." >&2
+    return 1
+  fi
+}
+
+install_from_script() {
+  name=$1
+  unix_url=$2
+  windows_url=$3
+  if [ "$OFFLINE" -eq 1 ]; then
+    echo "$name is missing and --offline was supplied. Install $name manually, then rerun." >&2
+    exit 1
+  fi
+
+  os_name=$(uname -s 2>/dev/null || echo unknown)
+  case "$os_name" in
+    MINGW*|MSYS*|CYGWIN*)
+      tmp="${TMPDIR:-/tmp}/tura-install-$name-$$.ps1"
+      download_to "$windows_url" "$tmp"
+      if have pwsh; then
+        pwsh -NoProfile -ExecutionPolicy Bypass -File "$tmp"
+      elif have powershell.exe; then
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$tmp"
+      else
+        echo "PowerShell was not found; install $name manually." >&2
+        exit 1
+      fi
+      ;;
+    *)
+      tmp="${TMPDIR:-/tmp}/tura-install-$name-$$.sh"
+      download_to "$unix_url" "$tmp"
+      if have bash; then
+        bash "$tmp"
+      else
+        sh "$tmp"
+      fi
+      ;;
+  esac
+  add_user_tool_paths
+}
+
+ensure_uv() {
+  [ "$SKIP_UV" -eq 1 ] && { echo "Skipping uv setup."; return; }
+  add_user_tool_paths
+  if have uv; then
+    print_version uv uv --version
+    return
+  fi
+  if [ "$CHECK_ONLY" -eq 1 ]; then
+    echo "uv was not found. Run scripts/install.sh without --check-only or install uv from https://docs.astral.sh/uv/." >&2
+    exit 1
+  fi
+  step "Installing uv into the current user's tool directory"
+  install_from_script uv "https://astral.sh/uv/install.sh" "https://astral.sh/uv/install.ps1"
+  have uv || { echo "uv was installed but is still not on PATH. Add $HOME/.local/bin or $HOME/.cargo/bin to PATH." >&2; exit 1; }
+  print_version uv uv --version
 }
 
 ensure_bun() {
+  [ "$SKIP_BUN" -eq 1 ] && { echo "Skipping bun setup."; return; }
+  add_user_tool_paths
   if have bun; then
     print_version bun bun --version
     return
   fi
-  step "Installing Bun"
-  if have brew; then
-    brew install oven-sh/bun/bun || echo "Automatic Bun installation failed; install Bun from https://bun.sh if you need the GUI." >&2
-  else
-    if ! have curl; then
-      install_system_package curl curl || {
-        echo "curl was not found; install Bun from https://bun.sh if you need the GUI." >&2
-        return
-      }
+  if [ "$CHECK_ONLY" -eq 1 ]; then
+    echo "bun was not found. Run scripts/install.sh without --check-only or install Bun from https://bun.sh/." >&2
+    exit 1
+  fi
+  step "Installing bun into the current user's tool directory"
+  install_from_script bun "https://bun.sh/install" "https://bun.sh/install.ps1"
+  have bun || { echo "bun was installed but is still not on PATH. Add $HOME/.bun/bin to PATH." >&2; exit 1; }
+  print_version bun bun --version
+}
+
+run_command_installers() {
+  [ "$SKIP_COMMANDS" -eq 1 ] && return
+  [ -d "$COMMANDS_DIR" ] || return
+
+  for dir in "$COMMANDS_DIR"/*; do
+    [ -d "$dir" ] || continue
+    name=$(basename "$dir")
+    ps_installer="$dir/install.ps1"
+    sh_installer="$dir/install.sh"
+    [ -f "$sh_installer" ] || [ -f "$ps_installer" ] || continue
+
+    step "Installing command dependencies: $name"
+    args=""
+    [ "$CHECK_ONLY" -eq 1 ] && args="$args --check-only"
+    [ "$OFFLINE" -eq 1 ] && args="$args --offline"
+
+    if [ -f "$sh_installer" ]; then
+      # shellcheck disable=SC2086
+      sh "$sh_installer" $args
+    elif have pwsh; then
+      ps_args=""
+      [ "$CHECK_ONLY" -eq 1 ] && ps_args="$ps_args -CheckOnly"
+      [ "$OFFLINE" -eq 1 ] && ps_args="$ps_args -Offline"
+      # shellcheck disable=SC2086
+      pwsh -NoProfile -File "$ps_installer" $ps_args
+    else
+      echo "No runnable installer found for $name." >&2
+      exit 1
     fi
-    curl -fsSL https://bun.sh/install | sh || {
-      echo "Automatic Bun installation failed; install Bun from https://bun.sh if you need the GUI." >&2
-      return
-    }
-    export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
-    export PATH="$BUN_INSTALL/bin:$PATH"
-  fi
+  done
 }
 
-ensure_ffmpeg() {
-  if have ffmpeg; then
-    print_version ffmpeg ffmpeg -version
-    return
-  fi
-  step "Installing ffmpeg"
-  install_system_package ffmpeg ffmpeg || echo "Automatic ffmpeg installation failed; Python media fallback packages will still be installed." >&2
-}
+install_bun_workspace() {
+  workspace_dir=$1
+  [ "$SKIP_APPS" -eq 1 ] && return
+  [ -f "$workspace_dir/package.json" ] || return
 
-python_cmd() {
-  if have python3; then
-    printf '%s\n' python3
-  elif have python; then
-    printf '%s\n' python
-  else
-    return 1
-  fi
-}
-
-ensure_python_packages() {
-  if [ "$SKIP_PYTHON_PACKAGES" -eq 1 ]; then
-    echo "Skipping Python package setup."
-    return
-  fi
-
-  ensure_python_toolchain
-  if ! PYTHON=$(python_cmd); then
-    echo "Python was not found; skipping optional media/web fallback packages." >&2
-    return
-  fi
-
-  mkdir -p "$PYTHON_PACKAGES_DIR"
-  case "${PYTHONPATH:-}" in
-    *"$PYTHON_PACKAGES_DIR"*) ;;
-    "") export PYTHONPATH="$PYTHON_PACKAGES_DIR" ;;
-    *) export PYTHONPATH="$PYTHON_PACKAGES_DIR:$PYTHONPATH" ;;
-  esac
-
-  if [ ! -f "$REPO_ROOT/requirements.txt" ]; then
-    return
-  fi
-
-  step "Installing Python fallback packages into scripts/packages/python"
-  "$PYTHON" -m pip install --upgrade pip || echo "pip self-upgrade failed; continuing with the existing pip." >&2
-  if ! "$PYTHON" -m pip install --upgrade -r "$REPO_ROOT/requirements.txt" --target "$PYTHON_PACKAGES_DIR"; then
-    echo "pip install failed; retrying with --break-system-packages for externally managed Python environments." >&2
-    "$PYTHON" -m pip install --upgrade -r "$REPO_ROOT/requirements.txt" --target "$PYTHON_PACKAGES_DIR" --break-system-packages
-  fi
-
-  LIBCLANG_PATH=$("$PYTHON" <<'PY' || true
-import pathlib
-import sys
-
-try:
-    import clang
-except Exception:
-    sys.exit(1)
-
-root = pathlib.Path(clang.__file__).resolve().parent
-for candidate in [root / "native", root]:
-    if any(candidate.glob("libclang*.dll")) or any(candidate.glob("libclang*.so*")) or any(candidate.glob("libclang*.dylib")):
-        print(candidate)
-        sys.exit(0)
-sys.exit(1)
-PY
-)
-  if [ -n "$LIBCLANG_PATH" ]; then
-    export LIBCLANG_PATH
-    echo "LIBCLANG_PATH=$LIBCLANG_PATH"
-  fi
-}
-
-ensure_tui() {
-  if [ "$SKIP_FRONTEND" -eq 1 ] || [ ! -d "$TUI_DIR" ]; then
-    return
-  fi
-  ensure_node
-
-  step "Installing and building apps/tui"
-  cd "$TUI_DIR"
-  if [ -f package-lock.json ]; then
-    npm ci
-  else
-    npm install
-  fi
-  npm run build
-  cd "$REPO_ROOT"
-}
-
-ensure_gui() {
-  if [ "$SKIP_FRONTEND" -eq 1 ] || [ ! -d "$GUI_DIR" ]; then
-    return
-  fi
   ensure_bun
-  if ! have bun; then
-    echo "Bun was not found; skipping apps/gui workspace install. Install Bun if you need the GUI." >&2
-    return
-  fi
-  step "Installing and building apps/gui workspace"
-  cd "$GUI_DIR"
-  if [ -f bun.lock ]; then
-    bun install --frozen-lockfile
-  else
-    bun install
-  fi
-  bun run build
-  cd "$REPO_ROOT"
-}
-
-ensure_playwright() {
-  if [ "$SKIP_PLAYWRIGHT" -eq 1 ] || [ "$SKIP_FRONTEND" -eq 1 ]; then
-    return
-  fi
-  ensure_node
-  if ! have npx; then
-    echo "npx was not found; skipping Playwright Chromium installation." >&2
-    return
-  fi
-  step "Ensuring Playwright Chromium is available"
-  if [ "$(uname -s 2>/dev/null || echo unknown)" = "Linux" ]; then
-    npx --yes playwright install --with-deps chromium
-  else
-    npx --yes playwright install chromium
-  fi
-  verify_playwright_chromium
-}
-
-verify_playwright_chromium() {
-  step "Verifying Playwright Chromium can launch"
-  if npx --yes -p playwright node <<'NODE'
-const { chromium } = require("playwright");
-(async () => {
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
-  await page.goto("data:text/html,<title>ok</title><main>ok</main>");
-  const title = await page.title();
-  await browser.close();
-  if (title !== "ok") throw new Error("unexpected page title");
-})().catch((error) => {
-  console.error(error && error.stack ? error.stack : String(error));
-  process.exit(1);
-});
-NODE
-  then
+  if [ "$CHECK_ONLY" -eq 1 ]; then
+    echo "Bun workspace present: $workspace_dir"
     return
   fi
 
-  os_name=$(uname -s 2>/dev/null || echo unknown)
-  echo "Playwright Chromium was installed, but a launch verification failed." >&2
-  echo "Manual checks:" >&2
-  echo "  1. Run: npx --yes playwright install chromium" >&2
-  if [ "$os_name" = "Linux" ]; then
-    echo "  2. Run: npx --yes playwright install-deps chromium" >&2
-    echo "  3. If sudo is unavailable on a company machine, ask IT to install the Playwright Chromium system dependencies." >&2
-  else
-    echo "  2. If your company proxy blocks downloads, configure HTTPS_PROXY/HTTP_PROXY and rerun." >&2
-    echo "  3. If endpoint security blocks Chromium, whitelist the Playwright browser cache." >&2
-  fi
-  exit 1
-}
-
-ensure_rust() {
-  ensure_rust_toolchain
-  ensure_native_build_tools
-  step "Fetching Rust dependencies"
-  cargo fetch
-
-  if [ "$SKIP_RUST_BUILD" -eq 1 ]; then
-    return
-  fi
-
-  step "Building Rust binaries and core crates (debug)"
-  cargo build -p gateway --bin tura --bin gateway
-  cargo build -p router --bin tura_router
-  cargo check -p tools -p provider -p agents -p runtime -p session_log
-}
-
-invoke_build_bin() {
-  # Production route: build release binaries and package them (plus runtime
-  # resources) into bin/ via build-bin.sh, leaving a self-contained directory.
-  step "Building release binaries into bin/"
-  ensure_rust_toolchain
-  ensure_native_build_tools
-  # install registers the CLI itself as its final step, so build-bin must not.
-  if [ "$SKIP_FRONTEND" -eq 1 ]; then
-    sh "$SCRIPT_DIR/build-bin.sh" --skip-gui --skip-tui --skip-frontend-install --skip-cli-register
-  else
-    sh "$SCRIPT_DIR/build-bin.sh" --skip-cli-register
-  fi
-}
-
-register_tura_cli_launchers() {
-  mode=$1
-  # CLI registration (launcher generation + user PATH) lives in the shared
-  # scripts/register-cli.sh so install.sh and build-bin.sh stay in sync.
-  if [ "$SKIP_CLI_REGISTER" -eq 1 ]; then
-    return
-  fi
-  step "Registering tura CLI launchers (tura-tui, tura-gateway)"
-  sh "$SCRIPT_DIR/register-cli.sh" --mode "$mode"
+  step "Installing Bun workspace: $workspace_dir"
+  bun_args="install"
+  [ -f "$workspace_dir/bun.lock" ] && bun_args="$bun_args --frozen-lockfile"
+  [ "$OFFLINE" -eq 1 ] && bun_args="$bun_args --offline"
+  # shellcheck disable=SC2086
+  (cd "$workspace_dir" && bun $bun_args)
 }
 
 cd "$REPO_ROOT"
 
-step "Checking required toolchains"
-if [ "$CHECK_ONLY" -eq 1 ]; then
-  require git "Install Git from https://git-scm.com/downloads."
-  print_version git git --version
-  require cargo "Install Rust with rustup from https://rustup.rs."
-  print_version cargo cargo --version
-  if [ "$SKIP_FRONTEND" -eq 0 ]; then
-    require node "Install Node.js 20 or newer."
-    require npm "Install npm with Node.js 20 or newer."
-    node_version=$(command_version node --version)
-    if ! version_at_least "$node_version" 20 0; then
-      echo "Node.js version is too old ($node_version). Install Node.js 20 or newer from https://nodejs.org/." >&2
-      exit 1
-    fi
-    print_version node node --version
-    print_version npm npm --version
-    require bun "Install Bun from https://bun.sh for the GUI workspace, or rerun with --skip-frontend."
-    print_version bun bun --version
-    if [ "$SKIP_PLAYWRIGHT" -eq 0 ]; then
-      require npx "Install npm with Node.js 20 or newer so Playwright Chromium can be installed or verified."
-      print_version npx npx --version
-    fi
-  fi
-  if [ "$SKIP_PYTHON_PACKAGES" -eq 0 ]; then
-    if ! PYTHON_CHECK=$(python_cmd 2>/dev/null); then
-      echo "Python was not found. Install Python 3.10 or newer from https://www.python.org/downloads/, or rerun with --skip-python-packages." >&2
-      exit 1
-    fi
-    python_version=$(command_version "$PYTHON_CHECK" --version)
-    if ! version_at_least "$python_version" 3 10; then
-      echo "Python version is too old ($python_version). Install Python 3.10 or newer, or rerun with --skip-python-packages." >&2
-      exit 1
-    fi
-    printf 'python: %s\n' "$python_version"
-  fi
-  if have ffmpeg; then
-    print_version ffmpeg ffmpeg -version
-  else
-    echo "ffmpeg: not found (installer will try to install it; Python media fallback packages may still cover basic media flows)"
-  fi
-  echo "Toolchain check completed."
-  exit 0
+step "Checking root dependency installers"
+ensure_shell_tool_coverage
+ensure_uv
+ensure_bun
+run_command_installers
+
+if [ "$SKIP_APPS" -eq 0 ]; then
+  install_bun_workspace "$REPO_ROOT/scripts/packages/playwright_node"
+  install_bun_workspace "$REPO_ROOT/apps/tui"
+  install_bun_workspace "$REPO_ROOT/apps/gui"
+  install_bun_workspace "$REPO_ROOT/apps/tauri"
 fi
 
-ensure_git
-ensure_rust_toolchain
-if [ "$SKIP_FRONTEND" -eq 0 ]; then
-  ensure_node
-  ensure_bun
-fi
-
-ensure_python_packages
-ensure_ffmpeg
-ensure_playwright
-if [ "$DEV" -eq 1 ]; then
-  ensure_tui
-  ensure_gui
-  ensure_rust
-else
-  invoke_build_bin
-fi
-if [ "$DEV" -eq 1 ]; then
-  register_tura_cli_launchers dev
-else
-  register_tura_cli_launchers production
-fi
-
-step "Tura install completed"
-if [ "$DEV" -eq 1 ]; then
-  echo 'Mode:         dev (debug build)'
-  echo 'Rust CLI:     cargo run -p gateway --bin tura -- exec "Inspect the workspace"'
-  echo 'TUI CLI:      node apps/tui/dist/index.js --help'
-else
-  echo 'Mode:         production (release binaries in bin/)'
-  echo 'Gateway:      bin/gateway'
-  echo 'TUI:          bin/tura-tui --help'
-fi
-if [ "$SKIP_CLI_REGISTER" -eq 0 ]; then
-  echo 'Registered:   tura-tui (TUI) and tura-gateway (gateway server) — open a new terminal to use them'
-fi
+step "Tura dependency install completed"
+echo "No Rust binaries were built. Use scripts/build-debug.sh or scripts/build-release.sh when you want binaries."

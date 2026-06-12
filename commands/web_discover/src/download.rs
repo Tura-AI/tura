@@ -2,7 +2,10 @@ use super::files::{
     downloaded_file_value, move_unique_download, stable_hash, write_unique_download,
 };
 use super::types::{SearchResult, WebDiscoverArgs};
-use super::util::{extension_from_url, find_on_path, safe_filename, snapshot_files};
+use super::util::{
+    command_configured_python, command_local_executable, extension_from_url, find_on_path,
+    safe_filename, snapshot_files,
+};
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -19,7 +22,7 @@ pub(super) fn download_images(
         .timeout(Duration::from_secs(45))
         .user_agent("Tura web_discover/1.0")
         .build()
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| format!("failed to create web_discover download client: {err}"))?;
     let mut handles = Vec::new();
     for (index, result) in results.iter().cloned().enumerate() {
         let client = client.clone();
@@ -109,9 +112,9 @@ pub(super) fn download_ytdlp_media(
                     .map_err(|err| format!("failed to create yt-dlp temp dir: {err}"))?;
                 let output_template = temp_dir.join("%(title).80s-%(id)s.%(ext)s");
                 let command_parts = resolve_ytdlp_command();
-                let mut command = Command::new(command_parts.0);
+                let mut command = Command::new(&command_parts.0);
                 command
-                    .args(command_parts.1)
+                    .args(&command_parts.1)
                     .args([
                         "-f",
                         format_arg,
@@ -224,10 +227,29 @@ pub(super) fn ytdlp_download_candidate_rank(
     (rank, std::cmp::Reverse(size))
 }
 
-pub(super) fn resolve_ytdlp_command() -> (&'static str, Vec<&'static str>) {
-    if find_on_path("yt-dlp").is_some() {
-        ("yt-dlp", Vec::new())
+pub(super) fn resolve_ytdlp_command() -> (String, Vec<String>) {
+    for env_name in ["TURA_WEB_DISCOVER_YTDLP", "TURA_YTDLP", "YTDLP_PATH"] {
+        if let Ok(path) = std::env::var(env_name) {
+            if !path.trim().is_empty() && Path::new(&path).exists() {
+                return (path, Vec::new());
+            }
+        }
+    }
+    if let Some(path) = command_local_executable("yt-dlp") {
+        (path.display().to_string(), Vec::new())
+    } else if let Some(python) = command_configured_python("TURA_WEB_DISCOVER_PYTHON") {
+        (
+            python.display().to_string(),
+            vec!["-m".to_string(), "yt_dlp".to_string()],
+        )
+    } else if let Some(path) = find_on_path("yt-dlp") {
+        (path.display().to_string(), Vec::new())
     } else {
-        ("python", vec!["-m", "yt_dlp"])
+        let python = find_on_path("python3")
+            .or_else(|| find_on_path("python"))
+            .or_else(|| find_on_path("py"))
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "python".to_string());
+        (python, vec!["-m".to_string(), "yt_dlp".to_string()])
     }
 }

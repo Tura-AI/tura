@@ -29,8 +29,8 @@ impl SessionLogClient {
             todos,
         }))? {
             SessionLogResponse::Ok => Ok(()),
-            SessionLogResponse::Error { error } => Err(anyhow!(error)),
-            other => Err(anyhow!("unexpected session_log response: {other:?}")),
+            SessionLogResponse::Error { error } => Err(session_log_error("upsert_session", error)),
+            other => Err(unexpected_session_log_response("upsert_session", other)),
         }
     }
 
@@ -39,16 +39,21 @@ impl SessionLogClient {
             checkpoint,
         )))? {
             SessionLogResponse::Ok => Ok(()),
-            SessionLogResponse::Error { error } => Err(anyhow!(error)),
-            other => Err(anyhow!("unexpected session_log response: {other:?}")),
+            SessionLogResponse::Error { error } => {
+                Err(session_log_error("apply_command_checkpoint", error))
+            }
+            other => Err(unexpected_session_log_response(
+                "apply_command_checkpoint",
+                other,
+            )),
         }
     }
 
     pub fn list_workspaces(&self) -> Result<Vec<WorkspaceSummary>> {
         match self.call(SessionLogCommand::ListWorkspaces)? {
             SessionLogResponse::Workspaces { workspaces } => Ok(workspaces),
-            SessionLogResponse::Error { error } => Err(anyhow!(error)),
-            other => Err(anyhow!("unexpected session_log response: {other:?}")),
+            SessionLogResponse::Error { error } => Err(session_log_error("list_workspaces", error)),
+            other => Err(unexpected_session_log_response("list_workspaces", other)),
         }
     }
 
@@ -64,8 +69,8 @@ impl SessionLogClient {
             page_size,
         }))? {
             SessionLogResponse::Sessions { page, sessions } => Ok((page, sessions)),
-            SessionLogResponse::Error { error } => Err(anyhow!(error)),
-            other => Err(anyhow!("unexpected session_log response: {other:?}")),
+            SessionLogResponse::Error { error } => Err(session_log_error("list_sessions", error)),
+            other => Err(unexpected_session_log_response("list_sessions", other)),
         }
     }
 
@@ -74,8 +79,8 @@ impl SessionLogClient {
             session_id,
         }))? {
             SessionLogResponse::Session { session } => Ok(session.map(|session| *session)),
-            SessionLogResponse::Error { error } => Err(anyhow!(error)),
-            other => Err(anyhow!("unexpected session_log response: {other:?}")),
+            SessionLogResponse::Error { error } => Err(session_log_error("get_session", error)),
+            other => Err(unexpected_session_log_response("get_session", other)),
         }
     }
 
@@ -93,41 +98,45 @@ impl SessionLogClient {
             },
         ))? {
             SessionLogResponse::Records { page, records } => Ok((page, records)),
-            SessionLogResponse::Error { error } => Err(anyhow!(error)),
-            other => Err(anyhow!("unexpected session_log response: {other:?}")),
+            SessionLogResponse::Error { error } => {
+                Err(session_log_error("list_session_records", error))
+            }
+            other => Err(unexpected_session_log_response(
+                "list_session_records",
+                other,
+            )),
         }
     }
 
     fn call(&self, command: SessionLogCommand) -> Result<SessionLogResponse> {
+        if session_log::ipc::service_is_running() {
+            match session_log::ipc::call_service(&command) {
+                Ok(response) => return Ok(response),
+                Err(error) if session_log::file_queue::is_async_write(&command) => {
+                    tracing::warn!(
+                        error = %error,
+                        "session_db service call failed for async write; enqueueing for later drain"
+                    );
+                    session_log::file_queue::enqueue_command(&command)?;
+                    return Ok(SessionLogResponse::Ok);
+                }
+                Err(error) => return Err(error),
+            }
+        }
         if session_log::file_queue::is_async_write(&command) {
             session_log::file_queue::enqueue_command(&command)?;
             return Ok(SessionLogResponse::Ok);
         }
-        let store = session_log::SessionLogStore::open_default()?;
-        let _ = session_log::file_queue::drain_queue(&store, 10_000)?;
-        handle_read_command(command, &store)
+        Err(anyhow!(
+            "session_db service is not running; start the per-home tura_router/tura_session_db owner before reading session data"
+        ))
     }
 }
 
-fn handle_read_command(
-    command: SessionLogCommand,
-    store: &session_log::SessionLogStore,
-) -> Result<SessionLogResponse> {
-    Ok(match command {
-        SessionLogCommand::ListWorkspaces => SessionLogResponse::Workspaces {
-            workspaces: store.list_workspaces()?,
-        },
-        SessionLogCommand::GetSession(payload) => SessionLogResponse::Session {
-            session: store.get_session(payload)?.map(Box::new),
-        },
-        SessionLogCommand::ListSessions(payload) => {
-            let (page, sessions) = store.list_sessions(payload)?;
-            SessionLogResponse::Sessions { page, sessions }
-        }
-        SessionLogCommand::ListSessionRecords(payload) => {
-            let (page, records) = store.list_session_records(payload)?;
-            SessionLogResponse::Records { page, records }
-        }
-        other => anyhow::bail!("unexpected session_log read command: {other:?}"),
-    })
+fn session_log_error(operation: &str, error: String) -> anyhow::Error {
+    anyhow!("session_log {operation} failed: {error}")
+}
+
+fn unexpected_session_log_response(operation: &str, response: SessionLogResponse) -> anyhow::Error {
+    anyhow!("unexpected session_log response for {operation}: {response:?}")
 }

@@ -143,6 +143,7 @@ export function messageText(message: Message): string {
   return (message.parts ?? [])
     .filter((part) => part.type === "text" || part.type === "message" || !part.type)
     .map((part) => part.text ?? part.content ?? "")
+    .filter((text) => !isInternalTaskStatusText(text))
     .filter(Boolean)
     .join("");
 }
@@ -175,6 +176,75 @@ export function hasUserFacingAssistantText(messages: Message[], startIndex = 0):
 function isUserFacingAssistantText(value: string): boolean {
   const text = value.trim();
   if (!text) return false;
+  if (isInternalTaskStatusText(text)) return false;
   if (/completed without a user-facing message/i.test(text)) return false;
   return true;
+}
+
+export function isInternalTaskStatusPart(part: MessagePart): boolean {
+  if (part.type === "text" || part.type === "message" || !part.type) {
+    return isInternalTaskStatusText(part.text ?? part.content ?? "");
+  }
+  if (part.tool === "command_run") {
+    const state = part.state && typeof part.state === "object" ? (part.state as JsonObject) : {};
+    return (
+      isInternalTaskStatusPayload(state.input) ||
+      isInternalTaskStatusPayload(state.output) ||
+      isInternalTaskStatusPayload(part.metadata)
+    );
+  }
+  return false;
+}
+
+export function isInternalTaskStatusText(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const text = value.trim();
+  if (!text) return false;
+  if (/^(?:doing|done|question)\s*:\s*\{\s*\}$/iu.test(text)) return true;
+  if (/^(?:done|question)\s*:\s+\S[\s\S]*$/iu.test(text)) return true;
+  if (/^\[?command_run:\s*/iu.test(text)) {
+    const payload = text.replace(/^\[?command_run:\s*/iu, "").replace(/\]\s*$/u, "");
+    return isInternalTaskStatusText(payload);
+  }
+  const normalized = text.replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  try {
+    return isInternalTaskStatusPayload(JSON.parse(normalized) as unknown);
+  } catch {
+    return false;
+  }
+}
+
+export function isInternalTaskStatusPayload(value: unknown): boolean {
+  if (!value) return false;
+  if (typeof value === "string") return isInternalTaskStatusText(value);
+  if (Array.isArray(value)) return value.length > 0 && value.every(isInternalTaskStatusPayload);
+  if (typeof value !== "object") return false;
+  const object = value as JsonObject;
+  const commandType = stringField(object, "command_type") ?? stringField(object, "command");
+  if (commandType?.trim().toLowerCase().replace(/-/g, "_") === "task_status") return true;
+  if ("task_status" in object) return true;
+  if (taskStatusOnlyObject(object)) return true;
+  if ("output" in object && isInternalTaskStatusPayload(object.output)) return true;
+  if ("input" in object && isInternalTaskStatusPayload(object.input)) return true;
+  if ("results" in object && isInternalTaskStatusPayload(object.results)) return true;
+  return false;
+}
+
+function taskStatusOnlyObject(object: JsonObject): boolean {
+  const allowed = new Set(["status", "task_detail", "summary", "label"]);
+  const keys = Object.keys(object);
+  return (
+    keys.length > 0 &&
+    keys.every((key) => allowed.has(key)) &&
+    ("task_detail" in object || "summary" in object || taskStatusValue(object.status))
+  );
+}
+
+function taskStatusValue(value: unknown): boolean {
+  return typeof value === "string" && /^(doing|done|question)$/iu.test(value.trim());
+}
+
+function stringField(object: JsonObject, key: string): string | undefined {
+  const value = object[key];
+  return typeof value === "string" ? value : undefined;
 }

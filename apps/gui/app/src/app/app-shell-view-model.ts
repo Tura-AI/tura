@@ -25,6 +25,7 @@ export type AppShellViewModel = {
   toggleRailGroup: (id: string) => void;
   selectedSession: Accessor<Session | undefined>;
   selectedMessages: Accessor<Message[]>;
+  loadEarlierMessages: (sessionId: string) => Promise<boolean>;
   slashCommands: Accessor<Command[]>;
   openBlankSession: () => void;
   openSession: (sessionId: string) => Promise<void>;

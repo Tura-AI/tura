@@ -2,6 +2,7 @@ import type { Session } from "@tura/gateway-sdk";
 import { describe, expect, test } from "bun:test";
 import {
   SESSION_FALLBACK_NAME_MAX_LENGTH,
+  initialAppState,
   sessionFallbackNameFromInput,
   sessionTitle,
   withSessionFallbackName,
@@ -44,5 +45,14 @@ describe("session fallback names", () => {
     };
 
     expect(withSessionFallbackName(named, "用户输入").name).toBe("gateway name");
+  });
+});
+
+describe("initialAppState", () => {
+  test("defaults GUI runs to medium thinking with priority routing", () => {
+    const state = initialAppState("http://127.0.0.1:4126");
+
+    expect(state.modelVariant).toBe("medium");
+    expect(state.accelerationEnabled).toBe(true);
   });
 });

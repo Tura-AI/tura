@@ -131,3 +131,52 @@ fn tail(value: &str, max_chars: usize) -> String {
         chars[chars.len() - max_chars..].iter().collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{execute, invoke, tail};
+    use crate::runtime::tool::ToolError;
+    use serde_json::json;
+
+    #[test]
+    fn tail_keeps_short_text_and_takes_char_suffix() {
+        assert_eq!(tail("short", 20), "short");
+        assert_eq!(tail("abcdef", 3), "def");
+        assert_eq!(tail("a😀b😀c", 3), "b😀c");
+        assert_eq!(tail("abcdef", 0), "");
+    }
+
+    #[tokio::test]
+    async fn invoke_rejects_unsupported_external_command_before_spawning() {
+        let err = invoke("not_a_command", "execute", json!({}))
+            .await
+            .expect_err("unsupported command should fail locally");
+
+        match err {
+            ToolError::RespondToModel(message) => {
+                assert!(message.contains("unsupported external command"));
+                assert!(message.contains("not_a_command"));
+            }
+            ToolError::Fatal(message) => panic!("unexpected fatal error: {message}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_propagates_unsupported_command_error() {
+        let err = execute(
+            "not_a_command",
+            json!({"q":"anything"}),
+            std::path::Path::new("."),
+            "call-1",
+        )
+        .await
+        .expect_err("unsupported command should fail locally");
+
+        match err {
+            ToolError::RespondToModel(message) => {
+                assert!(message.contains("unsupported external command"));
+            }
+            ToolError::Fatal(message) => panic!("unexpected fatal error: {message}"),
+        }
+    }
+}

@@ -4,6 +4,7 @@ export interface ProviderModel {
   family?: string;
   release_date?: string;
   status?: string | null;
+  options?: Record<string, unknown>;
 }
 
 export interface Provider {
@@ -12,6 +13,9 @@ export interface Provider {
   source?: string;
   env?: string[];
   key?: string | null;
+  options?: Record<string, unknown>;
+  api?: string | null;
+  npm?: string | null;
   models?: Record<string, ProviderModel>;
 }
 

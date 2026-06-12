@@ -4,7 +4,7 @@ use crate::api::types::*;
 use crate::mock::global_store;
 use crate::session::session_store;
 use axum::{
-    http::{header, StatusCode},
+    http::{header, HeaderValue, StatusCode},
     response::sse::{Event as SseEvent, KeepAlive, Sse},
     response::Response,
     Json,
@@ -12,7 +12,7 @@ use axum::{
 use serde_json::Value;
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 // ============================================================================
@@ -23,7 +23,67 @@ pub async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         healthy: true,
         version: env!("CARGO_PKG_VERSION").to_string(),
+        root: gateway_identity_root(),
+        exe_dir: gateway_exe_dir(),
+        dev_log_path: gateway_dev_log_path(),
     })
+}
+
+/// Returns the provider LLM call log directory when dev logging is active.
+///
+/// Logging is active when `LOG_PATH` is explicitly set, or for `dev` build-kind
+/// (the repo-local `bin/` package always writes). A `release` build only logs
+/// via the explicit `LOG_PATH` opt-in. Uses TURA_PROJECT_ROOT for the default
+/// path so the reported location matches what the gateway actually writes to.
+fn gateway_dev_log_path() -> Option<String> {
+    let log_path_env = std::env::var("LOG_PATH").ok();
+    let dev_build = tura_path::build_kind() == "dev";
+    if log_path_env.is_none() && !dev_build {
+        return None;
+    }
+    let root = log_path_env.map(PathBuf::from).unwrap_or_else(|| {
+        std::env::var_os("TURA_PROJECT_ROOT")
+            .map(PathBuf::from)
+            .filter(|p| p.exists())
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_default()
+            .join("log")
+            .join("provider")
+    });
+    Some(canonical_string(&root))
+}
+
+/// Canonical runtime root the gateway is serving. Clients compare this against
+/// their own package root to decide whether a reachable gateway is "their own".
+pub(crate) fn gateway_identity_root() -> String {
+    let root = std::env::var_os("TURA_PROJECT_ROOT")
+        .map(PathBuf::from)
+        .filter(|path| path.exists())
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_default();
+    canonical_string(&root)
+}
+
+fn gateway_exe_dir() -> String {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(PathBuf::from))
+        .unwrap_or_default();
+    canonical_string(&exe_dir)
+}
+
+fn canonical_string(path: &std::path::Path) -> String {
+    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    strip_verbatim_prefix(&resolved.to_string_lossy())
+}
+
+/// Strip the Windows `\\?\` (and `\\?\UNC\`) verbatim prefix so paths compare
+/// equal to the plain forms other tools (Node `realpathSync`, etc.) produce.
+///
+/// Delegates to [`tura_path::strip_verbatim_prefix`] — the single source of
+/// truth for path normalization — and is re-exported here for existing callers.
+pub fn strip_verbatim_prefix(path: &str) -> String {
+    tura_path::strip_verbatim_prefix(path)
 }
 
 // ============================================================================
@@ -113,10 +173,7 @@ pub struct TuraConfigOption {
 
 fn read_tura_config_response() -> TuraConfigResponse {
     let path = crate::api::provider::config::provider_config_path();
-    match std::fs::read_to_string(&path)
-        .map_err(|err| err.to_string())
-        .and_then(|content| serde_json::from_str::<Value>(&content).map_err(|err| err.to_string()))
-    {
+    match read_json_config(&path) {
         Ok(root) => tura_config_response_from_value(path, root),
         Err(error) => TuraConfigResponse {
             path: path.to_string_lossy().to_string(),
@@ -124,6 +181,21 @@ fn read_tura_config_response() -> TuraConfigResponse {
             error: Some(error),
         },
     }
+}
+
+fn read_json_config(path: &Path) -> Result<Value, String> {
+    let content = std::fs::read_to_string(path).map_err(|err| {
+        format!(
+            "failed to read Tura provider config {}: {err}",
+            path.display()
+        )
+    })?;
+    serde_json::from_str::<Value>(&content).map_err(|err| {
+        format!(
+            "failed to parse Tura provider config {}: {err}",
+            path.display()
+        )
+    })
 }
 
 fn tura_config_response_from_value(path: PathBuf, root: Value) -> TuraConfigResponse {
@@ -308,9 +380,19 @@ fn config_key_exists(key: &str) -> bool {
         .is_some_and(|value| !value.trim().is_empty())
 }
 
-fn update_tura_config_tier(path: &PathBuf, payload: &TuraConfigUpdate) -> Result<(), String> {
-    let content = std::fs::read_to_string(path).map_err(|err| err.to_string())?;
-    let mut root: Value = serde_json::from_str(&content).map_err(|err| err.to_string())?;
+fn update_tura_config_tier(path: &Path, payload: &TuraConfigUpdate) -> Result<(), String> {
+    let content = std::fs::read_to_string(path).map_err(|err| {
+        format!(
+            "failed to read Tura provider config {}: {err}",
+            path.display()
+        )
+    })?;
+    let mut root: Value = serde_json::from_str(&content).map_err(|err| {
+        format!(
+            "failed to parse Tura provider config {}: {err}",
+            path.display()
+        )
+    })?;
     if !option_exists(&root, &payload.tier, &payload.provider, &payload.model) {
         return Err(format!(
             "{} / {} is not available for tier {} with configured credentials",
@@ -342,8 +424,14 @@ fn update_tura_config_tier(path: &PathBuf, payload: &TuraConfigUpdate) -> Result
     } else {
         providers.push(next);
     }
-    let formatted = serde_json::to_string_pretty(&root).map_err(|err| err.to_string())?;
-    std::fs::write(path, format!("{formatted}\n")).map_err(|err| err.to_string())
+    let formatted = serde_json::to_string_pretty(&root)
+        .map_err(|err| format!("failed to serialize Tura provider config: {err}"))?;
+    std::fs::write(path, format!("{formatted}\n")).map_err(|err| {
+        format!(
+            "failed to write Tura provider config {}: {err}",
+            path.display()
+        )
+    })
 }
 
 fn option_exists(root: &Value, tier: &str, provider_id: &str, model: &str) -> bool {
@@ -360,11 +448,13 @@ fn gui_config_path() -> PathBuf {
 }
 
 fn text_response(status: StatusCode, body: String) -> Response<String> {
-    Response::builder()
-        .status(status)
-        .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-        .body(body)
-        .expect("text response is valid")
+    let mut response = Response::new(body);
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    response
 }
 
 // ============================================================================
@@ -498,4 +588,54 @@ pub async fn upgrade(Json(_payload): Json<UpgradeRequest>) -> Json<UpgradeRespon
         version: Some(env!("CARGO_PKG_VERSION").to_string()),
         error: Some("Self-upgrade is not implemented by this gateway build.".to_string()),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_json_config, update_tura_config_tier, TuraConfigUpdate};
+
+    #[test]
+    fn read_json_config_reports_missing_path_context() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("missing-provider.json");
+
+        let error = read_json_config(&path).expect_err("missing config should fail");
+
+        let message = &error;
+        assert!(
+            message.contains("failed to read Tura provider config"),
+            "error should describe the failed operation: {message}"
+        );
+        assert!(
+            message.contains(&path.to_string_lossy().to_string()),
+            "error should include the config path: {message}"
+        );
+    }
+
+    #[test]
+    fn update_tura_config_tier_reports_parse_path_context() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("provider.json");
+        std::fs::write(&path, "{not-json").expect("write invalid config");
+
+        let error = update_tura_config_tier(
+            &path,
+            &TuraConfigUpdate {
+                tier: "fast".to_string(),
+                provider: "codex".to_string(),
+                model: "gpt-5.5".to_string(),
+            },
+        )
+        .expect_err("invalid config should fail");
+
+        let message = &error;
+        assert!(
+            message.contains("failed to parse Tura provider config"),
+            "error should describe the failed operation: {message}"
+        );
+        assert!(
+            message.contains(&path.to_string_lossy().to_string()),
+            "error should include the config path: {message}"
+        );
+    }
 }

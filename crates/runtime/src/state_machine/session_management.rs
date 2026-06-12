@@ -26,7 +26,7 @@ pub type UserInputText = String;
 /// Summarized user goal extracted from the original request.
 pub type UserGoal = String;
 
-/// Free-form historical execution log entry.
+/// Free-form execution log entry.
 pub type SessionLogEntry = String;
 
 /// JSON text describing the tools needed by a step.
@@ -79,16 +79,12 @@ pub struct SessionInput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanStatus {
-    #[serde(alias = "pending")]
     #[default]
     Todo,
     WaitingUser,
-    #[serde(alias = "in_progress")]
     Doing,
     Question,
-    #[serde(alias = "completed")]
     Done,
-    #[serde(alias = "cancelled")]
     Archived,
 }
 
@@ -179,29 +175,7 @@ pub struct TaskPlan {
     pub detailed_tasks: Vec<TaskStep>,
 }
 
-/// State machine for a session lifecycle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SessionState {
-    /// Session has been created but not started.
-    Created,
-    /// Session is actively processing work.
-    Running,
-    /// Session is temporarily paused.
-    Paused,
-    /// Session finished successfully.
-    Completed,
-    /// Session finished with a failure.
-    Failed,
-    /// Session was manually cancelled.
-    Cancelled,
-}
-
-impl SessionState {
-    /// Returns true if transitioning from `self` to `next` is allowed.
-    pub fn can_transition_to(self, next: SessionState) -> bool {
-        crate::session_state::transitions::can_transition_to(self, next)
-    }
-}
+pub use session_log::SessionState;
 
 /// Root session state object.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -327,7 +301,10 @@ impl SessionManagement {
         self.input = input;
         if matches!(
             self.state,
-            SessionState::Completed | SessionState::Failed | SessionState::Cancelled
+            SessionState::Completed
+                | SessionState::Failed
+                | SessionState::Cancelled
+                | SessionState::Interrupted
         ) {
             self.state = SessionState::Created;
             self.session_started_at = now;
@@ -446,6 +423,43 @@ mod tests {
     }
 
     #[test]
+    fn session_state_uses_snake_case_internal_persistence() {
+        assert_eq!(
+            serde_json::to_value(SessionState::Running).expect("state should serialize"),
+            serde_json::json!("running")
+        );
+        assert_eq!(
+            serde_json::from_value::<SessionState>(serde_json::json!("interrupted"))
+                .expect("interrupted is a first-class state"),
+            SessionState::Interrupted
+        );
+        assert!(
+            serde_json::from_value::<SessionState>(serde_json::json!("Running")).is_err(),
+            "internal state persistence must not accept PascalCase aliases"
+        );
+    }
+
+    #[test]
+    fn interrupted_session_can_prepare_for_another_user_turn() {
+        let now = Utc::now();
+        let mut session = session_in_state(SessionState::Interrupted);
+
+        session.prepare_for_new_user_turn(
+            SessionInput {
+                user_input: "resume".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            now,
+        );
+
+        assert_eq!(session.state, SessionState::Created);
+        assert_eq!(session.input.user_input, "resume");
+    }
+
+    #[test]
     fn task_management_json_single_task_is_object() {
         let mut session = session_in_state(SessionState::Running);
         session.task_plan.plan_summary = "Fix issue".to_string();
@@ -499,10 +513,9 @@ mod tests {
     }
 
     #[test]
-    fn status_deserializes_legacy_names() {
+    fn plan_status_rejects_non_canonical_internal_names() {
         assert_eq!(
-            serde_json::from_str::<PlanStatus>("\"pending\"")
-                .expect("pending alias should deserialize"),
+            serde_json::from_str::<PlanStatus>("\"todo\"").expect("todo should deserialize"),
             PlanStatus::Todo
         );
         assert_eq!(
@@ -511,19 +524,23 @@ mod tests {
             PlanStatus::WaitingUser
         );
         assert_eq!(
-            serde_json::from_str::<PlanStatus>("\"in_progress\"")
-                .expect("in_progress alias should deserialize"),
+            serde_json::from_str::<PlanStatus>("\"doing\"").expect("doing should deserialize"),
             PlanStatus::Doing
         );
         assert_eq!(
-            serde_json::from_str::<PlanStatus>("\"completed\"")
-                .expect("completed alias should deserialize"),
+            serde_json::from_str::<PlanStatus>("\"done\"").expect("done should deserialize"),
             PlanStatus::Done
         );
         assert_eq!(
-            serde_json::from_str::<PlanStatus>("\"cancelled\"")
-                .expect("cancelled alias should deserialize"),
+            serde_json::from_str::<PlanStatus>("\"archived\"")
+                .expect("archived should deserialize"),
             PlanStatus::Archived
         );
+        for non_canonical in ["pending", "in_progress", "completed", "cancelled"] {
+            assert!(
+                serde_json::from_str::<PlanStatus>(&format!("\"{non_canonical}\"")).is_err(),
+                "{non_canonical} must not be accepted inside persisted task state"
+            );
+        }
     }
 }

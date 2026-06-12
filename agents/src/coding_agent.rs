@@ -38,6 +38,7 @@ impl CodingAgent {
             "command_run".to_string(),
             "apply_patch".to_string(),
             "shell_command".to_string(),
+            "zsh".to_string(),
             "read_media".to_string(),
             "web_discover".to_string(),
             "compact_context".to_string(),

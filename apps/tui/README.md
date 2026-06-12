@@ -5,6 +5,11 @@ non-interactive CLI and the interactive terminal UI. The package talks to the
 Rust gateway over HTTP and SSE; it does not embed runtime, provider, tool, or
 session-storage logic.
 
+When the requested gateway port is already occupied by another process, TUI
+autostart now chooses a free loopback port before spawning gateway so the
+terminal client waits on the actual gateway URL it owns instead of timing out on
+the occupied port.
+
 ## Scope
 
 The terminal client stays intentionally small:
@@ -35,7 +40,18 @@ apps/tui/
   scripts/
     web-terminal.mjs
   e2e/
+    business/
+      run_all_release.mjs
+      tui_mock_gateway_stream_flow.mjs
+      tui_single_request_release.mjs
+      tui_snake_release.mjs
+      tui_password_zip_release.mjs
+    live/
+      tui_real_gateway_session_flow.mjs
+      tui_web_terminal_snake_game_flow.mjs
     tui_gateway_cli_e2e.mjs
+    tui_real_gateway_snake_playwright.mjs
+    tui_zip_password_playwright.mjs
   src/
     index.ts
     cli.ts
@@ -115,6 +131,34 @@ The terminal client should use existing gateway endpoints only.
 The CLI/TUI should not read `.tura/sessions`, `db/session_log`, `.env`,
 `provider_config.json`, provider logs, or backend config files directly.
 
+## Mock Stream E2E
+
+Run `npm run test:stream` from `apps/tui` to exercise the web-terminal UI
+against an app-local mock gateway. This script is app-owned and is intentionally
+not part of the root backend business runner.
+
+## Real Gateway Snake Playwright E2E
+
+Run `npm run test:e2e:real-snake` from `apps/tui` to exercise the TUI against a
+real gateway and provider call. The test creates a disposable Snake fixture,
+runs `node tools/snake_playwright.mjs` for desktop/mobile screenshots, sends a
+networked TUI task through gateway, then captures the web terminal across chat,
+sessions, models, settings, and mobile views. Artifacts are written under
+`target/tui-real-gateway-snake/<run-id>/`.
+
+## Release Entry Live Acceptance Tests
+
+Run these after the repository release build and CLI registration. They drive
+the release `tura` entry and validate a single real request, Snake, and
+password-zip CLI refactor task through the TUI command surface.
+
+```text
+npm run test:live:release
+npm run test:live:release:single
+npm run test:live:release:snake
+npm run test:live:release:password-zip
+```
+
 ## Capability Levels
 
 The renderer supports three terminal capability levels.
@@ -178,6 +222,8 @@ OSC 8, markdown, media-open support, and raw-mode interactivity.
 - `/rich` starts the L3 page with `--rich` and `xterm-256color`.
 
 Each page owns an independent pty and SSE client set.
+The pty shell can be overridden with `TURA_WEB_TERMINAL_SHELL`; otherwise the
+script uses the user's shell, macOS `/bin/zsh`, then bash/sh fallbacks.
 
 ## Development Commands
 
@@ -185,7 +231,8 @@ Each page owns an independent pty and SSE client set.
 npm run build
 npm test
 npm run test:e2e
-npm run test:business
+npm run test:live
+npm run test:live:release
 npm run web
 ```
 
@@ -193,20 +240,20 @@ Build and run the Rust gateway separately when using this package against a
 local backend:
 
 ```text
-cargo run -p gateway --bin gateway
 npm run build
 node apps/tui/dist/index.js --help
 ```
 
+The TUI auto-starts (and attaches to) its own `tura_gateway` on port 4126, so no
+separate gateway command is needed.
+
 Repository start-script flow:
 
 ```powershell
-.\scripts\start.ps1 -Gateway -Port 4096
 .\scripts\start.ps1 -Tui --help
 ```
 
 ```sh
-./scripts/start.sh --gateway --port 4096
 ./scripts/start.sh --tui --help
 ```
 
@@ -216,7 +263,7 @@ The TypeScript CLI/TUI resolves the gateway URL in this order:
 
 1. `--gateway-url <url>`.
 2. `TURA_GATEWAY_URL`.
-3. `http://127.0.0.1:4096`.
+3. `http://127.0.0.1:4126`.
 
 Workspace-scoped commands should send the current working directory through the
 gateway client so backend config, sessions, files, and events remain scoped to

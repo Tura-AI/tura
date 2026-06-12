@@ -4,10 +4,12 @@ use crate::api::types::*;
 use crate::mock::global_store;
 use axum::extract::{Json, Path, Query};
 use chrono::Utc;
+use fs2::FileExt;
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path as FsPath, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use tura_llm_rust::{AuthMethodKind, OAuthAuthorizeKind};
 
 mod auth_refresh;
@@ -16,7 +18,8 @@ mod oauth_flow;
 use auth_validation::{validate_provider_auth_config, validation_detail};
 pub use oauth_flow::{
     oauth_authorize, oauth_callback, oauth_callback_info, oauth_redirect_callback,
-    OAuthRedirectCallbackParams,
+    OAuthAuthorizeParams, OAuthAuthorizePayload, OAuthAuthorizeResponse, OAuthCallbackParams,
+    OAuthCallbackPayload, OAuthRedirectCallbackParams,
 };
 mod catalog;
 pub use catalog::{list_providers, validate_model};
@@ -35,6 +38,8 @@ use metadata::{
     provider_auth_docs_url,
 };
 use oauth_support::{browser_login_url, github_copilot_oauth_client_id, google_oauth_client_id};
+
+static PROVIDER_AUTH_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 // ============================================================================
 // Provider List
@@ -404,6 +409,7 @@ fn auth_method_unavailable_reason(
 }
 
 fn persist_provider_auth(provider_id: &str, auth: &ProviderAuth) -> io::Result<()> {
+    let _write_guard = provider_auth_write_guard();
     let key = auth.access.as_deref().or(auth.key.as_deref());
     let Some(key) = key.filter(|value| !value.trim().is_empty()) else {
         return Ok(());
@@ -418,6 +424,7 @@ fn persist_provider_auth(provider_id: &str, auth: &ProviderAuth) -> io::Result<(
                 .env_path()
                 .to_path_buf()
         });
+    let _file_guard = provider_auth_file_lock()?;
     let api_key = auth
         .metadata
         .as_ref()
@@ -492,6 +499,45 @@ fn persist_provider_auth(provider_id: &str, auth: &ProviderAuth) -> io::Result<(
     }
 
     Ok(())
+}
+
+fn provider_auth_write_guard() -> MutexGuard<'static, ()> {
+    match PROVIDER_AUTH_WRITE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+struct ProviderAuthFileLock {
+    file: File,
+}
+
+impl Drop for ProviderAuthFileLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
+fn provider_auth_file_lock() -> io::Result<ProviderAuthFileLock> {
+    let config_path = config::provider_config_path();
+    let lock_path = provider_auth_lock_path(&config_path);
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)?;
+    file.lock_exclusive()?;
+    Ok(ProviderAuthFileLock { file })
+}
+
+fn provider_auth_lock_path(config_path: &FsPath) -> PathBuf {
+    let mut lock_path = config_path.to_path_buf();
+    lock_path.set_extension("auth.lock");
+    lock_path
 }
 
 fn login_value_for_auth(provider_id: &str, auth: &ProviderAuth) -> String {
@@ -685,7 +731,7 @@ fn bedrock_credentials_exist(provider_id: &str) -> bool {
 }
 
 fn logout_provider_auth(provider_id: &str) -> io::Result<()> {
-    let status = build_provider_auth_status(provider_id);
+    let _write_guard = provider_auth_write_guard();
     let env_path = std::env::var("TURA_ENV_PATH")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -695,6 +741,8 @@ fn logout_provider_auth(provider_id: &str) -> io::Result<()> {
                 .env_path()
                 .to_path_buf()
         });
+    let _file_guard = provider_auth_file_lock()?;
+    let status = build_provider_auth_status(provider_id);
 
     let current_login = status.login.as_deref();
     let should_clear_shared_token = match provider_id {
@@ -778,9 +826,13 @@ fn upsert_provider_auth_config(
         ));
     }
 
-    let provider_auth = root
-        .as_object_mut()
-        .expect("checked object")
+    let Some(root_object) = root.as_object_mut() else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "tura llm config root must be a JSON object",
+        ));
+    };
+    let provider_auth = root_object
         .entry("provider_auth")
         .or_insert_with(|| serde_json::json!({}));
     if !provider_auth.is_object() {
@@ -836,10 +888,13 @@ fn upsert_provider_auth_config(
             entry["account_id"] = serde_json::Value::String(account_id.to_string());
         }
     }
-    provider_auth
-        .as_object_mut()
-        .expect("provider_auth is object")
-        .insert(provider_id.to_string(), entry);
+    let Some(provider_auth_object) = provider_auth.as_object_mut() else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "provider_auth must be a JSON object",
+        ));
+    };
+    provider_auth_object.insert(provider_id.to_string(), entry);
 
     let formatted = serde_json::to_string_pretty(&root)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;

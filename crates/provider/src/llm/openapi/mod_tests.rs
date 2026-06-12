@@ -980,7 +980,8 @@ fn command_index_for_test(event: &crate::tura_llm::ProviderStreamEvent) -> Optio
         crate::tura_llm::ProviderStreamEvent::CommandRunCommandReady { command_index, .. } => {
             Some(*command_index)
         }
-        crate::tura_llm::ProviderStreamEvent::ProviderOutputStarted => None,
+        crate::tura_llm::ProviderStreamEvent::ProviderOutputStarted
+        | crate::tura_llm::ProviderStreamEvent::TextDelta { .. } => None,
     }
 }
 

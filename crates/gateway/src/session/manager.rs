@@ -259,7 +259,9 @@ impl SessionStatus {
         match state {
             SessionState::Created | SessionState::Completed => SessionStatus::Idle,
             SessionState::Running | SessionState::Paused => SessionStatus::Busy,
-            SessionState::Failed | SessionState::Cancelled => SessionStatus::Error,
+            SessionState::Failed | SessionState::Cancelled | SessionState::Interrupted => {
+                SessionStatus::Error
+            }
         }
     }
 }

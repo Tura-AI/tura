@@ -116,14 +116,15 @@ export function toolOutput(part?: MessagePart): string {
 }
 
 export function toolRecords(parts: MessagePart[]): ToolRecord[] {
-  const sharedSpecs = parts.flatMap((part) => commandSpecs(asRecord(part.state)));
+  const commandParts = parts.filter((part) => isToolPart(part) && part.tool !== "runtime");
+  const sharedSpecs = commandParts.flatMap((part) => commandSpecs(asRecord(part.state)));
   let specCursor = 0;
-  const recordsByPart = parts.map((part) => {
+  const recordsByPart = commandParts.map((part) => {
     const state = asRecord(part.state);
     const streamed = streamedResults(state);
     const specs =
       streamed.length > 0 ? sharedSpecs.slice(specCursor, specCursor + streamed.length) : [];
-    if (streamed.length > 0 && part.tool !== "runtime") {
+    if (streamed.length > 0) {
       specCursor += streamed.length;
     }
     return {
@@ -131,18 +132,10 @@ export function toolRecords(parts: MessagePart[]): ToolRecord[] {
       records: toolPartRecords(part, specs),
     };
   });
-  const nonRuntimeRecords = visibleToolRecords(
-    recordsByPart.filter(({ part }) => part.tool !== "runtime").flatMap(({ records }) => records),
-  );
-  const runtimeRecords = visibleToolRecords(
-    recordsByPart.flatMap(({ part, records }) =>
-      part.tool === "runtime" && !records.every(isRawRuntimeRecord) ? records : [],
-    ),
-  );
-  const visibleRecords = nonRuntimeRecords.length > 0 ? nonRuntimeRecords : runtimeRecords;
+  const visibleRecords = visibleToolRecords(recordsByPart.flatMap(({ records }) => records));
   return visibleRecords.length > 0
     ? visibleRecords
-    : parts
+    : commandParts
         .map((part) => fallbackRecord(part))
         .filter((record) => !isCommandRunWrapper(record) && !isRuntimeWrapper(record));
 }
@@ -330,14 +323,6 @@ function normalizeCommandLine(value: string): string {
   } catch {
     return value;
   }
-}
-
-function isRawRuntimeRecord(record: ToolRecord): boolean {
-  return (
-    record.kind === "tool" &&
-    record.title.toLowerCase().includes("runtime") &&
-    record.output.trim().startsWith("{")
-  );
 }
 
 function isCommandRunWrapper(record: ToolRecord): boolean {

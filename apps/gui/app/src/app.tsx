@@ -59,6 +59,7 @@ const PROMPT_RESPONSE_TIMEOUT_MS = 30_000;
 const PROMPT_RESPONSE_TIMEOUT_CODE = "GATEWAY_NO_RESPONSE_30S";
 const ASSISTANT_REPLY_POLL_TIMEOUT_MS = 120_000;
 const ASSISTANT_REPLY_POLL_INTERVAL_MS = 1_250;
+const MESSAGE_PAGE_SIZE = 200;
 
 export function App() {
   const e2eFixture = readSearchParam("e2eFixture");
@@ -150,7 +151,7 @@ export function App() {
     const [messages] = await Promise.all([
       e2eFixture && existingMessages.length > 0 && !options.forceRefreshMessages
         ? Promise.resolve(existingMessages)
-        : safe(() => client.messages(sessionId), existingMessages),
+        : safe(() => client.messages(sessionId, { limit: MESSAGE_PAGE_SIZE }), existingMessages),
     ]);
     setState((previous) => ({
       ...previous,
@@ -158,7 +159,70 @@ export function App() {
         ...previous.messagesBySession,
         [sessionId]: messages,
       },
+      messagePagingBySession: {
+        ...previous.messagePagingBySession,
+        [sessionId]: {
+          hasEarlier: !e2eFixture && messages.length >= MESSAGE_PAGE_SIZE,
+          loadingEarlier: false,
+        },
+      },
     }));
+  }
+
+  async function loadEarlierMessages(sessionId: string): Promise<boolean> {
+    if (e2eFixture) {
+      return false;
+    }
+    const paging = state().messagePagingBySession[sessionId];
+    if (paging?.loadingEarlier || paging?.hasEarlier === false) {
+      return false;
+    }
+    const currentMessages = state().messagesBySession[sessionId] ?? [];
+    const before = currentMessages[0]?.id;
+    if (!before) {
+      return false;
+    }
+    setState((previous) => ({
+      ...previous,
+      messagePagingBySession: {
+        ...previous.messagePagingBySession,
+        [sessionId]: { hasEarlier: paging?.hasEarlier ?? true, loadingEarlier: true },
+      },
+    }));
+    try {
+      const earlier = await directoryClient().messages(sessionId, {
+        limit: MESSAGE_PAGE_SIZE,
+        before,
+      });
+      setState((previous) => {
+        const existing = previous.messagesBySession[sessionId] ?? [];
+        return {
+          ...previous,
+          messagesBySession: {
+            ...previous.messagesBySession,
+            [sessionId]: mergeMessagePages(earlier, existing),
+          },
+          messagePagingBySession: {
+            ...previous.messagePagingBySession,
+            [sessionId]: {
+              hasEarlier: earlier.length >= MESSAGE_PAGE_SIZE,
+              loadingEarlier: false,
+            },
+          },
+        };
+      });
+      return earlier.length > 0;
+    } catch (error) {
+      setState((previous) => ({
+        ...previous,
+        error: errorMessage(error),
+        messagePagingBySession: {
+          ...previous.messagePagingBySession,
+          [sessionId]: { hasEarlier: paging?.hasEarlier ?? true, loadingEarlier: false },
+        },
+      }));
+      return false;
+    }
   }
 
   function openBlankSession() {
@@ -861,6 +925,7 @@ export function App() {
       directory,
       selectedSessionId: undefined,
       messagesBySession: {},
+      messagePagingBySession: {},
       todosBySession: {},
       files: [],
       filePath: "",
@@ -942,6 +1007,7 @@ export function App() {
           toggleRailGroup,
           selectedSession,
           selectedMessages,
+          loadEarlierMessages,
           slashCommands,
           openBlankSession,
           openSession,
@@ -995,6 +1061,19 @@ export function App() {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function mergeMessagePages(prefix: Message[], suffix: Message[]): Message[] {
+  const seen = new Set<string>();
+  const merged: Message[] = [];
+  for (const message of [...prefix, ...suffix]) {
+    if (seen.has(message.id)) {
+      continue;
+    }
+    seen.add(message.id);
+    merged.push(message);
+  }
+  return merged;
 }
 
 function hasVisibleAssistantReply(messages: Message[]): boolean {

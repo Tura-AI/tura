@@ -7,6 +7,9 @@ pub async fn prompt_async(
     session_store().clear_cancelled(&session_id);
     let content = prompt_text(&payload).unwrap_or_else(|| "Prompt submitted".to_string());
     let session = session_store().get_session(&session_id);
+    if session.is_none() {
+        return StatusCode::NOT_FOUND;
+    }
     if session
         .as_ref()
         .is_some_and(|session| matches!(session.status, SessionStatus::Busy))
@@ -77,29 +80,7 @@ pub fn start_task_scheduler() {
 }
 
 fn run_due_task_scheduler_tick() {
-    for run in session_store().claim_due_task_runs(chrono::Utc::now()) {
-        let prompt = scheduler_prompt_payload(&run.task_summary, run.start_condition);
-        let content = prompt_text(&prompt).unwrap_or_else(|| run.task_summary.clone());
-        let initial_count = session_store().get_messages(&run.session_id).len();
-        let _ = session_store().add_message_with_metadata(
-            &run.session_id,
-            SessionMessageRole::User,
-            content,
-            Some(serde_json::json!({
-                "kind": "task_scheduler",
-                "start_condition": run.start_condition,
-            })),
-        );
-        session_store().set_todos(
-            &run.session_id,
-            vec![serde_json::json!({
-                "id": format!("{}:scheduled-task", run.session_id),
-                "content": run.task_summary,
-                "status": "in_progress",
-                "priority": "medium",
-            })],
-        );
-        watch_direct_mano_messages(run.session_id.clone(), initial_count);
+    run_due_task_scheduler_tick_with_launcher(|run, prompt| {
         std::thread::spawn(move || {
             if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 run_mano_for_prompt(run.session_id.clone(), prompt);
@@ -118,7 +99,59 @@ fn run_due_task_scheduler_tick() {
                 );
             }
         });
+    });
+}
+
+fn run_due_task_scheduler_tick_with_launcher(
+    mut launch: impl FnMut(crate::session::store::ScheduledTaskRun, serde_json::Value),
+) {
+    run_due_task_scheduler_tick_for_store_with_launcher(session_store(), true, |run, prompt| {
+        launch(run, prompt);
+    });
+}
+
+fn run_due_task_scheduler_tick_for_store_with_launcher(
+    store: &crate::session::SessionStore,
+    watch_messages: bool,
+    mut launch: impl FnMut(crate::session::store::ScheduledTaskRun, serde_json::Value),
+) {
+    for run in store.claim_due_task_runs(chrono::Utc::now()) {
+        let prompt = scheduler_prompt_payload(&run.task_summary, run.start_condition);
+        let content = prompt_text(&prompt).unwrap_or_else(|| run.task_summary.clone());
+        let initial_count = store.get_messages(&run.session_id).len();
+        let _ = store.add_message_with_metadata(
+            &run.session_id,
+            SessionMessageRole::User,
+            content,
+            Some(serde_json::json!({
+                "kind": "task_scheduler",
+                "start_condition": run.start_condition,
+            })),
+        );
+        store.set_todos(
+            &run.session_id,
+            vec![serde_json::json!({
+                "id": format!("{}:scheduled-task", run.session_id),
+                "content": run.task_summary,
+                "status": "in_progress",
+                "priority": "medium",
+            })],
+        );
+        if watch_messages {
+            watch_direct_mano_messages(run.session_id.clone(), initial_count);
+        }
+        launch(run, prompt);
     }
+}
+
+#[cfg(feature = "business-tests")]
+pub fn run_due_task_scheduler_tick_for_business_test() {
+    run_due_task_scheduler_tick_with_launcher(|_, _| {});
+}
+
+#[cfg(feature = "business-tests")]
+pub fn run_due_task_scheduler_tick_for_store_business_test(store: &crate::session::SessionStore) {
+    run_due_task_scheduler_tick_for_store_with_launcher(store, false, |_, _| {});
 }
 
 fn scheduler_prompt_payload(
@@ -234,8 +267,9 @@ fn prompt_runtime_context(payload: &serde_json::Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
-/// 通过 router CLI 转发一次 prompt：gateway 仅做转发 + 状态收尾，
-/// runtime 行为全部经 router→runtime worker 子进程执行，事件经现有回调通道回报。
+/// Forward one prompt through the router; the gateway only handles handoff and
+/// final state bookkeeping. Runtime work runs in router-managed worker
+/// subprocesses and reports events through the existing callback channel.
 pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value) {
     let content = prompt_text(&payload).unwrap_or_else(|| "Prompt submitted".to_string());
     let before_count = session_store().get_messages(&session_id).len();
@@ -286,6 +320,7 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
         .map(load_config)
         .map(|config| config.command_run_stall_guard())
         .unwrap_or_else(|| TuraSessionConfig::default().command_run_stall_guard());
+    let command_run_shell = prompt_command_run_shell(&payload);
     let language = directory
         .as_deref()
         .map(load_config)
@@ -294,7 +329,7 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
-    // worker env 契约：取代旧的进程级 with_*_env 注入，由 router 注入 runtime worker 子进程。
+    // Worker env contract: router injects these values into the runtime worker.
     let mut worker_env: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     if let Some(reasoning) = reasoning_effort
@@ -312,6 +347,9 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
             "TURA_SESSION_ACCELERATION_ENABLED".to_string(),
             "1".to_string(),
         );
+    }
+    if let Some(shell) = command_run_shell {
+        worker_env.insert("TURA_COMMAND_RUN_SHELL".to_string(), shell);
     }
     if let Some(language) = language {
         worker_env.insert("TURA_SESSION_LANGUAGE".to_string(), language);
@@ -362,8 +400,6 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
                         info: api_message_from_store(message),
                     },
                 });
-            } else {
-                add_agent_fallback_message(&session_id, user_facing_completion_fallback(&content));
             }
         }
         Err(error) => {
@@ -377,7 +413,8 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
     }
 }
 
-/// 阻塞式提交给 gateway 持有的唯一 persistent router；gateway 不再直接 spawn runtime worker。
+/// Submit through the gateway-owned persistent router instead of spawning a
+/// runtime worker directly.
 fn forward_run_agent_to_router(
     turn_id: &str,
     session_id: &str,
@@ -389,7 +426,9 @@ fn forward_run_agent_to_router(
             session_id: session_id.to_string(),
             payload: body.clone(),
         })
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| {
+            format!("failed to enqueue turn {turn_id} for session {session_id}: {error}")
+        })?;
     if value
         .get("ok")
         .and_then(serde_json::Value::as_bool)
@@ -397,11 +436,14 @@ fn forward_run_agent_to_router(
     {
         Ok(())
     } else {
-        Err(value
+        let error = value
             .get("error")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("gateway worker returned failure")
-            .to_string())
+            .to_string();
+        Err(format!(
+            "router rejected turn {turn_id} for session {session_id}: {error}"
+        ))
     }
 }
 
@@ -444,7 +486,7 @@ struct AgentRuntimeSettings {
 }
 
 fn agent_runtime_settings(agent_id: &str) -> Option<AgentRuntimeSettings> {
-    let root = repo_root_for_router()?;
+    let root = tura_agents::store::project_root_from_env_or_cwd();
     let agent = tura_agents::store::load_agent(&root, agent_id)?;
     let provider = agent.config.provider.as_object()?;
     Some(AgentRuntimeSettings {
@@ -497,6 +539,20 @@ pub(super) fn prompt_model_acceleration(payload: &serde_json::Value) -> Option<b
         .or_else(|| payload.get("modelAccelerationEnabled"))
         .or_else(|| payload.get("accelerated"))
         .and_then(|value| value.as_bool())
+}
+
+pub(super) fn prompt_command_run_shell(payload: &serde_json::Value) -> Option<String> {
+    let value = payload
+        .get("command_run_shell")
+        .or_else(|| payload.get("commandRunShell"))
+        .and_then(|value| value.as_str())?
+        .trim();
+    match value {
+        "bash" => Some("bash".to_string()),
+        "zsh" => Some("zsh".to_string()),
+        "shll" | "shell_command" => Some("shell_command".to_string()),
+        _ => None,
+    }
 }
 
 fn normalize_model_override(value: String) -> Option<String> {
@@ -678,52 +734,4 @@ fn add_agent_fallback_message(session_id: &str, content: String) {
             },
         });
     }
-}
-
-pub(super) fn user_facing_completion_fallback(prompt: &str) -> String {
-    if let Some(exact) = requested_exact_reply(prompt) {
-        return exact;
-    }
-    let summary = prompt
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or("The request completed.");
-    format!("Done: {summary}")
-}
-
-fn requested_exact_reply(text: &str) -> Option<String> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let lower = trimmed.to_ascii_lowercase();
-    for marker in [
-        "reply with exactly",
-        "reply exactly",
-        "respond with exactly",
-        "respond exactly",
-        "只回复这一行，不要解释：",
-        "只回复这一行，不要解释:",
-        "只回复：",
-        "只回复:",
-    ] {
-        if let Some(index) = lower.find(marker) {
-            let source = &trimmed[index + marker.len()..];
-            let candidate = source
-                .trim_start_matches(|ch: char| {
-                    ch.is_whitespace() || matches!(ch, ':' | '：' | '"' | '\'' | '`')
-                })
-                .split(" and no extra")
-                .next()
-                .unwrap_or(source)
-                .trim()
-                .trim_matches(|ch: char| matches!(ch, '"' | '\'' | '`' | '.' | '。'))
-                .trim();
-            if !candidate.is_empty() {
-                return Some(candidate.to_string());
-            }
-        }
-    }
-    None
 }

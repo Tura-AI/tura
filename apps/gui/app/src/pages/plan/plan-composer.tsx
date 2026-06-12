@@ -6,11 +6,11 @@ import {
 } from "@tura/gateway-sdk";
 import CalendarClock from "lucide-solid/icons/calendar-clock";
 import CalendarDays from "lucide-solid/icons/calendar-days";
-import ChartGantt from "lucide-solid/icons/chart-gantt";
 import Check from "lucide-solid/icons/check";
 import ChevronDown from "lucide-solid/icons/chevron-down";
 import Columns3 from "lucide-solid/icons/columns-3";
 import MoreHorizontal from "lucide-solid/icons/ellipsis";
+import GitBranch from "lucide-solid/icons/git-branch";
 import GripVertical from "lucide-solid/icons/grip-vertical";
 import LayoutList from "lucide-solid/icons/layout-list";
 import Play from "lucide-solid/icons/play";
@@ -63,7 +63,7 @@ export function PlanModeButtons(props: {
     label: string;
     icon: (props: { size?: number }) => JSX.Element;
   }> = [
-    { id: "gantt", label: t("gantt"), icon: ChartGantt },
+    { id: "gantt", label: t("gantt"), icon: GitBranch },
     { id: "calendar", label: t("calendar"), icon: CalendarDays },
     { id: "todo", label: t("todoList"), icon: LayoutList },
     { id: "split", label: t("splitCollaboration"), icon: Columns3 },

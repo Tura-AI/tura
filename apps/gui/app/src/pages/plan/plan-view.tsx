@@ -373,12 +373,7 @@ export function PlanView(props: {
                   props.onOpenSession(session);
                   props.onEditTask(session, task, taskDisplayText(task));
                 }}
-                onSchedule={(session, task, startAt) =>
-                  props.onTask(session, {
-                    task_id: taskNonceId(task),
-                    start_at: startAt,
-                  })
-                }
+                onReorder={props.onReorderTasks}
               />
             </Match>
             <Match when={props.state.planMode === "calendar"}>
@@ -387,8 +382,9 @@ export function PlanView(props: {
                 selectedSessionId={props.state.planPreviewSessionId}
                 onOpenSession={props.onOpenSession}
                 onCreateAt={openDraftAt}
-                onSchedule={(session, startAt) =>
+                onSchedule={(session, task, startAt) =>
                   props.onTask(session, {
+                    task_id: taskNonceId(task),
                     start_at: startAt,
                   })
                 }

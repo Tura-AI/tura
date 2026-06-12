@@ -19,7 +19,7 @@ OUT = Path(
     )
 )
 GUI_URL = os.environ.get("TURA_GUI_URL", "http://127.0.0.1:5180")
-GATEWAY_URL = os.environ.get("TURA_GATEWAY_URL", "http://127.0.0.1:4096")
+GATEWAY_URL = os.environ.get("TURA_GATEWAY_URL", "http://127.0.0.1:4126")
 MODEL = os.environ.get("TURA_E2E_MODEL", "openai/gpt-5.5")
 AGENT = os.environ.get("TURA_E2E_AGENT", "thinking-planning")
 PROMPT_NONCE = os.environ.get("TURA_E2E_NONCE", f"tura-tool-e2e-{int(time.time())}")
@@ -60,7 +60,7 @@ def real_tool_prompt() -> str:
         (
             "This is a real GUI to gateway to coding agent e2e test. "
             "Complete a ProgramBench-inspired multi-task reconstruction benchmark using command_run. "
-            "First read tests/business/command-run-agent-benchmarks/command_run_frontend_playwright_business_test.mjs "
+            "First read tests/benchmark/frontend-playwright/react_ops_board_programbench_rebuild_full.mjs "
             "and use its Vite + Playwright screenshot/probe style as the reference pattern; do not run the whole benchmark. "
             "Also treat https://github.com/facebookresearch/programbench as the benchmark inspiration: the task must be decomposed into "
             "parallel subtasks with ordered integration barriers, then produce a runnable artifact, submission archive, eval JSON, and documentation. "
@@ -81,7 +81,7 @@ def real_tool_prompt() -> str:
             f"{COMMAND_MARKER} setup, {COMMAND_MARKER} build, {COMMAND_MARKER} cli, {COMMAND_MARKER} docs, {COMMAND_MARKER} desktop, {COMMAND_MARKER} mobile, "
             f"{COMMAND_MARKER} modal, {COMMAND_MARKER} streaming, {COMMAND_MARKER} error-state, "
             f"{COMMAND_MARKER} cleanup. "
-            "After verifying the screenshots/probes, reply with exactly this final line: "
+            "After verifying the screenshots/probes, include this completion marker in the final response: "
             f"{EXPECTED}"
         ),
     )

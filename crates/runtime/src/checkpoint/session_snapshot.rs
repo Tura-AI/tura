@@ -13,9 +13,19 @@ pub(crate) fn persist_session_snapshot(session: &SessionManagement) -> Result<()
         .ok_or_else(|| "persisted session info missing".to_string())?;
     let messages = persisted_messages(session);
     SessionLogClient::discover()
-        .map_err(|err| err.to_string())?
+        .map_err(|err| {
+            format!(
+                "failed to discover session_log client for session snapshot {}: {err}",
+                session.session_id
+            )
+        })?
         .upsert_session(session_info, None, messages, Vec::new())
-        .map_err(|err| err.to_string())
+        .map_err(|err| {
+            format!(
+                "failed to persist session snapshot {}: {err}",
+                session.session_id
+            )
+        })
 }
 
 pub(crate) fn persist_session_checkpoint(session: &SessionManagement, stage: &str) {
@@ -87,9 +97,22 @@ fn persisted_message(
         });
     }
 
-    let object = value
-        .as_object_mut()
-        .expect("persisted message value normalized to object");
+    let Some(object) = value.as_object_mut() else {
+        tracing::warn!(
+            session_id = %session.session_id,
+            index,
+            "persisted message normalization produced a non-object value"
+        );
+        return serde_json::json!({
+            "id": format!("{}:log:{index}", session.session_id),
+            "role": "event",
+            "type": "log",
+            "content": entry,
+            "created_at": base_time.saturating_add(index as i64),
+            "updated_at": base_time.saturating_add(index as i64),
+            "session_id": session.session_id.clone(),
+        });
+    };
     let fallback_time = base_time.saturating_add(index as i64);
     let created_at = object
         .get("created_at")
@@ -144,6 +167,46 @@ fn session_status(session: &SessionManagement) -> &'static str {
     match session.state {
         SessionState::Created | SessionState::Completed => "idle",
         SessionState::Running | SessionState::Paused => "busy",
-        SessionState::Failed | SessionState::Cancelled => "error",
+        SessionState::Failed | SessionState::Cancelled | SessionState::Interrupted => "error",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::persisted_message;
+    use crate::state_machine::session_management::{SessionInput, SessionManagement};
+    use chrono::Utc;
+    use std::path::PathBuf;
+
+    fn session() -> SessionManagement {
+        let now = Utc::now();
+        SessionManagement::new(
+            "snapshot-session".to_string(),
+            "snapshot".to_string(),
+            PathBuf::from("C:/workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "persist".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "persist".to_string(),
+            now,
+        )
+    }
+
+    #[test]
+    fn persisted_message_wraps_non_object_json_without_panicking() {
+        let session = session();
+        let value = persisted_message(&session, 2, "\"plain text\"", 1_000);
+
+        assert_eq!(value["type"], "log");
+        assert_eq!(value["content"], "plain text");
+        assert_eq!(value["role"], "log");
+        assert_eq!(value["created_at"], 1_002);
+        assert_eq!(value["session_id"], "snapshot-session");
     }
 }

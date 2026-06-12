@@ -34,6 +34,7 @@ import {
 import {
   avatarConfigForAgent,
   conversationReactionItems,
+  type ConversationReactionItem,
   groupConversationTurns,
   latestSticker,
   messagesWithSessionThinking,
@@ -59,11 +60,15 @@ const AGENT_AVATAR_SIZE = 56;
 const AGENT_AVATAR_GAP = 8;
 const AGENT_AVATAR_BOTTOM_SNAP = 48;
 const AGENT_AVATAR_BOTTOM_SETTLE_MS = 0;
+const VIRTUAL_MESSAGE_ESTIMATED_HEIGHT = 64;
+const VIRTUAL_MESSAGE_OVERSCAN = 300;
+const LOAD_EARLIER_SCROLL_TOP = 480;
 
 export function ConversationView(props: {
   state: AppState;
   session?: Session;
   messages: Message[];
+  onLoadEarlierMessages?: () => Promise<boolean>;
   slashCommands: Command[];
   onComposerText: (text: string) => void;
   onComposerImages: (images: ComposerImage[]) => void;
@@ -348,6 +353,7 @@ export function ConversationView(props: {
           <Transcript
             session={props.session}
             messages={groupedMessages()}
+            onLoadEarlierMessages={props.onLoadEarlierMessages}
             loading={props.state.loading}
             activeToolId={selectedToolId()}
             conversationNotice={props.conversationNotice}
@@ -427,6 +433,7 @@ export function ConversationView(props: {
 function Transcript(props: {
   session?: Session;
   messages: Message[];
+  onLoadEarlierMessages?: () => Promise<boolean>;
   loading: boolean;
   activeToolId?: string;
   conversationNotice?: JSX.Element;
@@ -441,15 +448,48 @@ function Transcript(props: {
     conversationReactionItems(messagesWithSessionThinking(props.messages, props.session)),
   );
   const latestId = createMemo(() => displayMessages().at(-1)?.message.id);
+  const [scrollTop, setScrollTop] = createSignal(0);
+  const [clientHeight, setClientHeight] = createSignal(0);
+  const [heightVersion, setHeightVersion] = createSignal(0);
   const [floatingAvatar, setFloatingAvatar] = createSignal<
     { left: number; top: number } | undefined
   >();
   let transcriptEl: HTMLElement | undefined;
   let transcriptInnerEl: HTMLDivElement | undefined;
   let avatarFrame: number | undefined;
+  let loadEarlierPromise: Promise<boolean> | undefined;
   let bottomSettleTimer: number | undefined;
   let avatarResizeObserver: ResizeObserver | undefined;
+  const measuredHeights = new Map<string, number>();
   let lastScrollUpdateAt = 0;
+  let lastScrolledAwayFromBottomAt = 0;
+
+  const virtualLayout = createMemo(() => {
+    heightVersion();
+    const items = displayMessages();
+    const offsets: number[] = [];
+    let totalHeight = 0;
+    for (const item of items) {
+      offsets.push(totalHeight);
+      totalHeight += measuredHeights.get(item.message.id) ?? VIRTUAL_MESSAGE_ESTIMATED_HEIGHT;
+    }
+    return { offsets, totalHeight };
+  });
+
+  const virtualItems = createMemo(() => {
+    const items = displayMessages();
+    const layout = virtualLayout();
+    const start = Math.max(0, scrollTop() - VIRTUAL_MESSAGE_OVERSCAN);
+    const end = scrollTop() + clientHeight() + VIRTUAL_MESSAGE_OVERSCAN;
+    return items
+      .map((item, index) => ({
+        item,
+        index,
+        top: layout.offsets[index] ?? 0,
+        height: measuredHeights.get(item.message.id) ?? VIRTUAL_MESSAGE_ESTIMATED_HEIGHT,
+      }))
+      .filter((entry) => entry.top + entry.height >= start && entry.top <= end);
+  });
 
   function hideFloatingAvatar() {
     setFloatingAvatar(undefined);
@@ -544,10 +584,77 @@ function Transcript(props: {
     });
   }
 
+  function updateTranscriptViewport() {
+    if (!transcriptEl) {
+      return;
+    }
+    setScrollTop(transcriptEl.scrollTop);
+    setClientHeight(transcriptEl.clientHeight);
+  }
+
+  function updateMeasuredHeight(messageId: string, height: number, top: number) {
+    const next = Math.max(1, Math.round(height));
+    const previous = measuredHeights.get(messageId);
+    if (previous === next) {
+      return;
+    }
+    const delta = next - (previous ?? VIRTUAL_MESSAGE_ESTIMATED_HEIGHT);
+    const wasAtBottom = transcriptEl
+      ? transcriptEl.scrollHeight - transcriptEl.scrollTop - transcriptEl.clientHeight < 28
+      : false;
+    measuredHeights.set(messageId, next);
+    setHeightVersion((version) => version + 1);
+    if (!transcriptEl || delta === 0) {
+      return;
+    }
+    const recentlyScrolledAway = performance.now() - lastScrolledAwayFromBottomAt < 500;
+    if (wasAtBottom && !recentlyScrolledAway) {
+      requestAnimationFrame(() => transcriptEl?.scrollTo({ top: transcriptEl.scrollHeight }));
+      return;
+    }
+    if (top < transcriptEl.scrollTop) {
+      transcriptEl.scrollTop += delta;
+      updateTranscriptViewport();
+    }
+  }
+
+  function maybeLoadEarlierMessages() {
+    if (!transcriptEl || !props.onLoadEarlierMessages || transcriptEl.scrollTop > LOAD_EARLIER_SCROLL_TOP) {
+      return;
+    }
+    if (loadEarlierPromise) {
+      return;
+    }
+    const previousHeight = transcriptEl.scrollHeight;
+    loadEarlierPromise = props
+      .onLoadEarlierMessages()
+      .then((loaded) => {
+        if (!loaded || !transcriptEl) {
+          return false;
+        }
+        requestAnimationFrame(() => {
+          if (!transcriptEl) {
+            return;
+          }
+          transcriptEl.scrollTop += Math.max(0, transcriptEl.scrollHeight - previousHeight);
+          updateTranscriptViewport();
+          queueFloatingAvatarUpdate();
+        });
+        return true;
+      })
+      .finally(() => {
+        loadEarlierPromise = undefined;
+      });
+  }
+
   onMount(() => {
-    avatarResizeObserver = new ResizeObserver(queueFloatingAvatarUpdate);
+    avatarResizeObserver = new ResizeObserver(() => {
+      updateTranscriptViewport();
+      queueFloatingAvatarUpdate();
+    });
     if (transcriptEl) {
       avatarResizeObserver.observe(transcriptEl);
+      updateTranscriptViewport();
     }
     if (transcriptInnerEl) {
       avatarResizeObserver.observe(transcriptInnerEl);
@@ -573,6 +680,15 @@ function Transcript(props: {
     props.avatarSettings.display_mode;
     queueFloatingAvatarUpdate();
   });
+  createEffect(() => {
+    props.session?.id;
+    measuredHeights.clear();
+    setHeightVersion((version) => version + 1);
+    requestAnimationFrame(() => {
+      updateTranscriptViewport();
+      queueFloatingAvatarUpdate();
+    });
+  });
   const avatarMode = createMemo<AvatarDisplayMode>(
     () => props.avatarSettings.display_mode ?? "static",
   );
@@ -585,11 +701,18 @@ function Transcript(props: {
         transcriptEl = element;
         props.onTranscript(element);
         avatarResizeObserver?.observe(element);
+        updateTranscriptViewport();
         queueFloatingAvatarUpdate();
       }}
       onScroll={() => {
         lastScrollUpdateAt = performance.now();
+        updateTranscriptViewport();
         props.onScroll();
+        const element = transcriptEl;
+        if (element && element.scrollHeight - element.scrollTop - element.clientHeight >= 28) {
+          lastScrolledAwayFromBottomAt = performance.now();
+        }
+        maybeLoadEarlierMessages();
         queueFloatingAvatarUpdate();
       }}
     >
@@ -612,22 +735,31 @@ function Transcript(props: {
           }
         >
           <Show when={props.session} fallback={<div class="center-state">{t("ready")}</div>}>
-            <For
-              each={displayMessages()}
+            <Show
+              when={displayMessages().length > 0}
               fallback={<div class="center-state">{sessionTitle(props.session!)}</div>}
             >
-              {(item) => (
-                <MessageCell
-                  message={item.message}
-                  reactions={item.reactions}
-                  activeToolId={props.activeToolId}
-                  isLatest={latestId() === item.message.id}
-                  sessionStatus={props.session?.status}
-                  showAvatarSpace={avatarMode() !== "hidden"}
-                  onTool={props.onTool}
-                />
-              )}
-            </For>
+              <div
+                class="transcript-virtual-space"
+                style={{ height: `${virtualLayout().totalHeight}px` }}
+                data-virtual-count={displayMessages().length}
+                data-mounted-count={virtualItems().length}
+              >
+                <For each={virtualItems()}>
+                  {(entry) => (
+                    <VirtualMessageCell
+                      entry={entry}
+                      activeToolId={props.activeToolId}
+                      latestId={latestId()}
+                      sessionStatus={props.session?.status}
+                      showAvatarSpace={avatarMode() !== "hidden"}
+                      onTool={props.onTool}
+                      onMeasure={updateMeasuredHeight}
+                    />
+                  )}
+                </For>
+              </div>
+            </Show>
             <Show when={props.conversationNotice}>{props.conversationNotice}</Show>
           </Show>
         </Show>
@@ -654,6 +786,65 @@ function Transcript(props: {
         )}
       </Show>
     </section>
+  );
+}
+
+function VirtualMessageCell(props: {
+  entry: {
+    item: ConversationReactionItem;
+    index: number;
+    top: number;
+  };
+  activeToolId?: string;
+  latestId?: string;
+  sessionStatus?: Session["status"];
+  showAvatarSpace: boolean;
+  onTool: (part: MessagePart, parts: MessagePart[]) => void;
+  onMeasure: (messageId: string, height: number, top: number) => void;
+}) {
+  let rowEl: HTMLDivElement | undefined;
+  let observer: ResizeObserver | undefined;
+
+  function measure() {
+    if (!rowEl) {
+      return;
+    }
+    props.onMeasure(props.entry.item.message.id, rowEl.offsetHeight, props.entry.top);
+  }
+
+  onMount(() => {
+    observer = new ResizeObserver(measure);
+    if (rowEl) {
+      observer.observe(rowEl);
+    }
+    requestAnimationFrame(measure);
+    onCleanup(() => observer?.disconnect());
+  });
+
+  createEffect(() => {
+    props.entry.item.message.id;
+    props.entry.top;
+    requestAnimationFrame(measure);
+  });
+
+  return (
+    <div
+      ref={rowEl}
+      class="transcript-virtual-row"
+      data-message-id={props.entry.item.message.id}
+      data-virtual-index={props.entry.index}
+      style={{ transform: `translateY(${props.entry.top}px)` }}
+    >
+      <MessageCell
+        message={props.entry.item.message}
+        reactions={props.entry.item.reactions}
+        activeToolId={props.activeToolId}
+        isLatest={props.latestId === props.entry.item.message.id}
+        sessionStatus={props.sessionStatus}
+        showAvatarSpace={props.showAvatarSpace}
+        onTool={props.onTool}
+      />
+    </div>
   );
 }
 
@@ -716,15 +907,7 @@ function MessageCell(props: {
       window.clearTimeout(pulseTimer);
     }
   });
-  const visibleTextParts = createMemo(() => {
-    const visible = textParts().filter((part) => partText(part).trim());
-    const showProcessText =
-      props.sessionStatus === undefined ? isPending() : props.sessionStatus !== "idle";
-    if (props.message.role !== "assistant" || showProcessText || visible.length <= 1) {
-      return visible;
-    }
-    return [visible[visible.length - 1]!];
-  });
+  const visibleTextParts = createMemo(() => textParts().filter((part) => partText(part).trim()));
   const summaryText = createMemo(() =>
     visibleTextParts().map(partText).filter(Boolean).join("\n\n"),
   );
@@ -857,32 +1040,19 @@ type AssistantBlock = {
 };
 
 function assistantPartBlocks(parts: MessagePart[], visibleTextIds: Set<string>): AssistantBlock[] {
+  // All tool parts in a message share a single summary so commands split across
+  // multiple text segments are counted together rather than as separate runs.
+  const toolParts = parts.filter((part) => isToolPart(part));
+  const textBlocks: AssistantBlock[] = parts
+    .filter((part) => !isToolPart(part) && visibleTextIds.has(part.id))
+    .map((part) => ({ type: "text", parts: [part] }));
+
   const blocks: AssistantBlock[] = [];
-  let toolBuffer: MessagePart[] = [];
-
-  function flushTools() {
-    if (toolBuffer.length > 0) {
-      blocks.push({ type: "tools", parts: toolBuffer });
-      toolBuffer = [];
-    }
+  if (toolParts.length > 0) {
+    blocks.push({ type: "tools", parts: toolParts });
   }
-
-  for (const part of parts) {
-    if (isToolPart(part)) {
-      toolBuffer.push(part);
-      continue;
-    }
-    if (!visibleTextIds.has(part.id)) {
-      continue;
-    }
-    flushTools();
-    blocks.push({ type: "text", parts: [part] });
-  }
-  flushTools();
-  return [
-    ...blocks.filter((block) => block.type === "tools"),
-    ...blocks.filter((block) => block.type === "text"),
-  ];
+  blocks.push(...textBlocks);
+  return blocks;
 }
 
 function numericField(record: Record<string, unknown>, key: string) {

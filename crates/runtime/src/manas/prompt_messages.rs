@@ -182,11 +182,7 @@ pub(super) fn user_new_command_message(session_id: &str) -> Option<String> {
 }
 
 pub(super) fn fetch_user_commands(session_id: &str) -> Vec<String> {
-    if std::env::var("TURA_DISABLE_GATEWAY_CALLBACKS")
-        .ok()
-        .as_deref()
-        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-    {
+    if super::constants::gateway_callbacks_disabled() {
         return Vec::new();
     }
     let endpoint = format!(
@@ -272,7 +268,7 @@ pub(crate) fn push_no_tool_task_status_retry_message(
         .part(task_status::planning_objective_context(&planning_objective_block(
             session,
         )))
-        .part("If user feedback, missing information, permissions, credentials, or keys are required, call command_run with task_status status question. If the task is complete and verified, call command_run with task_status status done. If work remains, continue with command_run.")
+        .part("If more command_run calls are required to complete the task, call command_run with task_status status doing. If user feedback, missing information, permissions, credentials, or keys are required, call command_run with task_status status question. If the task is complete and verified, call command_run with task_status status done. Every task_status status change must also have a normal assistant-channel reply.")
         .render();
     messages.push(serde_json::json!({
         "role": "system",
@@ -409,7 +405,7 @@ mod tests {
         assert!(content.contains("[current objective]:\nSTATE MACHINE OBJECTIVE"));
         assert!(content.contains("task_status status question"));
         assert!(content.contains("task_status status done"));
-        assert!(content.contains("continue with command_run"));
+        assert!(content.contains("task_status status doing"));
         assert!(!content.contains("original_user_task:"));
     }
 

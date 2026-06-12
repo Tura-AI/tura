@@ -29,6 +29,7 @@ export function ConversationPageOutlet(props: {
   setState: Setter<AppState>;
   selectedSession: Accessor<Session | undefined>;
   selectedMessages: Accessor<Message[]>;
+  loadEarlierMessages: (sessionId: string) => Promise<boolean>;
   slashCommands: Accessor<Command[]>;
   selectedEditingTask: () => TaskManagement | undefined;
   leftRailOpen: boolean;
@@ -144,6 +145,7 @@ export function ConversationPageOutlet(props: {
           state={props.state()}
           session={session}
           messages={props.selectedMessages()}
+          onLoadEarlierMessages={() => props.loadEarlierMessages(session.id)}
           slashCommands={props.slashCommands()}
           onComposerText={setComposerText}
           onComposerImages={setComposerImages}

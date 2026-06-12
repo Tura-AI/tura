@@ -1,13 +1,467 @@
 use super::auth_validation::{
     validate_provider_credentials_remotely, ProviderCredentialValidation,
 };
-use super::catalog::{looks_like_claude_model, provider_list_for_route};
+use super::catalog::{
+    apply_catalog_model_detail, browser_login_provider_defaults, default_model_for_provider,
+    enrich_provider_list, insert_option, looks_like_claude_model, model_supported_by_provider,
+    normalize_model_id, provider_display_name, provider_list_for_route, provider_model_catalog,
+    sdk_model_from_config,
+};
 use super::*;
 use axum::extract::{Path, Query};
 use std::io::{Read, Write};
 use tokio::sync::Mutex;
 
 static ENV_LOCK: Mutex<()> = Mutex::const_new(());
+
+#[test]
+fn catalog_default_model_has_picker_safe_capabilities_and_limits() {
+    let model = default_model_for_provider("openai");
+
+    assert_eq!(model.id, "default");
+    assert_eq!(model.name, "default");
+    assert_eq!(model.family, "openai");
+    assert_eq!(model.release_date, "2026-01-01");
+    assert!(model.attachment);
+    assert!(model.reasoning);
+    assert!(model.temperature);
+    assert!(model.tool_call);
+    assert_eq!(model.limit.context, 200_000);
+    assert_eq!(model.limit.input, 200_000);
+    assert_eq!(model.limit.output, 16_384);
+    assert_eq!(model.modalities.input, vec!["text", "image", "pdf"]);
+    assert_eq!(model.modalities.output, vec!["text"]);
+    assert!(model.options.is_empty());
+    assert_eq!(model.status, None);
+}
+
+#[test]
+fn catalog_sdk_model_from_config_uses_provider_as_family() {
+    let model = sdk_model_from_config("custom-provider", "model-a");
+
+    assert_eq!(model.id, "model-a");
+    assert_eq!(model.name, "model-a");
+    assert_eq!(model.family, "custom-provider");
+    assert_eq!(model.modalities.input, vec!["text", "image", "pdf"]);
+}
+
+#[test]
+fn catalog_model_detail_overrides_all_model_picker_fields() {
+    let mut model = sdk_model_from_config("openai", "gpt-test");
+    let detail = tura_llm_rust::CatalogModelDetail {
+        id: "gpt-test".to_string(),
+        visible: true,
+        name: "GPT Test".to_string(),
+        family: "gpt".to_string(),
+        release_date: "2026-06-01".to_string(),
+        attachment: false,
+        reasoning: true,
+        temperature: false,
+        tool_call: true,
+        limit: tura_llm_rust::CatalogModelLimit {
+            context: 128_000,
+            input: 96_000,
+            output: 8_192,
+        },
+        modalities: tura_llm_rust::CatalogModelModalities {
+            input: vec!["text".to_string()],
+            output: vec!["text".to_string(), "audio".to_string()],
+        },
+        options: serde_json::Map::from_iter([("tier".to_string(), serde_json::json!("flagship"))]),
+        status: Some("stable".to_string()),
+    };
+
+    apply_catalog_model_detail(&mut model, "openai", &detail);
+
+    assert_eq!(model.name, "GPT Test");
+    assert_eq!(model.family, "gpt");
+    assert_eq!(model.release_date, "2026-06-01");
+    assert!(!model.attachment);
+    assert!(model.reasoning);
+    assert!(!model.temperature);
+    assert!(model.tool_call);
+    assert_eq!(model.limit.context, 128_000);
+    assert_eq!(model.limit.input, 96_000);
+    assert_eq!(model.limit.output, 8_192);
+    assert_eq!(model.modalities.input, vec!["text"]);
+    assert_eq!(model.modalities.output, vec!["text", "audio"]);
+    assert_eq!(
+        model.options.get("tier"),
+        Some(&serde_json::json!("flagship"))
+    );
+    assert_eq!(model.status.as_deref(), Some("stable"));
+}
+
+#[test]
+fn catalog_model_detail_falls_back_to_provider_family_when_blank() {
+    let mut model = sdk_model_from_config("openai", "gpt-test");
+    let detail = tura_llm_rust::CatalogModelDetail {
+        id: "gpt-test".to_string(),
+        family: "   ".to_string(),
+        ..Default::default()
+    };
+
+    apply_catalog_model_detail(&mut model, "openai", &detail);
+
+    assert_eq!(model.family, "openai");
+}
+
+#[test]
+fn catalog_insert_option_trims_empty_values_but_preserves_payload() {
+    let mut options = HashMap::new();
+
+    insert_option(&mut options, "api_style", "openai");
+    insert_option(&mut options, "empty", " ");
+
+    assert_eq!(options.get("api_style"), Some(&serde_json::json!("openai")));
+    assert!(!options.contains_key("empty"));
+}
+
+#[test]
+fn oauth_pkce_challenge_matches_rfc7636_vector() {
+    let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+
+    let challenge = oauth_support::oauth_code_challenge(verifier);
+
+    assert_eq!(challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+    assert!(!challenge.contains('='));
+}
+
+#[test]
+fn oauth_random_values_are_url_safe_and_non_empty() {
+    let state = oauth_support::oauth_state();
+    let verifier = oauth_support::oauth_code_verifier();
+
+    assert_eq!(state.len(), 32);
+    assert_eq!(verifier.len(), 64);
+    assert!(state.chars().all(|ch| ch.is_ascii_hexdigit()));
+    assert!(verifier.chars().all(|ch| ch.is_ascii_hexdigit()));
+}
+
+#[test]
+fn oauth_authorize_urls_include_required_provider_specific_params() {
+    let openai = oauth_support::oauth_authorize_url(
+        "openai",
+        tura_llm_rust::OAuthAuthorizeKind::OpenAiPkce,
+        "state value",
+        "challenge/value",
+    )
+    .expect("openai authorize url");
+    let openai_url = reqwest::Url::parse(&openai).expect("parse openai url");
+    let openai_pairs = openai_url.query_pairs().collect::<HashMap<_, _>>();
+    assert_eq!(openai_url.host_str(), Some("auth.openai.com"));
+    assert_eq!(
+        openai_pairs.get("response_type").map(|v| v.as_ref()),
+        Some("code")
+    );
+    assert_eq!(
+        openai_pairs.get("code_challenge").map(|v| v.as_ref()),
+        Some("challenge/value")
+    );
+    assert_eq!(
+        openai_pairs.get("state").map(|v| v.as_ref()),
+        Some("state value")
+    );
+    assert_eq!(
+        openai_pairs
+            .get("codex_cli_simplified_flow")
+            .map(|v| v.as_ref()),
+        Some("true")
+    );
+
+    let anthropic = oauth_support::oauth_authorize_url(
+        "claude-code",
+        tura_llm_rust::OAuthAuthorizeKind::AnthropicPkce,
+        "state",
+        "challenge",
+    )
+    .expect("anthropic authorize url");
+    let anthropic_url = reqwest::Url::parse(&anthropic).expect("parse anthropic url");
+    let anthropic_pairs = anthropic_url.query_pairs().collect::<HashMap<_, _>>();
+    assert_eq!(anthropic_url.host_str(), Some("claude.ai"));
+    assert_eq!(
+        anthropic_pairs.get("code").map(|v| v.as_ref()),
+        Some("true")
+    );
+    assert_eq!(
+        anthropic_pairs
+            .get("code_challenge_method")
+            .map(|v| v.as_ref()),
+        Some("S256")
+    );
+}
+
+#[test]
+fn oauth_authorize_url_returns_none_for_non_browser_redirect_methods() {
+    for kind in [
+        tura_llm_rust::OAuthAuthorizeKind::GithubDevice,
+        tura_llm_rust::OAuthAuthorizeKind::BrowserTokenPaste,
+        tura_llm_rust::OAuthAuthorizeKind::Unsupported,
+    ] {
+        assert!(oauth_support::oauth_authorize_url("openai", kind, "state", "challenge").is_none());
+    }
+}
+
+#[tokio::test]
+async fn google_oauth_support_prefers_provider_specific_env_then_google_default() {
+    let _guard = ENV_LOCK.lock().await;
+    clear_openai_refresh_test_env();
+    for key in [
+        "GEMINI_OAUTH_CLIENT_ID",
+        "GEMINI_OAUTH_CLIENT_SECRET",
+        "GEMINI_OAUTH_REDIRECT_URI",
+        "GEMINI_OAUTH_SCOPE",
+    ] {
+        std::env::remove_var(key);
+    }
+
+    set_env("GOOGLE_OAUTH_CLIENT_ID", "google-client");
+    set_env("GOOGLE_OAUTH_CLIENT_SECRET", "google-secret");
+    set_env("GOOGLE_OAUTH_REDIRECT_URI", "http://localhost/google");
+    set_env("GOOGLE_OAUTH_SCOPE", "openid email");
+    assert_eq!(
+        oauth_support::google_oauth_client_id("gemini").as_deref(),
+        Some("google-client")
+    );
+    assert_eq!(
+        oauth_support::google_oauth_client_secret("gemini").as_deref(),
+        Some("google-secret")
+    );
+    assert_eq!(
+        oauth_support::provider_google_oauth_redirect_uri("gemini"),
+        "http://localhost/google"
+    );
+    assert_eq!(
+        oauth_support::provider_google_oauth_scope("gemini"),
+        "openid email"
+    );
+
+    set_env("GEMINI_OAUTH_CLIENT_ID", "gemini-client");
+    set_env("GEMINI_OAUTH_CLIENT_SECRET", "gemini-secret");
+    set_env("GEMINI_OAUTH_REDIRECT_URI", "http://localhost/gemini");
+    set_env("GEMINI_OAUTH_SCOPE", "profile");
+    assert_eq!(
+        oauth_support::google_oauth_client_id("gemini").as_deref(),
+        Some("gemini-client")
+    );
+    assert_eq!(
+        oauth_support::google_oauth_client_secret("gemini").as_deref(),
+        Some("gemini-secret")
+    );
+    assert_eq!(
+        oauth_support::provider_google_oauth_redirect_uri("gemini"),
+        "http://localhost/gemini"
+    );
+    assert_eq!(
+        oauth_support::provider_google_oauth_scope("gemini"),
+        "profile"
+    );
+
+    clear_openai_refresh_test_env();
+    for key in [
+        "GEMINI_OAUTH_CLIENT_ID",
+        "GEMINI_OAUTH_CLIENT_SECRET",
+        "GEMINI_OAUTH_REDIRECT_URI",
+        "GEMINI_OAUTH_SCOPE",
+    ] {
+        std::env::remove_var(key);
+    }
+}
+
+#[test]
+fn oauth_callback_html_escapes_message_and_browser_login_fallbacks_are_stable() {
+    let html = oauth_support::oauth_callback_html(false, r#"<bad>&"quoted""#);
+
+    assert!(html.contains("<title>OAuth failed</title>"));
+    assert!(html.contains("&lt;bad&gt;&amp;&quot;quoted&quot;"));
+    assert_eq!(
+        oauth_support::browser_login_url("openai"),
+        "https://chatgpt.com/auth/login"
+    );
+    assert_eq!(
+        oauth_support::browser_login_url("custom-provider"),
+        "https://auth.example.com/oauth/custom-provider"
+    );
+    assert_eq!(
+        oauth_support::browser_login_token("custom-provider", None),
+        "browser-login:custom-provider:confirmed"
+    );
+    assert_eq!(
+        oauth_support::browser_login_token("custom-provider", Some("code-123")),
+        "browser-login:custom-provider:code-123"
+    );
+}
+
+#[test]
+fn catalog_normalizes_runtime_model_prefix_only_for_matching_provider() {
+    let runtime_prefix = super::catalog::provider_runtime_id("openai");
+    let prefixed = format!("{runtime_prefix}/gpt-test");
+
+    assert_eq!(normalize_model_id("openai", &prefixed), "gpt-test");
+    assert_eq!(
+        normalize_model_id("google", &prefixed),
+        prefixed,
+        "a different provider prefix must not be stripped"
+    );
+    assert_eq!(normalize_model_id("openai", "gpt-test"), "gpt-test");
+}
+
+#[test]
+fn catalog_claude_hidden_rule_covers_provider_model_and_namespaced_forms() {
+    for (provider_id, model_id) in [
+        ("claude-code", "anything"),
+        ("anthropic", "claude"),
+        ("anthropic", "claude-sonnet-4"),
+        ("bedrock", "anthropic.claude-3-5-sonnet"),
+        ("openrouter", "anthropic/claude-3-7-sonnet"),
+    ] {
+        assert!(
+            looks_like_claude_model(provider_id, model_id),
+            "{provider_id}/{model_id} should be hidden from the picker"
+        );
+    }
+    assert!(!looks_like_claude_model("anthropic", "sonnet-non-claude"));
+    assert!(!looks_like_claude_model("openai", "gpt-5.1-codex"));
+}
+
+#[test]
+fn catalog_browser_login_defaults_are_stable_and_supported_by_registry() {
+    let defaults = browser_login_provider_defaults();
+
+    assert_eq!(defaults.len(), 4);
+    assert!(defaults.contains(&("codex", "gpt-5.1-codex")));
+    for (provider_id, model_id) in defaults {
+        assert!(
+            !provider_id.trim().is_empty() && !model_id.trim().is_empty(),
+            "browser login defaults must have concrete provider/model ids"
+        );
+    }
+}
+
+#[test]
+fn catalog_provider_display_name_uses_registry_or_identity_fallback() {
+    assert_eq!(provider_display_name("openai"), "OpenAI API");
+    assert_eq!(
+        provider_display_name("unknown-provider-for-test"),
+        "unknown-provider-for-test"
+    );
+}
+
+#[test]
+fn catalog_provider_model_catalog_filters_hidden_claude_models() {
+    let catalog = provider_model_catalog(None);
+
+    assert!(catalog.iter().any(|(provider, models)| {
+        provider == "codex" && models.iter().any(|model| model == "gpt-5.5")
+    }));
+    for (provider_id, models) in catalog {
+        for model_id in models {
+            assert!(
+                !looks_like_claude_model(&provider_id, &model_id),
+                "hidden Claude model leaked into provider_model_catalog: {provider_id}/{model_id}"
+            );
+        }
+    }
+}
+
+#[test]
+fn catalog_model_supported_by_provider_matches_registry_exactly() {
+    assert!(model_supported_by_provider("codex", "gpt-5.5"));
+    assert!(!model_supported_by_provider("codex", "missing-model"));
+    assert!(!model_supported_by_provider("missing-provider", "gpt-5.5"));
+}
+
+#[tokio::test]
+async fn catalog_enrich_provider_list_prefers_env_then_api_then_config() {
+    let _guard = ENV_LOCK.lock().await;
+    set_env("TURA_GATEWAY_TEST_PROVIDER_KEY", "test-secret");
+    let mut providers = vec![
+        SdkProvider {
+            id: "test-provider".to_string(),
+            name: "Test Provider".to_string(),
+            source: "config".to_string(),
+            env: vec!["TURA_GATEWAY_TEST_PROVIDER_KEY".to_string()],
+            key: None,
+            options: HashMap::new(),
+            models: HashMap::new(),
+            api: None,
+            npm: None,
+        },
+        SdkProvider {
+            id: "api-provider".to_string(),
+            name: "API Provider".to_string(),
+            source: "config".to_string(),
+            env: vec![],
+            key: None,
+            options: HashMap::new(),
+            models: HashMap::new(),
+            api: None,
+            npm: None,
+        },
+        SdkProvider {
+            id: "config-provider".to_string(),
+            name: "Config Provider".to_string(),
+            source: "config".to_string(),
+            env: vec![],
+            key: None,
+            options: HashMap::new(),
+            models: HashMap::new(),
+            api: None,
+            npm: None,
+        },
+    ];
+    let store_connected = std::collections::HashSet::from(["api-provider".to_string()]);
+    let mut connected = Vec::new();
+
+    enrich_provider_list(&mut providers, &mut connected, &store_connected);
+
+    assert_eq!(providers[0].source, "env");
+    assert_eq!(providers[0].key.as_deref(), Some("test-secret"));
+    assert_eq!(providers[1].source, "api");
+    assert_eq!(providers[2].source, "config");
+    assert!(connected.iter().any(|id| id == "test-provider"));
+    assert!(!connected.iter().any(|id| id == "config-provider"));
+
+    std::env::remove_var("TURA_GATEWAY_TEST_PROVIDER_KEY");
+}
+
+#[test]
+fn catalog_enrich_provider_list_adds_registry_metadata_and_fallback_env() {
+    let mut providers = vec![SdkProvider {
+        id: "codex".to_string(),
+        name: "Codex".to_string(),
+        source: "config".to_string(),
+        env: vec![],
+        key: None,
+        options: HashMap::new(),
+        models: HashMap::new(),
+        api: None,
+        npm: None,
+    }];
+    let mut connected = Vec::new();
+    let store_connected = std::collections::HashSet::new();
+
+    enrich_provider_list(&mut providers, &mut connected, &store_connected);
+
+    assert!(providers[0].env.iter().any(|env| env == "OPENAI_API_KEY"));
+    assert_eq!(
+        providers[0].options.get("domains"),
+        Some(&serde_json::json!(["llm"]))
+    );
+    assert_eq!(
+        providers[0].options.get("capabilities"),
+        Some(&serde_json::json!([
+            "llm.chat",
+            "llm.tool_call",
+            "oauth.login"
+        ]))
+    );
+    assert!(providers[0]
+        .options
+        .get("auth_methods")
+        .and_then(|value| value.as_array())
+        .is_some_and(|methods| !methods.is_empty()));
+}
 
 #[test]
 fn provider_auth_methods_are_projected_from_registry() {
@@ -54,7 +508,23 @@ fn provider_env_keys_use_registry_compatibility_aliases() {
 async fn provider_auth_method_value_is_available_for_hover_reveal() {
     let _guard = ENV_LOCK.lock().await;
     clear_openai_refresh_test_env();
-    set_env("OPENAI_LOGIN", "oauth");
+    let temp_dir = std::env::temp_dir().join(format!(
+        "tura-provider-hover-reveal-test-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).expect("temp dir");
+    let config_path = temp_dir.join("provider_config.json");
+    std::fs::write(&config_path, r#"{"provider_auth":{}}"#).expect("config");
+    set_env(
+        "TURA_PROVIDER_CONFIG",
+        config_path.to_string_lossy().as_ref(),
+    );
+    set_env(
+        "TURA_PROVIDER_CONFIG",
+        config_path.to_string_lossy().as_ref(),
+    );
+    set_env("OPENAI_LOGIN", "api");
     set_env("OPENAI_API_KEY", "sk-test-hover-reveal");
 
     let openai = provider_auth_methods("openai");
@@ -70,6 +540,7 @@ async fn provider_auth_method_value_is_available_for_hover_reveal() {
     );
 
     clear_openai_refresh_test_env();
+    let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
 #[tokio::test]
@@ -290,7 +761,10 @@ async fn provider_auth_refresh_updates_expired_openai_oauth_env_and_config() {
     );
 
     set_env("TURA_ENV_PATH", env_path.to_string_lossy().as_ref());
-    set_env("TURALLM_CONFIG", config_path.to_string_lossy().as_ref());
+    set_env(
+        "TURA_PROVIDER_CONFIG",
+        config_path.to_string_lossy().as_ref(),
+    );
     set_env(
         "OPENAI_OAUTH_TOKEN_URL",
         &format!("http://{addr}/oauth/token"),
@@ -325,6 +799,56 @@ async fn provider_auth_refresh_updates_expired_openai_oauth_env_and_config() {
         config.contains("\"status\": \"connected\"") || config.contains("\"status\":\"connected\"")
     );
     assert!(config.contains("OPENAI_REFRESH_TOKEN"));
+    server.join().expect("token server should finish");
+
+    clear_openai_refresh_test_env();
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[tokio::test]
+async fn provider_auth_refresh_reports_parse_context_for_invalid_token_json() {
+    let _guard = ENV_LOCK.lock().await;
+    let temp_dir = std::env::temp_dir().join(format!(
+        "tura-openai-oauth-refresh-invalid-json-test-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).expect("temp dir");
+    let env_path = temp_dir.join(".env");
+    let config_path = temp_dir.join("provider_config.json");
+    std::fs::write(
+        &env_path,
+        "OPENAI_LOGIN=oauth\nOPENAI_API_KEY=old-access\nOPENAI_REFRESH_TOKEN=old-refresh\nOPENAI_TOKEN_EXPIRES=0\n",
+    )
+    .expect("env");
+    std::fs::write(&config_path, r#"{"provider_auth":{}}"#).expect("config");
+
+    let (addr, server) = spawn_openai_token_server("old-refresh", "not-json");
+
+    set_env("TURA_ENV_PATH", env_path.to_string_lossy().as_ref());
+    set_env(
+        "TURA_PROVIDER_CONFIG",
+        config_path.to_string_lossy().as_ref(),
+    );
+    set_env(
+        "OPENAI_OAUTH_TOKEN_URL",
+        &format!("http://{addr}/oauth/token"),
+    );
+    set_env("OPENAI_LOGIN", "oauth");
+    set_env("OPENAI_API_KEY", "old-access");
+    set_env("OPENAI_REFRESH_TOKEN", "old-refresh");
+    set_env("OPENAI_TOKEN_EXPIRES", "0");
+
+    let Json(response) = provider_auth_refresh(Path("codex".to_string())).await;
+
+    assert!(!response.ok);
+    assert!(
+        response
+            .message
+            .contains("failed to parse OpenAI OAuth refresh response for codex"),
+        "refresh error should keep provider and parse context: {}",
+        response.message
+    );
     server.join().expect("token server should finish");
 
     clear_openai_refresh_test_env();
@@ -388,7 +912,10 @@ async fn provider_auth_status_refreshes_expired_openai_oauth_before_reporting() 
     );
 
     set_env("TURA_ENV_PATH", env_path.to_string_lossy().as_ref());
-    set_env("TURALLM_CONFIG", config_path.to_string_lossy().as_ref());
+    set_env(
+        "TURA_PROVIDER_CONFIG",
+        config_path.to_string_lossy().as_ref(),
+    );
     set_env(
         "OPENAI_OAUTH_TOKEN_URL",
         &format!("http://{addr}/oauth/token"),
@@ -496,7 +1023,10 @@ async fn provider_auth_refresh_covers_google_and_gemini_oauth_methods() {
         );
 
         set_env("TURA_ENV_PATH", env_path.to_string_lossy().as_ref());
-        set_env("TURALLM_CONFIG", config_path.to_string_lossy().as_ref());
+        set_env(
+            "TURA_PROVIDER_CONFIG",
+            config_path.to_string_lossy().as_ref(),
+        );
         set_env(
             "GOOGLE_OAUTH_TOKEN_URL",
             &format!("http://{addr}/oauth/token"),
@@ -556,7 +1086,10 @@ async fn provider_auth_refresh_covers_claude_code_oauth_method() {
     );
 
     set_env("TURA_ENV_PATH", env_path.to_string_lossy().as_ref());
-    set_env("TURALLM_CONFIG", config_path.to_string_lossy().as_ref());
+    set_env(
+        "TURA_PROVIDER_CONFIG",
+        config_path.to_string_lossy().as_ref(),
+    );
     set_env(
         "ANTHROPIC_OAUTH_TOKEN_URL",
         &format!("http://{addr}/oauth/token"),
@@ -644,7 +1177,10 @@ async fn run_pkce_callback_case(case: PkceCallbackCase) {
     );
     let (addr, server) = spawn_oauth_code_token_server("callback-code", "callback-verifier", body);
     set_env("TURA_ENV_PATH", env_path.to_string_lossy().as_ref());
-    set_env("TURALLM_CONFIG", config_path.to_string_lossy().as_ref());
+    set_env(
+        "TURA_PROVIDER_CONFIG",
+        config_path.to_string_lossy().as_ref(),
+    );
     set_env(case.token_url_env, &format!("http://{addr}/oauth/token"));
     for (key, value) in case.extra_env {
         set_env(key, value);
@@ -782,7 +1318,6 @@ fn clear_openai_refresh_test_env() {
     for key in [
         "TURA_ENV_PATH",
         "TURA_PROVIDER_CONFIG",
-        "TURALLM_CONFIG",
         "OPENAI_OAUTH_TOKEN_URL",
         "OPENAI_LOGIN",
         "OPENAI_API_KEY",

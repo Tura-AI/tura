@@ -1,23 +1,22 @@
-//! agent 注册表（registry 归 router，loop 仍归 runtime）。
+//! Agent registry owned by the router.
 //!
-//! 边界（对齐 `ARCHITECTURE.md`）：router 拥有 agent 注册表 + 解析 + spec 下发；
-//! runtime 仅据下发的 spec 激活 `AgentManagement` 实体并跑 MANAS loop。
-//! router **不拥有** agent loop / prompt 组装 / provider 格式化。
+//! The router owns agent discovery, resolution, and spec delivery. The runtime
+//! activates `AgentManagement` from the delivered spec and runs the MANAS loop.
+//! The router does not own prompt assembly, provider formatting, or agent loops.
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use tura_agents::store::{discover_agents, project_root_from_env_or_cwd};
 
-/// router 下发给 runtime worker 的已解析 agent spec。
-/// runtime 据此激活实体，不再自己查 agent 注册表。
+/// Resolved agent spec delivered from the router to a runtime worker.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AgentSpec {
     pub agent_name: String,
-    /// 默认 provider 标识（真值/OAuth 仍归 provider crate）。
+    /// Default provider id; credential truth and OAuth handling stay in provider.
     pub provider: String,
     pub capabilities: Vec<String>,
-    /// 触发该 agent 的 session_type / topic 集合。
+    /// Session types and topics that select this agent.
     pub session_types: Vec<String>,
     pub validator_enabled: bool,
     #[serde(default)]
@@ -97,7 +96,7 @@ const AGENT_TABLE: &[AgentDefinition] = &[
 
 const DEFAULT_AGENT_INDEX: usize = 1;
 
-/// 内存态 agent 注册表，启动从静态定义装载。
+/// In-memory agent registry loaded from static and dynamic definitions.
 #[derive(Clone, Debug)]
 pub struct AgentRegistry {
     name_index: HashMap<String, usize>,
@@ -150,7 +149,7 @@ impl AgentRegistry {
         }
     }
 
-    /// 按显式 agent 名解析。
+    /// Resolve by explicit agent name.
     pub fn resolve_by_name(&self, name: &str) -> Option<AgentSpec> {
         let key = name.trim().to_ascii_lowercase();
         if let Some(spec) = self.dynamic_specs.get(&key) {
@@ -161,7 +160,7 @@ impl AgentRegistry {
             .map(|index| spec_from(&AGENT_TABLE[*index]))
     }
 
-    /// 按 session_type / topic 解析；无显式 agent 时使用。
+    /// Resolve by session type or topic when no explicit agent is selected.
     pub fn resolve_by_session_type(&self, session_type: &str) -> AgentSpec {
         let key = session_type.trim().to_ascii_lowercase();
         if let Some(spec) = self.dynamic_specs.get(&key) {
@@ -175,7 +174,7 @@ impl AgentRegistry {
         spec_from(&AGENT_TABLE[index])
     }
 
-    /// 综合解析：优先显式 agent 名，回退 session_type。
+    /// Resolve by explicit agent first, then fall back to session type.
     pub fn resolve(&self, agent: Option<&str>, session_type: Option<&str>) -> AgentSpec {
         if let Some(agent) = agent {
             if let Some(spec) = self.resolve_by_name(agent) {

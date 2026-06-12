@@ -5,10 +5,8 @@ pub async fn get_paths(headers: HeaderMap, Query(params): Query<PathParams>) -> 
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_else(|_| "C:\\Users\\default".to_string());
-    let appdata =
-        std::env::var("APPDATA").unwrap_or_else(|_| format!("{}\\AppData\\Roaming", home));
-    let state =
-        std::env::var("LOCALAPPDATA").unwrap_or_else(|_| format!("{}\\AppData\\Local", home));
+    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| format!("{home}\\AppData\\Roaming"));
+    let state = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| format!("{home}\\AppData\\Local"));
     let cwd = std::env::current_dir()
         .unwrap_or_default()
         .to_string_lossy()

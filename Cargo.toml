@@ -1,11 +1,35 @@
+[package]
+name = "tura_workspace"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
 [workspace]
 resolver = "2"
+default-members = [
+  ".",
+  "agents",
+  "commands/read_media",
+  "commands/web_discover",
+  "crates/gateway",
+  "crates/path",
+  "crates/provider",
+  "personas",
+  "crates/router",
+  "crates/runtime",
+  "crates/session_log",
+  "crates/tools",
+]
 members = [
+  ".",
   "agents",
   "apps/tauri/src-tauri",
   "commands/read_media",
   "commands/web_discover",
   "crates/gateway",
+  "crates/path",
   "crates/provider",
   "personas",
   "crates/router",
@@ -18,7 +42,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 authors = ["Tura"]
-license = "MIT"
+license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -29,6 +53,7 @@ chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 futures = "0.3"
 futures-util = "0.3"
+filetime = "0.2"
 fs2 = "0.4"
 image = { version = "0.25", features = ["jpeg", "png", "webp"] }
 lazy_static = "1.4"
@@ -38,11 +63,8 @@ pdfium-render = { version = "0.8", features = ["image"] }
 redis = { version = "0.25", features = ["tokio-comp"] }
 regex = "1"
 reqwest = { version = "0.12", features = ["json", "stream"] }
-r2d2 = "0.8"
-r2d2_postgres = "0.18"
-postgres = { version = "0.19", features = ["with-serde_json-1"] }
-postgresql_embedded = { version = "0.20.2", features = ["blocking"] }
 quick_html2md = "0.2.1"
+rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
@@ -60,11 +82,53 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 agents = { path = "agents" }
 provider = { path = "crates/provider" }
+tura_path = { path = "crates/path" }
 personas = { path = "personas" }
 router = { path = "crates/router" }
 runtime = { path = "crates/runtime" }
 session_log = { path = "crates/session_log" }
 tools = { path = "crates/tools" }
+
+[profile.test]
+debug = 0
+incremental = false
+
+[dev-dependencies]
+anyhow.workspace = true
+rusqlite.workspace = true
+serde_json.workspace = true
+session_log.workspace = true
+sysinfo.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+router.workspace = true
+runtime.workspace = true
+tools.workspace = true
+
+[[test]]
+name = "process_state_management_e2e"
+path = "tests/business/process_state_management_e2e.rs"
+
+[[test]]
+name = "session_db_workspace_flow_e2e"
+path = "tests/business/session_db_workspace_flow_e2e.rs"
+
+[[test]]
+name = "session_db_restart_queue_resilience"
+path = "tests/business/session_db_restart_queue_resilience.rs"
+
+[[test]]
+name = "process_scope_management_e2e"
+path = "tests/business/process_scope_management_e2e.rs"
+
+[[test]]
+name = "process_lifecycle_policy_matrix"
+path = "tests/business/process_lifecycle_policy_matrix.rs"
+
+[[test]]
+name = "command_run_router_ownership_e2e"
+path = "tests/business/command_run_router_ownership_e2e.rs"

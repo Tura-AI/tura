@@ -429,7 +429,7 @@ class SnakeGatewayHandler(BaseHTTPRequestHandler):
                         "read-reference",
                         "shell_command",
                         "Read Snake Playwright benchmark",
-                        "Get-Content tests/business/command-run-agent-benchmarks/command_run_tui_snake_playwright_business_test.mjs -TotalCount 120",
+                        "Get-Content apps/tui/e2e/live/tui_web_terminal_snake_game_flow.mjs -TotalCount 120",
                         "Found acceptance checks for Snake/贪吃蛇, score, board, keyboard movement, and Playwright screenshots.",
                         now - 9000,
                         now - 7600,

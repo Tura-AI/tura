@@ -11,11 +11,10 @@ pub(crate) fn select_directory(title: Option<&str>) -> anyhow::Result<Option<Str
              $f.StartPosition = 'CenterScreen'; \
              $f.ShowInTaskbar = $false; \
              $d = New-Object System.Windows.Forms.FolderBrowserDialog; \
-             $d.Description = '{}'; \
+             $d.Description = '{escaped_title}'; \
              $d.ShowNewFolderButton = $true; \
              if ($d.ShowDialog($f) -eq [System.Windows.Forms.DialogResult]::OK) {{ $d.SelectedPath }}; \
              $f.Dispose()",
-            escaped_title,
         );
         let output = ProcessCommand::new("powershell")
             .args([

@@ -46,7 +46,8 @@ pub(crate) fn execute_turn(
     tools = move_command_run_to_end(tools);
     if debug_runtime_enabled() {
         eprintln!(
-            "tura runtime debug: agent={} allowed_tools={:?}",
+            "tura runtime debug [{}]: agent={} allowed_tools={:?}",
+            debug_runtime_timestamp(),
             agent.agent_name,
             tools
                 .iter()
@@ -131,7 +132,8 @@ pub(crate) fn execute_turn(
         .collect();
     if debug_runtime_enabled() {
         eprintln!(
-            "tura runtime debug: state={:?} text_len={} raw_tool_calls={} filtered_tool_calls={}",
+            "tura runtime debug [{}]: state={:?} text_len={} raw_tool_calls={} filtered_tool_calls={}",
+            debug_runtime_timestamp(),
             runtime.state,
             runtime.text.len(),
             runtime.tool_call.len(),
@@ -169,6 +171,10 @@ fn debug_runtime_enabled() -> bool {
                 "1" | "true" | "yes" | "on"
             )
         })
+}
+
+fn debug_runtime_timestamp() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 fn tool_choice_for_turn(

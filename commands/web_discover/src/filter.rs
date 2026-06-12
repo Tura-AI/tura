@@ -127,14 +127,7 @@ pub(super) fn site_filters(query: &str) -> Vec<String> {
     };
     re.captures_iter(query)
         .filter_map(|capture| capture.get(1).map(|value| value.as_str()))
-        .map(|site| {
-            site.trim()
-                .trim_start_matches("https://")
-                .trim_start_matches("http://")
-                .trim_start_matches("www.")
-                .trim_matches('/')
-                .to_ascii_lowercase()
-        })
+        .filter_map(url_host)
         .filter(|site| !site.is_empty())
         .collect()
 }

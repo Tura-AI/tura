@@ -5,6 +5,7 @@ pub mod compact_context;
 pub mod planning;
 pub mod shell_command;
 pub mod task_status;
+pub mod zsh;
 
 use crate::runtime::file_locks::Access;
 use serde_json::Value;
@@ -34,6 +35,7 @@ pub fn execute(
         "read_media" => execute_external("read_media", command_line, session_dir),
         "shell_command" => shell_command::execute(command_line, session_dir, timeout_secs),
         "web_discover" => execute_external("web_discover", command_line, session_dir),
+        "zsh" => zsh::execute(command_line, session_dir, timeout_secs),
         other => CommandResponse {
             success: false,
             exit_code: 1,
@@ -52,10 +54,10 @@ pub fn access(command: &str, command_line: &str, session_dir: &Path) -> Access {
         "planning" if planning_command_enabled() => Access::default(),
         "read_media" => access_external("read_media", command_line, session_dir),
         "web_discover" => access_external("web_discover", command_line, session_dir),
-        "shell_command" | "bash" if shell_command::looks_read_only(command_line) => {
+        "shell_command" | "bash" | "zsh" if shell_command::looks_read_only(command_line) => {
             Access::default()
         }
-        "shell_command" | "bash" => Access {
+        "shell_command" | "bash" | "zsh" => Access {
             workspace_write: true,
             ..Access::default()
         },
@@ -94,7 +96,7 @@ pub fn result_command_name(command: &str) -> String {
 pub fn canonical_command(name: &str) -> String {
     let text = name.trim().to_ascii_lowercase().replace('-', "_");
     match text.as_str() {
-        "bash" | "shell" | "shell_command" | "shll" | "shall" => {
+        "bash" | "zsh" | "shell" | "shell_command" | "shll" | "shall" => {
             active_shell_command_name().to_string()
         }
         "apply_patch" => "apply_patch".to_string(),
@@ -118,8 +120,10 @@ pub fn active_shell_command_name() -> &'static str {
         .as_deref()
     {
         Some("bash") => "bash",
+        Some("zsh") => "zsh",
         Some("shell") | Some("shell_command") | Some("shll") | Some("shall") => "shell_command",
         _ if cfg!(windows) => "shell_command",
+        _ if cfg!(target_os = "macos") => "zsh",
         _ => "bash",
     }
 }
@@ -141,16 +145,18 @@ fn planning_command_enabled() -> bool {
 }
 
 fn execute_external(command: &str, command_line: &str, session_dir: &Path) -> CommandResponse {
-    let command = command.to_string();
+    let command_for_run = command.to_string();
+    let command_for_error = command.to_string();
     let payload = Value::String(command_line.to_string());
-    let session_dir = session_dir.display().to_string();
+    let session_dir_for_run = session_dir.display().to_string();
+    let session_dir_for_error = session_dir_for_run.clone();
     let run = async move {
         crate::external::launcher::invoke(
-            &command,
+            &command_for_run,
             "execute",
             serde_json::json!({
                 "arguments": payload,
-                "session_dir": session_dir,
+                "session_dir": session_dir_for_run,
                 "call_id": "command_run",
             }),
         )
@@ -161,18 +167,36 @@ fn execute_external(command: &str, command_line: &str, session_dir: &Path) -> Co
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .map_err(|err| err.to_string())?
+                .map_err(|err| {
+                    format!(
+                        "failed to create runtime for external command {command_for_error} in {session_dir_for_error}: {err}"
+                    )
+                })?
                 .block_on(run)
-                .map_err(|err| err.to_string())
+                .map_err(|err| {
+                    format!(
+                        "external command {command_for_error} execute failed in {session_dir_for_error}: {err}"
+                    )
+                })
         })
         .join()
-        .unwrap_or_else(|_| Err("external command thread panicked".to_string()))
+        .unwrap_or_else(|_| Err("external command worker thread panicked".to_string()))
     } else {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .map_err(|err| err.to_string())
-            .and_then(|runtime| runtime.block_on(run).map_err(|err| err.to_string()))
+            .map_err(|err| {
+                format!(
+                    "failed to create runtime for external command {command_for_error} in {session_dir_for_error}: {err}"
+                )
+            })
+            .and_then(|runtime| {
+                runtime.block_on(run).map_err(|err| {
+                    format!(
+                        "external command {command_for_error} execute failed in {session_dir_for_error}: {err}"
+                    )
+                })
+            })
     };
     match response {
         Ok(response) => CommandResponse {
@@ -222,4 +246,36 @@ fn access_external(command: &str, command_line: &str, session_dir: &Path) -> Acc
     response
         .and_then(|response| serde_json::from_value(response.output).ok())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{execute_external, CommandResponse};
+    use std::path::Path;
+
+    fn assert_failed(response: CommandResponse) -> String {
+        assert!(!response.success);
+        assert_eq!(response.exit_code, 1);
+        response.stderr
+    }
+
+    #[test]
+    fn external_command_error_includes_command_and_workspace() {
+        let workspace = Path::new("workspace-for-external-error");
+
+        let stderr = assert_failed(execute_external("missing_external", "{}", workspace));
+
+        assert!(
+            stderr.contains("external command missing_external execute failed"),
+            "error should include command and operation: {stderr}"
+        );
+        assert!(
+            stderr.contains("workspace-for-external-error"),
+            "error should include workspace context: {stderr}"
+        );
+        assert!(
+            stderr.contains("unsupported external command: missing_external"),
+            "error should preserve the launcher error: {stderr}"
+        );
+    }
 }

@@ -22,9 +22,9 @@ pub(super) fn load_agent_capabilities(
     }
 
     let content = std::fs::read_to_string(&interface_path)
-        .map_err(|e| format!("failed to read tool interface: {}", e))?;
+        .map_err(|e| format!("failed to read tool interface: {e}"))?;
     let interface = serde_json::from_str::<serde_json::Value>(&content)
-        .map_err(|e| format!("failed to parse tool interface: {}", e))?;
+        .map_err(|e| format!("failed to parse tool interface: {e}"))?;
 
     Ok(vec![tool_interface_to_provider_schema_for_agent(
         interface, agent,
@@ -314,8 +314,10 @@ fn active_shell_command_name() -> &'static str {
         .as_deref()
     {
         Some("bash") => "bash",
+        Some("zsh") => "zsh",
         Some("shell") | Some("shell_command") | Some("shll") | Some("shall") => "shell_command",
         _ if cfg!(windows) => "shell_command",
+        _ if cfg!(target_os = "macos") => "zsh",
         _ => "bash",
     }
 }
@@ -351,10 +353,10 @@ fn command_run_description_for_active_shell(
         ));
     }
     if allowed_commands.contains(active) {
-        let shell_prompt = if active == "shell_command" {
-            code_tools::commands::shell_command::PROMPT
-        } else {
-            code_tools::commands::bash::PROMPT
+        let shell_prompt = match active {
+            "shell_command" => code_tools::commands::shell_command::PROMPT,
+            "zsh" => code_tools::commands::zsh::PROMPT,
+            _ => code_tools::commands::bash::PROMPT,
         };
         command_lines.push(format!(
             "- {active}: {}",
@@ -451,7 +453,7 @@ fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
         "- Do not run test/probe invocations before you have read the relevant code and determined the actual CLI command set.",
         "- Use steps to express execution order and dependency relationships. Commands in the same step may run together; later steps should depend on earlier steps only when their inputs are already known before the batch is created.",
         "- Code repair loop: after discovery has produced enough facts, use one step for coordinated edits and later steps for already-known tests or focused validation.",
-        "- Avoid embedding long generated source code or complex quoting directly in shell/bash command lines; for complex logic, invoke a script/interpreter from shell/bash rather than encoding the logic in shell syntax.",
+        "- Avoid embedding long generated source code or complex quoting directly in shell command lines; for complex logic, invoke a script/interpreter from the active shell rather than encoding the logic in shell syntax.",
         "- Verification: run the relevant test or build command after edits in the same command_run only when the verification command is already known.",
         "- Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.",
         "- Context compaction: after a meaningful phase completes, or when context is near 200,000 tokens and feels crowded, put `compact_context` as the final command in the highest step with a concise handoff summary for the next turn.",
@@ -618,15 +620,15 @@ mod tests {
             "description missing task_status command"
         );
         assert!(
-            description
-                .contains("Reminder: settle the task state with the last task_status command")
+            description.contains("Reminder: task_status only updates internal task state")
                 && description
-                    .contains("Mark `done` only after the task is complete and verified."),
+                    .contains("Mark `done` only after the task is complete and verified.")
+                && description.contains("if the user says hello or asks a simple question"),
             "description missing task_status reminder"
         );
         // The schema enum is injected too.
         assert!(
-            description.contains("\"enum\":[\"question\",\"done\"]"),
+            description.contains("\"enum\":[\"doing\",\"question\",\"done\"]"),
             "description missing task_status schema enum"
         );
     }
@@ -646,9 +648,9 @@ mod tests {
             .unwrap_or_default();
 
         assert!(description.contains("task_status"));
-        assert!(description
-            .contains("Reminder: settle the task state with the last task_status command"));
+        assert!(description.contains("Reminder: task_status only updates internal task state"));
         assert!(description.contains("Mark `done` only after the task is complete and verified."));
+        assert!(description.contains("if the user says hello or asks a simple question"));
         assert!(!description.contains("Continue working toward the active thread goal."));
         assert!(!description.contains("[current objective]:"));
         assert!(!description.to_ascii_lowercase().contains("budget"));
@@ -847,6 +849,9 @@ mod tests {
         assert!(description.contains("\"workdir\":{\"type\":\"string\""));
         assert!(description.contains("\"timeout_ms\":{\"type\":\"number\""));
         assert!(description.contains("Default timeout is 15 seconds"));
+        assert!(description.contains("bash-specific syntax"));
+        assert!(description.contains("Bash arrays are zero-indexed"));
+        assert!(description.contains("Do not use zsh-only glob qualifiers"));
         assert!(description
             .contains("Persistent services must never be used as blocking foreground commands"));
         assert!(description.contains(
@@ -861,6 +866,31 @@ mod tests {
         assert!(!description.contains("Stop-Process -Id $p1.Id,$p2.Id -Force"));
         assert!(!description.contains("p1=$(node server.mjs 4173"));
         assert!(!description.contains("shell_command"));
+
+        std::env::remove_var("TURA_COMMAND_RUN_SHELL");
+    }
+
+    #[test]
+    fn command_run_provider_description_exposes_only_zsh_surface() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "zsh");
+
+        let schema = tool_interface_to_provider_schema(command_run_interface());
+        let description = schema["function"]["description"]
+            .as_str()
+            .unwrap_or_default();
+
+        assert!(description.contains(
+            "Available commands: apply_patch, zsh, read_media, web_discover, compact_context, task_status."
+        ));
+        assert!(description.contains("- zsh:"));
+        assert!(description.contains("zsh-specific syntax"));
+        assert!(description.contains("/bin/zsh"));
+        assert!(description.contains("Zsh arrays are one-indexed"));
+        assert!(description.contains("unmatched globs can fail"));
+        assert!(description.contains("Do not use bash-only helpers"));
+        assert!(!description.contains("- bash:"));
+        assert!(!description.contains("- shell_command:"));
 
         std::env::remove_var("TURA_COMMAND_RUN_SHELL");
     }
@@ -898,10 +928,12 @@ mod tests {
         let command_run_dir = root.join("command_run");
         let shell_dir = root.join("commands").join("shell_command");
         let bash_dir = root.join("commands").join("bash");
+        let zsh_dir = root.join("commands").join("zsh");
         let apply_patch_dir = root.join("commands").join("apply_patch");
         std::fs::create_dir_all(&command_run_dir).expect("command_run dir should be created");
         std::fs::create_dir_all(&shell_dir).expect("shell dir should be created");
         std::fs::create_dir_all(&bash_dir).expect("bash dir should be created");
+        std::fs::create_dir_all(&zsh_dir).expect("zsh dir should be created");
         std::fs::create_dir_all(&apply_patch_dir).expect("apply_patch dir should be created");
         std::fs::write(
             command_run_dir.join("prompt.md"),
@@ -912,6 +944,8 @@ mod tests {
             .expect("shell prompt should be written");
         std::fs::write(bash_dir.join("prompt.md"), "bash command_run prompt")
             .expect("bash prompt should be written");
+        std::fs::write(zsh_dir.join("prompt.md"), "zsh command_run prompt")
+            .expect("zsh prompt should be written");
         std::fs::write(apply_patch_dir.join("prompt.md"), "apply_patch prompt")
             .expect("apply_patch prompt should be written");
 
@@ -960,6 +994,7 @@ mod tests {
         assert!(!descriptions.contains("apply_patch prompt"));
         assert!(!descriptions.contains("shell command_run prompt"));
         assert!(!descriptions.contains("bash command_run prompt"));
+        assert!(!descriptions.contains("zsh command_run prompt"));
 
         let _ = std::fs::remove_dir_all(root);
     }

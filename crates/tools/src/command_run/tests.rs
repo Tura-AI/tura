@@ -1,6 +1,10 @@
+use super::handler_parse::{
+    command_values, parse_arguments_value, parse_command_item, string_field, u64_field,
+};
 use super::{normalize_command_steps, normalize_shell_command_arguments, parse_args};
 use serde_json::json;
 use serde_json::Value;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn parse_missing_steps_default_to_original_order_steps() {
@@ -233,4 +237,149 @@ fn parse_command_only_here_string_patch_is_routed_to_apply_patch() {
 
     assert_eq!(args.commands[0].command, "apply_patch");
     assert!(args.commands[0].command_line.starts_with("*** Begin Patch"));
+}
+
+#[test]
+fn parse_arguments_value_accepts_requests_wrapper_and_plain_values() {
+    let wrapped = parse_arguments_value(&json!({
+        "requests": {
+            "commands": [
+                {"command_type": "shell_command", "command_line": "echo wrapped"}
+            ]
+        }
+    }))
+    .expect("requests wrapper");
+    let fenced = parse_arguments_value(&Value::String(
+        "```json\n{\"requests\":{\"commands\":[{\"command\":\"shell_command\"}]}}\n```".to_string(),
+    ))
+    .expect("fenced requests wrapper");
+    let plain = parse_arguments_value(&json!({"commands": [{"command": "echo plain"}]}))
+        .expect("plain arguments");
+
+    assert_eq!(wrapped["commands"][0]["command_line"], "echo wrapped");
+    assert_eq!(fenced["commands"][0]["command"], "shell_command");
+    assert_eq!(plain["commands"][0]["command"], "echo plain");
+}
+
+#[test]
+fn parse_arguments_value_reports_jsonish_errors_with_context() {
+    let error = parse_arguments_value(&Value::String("```json\n{\"commands\":[}\n```".to_string()))
+        .expect_err("invalid fenced json should fail");
+
+    assert!(error.contains("failed to parse command_run arguments"));
+}
+
+#[test]
+fn command_values_wraps_single_objects_and_strings_but_drops_scalars() {
+    assert_eq!(command_values(&json!([{"command": "one"}])).len(), 1);
+    assert_eq!(command_values(&json!({"command": "one"})).len(), 1);
+    assert_eq!(command_values(&json!("echo one")), vec![json!("echo one")]);
+    assert!(command_values(&json!(false)).is_empty());
+    assert!(command_values(&json!(42)).is_empty());
+}
+
+#[test]
+fn parse_command_item_recovers_inline_arguments_and_residual_fields() {
+    let item = parse_command_item(&json!({
+        "command_type": "task_status",
+        "command": "{\"status\":\"done\"}",
+        "parameters": {"status": "done"},
+        "workdir": "workspace",
+        "step": "3",
+        "timeoutMs": "4000"
+    }))
+    .expect("parse command item");
+
+    assert_eq!(item.command, "task_status");
+    assert_eq!(item.command_line, "{\"status\":\"done\"}");
+    assert_eq!(item.inline_arguments, Some(json!({"status": "done"})));
+    assert_eq!(item.workdir.as_deref(), Some("workspace"));
+    assert_eq!(item.step, Some(3));
+    assert_eq!(item.timeout_ms, Some(4000));
+}
+
+#[test]
+fn parse_command_item_uses_shell_when_only_payload_field_is_present() {
+    let item = parse_command_item(&json!({
+        "payload": "echo payload-only",
+        "extra": "kept"
+    }))
+    .expect("parse payload-only item");
+
+    assert_eq!(item.command, crate::commands::active_shell_command_name());
+    assert_eq!(item.command_line, "echo payload-only");
+    assert_eq!(item.inline_arguments, Some(json!({"extra": "kept"})));
+}
+
+#[test]
+fn parse_command_item_rejects_non_object_non_string_and_missing_command() {
+    assert!(parse_command_item(&json!(null))
+        .expect_err("null command item")
+        .contains("expected object"));
+    assert!(parse_command_item(&json!({"step": 1}))
+        .expect_err("missing command")
+        .contains("missing field `command_type`"));
+}
+
+#[test]
+fn field_helpers_trim_only_string_presence_and_parse_unsigned_numbers() {
+    let object = json!({
+        "blank": " ",
+        "array": ["a", "b"],
+        "object": {"k": "v"},
+        "number": 42,
+        "numberString": "43",
+        "badNumber": "-1"
+    });
+    let object = object.as_object().expect("object");
+
+    assert_eq!(string_field(object, &["blank"]), None);
+    assert_eq!(
+        string_field(object, &["array"]),
+        Some("[\"a\",\"b\"]".to_string())
+    );
+    assert_eq!(
+        string_field(object, &["object"]),
+        Some("{\"k\":\"v\"}".to_string())
+    );
+    assert_eq!(u64_field(object, &["number"]), Some(42));
+    assert_eq!(u64_field(object, &["numberString"]), Some(43));
+    assert_eq!(u64_field(object, &["badNumber"]), None);
+}
+
+#[tokio::test]
+async fn streaming_executor_returns_safe_shell_result_before_finish() {
+    let workspace = temporary_workspace("streaming-safe-shell-before-finish");
+    let mut executor = super::StreamingCommandRunExecutor::new(workspace.clone());
+
+    let result = executor
+        .push_command_value(json!({
+            "command": "shell_command",
+            "command_line": "echo streamed-safe-shell",
+            "timeout_ms": 3000,
+            "step": 1
+        }))
+        .await;
+
+    assert!(
+        !result.is_empty(),
+        "streaming shell result should be available before finish()"
+    );
+    assert_eq!(
+        result[0].get("success").and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+fn temporary_workspace(prefix: &str) -> std::path::PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after UNIX_EPOCH")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&path)
+        .unwrap_or_else(|error| panic!("failed to create {}: {error}", path.display()));
+    path
 }

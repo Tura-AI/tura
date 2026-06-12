@@ -113,3 +113,88 @@ fn mime_type_for_path(path: &Path) -> &'static str {
         _ => "application/octet-stream",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{mime_type_for_path, process_document};
+    use crate::types::ReadMediaArgs;
+    use base64::{engine::general_purpose, Engine as _};
+
+    fn args(include_text: bool, attachment_bytes: u64) -> ReadMediaArgs {
+        ReadMediaArgs {
+            paths: vec!["sample.txt".to_string()],
+            include_text,
+            max_text_chars: 12,
+            max_visuals: 2,
+            max_side: 256,
+            max_files: 10,
+            pdf_max_pages: 2,
+            document_attachment_bytes: attachment_bytes,
+            audio_preview_bytes: 1_000_000,
+        }
+    }
+
+    #[test]
+    fn text_document_is_read_and_truncated_when_requested() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("notes.txt");
+        std::fs::write(&file, "abcdefghijklmnopqrstuvwxyz").expect("write notes");
+
+        let content = process_document(&file, &args(true, 1_000_000))
+            .expect("text document should be processed");
+
+        assert!(content.text.contains("[read_media text truncated]"));
+        assert!(content.visual_previews.is_empty());
+        assert!(content.file_attachments.is_empty());
+    }
+
+    #[test]
+    fn binary_document_under_size_limit_is_uploaded_as_attachment() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("archive.zip");
+        std::fs::write(&file, b"PK\x03\x04fixture").expect("write archive");
+
+        let content = process_document(&file, &args(false, 1_000_000))
+            .expect("zip document should be processed");
+
+        assert_eq!(content.file_attachments.len(), 1);
+        assert_eq!(content.file_attachments[0]["mime_type"], "application/zip");
+        assert_eq!(
+            content.file_attachments[0]["data_base64"],
+            general_purpose::STANDARD.encode(b"PK\x03\x04fixture")
+        );
+    }
+
+    #[test]
+    fn oversized_binary_document_is_omitted_without_attachment() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("archive.zip");
+        std::fs::write(&file, b"large enough").expect("write archive");
+
+        let content = process_document(&file, &args(false, 1))
+            .expect("oversized document should be safely omitted");
+
+        assert!(content.text.is_empty());
+        assert!(content.file_attachments.is_empty());
+    }
+
+    #[test]
+    fn mime_type_mapping_covers_known_documents_and_unknowns() {
+        assert_eq!(
+            mime_type_for_path(std::path::Path::new("a.docx")),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        );
+        assert_eq!(
+            mime_type_for_path(std::path::Path::new("a.xlsx")),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+        assert_eq!(
+            mime_type_for_path(std::path::Path::new("a.pptx")),
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        );
+        assert_eq!(
+            mime_type_for_path(std::path::Path::new("a.bin")),
+            "application/octet-stream"
+        );
+    }
+}

@@ -250,6 +250,7 @@ pub trait ToolHandler: Send + Sync {
 pub struct ToolRouter {
     shell: crate::commands::shell_command::ShellCommandHandler,
     bash: crate::commands::bash::BashHandler,
+    zsh: crate::commands::zsh::ZshHandler,
     apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
     compact_context: crate::commands::compact_context::CompactContextHandler,
     planning: crate::commands::planning::PlanningHandler,
@@ -262,6 +263,7 @@ impl ToolRouter {
         Self {
             shell: crate::commands::shell_command::ShellCommandHandler,
             bash: crate::commands::bash::BashHandler,
+            zsh: crate::commands::zsh::ZshHandler,
             apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
             compact_context: crate::commands::compact_context::CompactContextHandler,
             planning: crate::commands::planning::PlanningHandler,
@@ -274,6 +276,7 @@ impl ToolRouter {
         match crate::commands::canonical_command(command).as_str() {
             "shell_command" => Some("shell_command"),
             "bash" => Some("bash"),
+            "zsh" => Some("zsh"),
             "apply_patch" => Some("apply_patch"),
             "compact_context" => Some("compact_context"),
             "planning" if planning_command_enabled() => Some("planning"),
@@ -287,6 +290,7 @@ impl ToolRouter {
         match tool_name {
             "shell_command" => Some(&self.shell),
             "bash" => Some(&self.bash),
+            "zsh" => Some(&self.zsh),
             "apply_patch" => Some(&self.apply_patch),
             "compact_context" => Some(&self.compact_context),
             "planning" if planning_command_enabled() => Some(&self.planning),
@@ -422,5 +426,332 @@ impl ToolHandler for ExternalCommandHandler {
         )
         .await?;
         Ok(FunctionToolOutput::from_value(output, Some(true)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct StaticHandler {
+        name: &'static str,
+        mutating: bool,
+        macro_command: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl ToolHandler for StaticHandler {
+        fn tool_name(&self) -> &'static str {
+            self.name
+        }
+
+        fn supports_macro_command(&self) -> bool {
+            self.macro_command
+        }
+
+        async fn is_mutating(&self, _call: &ToolCall, _ctx: &ToolContext) -> bool {
+            self.mutating
+        }
+
+        async fn handle(
+            &self,
+            _call: ToolCall,
+            _ctx: ToolContext,
+        ) -> Result<FunctionToolOutput, ToolError> {
+            Ok(FunctionToolOutput::from_value(
+                json!({"ok": true}),
+                Some(true),
+            ))
+        }
+    }
+
+    #[test]
+    fn tool_payload_code_mode_input_preserves_function_json_and_freeform_text() {
+        let function = ToolPayload::Function {
+            arguments: json!({"command":"cargo test","timeout_secs":30}),
+        };
+        let freeform = ToolPayload::Freeform {
+            input: "*** Begin Patch\n*** End Patch".to_string(),
+        };
+
+        assert_eq!(
+            function.code_mode_input(),
+            json!({"command":"cargo test","timeout_secs":30})
+        );
+        assert_eq!(
+            freeform.code_mode_input(),
+            json!("*** Begin Patch\n*** End Patch")
+        );
+    }
+
+    #[test]
+    fn function_tool_output_defaults_success_for_logging_and_returns_body_for_code_mode() {
+        let implicit = FunctionToolOutput::from_value(json!({"result": "ok"}), None);
+        assert!(implicit.success_for_logging());
+        assert_eq!(implicit.code_mode_result(), json!({"result": "ok"}));
+
+        let explicit_failure = FunctionToolOutput::from_value(json!({"error": "bad"}), Some(false));
+        assert!(!explicit_failure.success_for_logging());
+        assert_eq!(explicit_failure.code_mode_result(), json!({"error": "bad"}));
+    }
+
+    #[test]
+    fn tool_context_child_shares_events_hooks_gate_and_cancellation_but_keeps_call_id() {
+        let context =
+            ToolContext::new(PathBuf::from("workspace")).with_call_id("call-1".to_string());
+        let child = context.child();
+
+        assert_eq!(child.session_dir, PathBuf::from("workspace"));
+        assert_eq!(child.current_call_id(), Some("call-1"));
+        child.record_event(ToolRuntimeEvent::ToolStarted {
+            call_id: "call-1".to_string(),
+            tool_name: "shell_command".to_string(),
+        });
+        assert_eq!(context.events().len(), 1);
+
+        context.cancellation.cancel();
+        assert!(child.cancellation.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn cancellation_token_waiters_are_notified_and_late_waiters_return_immediately() {
+        let token = CancellationToken::new();
+        let waiter_token = token.child_token();
+        let waiter = tokio::spawn(async move {
+            waiter_token.cancelled().await;
+            waiter_token.is_cancelled()
+        });
+
+        assert!(!token.is_cancelled());
+        token.cancel();
+        assert!(waiter.await.expect("waiter task"));
+        token.cancelled().await;
+    }
+
+    #[tokio::test]
+    async fn default_access_tracks_mutating_workspace_write_rule() {
+        let context = ToolContext::new(PathBuf::from("workspace"));
+        let call = ToolCall {
+            tool_name: "dummy".to_string(),
+            call_id: "call".to_string(),
+            payload: ToolPayload::Function {
+                arguments: json!({}),
+            },
+        };
+        let read_only = StaticHandler {
+            name: "dummy",
+            mutating: false,
+            macro_command: false,
+        };
+        let mutating = StaticHandler {
+            name: "dummy",
+            mutating: true,
+            macro_command: false,
+        };
+
+        assert!(!read_only.access(&call, &context).await.workspace_write);
+        assert!(mutating.access(&call, &context).await.workspace_write);
+    }
+
+    #[test]
+    fn tool_router_resolves_documented_command_aliases_and_macro_support() {
+        let router = ToolRouter::new();
+        let active_shell = crate::commands::active_shell_command_name();
+
+        assert_eq!(
+            router.resolve_command_tool_name("shell_command"),
+            Some(active_shell)
+        );
+        assert_eq!(
+            router.resolve_command_tool_name("shell-command"),
+            Some(active_shell)
+        );
+        assert_eq!(router.resolve_command_tool_name("bash"), Some(active_shell));
+        assert_eq!(router.resolve_command_tool_name("zsh"), Some(active_shell));
+        assert_eq!(
+            router.resolve_command_tool_name("apply_patch"),
+            Some("apply_patch")
+        );
+        assert_eq!(
+            router.resolve_command_tool_name("compact_context"),
+            Some("compact_context")
+        );
+        assert_eq!(
+            router.resolve_command_tool_name("read_media"),
+            Some("read_media")
+        );
+        assert_eq!(
+            router.resolve_command_tool_name("web_discover"),
+            Some("web_discover")
+        );
+        assert_eq!(router.resolve_command_tool_name("missing"), None);
+
+        let read_media = ToolCall {
+            tool_name: "read_media".to_string(),
+            call_id: "read".to_string(),
+            payload: ToolPayload::Function {
+                arguments: json!({}),
+            },
+        };
+        let shell = ToolCall {
+            tool_name: "shell_command".to_string(),
+            call_id: "shell".to_string(),
+            payload: ToolPayload::Function {
+                arguments: json!({}),
+            },
+        };
+        assert!(router.tool_supports_macro_command(&read_media));
+        assert!(router.tool_supports_macro_command(&shell));
+    }
+
+    #[test]
+    fn planning_command_is_hidden_until_explicit_force_env_is_enabled() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let previous_force = std::env::var_os("TURA_FORCE_PLANNING");
+        let previous_execute = std::env::var_os("TURA_FORCE_EXECUTE_TOOLS_PLANNING");
+        std::env::remove_var("TURA_FORCE_PLANNING");
+        std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_PLANNING");
+        let router = ToolRouter::new();
+        assert_eq!(router.resolve_command_tool_name("planning"), None);
+        assert!(router.handler("planning").is_none());
+
+        for value in ["1", "true", "yes", "on", " TRUE "] {
+            std::env::set_var("TURA_FORCE_PLANNING", value);
+            assert_eq!(
+                router.resolve_command_tool_name("planning"),
+                Some("planning")
+            );
+            assert!(router.handler("planning").is_some());
+        }
+        std::env::set_var("TURA_FORCE_PLANNING", "false");
+        std::env::set_var("TURA_FORCE_EXECUTE_TOOLS_PLANNING", "yes");
+        assert_eq!(
+            router.resolve_command_tool_name("planning"),
+            Some("planning")
+        );
+
+        restore_env("TURA_FORCE_PLANNING", previous_force);
+        restore_env("TURA_FORCE_EXECUTE_TOOLS_PLANNING", previous_execute);
+    }
+
+    #[tokio::test]
+    async fn dispatch_unknown_tool_responds_to_model_without_recording_events() {
+        let router = ToolRouter::new();
+        let context = ToolContext::new(PathBuf::from("workspace"));
+        let call = ToolCall {
+            tool_name: "missing".to_string(),
+            call_id: "call-missing".to_string(),
+            payload: ToolPayload::Function {
+                arguments: json!({}),
+            },
+        };
+
+        let error = router
+            .dispatch(call, context.clone(), false)
+            .await
+            .expect_err("unknown tool should fail");
+
+        assert!(
+            matches!(error, ToolError::RespondToModel(message) if message.contains("unsupported command_run command: missing"))
+        );
+        assert!(context.events().is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatch_pre_hook_failure_stops_before_start_event() {
+        let router = ToolRouter::new();
+        let context = ToolContext::new(PathBuf::from("workspace"));
+        context.set_pre_hook(|call| {
+            Err(ToolError::RespondToModel(format!(
+                "blocked {}",
+                call.tool_name
+            )))
+        });
+        let call = ToolCall {
+            tool_name: "compact_context".to_string(),
+            call_id: "call-1".to_string(),
+            payload: ToolPayload::Function {
+                arguments: json!({}),
+            },
+        };
+
+        let error = router
+            .dispatch(call, context.clone(), false)
+            .await
+            .expect_err("pre hook should fail");
+
+        assert!(
+            matches!(error, ToolError::RespondToModel(message) if message == "blocked compact_context")
+        );
+        assert!(context.events().is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatch_records_start_finish_and_post_hook_can_change_success() {
+        let router = ToolRouter::new();
+        let context = ToolContext::new(PathBuf::from("workspace"));
+        let post_calls = Arc::new(AtomicUsize::new(0));
+        let post_calls_for_hook = Arc::clone(&post_calls);
+        context.set_post_hook(move |_call, output| {
+            post_calls_for_hook.fetch_add(1, Ordering::SeqCst);
+            output.success = Some(false);
+            output.body = json!({"hooked": true});
+            Ok(())
+        });
+        let call = ToolCall {
+            tool_name: "compact_context".to_string(),
+            call_id: "call-1".to_string(),
+            payload: ToolPayload::Function {
+                arguments: json!({"summary":"checkpoint after successful dispatch"}),
+            },
+        };
+
+        let result = router
+            .dispatch(call, context.clone(), false)
+            .await
+            .expect("compact_context dispatch");
+
+        assert_eq!(result.call_id, "call-1");
+        assert_eq!(result.result.success, Some(false));
+        assert_eq!(result.result.body, json!({"hooked": true}));
+        assert_eq!(post_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            context.events(),
+            vec![
+                ToolRuntimeEvent::ToolStarted {
+                    call_id: "call-1".to_string(),
+                    tool_name: "compact_context".to_string(),
+                },
+                ToolRuntimeEvent::ToolFinished {
+                    call_id: "call-1".to_string(),
+                    tool_name: "compact_context".to_string(),
+                    success: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn tool_error_display_uses_model_visible_message_for_both_error_kinds() {
+        assert_eq!(
+            ToolError::Fatal("fatal error".to_string()).to_string(),
+            "fatal error"
+        );
+        assert_eq!(
+            ToolError::RespondToModel("model error".to_string()).to_string(),
+            "model error"
+        );
+    }
+
+    fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
+        if let Some(value) = previous {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
     }
 }

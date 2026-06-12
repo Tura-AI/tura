@@ -3,8 +3,8 @@
 //! This is the shared core for codex (OAuth) and the API-key Responses
 //! sub-providers — `chatgpt` (OpenAI), `grok` (xAI), `qwen` (DashScope
 //! international). All of them speak the same request/stream shape; the few
-//! per-provider divergences are captured by [`ResponsesProfile`] (the "额外一层"
-//! quirk layer).
+//! per-provider divergences are captured by [`ResponsesProfile`] as a small
+//! provider quirk layer.
 
 use serde_json::{json, Value};
 use std::time::Instant;
@@ -160,7 +160,7 @@ fn codex_cli_user_agent() -> String {
 
 /// Per-provider behaviour of the shared Responses-API payload builder. Codex
 /// (OAuth) and the API-key Responses tier (`chatgpt`, `grok`, `qwen`) share the
-/// same request shape; the few divergences live here ("额外一层"/quirk layer).
+/// same request shape; the few divergences live in this quirk layer.
 #[derive(Clone, Copy)]
 struct ResponsesProfile {
     /// Provider id, used for quirk dispatch and diagnostics.
@@ -434,6 +434,17 @@ fn process_codex_sse_line(
     if let Some(sink) = stream_events {
         if output_event {
             sink(ProviderStreamEvent::ProviderOutputStarted);
+        }
+        if value.get("type").and_then(Value::as_str) == Some("response.output_text.delta") {
+            if let Some(delta) = value
+                .get("delta")
+                .and_then(Value::as_str)
+                .filter(|delta| !delta.is_empty())
+            {
+                sink(ProviderStreamEvent::TextDelta {
+                    text: delta.to_string(),
+                });
+            }
         }
         for event in command_collector.push_event(&value) {
             sink(event);

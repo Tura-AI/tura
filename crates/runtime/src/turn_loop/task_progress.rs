@@ -71,44 +71,45 @@ fn command_run_item_terminal_task_status(item: &serde_json::Value) -> Option<Str
         .and_then(|output| output.get("task_status"))
         .and_then(|status| status.get("status"))
         .and_then(serde_json::Value::as_str)
-        .filter(|status| matches!(*status, "done" | "question"))
+        .filter(|status| matches!(*status, "doing" | "done" | "question"))
         .map(ToString::to_string)
 }
 
-pub(crate) fn terminal_task_status_final_message(
-    session: &SessionManagement,
-    status: &str,
-    original_user_task: &str,
-) -> Option<String> {
-    let summary = session
-        .task_plan
-        .detailed_tasks
-        .iter()
-        .rev()
-        .find_map(|task| non_empty_text(&task.task_summary))
-        .or_else(|| non_empty_text(&session.task_plan.plan_summary))
-        .or_else(|| non_empty_text(original_user_task))?;
-    let prefix = if status == "question" {
-        "Question"
-    } else {
-        "Done"
-    };
-    Some(format!("{prefix}: {summary}"))
-}
-
-fn non_empty_text(value: &str) -> Option<String> {
-    let value = value.trim();
-    (!value.is_empty()).then(|| value.to_string())
+pub(crate) fn command_run_result_has_non_status_command(result: &serde_json::Value) -> bool {
+    let result = result.get("streamed_command_run_result").unwrap_or(result);
+    result
+        .get("results")
+        .and_then(|value| value.as_array())
+        .is_some_and(|items| {
+            items.iter().any(|item| {
+                let command_type = item
+                    .get("command_type")
+                    .or_else(|| item.get("command"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_ascii_lowercase()
+                    .replace('-', "_");
+                !command_type.is_empty() && command_type != TASK_STATUS_COMMAND
+            })
+        })
 }
 
 pub(crate) fn active_task_user_message(session: &SessionManagement) -> Option<serde_json::Value> {
     task_user_message_by(session, task_is_executable)
 }
 
+#[cfg(test)]
 pub(crate) fn active_todo_task_user_message(
     session: &SessionManagement,
 ) -> Option<serde_json::Value> {
     task_user_message_by(session, task_is_user_action_todo)
+}
+
+pub(crate) fn active_doing_task_user_message(
+    session: &SessionManagement,
+) -> Option<serde_json::Value> {
+    task_user_message_by(session, task_is_doing)
 }
 
 fn task_user_message_by(
@@ -191,6 +192,10 @@ fn task_is_executable(task: &crate::state_machine::session_management::TaskStep)
                 == crate::state_machine::session_management::StartCondition::UserAction)
 }
 
+fn task_is_doing(task: &crate::state_machine::session_management::TaskStep) -> bool {
+    task.status == TaskStatus::Doing
+}
+
 fn task_is_user_action_todo(task: &crate::state_machine::session_management::TaskStep) -> bool {
     task.status == TaskStatus::Todo
         && task.start_condition
@@ -253,7 +258,7 @@ mod tests {
                     "output": {
                         "task_status": {
                             "status": "done",
-                            "task_summary": "finished"
+                            "task_detail": "finished"
                         }
                     }
                 }]
@@ -280,6 +285,49 @@ mod tests {
             super::command_run_result_terminal_task_status(&question).as_deref(),
             Some("question")
         );
+
+        let doing = json!({
+            "results": [{
+                "command_type": "task_status",
+                "output": {
+                    "task_status": {
+                        "status": "doing"
+                    }
+                }
+            }]
+        });
+        assert_eq!(
+            super::command_run_result_terminal_task_status(&doing).as_deref(),
+            Some("doing")
+        );
+    }
+
+    #[test]
+    fn command_run_result_detects_real_commands_before_terminal_status() {
+        let result = json!({
+            "streamed_command_run_result": {
+                "results": [
+                    { "command_type": "shell_command", "success": true, "output": "ok" },
+                    {
+                        "command_type": "task_status",
+                        "success": true,
+                        "output": { "task_status": { "status": "done" } }
+                    }
+                ]
+            }
+        });
+        assert!(super::command_run_result_has_non_status_command(&result));
+
+        let status_only = json!({
+            "results": [{
+                "command_type": "task_status",
+                "success": true,
+                "output": { "task_status": { "status": "done" } }
+            }]
+        });
+        assert!(!super::command_run_result_has_non_status_command(
+            &status_only
+        ));
     }
 
     fn session_with_tasks(tasks: Vec<TaskStep>) -> SessionManagement {
@@ -409,17 +457,5 @@ mod tests {
 
         assert!(super::active_todo_task_user_message(&session).is_none());
         assert!(super::active_task_user_message(&session).is_none());
-    }
-
-    #[test]
-    fn terminal_task_status_message_falls_back_to_task_summary() {
-        let session =
-            session_with_tasks(vec![task(1, PlanStatus::Done, StartCondition::UserAction)]);
-
-        assert_eq!(
-            super::terminal_task_status_final_message(&session, "done", "finish queued work")
-                .as_deref(),
-            Some("Done: Task 1")
-        );
     }
 }

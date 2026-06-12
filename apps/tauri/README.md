@@ -11,5 +11,6 @@ bun run dev
 ```
 
 
-Release builds are driven from the repository-level `scripts/build-bin.*`
-scripts so the generated executable is copied into the shared `bin` layout.
+Release builds are driven from the repository-level `scripts/build-debug.*`
+scripts so the generated executable is copied into the shared `bin` layout. The
+default `scripts/install.*` (no `dev` argument) invokes the same packaging.

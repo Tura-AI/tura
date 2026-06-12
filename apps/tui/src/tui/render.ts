@@ -1,4 +1,4 @@
-import type { AppState } from "./reducer.js";
+import type { AppState, SettingDetail } from "./reducer.js";
 import type { Message, MessagePart } from "../types/session.js";
 import { messageText, sessionTitle } from "../types/session.js";
 import { t } from "../i18n.js";
@@ -6,12 +6,9 @@ import { detectTerminalCapabilities, type TerminalCapabilities } from "./capabil
 import {
   activeCapabilities,
   bold,
-  clear,
   dim,
-  fit,
   gray,
   opencodeBorder,
-  opencodeElementBg,
   opencodePanelBg,
   opencodePrimary,
   opencodeText,
@@ -24,7 +21,6 @@ import {
   stripAnsi,
   truncate,
   truncateAnsi,
-  underline,
   visibleTextWidth,
   wrap,
   wrapAnsi,
@@ -33,13 +29,16 @@ import {
   compactInlinePayloads,
   compactPayloadField,
   displayMessageText,
-  extractCommandsFromText,
   extractCommandsFromUnknown,
   firstCommandLine,
+  isTaskStatusPayload,
   renderRichText,
+  sanitizeRawTerminalText,
   toolSummary,
 } from "./render-rich-text.js";
 import { SplitBorder, SplitBorderFallback } from "./ui/border.js";
+
+const COMPOSER_CURSOR_MARKER = "\x01\x02\x01";
 
 type CommandInfo = {
   command: string;
@@ -47,37 +46,51 @@ type CommandInfo = {
   status?: string;
 };
 
-type TranscriptTurn = {
-  user?: Message;
-  replies: Message[];
+export type RenderedFrame = {
+  frame: string;
+  cursor?: { row: number; column: number };
 };
 
 export function render(
   state: AppState,
   capabilities: TerminalCapabilities = detectTerminalCapabilities(),
 ): string {
+  return renderFrame(state, capabilities).frame;
+}
+
+export function renderFrame(
+  state: AppState,
+  capabilities: TerminalCapabilities = detectTerminalCapabilities(),
+): RenderedFrame {
   setActiveCapabilities(capabilities);
-  if (capabilities.level === "plain") return renderPlain(state);
+  if (capabilities.level === "plain") return renderPlainFrame(state);
   const rows = process.stdout.rows || 30;
   const cols = process.stdout.columns || 100;
   const renderCols = terminalRenderCols(cols);
   const lines: string[] = [];
-  lines.push(`${clear}${topBar(state, renderCols)}`);
-  lines.push(...layoutSeparator(renderCols));
+  lines.push(topBar(state, renderCols));
 
   if (state.help) {
+    lines.push(...layoutSeparator(renderCols));
     lines.push(...helpLines(renderCols, rows - 7));
   } else if (state.sessionsOpen) {
+    lines.push(...layoutSeparator(renderCols));
     lines.push(...sessionLines(state, renderCols, rows - 7));
   } else if (state.authOpen) {
+    lines.push(...layoutSeparator(renderCols));
     lines.push(...authLines(state, renderCols, rows - 7));
   } else if (state.settingsOpen) {
+    lines.push(...layoutSeparator(renderCols));
     lines.push(...settingsLines(state, renderCols, rows - 7));
   } else if (state.personasOpen) {
+    lines.push(...layoutSeparator(renderCols));
     lines.push(...personaLines(state, renderCols, rows - 7));
   } else if (state.modelsOpen) {
+    lines.push(...layoutSeparator(renderCols));
     lines.push(...modelLines(state, renderCols, rows - 7));
   } else {
+    // Chat transcript: title sits directly above the conversation (no extra
+    // blank line) so more history stays on screen.
     lines.push(
       ...transcriptLines(state, renderCols, transcriptMaxLines(rows, renderCols, state.composer)),
     );
@@ -102,10 +115,20 @@ export function render(
     }
   }
   if (state.notice) lines.push(...noticeLines(state.notice, renderCols));
-  lines.push(...composerSeparator(renderCols));
-  lines.push(...composerLines(state.composer, renderCols));
+  const footerStart = lines.length;
   lines.push(bottomMetaLine(state, renderCols));
-  return fit(lines, Math.max(1, rows - 1), renderCols).join("\n");
+  if ((!state.settingsOpen || state.settingInput) && !state.sessionsOpen) {
+    lines.push(...composerSeparator(renderCols));
+    lines.push(
+      ...composerLines(
+        state.composer,
+        renderCols,
+        state.thinkingFrame,
+        state.settingInput ? t("settingInputComposerHint") : undefined,
+      ),
+    );
+  }
+  return finalizeFrame(lines, Math.max(1, rows - 1), renderCols, footerStart);
 }
 
 function transcriptMaxLines(rows: number, cols: number, composer: string): number {
@@ -113,7 +136,7 @@ function transcriptMaxLines(rows: number, cols: number, composer: string): numbe
     activeCapabilities.level === "plain"
       ? Math.max(1, wrap(composer || "", Math.max(20, cols - 3)).length) + 1
       : Math.min(4, Math.max(1, wrap(composer || "", Math.max(20, cols - 6)).length)) + 2;
-  return Math.max(4, rows - composerRows - 4);
+  return Math.max(0, rows - composerRows - 5);
 }
 
 function layoutSeparator(cols: number): string[] {
@@ -126,7 +149,7 @@ function composerSeparator(cols: number): string[] {
   return [""];
 }
 
-function renderPlain(state: AppState): string {
+function renderPlainFrame(state: AppState): RenderedFrame {
   const cols = process.stdout.columns || 100;
   const rows = process.stdout.rows || 30;
   const renderCols = terminalRenderCols(cols);
@@ -139,12 +162,67 @@ function renderPlain(state: AppState): string {
   else if (state.settingsOpen) lines.push(...settingsLines(state, renderCols, 20));
   else if (state.personasOpen) lines.push(...personaLines(state, renderCols, 20));
   else if (state.modelsOpen) lines.push(...modelLines(state, renderCols, 20));
-  else lines.push(...transcriptLines(state, renderCols, 20));
+  else
+    lines.push(
+      ...transcriptLines(state, renderCols, transcriptMaxLines(rows, renderCols, state.composer)),
+    );
   if (state.notice) lines.push(...noticeLines(state.notice, renderCols));
-  lines.push("");
-  lines.push(...composerLines(state.composer, renderCols));
+  const footerStart = lines.length;
   lines.push(stripAnsi(bottomMetaLine(state, renderCols)));
-  return stripAnsi(fit(lines, Math.max(1, rows - 1), renderCols).join("\n"));
+  if ((!state.settingsOpen || state.settingInput) && !state.sessionsOpen) {
+    lines.push("");
+    lines.push(
+      ...composerLines(
+        state.composer,
+        renderCols,
+        state.thinkingFrame,
+        state.settingInput ? t("settingInputComposerHint") : undefined,
+      ),
+    );
+  }
+  const rendered = finalizeFrame(lines, Math.max(1, rows - 1), renderCols, footerStart);
+  return { ...rendered, frame: stripAnsi(rendered.frame) };
+}
+
+function finalizeFrame(
+  lines: string[],
+  rows: number,
+  cols: number,
+  footerStart = lines.length,
+): RenderedFrame {
+  const fitted = fitWithPinnedFooter(lines, rows, cols, footerStart);
+  const cursor = findComposerCursor(fitted);
+  return {
+    frame: fitted.map((line) => line.replace(COMPOSER_CURSOR_MARKER, "")).join("\n"),
+    cursor,
+  };
+}
+
+function fitWithPinnedFooter(
+  lines: string[],
+  rows: number,
+  cols: number,
+  footerStart: number,
+): string[] {
+  const footer = lines.slice(footerStart).map((line) => truncateAnsi(line, cols));
+  const contentRows = Math.max(0, rows - footer.length);
+  const content = lines
+    .slice(0, footerStart)
+    .slice(0, contentRows)
+    .map((line) => truncateAnsi(line, cols));
+  return [...content, ...footer].slice(0, rows);
+}
+
+function findComposerCursor(lines: string[]): RenderedFrame["cursor"] {
+  for (const [rowIndex, line] of lines.entries()) {
+    const markerIndex = line.indexOf(COMPOSER_CURSOR_MARKER);
+    if (markerIndex < 0) continue;
+    return {
+      row: rowIndex + 1,
+      column: Math.max(1, visibleTextWidth(line.slice(0, markerIndex)) + 1),
+    };
+  }
+  return undefined;
 }
 
 function terminalRenderCols(cols: number): number {
@@ -195,7 +273,7 @@ function hintText(value: string): string {
 function statusIndicator(state: AppState): string {
   if (activeCapabilities.unicode) {
     if (state.status === "busy") return ["◇", "◆", "◈", "◆"][state.thinkingFrame % 4] ?? "◇";
-    if (state.status === "error") return "×";
+    if (state.status === "error") return "x";
     return "◇";
   }
   if (state.status === "busy") return ["-", "\\", "|", "/"][state.thinkingFrame % 4] ?? "-";
@@ -253,72 +331,50 @@ function richPrimary(): string {
 
 function transcriptLines(state: AppState, cols: number, maxLines: number): string[] {
   const lines: string[] = [];
-  const showCommands = Boolean(state.sessionConfig?.show_command_instructions);
-  const visibleMessages =
-    activeCapabilities.level === "plain" ? state.messages.slice(-16) : state.messages.slice(-10);
-  if (activeCapabilities.level !== "plain") {
-    for (const turn of groupTranscriptTurns(visibleMessages)) {
-      const rendered = renderRichTurn(turn, state, cols, showCommands);
-      if (!rendered.length) continue;
-      addTranscriptGap(lines, turn.user?.role ?? turn.replies[0]?.role ?? "assistant", cols);
-      lines.push(...rendered);
-    }
-  } else {
-    for (const turn of groupTranscriptTurns(visibleMessages)) {
-      const rendered = renderSimpleTurn(turn, state, cols, showCommands);
-      if (!rendered.length) continue;
-      addTranscriptGap(lines, turn.user?.role ?? turn.replies[0]?.role ?? "assistant", cols);
-      lines.push(...rendered);
-    }
+  const showCommands = state.sessionConfig?.show_command_instructions !== false;
+  // Render up to last 100 messages to give scroll room without unbounded rendering cost.
+  // Message order is the layout contract: user, agent text, and command blocks stay
+  // exactly where the gateway inserted them. Do not regroup assistant messages by turn.
+  for (const message of state.messages.slice(-100)) {
+    const rendered = renderTranscriptMessage(message, state, cols, showCommands);
+    if (!rendered.length) continue;
+    addTranscriptGap(lines);
+    lines.push(...rendered);
   }
   if (isThinking(state)) {
-    addTranscriptGap(lines, "assistant", cols);
+    addTranscriptGap(lines);
     lines.push(thinkingLine(state, cols));
   }
-  return visibleTranscriptLines(lines, maxLines);
+  return viewportLines(lines, maxLines, state.scrollOffset);
 }
 
-function visibleTranscriptLines(lines: string[], maxLines: number): string[] {
-  if (lines.length <= maxLines) return lines;
-  if (activeCapabilities.level === "plain")
-    return lines.slice(Math.max(0, lines.length - maxLines));
-  const withoutLeadingUser = dropLeadingUserBlock(lines);
-  if (withoutLeadingUser.length < lines.length) {
-    if (withoutLeadingUser.length <= maxLines) return withoutLeadingUser;
-    lines = withoutLeadingUser;
-  }
-  const tailCount = Math.min(8, Math.max(4, Math.floor(maxLines / 3)));
-  const headCount = Math.max(1, maxLines - tailCount);
-  return [...lines.slice(0, headCount), ...lines.slice(lines.length - tailCount)];
+function viewportLines(lines: string[], maxLines: number, scrollOffset: number): string[] {
+  if (maxLines <= 0) return [];
+  if (scrollOffset === 0) return smartViewportLines(lines, maxLines);
+  const maxOffset = Math.max(0, lines.length - maxLines);
+  const offset = Math.min(scrollOffset, maxOffset);
+  const bottom = lines.length - offset;
+  const top = Math.max(0, bottom - maxLines);
+  return lines.slice(top, bottom);
 }
 
-function dropLeadingUserBlock(lines: string[]): string[] {
-  const firstContent = lines.findIndex((line) => line !== "");
-  if (firstContent < 0 || !lines[firstContent]?.includes(`${opencodeText}▏`)) return lines;
-  const nextGap = lines.findIndex((line, index) => index > firstContent && line === "");
-  return nextGap >= 0 ? lines.slice(nextGap + 1) : lines;
+function smartViewportLines(lines: string[], maxLines: number): string[] {
+  return lines.slice(Math.max(0, lines.length - maxLines));
 }
 
-function groupTranscriptTurns(messages: Message[]): TranscriptTurn[] {
-  const turns: TranscriptTurn[] = [];
-  let current: TranscriptTurn | undefined;
-  for (const message of messages) {
-    if (message.role === "user") {
-      current = { user: message, replies: [] };
-      turns.push(current);
-      continue;
-    }
-    if (!current) {
-      current = { replies: [] };
-      turns.push(current);
-    }
-    current.replies.push(message);
-  }
-  return turns;
+function renderTranscriptMessage(
+  message: Message,
+  state: AppState,
+  cols: number,
+  showCommands: boolean,
+): string[] {
+  return activeCapabilities.level === "plain"
+    ? renderSimpleMessage(message, state, cols, showCommands)
+    : renderRichMessage(message, state, cols, showCommands);
 }
 
-function renderSimpleTurn(
-  turn: TranscriptTurn,
+function renderSimpleMessage(
+  message: Message,
   state: AppState,
   cols: number,
   showCommands: boolean,
@@ -326,45 +382,34 @@ function renderSimpleTurn(
   const lines: string[] = [];
   const prefixWidth = activeCapabilities.unicode ? 4 : 3;
   const contentWidth = Math.max(20, cols - prefixWidth - 2);
-  if (turn.user) {
-    const text = displayMessageText("user", messageText(turn.user));
+
+  if (message.role === "user") {
+    const text = displayMessageText("user", messageText(message));
     const rendered = secondaryText(stripAnsi(renderRichText(text)));
-    for (const line of wrapAnsi(rendered, contentWidth))
+    for (const line of wrapAnsi(rendered, contentWidth)) {
       lines.push(simpleBodyLine(line, "user", true, cols));
+    }
+    return lines;
   }
 
-  const replyLines: string[] = [];
-  for (const message of turn.replies) {
-    const text = displayMessageText(message.role, messageText(message));
-    const partLines = message.parts.flatMap(partTranscriptLines);
-    const commands = commandsForMessage(message);
-    const richText = text ? renderRichText(text) : "";
-    const displayText =
-      message.role === "assistant" ? richText : secondaryText(stripAnsi(richText));
-    for (const line of displayText ? wrapAnsi(displayText, contentWidth) : []) {
-      replyLines.push(simpleBodyLine(line, message.role, false, cols));
-    }
-    for (const partLine of partLines) {
-      for (const line of wrapAnsi(secondaryText(partLine), contentWidth)) {
-        replyLines.push(simpleBodyLine(line, message.role, false, cols));
+  for (const block of orderedMessageBlocks(message)) {
+    if (lines.length) lines.push("");
+    if (block.kind === "text") {
+      const richText = renderRichText(block.text);
+      const displayText =
+        message.role === "assistant" ? richText : secondaryText(stripAnsi(richText));
+      for (const line of wrapAnsi(displayText, contentWidth)) {
+        lines.push(simpleBodyLine(line, message.role, false, cols));
       }
+      continue;
     }
-    if (message.role === "assistant" && commands.length) {
-      if (replyLines.length && replyLines.at(-1) !== "") replyLines.push("");
-      replyLines.push(
-        commandDetailLine(commandSummaryLine(commands, state.commandDetailsOpen, cols), cols),
-      );
-      if (state.commandDetailsOpen || showCommands) {
-        for (const line of commandDetailLines(commands, cols)) {
-          replyLines.push(commandDetailLine(line, cols));
-        }
+    if (block.kind === "detail") {
+      for (const line of wrapAnsi(secondaryText(block.text), contentWidth)) {
+        lines.push(simpleBodyLine(line, message.role, false, cols));
       }
-      replyLines.push("");
+      continue;
     }
-  }
-  if (replyLines.length) {
-    if (lines.length) lines.push(simpleSpacerLine("assistant", cols));
-    lines.push(...replyLines);
+    lines.push(...commandSectionLines(block.commands, state, cols, cols, showCommands));
   }
   return lines;
 }
@@ -402,83 +447,122 @@ function splitBorderPanelBlank(
   return splitBorderPanelLine("", cols, role, background);
 }
 
-function renderRichTurn(
-  turn: TranscriptTurn,
+function renderRichMessage(
+  message: Message,
   state: AppState,
   cols: number,
   showCommands: boolean,
 ): string[] {
   const lines: string[] = [];
   const contentWidth = Math.max(20, cols - 8);
-  if (turn.user) {
-    const userText = displayMessageText("user", messageText(turn.user));
+
+  if (message.role === "user") {
+    const userText = displayMessageText("user", messageText(message));
     const body = secondaryText(stripAnsi(renderRichText(userText)));
     const wrapped = body ? wrapAnsi(body, contentWidth) : [];
     if (wrapped.length) {
       lines.push(richBlankRailLine("user", cols));
-      for (const [index, line] of wrapped.entries()) {
-        const marker = index === 0 ? `${opencodePrimary}◆${reset}` : " ";
-        lines.push(richContentLine(`${marker} ${line}`, cols, "user"));
-      }
+      for (const line of wrapped) lines.push(richContentLine(line, cols, "user"));
       lines.push(richBlankRailLine("user", cols));
     }
+    return lines;
   }
 
-  const replyBlocks: Array<{ role: string; lines: string[] }> = [];
-  for (const message of turn.replies) {
-    const blockLines: string[] = [];
-    const commandLines: string[] = [];
-    const text = displayMessageText(message.role, messageText(message));
-    const partLines = message.parts.flatMap(partTranscriptLines);
-    const commands = commandsForMessage(message);
-    const primary = message.role === "assistant";
-    const richText = text ? renderRichText(text) : "";
-    const displayText = primary ? richText : secondaryText(stripAnsi(richText));
-    const wrapped = displayText ? wrapAnsi(displayText, contentWidth) : [];
-    if (wrapped.length) {
-      for (const line of wrapped) blockLines.push(richContentLine(line, cols, message.role));
-    } else if (message.role !== "assistant") {
-      blockLines.push(
-        richContentLine(`${opencodeTextWeak}${message.role}${reset}`, cols, message.role),
-      );
-    }
-    for (const partLine of partLines) {
-      for (const line of wrapAnsi(secondaryText(partLine), Math.max(20, cols - 8))) {
-        blockLines.push(
-          richContentLine(`${opencodeTextWeak}◇${reset} ${line}`, cols, message.role),
-        );
-      }
-    }
-    if (message.role === "assistant" && commands.length) {
-      commandLines.push(
-        commandDetailLine(commandSummaryLine(commands, state.commandDetailsOpen, cols - 6), cols),
-      );
-      if (state.commandDetailsOpen || (showCommands && activeCapabilities.level !== "rich")) {
-        for (const line of commandDetailLines(commands, cols - 6)) {
-          commandLines.push(commandDetailLine(line, cols));
-        }
-      }
-    }
-    if (blockLines.length || commandLines.length) {
-      const commandSection = commandLines.length ? ["", ...commandLines, ""] : [];
-      replyBlocks.push({
-        role: message.role,
-        lines: blockLines.length
-          ? [
-              richBlankRailLine(message.role, cols),
-              ...blockLines,
-              richBlankRailLine(message.role, cols),
-              ...commandSection,
-            ]
-          : commandSection,
-      });
-    }
+  const blocks = orderedMessageBlocks(message);
+  if (!blocks.length && message.role !== "assistant") {
+    lines.push(richContentLine(`${opencodeTextWeak}${message.role}${reset}`, cols, message.role));
   }
-  for (const block of replyBlocks) {
-    if (lines.length && lines.at(-1) !== "") lines.push("");
-    lines.push(...block.lines);
+  for (const block of blocks) {
+    if (lines.length) lines.push("");
+    if (block.kind === "text") {
+      const richText = renderRichText(block.text);
+      const displayText =
+        message.role === "assistant" ? richText : secondaryText(stripAnsi(richText));
+      const wrapped = wrapAnsi(displayText, contentWidth);
+      if (message.role === "assistant") lines.push(richBlankRailLine(message.role, cols));
+      for (const line of wrapped) lines.push(richContentLine(line, cols, message.role));
+      if (message.role === "assistant") lines.push(richBlankRailLine(message.role, cols));
+      continue;
+    }
+    if (block.kind === "detail") {
+      lines.push(richBlankRailLine(message.role, cols));
+      for (const line of wrapAnsi(secondaryText(block.text), Math.max(20, cols - 8))) {
+        lines.push(richContentLine(secondaryText(line), cols, message.role));
+      }
+      lines.push(richBlankRailLine(message.role, cols));
+      continue;
+    }
+    lines.push(...commandSectionLines(block.commands, state, cols - 6, cols, showCommands));
   }
   return lines;
+}
+interface OrderedTextBlock {
+  kind: "text";
+  text: string;
+}
+interface OrderedDetailBlock {
+  kind: "detail";
+  text: string;
+}
+interface OrderedCommandsBlock {
+  kind: "commands";
+  commands: CommandInfo[];
+}
+type OrderedMessageBlock = OrderedTextBlock | OrderedDetailBlock | OrderedCommandsBlock;
+
+function orderedMessageBlocks(message: Message): OrderedMessageBlock[] {
+  if (message.role !== "assistant") {
+    const text = displayMessageText(message.role, messageText(message));
+    return text ? [{ kind: "text", text }] : [];
+  }
+  const blocks: OrderedMessageBlock[] = [];
+  // Accumulate consecutive command parts so a single assistant message renders
+  // one aggregated "Commands: N" summary (deduped) rather than one per part.
+  let pendingCommands: CommandInfo[] = [];
+  const flushCommands = () => {
+    if (pendingCommands.length) {
+      blocks.push({ kind: "commands", commands: uniqueCommands(pendingCommands) });
+      pendingCommands = [];
+    }
+  };
+  for (const part of orderedPartsForDisplay(message.parts ?? [])) {
+    const text = partText(part);
+    if (text) {
+      const display = displayMessageText(message.role, text);
+      if (display) {
+        flushCommands();
+        blocks.push({ kind: "text", text: display });
+      }
+      continue;
+    }
+    const commands = commandsForPart(part);
+    if (commands.length) {
+      pendingCommands.push(...commands);
+      continue;
+    }
+    const details = partTranscriptLines(part);
+    if (details.length) {
+      flushCommands();
+      for (const detail of details) blocks.push({ kind: "detail", text: detail });
+    }
+  }
+  flushCommands();
+  return blocks;
+}
+
+function orderedPartsForDisplay(parts: MessagePart[]): MessagePart[] {
+  return [...parts].sort((left, right) => partDisplayRank(left) - partDisplayRank(right));
+}
+
+function partDisplayRank(part: MessagePart): number {
+  if (part.type === "text" || part.type === "message" || !part.type) return 0;
+  if (part.tool || part.type === "tool") return 2;
+  return 1;
+}
+
+function partText(part: MessagePart): string {
+  if (part.type !== "text" && part.type !== "message" && part.type) return "";
+  return part.text ?? part.content ?? "";
 }
 
 function richContentLine(content: string, cols: number, role = "assistant"): string {
@@ -514,14 +598,7 @@ function secondaryText(value: string): string {
   return `${gray}${value.replaceAll(reset, `${reset}${gray}`)}${reset}`;
 }
 
-function commandsForMessage(message: Message): CommandInfo[] {
-  const commands = [
-    ...extractCommandsFromText(messageText(message)).map((command) => ({
-      command,
-      tool: t("assistant"),
-    })),
-    ...message.parts.flatMap(commandsForPart),
-  ];
+function uniqueCommands(commands: CommandInfo[]): CommandInfo[] {
   const seen = new Set<string>();
   const unique: CommandInfo[] = [];
   for (const item of commands) {
@@ -530,7 +607,7 @@ function commandsForMessage(message: Message): CommandInfo[] {
     seen.add(command);
     unique.push({ ...item, command });
   }
-  return unique.slice(0, 24);
+  return unique;
 }
 
 function commandsForPart(part: MessagePart): CommandInfo[] {
@@ -538,69 +615,96 @@ function commandsForPart(part: MessagePart): CommandInfo[] {
     part.state && typeof part.state === "object" ? (part.state as Record<string, unknown>) : {};
   const status = typeof state.status === "string" ? state.status : undefined;
   const tool = part.tool ?? t("tool");
-  return [
+  const commands = [
     ...extractCommandsFromUnknown(state.input).map((command) => ({ command, tool, status })),
     ...extractCommandsFromUnknown(state.output).map((command) => ({ command, tool, status })),
     ...extractCommandsFromUnknown(part.metadata).map((command) => ({ command, tool, status })),
   ];
+  if (commands.length || part.tool !== "command_run") return commands;
+  const summary =
+    commandRunPayloadSummary(state.output) ??
+    commandRunPayloadSummary(state.input) ??
+    commandRunPayloadSummary(part.metadata) ??
+    toolSummary(state).trim();
+  return summary ? [{ command: summary, tool, status }] : [];
 }
 
-function commandSummaryLine(commands: CommandInfo[], expanded: boolean, cols: number): string {
+function commandRunPayloadSummary(value: unknown): string | undefined {
+  if (!value) return undefined;
+  if (isTaskStatusPayload(value)) return undefined;
+  if (typeof value === "string") return compactPayloadField(value)?.trim() || undefined;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const summary = commandRunPayloadSummary(item);
+      if (summary) return summary;
+    }
+    return undefined;
+  }
+  if (typeof value !== "object") return undefined;
+  const object = value as Record<string, unknown>;
+  for (const key of ["task_detail", "step_summary", "summary", "status", "label"]) {
+    const item = object[key];
+    if (typeof item === "string" && item.trim()) return sanitizeRawTerminalText(item).trim();
+  }
+  for (const key of ["input", "output", "metadata", "commands", "results", "steps"]) {
+    const summary = commandRunPayloadSummary(object[key]);
+    if (summary) return summary;
+  }
+  return undefined;
+}
+
+function commandSectionLines(
+  commands: CommandInfo[],
+  state: AppState,
+  summaryCols: number,
+  detailCols: number,
+  showCommands: boolean,
+): string[] {
+  const lines = [commandDetailLine(commandSummaryLine(commands, state, summaryCols), detailCols)];
+  if (showCommands) {
+    for (const line of commandDetailLines(commands, state, summaryCols)) {
+      lines.push(commandDetailLine(line, detailCols));
+    }
+  }
+  return lines;
+}
+
+function commandSummaryLine(commands: CommandInfo[], state: AppState, cols: number): string {
   const count = `${t("commands")}: ${commands.length}`;
   const running = commands.some((command) =>
     /run|progress|pending|busy|question/i.test(command.status ?? ""),
   );
   const icon = activeCapabilities.unicode
     ? running
-      ? "◇"
-      : expanded
-        ? "◇"
+      ? state.thinkingFrame % 2 === 0
+        ? "◆"
         : "◇"
+      : "◇"
     : running
       ? "#"
-      : expanded
-        ? "+"
-        : "*";
+      : "*";
   const label = `${icon} ${count}`;
-  const visible = commandToggleLabel(label);
-  return secondaryText(truncateAnsi(visible, Math.max(12, cols - 2)));
+  return secondaryText(truncateAnsi(label, Math.max(12, cols - 2)));
 }
 
-function commandToggleLabel(label: string): string {
-  if (activeCapabilities.level === "plain") return label;
-  const visible = `${underline}${label}${reset}`;
-  if (activeCapabilities.level !== "rich" || !activeCapabilities.osc8) return visible;
-  return `\x1b]8;;tura://commands/toggle\x1b\\${visible}\x1b]8;;\x1b\\`;
-}
-
-function commandDetailLines(commands: CommandInfo[], cols: number): string[] {
+function commandDetailLines(commands: CommandInfo[], state: AppState, cols: number): string[] {
   const lines: string[] = [];
   for (const [index, command] of commands.entries()) {
     const isLast = index === commands.length - 1;
     const branch = activeCapabilities.unicode ? (isLast ? "└─" : "├─") : "|-";
-    const stem = activeCapabilities.unicode ? (isLast ? "   " : "│  ") : "|  ";
-    const symbol = statusSymbol(command.status);
+    const symbol = statusSymbol(command.status, state.thinkingFrame);
     const meta = [command.tool ?? t("tool"), command.status].filter(Boolean).join(" ");
-    lines.push(
-      secondaryText(`${branch} ${stripAnsi(symbol)} #${index + 1}${meta ? ` ${meta}` : ""}`),
-    );
-    const prefix = "$ ";
-    for (const line of wrapAnsi(
-      secondaryText(`${prefix}${command.command}`),
-      Math.max(20, cols - 2),
-    )) {
-      lines.push(`${secondaryText(stem)}${line}`);
-    }
+    const prefix = `${branch} ${stripAnsi(symbol)} #${index + 1}${meta ? ` ${meta}` : ""}  $ `;
+    lines.push(secondaryText(truncateAnsi(`${prefix}${command.command}`, Math.max(20, cols - 2))));
   }
   return lines;
 }
 
-function statusSymbol(status: string | undefined): string {
+function statusSymbol(status: string | undefined, frame: number): string {
   const normalized = (status ?? "").toLowerCase();
-  if (/fail|error|reject|denied/.test(normalized))
-    return `${opencodePrimary}${activeCapabilities.unicode ? "✕" : "x"}${reset}`;
+  if (/fail|error|reject|denied/.test(normalized)) return `${opencodePrimary}x${reset}`;
   if (/run|progress|pending|busy|question/.test(normalized))
-    return `${opencodePrimary}${activeCapabilities.unicode ? "◆" : "#"}${reset}`;
+    return `${opencodePrimary}${activeCapabilities.unicode ? (frame % 2 === 0 ? "■" : "□") : "#"}${reset}`;
   if (/done|complete|success|ok/.test(normalized))
     return `${opencodePrimary}${activeCapabilities.unicode ? "✓" : "+"}${reset}`;
   return `${dim}${activeCapabilities.unicode ? "•" : "-"}${reset}`;
@@ -615,21 +719,47 @@ function thinkingLine(state: AppState, cols: number): string {
     ? ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
     : ["|", "/", "-", "\\"];
   const frame = frames[state.thinkingFrame % frames.length] ?? ".";
-  const commands = state.messages.slice(-24).flatMap(commandsForMessage);
-  const suffix = commands.length ? `  ${t("commands")}: ${commands.length}` : "";
-  const text = `${frame} thinking${suffix ? `  ${truncate(suffix.trim(), Math.max(12, cols - 14))}` : ""}`;
+  const text = `${frame} thinking  ${secondsSinceLastUserMessage(state)}s`;
   if (activeCapabilities.level !== "plain")
     return splitBorderPanelLine(secondaryText(text), cols, "assistant", opencodePanelBg);
   return secondaryText(text);
+}
+
+function secondsSinceLastUserMessage(state: AppState): number {
+  const message = [...state.messages].reverse().find((item) => item.role === "user");
+  const created = message?.created_at ?? message?.time?.created ?? message?.updated_at;
+  if (!created || !Number.isFinite(created)) return 0;
+  return Math.max(0, Math.floor((Date.now() - created) / 1000));
+}
+
+function sessionStateMarker(state: AppState, session: AppState["sessions"][number]): string {
+  if (session.status === "busy")
+    return state.thinkingFrame % 2 === 0
+      ? activeCapabilities.unicode
+        ? "◆"
+        : "#"
+      : activeCapabilities.unicode
+        ? "◇"
+        : "o";
+  if (session.id === state.session?.id) return "";
+  const seen = state.seenSessionMessageCounts[session.id] ?? session.message_count ?? 0;
+  const count = session.message_count ?? 0;
+  return count > seen ? (activeCapabilities.unicode ? "◆" : "#") : "";
+}
+
+function lastMessagePreview(messages: Message[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const text = messageText(messages[index]).replace(/\s+/g, " ").trim();
+    if (text) return text;
+  }
+  return "";
 }
 
 function sessionLines(state: AppState, cols: number, maxLines: number): string[] {
   const lines = sectionLines(t("sessions"), cols);
   lines.push(
     sectionBodyLine(
-      secondaryText(
-        `${t("selectSessions")}  ${t("enterResume")}  ${t("createSession")}  /resume <id> ${t("directSwitch")}`,
-      ),
+      secondaryText(`${t("selectSessions")}  ${t("enterResume")}  ${t("createSession")}`),
       cols,
     ),
   );
@@ -638,22 +768,19 @@ function sessionLines(state: AppState, cols: number, maxLines: number): string[]
     return lines;
   }
   const entries = state.sessions.map((session) => {
-    const current =
-      session.id === state.session?.id ? t("active") : (session.status ?? t("sessionIdle"));
-    const meta = `${current} ${formatTime(session.updated_at ?? session.created_at)}`;
-    return [session.id, `${meta}  ${sessionTitle(session)}`] as [string, string];
+    const marker = sessionStateMarker(state, session);
+    const label = [sessionTitle(session), marker].filter(Boolean).join(" ");
+    const preview =
+      state.sessionPreviews[session.id] ||
+      (session.id === state.session?.id ? lastMessagePreview(state.messages) : "");
+    return [label, preview] as [string, string];
   });
   const width = menuLabelWidth(cols);
   for (const [index, [label, description]] of entries.entries()) {
-    const rendered = menuEntryLines(
-      label,
-      description,
-      width,
-      cols,
-      index === state.selectedSessionIndex,
+    if (lines.length + 1 >= maxLines - 2) break;
+    lines.push(
+      sessionEntryLine(label, description, width, cols, index === state.selectedSessionIndex),
     );
-    if (lines.length + rendered.length >= maxLines - 2) break;
-    lines.push(...rendered);
   }
   lines.push(sectionBlankLine(cols));
   return lines.slice(0, maxLines);
@@ -714,28 +841,56 @@ function authLines(state: AppState, cols: number, maxLines: number): string[] {
   return lines.slice(0, maxLines);
 }
 
+export type SettingEntry = {
+  detail: SettingDetail;
+  label: string;
+  value: unknown;
+};
+
+export function settingsCommandEntries(state: AppState): Array<[string, unknown]> {
+  return settingsEntries(state).map((entry) => [settingCommandLabel(entry.detail), entry.value]);
+}
+
+export function settingsEntries(state: AppState): SettingEntry[] {
+  const config = state.sessionConfig;
+  if (!config) return [];
+  return [
+    { detail: "model", label: t("settingModel"), value: config.model ?? config.active_model },
+    { detail: "provider", label: t("settingProvider"), value: configuredProviderSummary(state) },
+    { detail: "agent", label: t("settingAgent"), value: config.active_agent },
+    { detail: "persona", label: t("settingPersona"), value: activePersonaID(state) },
+    { detail: "variant", label: t("settingReasoning"), value: config.model_variant },
+    { detail: "priority", label: t("settingPriority"), value: config.model_acceleration_enabled },
+    {
+      detail: "commands",
+      label: t("settingCommandExpansion"),
+      value: config.show_command_instructions !== false,
+    },
+    {
+      detail: "stallGuard",
+      label: t("settingStallGuard"),
+      value: config.command_run_stall_guard_profile,
+    },
+  ];
+}
+
 function settingsLines(state: AppState, cols: number, maxLines: number): string[] {
   const config = state.sessionConfig;
-  const lines = sectionLines(t("sessionSettings"), cols);
+  const lines = sectionLines(settingTitle(state), cols);
   if (!config) {
     lines.push(sectionBodyLine(t("noSessionConfig"), cols));
     lines.push(sectionBlankLine(cols));
     return lines;
   }
-  const rows: Array<[string, unknown]> = [
-    ["/model <provider/model>", config.model ?? config.active_model],
-    ["/provider <id>", config.active_provider],
-    ["/agent <name>", config.active_agent],
-    ["/persona <id>", activePersonaID(state)],
-    ["/variant <name>", config.model_variant],
-    ["/priority <on/off>", config.model_acceleration_enabled],
-    ["/session <type>", config.session_type],
-    ["/context <limit>", config.context_message_limit],
-    ["/validator <on/off>", config.validator_enabled],
-    ["/commands <on/off>", config.show_command_instructions ?? false],
-    ["/stall-guard <profile>", config.command_run_stall_guard_profile],
-  ];
-  const entries = settingEntries(rows);
+  lines.push(sectionBodyLine(secondaryText(settingHint(state)), cols));
+  if (state.settingInput)
+    lines.push(sectionBodyLine(secondaryText(state.settingInput.prompt), cols));
+  if (state.settingDetail) {
+    lines.push(...settingDetailLines(state, cols, maxLines - lines.length - 1));
+    lines.push(sectionBlankLine(cols));
+    return lines.slice(0, maxLines);
+  }
+  const entries = settingEntries(settingsEntries(state).map((entry) => [entry.label, entry.value]));
   const settingWidth = menuLabelWidth(cols);
   for (const [index, [label, value]] of entries.entries()) {
     const rendered = menuEntryLines(
@@ -750,6 +905,282 @@ function settingsLines(state: AppState, cols: number, maxLines: number): string[
   }
   lines.push(sectionBlankLine(cols));
   return lines.slice(0, maxLines);
+}
+
+function settingTitle(state: AppState): string {
+  const detail = state.settingDetail;
+  if (!detail) return t("sessionSettings");
+  if (detail === "providerAuth" && state.selectedProviderID)
+    return `${t("sessionSettings")} / ${t("settingProvider")} / ${state.selectedProviderID}`;
+  const entry = settingStaticEntries().find((item) => item.detail === detail);
+  return `${t("sessionSettings")} / ${entry?.label ?? t("settings")}`;
+}
+
+function settingHint(state: AppState): string {
+  const detail = state.settingDetail;
+  if (!detail) return t("settingRootHint");
+  if (detail === "model") return t("settingModelHint");
+  if (detail === "provider") return t("settingProviderHint");
+  if (detail === "providerAuth") return providerAuthHint(state);
+  if (detail === "variant") return t("settingReasoningHint");
+  if (detail === "priority") return t("settingPriorityHint");
+  if (detail === "agent") return t("settingAgentHint");
+  if (detail === "persona") return t("settingPersonaHint");
+  if (detail === "commands") return t("settingCommandExpansionHint");
+  if (detail === "stallGuard") return t("settingStallGuardHint");
+  return t("settingDetailHint");
+}
+
+function settingStaticEntries(): Array<{ detail: SettingDetail; label: string }> {
+  return [
+    { detail: "model", label: t("settingModel") },
+    { detail: "provider", label: t("settingProvider") },
+    { detail: "providerAuth", label: t("settingProvider") },
+    { detail: "agent", label: t("settingAgent") },
+    { detail: "persona", label: t("settingPersona") },
+    { detail: "variant", label: t("settingReasoning") },
+    { detail: "priority", label: t("settingPriority") },
+    { detail: "commands", label: t("settingCommandExpansion") },
+    { detail: "stallGuard", label: t("settingStallGuard") },
+  ];
+}
+
+function settingCommandLabel(detail: SettingDetail): string {
+  const labels: Record<SettingDetail, string> = {
+    model: "/model <provider/model>",
+    provider: "/provider <id>",
+    providerAuth: "/provider <id>",
+    agent: "/agent <name>",
+    persona: "/persona <id>",
+    variant: "/variant <name>",
+    priority: "/priority <on/off>",
+    commands: "/commands <on/off>",
+    stallGuard: "/stall-guard <profile>",
+  };
+  return labels[detail];
+}
+
+export function settingOptions(state: AppState): Array<[string, string, unknown]> {
+  const active = state.sessionConfig;
+  if (!state.settingDetail || !active) return [];
+  if (state.settingDetail === "model") {
+    const rows: Array<[string, string, string]> = [];
+    for (const provider of state.providers?.all ?? []) {
+      for (const [modelID, model] of Object.entries(provider.models ?? {})) {
+        const id = `${provider.id}/${modelID}`;
+        rows.push([id, [model.name, model.status].filter(Boolean).join("  "), id]);
+      }
+    }
+    return rows;
+  }
+  if (state.settingDetail === "provider") {
+    return settingProviders(state).map((provider) => [
+      providerLabelWithStatus(state, provider.id),
+      providerDescription(state, provider.id),
+      provider.id,
+    ]);
+  }
+  if (state.settingDetail === "providerAuth") {
+    const providerID = state.selectedProviderID;
+    if (!providerID) return [];
+    const methods = state.authMethods?.[providerID] ?? [];
+    const rows: Array<[string, string, unknown]> = methods.map((method, index) => {
+      const isOAuth = /oauth/i.test([method.type, method.kind, method.login].join(" "));
+      return [
+        isOAuth
+          ? `${t("oauthLogin")}: ${method.label || method.login}`
+          : method.label || method.login,
+        [
+          method.kind,
+          method.available === false ? method.unavailable_reason || t("notConnected") : undefined,
+          method.token_env ? `${t("env")}:${method.token_env}` : undefined,
+        ]
+          .filter(Boolean)
+          .join("  "),
+        { action: isOAuth ? "oauth" : "api-key", providerID, method: index },
+      ];
+    });
+    if (!rows.some(([, , value]) => authAction(value)?.action === "api-key")) {
+      rows.push([
+        t("apiKey"),
+        providerApiKeyDescription(state, providerID),
+        { action: "api-key", providerID },
+      ]);
+    }
+    rows.push([
+      t("logout"),
+      providerStatusText(state, providerID),
+      { action: "logout", providerID },
+    ]);
+    return rows;
+  }
+  if (state.settingDetail === "agent") {
+    return state.agents.map((agent) => [
+      storedAgentID(agent) ?? t("unknown"),
+      [agent.summary?.description, agent.summary?.source].filter(Boolean).join("  "),
+      storedAgentID(agent) ?? "",
+    ]);
+  }
+  if (state.settingDetail === "persona") {
+    return state.personas.map((persona) => [
+      personaID(persona) ?? t("unknown"),
+      [persona.summary?.description, persona.summary?.source].filter(Boolean).join("  "),
+      personaID(persona) ?? "",
+    ]);
+  }
+  if (state.settingDetail === "variant")
+    return ["low", "medium", "high", "xhigh"].map((value) => [value, "", value]);
+  if (state.settingDetail === "priority")
+    return [
+      [t("on"), t("priority"), true],
+      [t("off"), t("priority"), false],
+    ];
+  if (state.settingDetail === "commands")
+    return [
+      [t("on"), t("settingCommandExpansion"), true],
+      [t("off"), t("settingCommandExpansion"), false],
+    ];
+  if (state.settingDetail === "stallGuard")
+    return ["default", "relaxed", "strict", "off"].map((value) => [value, "", value]);
+  return [];
+}
+
+function authAction(value: unknown): { action?: string } | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as { action?: string })
+    : undefined;
+}
+
+function settingDetailLines(state: AppState, cols: number, maxLines: number): string[] {
+  const options = settingOptions(state);
+  if (!options.length) return [sectionBodyLine(t("noOptions"), cols)];
+  const width = menuLabelWidth(cols);
+  const lines: string[] = [];
+  const active = activeSettingValue(state);
+  for (const [index, [label, description, value]] of options.entries()) {
+    const decoratedLabel = value === active ? `${label} ${activeMarker()}` : label;
+    const rendered = menuEntryLines(
+      decoratedLabel,
+      description,
+      width,
+      cols,
+      index === state.selectedSettingOptionIndex,
+    );
+    if (lines.length + rendered.length >= maxLines) break;
+    lines.push(...rendered);
+  }
+  return lines;
+}
+
+function activeSettingValue(state: AppState): unknown {
+  const config = state.sessionConfig;
+  if (state.settingDetail === "model") return config?.model ?? config?.active_model;
+  if (state.settingDetail === "provider") return config?.active_provider;
+  if (state.settingDetail === "providerAuth") return undefined;
+  if (state.settingDetail === "agent") return state.session?.agent ?? config?.active_agent;
+  if (state.settingDetail === "persona") return activePersonaID(state);
+  if (state.settingDetail === "variant") return config?.model_variant;
+  if (state.settingDetail === "priority") return Boolean(config?.model_acceleration_enabled);
+  if (state.settingDetail === "commands") return config?.show_command_instructions !== false;
+  if (state.settingDetail === "stallGuard") return config?.command_run_stall_guard_profile;
+  return undefined;
+}
+
+function activeMarker(): string {
+  return activeCapabilities.unicode ? "✓" : "*";
+}
+
+function configuredProviderSummary(state: AppState): string {
+  const providers = settingProviders(state);
+  return t("providerConfiguredRatio", {
+    configured: configuredProviderCount(state, providers),
+    total: providers.length,
+  });
+}
+
+function configuredProviderCount(state: AppState, providers = settingProviders(state)): number {
+  const ids = new Set<string>();
+  for (const id of state.providers?.connected ?? []) ids.add(id);
+  for (const [id, status] of Object.entries(state.authStatuses)) {
+    if (status.configured || status.authenticated) ids.add(id);
+  }
+  return providers.filter((provider) => ids.has(provider.id)).length;
+}
+
+function providerLabelWithStatus(state: AppState, providerID: string): string {
+  return `${providerID} (${providerStatusText(state, providerID)})`;
+}
+
+function providerDescription(state: AppState, providerID: string): string {
+  const provider = state.providers?.all.find((item) => item.id === providerID);
+  const methods = state.authMethods?.[providerID] ?? [];
+  return [
+    provider?.name,
+    provider?.source,
+    methods.length ? `${t("auth")}:${methods.map((method) => method.type).join("/")}` : undefined,
+    provider?.env?.[0] ? `${t("env")}:${provider.env[0]}` : undefined,
+  ]
+    .filter(Boolean)
+    .join("  ");
+}
+
+function providerStatusText(state: AppState, providerID: string): string {
+  const status = state.authStatuses[providerID];
+  if (status?.authenticated) return t("authenticated");
+  if (status?.configured) return t("configured");
+  if (state.providers?.connected.includes(providerID)) return t("connected");
+  if (status?.auth_state) return status.auth_state;
+  if (status?.runtime_state) return status.runtime_state;
+  return t("notConnected");
+}
+
+function providerApiKeyDescription(state: AppState, providerID: string): string {
+  const method = (state.authMethods?.[providerID] ?? []).find((item) =>
+    /key|token|api/i.test([item.type, item.kind, item.login, item.label].filter(Boolean).join(" ")),
+  );
+  return [
+    method?.label,
+    method?.api_key_url ? t("openUrl", { url: method.api_key_url }) : undefined,
+    method?.docs_url ? t("docs") : undefined,
+  ]
+    .filter(Boolean)
+    .join("  ");
+}
+
+function providerAuthHint(state: AppState): string {
+  const providerID = state.selectedProviderID;
+  if (!providerID) return t("settingProviderAuthHint");
+  const docs = providerDocsUrl(state, providerID);
+  return docs
+    ? `${t("settingProviderAuthHint")} ${t("providerDocsHint", { url: docs })}`
+    : t("settingProviderAuthHint");
+}
+
+function providerDocsUrl(state: AppState, providerID: string): string | undefined {
+  const provider = state.providers?.all.find((item) => item.id === providerID);
+  const direct = stringField(provider?.options, "api_docs") ?? provider?.api ?? undefined;
+  if (direct) return direct;
+  for (const method of state.authMethods?.[providerID] ?? []) {
+    if (method.api_key_url) return method.api_key_url;
+    if (method.docs_url) return method.docs_url;
+  }
+  for (const model of Object.values(provider?.models ?? {})) {
+    const docs = stringField(model.options, "api_docs");
+    if (docs) return docs;
+  }
+  return undefined;
+}
+
+function settingProviders(state: AppState): NonNullable<AppState["providers"]>["all"] {
+  return (state.providers?.all ?? []).filter(isLlmProvider);
+}
+
+function isLlmProvider(provider: NonNullable<AppState["providers"]>["all"][number]): boolean {
+  const domains = stringArrayField(provider.options, "domains");
+  if (domains.length) return domains.some((domain) => domain.toLowerCase() === "llm");
+  const capabilities = stringArrayField(provider.options, "capabilities");
+  if (capabilities.some((capability) => capability.toLowerCase().startsWith("llm."))) return true;
+  return Object.keys(provider.models ?? {}).length > 0;
 }
 
 function personaLines(state: AppState, cols: number, maxLines: number): string[] {
@@ -890,6 +1321,25 @@ function menuEntryLines(
   return sectionEntryLines(`${marker}${label}`, description, labelWidth, cols);
 }
 
+function sessionEntryLine(
+  label: string,
+  description: string,
+  labelWidth: number,
+  cols: number,
+  selected: boolean,
+): string {
+  const marker = selected ? "> " : "  ";
+  const leftWidth = Math.max(8, labelWidth);
+  const rightWidth = Math.max(4, visibleTextWidth(label));
+  const left = truncateAnsi(`${marker}${label}`, leftWidth);
+  const right = truncateAnsi(description, rightWidth);
+  const content =
+    activeCapabilities.level === "plain"
+      ? `${pad(left, leftWidth)}  ${right}`
+      : `${opencodePrimary}${pad(left, leftWidth)}${reset}   ${secondaryText(right)}`;
+  return sectionBodyLine(truncateAnsi(content, Math.max(20, cols - 2)), cols);
+}
+
 function sectionEntriesLines(
   entries: Array<[string, string]>,
   labelWidth: number,
@@ -1016,6 +1466,7 @@ function commandHelpEntries(): Array<[string, string]> {
     ["/sessions", t("helpSessions")],
     ["/models", t("helpModels")],
     ["/abort", t("helpAbort")],
+    ["/stop", t("helpStop")],
     [t("configGet"), t("helpConfigGet")],
     [t("configSet"), t("helpConfigSet")],
     ["/quit", t("helpQuit")],
@@ -1068,41 +1519,45 @@ function serviceState(value: unknown): string {
   return t("unknown");
 }
 
-function composerLines(value: string, cols: number): string[] {
+function composerLines(value: string, cols: number, frame = 0, hint = t("composerHint")): string[] {
   const text = value || "";
   if (activeCapabilities.level !== "plain") {
-    return richComposerLines(text, cols);
+    return richComposerLines(text, cols, frame, hint);
   }
   const lines = wrap(text, Math.max(20, cols - 3));
+  const cursor = COMPOSER_CURSOR_MARKER;
   const inputLines =
     lines.length === 0
-      ? [`${opencodePrimary}>${reset}`]
-      : lines.map((line, index) => `${index === 0 ? `${opencodePrimary}>${reset}` : " "} ${line}`);
-  return [...inputLines, `  ${stripAnsi(t("composerHint"))}`];
+      ? [`${opencodePrimary}>${reset} ${cursor}`]
+      : lines.map(
+          (line, index) =>
+            `${index === 0 ? `${opencodePrimary}>${reset}` : " "} ${line}${index === lines.length - 1 ? cursor : ""}`,
+        );
+  return [...inputLines, `  ${stripAnsi(hint)}`];
 }
 
-function richComposerLines(value: string, cols: number): string[] {
+function richComposerLines(value: string, cols: number, _frame: number, hint: string): string[] {
   const textWidth = Math.max(20, cols - 6);
   const lines = wrap(value || "", textWidth).slice(0, 4);
-  return composerPanelLines(lines, cols);
+  return composerPanelLines(lines, cols, hint);
 }
 
-function composerPanelLines(lines: string[], cols: number): string[] {
+function composerPanelLines(lines: string[], cols: number, hint = t("composerHint")): string[] {
   const visible = lines.length && lines.some((line) => line) ? lines : [""];
   const body = visible.map((line, index) => {
     const prompt = index === 0 ? `${opencodePrimary}>${reset}` : " ";
-    const content = line || `${opencodeTextWeak}${t("composerHint")}${reset}`;
-    return splitBorderPanelLine(`${prompt} ${content}`, cols, "user", opencodeElementBg);
+    const isLast = index === visible.length - 1;
+    const content = line
+      ? `${line}${isLast ? COMPOSER_CURSOR_MARKER : ""}`
+      : `${COMPOSER_CURSOR_MARKER}${opencodeTextWeak}${truncateAnsi(hint, Math.max(1, cols - 7))}${reset}`;
+    return splitBorderPanelLine(`${prompt} ${content}`, cols, "user");
   });
-  return [
-    splitBorderPanelBlank("user", cols, opencodeElementBg),
-    ...body,
-    splitBorderPanelBlank("user", cols, opencodeElementBg),
-  ];
+  return [splitBorderPanelBlank("user", cols), ...body, splitBorderPanelBlank("user", cols)];
 }
 
 function partTranscriptLines(part: MessagePart): string[] {
   if (part.type !== "tool") return [];
+  if (part.tool === "runtime" || part.tool === "command_run") return [];
   if (commandsForPart(part).length) return [];
   const state =
     part.state && typeof part.state === "object" ? (part.state as Record<string, unknown>) : {};
@@ -1144,9 +1599,9 @@ function stringField(value: Record<string, unknown> | undefined, key: string): s
   return typeof item === "string" ? item : undefined;
 }
 
-function formatTime(value: string | number | undefined): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2, "0")}`;
+function stringArrayField(value: Record<string, unknown> | undefined, key: string): string[] {
+  const item = value?.[key];
+  return Array.isArray(item)
+    ? item.filter((entry): entry is string => typeof entry === "string")
+    : [];
 }

@@ -21,12 +21,12 @@ pub async fn dispatch_handler(
     let result = if mutating {
         let gate = Arc::clone(&ctx.execution_gate);
         let _guard = gate.write().await;
-        let _file_guard = file_locks::acquire(&access);
+        let _file_guard = acquire_file_lock(access).await?;
         handler.handle(call.clone(), call_ctx).await?
     } else {
         let gate = Arc::clone(&ctx.execution_gate);
         let _guard = gate.read().await;
-        let _file_guard = file_locks::acquire(&access);
+        let _file_guard = acquire_file_lock(access).await?;
         handler.handle(call.clone(), call_ctx).await?
     };
     Ok(AnyToolResult {
@@ -34,4 +34,12 @@ pub async fn dispatch_handler(
         payload: call.payload,
         result,
     })
+}
+
+async fn acquire_file_lock(
+    access: file_locks::Access,
+) -> Result<file_locks::LockGuard<'static>, ToolError> {
+    tokio::task::spawn_blocking(move || file_locks::acquire(&access))
+        .await
+        .map_err(|err| ToolError::Fatal(format!("file lock task failed: {err}")))
 }

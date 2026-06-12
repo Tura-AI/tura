@@ -1,3 +1,6 @@
+#![deny(clippy::unwrap_used)]
+#![forbid(unsafe_code)]
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::io::Read;

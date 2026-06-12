@@ -222,6 +222,19 @@ impl AnthropicStreamState {
                     if let Some(delta) = event.get("delta") {
                         self.apply_delta(index as usize, delta);
                         output_started = true;
+                        if delta.get("type").and_then(Value::as_str) == Some("text_delta") {
+                            if let (Some(sink), Some(text)) = (
+                                stream_events,
+                                delta
+                                    .get("text")
+                                    .and_then(Value::as_str)
+                                    .filter(|text| !text.is_empty()),
+                            ) {
+                                sink(ProviderStreamEvent::TextDelta {
+                                    text: text.to_string(),
+                                });
+                            }
+                        }
                     }
                 }
             }

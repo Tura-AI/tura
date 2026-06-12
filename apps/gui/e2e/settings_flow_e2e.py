@@ -16,7 +16,7 @@ OUT = Path(
     )
 )
 GUI_URL = os.environ.get("TURA_GUI_URL", "http://127.0.0.1:5180")
-GATEWAY_URL = os.environ.get("TURA_GATEWAY_URL", "http://127.0.0.1:4096")
+GATEWAY_URL = os.environ.get("TURA_GATEWAY_URL", "http://127.0.0.1:4126")
 
 
 def provider_model(model_id: str, name: str, context: int = 400000) -> dict:

@@ -1,45 +1,62 @@
 use std::io::Read;
 
 use crate::{
-    file_queue, GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest,
-    SessionLogResponse, SessionLogStore, UpsertSessionRequest,
+    file_queue, ipc, DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest,
+    ListSessionRecordsRequest, ListSessionsRequest, SessionLogCommand, SessionLogResponse,
+    SessionLogStore,
 };
 
+/// Developer query CLI for the session DB.
+///
+/// By default this routes through the running `tura_session_db` service so it
+/// uses the same data path as gateway/runtime. Pass `--admin` to bypass the
+/// service and inspect the SQLite store directly.
 pub fn run() -> anyhow::Result<()> {
-    let command = std::env::args()
-        .nth(1)
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let admin = take_flag(&mut args, "--admin");
+    let command = args
+        .first()
+        .cloned()
         .ok_or_else(|| anyhow::anyhow!("session_log requires a command"))?;
-    let store = SessionLogStore::open_default()?;
-    let _ = file_queue::drain_queue(&store, 10_000)?;
-    let response = match command.as_str() {
-        "upsert-session" => {
-            let payload: UpsertSessionRequest = read_json()?;
-            store.upsert_session(payload)?;
-            SessionLogResponse::Ok
-        }
-        "list-workspaces" => SessionLogResponse::Workspaces {
-            workspaces: store.list_workspaces()?,
-        },
-        "get-session" => {
-            let payload: GetSessionRequest = read_json()?;
-            SessionLogResponse::Session {
-                session: store.get_session(payload)?.map(Box::new),
-            }
-        }
-        "list-sessions" => {
-            let payload: ListSessionsRequest = read_json()?;
-            let (page, sessions) = store.list_sessions(payload)?;
-            SessionLogResponse::Sessions { page, sessions }
-        }
+
+    let parsed = match command.as_str() {
+        "upsert-session" => SessionLogCommand::UpsertSession(read_json()?),
+        "list-workspaces" => SessionLogCommand::ListWorkspaces,
+        "get-session" => SessionLogCommand::GetSession(read_json::<GetSessionRequest>()?),
+        "list-sessions" => SessionLogCommand::ListSessions(read_json::<ListSessionsRequest>()?),
         "list-session-records" => {
-            let payload: ListSessionRecordsRequest = read_json()?;
-            let (page, records) = store.list_session_records(payload)?;
-            SessionLogResponse::Records { page, records }
+            SessionLogCommand::ListSessionRecords(read_json::<ListSessionRecordsRequest>()?)
+        }
+        "delete-session" => SessionLogCommand::DeleteSession(read_json::<DeleteSessionRequest>()?),
+        "delete-workspace" => {
+            SessionLogCommand::DeleteWorkspace(read_json::<DeleteWorkspaceRequest>()?)
         }
         other => anyhow::bail!("unknown session_log command: {other}"),
     };
+
+    let response = if !admin && ipc::service_is_running() {
+        ipc::call_service(&parsed)?
+    } else {
+        // Direct path: tests/admin inspection only.
+        let store = SessionLogStore::open_default()?;
+        let _ = file_queue::drain_queue(&store, 10_000)?;
+        ipc::dispatch_command(&store, parsed)
+    };
+
     println!("{}", serde_json::to_string(&response)?);
+    if let SessionLogResponse::Error { error } = &response {
+        anyhow::bail!("{error}");
+    }
     Ok(())
+}
+
+fn take_flag(args: &mut Vec<String>, flag: &str) -> bool {
+    if let Some(index) = args.iter().position(|arg| arg == flag) {
+        args.remove(index);
+        true
+    } else {
+        false
+    }
 }
 
 fn read_json<T: serde::de::DeserializeOwned>() -> anyhow::Result<T> {

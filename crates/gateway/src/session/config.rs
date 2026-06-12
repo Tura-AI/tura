@@ -198,8 +198,16 @@ pub fn load_config(directory: impl AsRef<Path>) -> TuraSessionConfig {
 
 pub fn save_config(directory: impl AsRef<Path>, config: &TuraSessionConfig) -> Result<(), String> {
     let directory = directory.as_ref();
-    std::fs::create_dir_all(tura_dir(directory)).map_err(|err| err.to_string())?;
-    std::fs::write(config_path(directory), serialize_config(config)).map_err(|err| err.to_string())
+    let tura_directory = tura_dir(directory);
+    std::fs::create_dir_all(&tura_directory).map_err(|err| {
+        format!(
+            "failed to create session config directory {}: {err}",
+            tura_directory.display()
+        )
+    })?;
+    let path = config_path(directory);
+    std::fs::write(&path, serialize_config(config))
+        .map_err(|err| format!("failed to write session config {}: {err}", path.display()))
 }
 
 pub fn merge_config(
@@ -400,7 +408,9 @@ fn serialize_json_value(value: &serde_json::Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_config, serialize_config, CommandRunStallGuardConfig, TuraSessionConfig};
+    use super::{
+        parse_config, save_config, serialize_config, CommandRunStallGuardConfig, TuraSessionConfig,
+    };
 
     #[test]
     fn command_run_stall_guard_defaults_to_balanced_profile() {
@@ -463,5 +473,25 @@ command_run_stall_guard_identical_checks=4
         assert!(serialized.contains("command_run_stall_guard_profile=long_io_60s"));
         assert!(serialized.contains("command_run_stall_guard_check_secs=15"));
         assert!(serialized.contains("command_run_stall_guard_identical_checks=4"));
+    }
+
+    #[test]
+    fn save_config_reports_directory_path_on_create_failure() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let blocked_tura_dir = temp.path().join(".tura");
+        std::fs::write(&blocked_tura_dir, "not a directory").expect("write blocking file");
+
+        let error = save_config(temp.path(), &TuraSessionConfig::default())
+            .expect_err("blocked .tura path should fail");
+
+        let message = &error;
+        assert!(
+            message.contains("failed to create session config directory"),
+            "error should describe the failed operation: {message}"
+        );
+        assert!(
+            message.contains(&blocked_tura_dir.to_string_lossy().to_string()),
+            "error should include the directory path: {message}"
+        );
     }
 }

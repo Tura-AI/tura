@@ -122,7 +122,21 @@ export async function waitForGatewayHealth(
       const response = await fetch(`${baseUrl.replace(/\/+$/u, "")}/global/health`, {
         signal: controller.signal,
       }).finally(() => window.clearTimeout(timer));
-      if (response.ok) return;
+      if (response.ok) {
+        const body = (await response
+          .clone()
+          .json()
+          .catch(() => undefined)) as { dev_log_path?: string } | undefined;
+        const devPath = body?.dev_log_path;
+        if (devPath) {
+          setState((previous) => ({
+            ...previous,
+            settingsNotice: `${t("devModeActive")}${devPath}`,
+            gatewayStartupNotice: `${t("devModeActive")}${devPath}`,
+          }));
+        }
+        return;
+      }
     } catch {
       // Keep the loading overlay alive while the dev server starts Gateway.
     }
