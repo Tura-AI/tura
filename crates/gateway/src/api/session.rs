@@ -581,6 +581,18 @@ pub async fn fork_session(
             .map(|session| session.disable_permission_restrictions)
             .unwrap_or(false),
     );
+    if payload.copy_context.unwrap_or(true) {
+        let _ = session_store().copy_session_context(&session_id, &new_session.id);
+    }
+    let new_session = session_store()
+        .get_session(&new_session.id)
+        .unwrap_or(new_session);
+    session_store().push_event(GlobalEvent::SessionCreated {
+        properties: SessionCreatedProperties {
+            session_id: new_session.id.clone(),
+            info: new_session.clone(),
+        },
+    });
     Json(new_session)
 }
 
@@ -589,6 +601,8 @@ pub struct ForkSessionRequest {
     pub directory: Option<String>,
     pub model: Option<String>,
     pub agent: Option<String>,
+    #[serde(default, alias = "copyContext")]
+    pub copy_context: Option<bool>,
 }
 
 pub async fn session_status() -> Json<std::collections::HashMap<String, serde_json::Value>> {
@@ -977,12 +991,12 @@ pub use session_shell::{session_shell, ShellRequest, ShellResponse};
 
 #[path = "session_prompt.rs"]
 mod session_prompt;
-use session_prompt::{final_agent_message, frontend_safe_reply_message, run_mano_for_prompt};
 #[cfg(test)]
 use session_prompt::{
-    first_prompt_part_id, prompt_command_run_shell, prompt_message_id, prompt_model_acceleration,
-    prompt_model_variant, prompt_text,
+    config_model_override, first_prompt_part_id, prompt_command_run_shell, prompt_message_id,
+    prompt_model_acceleration, prompt_model_variant, prompt_text,
 };
+use session_prompt::{final_agent_message, frontend_safe_reply_message, run_mano_for_prompt};
 pub use session_prompt::{prompt_async, start_task_scheduler};
 #[cfg(feature = "business-tests")]
 pub use session_prompt::{

@@ -7,7 +7,8 @@ use super::token_budget::{formatted_truncate_text, APPROX_CHARS_PER_TOKEN};
 
 pub(super) fn environment_context_message(cwd: &std::path::Path) -> String {
     format!(
-        "<environment_context>\n  <cwd>{}</cwd>\n  <shell>{}</shell>\n  <current_date>{}</current_date>\n  <timezone>{}</timezone>\n  <system_language>{}</system_language>\n</environment_context>",
+        "<environment_context>\n  <cwd>{}</cwd>\n  <workspace_roots>\n    <root>{}</root>\n  </workspace_roots>\n  <shell>{}</shell>\n  <current_date>{}</current_date>\n  <timezone>{}</timezone>\n  <system_language>{}</system_language>\n</environment_context>",
+        cwd.display(),
         cwd.display(),
         context_shell_name(),
         chrono::Local::now().format("%Y-%m-%d"),

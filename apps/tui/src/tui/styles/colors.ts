@@ -13,7 +13,6 @@ export const textAuxiliary = "\x1b[38;2;103;116;111m";
 export const textBackground = "\x1b[38;2;54;63;61m";
 
 export const richHighlight = "\x1b[38;2;64;224;208m";
-export const thinkingWaveMoon = richHighlight;
 export const thinkingWaveGlow = "\x1b[38;2;70;199;190m";
 export const thinkingWaveMid = "\x1b[38;2;75;174;172m";
 export const thinkingWaveLow = "\x1b[38;2;81;149;154m";
@@ -25,12 +24,3 @@ export const richBlockBg = "\x1b[48;5;235m";
 
 export const lineColor = "\x1b[38;2;61;70;68m";
 export const borderColor = "\x1b[38;2;61;70;68m";
-
-export const opencodePrimary = richHighlight;
-export const opencodeText = textPrimary;
-export const opencodeTextWeak = textAuxiliary;
-export const opencodeBorder = borderColor;
-export const opencodeLine = lineColor;
-export const opencodePanelBg = surfaceBackground;
-export const opencodeElementBg = elementBackground;
-export const gray = textSecondary;

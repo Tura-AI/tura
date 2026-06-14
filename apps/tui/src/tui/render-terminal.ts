@@ -1,21 +1,13 @@
 import { detectTerminalCapabilities, type TerminalCapabilities } from "./capabilities.js";
-import { gray, opencodeBorder, reset } from "./styles/colors.js";
+import { borderColor, reset, textSecondary } from "./styles/colors.js";
 export {
   bold,
   borderColor,
   dim,
   elementBackground,
-  gray,
   inverse,
   italic,
   lineColor,
-  opencodeBorder,
-  opencodeElementBg,
-  opencodeLine,
-  opencodePanelBg,
-  opencodePrimary,
-  opencodeText,
-  opencodeTextWeak,
   reset,
   richBlockBg,
   richHighlight,
@@ -31,7 +23,6 @@ export {
   thinkingWaveGlow,
   thinkingWaveLow,
   thinkingWaveMid,
-  thinkingWaveMoon,
   underline,
 } from "./styles/colors.js";
 
@@ -149,8 +140,8 @@ export function truncateAnsi(text: string, width: number): string {
 
 export function rule(cols: number): string {
   const line = (activeCapabilities.unicode ? "─" : "-").repeat(cols);
-  if (activeCapabilities.level === "rich") return `${opencodeBorder}${line}${reset}`;
-  if (activeCapabilities.level === "ansi") return `${gray}${line}${reset}`;
+  if (activeCapabilities.level === "rich") return `${borderColor}${line}${reset}`;
+  if (activeCapabilities.level === "ansi") return `${textSecondary}${line}${reset}`;
   return line;
 }
 

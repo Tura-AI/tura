@@ -296,6 +296,215 @@ fn session_db_handles_concurrent_short_lived_clients_after_restart_with_workspac
     Ok(())
 }
 
+#[test]
+fn session_db_drains_file_queue_under_concurrent_socket_reads_and_writes() -> Result<()> {
+    let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
+    let env = TestEnv::new("session-db-queue-concurrent-rw")?;
+    let workspace_a = env.workspace("queue-a")?;
+    let workspace_b = env.workspace("queue-b")?;
+    let workspace_a_key = session_log::path::normalize_workspace(&workspace_a.to_string_lossy());
+    let workspace_b_key = session_log::path::normalize_workspace(&workspace_b.to_string_lossy());
+    let mut expected_sessions = Vec::new();
+
+    for index in 0..72 {
+        let workspace = if index % 2 == 0 {
+            workspace_a_key.clone()
+        } else {
+            workspace_b_key.clone()
+        };
+        let session_id = env.session_id(&format!("queued-before-start-{index}"));
+        let messages = [
+            format!("queued-before-start-{index}-0"),
+            format!("queued-before-start-{index}-1"),
+        ];
+        let message_refs = messages.iter().map(String::as_str).collect::<Vec<_>>();
+        enqueue(SessionLogCommand::UpsertSession(upsert_session(
+            &session_id,
+            &workspace,
+            2_000 + index as i64,
+            "completed",
+            &message_refs,
+            &[("queued-task", "done")],
+        )))?;
+        expected_sessions.push((session_id, workspace, messages.len()));
+    }
+
+    let mut service = SessionDbService::start()?;
+    let barrier = Arc::new(Barrier::new(24));
+    let sample_session_id = expected_sessions
+        .first()
+        .map(|(session_id, _, _)| session_id.clone())
+        .ok_or_else(|| anyhow!("seeded queue sessions missing"))?;
+    let mut handles = Vec::new();
+
+    for writer in 0..12 {
+        let barrier = Arc::clone(&barrier);
+        let workspace = if writer % 2 == 0 {
+            workspace_a_key.clone()
+        } else {
+            workspace_b_key.clone()
+        };
+        handles.push(thread::spawn(
+            move || -> Result<Vec<(String, String, usize)>> {
+                barrier.wait();
+                let session_id = format!("socket-writer-{writer}-{}", std::process::id());
+                let messages = [
+                    format!("socket-writer-{writer}-0"),
+                    format!("socket-writer-{writer}-1"),
+                    format!("socket-writer-{writer}-2"),
+                ];
+                let message_refs = messages.iter().map(String::as_str).collect::<Vec<_>>();
+                assert_ok(session_log::ipc::call_service(
+                    &SessionLogCommand::UpsertSession(upsert_session(
+                        &session_id,
+                        &workspace,
+                        3_000 + writer as i64,
+                        "completed",
+                        &message_refs,
+                        &[("socket-task", "done")],
+                    )),
+                )?)?;
+                let _ = record_ids(&session_id)?;
+                Ok(vec![(session_id, workspace, messages.len())])
+            },
+        ));
+    }
+
+    for queue_writer in 0..6 {
+        let barrier = Arc::clone(&barrier);
+        let workspace_a = workspace_a_key.clone();
+        let workspace_b = workspace_b_key.clone();
+        handles.push(thread::spawn(
+            move || -> Result<Vec<(String, String, usize)>> {
+                barrier.wait();
+                let mut sessions = Vec::new();
+                for item in 0..6 {
+                    let workspace = if (queue_writer + item) % 2 == 0 {
+                        workspace_a.clone()
+                    } else {
+                        workspace_b.clone()
+                    };
+                    let session_id = format!(
+                        "queued-while-running-{queue_writer}-{item}-{}",
+                        std::process::id()
+                    );
+                    let messages = [
+                        format!("queued-while-running-{queue_writer}-{item}-0"),
+                        format!("queued-while-running-{queue_writer}-{item}-1"),
+                    ];
+                    let message_refs = messages.iter().map(String::as_str).collect::<Vec<_>>();
+                    enqueue(SessionLogCommand::UpsertSession(upsert_session(
+                        &session_id,
+                        &workspace,
+                        4_000 + queue_writer as i64 * 10 + item as i64,
+                        "completed",
+                        &message_refs,
+                        &[("live-queue-task", "done")],
+                    )))?;
+                    sessions.push((session_id, workspace, messages.len()));
+                }
+                Ok(sessions)
+            },
+        ));
+    }
+
+    for _reader in 0..6 {
+        let barrier = Arc::clone(&barrier);
+        let workspace_a = workspace_a_key.clone();
+        let workspace_b = workspace_b_key.clone();
+        let sample_session_id = sample_session_id.clone();
+        handles.push(thread::spawn(
+            move || -> Result<Vec<(String, String, usize)>> {
+                barrier.wait();
+                for round in 0..20 {
+                    match session_log::ipc::call_service(&SessionLogCommand::ListWorkspaces)? {
+                        SessionLogResponse::Workspaces { .. } => {}
+                        other => bail!(
+                            "unexpected workspace response during concurrent reads: {other:?}"
+                        ),
+                    }
+                    for workspace in [&workspace_a, &workspace_b] {
+                        match session_log::ipc::call_service(&SessionLogCommand::ListSessions(
+                            ListSessionsRequest {
+                                workspace: workspace.clone(),
+                                page: round % 4,
+                                page_size: 7,
+                            },
+                        ))? {
+                            SessionLogResponse::Sessions { .. } => {}
+                            other => bail!(
+                                "unexpected sessions response during concurrent reads: {other:?}"
+                            ),
+                        }
+                    }
+                    let _ = session_log::ipc::call_service(&SessionLogCommand::GetSession(
+                        GetSessionRequest {
+                            session_id: sample_session_id.clone(),
+                        },
+                    ))?;
+                    match session_log::ipc::call_service(&SessionLogCommand::ListSessionRecords(
+                        ListSessionRecordsRequest {
+                            session_id: sample_session_id.clone(),
+                            page: 0,
+                            page_size: 10,
+                        },
+                    ))? {
+                        SessionLogResponse::Records { .. } => {}
+                        other => {
+                            bail!("unexpected records response during concurrent reads: {other:?}")
+                        }
+                    }
+                }
+                Ok(Vec::new())
+            },
+        ));
+    }
+
+    for handle in handles {
+        expected_sessions.extend(
+            handle
+                .join()
+                .map_err(|_| anyhow!("concurrent session_db worker thread panicked"))??,
+        );
+    }
+
+    let expected_a = expected_sessions
+        .iter()
+        .filter(|(_, workspace, _)| workspace == &workspace_a_key)
+        .count() as u64;
+    let expected_b = expected_sessions
+        .iter()
+        .filter(|(_, workspace, _)| workspace == &workspace_b_key)
+        .count() as u64;
+
+    wait_until(Duration::from_secs(20), || {
+        pending_queue_items(&env.home) == 0
+            && workspace_session_total(&workspace_a_key) == Some(expected_a)
+            && workspace_session_total(&workspace_b_key) == Some(expected_b)
+    })?;
+    assert_pending_queue_empty(&env.home)?;
+    assert_workspace_page(&workspace_a_key, 0, 500, expected_a, expected_a as usize)?;
+    assert_workspace_page(&workspace_b_key, 0, 500, expected_b, expected_b as usize)?;
+    assert_workspace_summaries(&[
+        (workspace_a_key.clone(), expected_a),
+        (workspace_b_key.clone(), expected_b),
+    ])?;
+    for (session_id, _workspace, expected_records) in &expected_sessions {
+        assert!(
+            session_visible(session_id),
+            "session {session_id} should be visible after queue drain"
+        );
+        let records = record_ids(session_id)?;
+        assert_eq!(
+            records.len(),
+            *expected_records,
+            "session {session_id} should keep all records after concurrent writes"
+        );
+    }
+    service.shutdown()?;
+    Ok(())
+}
+
 fn enqueue(command: SessionLogCommand) -> Result<()> {
     file_queue::enqueue_command(&command)?;
     Ok(())
@@ -490,6 +699,17 @@ fn assert_workspace_page(
             Ok(())
         }
         other => bail!("unexpected list sessions response: {other:?}"),
+    }
+}
+
+fn workspace_session_total(workspace: &str) -> Option<u64> {
+    match session_log::ipc::call_service(&SessionLogCommand::ListSessions(ListSessionsRequest {
+        workspace: workspace.to_string(),
+        page: 0,
+        page_size: 1,
+    })) {
+        Ok(SessionLogResponse::Sessions { page, .. }) => Some(page.total),
+        _ => None,
     }
 }
 

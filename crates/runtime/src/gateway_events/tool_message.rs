@@ -10,6 +10,7 @@ use crate::state_machine::session_management::SessionManagement;
 
 use super::agent_message::{
     gateway_callback_base_url, gateway_callback_session_id, publish_gateway_agent_message,
+    stream_agent_message_id, stream_agent_part_id,
 };
 
 pub(crate) fn summarize_single_tool_output(tool_name: &str, output: &serde_json::Value) -> String {
@@ -191,6 +192,8 @@ pub(crate) fn publish_runtime_usage_record(
         runtime.runtime_id.clone(),
         state,
         metadata,
+        Some(stream_agent_message_id(&runtime.runtime_id)),
+        Some(stream_agent_part_id(&runtime.runtime_id)),
     ) {
         warn!(
             session_id = %session.session_id,
@@ -263,6 +266,8 @@ pub(crate) fn publish_tool_call_record(
         call_id,
         state,
         metadata,
+        None,
+        None,
     ) {
         warn!(
             session_id = %session.session_id,
@@ -309,6 +314,8 @@ pub(crate) fn publish_tool_call_started(
         call_id,
         state,
         metadata,
+        None,
+        None,
     ) {
         warn!(
             session_id = %session.session_id,
@@ -378,6 +385,8 @@ fn publish_gateway_tool_message(
     call_id: String,
     state: serde_json::Value,
     metadata: serde_json::Value,
+    message_id: Option<String>,
+    part_id: Option<String>,
 ) -> Result<(), String> {
     if gateway_callbacks_disabled() {
         return Ok(());
@@ -391,6 +400,8 @@ fn publish_gateway_tool_message(
         "new_learning": "",
         "media": [],
         "runtime_id": runtime_id,
+        "message_id": message_id,
+        "part_id": part_id,
         "tool_call": {
             "tool_name": tool_name,
             "call_id": call_id,
@@ -402,7 +413,7 @@ fn publish_gateway_tool_message(
     tokio::runtime::Runtime::new()
         .map_err(|err| format!("failed to create gateway callback runtime: {err}"))?
         .block_on(async {
-            let response = reqwest::Client::new()
+            let response = crate::gateway_events::gateway_callback_http_client()
                 .post(endpoint)
                 .json(&payload)
                 .send()
@@ -461,7 +472,7 @@ pub(crate) fn publish_task_plan_todos(session: &SessionManagement) {
         .map_err(|_| ())
         .and_then(|runtime| {
             runtime.block_on(async {
-                reqwest::Client::new()
+                crate::gateway_events::gateway_callback_http_client()
                     .post(endpoint)
                     .json(&todos)
                     .send()

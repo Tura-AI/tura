@@ -14,9 +14,6 @@ use super::models::{CallContext, WorkerEnvelope};
 use super::process_scope::{attach_child_scope, configure_scoped_spawn, WorkerProcessScope};
 
 const WORKER_HEALTH_TIMEOUT: Duration = Duration::from_secs(10);
-// 600s matches the TUI CLI default (timeoutSec: 600). Complex agent turns with
-// multiple tool calls and slow LLM API responses routinely exceed 3 minutes.
-const DEFAULT_WORKER_INVOKE_TIMEOUT: Duration = Duration::from_secs(600);
 
 pub enum WorkerMode {
     Persistent,
@@ -46,6 +43,15 @@ impl WorkerProcess {
         args: &[String],
         env: &[(String, String)],
     ) -> Result<Arc<Self>> {
+        if one_shot_worker_mode(env) {
+            return Ok(Arc::new(Self::one_shot(
+                worker_id,
+                service_name,
+                executable_path,
+                args,
+                env,
+            )));
+        }
         match Self::spawn_persistent(&worker_id, &service_name, executable_path, args, env).await {
             Ok(worker) => Ok(Arc::new(worker)),
             Err(err) => {
@@ -54,20 +60,36 @@ impl WorkerProcess {
                     error = %err,
                     "persistent worker mode unavailable, falling back to one-shot mode"
                 );
-                Ok(Arc::new(Self {
+                Ok(Arc::new(Self::one_shot(
                     worker_id,
                     service_name,
-                    mode: WorkerMode::OneShot,
-                    executable_path: executable_path.to_path_buf(),
-                    spawn_args: args.to_vec(),
-                    spawn_env: env.to_vec(),
-                    child: Mutex::new(None),
-                    process_scope: Mutex::new(None),
-                    stdin: Mutex::new(None),
-                    stdout: Mutex::new(None),
-                    round_trip: Mutex::new(()),
-                }))
+                    executable_path,
+                    args,
+                    env,
+                )))
             }
+        }
+    }
+
+    fn one_shot(
+        worker_id: String,
+        service_name: String,
+        executable_path: &Path,
+        args: &[String],
+        env: &[(String, String)],
+    ) -> Self {
+        Self {
+            worker_id,
+            service_name,
+            mode: WorkerMode::OneShot,
+            executable_path: executable_path.to_path_buf(),
+            spawn_args: args.to_vec(),
+            spawn_env: env.to_vec(),
+            child: Mutex::new(None),
+            process_scope: Mutex::new(None),
+            stdin: Mutex::new(None),
+            stdout: Mutex::new(None),
+            round_trip: Mutex::new(()),
         }
     }
 
@@ -136,9 +158,12 @@ impl WorkerProcess {
             stdin_for_probe.write_all(payload.as_bytes()).await?;
             stdin_for_probe.flush().await?;
 
-            let line =
-                read_worker_json_response_line(&mut reader, WORKER_HEALTH_TIMEOUT, "health check")
-                    .await?;
+            let line = read_worker_json_response_line(
+                &mut reader,
+                Some(WORKER_HEALTH_TIMEOUT),
+                "health check",
+            )
+            .await?;
             if line.trim().is_empty() {
                 return Err(anyhow!("worker health check returned empty response"));
             }
@@ -305,8 +330,7 @@ impl WorkerProcess {
             let stdout = stdout_guard
                 .as_mut()
                 .ok_or_else(|| anyhow!("persistent worker stdout unavailable"))?;
-            let invoke_timeout = worker_invoke_timeout(&self.spawn_env);
-            read_worker_json_response_line(stdout, invoke_timeout, "invocation").await
+            read_worker_json_response_line(stdout, None, "invocation").await
         };
         let response_line = match response_line {
             Ok(line) => line,
@@ -384,9 +408,10 @@ impl WorkerProcess {
             );
         }).ok().flatten();
 
-        let input = serde_json::to_vec(&ctx.input)?;
+        let input = one_shot_input_bytes(&ctx, &self.spawn_env)?;
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(&input).await?;
+            stdin.write_all(b"\n").await?;
             stdin.flush().await?;
         }
         let mut stdout = child
@@ -406,17 +431,7 @@ impl WorkerProcess {
             stderr.read_to_end(&mut bytes).await.map(|_| bytes)
         });
 
-        let invoke_timeout = worker_invoke_timeout(&self.spawn_env);
-        let status = match timeout(invoke_timeout, child.wait()).await.map_err(|_| {
-            if let Some(scope) = process_scope.as_ref() {
-                scope.terminate();
-            }
-            let _ = child.start_kill();
-            anyhow!(
-                "one-shot worker timed out after {}s",
-                invoke_timeout.as_secs()
-            )
-        })? {
+        let status = match child.wait().await {
             Ok(status) => status,
             Err(error) => {
                 if let Some(scope) = process_scope.as_ref() {
@@ -467,7 +482,7 @@ impl WorkerProcess {
             return Err(anyhow!("worker execution failed"));
         }
 
-        match serde_json::from_str::<Value>(&stdout) {
+        match parse_one_shot_worker_stdout(&stdout, one_shot_envelope_protocol(&self.spawn_env)) {
             Ok(v) => Ok(v),
             Err(err) => {
                 error!(
@@ -483,38 +498,85 @@ impl WorkerProcess {
     }
 }
 
-fn worker_invoke_timeout(env: &[(String, String)]) -> Duration {
-    env_value(env, "TURA_WORKER_INVOKE_TIMEOUT_SECS")
-        .map(ToString::to_string)
-        .or_else(|| std::env::var("TURA_WORKER_INVOKE_TIMEOUT_SECS").ok())
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .filter(|seconds| *seconds > 0)
-        .map(Duration::from_secs)
-        .unwrap_or(DEFAULT_WORKER_INVOKE_TIMEOUT)
+fn one_shot_input_bytes(ctx: &CallContext, env: &[(String, String)]) -> Result<Vec<u8>> {
+    if one_shot_envelope_protocol(env) {
+        let envelope = WorkerEnvelope {
+            kind: "call".to_string(),
+            payload: json!({
+                "input": {
+                    "request_id": ctx.request_id,
+                    "method": ctx.method,
+                    "path": ctx.path,
+                    "input": ctx.input
+                }
+            }),
+        };
+        serde_json::to_vec(&envelope).map_err(Into::into)
+    } else {
+        serde_json::to_vec(&ctx.input).map_err(Into::into)
+    }
+}
+
+fn parse_one_shot_worker_stdout(stdout: &str, allow_protocol_lines: bool) -> Result<Value> {
+    if !allow_protocol_lines {
+        return serde_json::from_str::<Value>(stdout.trim()).map_err(Into::into);
+    }
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .find_map(|line| serde_json::from_str::<Value>(line).ok())
+        .ok_or_else(|| anyhow!("one-shot worker returned no json response"))
+}
+
+fn one_shot_worker_mode(env: &[(String, String)]) -> bool {
+    env_value(env, "TURA_WORKER_MODE").is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "one-shot" | "oneshot"
+        )
+    })
+}
+
+fn one_shot_envelope_protocol(env: &[(String, String)]) -> bool {
+    env_value(env, "TURA_WORKER_ONESHOT_PROTOCOL").is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "envelope" | "worker-envelope" | "line-envelope"
+        )
+    })
 }
 
 async fn read_worker_json_response_line<R>(
     reader: &mut R,
-    duration: Duration,
+    duration: Option<Duration>,
     operation: &str,
 ) -> Result<String>
 where
     R: AsyncBufRead + Unpin,
 {
-    let deadline = Instant::now() + duration;
+    let deadline = duration.map(|duration| Instant::now() + duration);
     let mut skipped = 0usize;
     loop {
-        let now = Instant::now();
-        if now >= deadline {
-            return Err(anyhow!(
-                "worker {operation} timed out after {}s",
-                duration.as_secs()
-            ));
-        }
         let mut line = String::new();
-        let bytes_read = timeout(deadline - now, reader.read_line(&mut line))
-            .await
-            .map_err(|_| anyhow!("worker {operation} timed out after {}s", duration.as_secs()))??;
+        let bytes_read = if let Some(deadline) = deadline {
+            let now = Instant::now();
+            if now >= deadline {
+                let duration = duration.expect("deadline exists only when duration exists");
+                return Err(anyhow!(
+                    "worker {operation} timed out after {}s",
+                    duration.as_secs()
+                ));
+            }
+            let duration = duration.expect("deadline exists only when duration exists");
+            timeout(deadline - now, reader.read_line(&mut line))
+                .await
+                .map_err(|_| {
+                    anyhow!("worker {operation} timed out after {}s", duration.as_secs())
+                })??
+        } else {
+            reader.read_line(&mut line).await?
+        };
         if bytes_read == 0 {
             return Err(anyhow!("worker {operation} closed stdout before response"));
         }
@@ -652,8 +714,9 @@ fn process_debug_enabled() -> bool {
 mod tests {
     use super::super::models::CallContext;
     use super::{
-        env_flag, env_value, sanitize_log_component, worker_invoke_timeout, worker_stderr_log_path,
-        WorkerMode, WorkerProcess,
+        env_flag, env_value, one_shot_input_bytes, one_shot_worker_mode,
+        parse_one_shot_worker_stdout, sanitize_log_component, worker_stderr_log_path, WorkerMode,
+        WorkerProcess,
     };
     use serde_json::json;
     use std::path::PathBuf;
@@ -684,16 +747,24 @@ mod tests {
         assert!(worker.is_alive().await);
     }
 
-    #[test]
-    fn worker_timeout_is_always_positive() {
-        assert!(worker_invoke_timeout(&[]) >= std::time::Duration::from_secs(1));
-        assert_eq!(
-            worker_invoke_timeout(&[(
-                "TURA_WORKER_INVOKE_TIMEOUT_SECS".to_string(),
-                "2".to_string()
-            )]),
-            std::time::Duration::from_secs(2)
-        );
+    #[tokio::test]
+    async fn explicit_one_shot_worker_mode_skips_persistent_health_probe() {
+        let executable = PathBuf::from("definitely-missing-explicit-one-shot-worker-for-test");
+        let env = vec![("TURA_WORKER_MODE".to_string(), "one-shot".to_string())];
+
+        let worker = WorkerProcess::start_with(
+            "worker-id".to_string(),
+            "runtime_worker".to_string(),
+            &executable,
+            &[],
+            &env,
+        )
+        .await
+        .expect("explicit one-shot mode should not spawn during ensure");
+
+        assert!(matches!(worker.mode, WorkerMode::OneShot));
+        assert_eq!(worker.executable_path, executable);
+        assert_eq!(worker.spawn_env, env);
     }
 
     #[test]
@@ -735,6 +806,41 @@ mod tests {
         assert!(env_flag("ON"));
         assert!(env_flag(" true "));
         assert!(!env_flag("disabled"));
+    }
+
+    #[test]
+    fn one_shot_mode_and_envelope_protocol_are_env_driven() {
+        let env = vec![
+            ("TURA_WORKER_MODE".to_string(), "oneshot".to_string()),
+            (
+                "TURA_WORKER_ONESHOT_PROTOCOL".to_string(),
+                "envelope".to_string(),
+            ),
+        ];
+        let ctx = CallContext {
+            request_id: "request-1".to_string(),
+            method: "POST".to_string(),
+            path: "/runtime_worker/session".to_string(),
+            input: json!({ "session_id": "session", "prompt": "hello" }),
+        };
+
+        assert!(one_shot_worker_mode(&env));
+        let bytes = one_shot_input_bytes(&ctx, &env).expect("input bytes");
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("envelope should be json");
+        assert_eq!(value["kind"], "call");
+        assert_eq!(value["payload"]["input"]["request_id"], "request-1");
+        assert_eq!(value["payload"]["input"]["input"]["prompt"], "hello");
+    }
+
+    #[test]
+    fn one_shot_envelope_stdout_parser_ignores_noise_lines() {
+        let parsed =
+            parse_one_shot_worker_stdout("debug before json\n{\"ok\":true,\"value\":42}\n", true)
+                .expect("json line should be parsed");
+
+        assert_eq!(parsed["ok"], true);
+        assert_eq!(parsed["value"], 42);
     }
 
     #[test]
@@ -794,9 +900,26 @@ mod tests {
             .expect("write mock worker stdout");
         drop(writer);
 
+        let line = super::read_worker_json_response_line(&mut reader, None, "test")
+            .await
+            .expect("json line should be found without an invocation deadline");
+
+        assert_eq!(line.trim(), r#"{"ok":true,"result":42}"#);
+    }
+
+    #[tokio::test]
+    async fn worker_json_response_reader_can_use_startup_health_deadline() {
+        let (mut writer, reader) = tokio::io::duplex(256);
+        let mut reader = tokio::io::BufReader::new(reader);
+        writer
+            .write_all(b"library debug log\n{\"ok\":true,\"result\":42}\n")
+            .await
+            .expect("write mock worker stdout");
+        drop(writer);
+
         let line = super::read_worker_json_response_line(
             &mut reader,
-            std::time::Duration::from_secs(1),
+            Some(std::time::Duration::from_secs(1)),
             "test",
         )
         .await
@@ -817,7 +940,7 @@ mod tests {
 
         let line = super::read_worker_json_response_line(
             &mut reader,
-            std::time::Duration::from_secs(1),
+            Some(std::time::Duration::from_secs(1)),
             "test",
         )
         .await
@@ -834,7 +957,7 @@ mod tests {
 
         let error = super::read_worker_json_response_line(
             &mut reader,
-            std::time::Duration::from_secs(1),
+            Some(std::time::Duration::from_secs(1)),
             "test",
         )
         .await
@@ -860,7 +983,7 @@ mod tests {
 
         let error = super::read_worker_json_response_line(
             &mut reader,
-            std::time::Duration::from_secs(1),
+            Some(std::time::Duration::from_secs(1)),
             "test",
         )
         .await

@@ -1,9 +1,13 @@
 use anyhow::{anyhow, Context, Result};
 use gateway::session_db_client::SessionDbClient;
 use serde_json::json;
-use session_log::{SessionLogCommand, SessionLogStore};
+use session_log::{GetSessionRequest, SessionLogCommand, SessionLogResponse, SessionLogStore};
+use std::net::TcpListener;
 use std::path::Path;
-use std::sync::{Arc, Barrier};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Barrier,
+};
 use std::time::{Duration, Instant};
 
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -144,6 +148,148 @@ fn gateway_session_db_client_queues_mutating_write_while_service_is_down_then_re
     wait_until(Duration::from_secs(5), || {
         !session_log::ipc::service_is_running()
     })?;
+    Ok(())
+}
+
+#[test]
+fn gateway_session_db_business_flow_preserves_mixed_message_shapes() -> Result<()> {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let root = tempfile::tempdir().context("temp root")?;
+    let home = root.path().join("home");
+    let workspace = root.path().join("workspace");
+    std::fs::create_dir_all(&home)?;
+    std::fs::create_dir_all(&workspace)?;
+    let _env = EnvGuard::new(&home);
+    let service = ServiceThread::start()?;
+
+    let client = SessionDbClient::discover()?;
+    let session_id = format!("gateway-mixed-shapes-{}", uuid::Uuid::new_v4());
+    client.upsert_session(
+        session_payload(&session_id, &workspace, 1),
+        None,
+        vec![
+            json!({
+                "id": "msg-stream-runtime-mixed",
+                "session_id": session_id,
+                "role": "assistant",
+                "parent_id": null,
+                "created_at": 10,
+                "updated_at": 11,
+                "parts": [
+                    {
+                        "id": "part-stream-runtime-mixed",
+                        "type": "text",
+                        "content": "final visible text",
+                        "text": "final visible text",
+                        "metadata": null,
+                        "call_id": null,
+                        "tool": null,
+                        "state": null
+                    },
+                    {
+                        "id": "runtime-usage-part",
+                        "type": "tool",
+                        "content": null,
+                        "text": null,
+                        "metadata": {"kind": "mano_runtime_usage", "usage": {"total_tokens": 9}},
+                        "call_id": "runtime-mixed",
+                        "tool": "runtime",
+                        "state": {"status": "completed"}
+                    }
+                ]
+            }),
+            json!({
+                "id": "runtime-usage-aux",
+                "session_id": session_id,
+                "role": "runtime",
+                "type": "runtime_usage",
+                "created_at": 12,
+                "updated_at": 12,
+                "usage": {"total_tokens": 9}
+            }),
+            json!({
+                "id": "legacy-simple-assistant",
+                "session_id": session_id,
+                "role": "assistant",
+                "created_at": 13,
+                "updated_at": 13,
+                "content": "legacy dirty shape"
+            }),
+        ],
+        vec![],
+    )?;
+
+    let (_records_page, records) = client.list_session_records(session_id.clone(), 0, 50)?;
+    assert_eq!(records.len(), 3);
+    let visible = records
+        .iter()
+        .find(|record| record.message_id == "msg-stream-runtime-mixed")
+        .ok_or_else(|| anyhow!("missing mixed final message record"))?;
+    assert_eq!(visible.record["parts"][0]["text"], "final visible text");
+    assert_eq!(
+        visible.record["parts"][1]["metadata"]["kind"],
+        "mano_runtime_usage"
+    );
+    assert!(
+        records
+            .iter()
+            .any(|record| record.message_id == "legacy-simple-assistant"),
+        "dirty legacy shapes should be retained as records for diagnostics"
+    );
+
+    let loaded = client
+        .get_session(session_id)?
+        .ok_or_else(|| anyhow!("expected mixed session"))?;
+    assert_eq!(loaded.message_count, 3);
+
+    drop(service);
+    wait_until(Duration::from_secs(5), || {
+        !session_log::ipc::service_is_running()
+    })?;
+    Ok(())
+}
+
+#[test]
+fn gateway_session_db_client_queues_mutating_write_when_live_socket_aborts_before_response(
+) -> Result<()> {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let root = tempfile::tempdir().context("temp root")?;
+    let home = root.path().join("home");
+    let workspace = root.path().join("workspace");
+    std::fs::create_dir_all(&home)?;
+    std::fs::create_dir_all(&workspace)?;
+    let _env = EnvGuard::new(&home);
+    let abortive_endpoint = HealthThenAbortiveSessionDbEndpoint::publish()?;
+
+    let client = SessionDbClient::discover()?;
+    let session_id = format!("gateway-aborted-socket-{}", uuid::Uuid::new_v4());
+    client.upsert_session(
+        session_payload(&session_id, &workspace, 1),
+        None,
+        vec![message_payload(&session_id, "aborted-m-1", "user", 1)],
+        vec![json!({ "id": "aborted-todo", "content": "queued after socket abort" })],
+    )?;
+
+    let accepted = abortive_endpoint.stop()?;
+    assert!(
+        accepted >= 2,
+        "the fake endpoint should receive both probe and data-path connections, got {accepted}"
+    );
+
+    let store = SessionLogStore::open_default().context("open queued store")?;
+    assert_eq!(
+        session_log::file_queue::drain_queue(&store, 10)?,
+        1,
+        "the aborted service call should fall back to exactly one queued write"
+    );
+    let loaded = store
+        .get_session(GetSessionRequest {
+            session_id: session_id.clone(),
+        })?
+        .ok_or_else(|| anyhow!("expected queued session after drain"))?;
+    assert_eq!(loaded.session_id, session_id);
+    assert_eq!(loaded.message_count, 1);
+    assert_eq!(loaded.todos[0]["id"], "aborted-todo");
     Ok(())
 }
 
@@ -297,19 +443,127 @@ impl ServiceThread {
     fn start() -> Result<Self> {
         let store = SessionLogStore::open_default().context("open session log store")?;
         let handle = std::thread::spawn(move || session_log::ipc::serve_blocking(store));
-        wait_until(
-            Duration::from_secs(10),
-            session_log::ipc::service_is_running,
-        )?;
-        Ok(Self {
-            handle: Some(handle),
-        })
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(10) {
+            if handle.is_finished() {
+                let detail = match handle.join() {
+                    Ok(Ok(())) => {
+                        "session_db service exited before publishing service.addr".to_string()
+                    }
+                    Ok(Err(error)) => format!("session_db service exited with error: {error:#}"),
+                    Err(_) => "session_db service thread panicked before publishing service.addr"
+                        .to_string(),
+                };
+                return Err(anyhow!(detail));
+            }
+            if session_log::ipc::service_is_running() {
+                return Ok(Self {
+                    handle: Some(handle),
+                });
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        return Err(anyhow!(
+            "session_db service did not become reachable within 10000ms"
+        ));
     }
 }
 
 impl Drop for ServiceThread {
     fn drop(&mut self) {
         let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+struct HealthThenAbortiveSessionDbEndpoint {
+    stop: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<Result<usize>>>,
+}
+
+impl HealthThenAbortiveSessionDbEndpoint {
+    fn publish() -> Result<Self> {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).context("bind abortive endpoint")?;
+        listener
+            .set_nonblocking(true)
+            .context("make abortive endpoint nonblocking")?;
+        let addr = listener.local_addr().context("abortive endpoint addr")?;
+
+        let path = session_log::ipc::service_addr_path();
+        std::fs::create_dir_all(path.parent().expect("session_db addr parent"))?;
+        std::fs::write(
+            &path,
+            serde_json::to_string(&session_log::ipc::ServiceEndpoint {
+                addr: addr.to_string(),
+                version: tura_path::instance_version(),
+            })?,
+        )
+        .with_context(|| format!("write abortive session_db endpoint {}", path.display()))?;
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let handle = std::thread::spawn(move || -> Result<usize> {
+            let started = Instant::now();
+            let mut accepted = 0;
+            while !thread_stop.load(Ordering::SeqCst) && started.elapsed() < Duration::from_secs(5)
+            {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        accepted += 1;
+                        if accepted == 1 {
+                            use std::io::{BufRead, Write};
+                            stream
+                                .set_read_timeout(Some(Duration::from_secs(1)))
+                                .context("set health probe read timeout")?;
+                            let mut request_line = String::new();
+                            std::io::BufReader::new(stream.try_clone()?)
+                                .read_line(&mut request_line)
+                                .context("read health probe")?;
+                            assert!(
+                                request_line.contains("\"health\""),
+                                "first fake session_db call should be health, got {request_line}"
+                            );
+                            stream
+                                .write_all(
+                                    serde_json::to_string(&SessionLogResponse::Ok)?.as_bytes(),
+                                )
+                                .context("write health response")?;
+                            stream.write_all(b"\n").context("write health newline")?;
+                            stream.flush().context("flush health response")?;
+                            continue;
+                        }
+                        drop(stream);
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => return Err(error).context("accept abortive session_db client"),
+                }
+            }
+            Ok(accepted)
+        });
+
+        Ok(Self {
+            stop,
+            handle: Some(handle),
+        })
+    }
+
+    fn stop(mut self) -> Result<usize> {
+        self.stop.store(true, Ordering::SeqCst);
+        self.handle
+            .take()
+            .expect("abortive endpoint handle")
+            .join()
+            .map_err(|_| anyhow!("abortive session_db endpoint thread panicked"))?
+    }
+}
+
+impl Drop for HealthThenAbortiveSessionDbEndpoint {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }

@@ -6,6 +6,7 @@ use crate::state_machine::session_management::SessionManagement;
 
 use super::compaction::context_compaction_messages;
 use super::types::ContextState;
+use super::USER_AGENT_CONTEXT_ROLE;
 #[derive(Debug, Clone)]
 pub struct ContextInput {
     pub session: SessionManagement,
@@ -279,12 +280,21 @@ fn immutable_context_messages_from_log_entry(value: serde_json::Value) -> Vec<se
         return Vec::new();
     };
     if let Some(role) = obj.get("role").and_then(|role| role.as_str()) {
-        if role == "user" || role == "system" || role == "assistant" {
+        if role == USER_AGENT_CONTEXT_ROLE
+            || role == "user"
+            || role == "system"
+            || role == "assistant"
+        {
+            let provider_role = if role == USER_AGENT_CONTEXT_ROLE {
+                "user"
+            } else {
+                role
+            };
             return obj
                 .get("content")
                 .map(|content| {
                     vec![serde_json::json!({
-                    "role": role,
+                    "role": provider_role,
                     "content": content,
                     })]
                 })
@@ -318,6 +328,7 @@ mod tests {
         ContextInput,
     };
     use crate::context::compact_session_context;
+    use crate::context::USER_AGENT_CONTEXT_ROLE;
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
     use crate::state_machine::session_management::{
@@ -613,5 +624,34 @@ mod tests {
                 .count(),
             9
         );
+    }
+
+    #[test]
+    fn build_context_replays_user_agent_records_as_user_context() {
+        let mut session = session();
+        accumulate_message(
+            &mut session,
+            USER_AGENT_CONTEXT_ROLE,
+            json!("<environment_context>client context</environment_context>"),
+        )
+        .expect("user-agent context should log");
+
+        let output = build_context(ContextInput {
+            runtime: runtime(&session),
+            session,
+            additional_messages: vec![],
+        })
+        .expect("context should build");
+        let context = output
+            .messages
+            .iter()
+            .find(|message| {
+                message["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("client context"))
+            })
+            .expect("user-agent context should be replayed");
+
+        assert_eq!(context["role"], "user");
     }
 }

@@ -1,40 +1,56 @@
 import { emitKeypressEvents } from "node:readline";
-import { setTimeout as delay } from "node:timers/promises";
-import { existsSync, statSync } from "node:fs";
-import { basename } from "node:path";
 import { GatewayClient } from "../gateway/client.js";
 import { ensureGatewayAvailable, killOwnedGateway } from "../gateway/autostart.js";
 import { userFacingError } from "../gateway/errors.js";
 import { MockGatewayClient } from "../gateway/mock-client.js";
 import { CliUsageError, type CliContext } from "../types/common.js";
-import type { CreateSessionRequest, Message, PromptPayload, Session } from "../types/session.js";
-import type { ProviderAuthStatus } from "../types/provider.js";
-import { isDraftSession, sessionUpdatedAt } from "../types/session.js";
-import { promptPayload } from "../commands/run.js";
+import { isDraftSession } from "../types/session.js";
 import { sessionConfigPatchFromAssignments } from "../commands/config-values.js";
 import { initialState, reducer, type AppState } from "./reducer.js";
-import { renderChatFrameParts, renderFrame, settingOptions } from "./render.js";
-import { clear as terminalClear } from "./render-terminal.js";
 import { detectTerminalCapabilities, type TerminalCapabilities } from "./capabilities.js";
 import {
   TUI_ANIMATION_INTERVAL_MS,
   TUI_MIN_DRAW_INTERVAL_MS,
+  TUI_RESIZE_DRAW_PAUSE_MS,
   TUI_TICK_INTERVAL_MS,
 } from "./frame-rate.js";
-import { t } from "../i18n.js";
+import { parseLanguage, setLanguage, t } from "../i18n.js";
 import { keySequence, printableSequence } from "./interactions/keyboard.js";
+import { selectedModel, selectedPersonaID, selectedSettingDetail } from "./logic/selection.js";
+import { clearTerminalForSurfaceTransition, draw, resetDrawState } from "./draw.js";
 import {
-  selectedModel,
-  selectedPersonaID,
-  selectedSettingDetail,
-  promptRuntimeSelection,
-  settingPatch,
-} from "./logic/selection.js";
-import { lastMessagePreview } from "./services/message-preview.js";
+  eventLoop,
+  fetchAuthSurface,
+  hydrate,
+  pickInitialSession,
+  pollingLoop,
+  type TuiGatewayClient,
+} from "./runtime.js";
+import { shouldApplyInitialHydrate } from "./session-state.js";
+import {
+  deleteSelectedSession,
+  forkSelectedSession,
+  openSessionPicker,
+  refreshOpenSessionPicker,
+  SESSION_PICKER_REFRESH_MS,
+} from "./session-picker.js";
+import {
+  applyPersonaToActiveAgent,
+  applySelectedSetting,
+  submitSettingInput,
+  updateActiveSession,
+} from "./settings-actions.js";
+import { hasActiveAnimation, isBusyState } from "./busy-state.js";
+import { createAndSelectSession, submitPrompt } from "./session-actions.js";
 
-type TuiGatewayClient = GatewayClient | MockGatewayClient;
-const SESSION_PREVIEW_FETCH_LIMIT = 8;
-let draftSessionCounter = 0;
+export { clearTerminalForSurfaceTransition, draw, resetDrawState } from "./draw.js";
+export {
+  deleteSelectedSession,
+  forkSelectedSession,
+  openSessionPicker,
+  refreshOpenSessionPicker,
+} from "./session-picker.js";
+export { createAndSelectSession, submitPrompt } from "./session-actions.js";
 
 export async function runTui(context: CliContext, initialPrompt?: string): Promise<void> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
@@ -80,16 +96,31 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
   let pendingDraw: ReturnType<typeof setTimeout> | undefined;
   let pendingDrawAt = 0;
   let lastDrawAt = 0;
-  const flushDraw = () => {
+  const clearPendingDraw = () => {
     if (pendingDraw) {
       clearTimeout(pendingDraw);
       pendingDraw = undefined;
       pendingDrawAt = 0;
     }
-    lastFrame = draw(state, capabilities, lastFrame);
+  };
+  const performDraw = (forceReset = false) => {
+    clearPendingDraw();
+    lastFrame = draw(state, capabilities, lastFrame, { forceReset });
     lastDrawAt = Date.now();
   };
+  const resizeDrawGate = createResizeDrawGate({
+    drawNow: () => performDraw(true),
+    clearPendingDraw,
+  });
+  const flushDraw = () => {
+    if (resizeDrawGate.isFrozen()) return;
+    performDraw();
+  };
   const scheduleDraw = () => {
+    if (resizeDrawGate.isFrozen()) {
+      clearPendingDraw();
+      return;
+    }
     const now = Date.now();
     const nextDrawAt = Math.max(now, lastDrawAt + TUI_MIN_DRAW_INTERVAL_MS);
     if (pendingDraw && pendingDrawAt <= nextDrawAt) return;
@@ -99,6 +130,7 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
       () => {
         pendingDraw = undefined;
         pendingDrawAt = 0;
+        if (resizeDrawGate.isFrozen()) return;
         lastFrame = draw(state, capabilities, lastFrame);
         lastDrawAt = Date.now();
       },
@@ -136,15 +168,17 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
     void pollingLoop(client, () => state, dispatch, controller.signal);
   }
   const heartbeatTimer = setInterval(() => {
-    const current = state.status || state.session?.status;
-    if (current !== "busy" && !state.questions.length && !state.permissions.length) return;
+    if (!isBusyState(state) && !state.questions.length && !state.permissions.length) return;
     scheduleDraw();
   }, TUI_TICK_INTERVAL_MS);
   const animationTimer = setInterval(() => {
-    const current = state.status || state.session?.status;
-    if (current !== "busy" && !state.questions.length && !state.permissions.length) return;
+    if (!isBusyState(state) && !state.questions.length && !state.permissions.length) return;
     if (hasActiveAnimation(state)) dispatch({ type: "tick" });
   }, TUI_ANIMATION_INTERVAL_MS);
+  const sessionPickerRefreshTimer = setInterval(() => {
+    if (!state.sessionsOpen) return;
+    void refreshOpenSessionPicker(client, () => state, dispatch);
+  }, SESSION_PICKER_REFRESH_MS);
 
   // Load the initial session + transcript in the background. Keeping it off the
   // startup path means a slow or wedged gateway can never freeze the UI or block
@@ -155,6 +189,7 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
       const session = await pickInitialSession(client, context.cwd);
       const next = await hydrate(initialState(context.cwd), client, session);
       if (!shouldApplyInitialHydrate(state, session.id)) return;
+      applyConfiguredLanguage(next.sessionConfig?.language, context.language);
       dispatch({
         type: "hydrate",
         session: next.session!,
@@ -179,123 +214,18 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
     }
   })();
 
-  await inputLoop(client, () => state, dispatch, capabilities);
+  await inputLoop(client, () => state, dispatch, capabilities, resizeDrawGate.enterResize);
   // Normal exit path: kill gateway immediately so it doesn't outlive the TUI.
   killOwnedGateway();
   clearInterval(heartbeatTimer);
   clearInterval(animationTimer);
+  clearInterval(sessionPickerRefreshTimer);
   controller.abort();
+  resizeDrawGate.dispose();
   flushDraw();
   if (process.stdin.isTTY) process.stdin.setRawMode(false);
   if (process.stdout.isTTY) process.stdout.write("\x1b[?25h\x1b[0m\n");
   else process.stdout.write("\n");
-}
-
-async function pickInitialSession(client: TuiGatewayClient, cwd: string): Promise<Session> {
-  const sessions = await client.listSessions({ limit: 20 });
-  sessions.sort((left, right) => sessionUpdatedAt(right) - sessionUpdatedAt(left));
-  if (sessions[0]) return sessions[0];
-  return client.createSession().catch(() => createDraftSession(cwd));
-}
-
-async function hydrate(
-  state: AppState,
-  client: TuiGatewayClient,
-  session: Session,
-): Promise<AppState> {
-  const draft = isDraftSession(session);
-  const [messages, providers, sessionConfig, agents, personas] = await Promise.all([
-    draft ? Promise.resolve([]) : client.listMessages(session.id).catch(() => []),
-    client.listProviders().catch(() => undefined),
-    client.getSessionConfig().catch(() => undefined),
-    client.listAgents().catch(() => []),
-    client.listPersonas().catch(() => []),
-  ]);
-  const auth = providers
-    ? await fetchAuthSurface(
-        client,
-        providers.all.map((provider) => provider.id),
-      )
-    : {};
-  const sessions = await client.listSessions({ includeChildren: true }).catch(() => []);
-  return reducer(
-    reducer(state, {
-      type: "hydrate",
-      session,
-      messages,
-      permissions: [],
-      providers,
-      agents,
-      personas,
-      sessions,
-      authMethods: auth.methods,
-      authStatuses: auth.statuses,
-      sessionConfig,
-    }),
-    {
-      type: "questions",
-      value: [],
-    },
-  );
-}
-
-async function eventLoop(
-  client: TuiGatewayClient,
-  signal: AbortSignal,
-  dispatch: (action: Parameters<typeof reducer>[1]) => void,
-): Promise<void> {
-  while (!signal.aborted) {
-    try {
-      for await (const event of client.streamEvents(signal)) {
-        dispatch({ type: "event", event });
-      }
-    } catch (error) {
-      if (signal.aborted) return;
-      dispatch({
-        type: "notice",
-        value: t("eventStreamReconnecting", {
-          error: userFacingError(error),
-        }),
-      });
-      await delay(1000);
-    }
-  }
-}
-
-async function pollingLoop(
-  client: TuiGatewayClient,
-  getState: () => AppState,
-  dispatch: (action: Parameters<typeof reducer>[1]) => void,
-  signal: AbortSignal,
-): Promise<void> {
-  while (!signal.aborted) {
-    const sessionID = getState().session?.id;
-    if (sessionID && !isDraftSession(getState().session)) {
-      await refreshActiveMessages(client, getState, dispatch, sessionID);
-    }
-    await delay(1500);
-  }
-}
-
-async function refreshActiveMessages(
-  client: TuiGatewayClient,
-  getState: () => AppState,
-  dispatch: (action: Parameters<typeof reducer>[1]) => void,
-  sessionID: string,
-): Promise<void> {
-  const state = getState();
-  const session = state.session;
-  if (!session || session.id !== sessionID) return;
-  const cursor = state.refreshState[sessionID];
-  const messages = await client
-    .listMessages(sessionID, cursor?.lastFinalMessageID ? { after: cursor.lastFinalMessageID } : {})
-    .catch(() => undefined);
-  if (!messages) return;
-  const current = getState();
-  const active = current.session;
-  if (!active || active.id !== sessionID) return;
-  if (!messages.length) return;
-  dispatch({ type: "messages-incremental", sessionID, messages, session: active });
 }
 
 async function inputLoop(
@@ -303,22 +233,22 @@ async function inputLoop(
   getState: () => AppState,
   dispatch: (action: Parameters<typeof reducer>[1]) => void,
   capabilities: TerminalCapabilities,
+  onResize?: () => void,
 ): Promise<void> {
   emitKeypressEvents(process.stdin);
   if (process.stdin.isTTY && capabilities.interactive) process.stdin.setRawMode(true);
-  if (process.stdout.isTTY) process.stdout.write("\x1b[?25h");
   return new Promise((resolve) => {
-    const onResize = () => dispatch({ type: "notice", value: getState().notice });
+    const onTerminalResize = createTerminalResizeHandler(getState, dispatch, { onResize });
     const onKeypress = async (
       text: string,
-      key: { name?: string; ctrl?: boolean; meta?: boolean } | undefined,
+      key: { name?: string; ctrl?: boolean; meta?: boolean; shift?: boolean } | undefined,
     ) => {
       try {
         const state = getState();
         const sequence = keySequence(key) ?? text ?? "";
         if (key?.ctrl && key.name === "c") {
           process.stdin.off("keypress", onKeypress);
-          process.stdout.off("resize", onResize);
+          process.stdout.off("resize", onTerminalResize);
           resolve();
           return;
         }
@@ -371,12 +301,20 @@ async function inputLoop(
         if (key?.name === "pagedown" || sequence === "\x1b[6~") {
           return;
         }
+        if (state.sessionsOpen && (key?.name === "delete" || sequence === "\x1b[3~")) {
+          await deleteSelectedSession(client, getState, dispatch);
+          return;
+        }
         if (key?.name === "return") {
           if (state.settingInput) {
             await submitSettingInput(client, getState, dispatch);
             return;
           }
           if (state.sessionsOpen && !state.composer.trim()) {
+            if (key.shift) {
+              await forkSelectedSession(client, getState, dispatch);
+              return;
+            }
             if (state.selectedSessionIndex === 0) {
               clearTerminalForSurfaceTransition();
               await createAndSelectSession(client, getState, dispatch, true);
@@ -439,7 +377,7 @@ async function inputLoop(
             const shouldExit = await slashCommand(client, getState, dispatch, value);
             if (shouldExit) {
               process.stdin.off("keypress", onKeypress);
-              process.stdout.off("resize", onResize);
+              process.stdout.off("resize", onTerminalResize);
               resolve();
             }
           } else await submitPrompt(client, getState, dispatch, value);
@@ -467,8 +405,83 @@ async function inputLoop(
       }
     };
     process.stdin.on("keypress", onKeypress);
-    process.stdout.on("resize", onResize);
+    process.stdout.on("resize", onTerminalResize);
   });
+}
+
+export function createResizeDrawGate(options: {
+  drawNow: () => void;
+  clearPendingDraw: () => void;
+  resizePauseMs?: number;
+  setTimeoutFn?: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  clearTimeoutFn?: (timer: ReturnType<typeof setTimeout>) => void;
+}): {
+  isFrozen: () => boolean;
+  enterResize: () => void;
+  dispose: () => void;
+} {
+  const resizePauseMs = options.resizePauseMs ?? TUI_RESIZE_DRAW_PAUSE_MS;
+  const setTimeoutFn = options.setTimeoutFn ?? setTimeout;
+  const clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
+  let frozen = false;
+  let resizeEndTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const clearResizeEndTimer = () => {
+    if (!resizeEndTimer) return;
+    clearTimeoutFn(resizeEndTimer);
+    resizeEndTimer = undefined;
+  };
+  const finishResize = () => {
+    resizeEndTimer = undefined;
+    if (!frozen) return;
+    frozen = false;
+    options.drawNow();
+  };
+
+  return {
+    isFrozen: () => frozen,
+    enterResize: () => {
+      if (!frozen) {
+        options.drawNow();
+        frozen = true;
+      }
+      options.clearPendingDraw();
+      clearResizeEndTimer();
+      resizeEndTimer = setTimeoutFn(finishResize, resizePauseMs);
+    },
+    dispose: () => {
+      clearResizeEndTimer();
+      frozen = false;
+    },
+  };
+}
+
+export function createTerminalResizeHandler(
+  getState: () => AppState,
+  dispatch: (action: Parameters<typeof reducer>[1]) => void,
+  options: { onResize?: () => void; onHeightResize?: () => void } = {},
+): () => void {
+  let lastResizeSize = terminalSize();
+  return () => {
+    const size = terminalSize();
+    if (size.columns === lastResizeSize.columns && size.rows === lastResizeSize.rows) return;
+    const columnsChanged = size.columns !== lastResizeSize.columns;
+    const rowsChanged = size.rows !== lastResizeSize.rows;
+    lastResizeSize = size;
+    options.onResize?.();
+    if (columnsChanged) {
+      dispatch({ type: "notice", value: getState().notice });
+      return;
+    }
+    if (rowsChanged) options.onHeightResize?.();
+  };
+}
+
+function terminalSize(): { columns: number; rows: number } {
+  return {
+    columns: process.stdout.columns || 0,
+    rows: process.stdout.rows || 0,
+  };
 }
 
 async function slashCommand(
@@ -605,7 +618,9 @@ async function slashCommand(
       dispatch({ type: "notice", value: t("abortRequested") });
     }
   } else if (name === "settings" || name === "setting") {
-    dispatch({ type: "session-config", value: await client.getSessionConfig(), open: true });
+    const config = await client.getSessionConfig();
+    applyConfiguredLanguage(config.language, undefined);
+    dispatch({ type: "session-config", value: config, open: true });
   } else if (name === "provider") {
     if (args[0] === "set-auth") {
       const providerID = args[1];
@@ -655,6 +670,21 @@ async function slashCommand(
       dispatch({ type: "session-config", value: config, open: true });
       dispatch({ type: "notice", value: t("settingsUpdated") });
     }
+  } else if (name === "language" || name === "lang") {
+    if (!args[0]) {
+      dispatch({ type: "session-config", value: await client.getSessionConfig(), open: true });
+      dispatch({ type: "open-setting-detail", detail: "language" });
+    } else {
+      const parsed = parseLanguage(args[0]);
+      if (!parsed) {
+        dispatch({ type: "notice", value: t("unsupportedLanguage") });
+        return false;
+      }
+      const config = await client.patchSessionConfig({ language: parsed });
+      setLanguage(parsed);
+      dispatch({ type: "session-config", value: config, open: true });
+      dispatch({ type: "notice", value: t("settingsUpdated") });
+    }
   } else if (name === "session") {
     if (!args[0]) {
       dispatch({ type: "notice", value: t("usageConfigSet") });
@@ -688,6 +718,7 @@ async function slashCommand(
       if (args.length === 0) dispatch({ type: "notice", value: t("usageConfigSet") });
       else {
         const config = await client.patchSessionConfig(sessionConfigPatchFromAssignments(args));
+        applyConfiguredLanguage(config.language, undefined);
         dispatch({ type: "session-config", value: config, open: true });
         dispatch({ type: "notice", value: t("settingsUpdated") });
       }
@@ -705,703 +736,11 @@ async function slashCommand(
   return false;
 }
 
-export async function createAndSelectSession(
-  client: TuiGatewayClient,
-  getState: () => AppState,
-  dispatch: (action: Parameters<typeof reducer>[1]) => void,
-  closePanels = false,
-): Promise<void> {
-  const current = getState();
-  const runtimeSelection = promptRuntimeSelection(current);
-  const session = await client
-    .createSession(createSessionRequest(runtimeSelection))
-    .catch(() => createDraftSession(current.cwd));
-  dispatch({
-    type: "hydrate",
-    session,
-    messages: [],
-    permissions: [],
-    providers: current.providers,
-    agents: current.agents,
-    personas: current.personas,
-    sessions: isDraftSession(session)
-      ? current.sessions
-      : upsertSessionLocal(current.sessions, session),
-    authMethods: current.authMethods,
-    authStatuses: current.authStatuses,
-    sessionConfig: current.sessionConfig,
-    closePanels,
-  });
-  dispatch({ type: "questions", value: [] });
-}
-
-function hasActiveAnimation(state: AppState): boolean {
-  if (state.questions.length || state.permissions.length) return true;
-  const sessionID = state.session?.id;
-  if (
-    Object.values(state.liveStreams).some(
-      (stream) => !sessionID || !stream.sessionID || stream.sessionID === sessionID,
-    )
-  )
-    return true;
-  if (state.messages.at(-1)?.role === "user") return true;
-  return state.messages.some((message) =>
-    (message.parts ?? []).some((part) => {
-      if (part.tool !== "command_run" && part.type !== "tool") return false;
-      const status = commandStatus(part.state);
-      return /run|progress|pending|busy|question|in[_ -]?progress|execut|start/i.test(status);
-    }),
-  );
-}
-
-function commandStatus(value: unknown): string {
-  if (!value || typeof value !== "object") return "";
-  const status = (value as { status?: unknown }).status;
-  return typeof status === "string" ? status : "";
-}
-
-export async function submitPrompt(
-  client: TuiGatewayClient,
-  getState: () => AppState,
-  dispatch: (action: Parameters<typeof reducer>[1]) => void,
-  prompt: string,
-): Promise<void> {
-  let session = getState().session;
-  const runtimeSelection = promptRuntimeSelection(getState());
-  if (!session || isDraftSession(session)) {
-    session = await client.createSession(createSessionRequest(runtimeSelection));
-    const current = getState();
-    dispatch({
-      type: "hydrate",
-      session,
-      messages: isDraftSession(current.session) ? [] : current.messages,
-      permissions: isDraftSession(current.session) ? [] : current.permissions,
-      providers: current.providers,
-      agents: current.agents,
-      personas: current.personas,
-      sessions: upsertSessionLocal(current.sessions, session),
-      authMethods: current.authMethods,
-      authStatuses: current.authStatuses,
-      sessionConfig: current.sessionConfig,
-    });
-  }
-  const payload = promptPayload(richPromptFromInput(prompt), {
-    source: "tui",
-    ...runtimeSelection,
-  });
-  dispatch({ type: "close-panels" });
-  dispatch({
-    type: "messages-incremental",
-    sessionID: session.id,
-    messages: [localUserMessage(session.id, payload)],
-    session: { ...session, status: "busy" },
-  });
-  await client.sendPromptAsync(session.id, payload);
-  if (client instanceof MockGatewayClient) {
-    const next = await hydrate(getState(), client, session);
-    dispatch({
-      type: "hydrate",
-      session: next.session!,
-      messages: next.messages,
-      permissions: next.permissions,
-      providers: next.providers,
-      agents: next.agents,
-      personas: next.personas,
-      sessions: next.sessions,
-    });
-    dispatch({ type: "questions", value: next.questions });
-    dispatch({ type: "status", value: "idle" });
-    return;
-  }
-  dispatch({ type: "status", value: "busy" });
-}
-
-function localUserMessage(sessionID: string, payload: PromptPayload): Message {
-  const now = Date.now();
-  return {
-    id: payload.messageID,
-    sessionID,
-    session_id: sessionID,
-    role: "user",
-    created_at: now,
-    updated_at: now,
-    parts: payload.parts.map((part) => ({ ...part, sessionID, session_id: sessionID })),
-  };
-}
-
-function createDraftSession(cwd: string): Session {
-  draftSessionCounter += 1;
-  return {
-    id: `draft-session-${Date.now()}-${draftSessionCounter}`,
-    draft: true,
-    name: t("newSession"),
-    directory: cwd,
-    status: "idle",
-    updated_at: Date.now(),
-    message_count: 0,
-  };
-}
-
-function createSessionRequest(
-  runtimeSelection: ReturnType<typeof promptRuntimeSelection>,
-): CreateSessionRequest {
-  return {
-    ...(runtimeSelection.model ? { model: runtimeSelection.model } : {}),
-    ...(runtimeSelection.agent ? { agent: runtimeSelection.agent } : {}),
-    ...(runtimeSelection.modelVariant ? { model_variant: runtimeSelection.modelVariant } : {}),
-    ...(runtimeSelection.modelAccelerationEnabled !== undefined
-      ? { model_acceleration_enabled: runtimeSelection.modelAccelerationEnabled }
-      : {}),
-  };
-}
-
-function shouldApplyInitialHydrate(state: AppState, sessionID: string): boolean {
-  if (state.status === "busy") return state.session?.id === sessionID;
-  return !state.session || state.session.id === sessionID;
-}
-
-function upsertSessionLocal(sessions: Session[], session: Session): Session[] {
-  return [...sessions.filter((item) => item.id !== session.id), session];
-}
-
-async function fetchAuthSurface(
-  client: TuiGatewayClient,
-  providerIDs: string[],
-): Promise<{
-  methods?: Awaited<ReturnType<TuiGatewayClient["listProviderAuthMethods"]>>;
-  statuses?: Record<string, ProviderAuthStatus>;
-}> {
-  const [methods, statuses] = await Promise.all([
-    client.listProviderAuthMethods().catch(() => undefined),
-    Promise.all(
-      providerIDs.map(
-        async (providerID) =>
-          [providerID, await client.providerAuthStatus(providerID).catch(() => undefined)] as const,
-      ),
-    ).then((items) =>
-      Object.fromEntries(
-        items.filter((item): item is readonly [string, ProviderAuthStatus] => Boolean(item[1])),
-      ),
-    ),
-  ]);
-  return { methods, statuses };
-}
-
-export async function openSessionPicker(
-  client: TuiGatewayClient,
-  getState: () => AppState,
-  dispatch: (action: Parameters<typeof reducer>[1]) => void,
-): Promise<void> {
-  const state = getState();
-  if (state.sessionsOpen) {
-    clearTerminalForSurfaceTransition();
-    dispatch({ type: "toggle-sessions" });
-    return;
-  }
-  clearTerminalForSurfaceTransition();
-  dispatch({
-    type: "sessions",
-    value: sortedSessions(state.sessions.length ? state.sessions : activeSessionList(state)),
-    open: true,
-  });
-  void refreshOpenSessionPicker(client, getState, dispatch);
-}
-
-async function sessionPreviews(
-  client: TuiGatewayClient,
-  sessions: Session[],
-  cachedPreviews: Record<string, string> = {},
-): Promise<Record<string, string>> {
-  const entries = await Promise.all(
-    sessions.slice(0, SESSION_PREVIEW_FETCH_LIMIT).map(async (session) => {
-      const cached = cachedPreviews[session.id];
-      if (cached) return [session.id, cached] as const;
-      const messages = await client.listMessages(session.id, { limit: 1 }).catch(() => []);
-      const preview = lastMessagePreview(messages);
-      return preview ? ([session.id, preview] as const) : undefined;
-    }),
-  );
-  return Object.fromEntries(
-    entries.filter((entry): entry is readonly [string, string] => Boolean(entry)),
-  );
-}
-
-async function refreshOpenSessionPicker(
-  client: TuiGatewayClient,
-  getState: () => AppState,
-  dispatch: (action: Parameters<typeof reducer>[1]) => void,
-): Promise<void> {
-  const sessions = sortedSessions(
-    await client.listSessions({ includeChildren: true }).catch(() => getState().sessions),
-  );
-  if (!getState().sessionsOpen) return;
-  dispatch({ type: "sessions", value: sessions, open: true });
-  const previews = await sessionPreviews(client, sessions, getState().sessionPreviews);
-  if (!getState().sessionsOpen) return;
-  dispatch({ type: "session-previews", value: previews });
-}
-
-function activeSessionList(state: AppState): Session[] {
-  return state.session && !isDraftSession(state.session) ? [state.session] : [];
-}
-
-function sortedSessions(sessions: Session[]): Session[] {
-  return [...sessions].sort((left, right) => sessionUpdatedAt(right) - sessionUpdatedAt(left));
-}
-
-async function applySelectedSetting(
-  client: TuiGatewayClient,
-  getState: () => AppState,
-  dispatch: (action: Parameters<typeof reducer>[1]) => void,
-): Promise<void> {
-  const state = getState();
-  const detail = state.settingDetail;
-  if (!detail) return;
-  const selected = settingOptions(state)[state.selectedSettingOptionIndex];
-  if (!selected) return;
-  const value = selected[2];
-  if (detail === "model") {
-    if (typeof value !== "string" || !state.session?.id) return;
-    await updateActiveSession(client, getState, dispatch, { model: value });
-    dispatch({ type: "notice", value: t("settingsUpdated") });
-    return;
-  }
-  if (detail === "agent") {
-    if (typeof value !== "string" || !state.session?.id) return;
-    await updateActiveSession(client, getState, dispatch, { agent: value });
-    dispatch({ type: "notice", value: t("settingsUpdated") });
-    return;
-  }
-  if (detail === "persona" && typeof value === "string") {
-    await applyPersonaToActiveAgent(client, getState, dispatch, value);
-    dispatch({ type: "close-setting-detail" });
-    dispatch({ type: "notice", value: t("settingsUpdated") });
-    return;
-  }
-  if (detail === "provider" && typeof value === "string") {
-    const auth = await fetchAuthSurface(client, [value]);
-    dispatch({ type: "auth", methods: auth.methods, statuses: auth.statuses, open: false });
-    dispatch({ type: "open-setting-detail", detail: "providerAuth", providerID: value });
-    return;
-  }
-  if (detail === "providerAuth") {
-    await applyProviderAuthAction(client, getState, dispatch, value);
-    return;
-  }
-  const patch = settingPatch(detail, value);
-  if (!patch) return;
-  const config = await client.patchSessionConfig(patch);
-  dispatch({ type: "session-config", value: config, open: true });
-  dispatch({ type: "open-setting-detail", detail });
-  dispatch({ type: "notice", value: t("settingsUpdated") });
-}
-
-async function updateActiveSession(
-  client: TuiGatewayClient,
-  getState: () => AppState,
-  dispatch: (action: Parameters<typeof reducer>[1]) => void,
-  patch: Partial<Session>,
-): Promise<Session | undefined> {
-  const state = getState();
-  const active = state.session;
-  if (!active) return undefined;
-  const session = isDraftSession(active)
-    ? { ...active, ...patch, updated_at: Date.now() }
-    : await client.updateSession(active.id, patch);
-  dispatchHydrateFromState(
-    dispatch,
-    state,
-    session,
-    await client.getSessionConfig().catch(() => state.sessionConfig),
-  );
-  return session;
-}
-
-function dispatchHydrateFromState(
-  dispatch: (action: Parameters<typeof reducer>[1]) => void,
-  state: AppState,
-  session: Session,
-  sessionConfig: AppState["sessionConfig"],
+function applyConfiguredLanguage(
+  language: string | null | undefined,
+  explicit: string | undefined,
 ): void {
-  dispatch({
-    type: "hydrate",
-    session,
-    messages: state.messages,
-    permissions: state.permissions,
-    providers: state.providers,
-    agents: state.agents,
-    personas: state.personas,
-    sessions: state.sessions,
-    sessionConfig,
-  });
-}
-
-async function applyProviderAuthAction(
-  client: TuiGatewayClient,
-  getState: () => AppState,
-  dispatch: (action: Parameters<typeof reducer>[1]) => void,
-  value: unknown,
-): Promise<void> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return;
-  const action = value as { action?: string; providerID?: string; method?: number };
-  const providerID = action.providerID;
-  if (!providerID) return;
-  if (action.action === "oauth") {
-    const auth = await client.providerOauthAuthorize(providerID, action.method ?? 0);
-    const status = await client.providerAuthStatus(providerID).catch(() => undefined);
-    dispatch({
-      type: "auth",
-      statuses: status
-        ? { ...getState().authStatuses, [providerID]: status }
-        : getState().authStatuses,
-      open: false,
-    });
-    dispatch({ type: "open-setting-detail", detail: "providerAuth", providerID });
-    dispatch({
-      type: "setting-input",
-      value: {
-        kind: "oauth-callback",
-        providerID,
-        prompt: t("oauthCallbackInputHint"),
-      },
-    });
-    dispatch({
-      type: "notice",
-      value: [auth.instructions, auth.url ? t("openUrl", { url: auth.url }) : undefined]
-        .filter(Boolean)
-        .join(" "),
-    });
-    return;
-  }
-  if (action.action === "logout") {
-    await client.providerLogout(providerID);
-    const status = await client.providerAuthStatus(providerID).catch(() => undefined);
-    dispatch({
-      type: "auth",
-      statuses: status
-        ? { ...getState().authStatuses, [providerID]: status }
-        : getState().authStatuses,
-      open: false,
-    });
-    dispatch({ type: "open-setting-detail", detail: "providerAuth", providerID });
-    dispatch({ type: "notice", value: t("settingsUpdated") });
-    return;
-  }
-  if (action.action === "api-key") {
-    const method = (getState().authMethods?.[providerID] ?? []).find((item) =>
-      /key|token|api/i.test(
-        [item.type, item.kind, item.login, item.label].filter(Boolean).join(" "),
-      ),
-    );
-    dispatch({
-      type: "setting-input",
-      value: {
-        kind: "api-key",
-        providerID,
-        prompt: t("apiKeyInputHint", { provider: providerID }),
-      },
-    });
-    dispatch({
-      type: "notice",
-      value: [
-        method?.api_key_url ? t("openUrl", { url: method.api_key_url }) : undefined,
-        method?.docs_url,
-      ]
-        .filter(Boolean)
-        .join(" "),
-    });
-  }
-}
-
-async function submitSettingInput(
-  client: TuiGatewayClient,
-  getState: () => AppState,
-  dispatch: (action: Parameters<typeof reducer>[1]) => void,
-): Promise<void> {
-  const state = getState();
-  const input = state.settingInput;
-  const value = state.composer.trim();
-  if (!input || !value) return;
-  if (input.kind === "api-key") {
-    await client.setProviderAuth(input.providerID, { type: "api_key", key: value });
-  } else {
-    await client.setProviderAuth(input.providerID, {
-      type: "oauth",
-      access: value,
-      metadata: { callback_url_or_token: value },
-    });
-  }
-  const status = await client.providerAuthStatus(input.providerID).catch(() => undefined);
-  dispatch({
-    type: "auth",
-    statuses: status
-      ? { ...getState().authStatuses, [input.providerID]: status }
-      : getState().authStatuses,
-    open: false,
-  });
-  dispatch({ type: "setting-input", value: undefined });
-  dispatch({ type: "composer", value: "" });
-  dispatch({ type: "open-setting-detail", detail: "providerAuth", providerID: input.providerID });
-  dispatch({ type: "notice", value: t("settingsUpdated") });
-}
-
-function personaID(persona: AppState["personas"][number] | undefined): string | undefined {
-  const configName = persona?.config?.persona_name;
-  return persona?.summary?.id ?? (typeof configName === "string" ? configName : undefined);
-}
-
-async function applyPersonaToActiveAgent(
-  client: TuiGatewayClient,
-  getState: () => AppState,
-  dispatch: (action: Parameters<typeof reducer>[1]) => void,
-  targetPersonaID: string,
-): Promise<void> {
-  const state = getState();
-  const agentID = state.session?.agent ?? state.sessionConfig?.active_agent;
-  if (!agentID) throw new Error("No active agent selected.");
-  const persona =
-    state.personas.find((item) => personaID(item) === targetPersonaID) ??
-    (await client.getPersona(targetPersonaID));
-  const stored = await client.getAgent(agentID);
-  const config = {
-    ...stored.config,
-    agent_persona: [
-      {
-        persona_name: targetPersonaID,
-        persona_directory:
-          persona.config?.persona_directory ??
-          persona.summary?.path ??
-          `personas/src/${targetPersonaID}`,
-      },
-    ],
-  };
-  const updated = await client.updateAgent(agentID, { config, prompt: stored.prompt ?? undefined });
-  const agents = state.agents.map((agent) => (storedAgentID(agent) === agentID ? updated : agent));
-  dispatch({
-    type: "agents",
-    value: agents.length === state.agents.length ? agents : [updated, ...state.agents],
-  });
-  dispatch({
-    type: "personas",
-    value: await client.listPersonas().catch(() => state.personas),
-    open: state.personasOpen,
-  });
-}
-
-function storedAgentID(agent: AppState["agents"][number]): string | undefined {
-  return agent.summary?.id ?? (agent as unknown as { name?: string }).name;
-}
-
-let lastDrawSurface = "";
-let lastDrawSessionID = "";
-let lastChatCacheFrame = "";
-let lastChatLiveFrame = "";
-let lastChatChromeFrame = "";
-let lastChatChromeCursor: { row: number; column: number } | undefined;
-
-export function resetDrawState(): void {
-  lastDrawSurface = "";
-  lastDrawSessionID = "";
-  lastChatCacheFrame = "";
-  lastChatLiveFrame = "";
-  lastChatChromeFrame = "";
-  lastChatChromeCursor = undefined;
-}
-
-export function clearTerminalForSurfaceTransition(): void {
-  if (!process.stdout.isTTY) return;
-  resetDrawState();
-  process.stdout.write(terminalSurfaceClear());
-}
-
-export function draw(
-  state: AppState,
-  capabilities: TerminalCapabilities,
-  previousFrame = "",
-): string {
-  if (!process.stdout.isTTY) return previousFrame;
-  const surface = drawSurface(state);
-  const rendered =
-    surface === "chat"
-      ? renderChatFrameParts(state, capabilities)
-      : renderFrame(state, capabilities);
-  const frame = rendered.frame;
-  const sessionID = state.session?.id ?? "";
-  const previousSurface = lastDrawSurface;
-  const previousSessionID = lastDrawSessionID;
-  const sessionSurfaceBoundary =
-    (surface === "sessions" && previousSurface !== surface) ||
-    (previousSurface === "sessions" && previousSurface !== surface);
-  const shouldClearForSessionSurface = previousSessionID !== sessionID || sessionSurfaceBoundary;
-  lastDrawSurface = surface;
-  lastDrawSessionID = sessionID;
-
-  if (surface === "chat") {
-    return drawChatFrame(
-      rendered as ReturnType<typeof renderChatFrameParts>,
-      previousFrame,
-      shouldClearForSessionSurface || previousSurface !== "chat",
-    );
-  }
-
-  let output = "\x1b[?25l";
-  output += terminalSurfaceClear();
-  output += terminalAppendFrame(frame);
-  output += cursorOutputFromFrameEnd(frame, rendered.cursor);
-  process.stdout.write(output);
-  lastChatCacheFrame = "";
-  lastChatLiveFrame = "";
-  lastChatChromeFrame = "";
-  lastChatChromeCursor = undefined;
-  return frame;
-}
-
-function drawChatFrame(
-  rendered: ReturnType<typeof renderChatFrameParts>,
-  previousFrame: string,
-  forceReset: boolean,
-): string {
-  const frame = rendered.frame;
-  if (frame === previousFrame && !forceReset) {
-    return frame;
-  }
-
-  let output = "\x1b[?25l";
-  if (forceReset || !lastChatCacheFrame || rendered.cacheFrame !== lastChatCacheFrame) {
-    output += terminalSurfaceClear();
-    output += terminalAppendFrame(frame);
-    output += cursorOutputFromFrameEnd(frame, rendered.cursor);
-  } else {
-    output += terminalRewriteChatLiveAndChrome(rendered);
-  }
-  process.stdout.write(output);
-  lastChatCacheFrame = rendered.cacheFrame;
-  lastChatLiveFrame = rendered.liveFrame;
-  lastChatChromeFrame = rendered.chromeFrame;
-  lastChatChromeCursor = rendered.chromeCursor;
-  return frame;
-}
-
-function drawSurface(state: AppState): string {
-  if (state.help) return "help";
-  if (state.sessionsOpen) return "sessions";
-  if (state.authOpen) return "auth";
-  if (state.settingsOpen) return "settings";
-  if (state.personasOpen) return "personas";
-  if (state.modelsOpen) return "models";
-  return "chat";
-}
-
-function terminalAppendFrame(frame: string): string {
-  if (!frame) return "";
-  return frame.replace(/\n/g, "\r\n");
-}
-
-function terminalRewriteChatLiveAndChrome(
-  rendered: ReturnType<typeof renderChatFrameParts>,
-): string {
-  const previousLiveLines = frameLines(lastChatLiveFrame);
-  const nextLiveLines = frameLines(rendered.liveFrame);
-  const diffIndex = firstDifferentLine(previousLiveLines, nextLiveLines);
-  const currentChromeCursorRow =
-    lastChatChromeCursor?.row ?? Math.max(1, frameLineCount(lastChatChromeFrame));
-  const rowsUp = Math.max(0, currentChromeCursorRow - 1 + previousLiveLines.length - diffIndex);
-  const repaintLines = [...nextLiveLines.slice(diffIndex), ...frameLines(rendered.chromeFrame)];
-  const repaintFrame = repaintLines.join("\n");
-  const repaintCursor = rendered.chromeCursor
-    ? {
-        row: nextLiveLines.length - diffIndex + rendered.chromeCursor.row,
-        column: rendered.chromeCursor.column,
-      }
-    : undefined;
-  return [
-    "\x1b[1G",
-    rowsUp > 0 ? `\x1b[${rowsUp}A` : "",
-    "\x1b[J",
-    terminalAppendFrame(repaintFrame),
-    cursorOutputFromFrameEnd(repaintFrame, repaintCursor),
-  ].join("");
-}
-
-function frameLines(frame: string): string[] {
-  return frame ? frame.split("\n") : [];
-}
-
-function firstDifferentLine(left: string[], right: string[]): number {
-  const count = Math.min(left.length, right.length);
-  for (let index = 0; index < count; index += 1) {
-    if (left[index] !== right[index]) return index;
-  }
-  return count;
-}
-
-function cursorOutputFromFrameEnd(frame: string, cursor?: { row: number; column: number }): string {
-  if (!cursor) return "";
-  return `${cursorPositionFromFrameEnd(frame, cursor)}\x1b[?25h`;
-}
-
-function cursorPositionFromFrameEnd(
-  frame: string,
-  cursor: { row: number; column: number },
-): string {
-  const frameRows = frameLineCount(frame);
-  const cursorRow = Math.max(1, Math.min(frameRows, cursor.row));
-  const rowsBelowCursor = frameRows - cursorRow;
-  const column = Math.max(1, cursor.column);
-  return `${rowsBelowCursor > 0 ? `\x1b[${rowsBelowCursor}A` : ""}\x1b[${column}G`;
-}
-
-function frameLineCount(frame: string): number {
-  return frame ? frame.split("\n").length : 1;
-}
-
-function terminalSurfaceClear(): string {
-  return `\x1b[0m${terminalClear}`;
-}
-
-function richPromptFromInput(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed || /\[(?:MEDIA|EMOJI):/u.test(trimmed) || /\[[^\]]+\]\([^)]+\)/u.test(trimmed))
-    return value;
-  const paths = draggedPaths(trimmed);
-  if (!paths.length) return value;
-  return paths.map(richTokenForPath).join("\n");
-}
-
-function draggedPaths(value: string): string[] {
-  const matches = Array.from(value.matchAll(/"([^"]+)"|'([^']+)'|(\S+)/gu))
-    .map((match) => match[1] ?? match[2] ?? match[3])
-    .filter(Boolean);
-  if (!matches.length) return [];
-  return matches.every((item) => isExistingLocalPath(item)) ? matches : [];
-}
-
-function richTokenForPath(path: string): string {
-  if (isMediaPath(path)) return `[MEDIA:${path}:MEDIA]`;
-  const label = basename(path.replace(/[\\/]+$/u, "")) || path;
-  return `[${label}](${fileUrl(path)})`;
-}
-
-function isExistingLocalPath(path: string): boolean {
-  try {
-    return existsSync(path);
-  } catch {
-    return false;
-  }
-}
-
-function isMediaPath(path: string): boolean {
-  try {
-    const stat = statSync(path);
-    if (stat.isDirectory()) return false;
-  } catch {
-    return false;
-  }
-  return /\.(?:png|jpe?g|gif|webp|svg|bmp|mp4|mov|webm|mp3|wav|ogg)$/iu.test(path);
-}
-
-function fileUrl(path: string): string {
-  const normalized = path.replace(/\\/g, "/");
-  const withSlash = /^[A-Za-z]:\//u.test(normalized) ? `/${normalized}` : normalized;
-  return `file://${encodeURI(withSlash)}`;
+  if (explicit) return;
+  const parsed = parseLanguage(language ?? undefined);
+  if (parsed) setLanguage(parsed);
 }

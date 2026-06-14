@@ -1,11 +1,12 @@
 use super::{
     agent_message_content, agent_message_metadata, api_message_from_store, apply_single_change,
-    filter_list_sessions, first_prompt_part_id, frontend_safe_reply_message, frontend_safe_value,
-    planning_todos, prompt_command_run_shell, prompt_message_id, prompt_model_acceleration,
-    prompt_model_variant, prompt_text, workspace_key, SendAgentMedia, SendAgentMessageRequest,
-    SendAgentToolCall, SessionChangeRecord, SessionListParams,
+    config_model_override, filter_list_sessions, first_prompt_part_id, frontend_safe_reply_message,
+    frontend_safe_value, planning_todos, prompt_command_run_shell, prompt_message_id,
+    prompt_model_acceleration, prompt_model_variant, prompt_text, workspace_key, SendAgentMedia,
+    SendAgentMessageRequest, SendAgentToolCall, SessionChangeRecord, SessionListParams,
 };
 use crate::api::types::{Session, SessionStatus};
+use crate::session::config::TuraSessionConfig;
 use crate::session_store;
 use axum::{
     extract::{Path, Query},
@@ -67,6 +68,21 @@ fn prompt_payload_treats_default_model_variant_as_unset() {
     });
 
     assert_eq!(prompt_model_variant(&payload), None);
+}
+
+#[test]
+fn session_config_model_override_prefers_provider_model_pair_for_legacy_route_names() {
+    let config = TuraSessionConfig {
+        model: Some("flagship_thinking".to_string()),
+        active_provider: Some("codex".to_string()),
+        active_model: Some("gpt-5.5".to_string()),
+        ..TuraSessionConfig::default()
+    };
+
+    assert_eq!(
+        config_model_override(&config).as_deref(),
+        Some("codex/gpt-5.5")
+    );
 }
 
 fn test_session(id: &str, directory: &str, parent_id: Option<&str>, updated_at: i64) -> Session {
@@ -209,7 +225,7 @@ async fn session_status_includes_task_management_display_fields() {
 
     assert_eq!(status["task_management"]["status"], "question");
     assert_eq!(status["plan_summary"], "Status Contract");
-    assert_eq!(status["session_display_name"], "Status Contract");
+    assert_eq!(status["session_display_name"], "Status task");
 }
 
 #[tokio::test]
@@ -245,7 +261,7 @@ async fn create_session_accepts_task_management_and_serializes_session_fields() 
     assert_eq!(session.plan_summary.as_deref(), Some("Create Route Plan"));
     assert_eq!(
         session.session_display_name.as_deref(),
-        Some("Create Route Plan")
+        Some("Create route task")
     );
     assert_eq!(session.task_management["task_summary"], "Create route task");
 
@@ -254,7 +270,7 @@ async fn create_session_accepts_task_management_and_serializes_session_fields() 
     assert!(value["task_management"].get("status").is_none());
     assert_eq!(value["task_management"]["start_condition"], "user_action");
     assert_eq!(value["plan_summary"], "Create Route Plan");
-    assert_eq!(value["session_display_name"], "Create Route Plan");
+    assert_eq!(value["session_display_name"], "Create route task");
     assert_eq!(value["auto_session_name"], true);
     let object = value.as_object().expect("session JSON should be an object");
     assert_eq!(object.len(), 21);
@@ -314,10 +330,7 @@ async fn task_management_route_patches_session_and_returns_session_fields() {
         updated.plan_summary.as_deref(),
         Some("Dedicated Patch Route")
     );
-    assert_eq!(
-        updated.session_display_name.as_deref(),
-        Some("Dedicated Patch Route")
-    );
+    assert_eq!(updated.session_display_name.as_deref(), Some("Patch task"));
     assert_eq!(updated.task_management["status"], "question");
     assert_eq!(updated.task_management["start_condition"], "scheduled_task");
 
@@ -328,7 +341,7 @@ async fn task_management_route_patches_session_and_returns_session_fields() {
         "scheduled_task"
     );
     assert_eq!(value["plan_summary"], "Dedicated Patch Route");
-    assert_eq!(value["session_display_name"], "Dedicated Patch Route");
+    assert_eq!(value["session_display_name"], "Patch task");
     assert_eq!(value["auto_session_name"], true);
     let object = value.as_object().expect("session JSON should be an object");
     assert_eq!(object.len(), 21);

@@ -1,5 +1,6 @@
 param(
-  [switch]$SkipTui
+  [switch]$SkipTui,
+  [switch]$Clean
 )
 
 $ErrorActionPreference = "Stop"
@@ -77,9 +78,10 @@ function Stop-RepoTuraBackends {
   }
 }
 
-function Remove-SessionDbDirtyData {
+function Remove-LocalRuntimeState {
   $Targets = @(
     (Join-Path $RepoRoot "db\session_log"),
+    (Join-Path $RepoRoot ".tura\config.conf"),
     (Join-Path $RepoRoot ".tura\session_log.sqlite3"),
     (Join-Path $RepoRoot ".tura\session_log.sqlite3-wal"),
     (Join-Path $RepoRoot ".tura\session_log.sqlite3-shm"),
@@ -88,7 +90,7 @@ function Remove-SessionDbDirtyData {
   foreach ($Target in $Targets) {
     $Full = [System.IO.Path]::GetFullPath($Target)
     if (-not (Test-PathUnderRepo $Full)) {
-      throw "Refusing to delete session DB path outside repository: $Full"
+      throw "Refusing to delete local runtime path outside repository: $Full"
     }
     Remove-Item -LiteralPath $Full -Recurse -Force -ErrorAction SilentlyContinue
   }
@@ -104,7 +106,11 @@ if ($IsWindows -or $env:OS -eq "Windows_NT") {
 }
 
 Stop-RepoTuraBackends
-Remove-SessionDbDirtyData
+if ($Clean) {
+  Remove-LocalRuntimeState
+} else {
+  Write-Host "Preserving local session DB/config state. Pass -Clean to remove it before building."
+}
 Remove-Item -LiteralPath (Join-Path $TargetDir "cli.exe") -Force -ErrorAction SilentlyContinue
 
 Invoke-Checked "cargo" @("build", "--release", "-p", "gateway", "--bin", "tura_exec", "--bin", "tura_gateway")

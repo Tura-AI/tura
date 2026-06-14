@@ -449,15 +449,15 @@ fn command_list_for_description(commands: &BTreeSet<String>, active_shell: &str)
 fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
     let mut patterns = vec![
         "- Batch investigation: use early commands for the specific discovery, searches, and file reads needed to understand the failure surface.",
-        "- Keep related path listing, targeted search, and candidate file reads in the same command_run batch; independent commands with no output dependency may share one step.",
+        "- Keep related path listing, targeted search, and candidate file reads in the same command_run batch; independent commands with no output dependency must share one step.",
         "- Do not run test/probe invocations before you have read the relevant code and determined the actual CLI command set.",
-        "- Use steps to express execution order and dependency relationships. Commands in the same step may run together; later steps should depend on earlier steps only when their inputs are already known before the batch is created.",
+        "- Use steps as dependency groups, not command indexes. Commands in the same step must have no output dependency on each other and may run together; commands that depend on earlier output must use later unique ordered steps whose inputs are already known before the batch is created.",
         "- Code repair loop: after discovery has produced enough facts, use one step for coordinated edits and later steps for already-known tests or focused validation.",
         "- Avoid embedding long generated source code or complex quoting directly in shell command lines; for complex logic, invoke a script/interpreter from the active shell rather than encoding the logic in shell syntax.",
         "- Verification: run the relevant test or build command after edits in the same command_run only when the verification command is already known.",
         "- Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.",
         "- Context compaction: after a meaningful phase completes, or when context is near 200,000 tokens and feels crowded, put `compact_context` as the final command in the highest step with a concise handoff summary for the next turn.",
-        "- Example investigation batch: step 1 groups independent `rg --files`, targeted `rg -n`, and candidate file reads.",
+        "- Example investigation batch: independent `rg --files`, targeted `rg -n`, and candidate file reads all use step 1.",
         "- Example repair batch: step 1 `apply_patch` across related files, step 2 write or update a focused test script when needed, step 3 run the narrow test and focused validation searches.",
         "- Example frontend batch: step 1 write or reuse the focused frontend test script, step 2 run that script and inspect generated textual outputs.",
     ];

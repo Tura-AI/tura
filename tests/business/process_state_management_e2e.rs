@@ -11,7 +11,11 @@ use std::{
     net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -34,6 +38,8 @@ fn process_state_management_handles_orphans_restarts_conflicts_and_cleanup() -> 
         .context("scenario gateway restarts crashed router and adopts session_db")?;
     router_health_restarts_crashed_session_db(&repo)
         .context("scenario router health restarts crashed session_db")?;
+    router_health_restarts_unresponsive_session_db(&repo)
+        .context("scenario router health restarts unresponsive session_db")?;
     orphan_session_db_is_adopted_and_stopped_by_router(&repo)
         .context("scenario router adopts orphan session_db")?;
     orphan_router_is_adopted_and_stopped_by_gateway(&repo)
@@ -286,6 +292,77 @@ fn router_health_restarts_crashed_session_db(repo: &Path) -> Result<()> {
     assert!(
         shutdown["ok"].as_bool().unwrap_or(false),
         "router shutdown should succeed after session_db crash recovery: {shutdown}"
+    );
+    router.wait_for_exit(PROCESS_EXIT_TIMEOUT)?;
+    wait_for_missing(&router_addr_path(&home), Duration::from_secs(10))?;
+    wait_for_missing(&service_addr_path(&home), Duration::from_secs(10))?;
+    assert_endpoints_cleaned(&home)?;
+    Ok(())
+}
+
+fn router_health_restarts_unresponsive_session_db(repo: &Path) -> Result<()> {
+    let root = temp_root("workspace-process-session-db-unresponsive")?;
+    let home = root.join("home");
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&home)?;
+    std::fs::create_dir_all(&workspace)?;
+
+    let mut router = RouterGuard::start(repo, &home, &workspace)?;
+    wait_for_reachable_endpoint(&router_addr_path(&home), Duration::from_secs(30))
+        .context("session_db unresponsive initial router endpoint did not become reachable")?;
+    let service_before =
+        wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30))
+            .context("session_db unresponsive initial service endpoint did not become reachable")?;
+    let session_db_pid =
+        wait_for_process_pid("tura_session_db", &workspace, Duration::from_secs(10))?;
+    assert_process_alive(
+        session_db_pid,
+        "managed session_db before unresponsive endpoint swap",
+    )?;
+
+    let fake = UnresponsiveEndpoint::start()?;
+    publish_session_db_endpoint(&home, &fake.addr)?;
+    assert_process_alive(
+        session_db_pid,
+        "managed session_db after stale unresponsive endpoint is published",
+    )?;
+
+    let health = wait_for_router_session_db_running(&home, Duration::from_secs(30))
+        .context("router health did not restart unresponsive session_db")?;
+    assert_eq!(
+        health["payload"]["session_db"]["status"], "running",
+        "router health should report restarted session_db as running: {health}"
+    );
+    let service_after =
+        wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30)).context(
+            "session_db unresponsive restarted service endpoint did not become reachable",
+        )?;
+    assert_ne!(
+        service_after, fake.addr,
+        "router must replace the unresponsive published session_db endpoint"
+    );
+    assert_ne!(
+        service_after, service_before,
+        "router should publish a fresh session_db endpoint after replacing an unresponsive service"
+    );
+    wait_for_process_dead(session_db_pid, Duration::from_secs(10)).with_context(|| {
+        format!("unresponsive managed session_db pid {session_db_pid} should die")
+    })?;
+    let restarted_session_db_pid = wait_for_process_pid_change(
+        "tura_session_db",
+        &workspace,
+        session_db_pid,
+        Duration::from_secs(10),
+    )?;
+    assert_ne!(
+        restarted_session_db_pid, session_db_pid,
+        "unresponsive session_db restart should be owned by a different process"
+    );
+
+    let shutdown = shutdown_router(&home)?;
+    assert!(
+        shutdown["ok"].as_bool().unwrap_or(false),
+        "router shutdown should succeed after session_db unresponsive recovery: {shutdown}"
     );
     router.wait_for_exit(PROCESS_EXIT_TIMEOUT)?;
     wait_for_missing(&router_addr_path(&home), Duration::from_secs(10))?;
@@ -1410,6 +1487,69 @@ fn write_stale_session_db_endpoint(home: &Path) -> Result<()> {
     }
     std::fs::write(&path, addr)?;
     Ok(())
+}
+
+fn publish_session_db_endpoint(home: &Path, addr: &str) -> Result<()> {
+    let path = service_addr_path(home);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, addr)?;
+    Ok(())
+}
+
+struct UnresponsiveEndpoint {
+    addr: String,
+    stop: Arc<AtomicBool>,
+    handle: Option<thread::JoinHandle<Result<()>>>,
+}
+
+impl UnresponsiveEndpoint {
+    fn start() -> Result<Self> {
+        let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
+        listener.set_nonblocking(true)?;
+        let addr = listener.local_addr()?.to_string();
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let handle = thread::spawn(move || -> Result<()> {
+            while !thread_stop.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        let stream_stop = Arc::clone(&thread_stop);
+                        thread::spawn(move || {
+                            let _stream = stream;
+                            let started = Instant::now();
+                            while !stream_stop.load(Ordering::SeqCst)
+                                && started.elapsed() < Duration::from_secs(2)
+                            {
+                                thread::sleep(Duration::from_millis(25));
+                            }
+                        });
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(25));
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Ok(())
+        });
+        Ok(Self {
+            addr,
+            stop,
+            handle: Some(handle),
+        })
+    }
+}
+
+impl Drop for UnresponsiveEndpoint {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        let _ = TcpStream::connect(&self.addr);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
 }
 
 fn running_session_payload(

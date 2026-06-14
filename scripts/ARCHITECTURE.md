@@ -21,7 +21,7 @@ Important scripts:
   paths before checking bash/zsh. macOS asserts zsh and bash and reports
   optional PowerShell (`pwsh`) coverage.
 - `build-debug.*`: build Rust debug binaries and the TUI entry into `target/debug`.
-- `build-release.*`: build Rust release binaries and the TUI entry into `target/release`.
+- `build-release.*`: build Rust release binaries and the TUI entry into `target/release`. Release builds preserve local session DB/cache state by default; pass `-Clean` on PowerShell or `-clean`/`--clean` on POSIX shells when a build must intentionally remove repository-local session DB/cache files first.
 - `register-cli.*`: add `target/release` to the user PATH. No wrapper directory is created; the registered CLI command is `tura exec`. The POSIX script updates `.profile`, `.bash_profile`, `.bashrc`, `.zprofile`, and `.zshrc` when present, and creates `.zprofile`/`.zshrc` on macOS so new Terminal sessions work.
 - `unregister-cli.*`: remove `target/release` from PATH and delete a stale `cli-bin` directory if present.
 - `start.*`: convenience runner for `target/debug` by default, or `target/release` with `--release`. The runner repeats the same shell coverage checks before launching; set `TURA_STRICT_SHELL_TOOL_COVERAGE=1` when optional zsh/PowerShell gaps should fail the run.
@@ -37,8 +37,11 @@ Important scripts:
 - `run-backend-business-tests.*`: run root Rust business tests plus
   crate-owned Rust tests from `crates/*/tests/business`, `commands/*/tests/business`,
   `agents/*/tests/business`, and `personas/*/tests/business` using one-level
-  typed-directory scans. These backend runners do not execute `.mjs` app,
-  TUI, or GUI scripts; run app suites from `apps/tui` or `apps/gui`.
+  typed-directory scans. Process-sensitive unit checks and every typed
+  integration target run serially because backend business tests may own
+  process-global env, local sockets, owner locks, and child-process cleanup.
+  These backend runners do not execute `.mjs` app, TUI, or GUI scripts; run app
+  suites from `apps/tui` or `apps/gui`.
 - `run-backend-live-tests.*`: run opt-in root/backend Rust live tests and
   backend-owned root live scripts using one-level typed-directory scans and the
   `live-tests` feature gate when the package declares it. These backend

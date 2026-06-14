@@ -9,6 +9,7 @@ use session_log::{
     GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, Page, SessionLogCommand,
     SessionLogResponse, SessionRecord, SessionSnapshot, UpsertSessionRequest, WorkspaceSummary,
 };
+use std::io::{Error as IoError, ErrorKind};
 
 #[derive(Debug, Clone, Default)]
 pub struct SessionDbClient;
@@ -85,7 +86,17 @@ impl SessionDbClient {
 
     fn call_blocking(command: SessionLogCommand) -> Result<SessionLogResponse> {
         if session_log::ipc::service_is_running() {
-            return session_log::ipc::call_service(&command);
+            return match session_log::ipc::call_service(&command) {
+                Ok(response) => Ok(response),
+                Err(error)
+                    if session_log::file_queue::is_async_write(&command)
+                        && is_transport_failure(&error) =>
+                {
+                    session_log::file_queue::enqueue_command(&command)?;
+                    Ok(SessionLogResponse::Ok)
+                }
+                Err(error) => Err(error),
+            };
         }
         if session_log::file_queue::is_async_write(&command) {
             session_log::file_queue::enqueue_command(&command)?;
@@ -95,6 +106,24 @@ impl SessionDbClient {
             "session_db service is not running; start the per-home tura_router/tura_session_db owner before reading session data"
         ))
     }
+}
+
+fn is_transport_failure(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause.to_string().contains("closed without a response")
+            || cause.downcast_ref::<IoError>().is_some_and(|io_error| {
+                matches!(
+                    io_error.kind(),
+                    ErrorKind::ConnectionAborted
+                        | ErrorKind::ConnectionRefused
+                        | ErrorKind::ConnectionReset
+                        | ErrorKind::BrokenPipe
+                        | ErrorKind::NotConnected
+                        | ErrorKind::TimedOut
+                        | ErrorKind::UnexpectedEof
+                )
+            })
+    })
 }
 
 fn ok_response(response: SessionLogResponse, operation: &str) -> Result<()> {
@@ -148,10 +177,13 @@ fn unexpected_response(operation: &str, response: SessionLogResponse) -> anyhow:
 #[cfg(test)]
 mod tests {
     use super::{
-        ok_response, records_response, session_response, sessions_response, workspaces_response,
+        is_transport_failure, ok_response, records_response, session_response, sessions_response,
+        workspaces_response,
     };
+    use anyhow::anyhow;
     use serde_json::json;
     use session_log::{Page, SessionLogResponse, SessionSnapshot, WorkspaceSummary};
+    use std::io::{Error as IoError, ErrorKind};
 
     fn snapshot(session_id: &str) -> SessionSnapshot {
         SessionSnapshot {
@@ -243,5 +275,30 @@ mod tests {
                 .contains("unexpected session_db response for upsert_session"),
             "unexpected response error should include operation context: {error}"
         );
+    }
+
+    #[test]
+    fn transport_failure_classifier_includes_windows_aborted_connections() {
+        for kind in [
+            ErrorKind::ConnectionAborted,
+            ErrorKind::ConnectionRefused,
+            ErrorKind::ConnectionReset,
+            ErrorKind::BrokenPipe,
+            ErrorKind::NotConnected,
+            ErrorKind::TimedOut,
+            ErrorKind::UnexpectedEof,
+        ] {
+            let error = anyhow!(IoError::from(kind));
+            assert!(
+                is_transport_failure(&error),
+                "{kind:?} should fall back to the durable write queue"
+            );
+        }
+
+        let closed = anyhow!("session_db service at 127.0.0.1:1 closed without a response");
+        assert!(is_transport_failure(&closed));
+
+        let protocol = anyhow!("failed to decode session_db service response");
+        assert!(!is_transport_failure(&protocol));
     }
 }

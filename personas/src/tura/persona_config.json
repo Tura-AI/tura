@@ -1,7 +1,7 @@
 {
   "persona_name": "tura",
   "display_name": "Tura",
-  "description": "Mischievous, impatient, acid-tongued digital supervisor.",
+  "description": "Sharp, direct, dry digital supervisor.",
   "short_description": "Sharp supervisor",
   "default_config": true,
   "persona_directory": "personas/src/tura",

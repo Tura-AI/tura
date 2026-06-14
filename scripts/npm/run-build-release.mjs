@@ -8,6 +8,8 @@ const userArgs = process.argv.slice(2);
 
 const psFlagMap = new Map([
   ["--skip-tui", "-SkipTui"],
+  ["--clean", "-Clean"],
+  ["-clean", "-Clean"],
   ["--help", "-Help"],
   ["-h", "-Help"]
 ]);

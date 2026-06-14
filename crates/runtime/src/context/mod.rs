@@ -7,6 +7,8 @@ mod token_budget;
 mod tool_results;
 mod workspace;
 
+pub(crate) const USER_AGENT_CONTEXT_ROLE: &str = "user-agent";
+
 pub use build::{
     accumulate_message, accumulate_tool_result, accumulate_tool_result_with_provider_metadata,
     build_context, build_messages_from_session, user_input_content_matches,

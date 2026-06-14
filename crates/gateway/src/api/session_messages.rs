@@ -99,6 +99,13 @@ pub async fn send_agent_message(
     let content = agent_message_content(&payload);
     let message = if content.trim().is_empty() {
         None
+    } else if payload
+        .message_id
+        .as_deref()
+        .and_then(|message_id| existing_text_message(&session_id, message_id))
+        .is_some()
+    {
+        None
     } else {
         session_store().add_message_with_ids(
             &session_id,
@@ -113,12 +120,13 @@ pub async fn send_agent_message(
         if let Some(todos) = planning_todos(tool_call) {
             session_store().set_todos(&session_id, todos);
         }
-        session_store().add_tool_message(
+        session_store().add_tool_message_with_message_id(
             &session_id,
             tool_call.tool_name.clone(),
             tool_call.call_id.clone(),
             tool_call.state.clone(),
             tool_call.metadata.clone(),
+            payload.message_id.clone(),
         )
     });
     sync_auto_session_name_from_agent_tool_call(&session_id, payload.tool_call.as_ref());
@@ -148,6 +156,24 @@ pub async fn send_agent_message(
     }
 }
 
+fn existing_text_message(session_id: &str, message_id: &str) -> Option<crate::session::Message> {
+    session_store()
+        .get_messages(session_id)
+        .into_iter()
+        .find(|message| {
+            message.id == message_id
+                && message.role == SessionMessageRole::Assistant
+                && message.parts.iter().any(|part| {
+                    part.part_type == "text"
+                        && part
+                            .text
+                            .as_deref()
+                            .or(part.content.as_deref())
+                            .is_some_and(|text| !text.trim().is_empty())
+                })
+        })
+}
+
 pub async fn stream_agent_message(
     Path(session_id): Path<String>,
     Json(payload): Json<StreamAgentTextRequest>,
@@ -174,7 +200,7 @@ fn sync_auto_session_name_from_agent_tool_call(
     session_id: &str,
     tool_call: Option<&SendAgentToolCall>,
 ) {
-    let Some(summary) = tool_call.and_then(last_task_detail_from_tool_call) else {
+    let Some(summary) = tool_call.and_then(auto_session_name_from_tool_call) else {
         return;
     };
     let Some(current_session) = session_store().get_session(session_id) else {
@@ -209,6 +235,38 @@ fn sync_auto_session_name_from_agent_tool_call(
     });
 }
 
+fn auto_session_name_from_tool_call(tool_call: &SendAgentToolCall) -> Option<String> {
+    if tool_call.tool_name == "planning" {
+        return last_task_summary_from_planning_tool_call(tool_call);
+    }
+    last_task_detail_from_tool_call(tool_call)
+}
+
+fn last_task_summary_from_planning_tool_call(tool_call: &SendAgentToolCall) -> Option<String> {
+    let mut summaries = Vec::new();
+    if let Some(output) = tool_call
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("output"))
+    {
+        collect_string_field(output, "task_summary", &mut summaries);
+    }
+    if summaries.is_empty() {
+        if let Some(output) = tool_call
+            .state
+            .get("metadata")
+            .and_then(|metadata| metadata.get("output"))
+            .or_else(|| tool_call.state.get("output"))
+        {
+            collect_string_field(output, "task_summary", &mut summaries);
+        }
+    }
+    if summaries.is_empty() {
+        collect_string_field(&tool_call.state, "task_summary", &mut summaries);
+    }
+    summaries.pop()
+}
+
 fn last_task_detail_from_tool_call(tool_call: &SendAgentToolCall) -> Option<String> {
     let mut details = Vec::new();
     if let Some(output) = tool_call
@@ -216,7 +274,7 @@ fn last_task_detail_from_tool_call(tool_call: &SendAgentToolCall) -> Option<Stri
         .as_ref()
         .and_then(|metadata| metadata.get("output"))
     {
-        collect_task_details(output, &mut details);
+        collect_string_field(output, "task_detail", &mut details);
     }
     if details.is_empty() {
         if let Some(output) = tool_call
@@ -225,33 +283,33 @@ fn last_task_detail_from_tool_call(tool_call: &SendAgentToolCall) -> Option<Stri
             .and_then(|metadata| metadata.get("output"))
             .or_else(|| tool_call.state.get("output"))
         {
-            collect_task_details(output, &mut details);
+            collect_string_field(output, "task_detail", &mut details);
         }
     }
     if details.is_empty() {
-        collect_task_details(&tool_call.state, &mut details);
+        collect_string_field(&tool_call.state, "task_detail", &mut details);
     }
     details.pop()
 }
 
-fn collect_task_details(value: &serde_json::Value, details: &mut Vec<String>) {
+fn collect_string_field(value: &serde_json::Value, field: &str, values: &mut Vec<String>) {
     match value {
         serde_json::Value::Object(object) => {
-            if let Some(detail) = object
-                .get("task_detail")
+            if let Some(value) = object
+                .get(field)
                 .and_then(serde_json::Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
             {
-                details.push(detail.to_string());
+                values.push(value.to_string());
             }
             for child in object.values() {
-                collect_task_details(child, details);
+                collect_string_field(child, field, values);
             }
         }
         serde_json::Value::Array(items) => {
             for item in items {
-                collect_task_details(item, details);
+                collect_string_field(item, field, values);
             }
         }
         _ => {}
@@ -311,11 +369,16 @@ pub(super) fn agent_message_content(payload: &SendAgentMessageRequest) -> String
     if payload.tool_call.is_some()
         && payload.reply_message.trim().is_empty()
         && payload.media.is_empty()
+        && runtime_output_text_from_tool_call(payload.tool_call.as_ref()).is_none()
     {
         return String::new();
     }
 
     let mut content = frontend_safe_reply_message(&payload.reply_message);
+    if content.trim().is_empty() {
+        content =
+            runtime_output_text_from_tool_call(payload.tool_call.as_ref()).unwrap_or_default();
+    }
 
     if !payload.media.is_empty() {
         if !content.trim().is_empty() {
@@ -329,6 +392,89 @@ pub(super) fn agent_message_content(payload: &SendAgentMessageRequest) -> String
     }
 
     content
+}
+
+fn runtime_output_text_from_tool_call(tool_call: Option<&SendAgentToolCall>) -> Option<String> {
+    let tool_call = tool_call?;
+    if !is_runtime_output_tool_call(tool_call) {
+        return None;
+    }
+
+    runtime_output_candidate_values(tool_call)
+        .into_iter()
+        .find_map(visible_text_from_runtime_value)
+}
+
+fn is_runtime_output_tool_call(tool_call: &SendAgentToolCall) -> bool {
+    if tool_call.tool_name == "runtime" {
+        return true;
+    }
+    [
+        tool_call.metadata.as_ref(),
+        tool_call.state.get("metadata"),
+        tool_call
+            .state
+            .get("metadata")
+            .and_then(|metadata| metadata.get("metadata")),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| {
+        value.get("kind").and_then(serde_json::Value::as_str) == Some("mano_runtime_usage")
+    })
+}
+
+fn runtime_output_candidate_values(tool_call: &SendAgentToolCall) -> Vec<serde_json::Value> {
+    let mut values = Vec::new();
+    for root in [
+        tool_call.metadata.as_ref(),
+        Some(&tool_call.state),
+        tool_call.state.get("metadata"),
+        tool_call
+            .state
+            .get("metadata")
+            .and_then(|metadata| metadata.get("metadata")),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for key in ["output", "response", "result", "final", "message"] {
+            if let Some(value) = root.get(key) {
+                values.push(value.clone());
+            }
+        }
+    }
+    values
+}
+
+fn visible_text_from_runtime_value(value: serde_json::Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return visible_text_from_runtime_string(text);
+    }
+    for key in [
+        "reply_message",
+        "output_text",
+        "final_text",
+        "message",
+        "text",
+        "content",
+        "summary",
+    ] {
+        if let Some(text) = value.get(key).and_then(serde_json::Value::as_str) {
+            if let Some(text) = visible_text_from_runtime_string(text) {
+                return Some(text);
+            }
+        }
+    }
+
+    let normalized = tura_llm_rust::normalize_response_content(&value);
+    let text = tura_llm_rust::extract_response_text(&normalized)?;
+    visible_text_from_runtime_string(&tura_llm_rust::strip_thought_blocks(&text))
+}
+
+fn visible_text_from_runtime_string(text: &str) -> Option<String> {
+    let text = frontend_safe_reply_message(&tura_llm_rust::strip_thought_blocks(text));
+    (!text.trim().is_empty()).then_some(text)
 }
 
 pub(super) fn agent_message_metadata(
@@ -836,24 +982,71 @@ mod tests {
             last_task_detail_from_tool_call(&call).as_deref(),
             Some("state metadata detail")
         );
+
+        let detail_only = SendAgentToolCall {
+            tool_name: "task_status".to_string(),
+            call_id: "call".to_string(),
+            state: json!({
+                "task_summary": "must not be used",
+                "metadata": {
+                    "output": {
+                        "task_summary": "must not be used either"
+                    }
+                }
+            }),
+            metadata: Some(json!({
+                "output": {
+                    "task_summary": "still not a task detail"
+                }
+            })),
+        };
+        assert_eq!(last_task_detail_from_tool_call(&detail_only), None);
     }
 
     #[test]
-    fn collect_task_details_walks_nested_arrays_and_objects_in_order() {
-        let mut details = Vec::new();
+    fn planning_auto_session_name_uses_task_summary_only() {
+        let call = SendAgentToolCall {
+            tool_name: "planning".to_string(),
+            call_id: "planning".to_string(),
+            state: json!({
+                "task_detail": "must not be used",
+                "metadata": {
+                    "output": {
+                        "steps": [
+                            { "task_summary": "First summary" },
+                            { "task_detail": "must not be used either" },
+                            { "task_summary": "Last summary" }
+                        ]
+                    }
+                }
+            }),
+            metadata: None,
+        };
 
-        collect_task_details(
+        assert_eq!(
+            auto_session_name_from_tool_call(&call).as_deref(),
+            Some("Last summary")
+        );
+    }
+
+    #[test]
+    fn collect_string_field_walks_nested_arrays_and_objects_in_order() {
+        let mut values = Vec::new();
+
+        collect_string_field(
             &json!({
                 "task_detail": "root",
                 "items": [
                     { "task_detail": "child one" },
                     { "nested": { "task_detail": "child two" } },
+                    { "task_detail": "", "task_summary": "must not fallback" },
                     { "task_detail": "   " }
                 ]
             }),
-            &mut details,
+            "task_detail",
+            &mut values,
         );
 
-        assert_eq!(details, vec!["root", "child one", "child two"]);
+        assert_eq!(values, vec!["root", "child one", "child two"]);
     }
 }

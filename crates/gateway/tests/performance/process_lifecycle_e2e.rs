@@ -84,6 +84,43 @@ fn gateway_router_session_db_conflict_and_shutdown_e2e() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn gateway_stdin_eof_shutdown_stops_router_and_session_db_e2e() -> Result<()> {
+    let repo = repo_root();
+    ensure_backend_binary(&repo, "router", "tura_router")?;
+    ensure_backend_binary(&repo, "session_log", "tura_session_db")?;
+
+    let root = temp_root("gateway-stdin-eof-lifecycle-e2e")?;
+    let home = root.join("home");
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&home)?;
+    std::fs::create_dir_all(&workspace)?;
+
+    let port = free_port()?;
+    let mut gateway = GatewayGuard::start_with_stdin_lease(&repo, &home, &workspace, port)?;
+    wait_for_http_ok(port, "/global/health", Duration::from_secs(30))?;
+    wait_for_endpoint(&router_addr_path(&home), Duration::from_secs(30))?;
+    wait_for_endpoint(&service_addr_path(&home), Duration::from_secs(30))?;
+
+    gateway.close_stdin()?;
+    let status = gateway.wait_for_exit(Duration::from_secs(15))?;
+    assert!(
+        status.success(),
+        "gateway should exit cleanly after stdin EOF, got {status}"
+    );
+    wait_for_missing(&router_addr_path(&home), Duration::from_secs(10))?;
+    wait_for_missing(&service_addr_path(&home), Duration::from_secs(10))?;
+    assert!(
+        !router_endpoint_reachable(&home),
+        "router must stop when TUI-owned gateway stdin closes"
+    );
+    assert!(
+        !session_db_endpoint_reachable(&home),
+        "session_db must stop when TUI-owned gateway stdin closes"
+    );
+    Ok(())
+}
+
 struct GatewayGuard {
     child: Option<Child>,
     home: PathBuf,
@@ -103,6 +140,61 @@ impl GatewayGuard {
             child: Some(child),
             home: home.to_path_buf(),
         })
+    }
+
+    fn start_with_stdin_lease(
+        repo: &Path,
+        home: &Path,
+        workspace: &Path,
+        port: u16,
+    ) -> Result<Self> {
+        let mut env = gateway_env(repo, home, workspace, port);
+        env.push((
+            "TURA_GATEWAY_SHUTDOWN_ON_STDIN_EOF".to_string(),
+            "1".to_string(),
+        ));
+        let child = Command::new(gateway_bin())
+            .current_dir(workspace)
+            .envs(env)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("spawn stdin-lease tura_gateway")?;
+        Ok(Self {
+            child: Some(child),
+            home: home.to_path_buf(),
+        })
+    }
+
+    fn close_stdin(&mut self) -> Result<()> {
+        if let Some(child) = self.child.as_mut() {
+            drop(child.stdin.take());
+        }
+        Ok(())
+    }
+
+    fn wait_for_exit(&mut self, timeout: Duration) -> Result<ExitStatus> {
+        let Some(child) = self.child.as_mut() else {
+            bail!("gateway process already consumed");
+        };
+        let started = Instant::now();
+        loop {
+            if let Some(status) = child.try_wait()? {
+                return Ok(status);
+            }
+            if started.elapsed() >= timeout {
+                child
+                    .kill()
+                    .context("kill gateway after stdin EOF timeout")?;
+                let _ = child.wait();
+                bail!(
+                    "gateway did not exit within {}ms after stdin EOF",
+                    timeout.as_millis()
+                );
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 
     fn stop(&mut self) -> Result<()> {

@@ -247,8 +247,9 @@ Rules:
   The handler normalizes missing steps to the command's original 1-based
   position.
 - Every command executes with a positive step after normalization.
-- Duplicate or earlier step values are normalized to the next later unique
-  step in input order.
+- Duplicate step values are preserved as dependency groups. Earlier step values
+  that would move backwards are normalized to the next later step in input
+  order.
 - Later steps wait for earlier steps.
 - Mutating commands acquire file locks.
 - Partial results may be emitted after each step group.

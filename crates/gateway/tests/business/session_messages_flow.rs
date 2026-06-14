@@ -240,6 +240,211 @@ async fn gateway_session_messages_business_flow_updates_planning_tool_message_an
 }
 
 #[tokio::test]
+async fn gateway_session_messages_business_flow_runtime_usage_recovers_final_stream_text(
+) -> anyhow::Result<()> {
+    let workspace = tempfile::tempdir()?;
+    let session_id = create_business_session(workspace.path().to_string_lossy().to_string());
+    drain_events();
+
+    let message_id = "msg-stream-runtime-business-recovery".to_string();
+    let part_id = "part-stream-runtime-business-recovery".to_string();
+    let runtime_id = "runtime-business-recovery".to_string();
+    let Json(streamed) = stream_agent_message(
+        Path(session_id.clone()),
+        Json(StreamAgentTextRequest {
+            message_id: message_id.clone(),
+            part_id: part_id.clone(),
+            delta: "partial token".to_string(),
+            runtime_id: Some(runtime_id.clone()),
+        }),
+    )
+    .await;
+    assert_eq!(streamed["ok"], true);
+    assert_stream_delta_event(&session_id, &message_id, &part_id);
+
+    let Json(messages_before_usage) =
+        list_messages(Path(session_id.clone()), message_list_query()).await;
+    assert!(
+        messages_before_usage.is_empty(),
+        "streaming overlay should still wait for a durable final record"
+    );
+
+    let runtime_usage_call = SendAgentToolCall {
+        tool_name: "runtime".to_string(),
+        call_id: runtime_id.clone(),
+        state: json!({
+            "status": "completed",
+            "output": {
+                "output_text": "Recovered final reply from runtime usage"
+            },
+            "metadata": {
+                "kind": "mano_runtime_usage"
+            }
+        }),
+        metadata: Some(json!({
+            "kind": "mano_runtime_usage",
+            "runtime_id": runtime_id,
+            "output": {
+                "output_text": "Recovered final reply from runtime usage"
+            },
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "total_tokens": 15
+            }
+        })),
+    };
+
+    let Json(response) = send_agent_message(
+        Path(session_id.clone()),
+        Json(SendAgentMessageRequest {
+            reply_message: String::new(),
+            new_learning: String::new(),
+            step_summary: None,
+            media: Vec::new(),
+            runtime_id: Some("runtime-business-recovery".to_string()),
+            tool_call: Some(runtime_usage_call.clone()),
+            message_id: Some(message_id.clone()),
+            part_id: Some(part_id.clone()),
+        }),
+    )
+    .await;
+    assert!(response.ok);
+    assert_eq!(response.message_id.as_deref(), Some(message_id.as_str()));
+
+    let Json(messages) = list_messages(Path(session_id.clone()), message_list_query()).await;
+    assert_eq!(
+        messages.len(),
+        1,
+        "runtime usage recovery should produce one ordinary assistant message"
+    );
+    let message = &messages[0];
+    assert_eq!(message["info"]["id"], message_id);
+    assert_eq!(message["info"]["role"], "assistant");
+    assert_eq!(message["parts"][0]["id"], part_id);
+    assert_eq!(message["parts"][0]["type"], "text");
+    assert_text_contains(
+        &message["parts"][0],
+        "Recovered final reply from runtime usage",
+    );
+    assert_eq!(message["parts"][1]["type"], "tool");
+    assert_eq!(message["parts"][1]["tool"], "runtime");
+    assert_eq!(
+        message["parts"][1]["metadata"]["kind"],
+        "mano_runtime_usage"
+    );
+
+    let Json(second_response) = send_agent_message(
+        Path(session_id.clone()),
+        Json(SendAgentMessageRequest {
+            reply_message: String::new(),
+            new_learning: String::new(),
+            step_summary: None,
+            media: Vec::new(),
+            runtime_id: Some("runtime-business-recovery".to_string()),
+            tool_call: Some(runtime_usage_call),
+            message_id: Some(message_id.clone()),
+            part_id: Some(part_id),
+        }),
+    )
+    .await;
+    assert!(second_response.ok);
+
+    let Json(messages_after_update) =
+        list_messages(Path(session_id.clone()), message_list_query()).await;
+    assert_eq!(messages_after_update.len(), 1);
+    assert_eq!(
+        messages_after_update[0]["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|part| part["type"] == "text")
+            .count(),
+        1,
+        "replayed runtime usage must not duplicate the recovered final text"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn gateway_session_messages_business_flow_publishes_session_name_updates(
+) -> anyhow::Result<()> {
+    let workspace = tempfile::tempdir()?;
+    let session_id = create_business_session(workspace.path().to_string_lossy().to_string());
+    drain_events();
+
+    let Json(response) = send_agent_message(
+        Path(session_id.clone()),
+        Json(SendAgentMessageRequest {
+            reply_message: String::new(),
+            new_learning: String::new(),
+            step_summary: None,
+            media: Vec::new(),
+            runtime_id: Some("runtime-session-name-business".to_string()),
+            tool_call: Some(SendAgentToolCall {
+                tool_name: "command_run".to_string(),
+                call_id: "session-name-call-business".to_string(),
+                state: json!({
+                    "status": "completed",
+                    "metadata": {
+                        "output": {
+                            "results": [{
+                                "output": {
+                                    "status": {
+                                        "task_detail": "Gateway Session Name Updated"
+                                    }
+                                }
+                            }]
+                        }
+                    }
+                }),
+                metadata: None,
+            }),
+            message_id: None,
+            part_id: None,
+        }),
+    )
+    .await;
+
+    assert!(response.ok);
+    let updated_session = session_store()
+        .get_session(&session_id)
+        .ok_or_else(|| anyhow::anyhow!("created session should still exist"))?;
+    assert_eq!(
+        updated_session.name.as_deref(),
+        Some("Gateway Session Name Updated")
+    );
+    assert_eq!(
+        updated_session.session_display_name.as_deref(),
+        Some("Gateway Session Name Updated")
+    );
+
+    let mut saw_session_updated = false;
+    while let Some(event) = session_store().pop_event() {
+        if let GlobalEvent::SessionUpdated { properties } = event {
+            if properties.session_id == session_id {
+                assert_eq!(
+                    properties.info.name.as_deref(),
+                    Some("Gateway Session Name Updated")
+                );
+                assert_eq!(
+                    properties.info.session_display_name.as_deref(),
+                    Some("Gateway Session Name Updated")
+                );
+                saw_session_updated = true;
+            }
+        }
+    }
+    assert!(
+        saw_session_updated,
+        "auto session name changes must publish session.updated so GUI/TUI do not stare at stale names like decorative furniture"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn gateway_session_messages_business_flow_concurrent_agent_writes_stay_session_scoped(
 ) -> anyhow::Result<()> {
     let workspace = tempfile::tempdir()?;

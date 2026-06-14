@@ -6,7 +6,7 @@ use crate::state_machine::session_management::SessionManagement;
 
 use super::text_truncate::environment_context_message;
 use super::token_budget::truncate_text_to_token_budget;
-use super::{ContextualUserFragment, WorkspaceSnapshot};
+use super::{ContextualUserFragment, WorkspaceSnapshot, USER_AGENT_CONTEXT_ROLE};
 
 pub fn compact_session_context(
     session: &mut SessionManagement,
@@ -54,7 +54,7 @@ pub(super) fn context_compaction_messages(
         .and_then(serde_json::Value::as_str)
     {
         messages.push(serde_json::json!({
-            "role": "user",
+            "role": USER_AGENT_CONTEXT_ROLE,
             "content": snapshot,
         }));
     }
@@ -63,7 +63,7 @@ pub(super) fn context_compaction_messages(
         .and_then(serde_json::Value::as_str)
     {
         messages.push(serde_json::json!({
-            "role": "user",
+            "role": USER_AGENT_CONTEXT_ROLE,
             "content": environment,
         }));
     }

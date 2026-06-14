@@ -7,6 +7,8 @@ use crate::manas::constants::gateway_callbacks_disabled;
 use crate::manas::final_response::summarize_tool_results_for_user;
 use crate::manas::tool_catalog::env_flag;
 
+const DEFAULT_GATEWAY_CALLBACK_TIMEOUT_MS: u64 = 2_000;
+
 pub(crate) fn publish_runtime_failure_message(
     session: &SessionManagement,
     runtime_id: &str,
@@ -79,7 +81,7 @@ pub(crate) async fn publish_streamed_agent_text(session_id: &str, runtime_id: &s
         "delta": delta,
         "runtime_id": runtime_id,
     });
-    if let Err(error) = reqwest::Client::new()
+    if let Err(error) = gateway_callback_http_client()
         .post(endpoint)
         .json(&payload)
         .send()
@@ -119,7 +121,7 @@ pub(crate) fn publish_gateway_agent_message(
     tokio::runtime::Runtime::new()
         .map_err(|err| format!("failed to create gateway callback runtime: {err}"))?
         .block_on(async {
-            let response = reqwest::Client::new()
+            let response = gateway_callback_http_client()
                 .post(endpoint)
                 .json(&payload)
                 .send()
@@ -133,6 +135,21 @@ pub(crate) fn publish_gateway_agent_message(
                 Err(format!("gateway returned {status}: {body}"))
             }
         })
+}
+
+pub(crate) fn gateway_callback_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(gateway_callback_http_timeout())
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+pub(crate) fn gateway_callback_http_timeout() -> std::time::Duration {
+    let millis = std::env::var("TURA_GATEWAY_CALLBACK_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_GATEWAY_CALLBACK_TIMEOUT_MS);
+    std::time::Duration::from_millis(millis.max(1))
 }
 
 pub(super) fn gateway_callback_base_url() -> String {

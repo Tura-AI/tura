@@ -89,6 +89,42 @@ function Get-RelativePathCompat {
   throw "Path $Path is not under $Root"
 }
 
+function Invoke-ProcessSensitiveUnitTests {
+  param([string]$Crate, [switch]$List, [int]$TimeoutSeconds)
+
+  $cases = @(
+    @{
+      Package = "gateway"
+      Filter = "session::store::tests::"
+      Description = "session store/session_db unit tests"
+    }
+  )
+
+  foreach ($case in $cases) {
+    if ($Crate -and $Crate -ne $case.Package) {
+      continue
+    }
+    if ($List) {
+      Write-Host "$($case.Package)::$($case.Filter) <process-sensitive unit tests>"
+      continue
+    }
+
+    Write-Host ""
+    Write-Host "==> Running process-sensitive unit tests $($case.Package)::$($case.Filter)"
+    Invoke-CargoTestWithTimeout @(
+      "test",
+      "-p",
+      $case.Package,
+      "--features",
+      "business-tests",
+      $case.Filter,
+      "--",
+      "--nocapture",
+      "--test-threads=1"
+    ) $TimeoutSeconds
+  }
+}
+
 $scanRoots = @("crates", "commands", "agents", "personas") |
   ForEach-Object { Join-Path $RepoRoot $_ } |
   Where-Object { Test-Path -LiteralPath $_ }
@@ -109,6 +145,8 @@ if (Test-Path -LiteralPath $rootBusinessDir) {
     Where-Object { $_.Name -notmatch 'claude' } |
     Sort-Object FullName
 }
+
+Invoke-ProcessSensitiveUnitTests -Crate $Crate -List:$List -TimeoutSeconds $TimeoutSeconds
 
 foreach ($test in $rootRustTests) {
   if ($Crate -and $Crate -ne "tura_workspace" -and $Crate -ne ".") {

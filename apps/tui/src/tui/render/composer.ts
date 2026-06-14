@@ -1,8 +1,8 @@
 import { t } from "../../i18n.js";
 import {
   activeCapabilities,
-  opencodePrimary,
   reset,
+  richHighlight,
   stripAnsi,
   textBackground,
   truncateAnsi,
@@ -24,10 +24,10 @@ export function composerLines(
   const lines = wrap(text, Math.max(20, cols - 3));
   const inputLines =
     lines.length === 0
-      ? [`${opencodePrimary}>${reset} ${COMPOSER_CURSOR_MARKER}`]
+      ? [`${richHighlight}>${reset} ${COMPOSER_CURSOR_MARKER}`]
       : lines.map(
           (line, index) =>
-            `${index === 0 ? `${opencodePrimary}>${reset}` : " "} ${line}${
+            `${index === 0 ? `${richHighlight}>${reset}` : " "} ${line}${
               index === lines.length - 1 ? COMPOSER_CURSOR_MARKER : ""
             }`,
         );
@@ -43,7 +43,7 @@ function richComposerLines(value: string, cols: number, _frame: number, hint: st
 function composerPanelLines(lines: string[], cols: number, hint = t("composerHint")): string[] {
   const visible = lines.length && lines.some((line) => line) ? lines : [""];
   const body = visible.map((line, index) => {
-    const prompt = index === 0 ? `${opencodePrimary}>${reset}` : " ";
+    const prompt = index === 0 ? `${richHighlight}>${reset}` : " ";
     const isLast = index === visible.length - 1;
     const content = line
       ? `${line}${isLast ? COMPOSER_CURSOR_MARKER : ""}`

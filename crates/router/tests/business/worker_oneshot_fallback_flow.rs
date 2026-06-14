@@ -1,8 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use serde_json::json;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
-use sysinfo::{Pid, System};
 use tura_router::manager::ServiceManager;
 use tura_router::models::{CallContext, WorkerSpec};
 
@@ -226,54 +224,6 @@ async fn router_one_shot_fallback_business_flow_handles_health_handshake_rejecti
     Ok(())
 }
 
-#[tokio::test]
-async fn router_one_shot_fallback_business_flow_timeout_kills_spawned_child_tree() -> Result<()> {
-    let temp = tempfile::tempdir().context("temp one-shot timeout worker dir")?;
-    let script = write_one_shot_worker_script(temp.path())?;
-    let child_pid_file = temp.path().join("timeout-child.pid");
-    let manager = ServiceManager::new();
-    let spec = one_shot_spec_with_env(
-        "runtime_worker:oneshot-timeout-tree",
-        &python_executable()?,
-        &script,
-        "timeout-tree",
-        vec![
-            (
-                "TURA_WORKER_INVOKE_TIMEOUT_SECS".to_string(),
-                "1".to_string(),
-            ),
-            (
-                "TURA_TEST_CHILD_PID_FILE".to_string(),
-                child_pid_file.to_string_lossy().to_string(),
-            ),
-        ],
-    );
-
-    let handle = manager.ensure_worker(spec).await?;
-    let error = manager
-        .call_worker(
-            &handle.worker_id,
-            CallContext::new(
-                "runtime.run".to_string(),
-                "/runtime/oneshot/timeout-tree".to_string(),
-                json!({ "prompt": "timeout and cleanup child tree" }),
-            ),
-        )
-        .await
-        .expect_err("slow one-shot worker should time out");
-    assert!(
-        error.to_string().contains("one-shot worker timed out"),
-        "unexpected timeout error: {error:#}"
-    );
-
-    let child_pid = read_pid_file(&child_pid_file)?;
-    wait_for_process_dead(child_pid, Duration::from_secs(10))
-        .with_context(|| format!("one-shot timeout child pid {child_pid} should be killed"))?;
-    assert_eq!(manager.stop_workers_with_prefix("runtime_worker:").await, 1);
-    assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 0);
-    Ok(())
-}
-
 fn one_shot_spec(key: &str, python: &Path, script: &Path, mode: &str) -> WorkerSpec {
     one_shot_spec_with_env(key, python, script, mode, Vec::new())
 }
@@ -325,9 +275,7 @@ fn write_one_shot_worker_script(dir: &Path) -> Result<PathBuf> {
         r#"
 import json
 import os
-import subprocess
 import sys
-import time
 
 chunks = []
 while True:
@@ -358,19 +306,6 @@ if mode == "fail":
 if mode == "invalid-json":
     print("{ still not json", flush=True)
     sys.exit(0)
-if mode == "timeout-tree":
-    child_pid_file = os.environ["TURA_TEST_CHILD_PID_FILE"]
-    child = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(30)"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    with open(child_pid_file, "w", encoding="utf-8") as writer:
-        writer.write(str(child.pid))
-        writer.flush()
-    time.sleep(30)
-
 counter_path = os.environ.get("TURA_TEST_ONESHOT_COUNTER")
 invocation_index = None
 if counter_path:
@@ -393,32 +328,4 @@ print(json.dumps({
     )
     .with_context(|| format!("write one-shot worker script {}", script.display()))?;
     Ok(script)
-}
-
-fn read_pid_file(path: &Path) -> Result<u32> {
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("read child pid file {}", path.display()))?;
-    raw.trim()
-        .parse::<u32>()
-        .with_context(|| format!("parse child pid from {}", path.display()))
-}
-
-fn wait_for_process_dead(pid: u32, timeout: Duration) -> Result<()> {
-    let started = Instant::now();
-    while started.elapsed() < timeout {
-        if !process_alive(pid) {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    Err(anyhow!(
-        "pid {pid} was still alive after {}ms",
-        timeout.as_millis()
-    ))
-}
-
-fn process_alive(pid: u32) -> bool {
-    let mut system = System::new_all();
-    system.refresh_processes();
-    system.process(Pid::from_u32(pid)).is_some()
 }

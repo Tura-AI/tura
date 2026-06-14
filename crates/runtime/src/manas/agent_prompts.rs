@@ -80,20 +80,36 @@ fn ordered_agent_prompt_paths(prompt_item: &AgentPromptItem) -> Vec<PathBuf> {
 
 fn ordered_persona_prompt_paths(persona_item: &AgentPersonaItem) -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    for prompt_name in ["persona.md", "communication_style.md"] {
-        if let Some(path) = first_existing_persona_prompt_path(persona_item, prompt_name) {
-            paths.push(path);
-            continue;
-        }
-        if prompt_name == "communication_style.md" {
-            if let Some(path) =
-                first_existing_persona_prompt_path(persona_item, "communication_stlye.md")
-            {
-                paths.push(path);
-            }
-        }
+    if let Some(path) = first_existing_persona_prompt_path(persona_item, "persona.md") {
+        paths.push(path);
+    }
+    if let Some(path) = shared_communication_style_prompt_path(persona_item)
+        .or_else(|| first_existing_persona_prompt_path(persona_item, "communication_style.md"))
+        .or_else(|| first_existing_persona_prompt_path(persona_item, "communication_stlye.md"))
+    {
+        paths.push(path);
     }
     paths
+}
+
+fn shared_communication_style_prompt_path(persona_item: &AgentPersonaItem) -> Option<PathBuf> {
+    persona_item
+        .persona_directory
+        .ancestors()
+        .find_map(|ancestor| {
+            [
+                ancestor
+                    .join("communication_style")
+                    .join("communication_style.md"),
+                ancestor
+                    .join("personas")
+                    .join("src")
+                    .join("communication_style")
+                    .join("communication_style.md"),
+            ]
+            .into_iter()
+            .find(|path| path.exists())
+        })
 }
 
 fn first_existing_persona_prompt_path(
@@ -132,12 +148,18 @@ mod tests {
             .join("src")
             .join("tura")
             .join("prompt");
+        let shared_communication_style_dir = root
+            .join("personas")
+            .join("src")
+            .join("communication_style");
         std::fs::create_dir_all(&prompt_dir).expect("prompt dir should be created");
         std::fs::create_dir_all(&persona_prompt_dir).expect("persona prompt dir should be created");
+        std::fs::create_dir_all(&shared_communication_style_dir)
+            .expect("shared communication style dir should be created");
         std::fs::write(persona_prompt_dir.join("persona.md"), "persona prompt")
             .expect("persona prompt should be written");
         std::fs::write(
-            persona_prompt_dir.join("communication_style.md"),
+            shared_communication_style_dir.join("communication_style.md"),
             "communication style prompt",
         )
         .expect("communication style prompt should be written");

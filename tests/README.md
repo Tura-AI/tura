@@ -87,6 +87,11 @@ workspace root; crate-owned typed tests use the backend package directories.
 None of these types owns or nests the others. Backend quality checks enforce
 this layout through `tests/business`, `tests/performance`, `tests/live`,
 `tests/release`, and `tests/benchmark`.
+Do not run backend business coverage with a single
+`cargo test --features ...` command: process-owning tests share global env,
+local sockets, owner locks, and child-process cleanup, so the backend business
+runner serializes process-sensitive unit checks and each typed integration
+target with `--test-threads=1`.
 Do not create an empty typed directory; add a typed directory only when files in
 that type exist. Except for special hand-authored harness entrypoints, runners
 and docs should refer to the test type plus directory scan, not hardcoded
@@ -100,7 +105,7 @@ directories.
 Focused command-run CLI flows now live with the gateway crate under
 `crates/gateway/tests/command-run/`. Cross-crate command contracts that
 aggregate Cargo tests live under `crates/tools/tests/contracts/`. The TUI
-gateway CLI fixture lives under the app-owned `apps/tui/e2e/` suite.
+gateway CLI fixture lives under the app-owned `apps/tui/tests/e2e/` suite.
 
 Multi-agent dispatch (router-CLI subprocess + concurrent + 2-level recursive
 sub-sessions) is covered by `crates/runtime/tests/child_dispatch_test.rs`
@@ -160,9 +165,9 @@ Override the artifact root with `TURA_BUSINESS_TARGET_ROOT` or
 See `tests/business/README.md` for command examples and output schema.
 
 The backend business runners deliberately ignore root `.mjs` files and never
-run app-owned TUI/GUI/browser scripts. TUI scripts live under `apps/tui/e2e/`
-and GUI scripts live under `apps/gui/e2e/`; run those suites explicitly from
-their app package scripts.
+run app-owned TUI/GUI/browser scripts. TUI scripts live under
+`apps/tui/tests/e2e/` and GUI scripts live under `apps/gui/e2e/`; run those
+suites explicitly from their app package scripts.
 
 ## Live Tests
 

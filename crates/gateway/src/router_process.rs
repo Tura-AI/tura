@@ -21,7 +21,7 @@ use std::{
 };
 
 const ROUTER_HEALTH_TIMEOUT: Duration = Duration::from_secs(10);
-const ROUTER_EXECUTION_TIMEOUT: Duration = Duration::from_secs(900);
+const DEFAULT_ROUTER_EXECUTION_TIMEOUT: Duration = Duration::from_secs(35 * 60);
 const ROUTER_PROBE_CONNECT_TIMEOUT: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -350,8 +350,17 @@ fn read_timeout_for(method: &str) -> Duration {
     } else if method == "execution.shutdown" {
         Duration::from_secs(10)
     } else {
-        ROUTER_EXECUTION_TIMEOUT
+        router_execution_timeout()
     }
+}
+
+fn router_execution_timeout() -> Duration {
+    std::env::var("TURA_ROUTER_EXECUTION_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_ROUTER_EXECUTION_TIMEOUT)
 }
 
 fn router_addr_path() -> PathBuf {
@@ -610,6 +619,15 @@ mod tests {
             std::env::remove_var("TURA_DB_ROOT");
             Self { previous }
         }
+
+        fn set(key: &'static str, value: Option<&str>) -> Self {
+            let previous = vec![(key, std::env::var_os(key))];
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+            Self { previous }
+        }
     }
 
     impl Drop for EnvGuard {
@@ -641,6 +659,32 @@ mod tests {
         }
         std::fs::write(path, serde_json::to_string(&endpoint)?)?;
         Ok(())
+    }
+
+    #[test]
+    fn router_execution_timeout_defaults_to_long_prompt_budget_and_allows_override() {
+        let _guard = crate::test_support::env_lock();
+        {
+            let _env = EnvGuard::set("TURA_ROUTER_EXECUTION_TIMEOUT_SECS", None);
+            assert_eq!(
+                read_timeout_for("execution.enqueue_turn"),
+                Duration::from_secs(35 * 60)
+            );
+            assert_eq!(
+                read_timeout_for("health_check"),
+                ROUTER_HEALTH_TIMEOUT + Duration::from_secs(1)
+            );
+            assert_eq!(
+                read_timeout_for("execution.shutdown"),
+                Duration::from_secs(10)
+            );
+        }
+
+        let _env = EnvGuard::set("TURA_ROUTER_EXECUTION_TIMEOUT_SECS", Some("42"));
+        assert_eq!(
+            read_timeout_for("execution.enqueue_turn"),
+            Duration::from_secs(42)
+        );
     }
 
     #[test]
@@ -742,6 +786,41 @@ mod tests {
             path.exists(),
             "reachable compatible router endpoint should remain published"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn healthy_router_probe_rejects_socket_that_does_not_answer_health() -> anyhow::Result<()> {
+        let _guard = crate::test_support::env_lock();
+        let home = temp_home("tura-router-abortive-health")?;
+        let _env = EnvGuard::set_home(&home);
+        let listener = TcpListener::bind(("127.0.0.1", 0))?;
+        let addr = listener.local_addr()?.to_string();
+        let server = thread::spawn(move || -> anyhow::Result<()> {
+            let (stream, _) = listener.accept()?;
+            drop(stream);
+            Ok(())
+        });
+        let path = router_addr_path();
+        write_router_endpoint(
+            &path,
+            json!({
+                "addr": addr,
+                "version": tura_path::instance_version(),
+            }),
+        )?;
+
+        assert!(
+            healthy_router_endpoint()?.is_none(),
+            "gateway must not adopt a raw TCP endpoint that does not answer router health"
+        );
+        assert!(
+            !path.exists(),
+            "failed router health probes should remove the stale endpoint"
+        );
+        server
+            .join()
+            .map_err(|_| anyhow!("abortive router endpoint panicked"))??;
         Ok(())
     }
 

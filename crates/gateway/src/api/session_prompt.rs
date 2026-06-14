@@ -274,37 +274,6 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
     let content = prompt_text(&payload).unwrap_or_else(|| "Prompt submitted".to_string());
     let before_count = session_store().get_messages(&session_id).len();
     let session = session_store().get_session(&session_id);
-
-    let agent = prompt_agent_override(&payload)
-        .or_else(|| session.as_ref().and_then(|session| session.agent.clone()));
-    let runtime_context = prompt_runtime_context(&payload);
-    let force_planning = session
-        .as_ref()
-        .map(|session| session.force_planning)
-        .unwrap_or(false);
-    let model_override = prompt_model_override(&payload)
-        .or_else(|| session.as_ref().and_then(|session| session.model.clone()))
-        .and_then(normalize_model_override);
-    let agent_runtime_settings = agent
-        .as_deref()
-        .and_then(agent_runtime_settings)
-        .unwrap_or_default();
-    let reasoning_effort = prompt_model_variant(&payload)
-        .or(agent_runtime_settings.reasoning_effort)
-        .or_else(|| {
-            session
-                .as_ref()
-                .and_then(|session| session.model_variant.clone())
-                .filter(|value| !value.trim().is_empty())
-        });
-    let acceleration_enabled = prompt_model_acceleration(&payload)
-        .or(agent_runtime_settings.acceleration_enabled)
-        .or_else(|| {
-            session
-                .as_ref()
-                .map(|session| session.model_acceleration_enabled)
-        })
-        .unwrap_or(false);
     let directory = session
         .as_ref()
         .and_then(|session| {
@@ -315,16 +284,68 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
                 .filter(|directory| !directory.is_empty())
         })
         .or_else(|| global_store().get_current_directory());
-    let command_run_stall_guard = directory
+    let session_config = directory.as_deref().and_then(load_prompt_session_config);
+
+    let agent = prompt_agent_override(&payload)
+        .or_else(|| {
+            session_config.as_ref().and_then(|config| {
+                config.string("active_agent", |config| config.active_agent.clone())
+            })
+        })
+        .or_else(|| session.as_ref().and_then(|session| session.agent.clone()));
+    let runtime_context = prompt_runtime_context(&payload);
+    let force_planning = session
+        .as_ref()
+        .map(|session| session.force_planning)
+        .unwrap_or(false);
+    let model_override = prompt_model_override(&payload)
+        .or_else(|| {
+            session_config
+                .as_ref()
+                .and_then(explicit_config_model_override)
+        })
+        .or_else(|| session.as_ref().and_then(|session| session.model.clone()))
+        .and_then(normalize_model_override);
+    let agent_runtime_settings = agent
         .as_deref()
-        .map(load_config)
-        .map(|config| config.command_run_stall_guard())
+        .and_then(|agent| agent_runtime_settings(agent, directory.as_deref()))
+        .unwrap_or_default();
+    let reasoning_effort = prompt_model_variant(&payload)
+        .or_else(|| {
+            session_config.as_ref().and_then(|config| {
+                config.string("model_variant", |config| config.model_variant.clone())
+            })
+        })
+        .or(agent_runtime_settings.reasoning_effort)
+        .or_else(|| {
+            session
+                .as_ref()
+                .and_then(|session| session.model_variant.clone())
+                .filter(|value| !value.trim().is_empty())
+        });
+    let acceleration_enabled = prompt_model_acceleration(&payload)
+        .or(agent_runtime_settings.acceleration_enabled)
+        .or_else(|| {
+            session_config.as_ref().and_then(|config| {
+                config.bool("model_acceleration_enabled", |config| {
+                    config.model_acceleration_enabled
+                })
+            })
+        })
+        .or_else(|| {
+            session
+                .as_ref()
+                .map(|session| session.model_acceleration_enabled)
+        })
+        .unwrap_or(false);
+    let command_run_stall_guard = session_config
+        .as_ref()
+        .map(|config| config.config.command_run_stall_guard())
         .unwrap_or_else(|| TuraSessionConfig::default().command_run_stall_guard());
     let command_run_shell = prompt_command_run_shell(&payload);
-    let language = directory
-        .as_deref()
-        .map(load_config)
-        .and_then(|config| config.language)
+    let language = session_config
+        .as_ref()
+        .and_then(|config| config.string("language", |config| config.language.clone()))
         .or_else(|| global_store().get_config().language)
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
@@ -366,7 +387,6 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
         "TURA_COMMAND_RUN_STALL_IDENTICAL_CHECKS".to_string(),
         command_run_stall_guard.identical_checks.to_string(),
     );
-
     let turn_id =
         first_prompt_part_id(&payload).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let body = serde_json::json!({
@@ -469,6 +489,80 @@ fn prompt_model_override(payload: &serde_json::Value) -> Option<String> {
     Some(format!("{provider}/{model_id}"))
 }
 
+pub(super) fn config_model_override(config: &TuraSessionConfig) -> Option<String> {
+    if let Some(model) = non_empty_string(config.model.clone()).filter(|model| model.contains('/'))
+    {
+        return Some(model);
+    }
+    let provider = non_empty_string(config.active_provider.clone())?;
+    let model = non_empty_string(config.active_model.clone())?;
+    Some(format!("{provider}/{model}"))
+}
+
+struct PromptSessionConfig {
+    config: TuraSessionConfig,
+    keys: std::collections::BTreeSet<String>,
+}
+
+impl PromptSessionConfig {
+    fn has(&self, key: &str) -> bool {
+        self.keys.contains(key)
+    }
+
+    fn string(
+        &self,
+        key: &str,
+        getter: impl FnOnce(&TuraSessionConfig) -> Option<String>,
+    ) -> Option<String> {
+        self.has(key).then(|| getter(&self.config)).flatten()
+    }
+
+    fn bool(
+        &self,
+        key: &str,
+        getter: impl FnOnce(&TuraSessionConfig) -> Option<bool>,
+    ) -> Option<bool> {
+        self.has(key).then(|| getter(&self.config)).flatten()
+    }
+}
+
+fn load_prompt_session_config(directory: &str) -> Option<PromptSessionConfig> {
+    let content = std::fs::read_to_string(crate::session::config::config_path(directory)).ok()?;
+    Some(PromptSessionConfig {
+        config: load_config(directory),
+        keys: config_keys(&content),
+    })
+}
+
+fn config_keys(content: &str) -> std::collections::BTreeSet<String> {
+    content
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            line.split_once('=')
+                .map(|(key, _)| key.trim().to_string())
+                .filter(|key| !key.is_empty())
+        })
+        .collect()
+}
+
+fn explicit_config_model_override(config: &PromptSessionConfig) -> Option<String> {
+    if config.has("model") {
+        if let Some(model) =
+            non_empty_string(config.config.model.clone()).filter(|model| model.contains('/'))
+        {
+            return Some(model);
+        }
+    }
+    if !(config.has("active_provider") || config.has("active_model")) {
+        return None;
+    }
+    config_model_override(&config.config)
+}
+
 pub(super) fn prompt_model_variant(payload: &serde_json::Value) -> Option<String> {
     payload
         .get("variant")
@@ -479,15 +573,30 @@ pub(super) fn prompt_model_variant(payload: &serde_json::Value) -> Option<String
         .map(ToString::to_string)
 }
 
+fn non_empty_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 #[derive(Default)]
 struct AgentRuntimeSettings {
     reasoning_effort: Option<String>,
     acceleration_enabled: Option<bool>,
 }
 
-fn agent_runtime_settings(agent_id: &str) -> Option<AgentRuntimeSettings> {
-    let root = tura_agents::store::project_root_from_env_or_cwd();
-    let agent = tura_agents::store::load_agent(&root, agent_id)?;
+fn agent_runtime_settings(agent_id: &str, directory: Option<&str>) -> Option<AgentRuntimeSettings> {
+    let mut roots = Vec::new();
+    if let Some(directory) = directory {
+        roots.push(std::path::PathBuf::from(directory));
+    }
+    let env_root = tura_agents::store::project_root_from_env_or_cwd();
+    if !roots.iter().any(|root| root == &env_root) {
+        roots.push(env_root);
+    }
+    let agent = roots
+        .iter()
+        .find_map(|root| tura_agents::store::load_agent(root, agent_id))?;
     let provider = agent.config.provider.as_object()?;
     Some(AgentRuntimeSettings {
         reasoning_effort: provider_string(

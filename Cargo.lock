@@ -3737,6 +3737,7 @@ dependencies = [
  "serde",
  "serde_json",
  "session_log",
+ "sysinfo",
  "tempfile",
  "tokio",
  "tokio-test",

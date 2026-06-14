@@ -19,10 +19,9 @@ The release runner discovers tests only by scanning files directly under
 
 Release-entry scripts run after `scripts/build-release.*` and
 `scripts/register-cli.*`. The CLI surface uses the registered `tura exec`
-command; TUI release scripts live under `apps/tui/e2e/business/`; GUI release
-scripts live under the GUI E2E suite. These flows are live because they drive
-real model/provider execution, but they belong to the release test type because
-they validate the release binaries themselves.
+command. TUI/GUI release live scripts live under
+`tests/live/{tui,gui}_release_*.mjs` and are run through their app package
+commands. These flows are live because they drive real model/provider execution.
 
 The kept entry points cover each release surface:
 

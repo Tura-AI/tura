@@ -12,7 +12,7 @@
   "provider": {
     "max_tokens": 0,
     "model_acceleration_enabled": true,
-    "model_reasoning_effort": "medium",
+    "model_reasoning_effort": "high",
     "service_tier": "priority",
     "stream": true,
     "temperature": 0.2,

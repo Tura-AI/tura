@@ -796,6 +796,7 @@ mod tests {
 
     #[test]
     fn resolve_workspace_file_path_handles_absolute_and_relative_inputs() {
+        let _global_state = crate::test_support::current_directory_lock();
         let _current_directory = CurrentDirectoryGuard::clear();
         let temp = tempfile::tempdir().expect("temp workspace");
         let root = temp.path();

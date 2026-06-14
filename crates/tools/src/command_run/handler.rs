@@ -118,11 +118,38 @@ pub async fn execute_streamed_command_value(
     execute_async_args(args, session_dir).await
 }
 
+pub fn normalize_command_value_for_execution(
+    command: Value,
+    index: usize,
+) -> Result<Value, String> {
+    let item = parse_single_streamed_command(command.clone(), index).map_err(|(_, error)| error)?;
+    let Some(command_type) = command_type_for_execution(&item) else {
+        return Ok(command);
+    };
+    let mut object = command.as_object().cloned().unwrap_or_default();
+    object.insert("step".to_string(), json!(item.effective_step()));
+    object.insert("command_type".to_string(), Value::String(command_type));
+    if !item.command_line.trim().is_empty() {
+        object.insert(
+            "command_line".to_string(),
+            Value::String(item.command_line.clone()),
+        );
+    }
+    if let Some(workdir) = item.workdir {
+        object.insert("workdir".to_string(), Value::String(workdir));
+    }
+    if let Some(timeout_ms) = item.timeout_ms {
+        object.insert("timeout_ms".to_string(), json!(timeout_ms));
+    }
+    Ok(Value::Object(object))
+}
+
 pub struct StreamingCommandRunExecutor {
     router: Arc<ToolRouter>,
     ctx: ToolContext,
     allowed_commands: Option<BTreeSet<String>>,
     active_step: Option<u64>,
+    active_step_repaired: bool,
     next_index: usize,
     macro_command_batch: FuturesUnordered<tokio::task::JoinHandle<CommandRunItemResult>>,
     results: Vec<CommandRunItemResult>,
@@ -144,6 +171,7 @@ impl StreamingCommandRunExecutor {
             ctx: ToolContext::new(session_dir),
             allowed_commands,
             active_step: None,
+            active_step_repaired: false,
             next_index: 0,
             macro_command_batch: FuturesUnordered::new(),
             results: Vec::new(),
@@ -172,7 +200,9 @@ impl StreamingCommandRunExecutor {
         command.index = self.next_index;
         self.next_index += 1;
 
-        let step = command.effective_step();
+        let requested_step = command.effective_step();
+        let step = self.normalize_next_step(requested_step);
+        command.step = Some(step);
         if self.active_step.is_some_and(|current| step != current) {
             self.flush_macro_command_batch().await;
         }
@@ -229,6 +259,18 @@ impl StreamingCommandRunExecutor {
         self.halt_reason.as_deref()
     }
 
+    fn normalize_next_step(&mut self, requested_step: u64) -> u64 {
+        let step = match self.active_step {
+            Some(previous) if requested_step < previous => previous + 1,
+            Some(previous) if requested_step == previous && self.active_step_repaired => {
+                previous + 1
+            }
+            _ => requested_step,
+        };
+        self.active_step_repaired = step != requested_step;
+        step
+    }
+
     async fn flush_macro_command_batch(&mut self) {
         while let Some(result) = self.macro_command_batch.next().await {
             match result {
@@ -280,6 +322,16 @@ fn parse_single_streamed_command(
     Ok(item)
 }
 
+fn command_type_for_execution(command: &CommandItem) -> Option<String> {
+    let canonical = crate::commands::canonical_command(&command.command);
+    if canonical == "task_status" || canonical == "planning" {
+        return Some(canonical);
+    }
+    ToolRouter::new()
+        .resolve_command_tool_name(&command.command)
+        .map(ToString::to_string)
+}
+
 async fn execute_async_args(args: CommandRunArgs, session_dir: std::path::PathBuf) -> Value {
     let ctx = ToolContext::new(session_dir);
     let output = execute_async(args, ctx).await;
@@ -326,14 +378,17 @@ async fn execute_async(args: CommandRunArgs, ctx: ToolContext) -> CommandRunOutp
 
 fn normalize_command_steps(commands: &mut [CommandItem]) {
     let mut previous_step: Option<u64> = None;
+    let mut previous_repaired = false;
     for command in commands {
         let requested_step = command.effective_step();
         let step = match previous_step {
-            Some(previous) if requested_step <= previous => previous + 1,
+            Some(previous) if requested_step < previous => previous + 1,
+            Some(previous) if requested_step == previous && previous_repaired => previous + 1,
             _ => requested_step,
         };
         command.step = Some(step);
         previous_step = Some(step);
+        previous_repaired = step != requested_step;
     }
 }
 
@@ -655,10 +710,12 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
             if looks_like_removed_structured_tool_call(&command.command, &command.command_line) {
                 continue;
             }
-            if command.command_line.is_empty() {
+            if command.command_line.is_empty() && looks_like_shell_command_text(&command.command) {
                 command.command_line = command.command.clone();
+                command.command = crate::commands::active_shell_command_name().to_string();
+            } else if !command.command_line.is_empty() {
+                command.command = crate::commands::active_shell_command_name().to_string();
             }
-            command.command = crate::commands::active_shell_command_name().to_string();
         } else if command.command_line.is_empty() && looks_like_shell_command_text(&command.command)
         {
             command.command_line = command.command.clone();
@@ -835,13 +892,64 @@ impl CommandRunItemResult {
 }
 
 fn looks_like_shell_command_text(command: &str) -> bool {
-    let text = command.trim_start().to_ascii_lowercase();
+    let trimmed = command.trim_start();
+    let text = trimmed.to_ascii_lowercase();
+    let first = text
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_matches(['"', '\'']);
+    const KNOWN_SHELL_COMMANDS: &[&str] = &[
+        "cat",
+        "cargo",
+        "cd",
+        "cmd",
+        "cmd.exe",
+        "copy",
+        "cp",
+        "del",
+        "dir",
+        "echo",
+        "get-childitem",
+        "get-content",
+        "git",
+        "ls",
+        "measure-object",
+        "mkdir",
+        "mv",
+        "node",
+        "npm",
+        "npx",
+        "pnpm",
+        "powershell",
+        "powershell.exe",
+        "pwsh",
+        "pwsh.exe",
+        "py",
+        "python",
+        "rg",
+        "rm",
+        "robocopy",
+        "select-object",
+        "set-content",
+        "tsc",
+        "tsx",
+        "type",
+        "where-object",
+        "write-output",
+        "xcopy",
+        "yarn",
+    ];
     text.starts_with("powershell ")
         || text.starts_with("powershell.exe ")
         || text.starts_with("pwsh ")
         || text.starts_with("pwsh.exe ")
         || text.starts_with('"')
             && (text.contains("powershell.exe\"") || text.contains("pwsh.exe\""))
+        || trimmed.starts_with('$')
+        || trimmed.starts_with("./")
+        || trimmed.starts_with(".\\")
+        || KNOWN_SHELL_COMMANDS.contains(&first)
 }
 
 fn looks_like_removed_structured_tool_call(command: &str, command_line: &str) -> bool {

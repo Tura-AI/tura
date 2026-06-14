@@ -34,7 +34,7 @@ Default (whole workspace):
   backend Rust test layout policy check
   cargo fmt --all --check
   cargo clippy --workspace --exclude src-tauri --all-targets
-  cargo test --workspace --exclude src-tauri
+  cargo test --workspace --exclude src-tauri -- --test-threads=1
   cargo audit
   cargo deny check
   typos
@@ -127,12 +127,12 @@ if [ "$RUN_CRATE_CHECKS" -eq 1 ]; then
     step "Running Clippy for $CRATE"
     run_clippy -p "$CRATE"
     step "Running Rust tests for $CRATE"
-    cargo test -p "$CRATE"
+    cargo test -p "$CRATE" -- --test-threads=1
   else
     step "Running Clippy over the Rust workspace"
     run_clippy --workspace --exclude src-tauri
     step "Running Rust tests over the workspace"
-    cargo test --workspace --exclude src-tauri
+    cargo test --workspace --exclude src-tauri -- --test-threads=1
   fi
 fi
 

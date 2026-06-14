@@ -345,6 +345,21 @@ async fn call_runtime_streaming(
                 command_index,
                 command,
             } = command_event;
+            let command = match code_tools::command_run::normalize_command_value_for_execution(
+                command.clone(),
+                command_index,
+            ) {
+                Ok(command) => command,
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %gateway_session_id,
+                        runtime_id = %gateway_runtime_id,
+                        error = %error,
+                        "failed to normalize streamed command_run command before execution"
+                    );
+                    command
+                }
+            };
             if !command_run_started {
                 if let Err(error) = crate::checkpoint::checkpoint_command_run_started(
                     &gateway_session_id,

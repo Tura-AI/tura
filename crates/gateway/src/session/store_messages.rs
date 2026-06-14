@@ -35,6 +35,84 @@ impl SessionStore {
         todos
     }
 
+    pub fn copy_session_context(&self, source_session_id: &str, target_session_id: &str) -> bool {
+        if !self.sessions.read().contains_key(source_session_id)
+            || !self.sessions.read().contains_key(target_session_id)
+        {
+            return false;
+        }
+
+        let source_messages = self.get_messages(source_session_id);
+        let mut id_map = HashMap::new();
+        let now = Utc::now().timestamp_millis();
+        let copied_messages = source_messages
+            .iter()
+            .enumerate()
+            .map(|(index, message)| {
+                let id = new_message_id(now + index as i64);
+                id_map.insert(message.id.clone(), id.clone());
+                Message {
+                    id,
+                    session_id: target_session_id.to_string(),
+                    role: message.role,
+                    parent_id: None,
+                    parts: Vec::new(),
+                    created_at: message.created_at,
+                    updated_at: message.updated_at,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let copied_messages = source_messages
+            .into_iter()
+            .zip(copied_messages)
+            .map(|(source, mut copied)| {
+                copied.parent_id = source
+                    .parent_id
+                    .as_ref()
+                    .and_then(|parent_id| id_map.get(parent_id).cloned());
+                copied.parts = source
+                    .parts
+                    .into_iter()
+                    .map(|part| MessagePart {
+                        id: Uuid::new_v4().to_string(),
+                        part_type: part.part_type,
+                        content: part.content,
+                        text: part.text,
+                        metadata: part.metadata,
+                        call_id: part.call_id,
+                        tool: part.tool,
+                        state: part.state,
+                    })
+                    .collect();
+                copied
+            })
+            .collect::<Vec<_>>();
+
+        let copied_todos = self.get_todos(source_session_id);
+        self.messages
+            .write()
+            .insert(target_session_id.to_string(), copied_messages.clone());
+        self.todos
+            .write()
+            .insert(target_session_id.to_string(), copied_todos);
+
+        {
+            let mut children = self.children.write();
+            let entry = children.entry(source_session_id.to_string()).or_default();
+            if !entry.iter().any(|id| id == target_session_id) {
+                entry.push(target_session_id.to_string());
+            }
+        }
+
+        if let Some(info) = self.sessions.write().get_mut(target_session_id) {
+            info.message_count = copied_messages.len();
+            info.updated_at = now;
+        }
+        self.persist_session(target_session_id);
+        true
+    }
+
     pub fn finish_todos(&self, session_id: &str, success: bool) {
         let mut todos = self.get_todos(session_id);
         if todos.is_empty() {
@@ -215,6 +293,18 @@ impl SessionStore {
         state: serde_json::Value,
         metadata: Option<serde_json::Value>,
     ) -> Option<Message> {
+        self.add_tool_message_with_message_id(session_id, tool_name, call_id, state, metadata, None)
+    }
+
+    pub fn add_tool_message_with_message_id(
+        &self,
+        session_id: &str,
+        tool_name: String,
+        call_id: String,
+        state: serde_json::Value,
+        metadata: Option<serde_json::Value>,
+        preferred_message_id: Option<String>,
+    ) -> Option<Message> {
         let now = Utc::now().timestamp_millis();
         let (state, metadata) = normalize_tool_message_state(&tool_name, state, metadata);
 
@@ -283,8 +373,69 @@ impl SessionStore {
             state: Some(state),
         };
 
+        if let Some(preferred_message_id) = preferred_message_id.as_deref() {
+            let mut messages = self.messages.write();
+            let session_messages = messages.entry(session_id.to_string()).or_default();
+            if let Some(message) = session_messages
+                .iter_mut()
+                .find(|message| message.id == preferred_message_id)
+            {
+                message.updated_at = now;
+                message.parts.push(part.clone());
+                let message = message.clone();
+                if let Some(info) = self.sessions.write().get_mut(session_id) {
+                    info.updated_at = now;
+                }
+                drop(messages);
+                self.persist_session(session_id);
+                self.push_event(GlobalEvent::MessageUpdated {
+                    properties: crate::api::types::MessageUpdatedProperties {
+                        session_id: session_id.to_string(),
+                        info: crate::api::types::Message {
+                            id: message.id.clone(),
+                            session_id: message.session_id.clone(),
+                            role: crate::api::types::MessageRole::Assistant,
+                            parts: message
+                                .parts
+                                .iter()
+                                .map(|part| crate::api::types::MessagePart {
+                                    id: part.id.clone(),
+                                    part_type: part.part_type.clone(),
+                                    content: part.content.clone(),
+                                    text: part.text.clone(),
+                                    metadata: frontend_safe_part_value(part, part.metadata.clone()),
+                                    call_id: part.call_id.clone(),
+                                    tool: part.tool.clone(),
+                                    state: frontend_safe_part_value(part, part.state.clone()),
+                                })
+                                .collect(),
+                            created_at: message.created_at,
+                            updated_at: message.updated_at,
+                            parent_id: message.parent_id.clone(),
+                        },
+                    },
+                });
+                self.push_event(GlobalEvent::MessagePartUpdated {
+                    properties: crate::api::types::MessagePartUpdatedProperties {
+                        session_id: session_id.to_string(),
+                        part: serde_json::json!({
+                            "id": &part.id,
+                            "sessionID": session_id,
+                            "messageID": &message.id,
+                            "type": &part.part_type,
+                            "callID": &part.call_id,
+                            "tool": &part.tool,
+                            "state": frontend_safe_part_value(&part, part.state.clone()),
+                            "metadata": frontend_safe_part_value(&part, part.metadata.clone()),
+                        }),
+                    },
+                });
+                return Some(message);
+            }
+        }
+
         let message = Message {
-            id: new_message_id(now),
+            id: preferred_message_id.unwrap_or_else(|| new_message_id(now)),
             session_id: session_id.to_string(),
             role: MessageRole::Assistant,
             parent_id,

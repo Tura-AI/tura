@@ -57,6 +57,22 @@ find_backend_business_tests() {
   done
 }
 
+run_process_sensitive_unit_tests() {
+  package=gateway
+  filter='session::store::tests::'
+  if [ -n "$CRATE" ] && [ "$CRATE" != "$package" ]; then
+    return
+  fi
+  if [ "$LIST" -eq 1 ]; then
+    echo "$package::$filter <process-sensitive unit tests>"
+    return
+  fi
+  printf '\n==> Running process-sensitive unit tests %s::%s\n' "$package" "$filter"
+  run_cargo test -p "$package" --features business-tests "$filter" -- --nocapture --test-threads=1
+}
+
+run_process_sensitive_unit_tests
+
 if [ -d tests/business ]; then
   find tests/business -maxdepth 1 -type f -name '*.rs' | sort | while IFS= read -r test_path; do
     case "$test_path" in

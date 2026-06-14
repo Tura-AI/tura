@@ -21,7 +21,7 @@ fn parse_missing_steps_default_to_original_order_steps() {
 }
 
 #[test]
-fn normalize_duplicate_steps_extends_in_input_order() {
+fn normalize_preserves_duplicate_dependency_groups_and_extends_backwards_steps() {
     let mut args = parse_args(&json!({
         "commands": [
             { "command": "shell_command", "command_line": "echo a", "step": 1 },
@@ -39,7 +39,29 @@ fn normalize_duplicate_steps_extends_in_input_order() {
         .iter()
         .map(|command| command.effective_step())
         .collect::<Vec<_>>();
-    assert_eq!(steps, vec![1, 2, 3, 4]);
+    assert_eq!(steps, vec![1, 2, 2, 3]);
+}
+
+#[test]
+fn normalize_scrambled_steps_never_move_backwards_or_merge_repaired_groups() {
+    let mut args = parse_args(&json!({
+        "commands": [
+            { "command": "shell_command", "command_line": "echo three", "step": 3 },
+            { "command": "shell_command", "command_line": "echo two", "step": 2 },
+            { "command": "shell_command", "command_line": "echo four", "step": 4 },
+            { "command": "shell_command", "command_line": "echo one", "step": 1 }
+        ]
+    }))
+    .expect("parse args");
+
+    normalize_command_steps(&mut args.commands);
+
+    let steps = args
+        .commands
+        .iter()
+        .map(|command| command.effective_step())
+        .collect::<Vec<_>>();
+    assert_eq!(steps, vec![3, 4, 5, 6]);
 }
 
 #[test]
@@ -129,6 +151,42 @@ fn parse_command_line_without_command_type_accepts_workdir_and_timeout() {
     assert_eq!(args.commands[0].command_line, "pwd");
     assert_eq!(args.commands[0].workdir.as_deref(), Some("subdir"));
     assert_eq!(args.commands[0].timeout_ms, Some(5000));
+}
+
+#[test]
+fn normalize_command_value_for_execution_adds_actual_shell_command_type() {
+    let normalized = super::normalize_command_value_for_execution(
+        json!({
+            "command_line": "Write-Output normalized-ok",
+            "step": 3,
+            "timeout_ms": 5000
+        }),
+        0,
+    )
+    .expect("normalize command value");
+
+    assert_eq!(
+        normalized["command_type"],
+        crate::commands::active_shell_command_name()
+    );
+    assert_eq!(normalized["command_line"], "Write-Output normalized-ok");
+    assert_eq!(normalized["step"], 3);
+    assert_eq!(normalized["timeout_ms"], 5000);
+}
+
+#[test]
+fn normalize_command_value_for_execution_does_not_type_plain_summary_text() {
+    let normalized = super::normalize_command_value_for_execution(
+        json!({
+            "command": "large file scan",
+            "step": 1
+        }),
+        0,
+    )
+    .expect("plain summary should still parse as a non-executable command record");
+
+    assert!(normalized.get("command_type").is_none());
+    assert_eq!(normalized["command"], "large file scan");
 }
 
 #[test]

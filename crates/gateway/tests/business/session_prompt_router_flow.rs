@@ -1247,6 +1247,13 @@ async fn gateway_prompt_business_flow_inherits_agent_runtime_settings_for_router
         request["payload"]["payload"]["worker_env"]["TURA_COMMAND_RUN_STALL_CHECK_SECS"],
         "5"
     );
+    let worker_env = request["payload"]["payload"]["worker_env"]
+        .as_object()
+        .expect("worker_env should be an object");
+    assert!(
+        !worker_env.keys().any(|key| key.contains("INVOKE_TIMEOUT")),
+        "runtime worker payload must not include a session-wide invoke deadline"
+    );
     wait_until(Duration::from_secs(10), || {
         session_store()
             .get_session(&session.id)

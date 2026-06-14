@@ -5,9 +5,7 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pty from "node-pty";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const appRoot = path.resolve(here, "..");
+const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(appRoot, "..", "..");
 const port = Number(process.env.PORT || "8799");
 const gatewayUrl = process.env.TURA_GATEWAY_URL || "http://127.0.0.1:4126";
@@ -18,7 +16,6 @@ const nodeBin = process.execPath;
 const tuiBin = path.join(appRoot, "dist", "index.js");
 const tuiCommand = process.env.TURA_TUI_BIN || nodeBin;
 const tuiBaseArgs = process.env.TURA_TUI_BIN ? [] : [tuiBin];
-
 function defaultShell() {
   if (process.platform === "win32") return "powershell.exe";
   const userShell = process.env.SHELL?.trim();
@@ -29,11 +26,9 @@ function defaultShell() {
   }
   return "bash";
 }
-
 function shellPathUsable(value) {
   return !path.isAbsolute(value) || fs.existsSync(value);
 }
-
 const profiles = new Map([
   [
     "plain",
@@ -72,7 +67,6 @@ const profiles = new Map([
     },
   ],
 ]);
-
 function indexHtml() {
   return `<!doctype html>
 <html lang="en">
@@ -99,7 +93,6 @@ function indexHtml() {
 </body>
 </html>`;
 }
-
 function html(profileId, profile, instance) {
   const instanceQuery = instance ? `?instance=${encodeURIComponent(instance)}` : "";
   return `<!doctype html>
@@ -408,7 +401,6 @@ function html(profileId, profile, instance) {
 </body>
 </html>`;
 }
-
 function send(res, value, status = 200, headers = {}) {
   const body = typeof value === "string" ? value : JSON.stringify(value);
   res.writeHead(status, {
@@ -418,7 +410,6 @@ function send(res, value, status = 200, headers = {}) {
   });
   res.end(body);
 }
-
 function readJson(req) {
   return new Promise((resolve) => {
     let body = "";
@@ -428,7 +419,6 @@ function readJson(req) {
     req.on("end", () => resolve(body ? JSON.parse(body) : {}));
   });
 }
-
 async function saveDroppedFile(body) {
   const name = sanitizeDropFileName(body?.name || "attachment.bin");
   const data = typeof body?.data === "string" ? body.data : "";
@@ -440,7 +430,6 @@ async function saveDroppedFile(body) {
   await fsp.writeFile(filePath, Buffer.from(data, "base64"));
   return filePath;
 }
-
 function sanitizeDropFileName(value) {
   const cleaned = path
     .basename(String(value))
@@ -448,7 +437,6 @@ function sanitizeDropFileName(value) {
     .trim();
   return cleaned || "attachment.bin";
 }
-
 function runtimeFor(profile, key) {
   profile.runtimes ??= new Map();
   const runtimeKey = key || "default";
@@ -465,12 +453,10 @@ function runtimeFor(profile, key) {
   }
   return runtime;
 }
-
 function broadcast(runtime, data) {
   const payload = `data: ${JSON.stringify(data)}\n\n`;
   for (const res of runtime.clients) res.write(payload);
 }
-
 function queueOutput(runtime, data) {
   runtime.outputBuffer += data;
   const lastFrameStart = lastRepaintFrameStart(runtime.outputBuffer);
@@ -486,23 +472,17 @@ function queueOutput(runtime, data) {
     if (output) broadcast(runtime, output);
   }, 16);
 }
-
 function lastRepaintFrameStart(data) {
   const resetTerminal = data.lastIndexOf("\x1bc");
   if (resetTerminal >= 0) return resetTerminal;
-
   const clearScrollback = data.lastIndexOf("\x1b[3J");
   if (clearScrollback >= 0) return clearScrollback;
-
   const clearScreen = data.lastIndexOf("\x1b[2J");
   if (clearScreen >= 0) return clearScreen;
-
   const home = data.lastIndexOf("\x1b[H");
   if (home >= 0) return home;
-
   return -1;
 }
-
 function isClearFrame(data) {
   return (
     data.includes("\x1bc") ||
@@ -511,11 +491,9 @@ function isClearFrame(data) {
     data.includes("\x1b[3J")
   );
 }
-
 const panelBackground = "\x1b[48;2;32;32;34m";
 const panelAssistantRail = "\x1b[38;2;107;107;107m";
 const panelUserRail = "\x1b[38;2;238;238;238m";
-
 function normalizePanelRailStarts(data) {
   return data.replace(/(^|\r\n|\x1b\[H)([▏|])\x1b\[39m/gu, (match, lineStart, rail, offset) => {
     const recent = data.slice(Math.max(0, offset - 48), offset);
@@ -523,7 +501,6 @@ function normalizePanelRailStarts(data) {
     return `${lineStart}${panelBackground}${railColor}${rail}\x1b[0m${panelBackground}`;
   });
 }
-
 function startTui(profile, runtime, size = undefined) {
   if (runtime.term) return runtime.term;
   const cols = Number(size?.cols) || 120;
@@ -563,12 +540,10 @@ function startTui(profile, runtime, size = undefined) {
   });
   return term;
 }
-
 function profileFromPath(url) {
   const id = url.pathname.split("/").filter(Boolean)[0] ?? "";
   return profiles.get(id);
 }
-
 function escapeHtml(value) {
   return String(value)
     .replace(/&/g, "&amp;")
@@ -576,7 +551,6 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
-
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", "http://127.0.0.1");
   if (req.method === "GET" && url.pathname === "/") return send(res, indexHtml());
@@ -619,7 +593,6 @@ const server = http.createServer(async (req, res) => {
   }
   return send(res, { error: "not found" }, 404);
 });
-
 server.listen(port, "127.0.0.1", () => {
   console.log(`Tura TUI web terminal: http://127.0.0.1:${port}`);
   console.log(`Gateway: ${gatewayUrl}`);

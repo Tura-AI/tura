@@ -351,6 +351,96 @@ async fn runtime_openai_business_flow_replays_final_command_run_once_and_records
     );
 }
 
+#[tokio::test]
+async fn runtime_prompt_cache_key_reuses_root_session_for_forked_sessions() {
+    let _guard = ASYNC_ENV_LOCK.lock().await;
+    let _session_db = session_db_support::SessionDbTestService::start(&ENV_LOCK);
+    let workspace = tempfile::tempdir().expect("runtime cache workspace");
+    let workspace_text = workspace.path().to_string_lossy().to_string();
+    let root_session_id = "cache-root-session";
+    let child_session_id = "cache-child-session";
+    let client = runtime::session_log_client::SessionLogClient::discover()
+        .expect("session db client should be available");
+    client
+        .upsert_session(
+            session_snapshot_json(root_session_id, &workspace_text),
+            None,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("root session should persist");
+    client
+        .upsert_session(
+            session_snapshot_json(child_session_id, &workspace_text),
+            Some(root_session_id.to_string()),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("child session should persist");
+
+    let provider = LocalProvider::start(vec![ProviderReply::Json {
+        status: "200 OK",
+        request_id: Some("req-runtime-cache-root"),
+        body: json!({
+            "id": "chatcmpl-runtime-cache-root",
+            "choices": [{
+                "message": {"role": "assistant", "content": "cache root ok"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13}
+        }),
+    }]);
+    let _env = EnvGuard::set(&[
+        ("OPENAI_API_KEY", "runtime-cache-key"),
+        ("TURA_DISABLE_PROMPT_CACHE", "0"),
+    ]);
+    let settings = settings_for_route(
+        "openai-cache-route",
+        "openai",
+        &provider.endpoint,
+        "gpt-cache-local",
+    );
+    let runtime = runtime_for_provider(
+        "runtime-cache-root",
+        child_session_id,
+        "openai-cache-route",
+        "openai",
+        "gpt-cache-local",
+        false,
+    );
+
+    let result = call_runtime(
+        CallRuntimeInput {
+            runtime,
+            messages: vec![json!({"role": "user", "content": "reuse cache"})],
+            tools: Vec::new(),
+            provider_name: "openai-cache-route".to_string(),
+            stream: false,
+            max_tokens: 128,
+            tool_choice: None,
+            session_directory: workspace.path().to_path_buf(),
+            allowed_command_run_commands: None,
+        },
+        Arc::new(settings),
+        Arc::new(TuraConfig::new(".env.runtime-cache-business-missing")),
+    )
+    .await
+    .expect("runtime cache call should succeed");
+
+    let requests = provider.requests();
+    let cache_key = requests[0].body["prompt_cache_key"]
+        .as_str()
+        .expect("prompt cache key should be sent for OpenAI providers");
+    assert!(
+        cache_key.starts_with("turaosv2:openai-cache-route:cache-root-session:"),
+        "forked sessions should reuse the root session cache key, got {cache_key}"
+    );
+    assert_eq!(
+        result.input.expect("runtime input")["options"]["prompt_cache_key"],
+        cache_key
+    );
+}
+
 fn mock_command_run_router_addr() -> String {
     if let Some(addr) = MOCK_ROUTER_ADDR.get() {
         return addr.clone();
@@ -502,6 +592,23 @@ fn settings_for_route(
         model_catalog: ModelCatalog::default(),
         provider_enums: ProviderEnumCatalog::default(),
     }
+}
+
+fn session_snapshot_json(session_id: &str, workspace: &str) -> Value {
+    json!({
+        "id": session_id,
+        "directory": workspace,
+        "name": session_id,
+        "created_at": 1,
+        "updated_at": 1,
+        "management": {
+            "session_id": session_id,
+            "session_name": session_id,
+            "session_directory": workspace,
+            "state": "created",
+            "task_plan": {"plan_summary": "", "detailed_tasks": []}
+        }
+    })
 }
 
 fn command_run_tool_schema() -> Value {

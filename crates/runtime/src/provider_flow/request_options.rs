@@ -1,3 +1,5 @@
+use crate::context::USER_AGENT_CONTEXT_ROLE;
+use crate::session_log_client::SessionLogClient;
 use crate::state_machine::session_management::SessionId;
 use tura_llm_rust::{openai_compatible_usage_stream_supported, prompt_cache_key_supported};
 
@@ -62,6 +64,7 @@ pub(crate) fn normalize_provider_messages(
         }
 
         let (role, content) = match role {
+            role if role == USER_AGENT_CONTEXT_ROLE => ("user", content),
             "system" | "developer" | "user" | "assistant" | "tool" => (role, content),
             other => (
                 "user",
@@ -139,16 +142,43 @@ pub(crate) fn prompt_cache_key(
         .collect::<Vec<_>>();
     tool_names.sort();
     let tool_sig = tool_names.join(",");
+    let cache_session_id = prompt_cache_session_id(session_id);
     let hash_input = format!(
         "{}\n{}\n{}\n{}\n{}",
-        route_name, session_id, provider.provider, provider.model, tool_sig
+        route_name, cache_session_id, provider.provider, provider.model, tool_sig
     );
     Some(format!(
         "turaosv2:{}:{}:{}",
         short_key_part(route_name),
-        short_key_part(session_id),
+        short_key_part(&cache_session_id),
         fnv1a64_hex(&hash_input)
     ))
+}
+
+fn prompt_cache_session_id(session_id: &SessionId) -> String {
+    let client = match SessionLogClient::discover() {
+        Ok(client) => client,
+        Err(_) => return session_id.to_string(),
+    };
+    let mut current = session_id.to_string();
+    let mut seen = std::collections::HashSet::new();
+    loop {
+        if !seen.insert(current.clone()) {
+            return session_id.to_string();
+        }
+        let snapshot = match client.get_session(current.clone()) {
+            Ok(Some(snapshot)) => snapshot,
+            _ => return current,
+        };
+        let Some(parent_id) = snapshot
+            .parent_id
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+        else {
+            return current;
+        };
+        current = parent_id;
+    }
 }
 
 pub(crate) fn stream_options(
@@ -432,15 +462,21 @@ mod tests {
             serde_json::json!({"role": "system", "content": "## Input rules\nstable"}),
             serde_json::json!({"role": "system", "content": "# COMMAND_RUN Tool Guide\nstable"}),
             serde_json::json!({"role": "system", "content": "Dynamic runtime state:\ncurrent_directory: C:/tmp"}),
+            serde_json::json!({"role": crate::context::USER_AGENT_CONTEXT_ROLE, "content": "<environment_context>stable</environment_context>"}),
             serde_json::json!({"role": "user", "content": "do the task"}),
             serde_json::json!({"role": "system", "content": "Recent tool callback result from `command_run`:\nok"}),
             serde_json::json!({"role": "debug", "content": "unknown role text"}),
             serde_json::json!({"role": "user", "content": ""}),
         ]);
 
-        assert_eq!(normalized.len(), 6);
+        assert_eq!(normalized.len(), 7);
+        assert_eq!(normalized[3]["role"], "user");
         assert_eq!(
-            normalized[5]["content"],
+            normalized[3]["content"],
+            "<environment_context>stable</environment_context>"
+        );
+        assert_eq!(
+            normalized[6]["content"],
             "Runtime context (debug):\nunknown role text"
         );
     }

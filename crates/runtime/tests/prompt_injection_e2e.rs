@@ -10,8 +10,12 @@ fn coding_agents_inject_persona_style_then_agent_prompt() {
     let project_root = find_project_root();
     let tura_persona_root = project_root.join("personas").join("src").join("tura");
     let tura_persona_prompt_dir = tura_persona_root.join("prompt");
+    let communication_style_dir = project_root
+        .join("personas")
+        .join("src")
+        .join("communication_style");
     let persona = read_prompt(&tura_persona_prompt_dir.join("persona.md"));
-    let communication_style = read_prompt(&tura_persona_prompt_dir.join("communication_style.md"));
+    let communication_style = read_prompt(&communication_style_dir.join("communication_style.md"));
 
     for (agent_name, agent_prompt_path) in [
         (

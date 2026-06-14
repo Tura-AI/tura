@@ -10,7 +10,6 @@ use axum::{
     Json,
 };
 use serde_json::Value;
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -464,7 +463,7 @@ fn text_response(status: StatusCode, body: String) -> Response<String> {
 pub async fn global_event() -> Sse<impl futures::Stream<Item = Result<SseEvent, Infallible>>> {
     let state = EventStreamState {
         first: true,
-        seen_messages: seen_message_counts(),
+        event_cursor: session_store().event_cursor(),
     };
     let stream = futures::stream::unfold(state, |mut state| async move {
         loop {
@@ -474,9 +473,7 @@ pub async fn global_event() -> Sse<impl futures::Stream<Item = Result<SseEvent, 
                     properties: std::collections::HashMap::new(),
                 })
             } else {
-                session_store()
-                    .pop_event()
-                    .or_else(|| scan_message_events(&mut state.seen_messages))
+                session_store().next_event(&mut state.event_cursor)
             };
 
             if let Some(event) = event {
@@ -498,40 +495,7 @@ pub async fn global_event() -> Sse<impl futures::Stream<Item = Result<SseEvent, 
 
 struct EventStreamState {
     first: bool,
-    seen_messages: HashMap<String, usize>,
-}
-
-fn seen_message_counts() -> HashMap<String, usize> {
-    session_store()
-        .list_sessions()
-        .into_iter()
-        .map(|session| {
-            let count = session_store().get_messages(&session.id).len();
-            (session.id, count)
-        })
-        .collect()
-}
-
-fn scan_message_events(seen: &mut HashMap<String, usize>) -> Option<GlobalEvent> {
-    for session in session_store().list_sessions() {
-        let messages = session_store().get_messages(&session.id);
-        let count = messages.len();
-        let previous = seen.entry(session.id.clone()).or_insert(0);
-        if count <= *previous {
-            continue;
-        }
-
-        let message = messages.get(*previous).cloned()?;
-        *previous += 1;
-        return Some(GlobalEvent::MessageUpdated {
-            properties: MessageUpdatedProperties {
-                session_id: session.id,
-                info: crate::api::session::api_message_from_store(message),
-            },
-        });
-    }
-
-    None
+    event_cursor: u64,
 }
 
 fn event_directory(event: &GlobalEvent) -> String {

@@ -253,11 +253,25 @@ export function SettingsView(props: {
                       <For each={THEME_OPTIONS}>
                         {(option) => (
                           <button
-                            class={classNames(props.state.themeMode === option.id && "selected")}
+                            class={classNames(
+                              "theme-choice",
+                              props.state.themeMode === option.id && "selected",
+                            )}
                             onClick={() => props.onTheme(option.id)}
                           >
-                            {option.label}
-                            <Show when={option.id === systemThemeMode()}> ({t("default")})</Show>
+                            <span
+                              class="theme-choice-swatch"
+                              style={{
+                                "--theme-paper": option.preview.paper,
+                                "--theme-wash": option.preview.wash,
+                                "--theme-accent": option.preview.accent,
+                              }}
+                              aria-hidden="true"
+                            />
+                            <span class="theme-choice-label">
+                              {option.label}
+                              <Show when={option.id === systemThemeMode()}> ({t("default")})</Show>
+                            </span>
                           </button>
                         )}
                       </For>

@@ -17,7 +17,7 @@ use runtime::state_machine::session_management::{
     PlanStatus, PollInterval, SessionState, StartCondition, TaskStep,
 };
 use session_log::{SessionRecord, SessionSnapshot};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(test)]
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -64,7 +64,28 @@ pub struct SessionStore {
     user_commands: Arc<RwLock<HashMap<String, Vec<String>>>>,
     cancelled: Arc<RwLock<HashSet<String>>>,
     current_session_id: Arc<RwLock<Option<String>>>,
-    events: Arc<RwLock<Vec<GlobalEvent>>>,
+    events: Arc<RwLock<EventLog>>,
+}
+
+const MAX_SESSION_EVENTS: usize = 10_000;
+
+struct EventLog {
+    next_sequence: u64,
+    entries: VecDeque<EventLogEntry>,
+}
+
+struct EventLogEntry {
+    sequence: u64,
+    event: GlobalEvent,
+}
+
+impl EventLog {
+    fn new() -> Self {
+        Self {
+            next_sequence: 0,
+            entries: VecDeque::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -112,7 +133,7 @@ impl SessionStore {
             user_commands: Arc::new(RwLock::new(HashMap::new())),
             cancelled: Arc::new(RwLock::new(HashSet::new())),
             current_session_id: Arc::new(RwLock::new(None)),
-            events: Arc::new(RwLock::new(Vec::new())),
+            events: Arc::new(RwLock::new(EventLog::new())),
         };
         store.init_default_session();
         store
@@ -198,6 +219,7 @@ impl SessionStore {
         }
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     fn hydrate_directory_background(&self, directory: Option<String>) {
         let Some(directory) = directory else {
             return;
@@ -361,6 +383,7 @@ impl SessionStore {
             force_planning: Some(session.force_planning),
             model_variant: session.model_variant.clone(),
             model_acceleration_enabled: Some(session.model_acceleration_enabled),
+            show_react_kaomoji: None,
             ..TuraSessionConfig::default()
         };
         patch.fill_model_parts();
@@ -562,6 +585,7 @@ impl SessionStore {
         model_acceleration_enabled: bool,
         disable_permission_restrictions: bool,
     ) -> ApiSession {
+        #[cfg(not(test))]
         self.hydrate_directory_background(directory.clone());
         let persisted_config = directory.as_deref().map(load_config).unwrap_or_default();
         let model = model.or(persisted_config.model.clone());
@@ -866,15 +890,37 @@ impl SessionStore {
     }
 
     pub fn push_event(&self, event: GlobalEvent) {
-        self.events.write().push(event);
+        let mut log = self.events.write();
+        let sequence = log.next_sequence;
+        log.next_sequence = log.next_sequence.saturating_add(1);
+        log.entries.push_back(EventLogEntry { sequence, event });
+        while log.entries.len() > MAX_SESSION_EVENTS {
+            log.entries.pop_front();
+        }
+    }
+
+    pub fn event_cursor(&self) -> u64 {
+        self.events.read().next_sequence
+    }
+
+    pub fn next_event(&self, cursor: &mut u64) -> Option<GlobalEvent> {
+        let log = self.events.read();
+        let first_sequence = log.entries.front()?.sequence;
+        if *cursor < first_sequence {
+            *cursor = first_sequence;
+        }
+        let index = cursor.saturating_sub(first_sequence) as usize;
+        let entry = log.entries.get(index)?;
+        *cursor = entry.sequence.saturating_add(1);
+        Some(entry.event.clone())
     }
 
     pub fn pop_event(&self) -> Option<GlobalEvent> {
-        let mut events = self.events.write();
-        if events.is_empty() {
-            return None;
-        }
-        Some(events.remove(0))
+        self.events
+            .write()
+            .entries
+            .pop_front()
+            .map(|entry| entry.event)
     }
 
     pub fn mark_cancelled(&self, session_id: &str) {
@@ -939,10 +985,10 @@ fn api_session_from_info(info: &SessionInfo, parent_id: Option<String>) -> ApiSe
         .filter(|value| !value.is_empty());
     let session_name = info.management.session_name.trim().to_string();
     let session_name = (!session_name.is_empty()).then_some(session_name);
-    let session_display_name = plan_summary
+    let session_display_name = session_name
         .clone()
+        .or_else(|| plan_summary.clone())
         .or(first_task_summary)
-        .or_else(|| session_name.clone())
         .or_else(|| Some("New Session".to_string()));
     ApiSession {
         id: info.id.clone(),

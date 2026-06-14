@@ -39,16 +39,23 @@ apps/tui/
   tsconfig.json
   scripts/
     web-terminal.mjs
-  e2e/
-    tui_web_terminal_profiles_playwright.mjs
-    business/
-      tui_mock_gateway_stream_flow.mjs
+  tests/
+    unit/
+    e2e/
+      tui_web_terminal_profiles_playwright.mjs
+      business/
+        tui_mock_gateway_stream_flow.mjs
+      live/
+        tui_real_gateway_session_flow.mjs
+        tui_web_terminal_snake_game_flow.mjs
+      tui_gateway_cli_e2e.mjs
+      tui_real_gateway_snake_playwright.mjs
+      tui_zip_password_playwright.mjs
     live/
-      tui_real_gateway_session_flow.mjs
-      tui_web_terminal_snake_game_flow.mjs
-    tui_gateway_cli_e2e.mjs
-    tui_real_gateway_snake_playwright.mjs
-    tui_zip_password_playwright.mjs
+      tui_greeting_stream_visibility_live.mjs
+  test-results/
+    unit-dist/
+    <suite>/<run-id>/
   src/
     index.ts
     cli.ts
@@ -134,6 +141,13 @@ Run `npm run test:stream` from `apps/tui` to exercise the web-terminal UI
 against an app-local mock gateway. This script is app-owned and is intentionally
 not part of the root backend business runner.
 
+All app-local TUI tests live under `apps/tui/tests`. Unit tests compile to
+`apps/tui/test-results/unit-dist`, and browser/business/live scripts should
+write screenshots, summaries, and other artifacts under
+`apps/tui/test-results/<suite>/<run-id>/`. TUI release-entry scripts invoked
+through this package use `apps/tui/test-results/release/<profile>/tui/...` for
+their run directories; they still read binaries from `target/<profile>`.
+
 ## Web Terminal Profile / User-Agent E2E
 
 Run `npm run test:e2e:profiles` from `apps/tui` to exercise the browser wrapper
@@ -141,7 +155,7 @@ around the built TUI in mock mode. It opens `/plain`, `/ansi`, `/rich`, and a
 mobile Chromium user-agent profile, verifies that the terminal renders visible
 content, checks that raw ANSI controls are not leaked into xterm text, checks for
 horizontal overflow, and stores screenshots under
-`target/tui-web-terminal-profiles/<run-id>/`.
+`apps/tui/test-results/tui-web-terminal-profiles/<run-id>/`.
 
 The web terminal supports dragging local files onto the terminal window. When
 the browser exposes a local file URI or native path, the composer receives that
@@ -154,7 +168,7 @@ events before submitting the pasted composer text.
 Run `npm run test:e2e:drop` from `apps/tui` for the focused drag/drop coverage.
 It drives browser `DragEvent`/`DataTransfer` input, verifies the composer text,
 checks uploaded fallback copies under `.tura/attachments/`, and captures a
-screenshot under `target/tui-web-terminal-drop/<run-id>/`.
+screenshot under `apps/tui/test-results/tui-web-terminal-drop/<run-id>/`.
 
 ## Real Gateway Snake Playwright E2E
 
@@ -163,7 +177,7 @@ real gateway and provider call. The test creates a disposable Snake fixture,
 runs `node tools/snake_playwright.mjs` for desktop/mobile screenshots, sends a
 networked TUI task through gateway, then captures the web terminal across chat,
 sessions, models, settings, and mobile views. Artifacts are written under
-`target/tui-real-gateway-snake/<run-id>/`.
+`apps/tui/test-results/tui-real-gateway-snake/<run-id>/`.
 
 ## Release Entry Live Acceptance Tests
 
@@ -171,6 +185,8 @@ Run these after the repository release build and CLI registration. They drive
 the release `tura` entry and validate a single real request, Snake, and
 password-zip CLI refactor task through the TUI command surface. The release
 scripts themselves live under root `tests/live/tui_release_*.mjs`.
+Their summaries, logs, screenshots, and workspaces are written under
+`apps/tui/test-results/release/<profile>/tui/<case>/<run-id>/`.
 
 ```text
 npm run test:live:release

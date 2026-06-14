@@ -98,38 +98,42 @@ mod tests {
         assert!(response.output.contains(".tura/commands"));
     }
 
-    #[tokio::test]
-    async fn list_and_execute_command_use_current_workspace_directory() {
-        let temp = TempDir::new().expect("temp workspace");
-        let commands_dir = temp.path().join(".tura").join("commands");
-        std::fs::create_dir_all(&commands_dir).expect("create commands dir");
-        std::fs::write(
-            commands_dir.join("snake.md"),
-            "Run snake task with {{args}} in this workspace.",
-        )
-        .expect("write command");
-        let _directory_guard =
-            CurrentDirectoryGuard::set(temp.path().to_string_lossy().to_string());
+    #[test]
+    fn list_and_execute_command_use_current_workspace_directory() {
+        let _global_state = crate::test_support::current_directory_lock();
+        let runtime = tokio::runtime::Runtime::new().expect("create tokio runtime");
+        runtime.block_on(async {
+            let temp = TempDir::new().expect("temp workspace");
+            let commands_dir = temp.path().join(".tura").join("commands");
+            std::fs::create_dir_all(&commands_dir).expect("create commands dir");
+            std::fs::write(
+                commands_dir.join("snake.md"),
+                "Run snake task with {{args}} in this workspace.",
+            )
+            .expect("write command");
+            let _directory_guard =
+                CurrentDirectoryGuard::set(temp.path().to_string_lossy().to_string());
 
-        let commands = list_commands().await;
-        let snake = commands
-            .iter()
-            .find(|command| command.name == "snake")
-            .expect("snake command should be discovered");
-        assert_eq!(snake.source, "command");
-        assert_eq!(
-            snake.template.as_deref(),
-            Some("Run snake task with {{args}} in this workspace.")
-        );
+            let commands = list_commands().await;
+            let snake = commands
+                .iter()
+                .find(|command| command.name == "snake")
+                .expect("snake command should be discovered");
+            assert_eq!(snake.source, "command");
+            assert_eq!(
+                snake.template.as_deref(),
+                Some("Run snake task with {{args}} in this workspace.")
+            );
 
-        let response = execute_command(Json(ExecuteCommandRequest {
-            command: "snake".to_string(),
-            args: Some(vec!["debug".to_string(), "tui".to_string()]),
-        }))
-        .await;
-        assert!(response.output.contains("Run snake task with"));
-        assert!(response.output.contains("debug"));
-        assert!(response.output.contains("tui"));
+            let response = execute_command(Json(ExecuteCommandRequest {
+                command: "snake".to_string(),
+                args: Some(vec!["debug".to_string(), "tui".to_string()]),
+            }))
+            .await;
+            assert!(response.output.contains("Run snake task with"));
+            assert!(response.output.contains("debug"));
+            assert!(response.output.contains("tui"));
+        });
     }
 
     struct CurrentDirectoryGuard {

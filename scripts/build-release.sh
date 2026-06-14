@@ -8,16 +8,19 @@ REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 TARGET_DIR="$REPO_ROOT/target/release"
 ICON_PATH="$REPO_ROOT/assets/tura/icon.ico"
 SKIP_TUI=0
+CLEAN=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --skip-tui) SKIP_TUI=1 ;;
+    -clean|--clean) CLEAN=1 ;;
     -h|--help)
       cat <<'EOF'
 Usage:
-  scripts/build-release.sh [--skip-tui]
+  scripts/build-release.sh [--skip-tui] [-clean|--clean]
 
 Builds release artifacts directly into target/release.
+By default, local session DB/config state is preserved. Pass -clean to remove it before building.
 EOF
       exit 0
       ;;
@@ -77,16 +80,17 @@ stop_repo_tura_backends() {
   done
 }
 
-remove_session_db_dirty_data() {
+remove_local_runtime_state() {
   for target in \
     "$REPO_ROOT/db/session_log" \
+    "$REPO_ROOT/.tura/config.conf" \
     "$REPO_ROOT/.tura/session_log.sqlite3" \
     "$REPO_ROOT/.tura/session_log.sqlite3-wal" \
     "$REPO_ROOT/.tura/session_log.sqlite3-shm" \
     "$REPO_ROOT/.tura/session_log.sqlite3.init.lock"
   do
     if ! is_under_repo "$target"; then
-      echo "Refusing to delete session DB path outside repository: $target" >&2
+      echo "Refusing to delete local runtime path outside repository: $target" >&2
       exit 1
     fi
     rm -rf -- "$target"
@@ -94,7 +98,11 @@ remove_session_db_dirty_data() {
 }
 
 stop_repo_tura_backends
-remove_session_db_dirty_data
+if [ "$CLEAN" -eq 1 ]; then
+  remove_local_runtime_state
+else
+  echo "Preserving local session DB/config state. Pass -clean to remove it before building."
+fi
 
 (cd "$REPO_ROOT" && cargo build --release -p gateway --bin tura_exec --bin tura_gateway)
 (cd "$REPO_ROOT" && cargo build --release -p router --bin tura_router)

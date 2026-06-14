@@ -47,6 +47,10 @@ CLI command is `tura exec`; the TUI entry remains `tura`:
 ./scripts/build-release.sh; scripts/register-cli.sh
 ```
 
+Release builds preserve repository-local session DB/cache state by default. Use
+`-Clean` on PowerShell or `-clean`/`--clean` on POSIX shells only when you want
+the build script to remove that local state before building.
+
 Per-run command tool shell overrides are available as CLI commands and flags:
 
 ```powershell
@@ -139,7 +143,9 @@ Backend business and performance runners discover tests by package and
 directory type; keep typed test files directly under `business`, `performance`,
 `live`, or `benchmark`, do not add empty type directories, and do not hard-code
 individual test script paths when a one-level directory scan can select the
-suite. CI and default
+suite. Run backend business coverage through `scripts/run-backend-business-tests`
+instead of a single `cargo test --features ...` command, because process-owning
+business checks are serialized by the runner. CI and default
 `cargo test --workspace --exclude src-tauri` run only unit tests, default crate
 tests, and required non-foldered integration tests.
 

@@ -68,6 +68,21 @@ pub(crate) fn user_visible_runtime_text(text: &str) -> Option<String> {
 }
 
 pub(crate) fn user_visible_runtime_output_text(output: &serde_json::Value) -> Option<String> {
+    for key in [
+        "reply_message",
+        "output_text",
+        "final_text",
+        "message",
+        "text",
+        "content",
+        "summary",
+    ] {
+        if let Some(text) = output.get(key).and_then(serde_json::Value::as_str) {
+            if let Some(visible) = user_visible_runtime_text(text) {
+                return Some(visible);
+            }
+        }
+    }
     let content = tura_llm_rust::normalize_response_content(output);
     let text = tura_llm_rust::extract_response_text(&content)?;
     user_visible_runtime_text(&tura_llm_rust::strip_thought_blocks(&text))
@@ -275,5 +290,32 @@ mod tests {
             user_visible_runtime_output_text(&output).as_deref(),
             Some("你好。小主管已上线。")
         );
+    }
+
+    #[test]
+    fn user_visible_runtime_output_text_extracts_fixed_provider_text_locations() {
+        for (output, expected) in [
+            (
+                json!({"output_text": "from output_text"}),
+                "from output_text",
+            ),
+            (json!({"final_text": "from final_text"}), "from final_text"),
+            (json!({"message": "from message"}), "from message"),
+            (json!({"text": "from text"}), "from text"),
+            (json!({"content": "from content"}), "from content"),
+            (
+                json!({"choices": [{"message": {"content": "from choice"}}]}),
+                "from choice",
+            ),
+            (
+                json!({"parts": [{"text": "from "}, {"text": "parts"}]}),
+                "from parts",
+            ),
+        ] {
+            assert_eq!(
+                user_visible_runtime_output_text(&output).as_deref(),
+                Some(expected)
+            );
+        }
     }
 }

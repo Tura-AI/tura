@@ -10,7 +10,14 @@ import type {
   ProviderAuthUpsert,
   ProviderListResponse,
 } from "../types/provider.js";
-import type { CreateSessionRequest, Message, PromptPayload, Session } from "../types/session.js";
+import type {
+  CreateSessionRequest,
+  ForkSessionRequest,
+  Message,
+  MessagePart,
+  PromptPayload,
+  Session,
+} from "../types/session.js";
 
 export class MockGatewayClient {
   readonly baseUrl = "mock://tura";
@@ -86,6 +93,33 @@ export class MockGatewayClient {
     return session;
   }
 
+  async forkSession(sessionID: string, payload: ForkSessionRequest = {}): Promise<Session> {
+    const source = await this.getSession(sessionID);
+    const session = this.mockSession(
+      `mock-session-${this.sessions.length + 1}`,
+      source.session_display_name ?? source.name ?? "Copied Mock Session",
+      {
+        directory: payload.directory ?? source.directory ?? this.directory,
+        model: payload.model ?? source.model ?? undefined,
+        agent: payload.agent ?? source.agent ?? undefined,
+        session_type: source.session_type ?? undefined,
+        model_variant: source.model_variant ?? undefined,
+        model_acceleration_enabled: source.model_acceleration_enabled,
+        validator_enabled: source.validator_enabled,
+        kill_processes_on_start: source.kill_processes_on_start,
+        auto_session_name: source.auto_session_name,
+      },
+    );
+    const copyContext = payload.copy_context ?? payload.copyContext ?? true;
+    const copiedMessages = copyContext ? cloneMessagesForSession(session.id, this.messagesBySession.get(source.id) ?? []) : [];
+    this.sessions = [
+      { ...session, parent_id: source.id, message_count: copiedMessages.length },
+      ...this.sessions,
+    ];
+    this.messagesBySession.set(session.id, copiedMessages);
+    return this.sessions[0];
+  }
+
   async getSession(sessionID: string): Promise<Session> {
     const session = this.sessions.find((item) => item.id === sessionID);
     if (!session) throw new Error(`mock session not found: ${sessionID}`);
@@ -137,6 +171,13 @@ export class MockGatewayClient {
     });
     if (!updated) throw new Error(`mock session not found: ${sessionID}`);
     return updated;
+  }
+
+  async deleteSession(sessionID: string): Promise<boolean> {
+    const before = this.sessions.length;
+    this.sessions = this.sessions.filter((session) => session.id !== sessionID);
+    this.messagesBySession.delete(sessionID);
+    return this.sessions.length !== before;
   }
 
   async updateSessionTaskManagement(
@@ -512,6 +553,31 @@ function pageMessages(messages: Message[], options: ListMessagesOptions): Messag
   const safeEnd = end >= 0 ? end : messages.length;
   const start = limit ? Math.max(0, safeEnd - limit) : 0;
   return messages.slice(start, safeEnd);
+}
+
+function cloneMessagesForSession(sessionID: string, messages: Message[]): Message[] {
+  const idMap = new Map<string, string>();
+  const now = Date.now();
+  return messages.map((message, index) => {
+    const id = `mock-copy-${now}-${index}`;
+    idMap.set(message.id, id);
+    return {
+      ...message,
+      id,
+      sessionID,
+      session_id: sessionID,
+      parentID: message.parentID ? idMap.get(message.parentID) ?? null : null,
+      parent_id: message.parent_id ? idMap.get(message.parent_id) ?? null : null,
+      parts: (message.parts ?? []).map((part, partIndex): MessagePart => ({
+        ...part,
+        id: `mock-copy-${now}-${index}-${partIndex}`,
+        sessionID,
+        session_id: sessionID,
+        messageID: part.messageID ? id : part.messageID,
+        message_id: part.message_id ? id : part.message_id,
+      })),
+    };
+  });
 }
 
 function mockStreamYieldSentinel(): boolean {

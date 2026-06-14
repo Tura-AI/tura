@@ -28,6 +28,9 @@ use crate::{SessionLogCommand, SessionLogResponse, SessionLogStore};
 const ADDR_FILE: &str = "service.addr";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const PROBE_CONNECT_TIMEOUT: Duration = Duration::from_millis(100);
+const PROBE_RESPONSE_TIMEOUT: Duration = Duration::from_millis(500);
+const PROBE_RESPONSE_ATTEMPTS: usize = 3;
+const PROBE_RETRY_DELAY: Duration = Duration::from_millis(50);
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
 const EMPTY_RESPONSE_RETRIES: usize = 3;
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -96,7 +99,8 @@ pub fn service_version() -> Option<String> {
     read_endpoint().ok().map(|endpoint| endpoint.version)
 }
 
-/// True when a session_db service is reachable on the published address.
+/// True when a session_db service is reachable on the published address and
+/// responds to the session_db protocol health command.
 pub fn service_is_running() -> bool {
     let endpoint = match read_endpoint() {
         Ok(endpoint) => endpoint,
@@ -113,13 +117,61 @@ pub fn service_is_running() -> bool {
             return false;
         }
     };
-    match TcpStream::connect_timeout(&addr, probe_connect_timeout()) {
-        Ok(_) => true,
-        Err(_) => {
-            let _ = std::fs::remove_file(service_addr_path());
-            false
+    if probe_session_db(&addr) {
+        true
+    } else {
+        let _ = std::fs::remove_file(service_addr_path());
+        false
+    }
+}
+
+fn probe_session_db(addr: &SocketAddr) -> bool {
+    for attempt in 0..PROBE_RESPONSE_ATTEMPTS {
+        match call_service_addr(
+            addr,
+            &SessionLogCommand::Health,
+            probe_connect_timeout(),
+            probe_response_timeout(),
+        ) {
+            Ok(SessionLogResponse::Ok) => return true,
+            Ok(SessionLogResponse::Error { error }) if is_legacy_health_error(&error) => {
+                return probe_legacy_session_db(addr);
+            }
+            Ok(_) => return false,
+            Err(error) if is_retryable_probe_error(&error) => {
+                if attempt + 1 < PROBE_RESPONSE_ATTEMPTS {
+                    std::thread::sleep(PROBE_RETRY_DELAY);
+                    continue;
+                }
+                return false;
+            }
+            Err(_) => return false,
         }
     }
+    false
+}
+
+fn probe_legacy_session_db(addr: &SocketAddr) -> bool {
+    for attempt in 0..PROBE_RESPONSE_ATTEMPTS {
+        match call_service_addr(
+            addr,
+            &SessionLogCommand::ListWorkspaces,
+            probe_connect_timeout(),
+            probe_response_timeout(),
+        ) {
+            Ok(SessionLogResponse::Workspaces { .. }) => return true,
+            Ok(_) => return false,
+            Err(error) if is_retryable_probe_error(&error) => {
+                if attempt + 1 < PROBE_RESPONSE_ATTEMPTS {
+                    std::thread::sleep(PROBE_RETRY_DELAY);
+                    continue;
+                }
+                return false;
+            }
+            Err(_) => return false,
+        }
+    }
+    false
 }
 
 fn probe_connect_timeout() -> Duration {
@@ -129,6 +181,15 @@ fn probe_connect_timeout() -> Duration {
         .filter(|millis| *millis > 0)
         .map(Duration::from_millis)
         .unwrap_or(PROBE_CONNECT_TIMEOUT)
+}
+
+fn probe_response_timeout() -> Duration {
+    std::env::var("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|millis| *millis > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(PROBE_RESPONSE_TIMEOUT)
 }
 
 /// Send a single command to the running session_db service and await the
@@ -157,10 +218,19 @@ fn call_service_once(command: &SessionLogCommand) -> Result<SessionLogResponse> 
     let endpoint = read_endpoint()?;
     ensure_version_compatible(&endpoint)?;
     let addr = parse_addr(&endpoint)?;
-    let stream = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT)
+    call_service_addr(&addr, command, CONNECT_TIMEOUT, READ_TIMEOUT)
+}
+
+fn call_service_addr(
+    addr: &SocketAddr,
+    command: &SessionLogCommand,
+    connect_timeout: Duration,
+    read_timeout: Duration,
+) -> Result<SessionLogResponse> {
+    let stream = TcpStream::connect_timeout(addr, connect_timeout)
         .with_context(|| format!("failed to connect to session_db service at {addr}"))?;
-    stream.set_read_timeout(Some(READ_TIMEOUT))?;
-    stream.set_write_timeout(Some(READ_TIMEOUT))?;
+    stream.set_read_timeout(Some(read_timeout))?;
+    stream.set_write_timeout(Some(read_timeout))?;
     let mut writer = stream.try_clone()?;
     let line = serde_json::to_string(command)?;
     writer.write_all(line.as_bytes())?;
@@ -194,6 +264,29 @@ fn is_transient_response_error(error: &anyhow::Error) -> bool {
     })
 }
 
+fn is_retryable_probe_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause.to_string().contains("closed without a response")
+            || cause.downcast_ref::<IoError>().is_some_and(|io_error| {
+                matches!(
+                    io_error.kind(),
+                    ErrorKind::ConnectionAborted
+                        | ErrorKind::ConnectionReset
+                        | ErrorKind::UnexpectedEof
+                        | ErrorKind::BrokenPipe
+                        | ErrorKind::TimedOut
+                        | ErrorKind::WouldBlock
+                )
+            })
+    })
+}
+
+fn is_legacy_health_error(error: &str) -> bool {
+    error.contains("invalid session_db request")
+        && error.contains("unknown variant")
+        && error.contains("health")
+}
+
 /// Execute a command against an owned store. Shared by the socket server and the
 /// `tura_session_db` admin CLI so the data path has one implementation.
 pub fn dispatch_command(store: &SessionLogStore, command: SessionLogCommand) -> SessionLogResponse {
@@ -210,6 +303,7 @@ fn dispatch_inner(
     command: SessionLogCommand,
 ) -> Result<SessionLogResponse> {
     Ok(match command {
+        SessionLogCommand::Health => SessionLogResponse::Ok,
         SessionLogCommand::UpsertSession(payload) => {
             store.upsert_session(payload)?;
             SessionLogResponse::Ok
@@ -431,6 +525,211 @@ mod tests {
     }
 
     #[test]
+    fn service_probe_rejects_socket_that_does_not_speak_session_db_protocol() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let root = tempfile::tempdir().expect("temp db root");
+        let _env = EnvGuard::set(&[
+            ("SESSION_LOG_DB_ROOT", Some(root.path())),
+            ("TURA_DB_ROOT", None),
+        ]);
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind abortive endpoint");
+        let addr = listener.local_addr().expect("abortive endpoint addr");
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept health probe");
+            drop(stream);
+        });
+
+        let path = service_addr_path();
+        std::fs::create_dir_all(path.parent().expect("addr parent")).expect("addr dir");
+        std::fs::write(
+            &path,
+            serde_json::to_string(&ServiceEndpoint {
+                addr: addr.to_string(),
+                version: tura_path::instance_version(),
+            })
+            .expect("endpoint json"),
+        )
+        .expect("write abortive addr");
+
+        assert!(
+            !service_is_running(),
+            "a raw TCP accept without a session_db health response must not be adopted"
+        );
+        assert!(
+            !path.exists(),
+            "non-protocol session_db addr should be removed"
+        );
+        server.join().expect("abortive endpoint thread");
+    }
+
+    #[test]
+    fn service_probe_retries_transient_health_disconnect_before_replacing_endpoint() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let root = tempfile::tempdir().expect("temp db root");
+        let _env = EnvGuard::set(&[
+            ("SESSION_LOG_DB_ROOT", Some(root.path())),
+            ("TURA_DB_ROOT", None),
+        ]);
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind flaky endpoint");
+        let addr = listener.local_addr().expect("flaky endpoint addr");
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept transient probe");
+            drop(stream);
+
+            let (mut stream, _) = listener.accept().expect("accept retry probe");
+            let mut request = String::new();
+            let _ = BufReader::new(stream.try_clone().expect("clone retry stream"))
+                .read_line(&mut request)
+                .expect("read retry probe");
+            assert!(request.contains("\"health\""));
+            stream
+                .write_all(
+                    serde_json::to_string(&SessionLogResponse::Ok)
+                        .expect("health retry response json")
+                        .as_bytes(),
+                )
+                .expect("write health retry response");
+            stream.write_all(b"\n").expect("write retry newline");
+            stream.flush().expect("flush retry response");
+        });
+
+        let path = service_addr_path();
+        std::fs::create_dir_all(path.parent().expect("addr parent")).expect("addr dir");
+        std::fs::write(
+            &path,
+            serde_json::to_string(&ServiceEndpoint {
+                addr: addr.to_string(),
+                version: tura_path::instance_version(),
+            })
+            .expect("endpoint json"),
+        )
+        .expect("write flaky addr");
+
+        assert!(
+            service_is_running(),
+            "a transient health disconnect should be retried before replacing a live endpoint"
+        );
+        assert!(
+            path.exists(),
+            "endpoint should be kept after a successful retry"
+        );
+        server.join().expect("flaky endpoint thread");
+    }
+
+    #[test]
+    fn service_probe_adopts_legacy_endpoint_that_answers_existing_protocol() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let root = tempfile::tempdir().expect("temp db root");
+        let _env = EnvGuard::set(&[
+            ("SESSION_LOG_DB_ROOT", Some(root.path())),
+            ("TURA_DB_ROOT", None),
+        ]);
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind legacy endpoint");
+        let addr = listener.local_addr().expect("legacy endpoint addr");
+        let server = std::thread::spawn(move || {
+            for response in [
+                SessionLogResponse::Error {
+                    error:
+                        "invalid session_db request: unknown variant `health`, expected old commands"
+                            .to_string(),
+                },
+                SessionLogResponse::Workspaces {
+                    workspaces: Vec::new(),
+                },
+            ] {
+                let (mut stream, _) = listener.accept().expect("accept legacy probe");
+                let mut request = String::new();
+                let _ = BufReader::new(stream.try_clone().expect("clone legacy stream"))
+                    .read_line(&mut request)
+                    .expect("read legacy probe");
+                assert!(!request.trim().is_empty());
+                stream
+                    .write_all(
+                        serde_json::to_string(&response)
+                            .expect("legacy response json")
+                            .as_bytes(),
+                    )
+                    .expect("write legacy response");
+                stream.write_all(b"\n").expect("write legacy newline");
+                stream.flush().expect("flush legacy response");
+            }
+        });
+
+        let path = service_addr_path();
+        std::fs::create_dir_all(path.parent().expect("addr parent")).expect("addr dir");
+        std::fs::write(
+            &path,
+            serde_json::to_string(&ServiceEndpoint {
+                addr: addr.to_string(),
+                version: tura_path::instance_version(),
+            })
+            .expect("endpoint json"),
+        )
+        .expect("write legacy addr");
+
+        assert!(
+            service_is_running(),
+            "a same-version legacy session_db that answers old read protocol should still be adopted"
+        );
+        assert!(path.exists(), "legacy-compatible addr should be preserved");
+        server.join().expect("legacy endpoint thread");
+    }
+
+    #[test]
+    fn service_probe_keeps_live_endpoint_when_connect_timeout_is_short() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let root = tempfile::tempdir().expect("temp db root");
+        let _env = EnvGuard::set(&[
+            ("SESSION_LOG_DB_ROOT", Some(root.path())),
+            ("TURA_DB_ROOT", None),
+        ]);
+        let _probe_env = ProbeEnvGuard::set("20", None);
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind slow health endpoint");
+        let addr = listener.local_addr().expect("slow health endpoint addr");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept slow health probe");
+            let mut request = String::new();
+            let _ = BufReader::new(stream.try_clone().expect("clone slow health stream"))
+                .read_line(&mut request)
+                .expect("read slow health probe");
+            assert!(request.contains("\"health\""));
+            std::thread::sleep(Duration::from_millis(150));
+            stream
+                .write_all(
+                    serde_json::to_string(&SessionLogResponse::Ok)
+                        .expect("health response json")
+                        .as_bytes(),
+                )
+                .expect("write slow health response");
+            stream.write_all(b"\n").expect("write slow health newline");
+            stream.flush().expect("flush slow health response");
+        });
+
+        let path = service_addr_path();
+        std::fs::create_dir_all(path.parent().expect("addr parent")).expect("addr dir");
+        std::fs::write(
+            &path,
+            serde_json::to_string(&ServiceEndpoint {
+                addr: addr.to_string(),
+                version: tura_path::instance_version(),
+            })
+            .expect("endpoint json"),
+        )
+        .expect("write slow health addr");
+
+        assert!(
+            service_is_running(),
+            "short connect probes must still allow a reasonable protocol response window"
+        );
+        assert!(path.exists(), "live endpoint should not be removed");
+        server.join().expect("slow health endpoint thread");
+    }
+
+    #[test]
     fn service_probe_removes_foreign_version_addr_file() {
         let _lock = ENV_LOCK.lock().expect("env lock");
         let root = tempfile::tempdir().expect("temp db root");
@@ -501,5 +800,43 @@ mod tests {
             error.to_string().contains("different build"),
             "unexpected error: {error:#}"
         );
+    }
+
+    struct ProbeEnvGuard {
+        previous_connect: Option<std::ffi::OsString>,
+        previous_response: Option<std::ffi::OsString>,
+    }
+
+    impl ProbeEnvGuard {
+        fn set(connect_ms: &str, response_ms: Option<&str>) -> Self {
+            let previous_connect = std::env::var_os("TURA_SESSION_DB_PROBE_TIMEOUT_MS");
+            let previous_response = std::env::var_os("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS");
+            std::env::set_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS", connect_ms);
+            match response_ms {
+                Some(value) => {
+                    std::env::set_var("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS", value)
+                }
+                None => std::env::remove_var("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS"),
+            }
+            Self {
+                previous_connect,
+                previous_response,
+            }
+        }
+    }
+
+    impl Drop for ProbeEnvGuard {
+        fn drop(&mut self) {
+            match &self.previous_connect {
+                Some(value) => std::env::set_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS", value),
+                None => std::env::remove_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS"),
+            }
+            match &self.previous_response {
+                Some(value) => {
+                    std::env::set_var("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS", value)
+                }
+                None => std::env::remove_var("TURA_SESSION_DB_PROBE_RESPONSE_TIMEOUT_MS"),
+            }
+        }
     }
 }

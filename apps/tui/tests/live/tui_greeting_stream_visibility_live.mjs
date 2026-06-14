@@ -19,7 +19,15 @@ const debugDir = path.join(repoRoot, "target", "debug");
 const gatewayExe = path.join(debugDir, `tura_gateway${exeSuffix}`);
 const webTerminalBin = path.join(tuiAppRoot, "scripts", "web-terminal.mjs");
 const runId = process.env.TURA_TUI_LIVE_RUN_ID || `greeting-stream-${timestamp()}`;
-const runRoot = path.join(repoRoot, "target", "live", "tui", "greeting-stream", runId);
+const runRoot = path.join(
+  repoRoot,
+  "apps",
+  "tui",
+  "test-results",
+  "live",
+  "greeting-stream",
+  runId,
+);
 const workspace = path.join(runRoot, "workspace");
 const logsDir = path.join(runRoot, "logs");
 const screenshotsDir = path.join(runRoot, "screenshots");
@@ -393,12 +401,16 @@ async function stopProcess(child) {
   }
   try {
     child.kill("SIGTERM");
-  } catch {}
+  } catch {
+    // Best-effort process cleanup.
+  }
   await Promise.race([new Promise((resolve) => child.once("exit", resolve)), delay(2_000)]);
   if (child.exitCode === null) {
     try {
       child.kill("SIGKILL");
-    } catch {}
+    } catch {
+      // Best-effort process cleanup.
+    }
   }
 }
 

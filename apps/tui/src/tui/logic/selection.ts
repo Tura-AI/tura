@@ -49,6 +49,12 @@ export function settingPatch(
   if (detail === "persona" && typeof value === "string") {
     return { active_persona: value };
   }
+  if (detail === "language" && typeof value === "string") {
+    return { language: value };
+  }
+  if (detail === "session" && typeof value === "string") {
+    return { session_type: value };
+  }
   if (detail === "variant" && typeof value === "string") {
     return { model_variant: value };
   }
@@ -57,6 +63,9 @@ export function settingPatch(
   }
   if (detail === "commands") {
     return { show_command_instructions: Boolean(value) };
+  }
+  if (detail === "validator") {
+    return { validator_enabled: Boolean(value) };
   }
   if (detail === "stallGuard" && typeof value === "string") {
     return { command_run_stall_guard_profile: value };

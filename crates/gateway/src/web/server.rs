@@ -96,7 +96,16 @@ pub fn build_router() -> Router {
             "/session-log/{sessionID}/records",
             get(api::session_log::session_log_records),
         )
-        .route("/session/{sessionID}", patch(api::session::update_session))
+        .route(
+            "/session/{sessionID}",
+            get(api::session::get_session)
+                .patch(api::session::update_session)
+                .delete(api::session::delete_session),
+        )
+        .route(
+            "/session/{sessionID}/fork",
+            post(api::session::fork_session),
+        )
         .route(
             "/session/{sessionID}/task-management",
             patch(api::session::update_session_task_management),

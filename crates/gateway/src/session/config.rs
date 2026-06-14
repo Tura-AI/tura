@@ -8,9 +8,9 @@ const CONFIG_FILE: &str = "config.conf";
 pub const DEFAULT_SESSION_MODEL: &str = "codex/gpt-5.5";
 pub const DEFAULT_SESSION_PROVIDER: &str = "codex";
 pub const DEFAULT_SESSION_MODEL_ID: &str = "gpt-5.5";
-pub const DEFAULT_SESSION_AGENT: &str = "fast";
+pub const DEFAULT_SESSION_AGENT: &str = "thinking";
 pub const DEFAULT_SESSION_TYPE: &str = "coding";
-pub const DEFAULT_SESSION_REASONING_EFFORT: &str = "medium";
+pub const DEFAULT_SESSION_REASONING_EFFORT: &str = "high";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -27,6 +27,7 @@ pub struct TuraSessionConfig {
     pub kill_processes_on_start: Option<bool>,
     pub validator_enabled: Option<bool>,
     pub force_planning: Option<bool>,
+    pub show_react_kaomoji: Option<bool>,
     pub command_run_stall_guard_profile: Option<String>,
     pub command_run_stall_guard_check_secs: Option<u64>,
     pub command_run_stall_guard_identical_checks: Option<u8>,
@@ -48,6 +49,7 @@ impl Default for TuraSessionConfig {
             kill_processes_on_start: None,
             validator_enabled: None,
             force_planning: None,
+            show_react_kaomoji: Some(true),
             command_run_stall_guard_profile: None,
             command_run_stall_guard_check_secs: None,
             command_run_stall_guard_identical_checks: None,
@@ -93,6 +95,9 @@ impl TuraSessionConfig {
         }
         if next.force_planning.is_some() {
             self.force_planning = next.force_planning;
+        }
+        if next.show_react_kaomoji.is_some() {
+            self.show_react_kaomoji = next.show_react_kaomoji;
         }
         if next.command_run_stall_guard_profile.is_some() {
             self.command_run_stall_guard_profile = next.command_run_stall_guard_profile;
@@ -276,6 +281,9 @@ fn parse_config(content: &str) -> TuraSessionConfig {
         force_planning: values
             .get("force_planning")
             .and_then(|value| parse_bool(value)),
+        show_react_kaomoji: values
+            .get("show_react_kaomoji")
+            .and_then(|value| parse_bool(value)),
         command_run_stall_guard_profile: values.get("command_run_stall_guard_profile").cloned(),
         command_run_stall_guard_check_secs: values
             .get("command_run_stall_guard_check_secs")
@@ -291,6 +299,9 @@ fn parse_config(content: &str) -> TuraSessionConfig {
     };
     if config.model_acceleration_enabled.is_none() {
         config.model_acceleration_enabled = Some(true);
+    }
+    if config.show_react_kaomoji.is_none() {
+        config.show_react_kaomoji = Some(true);
     }
     config.fill_model_parts();
     config
@@ -325,6 +336,9 @@ fn serialize_config(config: &TuraSessionConfig) -> String {
     }
     if let Some(value) = config.force_planning {
         lines.push(format!("force_planning={value}"));
+    }
+    if let Some(value) = config.show_react_kaomoji {
+        lines.push(format!("show_react_kaomoji={value}"));
     }
     push_line(
         &mut lines,
@@ -460,6 +474,7 @@ mod tests {
 command_run_stall_guard_profile=long_io_60s
 command_run_stall_guard_check_secs=15
 command_run_stall_guard_identical_checks=4
+show_react_kaomoji=false
 "#,
         );
 
@@ -468,11 +483,13 @@ command_run_stall_guard_identical_checks=4
             Some("long_io_60s")
         );
         assert_eq!(config.command_run_stall_guard().stall_secs(), 60);
+        assert_eq!(config.show_react_kaomoji, Some(false));
 
         let serialized = serialize_config(&config);
         assert!(serialized.contains("command_run_stall_guard_profile=long_io_60s"));
         assert!(serialized.contains("command_run_stall_guard_check_secs=15"));
         assert!(serialized.contains("command_run_stall_guard_identical_checks=4"));
+        assert!(serialized.contains("show_react_kaomoji=false"));
     }
 
     #[test]

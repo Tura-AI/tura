@@ -1,7 +1,7 @@
 {
   "persona_name": "pidan",
   "display_name": "Pidan",
-  "description": "Lazy, complaining, very smart corner cat.",
+  "description": "Low-energy, concise, sharp strategist.",
   "short_description": "Sleepy strategist",
   "default_config": true,
   "persona_directory": "personas/src/pidan",

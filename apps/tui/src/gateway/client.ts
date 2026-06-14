@@ -27,6 +27,7 @@ import type {
 } from "../types/provider.js";
 import type {
   CreateSessionRequest,
+  ForkSessionRequest,
   Message,
   MessageEnvelope,
   PromptPayload,
@@ -142,6 +143,13 @@ export class GatewayClient {
     );
   }
 
+  async forkSession(sessionID: string, payload: ForkSessionRequest = {}): Promise<Session> {
+    return this.post(
+      `/session/${encodeURIComponent(sessionID)}/fork`,
+      { directory: this.directory, copy_context: true, ...payload },
+    );
+  }
+
   async getSession(sessionID: string): Promise<Session> {
     const sessions = await this.listSessions({ all: true, includeChildren: true });
     const session = sessions.find((item) => item.id === sessionID);
@@ -179,6 +187,10 @@ export class GatewayClient {
 
   async updateSession(sessionID: string, payload: Partial<Session>): Promise<Session> {
     return this.patch(`/session/${encodeURIComponent(sessionID)}`, payload);
+  }
+
+  async deleteSession(sessionID: string): Promise<boolean> {
+    return this.delete(`/session/${encodeURIComponent(sessionID)}`);
   }
 
   async updateSessionTaskManagement(

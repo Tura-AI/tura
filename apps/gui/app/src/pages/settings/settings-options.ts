@@ -4,12 +4,36 @@ import { DEFAULT_CODE_FONT } from "../../config/defaults";
 import type { ThemeMode } from "../../state/global-store";
 import type { AppearanceOption } from "./appearance-select";
 
-export const THEME_OPTIONS: Array<{ id: ThemeMode; label: string }> = [
-  { id: "light", label: t("light") },
-  { id: "dark", label: t("dark") },
-  { id: "caral", label: "Caral" },
-  { id: "uruk", label: "Uruk" },
-  { id: "liangzhu", label: "Liangzhu" },
+export const THEME_OPTIONS: Array<{
+  id: ThemeMode;
+  label: string;
+  preview: { paper: string; wash: string; accent: string };
+}> = [
+  {
+    id: "light",
+    label: t("light"),
+    preview: { paper: "#f6f8fb", wash: "#e8edf6", accent: "#2f63c7" },
+  },
+  {
+    id: "dark",
+    label: t("dark"),
+    preview: { paper: "#181a1b", wash: "#2c2f33", accent: "#e0b84b" },
+  },
+  {
+    id: "caral",
+    label: "Caral",
+    preview: { paper: "#f8f1ea", wash: "#f0dfd2", accent: "#b75c36" },
+  },
+  {
+    id: "uruk",
+    label: "Uruk",
+    preview: { paper: "#f0f3ee", wash: "#e2e9e1", accent: "#315f9f" },
+  },
+  {
+    id: "liangzhu",
+    label: "Liangzhu",
+    preview: { paper: "#1f2a26", wash: "#34443e", accent: "#79d6a8" },
+  },
 ];
 export const DEFAULT_PROVIDER_DOMAIN = "llm";
 const PROVIDER_DOMAIN_LABELS: Record<string, TextKey> = {

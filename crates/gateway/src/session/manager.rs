@@ -8,6 +8,7 @@ use runtime::state_machine::session_management::{
     SessionId, SessionInput, SessionManagement, SessionState, UserGoal,
 };
 use std::path::PathBuf;
+use uuid::Uuid;
 
 use crate::session::config::DEFAULT_SESSION_REASONING_EFFORT;
 
@@ -120,7 +121,7 @@ impl SessionManager {
             .chars()
             .take(8)
             .collect::<String>();
-        format!("{prefix}-{}", now.timestamp_millis())
+        format!("{prefix}-{}-{}", now.timestamp_millis(), Uuid::new_v4())
     }
 }
 
@@ -287,6 +288,20 @@ mod tests {
         assert!(!info.management.use_last_tool_call_response);
         assert!(info.management.auto_session_name);
         assert!(info.id.starts_with("sessions-"));
+    }
+
+    #[test]
+    fn generated_session_ids_are_unique_within_the_same_millisecond() {
+        let now = Utc::now();
+        let session_directory = PathBuf::from("concurrent-session-a");
+
+        let first = SessionManager::generate_session_id(&session_directory, now);
+        let second = SessionManager::generate_session_id(&session_directory, now);
+
+        assert_ne!(first, second);
+        let expected_prefix = format!("concurre-{}-", now.timestamp_millis());
+        assert!(first.starts_with(&expected_prefix));
+        assert!(second.starts_with(&expected_prefix));
     }
 
     #[test]

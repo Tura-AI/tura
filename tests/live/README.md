@@ -6,8 +6,10 @@ Keep files directly under `tests/live`; do not create child directories.
 
 `tests/live`, `tests/business`, `tests/performance`, `tests/benchmark`, and
 `tests/release` are peer test types. Local deterministic tests belong in
-`tests/business`; release-binary validation belongs in `tests/release`; scoring
-and comparison suites belong in `tests/benchmark`; performance, load, soak, and
+`tests/business`; backend release-binary validation belongs in `tests/release`;
+TUI/GUI release flows that drive real provider execution are live release tests
+and use the `tui_release_*.mjs` or `gui_release_*.mjs` prefixes here. Scoring and
+comparison suites belong in `tests/benchmark`; performance, load, soak, and
 stress tests belong in `tests/performance`.
 
 The kept entry points cover each required live surface without duplicate wrapper
@@ -17,18 +19,25 @@ scripts:
 | --- | --- | --- |
 | `target/debug` | CLI | `node ./tests/live/media_internet_official_docs_search_smoke_harness.mjs` |
 | `target/debug` | TUI | `npm --prefix apps/tui run test:live` |
+| `target/release` | TUI | `npm --prefix apps/tui run test:live:release` |
+| `target/release` | GUI | `bun run --cwd apps/gui e2e:live:release` |
 
-Backend live runners ignore app-owned TUI/GUI scripts. TUI live scripts live
-under `apps/tui/e2e/live/` and are run only through the app package commands.
+Backend live runners ignore app-owned TUI/GUI scripts. TUI/GUI live release
+scripts use root `tests/live/*_release_*.mjs` files and are run only through the
+app package commands.
 
 ```powershell
 npm --prefix apps\tui run test:live
 npm --prefix apps\tui run test:live:snake
+npm --prefix apps\tui run test:live:release
+bun run --cwd apps\gui e2e:live:release
 ```
 
 ```bash
 npm --prefix apps/tui run test:live
 npm --prefix apps/tui run test:live:snake
+npm --prefix apps/tui run test:live:release
+bun run --cwd apps/gui e2e:live:release
 ```
 
 Backend crate live tests are selected by directory scan:
@@ -43,4 +52,5 @@ Backend crate live tests are selected by directory scan:
 ./scripts/run-backend-live-tests.sh --crate provider --timeout-seconds 300
 ```
 
-Release-binary tests live in `tests/release`; see `tests/release/README.md`.
+Backend release-binary tests live in `tests/release`; TUI/GUI release live tests
+use the app package commands above and keep their scripts under this directory.

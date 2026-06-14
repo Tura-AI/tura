@@ -1,10 +1,10 @@
 import { SplitBorder, SplitBorderFallback } from "../ui/border.js";
 import {
   activeCapabilities,
-  opencodePanelBg,
-  opencodeText,
-  opencodeTextWeak,
   reset,
+  surfaceBackground,
+  textAuxiliary,
+  textPrimary,
   truncateAnsi,
 } from "../render-terminal.js";
 
@@ -14,7 +14,7 @@ export function panelLine(
   content: string,
   cols: number,
   role = "assistant",
-  background = opencodePanelBg,
+  background = surfaceBackground,
   innerWidth?: number,
 ): string {
   return `${railCell(role, background)}${coloredPanelBand(content, cols, background, innerWidth)}`;
@@ -23,7 +23,7 @@ export function panelLine(
 export function panelBlankLine(
   role = "assistant",
   cols = 80,
-  background = opencodePanelBg,
+  background = surfaceBackground,
   innerWidth?: number,
 ): string {
   return panelLine("", cols, role, background, innerWidth);
@@ -32,7 +32,7 @@ export function panelBlankLine(
 function railCell(role: string, background = ""): string {
   const border = activeCapabilities.unicode ? SplitBorder : SplitBorderFallback;
   const rail = border.customBorderChars.vertical;
-  return `${background}${role === "user" ? opencodeText : opencodeTextWeak}${rail}${reset}`;
+  return `${background}${role === "user" ? textPrimary : textAuxiliary}${rail}${reset}`;
 }
 
 function coloredPanelBand(

@@ -1,6 +1,6 @@
 use crate::context::{
     accumulate_message, build_messages_from_session, user_input_content_matches,
-    user_input_content_value, ContextualUserFragment, WorkspaceSnapshot,
+    user_input_content_value, ContextualUserFragment, WorkspaceSnapshot, USER_AGENT_CONTEXT_ROLE,
 };
 use crate::state_machine::session_management::SessionManagement;
 
@@ -13,24 +13,26 @@ pub(crate) fn initial_messages_for_session(
     });
     if session.session_current_turn == 0 && !session_has_initial_user_message(session) {
         let snapshot_message = serde_json::json!({
-            "role": "user",
+            "role": USER_AGENT_CONTEXT_ROLE,
             "content": workspace_snapshot_message(&session.session_directory),
         });
         let environment_message = serde_json::json!({
-            "role": "user",
+            "role": USER_AGENT_CONTEXT_ROLE,
             "content": environment_context_message(&session.session_directory),
         });
+        let runtime_context_message = runtime_context_message(session);
         let user_message = serde_json::json!({
             "role": "user",
             "content": user_input_content_value(&session.input.user_input),
         });
 
-        for message in [
-            &permissions_message,
-            &snapshot_message,
-            &environment_message,
-            &user_message,
-        ] {
+        let mut initial_messages = vec![permissions_message, snapshot_message, environment_message];
+        if let Some(message) = runtime_context_message {
+            initial_messages.push(message);
+        }
+        initial_messages.push(user_message);
+
+        for message in &initial_messages {
             let role = message
                 .get("role")
                 .and_then(serde_json::Value::as_str)
@@ -42,12 +44,17 @@ pub(crate) fn initial_messages_for_session(
             accumulate_message(session, role, content)?;
         }
 
-        return Ok(vec![
-            permissions_message,
-            snapshot_message,
-            environment_message,
-            user_message,
-        ]);
+        return Ok(initial_messages);
+    }
+
+    if let Some(message) = runtime_context_message(session) {
+        let content = message
+            .get("content")
+            .cloned()
+            .unwrap_or_else(|| serde_json::Value::String(String::new()));
+        if !session_has_runtime_context_message(session, &content) {
+            accumulate_message(session, USER_AGENT_CONTEXT_ROLE, content)?;
+        }
     }
 
     if !session_has_initial_user_message(session) {
@@ -69,7 +76,8 @@ fn permissions_instructions() -> &'static str {
 
 fn environment_context_message(cwd: &std::path::Path) -> String {
     format!(
-        "<environment_context>\n  <cwd>{}</cwd>\n  <shell>{}</shell>\n  <current_date>{}</current_date>\n  <timezone>{}</timezone>\n  <system_language>{}</system_language>\n</environment_context>",
+        "<environment_context>\n  <cwd>{}</cwd>\n  <workspace_roots>\n    <root>{}</root>\n  </workspace_roots>\n  <shell>{}</shell>\n  <current_date>{}</current_date>\n  <timezone>{}</timezone>\n  <system_language>{}</system_language>\n</environment_context>",
+        cwd.display(),
         cwd.display(),
         context_shell_name(),
         chrono::Local::now().format("%Y-%m-%d"),
@@ -115,6 +123,19 @@ fn workspace_snapshot_message(cwd: &std::path::Path) -> String {
         .unwrap_or_else(|| "<WORKSPACE_SNAPSHOT>\n\n</WORKSPACE_SNAPSHOT>".to_string())
 }
 
+fn runtime_context_message(session: &SessionManagement) -> Option<serde_json::Value> {
+    let content = session
+        .input
+        .runtime_context
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    Some(serde_json::json!({
+        "role": USER_AGENT_CONTEXT_ROLE,
+        "content": content,
+    }))
+}
+
 fn session_has_initial_user_message(session: &SessionManagement) -> bool {
     let raw_input = &session.input.user_input;
     session.session_log.iter().any(|entry| {
@@ -125,6 +146,21 @@ fn session_has_initial_user_message(session: &SessionManagement) -> bool {
                     && value
                         .get("content")
                         .is_some_and(|content| user_input_content_matches(content, raw_input))
+            })
+    })
+}
+
+fn session_has_runtime_context_message(
+    session: &SessionManagement,
+    content: &serde_json::Value,
+) -> bool {
+    session.session_log.iter().any(|entry| {
+        serde_json::from_str::<serde_json::Value>(entry)
+            .ok()
+            .is_some_and(|value| {
+                value.get("role").and_then(serde_json::Value::as_str)
+                    == Some(USER_AGENT_CONTEXT_ROLE)
+                    && value.get("content") == Some(content)
             })
     })
 }

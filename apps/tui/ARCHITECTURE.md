@@ -106,11 +106,18 @@ apps/tui/
   tsconfig.json
   scripts/
     web-terminal.mjs
-  e2e/
-    business/
-    tui_gateway_cli_e2e.mjs
-    tui_real_gateway_snake_playwright.mjs
-    tui_zip_password_playwright.mjs
+  tests/
+    unit/
+    e2e/
+      business/
+      live/
+      tui_gateway_cli_e2e.mjs
+      tui_real_gateway_snake_playwright.mjs
+      tui_zip_password_playwright.mjs
+    live/
+  test-results/
+    unit-dist/
+    <suite>/<run-id>/
   src/
     index.ts
     cli.ts
@@ -599,10 +606,11 @@ Non-interactive CLI:
 
 ## Testing Strategy
 
-The test suite should be layered. Keep fast invariant tests in `src/**/*.test.ts`
-and use Playwright only where a browser/xterm/user-agent boundary is required.
-Do not use live provider calls for ordinary regressions; mock gateway scripts own
-the terminal surface, and root live tests own release acceptance.
+The test suite should be layered. Keep fast invariant tests in
+`apps/tui/tests/unit/**/*.test.ts` and use Playwright only where a
+browser/xterm/user-agent boundary is required. Do not use live provider calls
+for ordinary regressions; mock gateway scripts own the terminal surface, and
+root live tests own release acceptance.
 
 Fast unit and edge tests:
 
@@ -641,7 +649,7 @@ Interactive and browser tests:
 Current app-owned commands:
 
 ```text
-npm test                         # build + all src unit/edge/perf smoke tests
+npm test                         # build + all tests/unit suites
 npm run test:e2e                 # mock gateway CLI and web-terminal e2e
 npm run test:e2e:profiles        # Playwright profile + mobile user-agent smoke
 npm run test:stream              # mock gateway stream flow
@@ -662,6 +670,16 @@ Terminal capabilities    unit tests for env/user-agent signals + profile e2e
 Web terminal wrapper     Playwright profile/mobile/regression tests
 Live release surface     root live tests only
 ```
+
+App-local TUI tests live under `apps/tui/tests`: `unit/` for Node test suites,
+`e2e/business/` for local business harnesses, `e2e/live/` for provider-backed
+flows, and `live/` for app-owned live checks. App-local test outputs must go
+under `apps/tui/test-results/<suite>/<run-id>/`. TUI release-entry scripts live
+under root `tests/live/tui_release_*.mjs`, but their logs, summaries,
+screenshots, and workspaces default to
+`apps/tui/test-results/release/<profile>/tui/<case>/<run-id>/`. TUI benchmarks
+should also archive outputs under `apps/tui/test-results/benchmark/...`; only
+the compiled debug/release binaries are read from `target/<profile>`.
 
 Release-entry acceptance tests that validate the registered release
 command surface belong in root `tests/live/tui_release_*.mjs` for the TUI

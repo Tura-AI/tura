@@ -1,4 +1,4 @@
-import { displayMessages, type AppState, type SettingDetail } from "./reducer.js";
+import { displayMessages, type AppState } from "./reducer.js";
 import type { Message } from "../types/session.js";
 import { messageText, sessionTitle } from "../types/session.js";
 import { t } from "../i18n.js";
@@ -6,19 +6,16 @@ import { detectTerminalCapabilities, type TerminalCapabilities } from "./capabil
 import {
   activeCapabilities,
   bold,
+  borderColor,
   dim,
-  opencodeBorder,
-  opencodePrimary,
-  opencodeText,
-  opencodeTextWeak,
-  pad,
   reset,
+  richHighlight,
   rule,
   setActiveCapabilities,
   stripAnsi,
+  textAuxiliary,
   truncate,
   truncateAnsi,
-  visibleTextWidth,
   wrap,
 } from "./render-terminal.js";
 import { composerLines } from "./render/composer.js";
@@ -29,13 +26,36 @@ import {
   terminalRenderCols,
   type RenderedFrame,
 } from "./render/frame.js";
-import { transcriptLines, transcriptLiveLines } from "./render/transcript.js";
-import { panelBlankLine, panelLine } from "./styles/panel.js";
+import {
+  transcriptLiveRenderLines,
+  transcriptRenderLines,
+  transcriptThinkingLines,
+  type TranscriptRenderLine,
+} from "./render/transcript.js";
 import { secondaryText } from "./styles/text.js";
+import { isBusyState } from "./busy-state.js";
+import {
+  commandHelpEntries,
+  menuEntryLines,
+  menuLabelWidth,
+  menuLabelWidthFor,
+  sectionBlankLine,
+  sectionBodyLine,
+  sectionEntriesLines,
+  sectionLines,
+  sessionEntryLine,
+  sessionLabelWidth,
+} from "./render/section-ui.js";
+import { settingsLines } from "./render/settings.js";
+
+export { settingOptions, settingsCommandEntries, settingsEntries } from "./render/settings.js";
 
 export type RenderedChatFrame = RenderedFrame & {
+  renderCols: number;
   cacheFrame: string;
   liveFrame: string;
+  liveRows: TranscriptRenderLine[];
+  liveStreamKey: string;
   chromeFrame: string;
   chromeCursor?: RenderedFrame["cursor"];
   liveRegionFrame: string;
@@ -103,6 +123,7 @@ export function renderFrame(
     }
   }
   if (state.notice) lines.push(...noticeLines(state.notice, renderCols));
+  if (chatSurface) lines.push(...transcriptThinkingLines(state, renderCols));
   if (chatSurface) lines.push(...bottomTitleLines(state, renderCols));
   lines.push(bottomMetaLine(state, renderCols));
   if (shouldShowComposer(state)) {
@@ -126,9 +147,15 @@ export function renderChatFrameParts(
   setActiveCapabilities(capabilities);
   const cols = process.stdout.columns || 100;
   const renderCols = terminalRenderCols(cols);
-  const cacheLines = transcriptLines(state, renderCols);
-  const liveLines = transcriptLiveLines(state, renderCols);
+  const cacheRows = transcriptRenderLines(state, renderCols);
+  const liveRows = liveLinesWithCacheBoundary(
+    cacheRows,
+    transcriptLiveRenderLines(state, renderCols),
+  );
+  const cacheLines = cacheRows.map((line) => line.text);
+  const liveLines = liveRows.map((line) => line.text);
   const chromeLines = [
+    ...transcriptThinkingLines(state, renderCols),
     ...bottomTitleLines(state, renderCols),
     bottomMetaLine(state, renderCols),
     ...composerSeparator(renderCols),
@@ -146,13 +173,25 @@ export function renderChatFrameParts(
   const rendered = finalizeFrame([...cacheLines, ...liveLines, ...chromeLines], 0, renderCols);
   return {
     ...rendered,
+    renderCols,
     cacheFrame: cache.frame,
     liveFrame: live.frame,
+    liveRows,
+    liveStreamKey: activeLiveStreamKey(state),
     chromeFrame: chrome.frame,
     chromeCursor: chrome.cursor,
     liveRegionFrame: liveRegion.frame,
     liveRegionCursor: liveRegion.cursor,
   };
+}
+
+function activeLiveStreamKey(state: AppState): string {
+  const sessionID = state.session?.id;
+  return Object.values(state.liveStreams)
+    .filter((stream) => !sessionID || !stream.sessionID || stream.sessionID === sessionID)
+    .map((stream) => `${stream.sessionID ?? ""}\u0000${stream.messageID}\u0000${stream.partID}`)
+    .sort()
+    .join("\n");
 }
 
 function layoutSeparator(cols: number): string[] {
@@ -183,6 +222,7 @@ function renderPlainFrame(state: AppState): RenderedFrame {
   else if (state.modelsOpen) lines.push(...modelLines(state, renderCols, panelMaxLines));
   else lines.push(...chatTranscriptLines(state, renderCols));
   if (state.notice) lines.push(...noticeLines(state.notice, renderCols));
+  if (chatSurface) lines.push(...transcriptThinkingLines(state, renderCols));
   if (chatSurface) lines.push(...bottomTitleLines(state, renderCols).map(stripAnsi));
   lines.push(stripAnsi(bottomMetaLine(state, renderCols)));
   if (shouldShowComposer(state)) {
@@ -200,9 +240,17 @@ function renderPlainFrame(state: AppState): RenderedFrame {
 }
 
 function chatTranscriptLines(state: AppState, cols: number): string[] {
-  const transcript = transcriptLines(state, cols);
-  const liveLines = transcriptLiveLines(state, cols);
-  return [...transcript, ...liveLines];
+  const transcript = transcriptRenderLines(state, cols);
+  const liveLines = liveLinesWithCacheBoundary(transcript, transcriptLiveRenderLines(state, cols));
+  return [...transcript, ...liveLines].map((line) => line.text);
+}
+
+function liveLinesWithCacheBoundary(
+  cacheLines: TranscriptRenderLine[],
+  liveLines: TranscriptRenderLine[],
+): TranscriptRenderLine[] {
+  if (!cacheLines.length || !liveLines.length) return liveLines;
+  return [{ text: "", kind: "gap" }, ...liveLines];
 }
 
 function shouldShowComposer(state: AppState): boolean {
@@ -221,9 +269,9 @@ function sessionTitleLine(state: AppState, cols: number): string {
   const title = state.session ? sessionTitle(state.session) : "tura";
   const color =
     activeCapabilities.level === "rich"
-      ? opencodePrimary
+      ? richHighlight
       : activeCapabilities.level === "ansi"
-        ? opencodePrimary
+        ? richHighlight
         : bold;
   return truncateAnsi(`${color}${title}${reset}`, cols);
 }
@@ -238,7 +286,7 @@ function bottomMetaLine(state: AppState, cols: number): string {
   if (activeCapabilities.level === "plain") {
     return truncateAnsi(`${dim}${pieces.join("  ")}${reset}`, cols);
   }
-  return truncateAnsi(`${opencodeTextWeak}${pieces.join(bottomMetaDivider())}${reset}`, cols);
+  return truncateAnsi(`${textAuxiliary}${pieces.join(bottomMetaDivider())}${reset}`, cols);
 }
 
 function bottomMetaPieces(state: AppState): string[] {
@@ -252,10 +300,6 @@ function bottomMetaPieces(state: AppState): string[] {
     .filter(Boolean)
     .join(" ");
   return [statusIndicator(state), model || "-", tokenSummary(state)];
-}
-
-function isBusy(state: AppState): boolean {
-  return state.status === "busy" || state.session?.status === "busy";
 }
 
 function bottomMetaModel(state: AppState): string | undefined {
@@ -274,22 +318,22 @@ function bottomMetaModel(state: AppState): string | undefined {
 }
 
 function bottomMetaDivider(): string {
-  return `${opencodeBorder} │ ${reset}${opencodeTextWeak}`;
+  return `${borderColor} │ ${reset}${textAuxiliary}`;
 }
 
 function hintText(value: string): string {
-  const color = activeCapabilities.level === "rich" ? opencodeTextWeak : dim;
+  const color = activeCapabilities.level === "rich" ? textAuxiliary : dim;
   return `${color}${value}${reset}`;
 }
 
 function statusIndicator(state: AppState): string {
   if (activeCapabilities.unicode) {
     if (state.status === "error") return "x";
-    if (isBusy(state)) return busyAnimationFrame(state.thinkingFrame, true);
+    if (isBusyState(state)) return busyAnimationFrame(state.thinkingFrame, true);
     return "○";
   }
   if (state.status === "error") return "x";
-  if (isBusy(state)) return busyAnimationFrame(state.thinkingFrame, false);
+  if (isBusyState(state)) return busyAnimationFrame(state.thinkingFrame, false);
   return "-";
 }
 
@@ -338,7 +382,7 @@ function nestedNumberField(
 }
 
 function richPrimary(): string {
-  return activeCapabilities.level === "plain" ? bold : opencodePrimary;
+  return activeCapabilities.level === "plain" ? bold : richHighlight;
 }
 
 function sessionStateMarker(state: AppState, session: AppState["sessions"][number]): string {
@@ -362,7 +406,12 @@ function lastMessagePreview(messages: Message[]): string {
 function sessionLines(state: AppState, cols: number, maxLines: number): string[] {
   const lines = sectionLines(t("sessions"), cols);
   lines.push(
-    sectionBodyLine(secondaryText(`${t("selectSessions")}  ${t("enterOpenSession")}`), cols),
+    sectionBodyLine(
+      secondaryText(
+        `${t("selectSessions")}  ${t("enterOpenSession")}  ${t("shiftEnterCopySession")}  ${t("deleteSessionHint")}`,
+      ),
+      cols,
+    ),
   );
   const entries = state.sessions.map((session) => {
     const marker = sessionStateMarker(state, session);
@@ -414,11 +463,11 @@ function authLines(state: AppState, cols: number, maxLines: number): string[] {
     const statusText = [
       provider.name,
       marker,
+      status?.account_id ? `${t("account")}:${status.account_id}` : undefined,
       provider.source,
       status?.login ? `${t("loginState")}:${status.login}` : undefined,
       status?.auth_state ? `${t("authState")}:${status.auth_state}` : undefined,
       status?.runtime_state ? `${t("runtime")}:${status.runtime_state}` : undefined,
-      status?.account_id ? `${t("account")}:${status.account_id}` : undefined,
       status?.token_env
         ? `${t("env")}:${status.token_env}`
         : provider.env?.[0]
@@ -427,7 +476,10 @@ function authLines(state: AppState, cols: number, maxLines: number): string[] {
     ]
       .filter(Boolean)
       .join("  ");
-    const width = menuLabelWidth(cols);
+    const width = menuLabelWidthFor(
+      providers.map((item) => item.id),
+      cols,
+    );
     lines.push(...menuEntryLines(provider.id, statusText, width, cols, index === 0));
     if (methods.length) {
       for (const [methodIndex, method] of methods.slice(0, 4).entries()) {
@@ -446,348 +498,6 @@ function authLines(state: AppState, cols: number, maxLines: number): string[] {
   }
   lines.push(sectionBlankLine(cols));
   return lines.slice(0, maxLines);
-}
-
-export type SettingEntry = {
-  detail: SettingDetail;
-  label: string;
-  value: unknown;
-};
-
-export function settingsCommandEntries(state: AppState): Array<[string, unknown]> {
-  return settingsEntries(state).map((entry) => [settingCommandLabel(entry.detail), entry.value]);
-}
-
-export function settingsEntries(state: AppState): SettingEntry[] {
-  const config = state.sessionConfig;
-  if (!config) return [];
-  return [
-    { detail: "model", label: t("settingModel"), value: config.model ?? config.active_model },
-    { detail: "provider", label: t("settingProvider"), value: configuredProviderSummary(state) },
-    { detail: "agent", label: t("settingAgent"), value: config.active_agent },
-    { detail: "persona", label: t("settingPersona"), value: activePersonaID(state) },
-    { detail: "variant", label: t("settingReasoning"), value: config.model_variant },
-    { detail: "priority", label: t("settingPriority"), value: config.model_acceleration_enabled },
-    {
-      detail: "commands",
-      label: t("settingCommandExpansion"),
-      value: config.show_command_instructions !== false,
-    },
-    {
-      detail: "stallGuard",
-      label: t("settingStallGuard"),
-      value: config.command_run_stall_guard_profile,
-    },
-  ];
-}
-
-function settingsLines(state: AppState, cols: number, maxLines: number): string[] {
-  const config = state.sessionConfig;
-  const lines = sectionLines(settingTitle(state), cols);
-  if (!config) {
-    lines.push(sectionBodyLine(t("noSessionConfig"), cols));
-    lines.push(sectionBlankLine(cols));
-    return lines;
-  }
-  lines.push(sectionBodyLine(secondaryText(settingHint(state)), cols));
-  if (state.settingInput)
-    lines.push(sectionBodyLine(secondaryText(state.settingInput.prompt), cols));
-  if (state.settingDetail) {
-    lines.push(...settingDetailLines(state, cols, maxLines - lines.length - 1));
-    lines.push(sectionBlankLine(cols));
-    return lines.slice(0, maxLines);
-  }
-  const entries = settingEntries(settingsEntries(state).map((entry) => [entry.label, entry.value]));
-  const settingWidth = menuLabelWidth(cols);
-  for (const [index, [label, value]] of entries.entries()) {
-    const rendered = menuEntryLines(
-      label,
-      value,
-      settingWidth,
-      cols,
-      index === state.selectedSettingsIndex,
-    );
-    if (lines.length + rendered.length >= maxLines - 2) break;
-    lines.push(...rendered);
-  }
-  lines.push(sectionBlankLine(cols));
-  return lines.slice(0, maxLines);
-}
-
-function settingTitle(state: AppState): string {
-  const detail = state.settingDetail;
-  if (!detail) return t("sessionSettings");
-  if (detail === "providerAuth" && state.selectedProviderID)
-    return `${t("sessionSettings")} / ${t("settingProvider")} / ${state.selectedProviderID}`;
-  const entry = settingStaticEntries().find((item) => item.detail === detail);
-  return `${t("sessionSettings")} / ${entry?.label ?? t("settings")}`;
-}
-
-function settingHint(state: AppState): string {
-  const detail = state.settingDetail;
-  if (!detail) return t("settingRootHint");
-  if (detail === "model") return t("settingModelHint");
-  if (detail === "provider") return t("settingProviderHint");
-  if (detail === "providerAuth") return providerAuthHint(state);
-  if (detail === "variant") return t("settingReasoningHint");
-  if (detail === "priority") return t("settingPriorityHint");
-  if (detail === "agent") return t("settingAgentHint");
-  if (detail === "persona") return t("settingPersonaHint");
-  if (detail === "commands") return t("settingCommandExpansionHint");
-  if (detail === "stallGuard") return t("settingStallGuardHint");
-  return t("settingDetailHint");
-}
-
-function settingStaticEntries(): Array<{ detail: SettingDetail; label: string }> {
-  return [
-    { detail: "model", label: t("settingModel") },
-    { detail: "provider", label: t("settingProvider") },
-    { detail: "providerAuth", label: t("settingProvider") },
-    { detail: "agent", label: t("settingAgent") },
-    { detail: "persona", label: t("settingPersona") },
-    { detail: "variant", label: t("settingReasoning") },
-    { detail: "priority", label: t("settingPriority") },
-    { detail: "commands", label: t("settingCommandExpansion") },
-    { detail: "stallGuard", label: t("settingStallGuard") },
-  ];
-}
-
-function settingCommandLabel(detail: SettingDetail): string {
-  const labels: Record<SettingDetail, string> = {
-    model: "/model <provider/model>",
-    provider: "/provider <id>",
-    providerAuth: "/provider <id>",
-    agent: "/agent <name>",
-    persona: "/persona <id>",
-    variant: "/variant <name>",
-    priority: "/priority <on/off>",
-    commands: "/commands <on/off>",
-    stallGuard: "/stall-guard <profile>",
-  };
-  return labels[detail];
-}
-
-export function settingOptions(state: AppState): Array<[string, string, unknown]> {
-  const active = state.sessionConfig;
-  if (!state.settingDetail || !active) return [];
-  if (state.settingDetail === "model") {
-    const rows: Array<[string, string, string]> = [];
-    for (const provider of state.providers?.all ?? []) {
-      for (const [modelID, model] of Object.entries(provider.models ?? {})) {
-        const id = `${provider.id}/${modelID}`;
-        rows.push([id, [model.name, model.status].filter(Boolean).join("  "), id]);
-      }
-    }
-    return rows;
-  }
-  if (state.settingDetail === "provider") {
-    return settingProviders(state).map((provider) => [
-      providerLabelWithStatus(state, provider.id),
-      providerDescription(state, provider.id),
-      provider.id,
-    ]);
-  }
-  if (state.settingDetail === "providerAuth") {
-    const providerID = state.selectedProviderID;
-    if (!providerID) return [];
-    const methods = state.authMethods?.[providerID] ?? [];
-    const rows: Array<[string, string, unknown]> = methods.map((method, index) => {
-      const isOAuth = /oauth/i.test([method.type, method.kind, method.login].join(" "));
-      return [
-        isOAuth
-          ? `${t("oauthLogin")}: ${method.label || method.login}`
-          : method.label || method.login,
-        [
-          method.kind,
-          method.available === false ? method.unavailable_reason || t("notConnected") : undefined,
-          method.token_env ? `${t("env")}:${method.token_env}` : undefined,
-        ]
-          .filter(Boolean)
-          .join("  "),
-        { action: isOAuth ? "oauth" : "api-key", providerID, method: index },
-      ];
-    });
-    if (!rows.some(([, , value]) => authAction(value)?.action === "api-key")) {
-      rows.push([
-        t("apiKey"),
-        providerApiKeyDescription(state, providerID),
-        { action: "api-key", providerID },
-      ]);
-    }
-    rows.push([
-      t("logout"),
-      providerStatusText(state, providerID),
-      { action: "logout", providerID },
-    ]);
-    return rows;
-  }
-  if (state.settingDetail === "agent") {
-    return state.agents.map((agent) => [
-      storedAgentID(agent) ?? t("unknown"),
-      [agent.summary?.description, agent.summary?.source].filter(Boolean).join("  "),
-      storedAgentID(agent) ?? "",
-    ]);
-  }
-  if (state.settingDetail === "persona") {
-    return state.personas.map((persona) => [
-      personaID(persona) ?? t("unknown"),
-      [persona.summary?.description, persona.summary?.source].filter(Boolean).join("  "),
-      personaID(persona) ?? "",
-    ]);
-  }
-  if (state.settingDetail === "variant")
-    return ["low", "medium", "high", "xhigh"].map((value) => [value, "", value]);
-  if (state.settingDetail === "priority")
-    return [
-      [t("on"), t("priority"), true],
-      [t("off"), t("priority"), false],
-    ];
-  if (state.settingDetail === "commands")
-    return [
-      [t("on"), t("settingCommandExpansion"), true],
-      [t("off"), t("settingCommandExpansion"), false],
-    ];
-  if (state.settingDetail === "stallGuard")
-    return ["default", "relaxed", "strict", "off"].map((value) => [value, "", value]);
-  return [];
-}
-
-function authAction(value: unknown): { action?: string } | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as { action?: string })
-    : undefined;
-}
-
-function settingDetailLines(state: AppState, cols: number, maxLines: number): string[] {
-  const options = settingOptions(state);
-  if (!options.length) return [sectionBodyLine(t("noOptions"), cols)];
-  const width = menuLabelWidth(cols);
-  const lines: string[] = [];
-  const active = activeSettingValue(state);
-  for (const [index, [label, description, value]] of options.entries()) {
-    const decoratedLabel = value === active ? `${label} ${activeMarker()}` : label;
-    const rendered = menuEntryLines(
-      decoratedLabel,
-      description,
-      width,
-      cols,
-      index === state.selectedSettingOptionIndex,
-    );
-    if (lines.length + rendered.length >= maxLines) break;
-    lines.push(...rendered);
-  }
-  return lines;
-}
-
-function activeSettingValue(state: AppState): unknown {
-  const config = state.sessionConfig;
-  if (state.settingDetail === "model") return config?.model ?? config?.active_model;
-  if (state.settingDetail === "provider") return config?.active_provider;
-  if (state.settingDetail === "providerAuth") return undefined;
-  if (state.settingDetail === "agent") return state.session?.agent ?? config?.active_agent;
-  if (state.settingDetail === "persona") return activePersonaID(state);
-  if (state.settingDetail === "variant") return config?.model_variant;
-  if (state.settingDetail === "priority") return Boolean(config?.model_acceleration_enabled);
-  if (state.settingDetail === "commands") return config?.show_command_instructions !== false;
-  if (state.settingDetail === "stallGuard") return config?.command_run_stall_guard_profile;
-  return undefined;
-}
-
-function activeMarker(): string {
-  return activeCapabilities.unicode ? "✓" : "*";
-}
-
-function configuredProviderSummary(state: AppState): string {
-  const providers = settingProviders(state);
-  return t("providerConfiguredRatio", {
-    configured: configuredProviderCount(state, providers),
-    total: providers.length,
-  });
-}
-
-function configuredProviderCount(state: AppState, providers = settingProviders(state)): number {
-  const ids = new Set<string>();
-  for (const id of state.providers?.connected ?? []) ids.add(id);
-  for (const [id, status] of Object.entries(state.authStatuses)) {
-    if (status.configured || status.authenticated) ids.add(id);
-  }
-  return providers.filter((provider) => ids.has(provider.id)).length;
-}
-
-function providerLabelWithStatus(state: AppState, providerID: string): string {
-  return `${providerID} (${providerStatusText(state, providerID)})`;
-}
-
-function providerDescription(state: AppState, providerID: string): string {
-  const provider = state.providers?.all.find((item) => item.id === providerID);
-  const methods = state.authMethods?.[providerID] ?? [];
-  return [
-    provider?.name,
-    provider?.source,
-    methods.length ? `${t("auth")}:${methods.map((method) => method.type).join("/")}` : undefined,
-    provider?.env?.[0] ? `${t("env")}:${provider.env[0]}` : undefined,
-  ]
-    .filter(Boolean)
-    .join("  ");
-}
-
-function providerStatusText(state: AppState, providerID: string): string {
-  const status = state.authStatuses[providerID];
-  if (status?.authenticated) return t("authenticated");
-  if (status?.configured) return t("configured");
-  if (state.providers?.connected.includes(providerID)) return t("connected");
-  if (status?.auth_state) return status.auth_state;
-  if (status?.runtime_state) return status.runtime_state;
-  return t("notConnected");
-}
-
-function providerApiKeyDescription(state: AppState, providerID: string): string {
-  const method = (state.authMethods?.[providerID] ?? []).find((item) =>
-    /key|token|api/i.test([item.type, item.kind, item.login, item.label].filter(Boolean).join(" ")),
-  );
-  return [
-    method?.label,
-    method?.api_key_url ? t("openUrl", { url: method.api_key_url }) : undefined,
-    method?.docs_url ? t("docs") : undefined,
-  ]
-    .filter(Boolean)
-    .join("  ");
-}
-
-function providerAuthHint(state: AppState): string {
-  const providerID = state.selectedProviderID;
-  if (!providerID) return t("settingProviderAuthHint");
-  const docs = providerDocsUrl(state, providerID);
-  return docs
-    ? `${t("settingProviderAuthHint")} ${t("providerDocsHint", { url: docs })}`
-    : t("settingProviderAuthHint");
-}
-
-function providerDocsUrl(state: AppState, providerID: string): string | undefined {
-  const provider = state.providers?.all.find((item) => item.id === providerID);
-  const direct = stringField(provider?.options, "api_docs") ?? provider?.api ?? undefined;
-  if (direct) return direct;
-  for (const method of state.authMethods?.[providerID] ?? []) {
-    if (method.api_key_url) return method.api_key_url;
-    if (method.docs_url) return method.docs_url;
-  }
-  for (const model of Object.values(provider?.models ?? {})) {
-    const docs = stringField(model.options, "api_docs");
-    if (docs) return docs;
-  }
-  return undefined;
-}
-
-function settingProviders(state: AppState): NonNullable<AppState["providers"]>["all"] {
-  return (state.providers?.all ?? []).filter(isLlmProvider);
-}
-
-function isLlmProvider(provider: NonNullable<AppState["providers"]>["all"][number]): boolean {
-  const domains = stringArrayField(provider.options, "domains");
-  if (domains.length) return domains.some((domain) => domain.toLowerCase() === "llm");
-  const capabilities = stringArrayField(provider.options, "capabilities");
-  if (capabilities.some((capability) => capability.toLowerCase().startsWith("llm."))) return true;
-  return Object.keys(provider.models ?? {}).length > 0;
 }
 
 function personaLines(state: AppState, cols: number, maxLines: number): string[] {
@@ -812,7 +522,10 @@ function personaLines(state: AppState, cols: number, maxLines: number): string[]
         .join("  "),
     ] as [string, string];
   });
-  const width = menuLabelWidth(cols);
+  const width = menuLabelWidthFor(
+    entries.map(([label]) => label),
+    cols,
+  );
   for (const [index, [label, description]] of entries.entries()) {
     const rendered = menuEntryLines(
       label,
@@ -852,7 +565,10 @@ function modelLines(state: AppState, cols: number, maxLines: number): string[] {
     lines.push(sectionBodyLine(t("noProviders"), cols), sectionBlankLine(cols));
     return lines.slice(0, maxLines);
   }
-  const width = menuLabelWidth(cols);
+  const width = menuLabelWidthFor(
+    entries.map(([label]) => label),
+    cols,
+  );
   for (const [label, description, selected] of entries) {
     const rendered = menuEntryLines(label, description, width, cols, selected);
     if (lines.length + rendered.length >= maxLines - 2) break;
@@ -873,228 +589,6 @@ function helpLines(cols: number, maxLines: number): string[] {
   return activeCapabilities.level === "rich"
     ? lines.filter(Boolean).slice(0, maxLines)
     : lines.slice(0, maxLines);
-}
-
-function sectionLines(title: string, cols: number): string[] {
-  const titleLine = sectionTitleLine(title, cols);
-  if (activeCapabilities.level === "plain") return [stripAnsi(titleLine), ""];
-  return [sectionBodyLine(titleLine, cols), sectionBlankLine(cols)];
-}
-
-function sectionTitleLine(title: string, _cols: number): string {
-  if (activeCapabilities.level === "plain") return `--- ${title} ---------`;
-  const left = "───";
-  const right = "─────────";
-  return `${opencodeTextWeak}${left} ${reset}${opencodeText}${title}${reset}${opencodeTextWeak} ${right}${reset}`;
-}
-
-function sectionBodyLine(content: string, cols: number): string {
-  if (activeCapabilities.level === "rich") return richContentLine(content, cols, "assistant");
-  return simpleBodyLine(content, "assistant", false, cols);
-}
-
-function simpleBodyLine(line: string, role: string, _user: boolean, cols = 80): string {
-  if (activeCapabilities.level === "plain") return `  ${stripAnsi(line)}`;
-  return panelLine(line, cols, role);
-}
-
-function richContentLine(content: string, cols: number, role = "assistant"): string {
-  return panelLine(content, cols, role);
-}
-
-function sectionBlankLine(cols: number): string {
-  return activeCapabilities.level === "plain" ? "" : panelBlankLine("assistant", cols);
-}
-
-function settingEntries(rows: Array<[string, unknown]>): Array<[string, string]> {
-  return rows
-    .filter(([, value]) => value !== undefined && value !== null && value !== "")
-    .map(([label, value]) => [label, formatSettingValue(value)]);
-}
-
-function sectionEntryLines(
-  label: string,
-  description: string,
-  labelWidth: number,
-  cols: number,
-): string[] {
-  if (activeCapabilities.level === "rich") {
-    return richHelpEntryLines(label, description, labelWidth, cols);
-  }
-  return simpleHelpEntryLines(label, description, labelWidth, cols);
-}
-
-function menuEntryLines(
-  label: string,
-  description: string,
-  labelWidth: number,
-  cols: number,
-  selected: boolean,
-): string[] {
-  const marker = selected ? "> " : "  ";
-  return sectionEntryLines(`${marker}${label}`, description, labelWidth, cols);
-}
-
-function sessionEntryLine(
-  label: string,
-  description: string,
-  labelWidth: number,
-  cols: number,
-  selected: boolean,
-): string {
-  const marker = selected ? "> " : "  ";
-  const gapWidth = activeCapabilities.level === "plain" ? 2 : 3;
-  const contentWidth = Math.max(20, cols - 4);
-  const leftWidth = Math.min(Math.max(8, labelWidth), Math.max(8, contentWidth - gapWidth - 4));
-  const rightWidth = Math.max(0, contentWidth - leftWidth - gapWidth);
-  const left = truncateAnsi(`${marker}${label}`, leftWidth);
-  const right = rightWidth > 0 ? truncateAnsi(description, rightWidth) : "";
-  const gap = " ".repeat(gapWidth);
-  const content =
-    activeCapabilities.level === "plain"
-      ? `${pad(left, leftWidth)}${gap}${right}`
-      : `${opencodePrimary}${pad(left, leftWidth)}${reset}${gap}${secondaryText(right)}`;
-  return sectionBodyLine(truncateAnsi(content, contentWidth), cols);
-}
-
-function sectionEntriesLines(
-  entries: Array<[string, string]>,
-  labelWidth: number,
-  cols: number,
-  maxLines: number,
-): string[] {
-  const lines: string[] = [];
-  for (const [label, description] of entries) {
-    const rendered = sectionEntryLines(label, description, labelWidth, cols);
-    if (lines.length + rendered.length > maxLines) break;
-    lines.push(...rendered);
-  }
-  return lines;
-}
-
-function helpEntryWidth(entries: Array<[string, string]>): number {
-  return Math.min(
-    activeCapabilities.level === "rich" ? 32 : 24,
-    Math.max(8, ...entries.map(([command]) => visibleTextWidth(command))),
-  );
-}
-
-function menuLabelWidth(cols: number): number {
-  const desired = helpEntryWidth(commandHelpEntries()) * 2;
-  const gutter = activeCapabilities.level === "rich" ? 12 : 8;
-  const maxByTerminal = Math.max(8, cols - gutter - 20);
-  return Math.max(8, Math.min(desired, maxByTerminal));
-}
-
-function sessionLabelWidth(labels: string[], cols: number): number {
-  const markerWidth = 2;
-  const maxLabelWidth = Math.max(6, ...labels.map((label) => visibleTextWidth(label)));
-  const maxByTerminal = Math.max(8, Math.floor(cols * 0.45));
-  return Math.max(8, Math.min(maxLabelWidth + markerWidth, maxByTerminal));
-}
-
-function formatSettingValue(value: unknown): string {
-  if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "number") return Number.isFinite(value) ? String(value) : "";
-  return String(value);
-}
-
-function simpleHelpEntryLines(
-  command: string,
-  description: string,
-  commandWidth: number,
-  cols: number,
-): string[] {
-  const descriptionWidth = Math.max(12, cols - commandWidth - 8);
-  const descriptionLines = wrapWords(description, descriptionWidth);
-  if (activeCapabilities.level === "plain") {
-    return descriptionLines.map((line, index) =>
-      index === 0
-        ? `  ${pad(command, commandWidth)}  ${line}`
-        : `  ${" ".repeat(commandWidth)}  ${line}`,
-    );
-  }
-  return descriptionLines.map((line, index) =>
-    simpleBodyLine(
-      index === 0
-        ? `${opencodePrimary}${pad(command, commandWidth)}${reset}   ${secondaryText(line)}`
-        : `${" ".repeat(commandWidth)}   ${secondaryText(line)}`,
-      "assistant",
-      false,
-      cols,
-    ),
-  );
-}
-
-function richHelpEntryLines(
-  command: string,
-  description: string,
-  commandWidth: number,
-  cols: number,
-): string[] {
-  const descriptionWidth = Math.max(12, cols - commandWidth - 12);
-  const descriptionLines = wrapWords(description, descriptionWidth);
-  return descriptionLines.map((line, index) =>
-    richContentLine(
-      index === 0
-        ? `${opencodePrimary}${pad(command, commandWidth)}${reset}   ${opencodeTextWeak}${line}${reset}`
-        : `${" ".repeat(commandWidth)}   ${opencodeTextWeak}${line}${reset}`,
-      cols,
-      "assistant",
-    ),
-  );
-}
-
-function wrapWords(text: string, width: number): string[] {
-  const safeWidth = Math.max(8, width);
-  const lines: string[] = [];
-  for (const inputLine of text.split(/\r?\n/)) {
-    let line = "";
-    for (const word of inputLine.split(/\s+/).filter(Boolean)) {
-      if (!line) {
-        if (visibleTextWidth(word) <= safeWidth) line = word;
-        else lines.push(...wrap(word, safeWidth));
-        continue;
-      }
-      if (visibleTextWidth(`${line} ${word}`) <= safeWidth) {
-        line = `${line} ${word}`;
-        continue;
-      }
-      lines.push(line);
-      if (visibleTextWidth(word) <= safeWidth) line = word;
-      else {
-        const wrapped = wrap(word, safeWidth);
-        lines.push(...wrapped.slice(0, -1));
-        line = wrapped.at(-1) ?? "";
-      }
-    }
-    lines.push(line);
-  }
-  return lines.length ? lines : [""];
-}
-
-function commandHelpEntries(): Array<[string, string]> {
-  return [
-    ["/chat", t("helpChat")],
-    ["/commands", t("helpCommands")],
-    ["/new", t("helpNew")],
-    ["/resume <id>", t("helpResume")],
-    ["/auth", t("providerLogin")],
-    [t("loginProvider"), t("helpLogin")],
-    [t("logoutProvider"), t("helpLogout")],
-    ["/settings", t("helpSettings")],
-    ["/model <provider/model>", t("helpModel")],
-    ["/agent <name>", t("agent")],
-    ["/personas", t("personas")],
-    ["/persona <name>", t("applyPersona")],
-    ["/sessions", t("helpSessions")],
-    ["/models", t("helpModels")],
-    ["/abort", t("helpAbort")],
-    ["/stop", t("helpStop")],
-    [t("configGet"), t("helpConfigGet")],
-    [t("configSet"), t("helpConfigSet")],
-    ["/quit", t("helpQuit")],
-  ];
 }
 
 function noticeLines(value: string, cols: number): string[] {
@@ -1175,11 +669,4 @@ function stringField(value: Record<string, unknown> | undefined, key: string): s
 
 function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function stringArrayField(value: Record<string, unknown> | undefined, key: string): string[] {
-  const item = value?.[key];
-  return Array.isArray(item)
-    ? item.filter((entry): entry is string => typeof entry === "string")
-    : [];
 }

@@ -154,7 +154,6 @@ fn worker_env_from_current_process() -> serde_json::Map<String, Value> {
         "TURA_COMMAND_RUN_STRICT_JSON",
         "TURA_COMMAND_RUN_DISABLE_STRICT_JSON",
         "TURA_RUNTIME_ERRORS_FATAL",
-        "TURA_WORKER_INVOKE_TIMEOUT_SECS",
         "TURA_RUNTIME_WORKER_STDERR_LOG",
         "TURA_DEBUG_RUNTIME",
         "TURA_PROVIDER_CONFIG",
@@ -347,20 +346,28 @@ mod tests {
         let previous_model = std::env::var_os("TURA_SESSION_MAX_TOKENS");
         let previous_empty = std::env::var_os("TURA_SESSION_LANGUAGE");
         let previous_other = std::env::var_os("TURA_UNRELATED_ENV_FOR_TEST");
+        let legacy_timeout_key = ["TURA_WORKER", "INVOKE_TIMEOUT_SECS"].join("_");
+        let previous_timeout = std::env::var_os(&legacy_timeout_key);
 
         std::env::set_var("TURA_SESSION_MAX_TOKENS", "4096");
         std::env::set_var("TURA_SESSION_LANGUAGE", "");
         std::env::set_var("TURA_UNRELATED_ENV_FOR_TEST", "must-not-forward");
+        std::env::set_var(&legacy_timeout_key, "1");
 
         let env = worker_env_from_current_process();
 
         assert_eq!(env.get("TURA_SESSION_MAX_TOKENS"), Some(&json!("4096")));
         assert!(!env.contains_key("TURA_SESSION_LANGUAGE"));
         assert!(!env.contains_key("TURA_UNRELATED_ENV_FOR_TEST"));
+        assert!(
+            !env.keys().any(|key| key.contains("INVOKE_TIMEOUT")),
+            "worker env must not forward a session-wide invoke deadline"
+        );
 
         restore_env("TURA_SESSION_MAX_TOKENS", previous_model);
         restore_env("TURA_SESSION_LANGUAGE", previous_empty);
         restore_env("TURA_UNRELATED_ENV_FOR_TEST", previous_other);
+        restore_env(&legacy_timeout_key, previous_timeout);
     }
 
     #[test]

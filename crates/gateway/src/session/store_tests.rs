@@ -82,6 +82,164 @@ impl Drop for SessionDbTestService {
 }
 
 #[test]
+fn persisted_session_log_hydration_keeps_conversation_messages_and_skips_auxiliary_records() {
+    let now = chrono::Utc::now();
+    let session_id = format!("hydrate-mixed-records-{}", uuid::Uuid::new_v4());
+    let workspace = std::env::temp_dir()
+        .join(format!("hydrate-mixed-records-{}", uuid::Uuid::new_v4()))
+        .to_string_lossy()
+        .to_string();
+    let management = runtime::state_machine::session_management::SessionManagement::new(
+        session_id.clone(),
+        "mixed records".to_string(),
+        PathBuf::from(&workspace),
+        false,
+        "coding".to_string(),
+        runtime::state_machine::session_management::SessionInput {
+            user_input: "hello".to_string(),
+            file_input: Vec::new(),
+            agent: Some("thinking".to_string()),
+            runtime_context: None,
+            planning_mode_override: None,
+        },
+        "hello".to_string(),
+        now,
+    );
+    let info = SessionInfo::from_management(&management);
+    let snapshot = SessionSnapshot {
+        session_id: session_id.clone(),
+        workspace,
+        name: Some("mixed records".to_string()),
+        parent_id: None,
+        created_at: 1,
+        updated_at: 10,
+        state: Some("completed".to_string()),
+        status: Some("idle".to_string()),
+        message_count: 6,
+        task_management: serde_json::json!({}),
+        management: serde_json::to_value(&management).expect("management json"),
+        session: serde_json::to_value(&info).expect("session json"),
+        todos: vec![serde_json::json!({"id": "todo-1"})],
+    };
+    let records = vec![
+        session_record(
+            &session_id,
+            "user-1",
+            "user",
+            1,
+            message_record(&session_id, "user-1", "user", "hello", 1),
+        ),
+        session_record(
+            &session_id,
+            "assistant-1",
+            "assistant",
+            2,
+            message_record(&session_id, "assistant-1", "assistant", "hi", 2),
+        ),
+        session_record(
+            &session_id,
+            "system-1",
+            "system",
+            3,
+            message_record(&session_id, "system-1", "system", "guardrail", 3),
+        ),
+        session_record(
+            &session_id,
+            "runtime-usage",
+            "runtime",
+            4,
+            serde_json::json!({
+                "id": "runtime-usage",
+                "role": "runtime",
+                "type": "runtime_usage",
+                "usage": {"total_tokens": 3}
+            }),
+        ),
+        session_record(
+            &session_id,
+            "user-agent-context",
+            "user-agent",
+            5,
+            serde_json::json!({
+                "id": "user-agent-context",
+                "role": "user-agent",
+                "content": "<environment_context>internal</environment_context>"
+            }),
+        ),
+        session_record(
+            &session_id,
+            "legacy-dirty-shape",
+            "assistant",
+            6,
+            serde_json::json!({
+                "id": "legacy-dirty-shape",
+                "role": "assistant",
+                "content": "legacy simple content without parts"
+            }),
+        ),
+    ];
+
+    let persisted =
+        persisted_record_from_session_log(snapshot, records).expect("hydrate persisted session");
+
+    assert_eq!(persisted.messages.len(), 3);
+    assert_eq!(
+        persisted
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["user-1", "assistant-1", "system-1"]
+    );
+    assert_eq!(persisted.messages[1].parts[0].text.as_deref(), Some("hi"));
+    assert_eq!(persisted.todos.len(), 1);
+}
+
+fn session_record(
+    session_id: &str,
+    message_id: &str,
+    role: &str,
+    created_at: i64,
+    record: serde_json::Value,
+) -> SessionRecord {
+    SessionRecord {
+        session_id: session_id.to_string(),
+        message_id: message_id.to_string(),
+        role: role.to_string(),
+        created_at,
+        updated_at: created_at,
+        record,
+    }
+}
+
+fn message_record(
+    session_id: &str,
+    message_id: &str,
+    role: &str,
+    text: &str,
+    created_at: i64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "id": message_id,
+        "session_id": session_id,
+        "role": role,
+        "parent_id": null,
+        "parts": [{
+            "id": format!("{message_id}:part"),
+            "type": "text",
+            "content": text,
+            "text": text,
+            "metadata": null,
+            "call_id": null,
+            "tool": null,
+            "state": null
+        }],
+        "created_at": created_at,
+        "updated_at": created_at
+    })
+}
+
+#[test]
 fn update_session_status_updates_stored_status() {
     let store = SessionStore::new();
     let session = store.create_session(
@@ -510,8 +668,75 @@ fn update_session_task_management_persists_and_lists_status() {
         .into_iter()
         .find(|item| item.id == session.id)
         .expect("session should be listed");
-    assert_eq!(listed.session_display_name.as_deref(), Some("计划入口名称"));
+    assert_eq!(
+        listed.session_display_name.as_deref(),
+        Some("执行状态机名称")
+    );
     assert_eq!(listed.task_management["sub_session_id"], "sub-1");
+}
+
+#[test]
+fn session_display_name_prefers_auto_session_name_over_plan_summary() {
+    let store = SessionStore::new();
+    let session = store.create_session(
+        Some("C:/workspace".to_string()),
+        None,
+        None,
+        Some("coding".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    let planned = store
+        .update_session(
+            &session.id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(serde_json::json!({
+                "plan_summary": "Original plan title",
+                "task_summary": "First generated task"
+            })),
+        )
+        .expect("session should accept initial task patch");
+    assert_eq!(
+        planned.session_display_name.as_deref(),
+        Some("First generated task")
+    );
+
+    let renamed = store
+        .update_session(
+            &session.id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(serde_json::json!({
+                "task_summary": "Latest agent task detail",
+                "status": "doing"
+            })),
+        )
+        .expect("session should update auto-generated task name");
+
+    assert_eq!(renamed.name.as_deref(), Some("Latest agent task detail"));
+    assert_eq!(
+        renamed.session_display_name.as_deref(),
+        Some("Latest agent task detail")
+    );
+    assert_eq!(renamed.plan_summary.as_deref(), Some("Original plan title"));
 }
 
 #[test]
@@ -1045,6 +1270,83 @@ fn user_messages_are_recorded_in_session_management_log() {
         .session_log
         .iter()
         .any(|entry| entry.contains("补充新的约束")));
+}
+
+#[test]
+fn copy_session_context_reuses_conversation_without_sharing_message_ids() {
+    let store = SessionStore::new();
+    let source = store.create_session(
+        Some("C:/workspace".to_string()),
+        Some("openai/gpt-5".to_string()),
+        Some("thinking".to_string()),
+        Some("coding".to_string()),
+        false,
+        true,
+        false,
+        Some("high".to_string()),
+        true,
+        false,
+    );
+    let target = store.create_session(
+        source.directory.clone(),
+        source.model.clone(),
+        source.agent.clone(),
+        source.session_type.clone(),
+        false,
+        true,
+        false,
+        source.model_variant.clone(),
+        source.model_acceleration_enabled,
+        false,
+    );
+
+    let user = store
+        .add_message(
+            &source.id,
+            MessageRole::User,
+            "reuse this context".to_string(),
+        )
+        .expect("user message should be stored");
+    let assistant = store
+        .add_message(
+            &source.id,
+            MessageRole::Assistant,
+            "context answer".to_string(),
+        )
+        .expect("assistant message should be stored");
+    store.set_todos(&source.id, vec![serde_json::json!({"id": "todo-1"})]);
+
+    assert!(store.copy_session_context(&source.id, &target.id));
+
+    let copied_session = store
+        .get_session(&target.id)
+        .expect("target session should exist");
+    assert_eq!(
+        copied_session.parent_id.as_deref(),
+        Some(source.id.as_str())
+    );
+    assert_eq!(copied_session.message_count, 2);
+    assert_eq!(
+        store.list_child_session_ids(&source.id),
+        vec![target.id.clone()]
+    );
+    assert_eq!(
+        store.get_todos(&target.id),
+        vec![serde_json::json!({"id": "todo-1"})]
+    );
+
+    let copied = store.get_messages(&target.id);
+    assert_eq!(copied.len(), 2);
+    assert_eq!(copied[0].session_id, target.id);
+    assert_eq!(copied[1].session_id, target.id);
+    assert_ne!(copied[0].id, user.id);
+    assert_ne!(copied[1].id, assistant.id);
+    assert_eq!(
+        copied[0].parts[0].text.as_deref(),
+        Some("reuse this context")
+    );
+    assert_eq!(copied[1].parts[0].text.as_deref(), Some("context answer"));
+    assert_eq!(copied[1].parent_id.as_deref(), Some(copied[0].id.as_str()));
 }
 
 #[test]

@@ -107,6 +107,7 @@ tools = { workspace = true }
 reqwest.workspace = true
 session_log = { workspace = true }
 uuid.workspace = true
+sysinfo.workspace = true
 
 [dev-dependencies]
 tokio-test.workspace = true

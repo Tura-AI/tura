@@ -211,6 +211,99 @@ async fn streamed_command_run_post_result_timeout_advances_without_final_provide
         .contains("authorization: bearer local-stream-key"));
 }
 
+#[tokio::test]
+async fn streamed_command_run_finishes_when_gateway_callback_stalls() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let output_path = workspace.path().join("stalled-gateway-callback.txt");
+    let provider = StalledResponsesProvider::start(stalled_command(&output_path));
+    let gateway = StalledGateway::start();
+    let router_addr = mock_command_run_router_addr();
+    let _api_key = EnvGuard::set("OPENAI_API_KEY", "local-stream-key");
+    let _post_result_timeout =
+        EnvGuard::set("TURA_STREAMED_COMMAND_RUN_POST_RESULT_TIMEOUT_MS", "150");
+    let _gateway_timeout = EnvGuard::set("TURA_GATEWAY_CALLBACK_TIMEOUT_MS", "75");
+    let _gateway_url = EnvGuard::set("TURA_GATEWAY_URL", gateway.base_url().as_str());
+    let _router_addr = EnvGuard::set("TURA_ROUTER_ADDR", router_addr.as_str());
+    let settings = Arc::new(Settings {
+        provider_base_url: HashMap::new(),
+        routes: HashMap::from([(
+            "stream-timeout-route".to_string(),
+            RouteConfig {
+                default_temperature: 0.0,
+                providers: vec![LlmProviderConfig {
+                    provider: "openai".to_string(),
+                    base_url: provider.endpoint.clone(),
+                    model: "local-stream-timeout-model".to_string(),
+                    temperature: 0.0,
+                }],
+            },
+        )]),
+        model_catalog: ModelCatalog::default(),
+        provider_enums: ProviderEnumCatalog::default(),
+    });
+    let runtime = runtime_for_provider(
+        "runtime-stalled-gateway-callback-business",
+        30_000,
+        true,
+        "stream-timeout-route",
+        "openai",
+        "local-stream-timeout-model",
+    );
+
+    let started = std::time::Instant::now();
+    let result = call_runtime(
+        CallRuntimeInput {
+            runtime,
+            messages: vec![json!({
+                "role": "user",
+                "content": "run one streamed command while gateway callbacks stall"
+            })],
+            tools: Vec::new(),
+            provider_name: "stream-timeout-route".to_string(),
+            stream: true,
+            max_tokens: 128,
+            tool_choice: None,
+            session_directory: workspace.path().to_path_buf(),
+            allowed_command_run_commands: Some(BTreeSet::from(["shell_command".to_string()])),
+        },
+        settings,
+        Arc::new(TuraConfig::new(
+            ".env.runtime-stalled-gateway-callback-business-missing",
+        )),
+    )
+    .await
+    .expect("stalled gateway callbacks should not pin the runtime turn");
+
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "gateway callback stalls must be bounded; elapsed={:?}, state={:?}, status={:?}, output={:?}",
+        started.elapsed(),
+        result.state,
+        result.call_result_status,
+        result.output
+    );
+    assert_eq!(result.state, RuntimeState::Finished);
+    assert_eq!(
+        result.call_result_status,
+        RuntimeCallResultStatus::Succeeded
+    );
+    assert_eq!(
+        result
+            .output
+            .as_ref()
+            .and_then(|output| output.pointer("/streamed_command_run_result/early_finish_reason")),
+        Some(&json!("post_command_run_stream_timeout"))
+    );
+    assert_eq!(
+        std::fs::read_to_string(&output_path).expect("command output file"),
+        "stream command completed"
+    );
+    assert!(
+        gateway.accepted_count() > 0,
+        "test must exercise the stalled callback server"
+    );
+}
+
 fn mock_command_run_router_addr() -> String {
     if let Some(addr) = MOCK_ROUTER_ADDR.get() {
         return addr.clone();
@@ -429,6 +522,42 @@ impl StalledResponsesProvider {
             .expect("stalled provider request lock")
             .clone()
             .expect("stalled provider request captured")
+    }
+}
+
+struct StalledGateway {
+    endpoint: String,
+    accepted: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl StalledGateway {
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind stalled gateway");
+        let addr = listener.local_addr().expect("stalled gateway addr");
+        let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let thread_accepted = Arc::clone(&accepted);
+        thread::spawn(move || {
+            while let Ok((mut stream, _)) = listener.accept() {
+                thread_accepted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                thread::spawn(move || {
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+                    let _ = read_request_head(&mut stream);
+                    thread::sleep(Duration::from_secs(10));
+                });
+            }
+        });
+        Self {
+            endpoint: format!("http://{addr}"),
+            accepted,
+        }
+    }
+
+    fn base_url(&self) -> String {
+        self.endpoint.clone()
+    }
+
+    fn accepted_count(&self) -> usize {
+        self.accepted.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 

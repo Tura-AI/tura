@@ -82,11 +82,7 @@ pub fn streamed_command_event_record(
         "provider_tool_call_id": tool_call_id,
         "command_index": command_index,
         "step": command.get("step").cloned().unwrap_or(Value::Null),
-        "command_type": command
-            .get("command_type")
-            .or_else(|| command.get("command"))
-            .cloned()
-            .unwrap_or(Value::Null),
+        "command_type": command.get("command_type").cloned().unwrap_or(Value::Null),
         "command_line": command.get("command_line").cloned().unwrap_or(Value::Null),
         "command": command,
         "result": result.cloned().unwrap_or(Value::Null),
@@ -123,14 +119,12 @@ pub fn streamed_command_run_call_id(runtime_id: &str) -> String {
 pub fn command_run_live_delta_result(command: &Value, stdout: &str, stderr: &str) -> Value {
     let command_type = command
         .get("command_type")
-        .or_else(|| command.get("command"))
         .and_then(Value::as_str)
         .unwrap_or(COMMAND_RUN_TOOL_NAME);
     let command_line = command
         .get("command_line")
-        .or_else(|| command.get("command"))
         .and_then(Value::as_str)
-        .unwrap_or(command_type);
+        .unwrap_or("");
     let step = command
         .get("step")
         .and_then(Value::as_u64)
@@ -244,7 +238,7 @@ pub async fn publish_streamed_command_run_update(update: StreamedCommandRunUpdat
         }
     });
 
-    let result = reqwest::Client::new()
+    let result = crate::gateway_events::gateway_callback_http_client()
         .post(endpoint)
         .json(&payload)
         .send()
@@ -313,8 +307,9 @@ fn planning_child_depth_from_env() -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        command_run_stream_event_command, command_run_stream_events_from_provider_content,
-        should_replay_final_response_command_run,
+        command_run_live_delta_result, command_run_stream_event_command,
+        command_run_stream_events_from_provider_content, should_replay_final_response_command_run,
+        streamed_command_event_record,
     };
 
     #[test]
@@ -348,5 +343,22 @@ mod tests {
             .expect("command_run event should contain a command");
         assert_eq!(event.tool_call_id, "call_command_run_0");
         assert_eq!(event.command["command_type"], "apply_patch");
+    }
+
+    #[test]
+    fn command_event_records_do_not_use_command_text_as_command_type() {
+        let command = serde_json::json!({
+            "command": "large file scan",
+            "step": 1
+        });
+
+        let record =
+            streamed_command_event_record("ready", "runtime-1", "call-1", 0, &command, None);
+        let live = command_run_live_delta_result(&command, "", "");
+
+        assert_eq!(record["command_type"], serde_json::Value::Null);
+        assert_eq!(record["command_line"], serde_json::Value::Null);
+        assert_eq!(live["command_type"], "command_run");
+        assert_eq!(live["command_line"], "");
     }
 }

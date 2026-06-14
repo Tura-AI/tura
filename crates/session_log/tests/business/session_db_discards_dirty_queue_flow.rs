@@ -1,6 +1,6 @@
 //! Business E2E: dirty session_db queue data must never prevent the owner from
 //! starting. Malformed durable queue rows are deleted, malformed file queue
-//! items are deleted, and clean writes still work through the live service.
+//! items are quarantined, and clean writes still work through the live service.
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::json;
@@ -20,7 +20,7 @@ use std::{
 static SERIAL: Mutex<()> = Mutex::new(());
 
 #[test]
-fn session_db_start_discards_dirty_queue_items_and_accepts_clean_writes() -> Result<()> {
+fn session_db_start_quarantines_dirty_file_queue_items_and_accepts_clean_writes() -> Result<()> {
     let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
     let repo = repo_root()?;
     ensure_session_db_binary(&repo)?;
@@ -48,18 +48,19 @@ fn session_db_start_discards_dirty_queue_items_and_accepts_clean_writes() -> Res
         session_log::ipc::service_is_running,
     )
     .context("session_db did not publish a reachable socket")?;
+    call_service_with_retry(&SessionLogCommand::ListWorkspaces, Duration::from_secs(30))
+        .context("session_db did not become ready for data-path reads")?;
 
     assert_eq!(pending_sqlite_queue_count(&home)?, 0);
     wait_until(Duration::from_secs(10), || !dirty_file.exists())
-        .context("dirty file queue item was not deleted")?;
-    assert_eq!(failed_file_queue_count(&home), 0);
+        .context("dirty file queue item stayed pending")?;
+    assert_failed_file_queue_contains(&home, &dirty_file)?;
 
     assert_ok(
-        session_log::ipc::call_service(&SessionLogCommand::UpsertSession(upsert_request(
-            "clean-direct",
-            &workspace_key,
-            10,
-        )))?,
+        call_service_with_retry(
+            &SessionLogCommand::UpsertSession(upsert_request("clean-direct", &workspace_key, 10)),
+            Duration::from_secs(30),
+        )?,
         "direct clean write",
     )?;
     file_queue::enqueue_command(&SessionLogCommand::UpsertSession(upsert_request(
@@ -79,7 +80,7 @@ fn session_db_start_discards_dirty_queue_items_and_accepts_clean_writes() -> Res
         })?
         .is_some());
 
-    let _ = session_log::ipc::call_service(&SessionLogCommand::Shutdown);
+    let _ = call_service_with_retry(&SessionLogCommand::Shutdown, Duration::from_secs(10));
     service.wait(Duration::from_secs(10))?;
     Ok(())
 }
@@ -125,15 +126,26 @@ fn pending_sqlite_queue_count(home: &Path) -> Result<i64> {
     .map_err(Into::into)
 }
 
-fn failed_file_queue_count(home: &Path) -> usize {
+fn assert_failed_file_queue_contains(home: &Path, dirty_file: &Path) -> Result<()> {
     let failed = home
         .join("db")
         .join("session_log")
         .join("message_queue")
         .join("failed");
-    std::fs::read_dir(failed)
-        .map(|entries| entries.flatten().count())
-        .unwrap_or(0)
+    let file_name = dirty_file
+        .file_name()
+        .ok_or_else(|| anyhow!("dirty file missing name"))?;
+    let failed_json = failed.join(file_name);
+    let failed_error = failed_json.with_extension("error.txt");
+    assert!(
+        failed_json.exists(),
+        "dirty file queue item should be retained in failed"
+    );
+    assert!(
+        failed_error.exists(),
+        "dirty file queue item should have an error sidecar"
+    );
+    Ok(())
 }
 
 fn upsert_request(session_id: &str, workspace: &str, tick: i64) -> UpsertSessionRequest {
@@ -179,6 +191,24 @@ fn assert_ok(response: SessionLogResponse, context: &str) -> Result<()> {
         SessionLogResponse::Error { error } => bail!("{context} returned error: {error}"),
         other => bail!("{context} returned unexpected response: {other:?}"),
     }
+}
+
+fn call_service_with_retry(
+    command: &SessionLogCommand,
+    timeout: Duration,
+) -> Result<SessionLogResponse> {
+    let started = Instant::now();
+    let mut last_error = None;
+    while started.elapsed() < timeout {
+        match session_log::ipc::call_service(command) {
+            Ok(response) => return Ok(response),
+            Err(error) => {
+                last_error = Some(error);
+                thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow!("session_db service call did not run")))
 }
 
 struct SessionDbGuard {

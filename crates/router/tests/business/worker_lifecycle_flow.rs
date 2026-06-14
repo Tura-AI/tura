@@ -1,11 +1,14 @@
 use anyhow::{anyhow, Context, Result};
 use serde_json::json;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
+use sysinfo::{Pid, System};
 use tokio::sync::Barrier;
 use tura_router::manager::ServiceManager;
 use tura_router::models::{CallContext, WorkerSpec};
+use tura_router::runtime_orphans::cleanup_orphan_runtime_workers;
 
 #[tokio::test]
 async fn router_worker_business_flow_reuses_replaces_and_cleans_up_processes() -> Result<()> {
@@ -103,6 +106,9 @@ async fn router_worker_business_flow_reuses_replaces_and_cleans_up_processes() -
     assert!(
         exit_error.to_string().contains("empty response")
             || exit_error.to_string().contains("broken pipe")
+            || exit_error
+                .to_string()
+                .contains("closed stdout before response")
             || exit_error.to_string().contains("reset"),
         "unexpected worker exit error: {exit_error:#}"
     );
@@ -400,89 +406,6 @@ async fn router_worker_business_flow_stale_worker_id_fails_cleanly_after_key_sto
 }
 
 #[tokio::test]
-async fn router_worker_business_flow_unresponsive_worker_is_removed_and_restarted() -> Result<()> {
-    let temp = tempfile::tempdir().context("temp unresponsive worker dir")?;
-    let script = write_worker_script(temp.path())?;
-    let python = python_executable()?;
-    let manager = ServiceManager::new();
-    let spec = WorkerSpec {
-        key: "runtime_worker:unresponsive-session".to_string(),
-        service_name: "runtime".to_string(),
-        executable: python,
-        args: vec![script.to_string_lossy().to_string()],
-        env: vec![
-            (
-                "TURA_TEST_WORKER_KIND".to_string(),
-                "unresponsive".to_string(),
-            ),
-            (
-                "TURA_WORKER_INVOKE_TIMEOUT_SECS".to_string(),
-                "1".to_string(),
-            ),
-        ],
-    };
-
-    let first = manager.ensure_worker(spec.clone()).await?;
-    let timeout_error = manager
-        .call_worker(
-            &first.worker_id,
-            CallContext::new(
-                "runtime.run".to_string(),
-                "/runtime/unresponsive".to_string(),
-                json!({ "never_respond": true }),
-            ),
-        )
-        .await
-        .expect_err("unresponsive worker should time out");
-    assert!(
-        timeout_error.to_string().contains("timed out")
-            || timeout_error.to_string().contains("worker stopped"),
-        "unexpected unresponsive worker error: {timeout_error:#}"
-    );
-    assert_eq!(
-        manager.count_workers_with_prefix("runtime_worker:"),
-        0,
-        "timed-out worker should be removed before the next ensure"
-    );
-
-    let stale_error = manager
-        .call_worker(
-            &first.worker_id,
-            CallContext::new(
-                "runtime.run".to_string(),
-                "/runtime/unresponsive/stale".to_string(),
-                json!({ "prompt": "old id" }),
-            ),
-        )
-        .await
-        .expect_err("stale worker id should already be removed");
-    assert!(
-        stale_error.to_string().contains("worker not found"),
-        "stale id should fail cleanly: {stale_error:#}"
-    );
-
-    let restarted = manager.ensure_worker(spec).await?;
-    assert_ne!(
-        first.worker_id, restarted.worker_id,
-        "unresponsive worker should be replaced with a fresh process"
-    );
-    let response = manager
-        .call_worker(
-            &restarted.worker_id,
-            CallContext::new(
-                "runtime.run".to_string(),
-                "/runtime/unresponsive/restarted".to_string(),
-                json!({ "prompt": "after restart" }),
-            ),
-        )
-        .await?;
-    assert_eq!(response["ok"], true);
-    assert_eq!(response["worker_kind"], "unresponsive");
-    assert_eq!(manager.stop_workers_with_prefix("runtime_worker:").await, 1);
-    Ok(())
-}
-
-#[tokio::test]
 async fn router_worker_business_flow_stop_by_key_interrupts_slow_worker_without_registry_leak(
 ) -> Result<()> {
     let temp = tempfile::tempdir().context("temp slow stop worker dir")?;
@@ -707,6 +630,54 @@ async fn router_worker_business_flow_prefix_stop_interrupts_many_in_flight_worke
     Ok(())
 }
 
+#[tokio::test]
+async fn router_worker_business_flow_startup_cleanup_kills_orphan_runtime_processes() -> Result<()>
+{
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let temp = tempfile::tempdir().context("temp orphan runtime dir")?;
+    let home = temp.path().join("tura-home");
+    std::fs::create_dir_all(&home).context("create orphan cleanup TURA_HOME")?;
+    let previous_home = std::env::var_os("TURA_HOME");
+    let previous_session_root = std::env::var_os("SESSION_LOG_DB_ROOT");
+    let previous_tura_root = std::env::var_os("TURA_DB_ROOT");
+    std::env::set_var("TURA_HOME", &home);
+    std::env::remove_var("SESSION_LOG_DB_ROOT");
+    std::env::remove_var("TURA_DB_ROOT");
+
+    let mut child = ChildCleanup::new(
+        Command::new(python_executable()?)
+            .arg("-c")
+            .arg("import time; time.sleep(60)")
+            .env("TURA_RUNTIME_WORKER", "1")
+            .env("TURA_ROLE", "runtime_worker")
+            .env("TURA_HOME", &home)
+            .env("TURA_ROUTER_PARENT_PID", "999999")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .context("spawn orphan runtime marker process")?,
+    );
+    let child_pid = child.id();
+    wait_for_process_alive(child_pid, Duration::from_secs(5))
+        .with_context(|| format!("orphan marker pid {child_pid} should start"))?;
+
+    let report = cleanup_orphan_runtime_workers();
+    wait_for_process_dead(child_pid, Duration::from_secs(10))
+        .with_context(|| format!("orphan marker pid {child_pid} should be killed"))?;
+    child.wait();
+
+    restore_env("TURA_HOME", previous_home);
+    restore_env("SESSION_LOG_DB_ROOT", previous_session_root);
+    restore_env("TURA_DB_ROOT", previous_tura_root);
+
+    assert!(
+        report.killed.contains(&child_pid),
+        "cleanup report should include the orphan runtime pid {child_pid}: {report:?}"
+    );
+    Ok(())
+}
+
 fn python_executable() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("PYTHON") {
         let path = PathBuf::from(path);
@@ -784,7 +755,81 @@ fn assert_worker_interruption_error(error: &anyhow::Error) {
         message.contains("empty response")
             || message.contains("broken pipe")
             || message.contains("reset")
+            || message.contains("closed stdout before response")
             || message.contains("cancelled"),
         "unexpected worker interruption error: {error:#}"
     );
+}
+
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+struct ChildCleanup {
+    child: Option<Child>,
+}
+
+impl ChildCleanup {
+    fn new(child: Child) -> Self {
+        Self { child: Some(child) }
+    }
+
+    fn id(&self) -> u32 {
+        self.child.as_ref().map(Child::id).unwrap_or(0)
+    }
+
+    fn wait(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.wait();
+        }
+    }
+}
+
+impl Drop for ChildCleanup {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+fn wait_for_process_alive(pid: u32, timeout: Duration) -> Result<()> {
+    let started = std::time::Instant::now();
+    while started.elapsed() < timeout {
+        if process_alive(pid) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Err(anyhow!(
+        "pid {pid} was not alive after {}ms",
+        timeout.as_millis()
+    ))
+}
+
+fn wait_for_process_dead(pid: u32, timeout: Duration) -> Result<()> {
+    let started = std::time::Instant::now();
+    while started.elapsed() < timeout {
+        if !process_alive(pid) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Err(anyhow!(
+        "pid {pid} was still alive after {}ms",
+        timeout.as_millis()
+    ))
+}
+
+fn process_alive(pid: u32) -> bool {
+    let mut system = System::new_all();
+    system.refresh_processes();
+    system.process(Pid::from_u32(pid)).is_some()
+}
+
+fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
+    if let Some(value) = previous {
+        std::env::set_var(key, value);
+    } else {
+        std::env::remove_var(key);
+    }
 }

@@ -125,6 +125,12 @@ fn persisted_message(
         .or_else(|| object.get("timestamp").and_then(timestamp_millis))
         .unwrap_or(created_at);
 
+    if let Some(message) =
+        conversation_message_record(session, index, object, created_at, updated_at)
+    {
+        return message;
+    }
+
     object
         .entry("id".to_string())
         .or_insert_with(|| Value::String(format!("{}:log:{index}", session.session_id)));
@@ -142,6 +148,111 @@ fn persisted_message(
         .entry("session_id".to_string())
         .or_insert_with(|| Value::String(session.session_id.clone()));
     value
+}
+
+fn conversation_message_record(
+    session: &SessionManagement,
+    index: usize,
+    object: &serde_json::Map<String, Value>,
+    created_at: i64,
+    updated_at: i64,
+) -> Option<Value> {
+    if object.get("parts").and_then(Value::as_array).is_some() {
+        let role = object.get("role").and_then(Value::as_str);
+        if !matches!(role, Some("user" | "assistant" | "system")) {
+            return None;
+        }
+        let mut message = Value::Object(object.clone());
+        if let Some(message_object) = message.as_object_mut() {
+            message_object
+                .entry("id".to_string())
+                .or_insert_with(|| Value::String(format!("{}:log:{index}", session.session_id)));
+            message_object
+                .entry("session_id".to_string())
+                .or_insert_with(|| Value::String(session.session_id.clone()));
+            message_object
+                .entry("created_at".to_string())
+                .or_insert_with(|| Value::Number(created_at.into()));
+            message_object
+                .entry("updated_at".to_string())
+                .or_insert_with(|| Value::Number(updated_at.into()));
+        }
+        return Some(message);
+    }
+
+    let role = object.get("role").and_then(Value::as_str)?;
+    if !matches!(role, "user" | "assistant" | "system") {
+        return None;
+    }
+    let content = conversation_content_text(object.get("content")?)?;
+    let message_id = object
+        .get("id")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("{}:log:{index}", session.session_id));
+    let part_id = object
+        .get("part_id")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("{message_id}:part"));
+    let metadata = object.get("metadata").cloned();
+    let has_metadata = metadata.is_some();
+
+    let mut part = serde_json::json!({
+        "id": part_id,
+        "type": "text",
+        "content": content,
+        "text": content,
+        "metadata": metadata,
+        "call_id": null,
+        "tool": null,
+        "state": null,
+    });
+    if !has_metadata {
+        if let Some(part_object) = part.as_object_mut() {
+            part_object.remove("metadata");
+        }
+    }
+
+    Some(serde_json::json!({
+        "id": message_id,
+        "session_id": session.session_id,
+        "role": role,
+        "parent_id": object.get("parent_id").cloned().unwrap_or(Value::Null),
+        "parts": [part],
+        "created_at": created_at,
+        "updated_at": updated_at,
+    }))
+}
+
+fn conversation_content_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => {
+            let text = text.trim();
+            (!text.is_empty()).then(|| text.to_string())
+        }
+        Value::Array(items) => {
+            let text = items
+                .iter()
+                .filter_map(|item| {
+                    item.as_str().map(ToString::to_string).or_else(|| {
+                        item.get("text")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string)
+                    })
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            (!text.trim().is_empty()).then(|| text.trim().to_string())
+        }
+        Value::Object(object) => object
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(ToString::to_string),
+        _ => None,
+    }
 }
 
 fn timestamp_millis(value: &Value) -> Option<i64> {
@@ -208,5 +319,102 @@ mod tests {
         assert_eq!(value["role"], "log");
         assert_eq!(value["created_at"], 1_002);
         assert_eq!(value["session_id"], "snapshot-session");
+    }
+
+    #[test]
+    fn persisted_message_turns_assistant_content_into_hydratable_message() {
+        let session = session();
+        let value = persisted_message(
+            &session,
+            7,
+            &serde_json::json!({
+                "id": "msg-stream-runtime-1",
+                "part_id": "part-stream-runtime-1",
+                "role": "assistant",
+                "content": "final visible reply",
+                "created_at": 42,
+                "updated_at": 43,
+                "runtime_id": "runtime-1"
+            })
+            .to_string(),
+            1_000,
+        );
+
+        assert_eq!(value["id"], "msg-stream-runtime-1");
+        assert_eq!(value["session_id"], "snapshot-session");
+        assert_eq!(value["role"], "assistant");
+        assert_eq!(value["created_at"], 42);
+        assert_eq!(value["updated_at"], 43);
+        assert_eq!(value["parts"][0]["id"], "part-stream-runtime-1");
+        assert_eq!(value["parts"][0]["type"], "text");
+        assert_eq!(value["parts"][0]["text"], "final visible reply");
+        assert_eq!(value["parts"][0]["content"], "final visible reply");
+    }
+
+    #[test]
+    fn persisted_message_normalizes_user_and_system_content_but_keeps_runtime_usage_auxiliary() {
+        let session = session();
+        let user = persisted_message(
+            &session,
+            1,
+            &serde_json::json!({
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}, {"text": " world"}]
+            })
+            .to_string(),
+            1_000,
+        );
+        let system = persisted_message(
+            &session,
+            2,
+            &serde_json::json!({
+                "role": "system",
+                "content": {"text": "guardrail"}
+            })
+            .to_string(),
+            1_000,
+        );
+        let usage = persisted_message(
+            &session,
+            3,
+            &serde_json::json!({
+                "type": "runtime_usage",
+                "runtime_id": "runtime-1",
+                "usage": {"total_tokens": 9},
+                "timestamp": "2026-06-14T08:09:11Z"
+            })
+            .to_string(),
+            1_000,
+        );
+
+        assert_eq!(user["role"], "user");
+        assert_eq!(user["parts"][0]["text"], "hello world");
+        assert_eq!(system["role"], "system");
+        assert_eq!(system["parts"][0]["text"], "guardrail");
+        assert_eq!(usage["role"], "runtime");
+        assert_eq!(usage["type"], "runtime_usage");
+        assert!(usage.get("parts").is_none());
+    }
+
+    #[test]
+    fn persisted_message_keeps_user_agent_context_auxiliary() {
+        let session = session();
+        let value = persisted_message(
+            &session,
+            4,
+            &serde_json::json!({
+                "role": crate::context::USER_AGENT_CONTEXT_ROLE,
+                "content": "<environment_context>internal</environment_context>"
+            })
+            .to_string(),
+            1_000,
+        );
+
+        assert_eq!(value["role"], crate::context::USER_AGENT_CONTEXT_ROLE);
+        assert_eq!(
+            value["content"],
+            "<environment_context>internal</environment_context>"
+        );
+        assert!(value.get("parts").is_none());
     }
 }

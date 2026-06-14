@@ -131,7 +131,7 @@ addCheck("command_run routes planning through the shared command consumer path",
   assert.match(handler, /run_macro_command_batch/)
   assert.match(handler, /run_command_run_step/)
   assert.match(commandRunTests, /pass_planning_command_routes_through_command_run/)
-  assert.match(commandRunTests, /pass_same_step_commands_are_extended_to_unique_order/)
+  assert.match(commandRunTests, /pass_same_step_commands_keep_dependency_group/)
 })
 
 addCheck("runtime plan mapping replaces active task and renumbers ordered steps", () => {

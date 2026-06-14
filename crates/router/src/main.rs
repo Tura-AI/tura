@@ -11,7 +11,7 @@ use services::manager::ServiceManager;
 use services::models::{CallContext, WorkerSpec};
 use services::{
     command_run::CommandRunService, execution::ExecutionService, recovery::recover_after_start,
-    session_db::SessionDbService,
+    runtime_orphans::cleanup_orphan_runtime_workers, session_db::SessionDbService,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::{
@@ -437,6 +437,13 @@ async fn serve_socket() -> anyhow::Result<()> {
     use tokio::time::{timeout, Duration};
 
     let _router_lock = RouterDaemonLock::acquire()?;
+    let orphan_report = cleanup_orphan_runtime_workers();
+    if !orphan_report.killed.is_empty() {
+        eprintln!(
+            "router startup cleanup: killed orphan runtime workers {:?}",
+            orphan_report.killed
+        );
+    }
     let state = build_state();
     let _ = recover_after_start(&state.session_db)?;
     // The daemon owns the backend: bring up the single session_db owner now.
@@ -857,7 +864,24 @@ async fn dispatch_run_agent(state: &AppState, req: RunAgentRequest) -> (u16, Val
 
     // Env contract: role, callback channel, model, plus parent/depth for
     // child sub-sessions (T5.2).
-    let mut env = vec![("TURA_ROLE".to_string(), "runtime_worker".to_string())];
+    let router_pid = std::process::id();
+    let mut env = vec![
+        ("TURA_ROLE".to_string(), "runtime_worker".to_string()),
+        ("TURA_RUNTIME_WORKER".to_string(), "1".to_string()),
+        ("TURA_WORKER_MODE".to_string(), "one-shot".to_string()),
+        (
+            "TURA_WORKER_ONESHOT_PROTOCOL".to_string(),
+            "envelope".to_string(),
+        ),
+        ("TURA_RUNTIME_ONESHOT".to_string(), "1".to_string()),
+        ("TURA_ROUTER_PARENT_PID".to_string(), router_pid.to_string()),
+    ];
+    if let Some(start_time) = current_process_start_time(router_pid) {
+        env.push((
+            "TURA_ROUTER_PARENT_START_TIME".to_string(),
+            start_time.to_string(),
+        ));
+    }
     if let Some(model) = req
         .model
         .as_deref()
@@ -933,11 +957,12 @@ async fn dispatch_run_agent(state: &AppState, req: RunAgentRequest) -> (u16, Val
     );
 
     let worker_id = worker.worker_id.clone();
+    let worker_cleanup = RuntimeWorkerCleanupGuard::new(state.manager.clone(), worker_id.clone());
     if router_debug_enabled() {
         eprintln!("router debug: dispatch_run_agent calling worker session_id={session_id} worker_id={worker_id}");
     }
     let call_result = state.manager.call_worker(&worker_id, ctx).await;
-    state.manager.stop_worker(&worker_id).await;
+    worker_cleanup.stop_now().await;
     if router_debug_enabled() {
         eprintln!(
             "router debug: dispatch_run_agent worker returned session_id={} worker_id={} ok={}",
@@ -970,6 +995,41 @@ async fn dispatch_run_agent(state: &AppState, req: RunAgentRequest) -> (u16, Val
                 "error": format!("runtime worker invocation failed: {error}")
             }),
         ),
+    }
+}
+
+struct RuntimeWorkerCleanupGuard {
+    manager: ServiceManager,
+    worker_id: String,
+    active: std::sync::atomic::AtomicBool,
+}
+
+impl RuntimeWorkerCleanupGuard {
+    fn new(manager: ServiceManager, worker_id: String) -> Self {
+        Self {
+            manager,
+            worker_id,
+            active: std::sync::atomic::AtomicBool::new(true),
+        }
+    }
+
+    async fn stop_now(&self) {
+        self.active
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.manager.stop_worker(&self.worker_id).await;
+    }
+}
+
+impl Drop for RuntimeWorkerCleanupGuard {
+    fn drop(&mut self) {
+        if !self.active.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        let manager = self.manager.clone();
+        let worker_id = self.worker_id.clone();
+        tokio::spawn(async move {
+            manager.stop_worker(&worker_id).await;
+        });
     }
 }
 
@@ -1037,6 +1097,102 @@ mod tests {
             ..command_run
         };
         assert_eq!(enqueue_turn_session_id(&blank_session), None);
+    }
+
+    #[test]
+    fn dispatch_run_agent_rejects_requests_over_runtime_worker_limit() -> anyhow::Result<()> {
+        let state = build_state();
+        let runtime = tokio_runtime()?;
+
+        runtime.block_on(async {
+            for index in 0..MAX_RUNTIME_WORKERS {
+                state
+                    .manager
+                    .ensure_worker(WorkerSpec {
+                        key: format!("runtime_worker:limit-fill-{index}"),
+                        service_name: "runtime".to_string(),
+                        executable: std::path::PathBuf::from(
+                            "definitely-missing-runtime-worker-for-limit-test",
+                        ),
+                        args: vec!["--serve".to_string()],
+                        env: vec![("TURA_DEBUG_RUNTIME".to_string(), "0".to_string())],
+                    })
+                    .await?;
+            }
+
+            assert_eq!(
+                state.manager.count_workers_with_prefix("runtime_worker:"),
+                MAX_RUNTIME_WORKERS
+            );
+
+            let request = serde_json::from_value(json!({
+                "session_id": "over-limit-session",
+                "prompt": "this request should be rejected before another runtime worker starts"
+            }))?;
+            let (status, body) = dispatch_run_agent(&state, request).await;
+
+            assert_eq!(status, 429);
+            assert_eq!(body["ok"], false);
+            assert_eq!(body["session_id"], "over-limit-session");
+            assert!(
+                body["error"].as_str().is_some_and(
+                    |error| error.contains("runtime worker concurrency limit reached (16/16)")
+                ),
+                "unexpected limit error body: {body}"
+            );
+            assert_eq!(
+                state.manager.count_workers_with_prefix("runtime_worker:"),
+                MAX_RUNTIME_WORKERS,
+                "rejected dispatch must not create another worker"
+            );
+
+            let stopped = state
+                .manager
+                .stop_workers_with_prefix("runtime_worker:")
+                .await;
+            assert_eq!(stopped, MAX_RUNTIME_WORKERS);
+            Ok::<_, anyhow::Error>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_worker_cleanup_guard_drop_stops_registered_worker() -> anyhow::Result<()> {
+        let state = build_state();
+        let runtime = tokio_runtime()?;
+
+        runtime.block_on(async {
+            let handle = state
+                .manager
+                .ensure_worker(WorkerSpec {
+                    key: "runtime_worker:drop-cleanup".to_string(),
+                    service_name: "runtime_worker".to_string(),
+                    executable: std::path::PathBuf::from(
+                        "definitely-missing-runtime-worker-for-drop-cleanup",
+                    ),
+                    args: Vec::new(),
+                    env: vec![("TURA_WORKER_MODE".to_string(), "one-shot".to_string())],
+                })
+                .await?;
+            assert_eq!(
+                state.manager.count_workers_with_prefix("runtime_worker:"),
+                1
+            );
+
+            let guard =
+                RuntimeWorkerCleanupGuard::new(state.manager.clone(), handle.worker_id.clone());
+            drop(guard);
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+            assert_eq!(
+                state.manager.count_workers_with_prefix("runtime_worker:"),
+                0,
+                "dropping the dispatch cleanup guard should remove the worker"
+            );
+            assert!(!state.manager.stop_worker(&handle.worker_id).await);
+            Ok::<_, anyhow::Error>(())
+        })?;
+        Ok(())
     }
 
     #[test]

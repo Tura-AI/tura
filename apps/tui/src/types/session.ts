@@ -75,6 +75,14 @@ export interface CreateSessionRequest {
   auto_session_name?: boolean;
 }
 
+export interface ForkSessionRequest {
+  directory?: string;
+  model?: string;
+  agent?: string;
+  copy_context?: boolean;
+  copyContext?: boolean;
+}
+
 export interface PromptPayload {
   messageID: string;
   parts: Array<{ id: string; type: "text"; text: string }>;
@@ -164,11 +172,12 @@ export function lastAssistantText(messages: Message[]): string {
     .map((message, index) => ({ message, index }))
     .sort(
       (left, right) =>
-        messageSortValue(right.message) - messageSortValue(left.message) || right.index - left.index,
+        messageSortValue(right.message) - messageSortValue(left.message) ||
+        right.index - left.index,
     );
   for (const { message } of ordered) {
     if (message.role === "assistant") {
-      const text = messageText(message).trim();
+      const text = assistantResultText(message).trim();
       if (isUserFacingAssistantText(text)) return text;
     }
   }
@@ -179,8 +188,38 @@ export function hasUserFacingAssistantText(messages: Message[], startIndex = 0):
   return messages
     .slice(startIndex)
     .some(
-      (message) => message.role === "assistant" && isUserFacingAssistantText(messageText(message)),
+      (message) =>
+        message.role === "assistant" && isUserFacingAssistantText(assistantResultText(message)),
     );
+}
+
+function assistantResultText(message: Message): string {
+  const text = messageText(message).trim();
+  if (text) return text;
+  return (message.parts ?? []).map(partResultText).filter(Boolean).join("");
+}
+
+function partResultText(part: MessagePart): string {
+  for (const value of [part.state, part.metadata]) {
+    const output = userFacingOutputText(value);
+    if (output) return output;
+  }
+  return "";
+}
+
+function userFacingOutputText(value: unknown): string {
+  if (!value || isInternalTaskStatusPayload(value)) return "";
+  if (typeof value === "string") return isInternalTaskStatusText(value) ? "" : value.trim();
+  if (Array.isArray(value)) {
+    return value.map(userFacingOutputText).filter(Boolean).join("");
+  }
+  if (typeof value !== "object") return "";
+  const object = value as JsonObject;
+  for (const key of ["output", "text", "content", "finalText", "final_text", "message"]) {
+    const output = userFacingOutputText(object[key]);
+    if (output) return output;
+  }
+  return "";
 }
 
 function isUserFacingAssistantText(value: string): boolean {

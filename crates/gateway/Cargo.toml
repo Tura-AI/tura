@@ -132,6 +132,11 @@ path = "tests/performance/process_lifecycle_e2e.rs"
 required-features = ["performance-tests"]
 
 [[test]]
+name = "gateway_session_concurrency_stress"
+path = "tests/performance/gateway_session_concurrency_stress.rs"
+required-features = ["performance-tests"]
+
+[[test]]
 name = "provider_auth_churn_test"
 path = "tests/performance/provider_auth_churn_test.rs"
 required-features = ["performance-tests"]

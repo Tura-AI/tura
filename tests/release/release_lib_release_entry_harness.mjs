@@ -1,38 +1,47 @@
-import { spawn, spawnSync } from "node:child_process"
-import { createHash } from "node:crypto"
-import fs from "node:fs"
-import fsp from "node:fs/promises"
-import net from "node:net"
-import path from "node:path"
-import process from "node:process"
-import { fileURLToPath } from "node:url"
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import fsp from "node:fs/promises";
+import net from "node:net";
+import path from "node:path";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
 
-const harnessDir = path.dirname(fileURLToPath(import.meta.url))
-export const repoRoot = path.resolve(harnessDir, "..", "..")
-const exeSuffix = process.platform === "win32" ? ".exe" : ""
-const defaultModel = process.env.TURA_BUSINESS_MODEL || "codex/gpt-5.5"
-const defaultAgent = process.env.TURA_BUSINESS_AGENT || "fast"
-const defaultVariant = process.env.TURA_BUSINESS_MODEL_VARIANT || "low"
-const binaryProfile = process.env.TURA_BUSINESS_BINARY_PROFILE || "release"
+const harnessDir = path.dirname(fileURLToPath(import.meta.url));
+export const repoRoot = path.resolve(harnessDir, "..", "..");
+const exeSuffix = process.platform === "win32" ? ".exe" : "";
+const defaultModel = process.env.TURA_BUSINESS_MODEL || "codex/gpt-5.5";
+const defaultAgent = process.env.TURA_BUSINESS_AGENT || "fast";
+const defaultVariant = process.env.TURA_BUSINESS_MODEL_VARIANT || "low";
+const binaryProfile = process.env.TURA_BUSINESS_BINARY_PROFILE || "release";
 const defaultTimeoutMsByCase = {
   "single-request": 180_000,
   snake: 240_000,
   "password-zip": 240_000,
-}
+};
 
-export const caseNames = ["single-request", "snake", "password-zip"]
+export const caseNames = ["single-request", "snake", "password-zip"];
 
 export function binaryDir() {
-  return path.join(repoRoot, "target", binaryProfile)
+  return path.join(repoRoot, "target", binaryProfile);
 }
 
 export function releaseBinary(name) {
-  return path.join(binaryDir(), `${name}${exeSuffix}`)
+  return path.join(binaryDir(), `${name}${exeSuffix}`);
 }
 
 export function assertReleaseArtifacts() {
-  const required = ["tura", "tura_exec", "tura_gateway", "tura_router", "tura_runtime", "tura_session_db"]
-  const missing = required.map(releaseBinary).filter((candidate) => !fs.existsSync(candidate))
+  const required = [
+    "tura",
+    "tura_exec",
+    "tura_gateway",
+    "tura_router",
+    "tura_runtime",
+    "tura_session_db",
+  ];
+  const missing = required
+    .map(releaseBinary)
+    .filter((candidate) => !fs.existsSync(candidate));
   if (missing.length > 0) {
     throw new Error(
       [
@@ -40,33 +49,35 @@ export function assertReleaseArtifacts() {
         ...missing.map((item) => `- ${item}`),
         `Run scripts/build-${binaryProfile}.ps1 or scripts/build-${binaryProfile}.sh first.`,
       ].join("\n"),
-    )
+    );
   }
 }
 
 export function assertReleaseGuiArtifacts() {
-  const index = path.join(binaryDir(), "gui", "index.html")
+  const index = path.join(binaryDir(), "gui", "index.html");
   if (!fs.existsSync(index)) {
     throw new Error(
       [
         `Missing ${binaryProfile} GUI artifact: ${index}`,
         `Run scripts/build-${binaryProfile}.ps1 or scripts/build-${binaryProfile}.sh first.`,
       ].join("\n"),
-    )
+    );
   }
 }
 
 export function runIdFor(surface, caseName) {
-  return process.env.TURA_BUSINESS_RUN_ID || `${surface}-${caseName}-${timestamp()}`
+  return (
+    process.env.TURA_BUSINESS_RUN_ID || `${surface}-${caseName}-${timestamp()}`
+  );
 }
 
 export function releaseRunPaths(surface, caseName) {
-  const runId = runIdFor(surface, caseName)
+  const runId = runIdFor(surface, caseName);
   const root =
     process.env.TURA_BUSINESS_TARGET_ROOT ||
     process.env.COMMAND_RUN_BUSINESS_TARGET_ROOT ||
-    path.join(repoRoot, "target", "business")
-  const runRoot = path.join(root, binaryProfile, surface, caseName, runId)
+    defaultBusinessTargetRoot(surface);
+  const runRoot = path.join(root, binaryProfile, surface, caseName, runId);
   return {
     surface,
     caseName,
@@ -78,11 +89,17 @@ export function releaseRunPaths(surface, caseName) {
     lastMessagePath: path.join(runRoot, "last-message.txt"),
     providerLogRoot: path.join(runRoot, "logs", "provider"),
     turaHome: path.join(runRoot, "tura-home"),
-  }
+  };
+}
+
+function defaultBusinessTargetRoot(surface) {
+  if (surface === "tui")
+    return path.join(repoRoot, "apps", "tui", "test-results", "release");
+  return path.join(repoRoot, "target", "business");
 }
 
 export async function runCliReleaseCase(caseName) {
-  const timeoutMs = caseTimeoutMs(caseName)
+  const timeoutMs = caseTimeoutMs(caseName);
   return runTextEntryCase("cli", caseName, async (ctx, prompt) => {
     const args = [
       "exec",
@@ -98,16 +115,16 @@ export async function runCliReleaseCase(caseName) {
       "--output-last-message",
       ctx.lastMessagePath,
       prompt,
-    ]
-    return runLoggedProcess("tura", args, ctx, { timeoutMs })
-  })
+    ];
+    return runLoggedProcess("tura", args, ctx, { timeoutMs });
+  });
 }
 
 export async function runTuiReleaseCase(caseName) {
-  const timeoutMs = caseTimeoutMs(caseName)
+  const timeoutMs = caseTimeoutMs(caseName);
   return runTextEntryCase("tui", caseName, async (ctx, prompt) => {
-    const port = await freePort()
-    const gatewayUrl = `http://127.0.0.1:${port}`
+    const port = await freePort();
+    const gatewayUrl = `http://127.0.0.1:${port}`;
     const args = [
       "--gateway-url",
       gatewayUrl,
@@ -126,28 +143,28 @@ export async function runTuiReleaseCase(caseName) {
       "--last-message-file",
       ctx.lastMessagePath,
       prompt,
-    ]
+    ];
     return runLoggedProcess("tura", args, ctx, {
       timeoutMs: timeoutMs + 30_000,
       env: {
         TURA_GATEWAY_PORT: String(port),
         TURA_GATEWAY_URL: gatewayUrl,
       },
-    })
-  })
+    });
+  });
 }
 
 export async function runGuiReleaseCase(caseName) {
-  assertReleaseArtifacts()
-  assertReleaseGuiArtifacts()
-  const timeoutMs = caseTimeoutMs(caseName)
-  const ctx = await prepareContext("gui", caseName)
-  const definition = caseDefinition(caseName, ctx)
-  let gateway
-  let result
-  let cleanup
+  assertReleaseArtifacts();
+  assertReleaseGuiArtifacts();
+  const timeoutMs = caseTimeoutMs(caseName);
+  const ctx = await prepareContext("gui", caseName);
+  const definition = caseDefinition(caseName, ctx);
+  let gateway;
+  let result;
+  let cleanup;
   try {
-    gateway = await startReleaseGateway(ctx)
+    gateway = await startReleaseGateway(ctx);
     const env = {
       ...caseEnv(ctx),
       TURA_GATEWAY_URL: gateway.url,
@@ -159,53 +176,62 @@ export async function runGuiReleaseCase(caseName) {
       TURA_SMOKE_PROMPT: definition.prompt,
       TURA_SMOKE_TIMEOUT_S: String(Math.ceil(timeoutMs / 1000)),
       PYTHONUTF8: "1",
-    }
-    result = await runLoggedProcess(pythonCommand(), [path.join(repoRoot, "apps", "gui", "e2e", "release_web_gui_smoke.py")], ctx, {
-      timeoutMs: timeoutMs + 60_000,
-      env,
-    })
+    };
+    result = await runLoggedProcess(
+      pythonCommand(),
+      [path.join(repoRoot, "apps", "gui", "e2e", "release_web_gui_smoke.py")],
+      ctx,
+      {
+        timeoutMs: timeoutMs + 60_000,
+        env,
+      },
+    );
   } finally {
-    cleanup = await shutdownBackendDaemons(ctx)
-    await stopProcess(gateway?.child)
+    cleanup = await shutdownBackendDaemons(ctx);
+    await stopProcess(gateway?.child);
   }
   return finishCase(ctx, definition, result, {
     surface: "gui",
     gatewayUrl: gateway?.url,
     cleanup,
-    resultText: await readText(path.join(ctx.runRoot, "gui-artifacts", "report.json")),
-  })
+    resultText: await readText(
+      path.join(ctx.runRoot, "gui-artifacts", "report.json"),
+    ),
+  });
 }
 
 async function runTextEntryCase(surface, caseName, runner) {
-  assertReleaseArtifacts()
-  const ctx = await prepareContext(surface, caseName)
-  const definition = caseDefinition(caseName, ctx)
-  let result
-  let cleanup
+  assertReleaseArtifacts();
+  const ctx = await prepareContext(surface, caseName);
+  const definition = caseDefinition(caseName, ctx);
+  let result;
+  let cleanup;
   try {
-    result = await runner(ctx, definition.prompt)
+    result = await runner(ctx, definition.prompt);
   } finally {
-    cleanup = await shutdownBackendDaemons(ctx)
+    cleanup = await shutdownBackendDaemons(ctx);
   }
-  return finishCase(ctx, definition, result, { surface, cleanup })
+  return finishCase(ctx, definition, result, { surface, cleanup });
 }
 
 export async function prepareContext(surface, caseName) {
   if (!caseNames.includes(caseName)) {
-    throw new Error(`Unknown business case ${caseName}. Expected one of: ${caseNames.join(", ")}`)
+    throw new Error(
+      `Unknown business case ${caseName}. Expected one of: ${caseNames.join(", ")}`,
+    );
   }
-  const ctx = releaseRunPaths(surface, caseName)
-  await fsp.rm(ctx.runRoot, { recursive: true, force: true })
-  await fsp.mkdir(ctx.workspace, { recursive: true })
-  await fsp.mkdir(ctx.logs, { recursive: true })
+  const ctx = releaseRunPaths(surface, caseName);
+  await fsp.rm(ctx.runRoot, { recursive: true, force: true });
+  await fsp.mkdir(ctx.workspace, { recursive: true });
+  await fsp.mkdir(ctx.logs, { recursive: true });
   if (caseName === "snake") {
-    await exposeWorkspaceNodeModules(ctx)
+    await exposeWorkspaceNodeModules(ctx);
   }
   if (caseName === "password-zip") {
-    await writePasswordZipCliRefactorSeed(ctx)
+    await writePasswordZipCliRefactorSeed(ctx);
   }
-  await writeWorkspaceSeed(ctx, caseName)
-  return ctx
+  await writeWorkspaceSeed(ctx, caseName);
+  return ctx;
 }
 
 async function exposeWorkspaceNodeModules(ctx) {
@@ -213,17 +239,23 @@ async function exposeWorkspaceNodeModules(ctx) {
     path.join(repoRoot, "apps", "tui", "node_modules"),
     path.join(repoRoot, "apps", "gui", "node_modules"),
     path.join(repoRoot, "node_modules"),
-  ]
-  const source = candidates.find((candidate) => fs.existsSync(path.join(candidate, "playwright")))
+  ];
+  const source = candidates.find((candidate) =>
+    fs.existsSync(path.join(candidate, "playwright")),
+  );
   if (!source) {
-    return
+    return;
   }
-  const destination = path.join(ctx.workspace, "node_modules")
-  await fsp.rm(destination, { recursive: true, force: true })
+  const destination = path.join(ctx.workspace, "node_modules");
+  await fsp.rm(destination, { recursive: true, force: true });
   try {
-    await fsp.symlink(source, destination, process.platform === "win32" ? "junction" : "dir")
+    await fsp.symlink(
+      source,
+      destination,
+      process.platform === "win32" ? "junction" : "dir",
+    );
   } catch {
-    await fsp.cp(source, destination, { recursive: true })
+    await fsp.cp(source, destination, { recursive: true });
   }
 }
 
@@ -239,21 +271,25 @@ async function writeWorkspaceSeed(ctx, caseName) {
       "For Playwright verification, the workspace has node_modules linked to the repository test dependencies.",
       "",
     ].join("\n"),
-  )
+  );
 }
 
 async function writePasswordZipCliRefactorSeed(ctx) {
-  const salt = "tura-password-zip-20260611"
-  const dictionaryPassword = "tura-zip-5519"
-  const bruteForcePassword = "cab"
-  const dictionaryTarget = createHash("sha256").update(`${salt}:${dictionaryPassword}`, "utf8").digest("hex")
-  const bruteForceTarget = createHash("sha256").update(`${salt}:${bruteForcePassword}`, "utf8").digest("hex")
-  const legacyDir = path.join(ctx.workspace, "legacy_zip_password_cli")
-  const fixtureDir = path.join(ctx.workspace, "fixtures")
-  const acceptanceDir = path.join(ctx.workspace, "acceptance")
-  await fsp.mkdir(legacyDir, { recursive: true })
-  await fsp.mkdir(fixtureDir, { recursive: true })
-  await fsp.mkdir(acceptanceDir, { recursive: true })
+  const salt = "tura-password-zip-20260611";
+  const dictionaryPassword = "tura-zip-5519";
+  const bruteForcePassword = "cab";
+  const dictionaryTarget = createHash("sha256")
+    .update(`${salt}:${dictionaryPassword}`, "utf8")
+    .digest("hex");
+  const bruteForceTarget = createHash("sha256")
+    .update(`${salt}:${bruteForcePassword}`, "utf8")
+    .digest("hex");
+  const legacyDir = path.join(ctx.workspace, "legacy_zip_password_cli");
+  const fixtureDir = path.join(ctx.workspace, "fixtures");
+  const acceptanceDir = path.join(ctx.workspace, "acceptance");
+  await fsp.mkdir(legacyDir, { recursive: true });
+  await fsp.mkdir(fixtureDir, { recursive: true });
+  await fsp.mkdir(acceptanceDir, { recursive: true });
   await fsp.writeFile(
     path.join(legacyDir, "README.md"),
     [
@@ -268,7 +304,7 @@ async function writePasswordZipCliRefactorSeed(ctx) {
       "dictionary search, brute-force search, JSON output, and tests.",
       "",
     ].join("\n"),
-  )
+  );
   await fsp.writeFile(
     path.join(legacyDir, "legacy_zip_password_finder.mjs"),
     [
@@ -300,7 +336,7 @@ async function writePasswordZipCliRefactorSeed(ctx) {
       "process.exit(1)",
       "",
     ].join("\n"),
-  )
+  );
   await fsp.writeFile(
     path.join(fixtureDir, "secret.zip.fixture.json"),
     JSON.stringify(
@@ -314,7 +350,7 @@ async function writePasswordZipCliRefactorSeed(ctx) {
       null,
       2,
     ),
-  )
+  );
   await fsp.writeFile(
     path.join(fixtureDir, "bruteforce.zip.fixture.json"),
     JSON.stringify(
@@ -328,11 +364,18 @@ async function writePasswordZipCliRefactorSeed(ctx) {
       null,
       2,
     ),
-  )
+  );
   await fsp.writeFile(
     path.join(fixtureDir, "candidates.txt"),
-    ["winter-2024", "password", "letmein", "tura-zip-5519", "archive-open", "zip-secret"].join("\n"),
-  )
+    [
+      "winter-2024",
+      "password",
+      "letmein",
+      "tura-zip-5519",
+      "archive-open",
+      "zip-secret",
+    ].join("\n"),
+  );
   await fsp.writeFile(
     path.join(acceptanceDir, "zip_password_cli_acceptance.mjs"),
     [
@@ -422,11 +465,11 @@ async function writePasswordZipCliRefactorSeed(ctx) {
       "console.log(`ZIP_PASSWORD_REFACTOR_ACCEPTANCE_OK score=${passed}/${total}`)",
       "",
     ].join("\n"),
-  )
+  );
 }
 
 export function caseDefinition(caseName, ctx) {
-  const sentinel = `TURA_${ctx.surface.toUpperCase()}_${caseName.replaceAll("-", "_").toUpperCase()}_${ctx.runId}`
+  const sentinel = `TURA_${ctx.surface.toUpperCase()}_${caseName.replaceAll("-", "_").toUpperCase()}_${ctx.runId}`;
   if (caseName === "single-request") {
     return {
       sentinel,
@@ -438,14 +481,14 @@ export function caseDefinition(caseName, ctx) {
         `Final answer must include this marker: ${sentinel}`,
       ].join("\n"),
       validate: async () => {
-        const file = path.join(ctx.workspace, "single_request_result.txt")
-        const text = await readText(file)
+        const file = path.join(ctx.workspace, "single_request_result.txt");
+        const text = await readText(file);
         return [
           check("single_request_result.txt exists", fs.existsSync(file)),
           check("single request marker written", text.includes(sentinel)),
-        ]
+        ];
       },
-    }
+    };
   }
   if (caseName === "snake") {
     return {
@@ -471,15 +514,19 @@ export function caseDefinition(caseName, ctx) {
           [path.join("tools", "snake_playwright.mjs"), 500],
           ["desktop.png", 1_000],
           ["mobile.png", 1_000],
-        ]
+        ];
         return files.map(([relative, minSize]) => {
-          const file = path.join(ctx.workspace, relative)
-          return check(`${relative} exists and is non-empty`, fileSize(file) >= minSize, {
-            size: fileSize(file),
-          })
-        })
+          const file = path.join(ctx.workspace, relative);
+          return check(
+            `${relative} exists and is non-empty`,
+            fileSize(file) >= minSize,
+            {
+              size: fileSize(file),
+            },
+          );
+        });
       },
-    }
+    };
   }
   return {
     sentinel,
@@ -504,11 +551,32 @@ export function caseDefinition(caseName, ctx) {
       "Final answer must mention zip_password_refactor/bin/zip-password-finder.mjs, acceptance/zip_password_cli_acceptance.mjs, dictionary mode, brute-force mode, --json, SHA-256, tura-zip-5519, and the acceptance harness score.",
     ].join("\n"),
     validate: async () => {
-      const cli = path.join(ctx.workspace, "zip_password_refactor", "bin", "zip-password-finder.mjs")
-      const readme = path.join(ctx.workspace, "zip_password_refactor", "README.md")
-      const report = path.join(ctx.workspace, "zip_password_refactor", "acceptance-report.json")
-      const releaseResult = path.join(ctx.workspace, "zip_password_refactor", "RELEASE_RESULT.md")
-      const acceptance = path.join(ctx.workspace, "acceptance", "zip_password_cli_acceptance.mjs")
+      const cli = path.join(
+        ctx.workspace,
+        "zip_password_refactor",
+        "bin",
+        "zip-password-finder.mjs",
+      );
+      const readme = path.join(
+        ctx.workspace,
+        "zip_password_refactor",
+        "README.md",
+      );
+      const report = path.join(
+        ctx.workspace,
+        "zip_password_refactor",
+        "acceptance-report.json",
+      );
+      const releaseResult = path.join(
+        ctx.workspace,
+        "zip_password_refactor",
+        "RELEASE_RESULT.md",
+      );
+      const acceptance = path.join(
+        ctx.workspace,
+        "acceptance",
+        "zip_password_cli_acceptance.mjs",
+      );
       const acceptanceResult = fs.existsSync(acceptance)
         ? spawnSync(process.execPath, [acceptance], {
             cwd: ctx.workspace,
@@ -516,12 +584,23 @@ export function caseDefinition(caseName, ctx) {
             timeout: 45_000,
             windowsHide: true,
           })
-        : { status: 1, signal: "missing-acceptance", stdout: "", stderr: "missing acceptance script" }
-      const reportValue = await readJson(report)
+        : {
+            status: 1,
+            signal: "missing-acceptance",
+            stdout: "",
+            stderr: "missing acceptance script",
+          };
+      const reportValue = await readJson(report);
       return [
-        check("refactored CLI exists", fileSize(cli) > 700, { size: fileSize(cli) }),
-        check("refactor README exists", fileSize(readme) > 100, { size: fileSize(readme) }),
-        check("acceptance script exists", fileSize(acceptance) > 1_000, { size: fileSize(acceptance) }),
+        check("refactored CLI exists", fileSize(cli) > 700, {
+          size: fileSize(cli),
+        }),
+        check("refactor README exists", fileSize(readme) > 100, {
+          size: fileSize(readme),
+        }),
+        check("acceptance script exists", fileSize(acceptance) > 1_000, {
+          size: fileSize(acceptance),
+        }),
         check("acceptance rerun exited 0", acceptanceResult.status === 0, {
           status: acceptanceResult.status,
           signal: acceptanceResult.signal,
@@ -540,30 +619,61 @@ export function caseDefinition(caseName, ctx) {
             total: reportValue?.total,
           },
         ),
-        check("release result marker artifact exists", fileSize(releaseResult) > 20, {
-          size: fileSize(releaseResult),
-        }),
-        check("legacy oracle comparison recorded", reportValue?.oracle?.dictionary_password === "tura-zip-5519", {
-          oracle: reportValue?.oracle,
-        }),
-      ]
+        check(
+          "release result marker artifact exists",
+          fileSize(releaseResult) > 20,
+          {
+            size: fileSize(releaseResult),
+          },
+        ),
+        check(
+          "legacy oracle comparison recorded",
+          reportValue?.oracle?.dictionary_password === "tura-zip-5519",
+          {
+            oracle: reportValue?.oracle,
+          },
+        ),
+      ];
     },
-  }
+  };
 }
 
 export async function finishCase(ctx, definition, result, extras = {}) {
-  const lastMessage = await readText(ctx.lastMessagePath)
+  const lastMessage = await readText(ctx.lastMessagePath);
   const markerArtifactText =
     ctx.caseName === "password-zip"
-      ? await readText(path.join(ctx.workspace, "zip_password_refactor", "RELEASE_RESULT.md"))
-      : ""
-  const finalAnswerText = [result.stdout, lastMessage, extras.resultText || "", markerArtifactText].join("\n")
-  const validation = await definition.validate()
-  if (Array.isArray(extras.validation)) validation.push(...extras.validation)
-  validation.push(check("process exited 0", result.status === 0, { status: result.status, signal: result.signal }))
-  validation.push(check("final marker observed", finalAnswerText.includes(definition.sentinel)))
+      ? await readText(
+          path.join(
+            ctx.workspace,
+            "zip_password_refactor",
+            "RELEASE_RESULT.md",
+          ),
+        )
+      : "";
+  const finalAnswerText = [
+    result.stdout,
+    lastMessage,
+    extras.resultText || "",
+    markerArtifactText,
+  ].join("\n");
+  const validation = await definition.validate();
+  if (Array.isArray(extras.validation)) validation.push(...extras.validation);
+  validation.push(
+    check("process exited 0", result.status === 0, {
+      status: result.status,
+      signal: result.signal,
+    }),
+  );
+  validation.push(
+    check(
+      "final marker observed",
+      finalAnswerText.includes(definition.sentinel),
+    ),
+  );
   if (extras.cleanup) {
-    validation.push(check("backend daemons cleaned up", extras.cleanup.ok, extras.cleanup))
+    validation.push(
+      check("backend daemons cleaned up", extras.cleanup.ok, extras.cleanup),
+    );
   }
   const summary = {
     schema: "tura.business.release-entry.v1",
@@ -591,53 +701,59 @@ export async function finishCase(ctx, definition, result, extras = {}) {
     last_message_path: ctx.lastMessagePath,
     validation,
     ...extras,
-  }
-  await fsp.writeFile(ctx.summaryPath, JSON.stringify(summary, null, 2))
-  console.log(JSON.stringify(summary, null, 2))
-  if (!summary.ok) process.exitCode = 1
-  return summary
+  };
+  await fsp.writeFile(ctx.summaryPath, JSON.stringify(summary, null, 2));
+  console.log(JSON.stringify(summary, null, 2));
+  if (!summary.ok) process.exitCode = 1;
+  return summary;
 }
 
 export async function runLoggedProcess(command, args, ctx, options = {}) {
-  const stdoutPath = path.join(ctx.logs, `${path.basename(command).replace(/[^\w.-]/g, "_")}.stdout.log`)
-  const stderrPath = path.join(ctx.logs, `${path.basename(command).replace(/[^\w.-]/g, "_")}.stderr.log`)
-  const env = { ...caseEnv(ctx), ...(options.env || {}) }
-  const started = Date.now()
+  const stdoutPath = path.join(
+    ctx.logs,
+    `${path.basename(command).replace(/[^\w.-]/g, "_")}.stdout.log`,
+  );
+  const stderrPath = path.join(
+    ctx.logs,
+    `${path.basename(command).replace(/[^\w.-]/g, "_")}.stderr.log`,
+  );
+  const env = { ...caseEnv(ctx), ...(options.env || {}) };
+  const started = Date.now();
   const child = spawn(command, args, {
     cwd: repoRoot,
     env,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
     shell: false,
-  })
-  let stdout = ""
-  let stderr = ""
+  });
+  let stdout = "";
+  let stderr = "";
   child.stdout?.on("data", (chunk) => {
-    stdout += chunk.toString()
-  })
+    stdout += chunk.toString();
+  });
   child.stderr?.on("data", (chunk) => {
-    stderr += chunk.toString()
-  })
-  const timeoutMs = options.timeoutMs || caseTimeoutMs(ctx.caseName)
+    stderr += chunk.toString();
+  });
+  const timeoutMs = options.timeoutMs || caseTimeoutMs(ctx.caseName);
   const result = await new Promise((resolve) => {
     const timer = setTimeout(async () => {
-      await stopProcess(child)
-      resolve({ status: null, signal: "timeout" })
-    }, timeoutMs)
+      await stopProcess(child);
+      resolve({ status: null, signal: "timeout" });
+    }, timeoutMs);
     child.on("error", (error) => {
-      clearTimeout(timer)
-      stderr += `\n${error.stack || error.message || error}`
-      resolve({ status: 1, signal: "error" })
-    })
+      clearTimeout(timer);
+      stderr += `\n${error.stack || error.message || error}`;
+      resolve({ status: 1, signal: "error" });
+    });
     child.on("close", (status, signal) => {
-      clearTimeout(timer)
-      resolve({ status, signal })
-    })
-  })
-  child.stdout?.destroy()
-  child.stderr?.destroy()
-  await fsp.writeFile(stdoutPath, stdout)
-  await fsp.writeFile(stderrPath, stderr)
+      clearTimeout(timer);
+      resolve({ status, signal });
+    });
+  });
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+  await fsp.writeFile(stdoutPath, stdout);
+  await fsp.writeFile(stderrPath, stderr);
   return {
     command,
     args,
@@ -648,7 +764,7 @@ export async function runLoggedProcess(command, args, ctx, options = {}) {
     stderr,
     stdoutPath,
     stderrPath,
-  }
+  };
 }
 
 export function caseEnv(ctx) {
@@ -658,16 +774,23 @@ export function caseEnv(ctx) {
     TURA_HOME: ctx.turaHome,
     TURA_PROJECT_ROOT: repoRoot,
     TURA_PROVIDER_CONFIG:
-      process.env.TURA_PROVIDER_CONFIG || path.join(repoRoot, "crates", "provider", "config", "provider_config.json"),
+      process.env.TURA_PROVIDER_CONFIG ||
+      path.join(
+        repoRoot,
+        "crates",
+        "provider",
+        "config",
+        "provider_config.json",
+      ),
     LOG_PATH: ctx.providerLogRoot,
     TURA_CWD: ctx.workspace,
     TURA_DEBUG_RUNTIME: process.env.TURA_DEBUG_RUNTIME || "1",
     FORCE_COLOR: process.env.FORCE_COLOR || "0",
-  }
+  };
 }
 
 export async function startReleaseGateway(ctx) {
-  const port = await freePort()
+  const port = await freePort();
   const child = spawn(releaseBinary("tura_gateway"), [], {
     cwd: ctx.workspace,
     env: {
@@ -677,212 +800,242 @@ export async function startReleaseGateway(ctx) {
       TURA_GATEWAY_URL: `http://127.0.0.1:${port}`,
       TURA_GUI_DIST: path.join(binaryDir(), "gui"),
       TURA_ROUTER_STDERR_LOG: path.join(ctx.logs, "router.stderr.log"),
-      TURA_RUNTIME_WORKER_STDERR_LOG: path.join(ctx.logs, "runtime-worker.stderr.log"),
+      TURA_RUNTIME_WORKER_STDERR_LOG: path.join(
+        ctx.logs,
+        "runtime-worker.stderr.log",
+      ),
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
-  })
-  child.stdout?.pipe(fs.createWriteStream(path.join(ctx.logs, "gateway.stdout.log")))
-  child.stderr?.pipe(fs.createWriteStream(path.join(ctx.logs, "gateway.stderr.log")))
-  const url = `http://127.0.0.1:${port}`
-  await waitForUrl(`${url}/global/health`, child, 60_000)
-  return { child, url }
+  });
+  child.stdout?.pipe(
+    fs.createWriteStream(path.join(ctx.logs, "gateway.stdout.log")),
+  );
+  child.stderr?.pipe(
+    fs.createWriteStream(path.join(ctx.logs, "gateway.stderr.log")),
+  );
+  const url = `http://127.0.0.1:${port}`;
+  await waitForUrl(`${url}/global/health`, child, 60_000);
+  return { child, url };
 }
 
 export async function waitForUrl(url, child, timeoutMs) {
-  const deadline = Date.now() + timeoutMs
-  let lastError
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
   while (Date.now() < deadline) {
     if (child?.exitCode !== null) {
-      throw new Error(`${url} exited before readiness with ${child.exitCode}`)
+      throw new Error(`${url} exited before readiness with ${child.exitCode}`);
     }
     try {
-      const response = await fetch(url)
-      if (response.ok) return response
-      lastError = new Error(`${url} returned ${response.status}`)
+      const response = await fetch(url);
+      if (response.ok) return response;
+      lastError = new Error(`${url} returned ${response.status}`);
     } catch (error) {
-      lastError = error
+      lastError = error;
     }
-    await delay(250)
+    await delay(250);
   }
-  throw lastError || new Error(`Timed out waiting for ${url}`)
+  throw lastError || new Error(`Timed out waiting for ${url}`);
 }
 
 export async function stopProcess(child) {
-  if (!child || child.killed || child.exitCode !== null) return
+  if (!child || child.killed || child.exitCode !== null) return;
   if (process.platform === "win32" && child.pid) {
-    spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true })
-    return
+    spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
+      windowsHide: true,
+    });
+    return;
   }
   try {
-    child.kill("SIGTERM")
+    child.kill("SIGTERM");
   } catch {}
-  await Promise.race([new Promise((resolve) => child.once("exit", resolve)), delay(2_000)])
+  await Promise.race([
+    new Promise((resolve) => child.once("exit", resolve)),
+    delay(2_000),
+  ]);
   if (child.exitCode === null) {
     try {
-      child.kill("SIGKILL")
+      child.kill("SIGKILL");
     } catch {}
   }
 }
 
 export async function shutdownBackendDaemons(ctx) {
-  const routerAddrPath = path.join(ctx.turaHome, "db", "session_log", "router.addr")
-  const serviceAddrPath = path.join(ctx.turaHome, "db", "session_log", "service.addr")
+  const routerAddrPath = path.join(
+    ctx.turaHome,
+    "db",
+    "session_log",
+    "router.addr",
+  );
+  const serviceAddrPath = path.join(
+    ctx.turaHome,
+    "db",
+    "session_log",
+    "service.addr",
+  );
   const result = {
     router_addr_path: routerAddrPath,
     service_addr_path: serviceAddrPath,
     requested: false,
     ok: true,
-  }
-  const endpoint = await readJson(routerAddrPath)
-  const addr = endpoint?.addr
+  };
+  const endpoint = await readJson(routerAddrPath);
+  const addr = endpoint?.addr;
   if (!addr) {
-    result.router_addr_missing = true
-    result.service_addr_removed = !fs.existsSync(serviceAddrPath)
-    return result
+    result.router_addr_missing = true;
+    result.service_addr_removed = !fs.existsSync(serviceAddrPath);
+    return result;
   }
 
-  result.requested = true
+  result.requested = true;
   try {
     result.response = await callRouter(addr, {
       request_id: `business-shutdown-${Date.now()}`,
       kind: "call",
       method: "execution.shutdown",
       payload: {},
-    })
-    await waitForFileMissing(routerAddrPath, 8_000)
-    await waitForFileMissing(serviceAddrPath, 8_000)
-    result.router_addr_removed = !fs.existsSync(routerAddrPath)
-    result.service_addr_removed = !fs.existsSync(serviceAddrPath)
-    result.ok = result.router_addr_removed && result.service_addr_removed
+    });
+    await waitForFileMissing(routerAddrPath, 8_000);
+    await waitForFileMissing(serviceAddrPath, 8_000);
+    result.router_addr_removed = !fs.existsSync(routerAddrPath);
+    result.service_addr_removed = !fs.existsSync(serviceAddrPath);
+    result.ok = result.router_addr_removed && result.service_addr_removed;
   } catch (error) {
-    result.ok = false
-    result.error = error.stack || error.message || String(error)
+    result.ok = false;
+    result.error = error.stack || error.message || String(error);
   }
-  return result
+  return result;
 }
 
 async function callRouter(addr, request) {
-  const [host, portText] = addr.split(":")
-  const port = Number(portText)
-  const timeoutMs = 15_000
+  const [host, portText] = addr.split(":");
+  const port = Number(portText);
+  const timeoutMs = 15_000;
   if (!host || !Number.isFinite(port)) {
-    throw new Error(`invalid router address ${addr}`)
+    throw new Error(`invalid router address ${addr}`);
   }
   return new Promise((resolve, reject) => {
-    const socket = net.createConnection({ host, port })
-    let buffer = ""
+    const socket = net.createConnection({ host, port });
+    let buffer = "";
     const timer = setTimeout(() => {
-      socket.destroy()
-      reject(new Error(`router shutdown timed out after ${timeoutMs}ms at ${addr}`))
-    }, timeoutMs)
+      socket.destroy();
+      reject(
+        new Error(`router shutdown timed out after ${timeoutMs}ms at ${addr}`),
+      );
+    }, timeoutMs);
     socket.on("connect", () => {
-      socket.write(`${JSON.stringify(request)}\n`)
-    })
+      socket.write(`${JSON.stringify(request)}\n`);
+    });
     socket.on("data", (chunk) => {
-      buffer += chunk.toString()
-      const newline = buffer.indexOf("\n")
+      buffer += chunk.toString();
+      const newline = buffer.indexOf("\n");
       if (newline >= 0) {
-        clearTimeout(timer)
-        socket.end()
+        clearTimeout(timer);
+        socket.end();
         try {
-          resolve(JSON.parse(buffer.slice(0, newline)))
+          resolve(JSON.parse(buffer.slice(0, newline)));
         } catch (error) {
-          reject(error)
+          reject(error);
         }
       }
-    })
+    });
     socket.on("error", (error) => {
-      clearTimeout(timer)
-      reject(error)
-    })
+      clearTimeout(timer);
+      reject(error);
+    });
     socket.on("close", () => {
-      clearTimeout(timer)
+      clearTimeout(timer);
       if (!buffer.trim()) {
-        reject(new Error(`router closed without response at ${addr}`))
+        reject(new Error(`router closed without response at ${addr}`));
       }
-    })
-  })
+    });
+  });
 }
 
 async function waitForFileMissing(file, timeoutMs) {
-  const deadline = Date.now() + timeoutMs
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (!fs.existsSync(file)) return
-    await delay(100)
+    if (!fs.existsSync(file)) return;
+    await delay(100);
   }
 }
 
 export async function freePort() {
   return new Promise((resolve, reject) => {
-    const server = net.createServer()
-    server.once("error", reject)
+    const server = net.createServer();
+    server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
-      const address = server.address()
-      const port = typeof address === "object" && address ? address.port : 0
-      server.close(() => resolve(port))
-    })
-  })
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close(() => resolve(port));
+    });
+  });
 }
 
 export function pythonCommand() {
-  return process.env.PYTHON || (process.platform === "win32" ? "python" : "python3")
+  return (
+    process.env.PYTHON || (process.platform === "win32" ? "python" : "python3")
+  );
 }
 
 export function timestamp() {
-  const now = new Date()
-  return now.toISOString().replace(/[-:]/g, "").replace(/\..+$/u, "").replace("T", "-")
+  const now = new Date();
+  return now
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\..+$/u, "")
+    .replace("T", "-");
 }
 
 export function caseTimeoutMs(caseName) {
-  const specificName = `TURA_BUSINESS_${caseName.replaceAll("-", "_").toUpperCase()}_TIMEOUT_MS`
-  const specific = positiveNumberFromEnv(specificName)
-  if (specific) return specific
-  const global = positiveNumberFromEnv("TURA_BUSINESS_TIMEOUT_MS")
-  if (global) return global
-  return defaultTimeoutMsByCase[caseName] || 180_000
+  const specificName = `TURA_BUSINESS_${caseName.replaceAll("-", "_").toUpperCase()}_TIMEOUT_MS`;
+  const specific = positiveNumberFromEnv(specificName);
+  if (specific) return specific;
+  const global = positiveNumberFromEnv("TURA_BUSINESS_TIMEOUT_MS");
+  if (global) return global;
+  return defaultTimeoutMsByCase[caseName] || 180_000;
 }
 
 function positiveNumberFromEnv(name) {
-  const value = Number(process.env[name] || 0)
-  return Number.isFinite(value) && value > 0 ? value : 0
+  const value = Number(process.env[name] || 0);
+  return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 function fileSize(file) {
   try {
-    return fs.statSync(file).size
+    return fs.statSync(file).size;
   } catch {
-    return 0
+    return 0;
   }
 }
 
 export async function readText(file) {
   try {
-    return await fsp.readFile(file, "utf8")
+    return await fsp.readFile(file, "utf8");
   } catch {
-    return ""
+    return "";
   }
 }
 
 export async function readJson(file) {
-  const text = await readText(file)
-  if (!text.trim()) return null
+  const text = await readText(file);
+  if (!text.trim()) return null;
   try {
-    return JSON.parse(text)
+    return JSON.parse(text);
   } catch {
-    return null
+    return null;
   }
 }
 
 export function check(name, ok, details = {}) {
-  return { name, ok: Boolean(ok), ...details }
+  return { name, ok: Boolean(ok), ...details };
 }
 
 export function trimForSummary(text) {
-  const value = String(text || "")
-  return value.length > 2_000 ? `${value.slice(0, 2_000)}...` : value
+  const value = String(text || "");
+  return value.length > 2_000 ? `${value.slice(0, 2_000)}...` : value;
 }
 
 export function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

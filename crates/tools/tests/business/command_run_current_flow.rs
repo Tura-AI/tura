@@ -11,6 +11,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
@@ -1988,6 +1989,43 @@ fn pass_streaming_executor_exposes_output_deltas_before_command_finishes() {
 }
 
 #[test]
+fn pass_streaming_executor_repairs_scrambled_steps_without_accidental_grouping() {
+    let root = temp_workspace("streaming-scrambled-steps");
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let mut executor = command_run::StreamingCommandRunExecutor::new(root);
+    let mut results = Vec::new();
+
+    for (step, detail) in [(3, "three"), (2, "two"), (4, "four"), (1, "one")] {
+        results.extend(runtime.block_on(executor.push_command_value(json!({
+            "command": "task_status",
+            "command_line": json!({ "status": "doing", "task_detail": detail }).to_string(),
+            "step": step
+        }))));
+    }
+    results.extend(runtime.block_on(executor.finish()));
+
+    assert_eq!(
+        results
+            .iter()
+            .map(|result| result["step"].as_u64().expect("step"))
+            .collect::<Vec<_>>(),
+        vec![3, 4, 5, 6]
+    );
+    assert_eq!(
+        results
+            .iter()
+            .map(|result| {
+                result["output"]["task_status"]["task_detail"]
+                    .as_str()
+                    .expect("task detail")
+                    .to_string()
+            })
+            .collect::<Vec<_>>(),
+        vec!["three", "two", "four", "one"]
+    );
+}
+
+#[test]
 fn pass_mutating_commands_are_barriers_between_read_batches() {
     let _guard = env_lock_blocking();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
@@ -2023,10 +2061,10 @@ fn pass_mutating_commands_are_barriers_between_read_batches() {
 }
 
 #[test]
-fn pass_same_step_commands_are_extended_to_unique_order() {
+fn pass_same_step_commands_keep_dependency_group() {
     let _guard = env_lock_blocking();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
-    let root = temp_workspace("unique-read-step");
+    let root = temp_workspace("shared-read-step");
     fs::write(root.join("state.txt"), "ready\n").expect("state fixture should be written");
     let command_a = if cfg!(windows) {
         "Test-Path state.txt; Write-Output read-a"
@@ -2052,7 +2090,152 @@ fn pass_same_step_commands_are_extended_to_unique_order() {
     assert_eq!(output["results"][0]["success"], true);
     assert_eq!(output["results"][1]["success"], true);
     assert_eq!(output["results"][0]["step"], 1);
-    assert_eq!(output["results"][1]["step"], 2);
+    assert_eq!(output["results"][1]["step"], 1);
+}
+
+#[tokio::test]
+async fn pass_later_steps_wait_while_step_two_is_running() {
+    let _guard = env_lock().await;
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("step-two-running-barrier");
+    let gate = root.join("release-step-two.flag");
+    let step_two = if cfg!(windows) {
+        format!(
+            "Set-Content -Path step2-started.txt -Value started; while (-not (Test-Path \
+             -LiteralPath '{}')) {{ Start-Sleep -Milliseconds 50 }}; Set-Content -Path \
+             step2-done.txt -Value done",
+            single_quoted_powershell_path(&gate)
+        )
+    } else {
+        format!(
+            "printf started > step2-started.txt; while [ ! -f '{}' ]; do sleep 0.05; done; \
+             printf done > step2-done.txt",
+            single_quoted_posix_path(&gate)
+        )
+    };
+    let step_command = |file_name: &str, text: &str| {
+        if cfg!(windows) {
+            format!("Set-Content -Path {file_name} -Value {text}")
+        } else {
+            format!("printf {text} > {file_name}")
+        }
+    };
+    let run_root = root.clone();
+    let run = tokio::spawn(async move {
+        command_run::execute_async_value(
+            json!({
+                "commands": [
+                    {
+                        "step": 1,
+                        "command": "shell_command",
+                        "command_line": json!({
+                            "command": step_command("step1.txt", "one"),
+                            "timeout_ms": 5000
+                        }).to_string()
+                    },
+                    {
+                        "step": 2,
+                        "command": "shell_command",
+                        "command_line": json!({
+                            "command": step_two,
+                            "timeout_ms": 10000
+                        }).to_string()
+                    },
+                    {
+                        "step": 3,
+                        "command": "shell_command",
+                        "command_line": json!({
+                            "command": step_command("step3.txt", "three"),
+                            "timeout_ms": 5000
+                        }).to_string()
+                    },
+                    {
+                        "step": 4,
+                        "command": "shell_command",
+                        "command_line": json!({
+                            "command": step_command("step4.txt", "four"),
+                            "timeout_ms": 5000
+                        }).to_string()
+                    }
+                ]
+            }),
+            run_root,
+        )
+        .await
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline && !root.join("step2-started.txt").exists() {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        root.join("step2-started.txt").exists(),
+        "step 2 should start before testing the dependency barrier"
+    );
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert!(
+        !root.join("step3.txt").exists() && !root.join("step4.txt").exists(),
+        "steps 3 and 4 must not run while step 2 is still blocked"
+    );
+
+    fs::write(&gate, "release").expect("release step two");
+    let output = tokio::time::timeout(Duration::from_secs(10), run)
+        .await
+        .expect("command_run should finish after releasing step 2")
+        .expect("command_run task should join");
+    let results = output["results"]
+        .as_array()
+        .expect("command_run output should contain results");
+    assert_eq!(results.len(), 4);
+    assert_eq!(
+        results
+            .iter()
+            .map(|result| result["step"].as_u64().expect("step"))
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3, 4]
+    );
+    assert!(root.join("step3.txt").exists());
+    assert!(root.join("step4.txt").exists());
+}
+
+#[test]
+fn pass_scrambled_steps_are_repaired_without_accidental_parallel_grouping() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("scrambled-steps");
+
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                { "step": 3, "command": "task_status", "command_line": json!({ "status": "doing", "task_detail": "three" }).to_string() },
+                { "step": 2, "command": "task_status", "command_line": json!({ "status": "doing", "task_detail": "two" }).to_string() },
+                { "step": 4, "command": "task_status", "command_line": json!({ "status": "doing", "task_detail": "four" }).to_string() },
+                { "step": 1, "command": "task_status", "command_line": json!({ "status": "done", "task_detail": "one" }).to_string() }
+            ]
+        }),
+        &root,
+    );
+
+    let results = output["results"].as_array().expect("results");
+    assert_eq!(
+        results
+            .iter()
+            .map(|result| result["step"].as_u64().expect("step"))
+            .collect::<Vec<_>>(),
+        vec![3, 4, 5, 6]
+    );
+    assert_eq!(
+        results
+            .iter()
+            .map(|result| {
+                result["output"]["task_status"]["task_detail"]
+                    .as_str()
+                    .expect("task detail")
+                    .to_string()
+            })
+            .collect::<Vec<_>>(),
+        vec!["three", "two", "four", "one"]
+    );
 }
 
 #[test]
@@ -2086,6 +2269,189 @@ fn pass_file_lock_allows_parallel_reads_and_blocks_write() {
     drop(read_b);
     let waited = writer.join().expect("writer thread should finish");
     assert!(waited >= Duration::from_millis(200));
+}
+
+#[test]
+fn pass_file_lock_high_concurrency_readers_release_before_writer() {
+    let reader_count = 16;
+    let key = format!("high-concurrency-readers-{}", std::process::id());
+    let read_access = Access {
+        read_paths: vec![key.clone()],
+        ..Access::default()
+    };
+    let write_access = Access {
+        write_paths: vec![key],
+        ..Access::default()
+    };
+    let readers_ready = Arc::new(Barrier::new(reader_count + 1));
+    let release_readers = Arc::new(Barrier::new(reader_count + 1));
+    let mut readers = Vec::new();
+
+    for _ in 0..reader_count {
+        let read_access = read_access.clone();
+        let readers_ready = Arc::clone(&readers_ready);
+        let release_readers = Arc::clone(&release_readers);
+        readers.push(thread::spawn(move || {
+            let _read = file_locks::acquire(&read_access);
+            readers_ready.wait();
+            release_readers.wait();
+        }));
+    }
+
+    readers_ready.wait();
+    let started = Instant::now();
+    let writer = thread::spawn(move || {
+        let _write = file_locks::acquire(&write_access);
+        started.elapsed()
+    });
+    thread::sleep(Duration::from_millis(100));
+    assert!(
+        !writer.is_finished(),
+        "writer must wait while many readers hold the dependency group"
+    );
+    release_readers.wait();
+    for reader in readers {
+        reader.join().expect("reader should release cleanly");
+    }
+    let waited = writer
+        .join()
+        .expect("writer should acquire after readers release");
+    assert!(waited >= Duration::from_millis(80));
+}
+
+#[test]
+fn pass_file_lock_releases_after_panic_and_allows_retry() {
+    let key = format!("panic-release-{}", std::process::id());
+    let first_access = Access {
+        write_paths: vec![key.clone()],
+        ..Access::default()
+    };
+    let retry_access = Access {
+        write_paths: vec![key],
+        ..Access::default()
+    };
+
+    let panicked = thread::spawn(move || {
+        let _write = file_locks::acquire(&first_access);
+        panic!("intentional panic while holding file lock");
+    })
+    .join();
+    assert!(panicked.is_err());
+
+    let retry = thread::spawn(move || {
+        let _write = file_locks::acquire(&retry_access);
+        true
+    })
+    .join()
+    .expect("retry should not panic");
+    assert!(retry, "retry should acquire after panic drops the guard");
+}
+
+#[test]
+fn pass_same_step_mutating_shell_commands_are_serialized_by_workspace_lock() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("same-step-mutating-serialized");
+    let command = |label: &str| {
+        if cfg!(windows) {
+            format!(
+                "$guard = 'guard.lock'; if (Test-Path $guard) {{ Write-Error 'overlap'; exit 7 }}; New-Item -ItemType File -Path $guard -Force | Out-Null; Start-Sleep -Milliseconds 150; Remove-Item $guard; Add-Content -Path trace.txt -Value '{label}'"
+            )
+        } else {
+            format!(
+                "if [ -e guard.lock ]; then echo overlap >&2; exit 7; fi; touch guard.lock; sleep 0.15; rm guard.lock; printf '%s\\n' '{label}' >> trace.txt"
+            )
+        }
+    };
+    let commands = (0..6)
+        .map(|index| {
+            json!({
+                "step": 1,
+                "command": "shell_command",
+                "command_line": json!({
+                    "command": command(&format!("serialized-{index}")),
+                    "timeout_ms": 5000
+                }).to_string()
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let output = command_run::execute(&json!({ "commands": commands }), &root);
+    let results = output["results"]
+        .as_array()
+        .expect("command_run output should contain results");
+    assert_eq!(results.len(), 6);
+    assert!(
+        results
+            .iter()
+            .all(|result| result["step"] == 1 && result["success"] == true),
+        "same-step mutating commands should keep step 1 and serialize without overlap: {output}"
+    );
+    let trace = fs::read_to_string(root.join("trace.txt")).expect("trace should be written");
+    for index in 0..6 {
+        assert!(trace.contains(&format!("serialized-{index}")));
+    }
+    assert!(
+        !root.join("guard.lock").exists(),
+        "guard file should be removed after serialized commands finish"
+    );
+}
+
+#[tokio::test]
+async fn pass_failed_mutating_command_releases_workspace_lock_for_retry() {
+    let _guard = env_lock().await;
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("failed-mutating-retry");
+    let failing_command = if cfg!(windows) {
+        "Set-Content -Path failed-before-retry.txt -Value before; exit 9"
+    } else {
+        "printf before > failed-before-retry.txt; exit 9"
+    };
+    let retry_command = if cfg!(windows) {
+        "Set-Content -Path retry-after-failure.txt -Value retry-ok"
+    } else {
+        "printf retry-ok > retry-after-failure.txt"
+    };
+
+    let first = tokio::time::timeout(
+        Duration::from_secs(10),
+        command_run::execute_async_value(
+            json!({
+                "commands": [{
+                    "step": 1,
+                    "command": "shell_command",
+                    "command_line": json!({ "command": failing_command, "timeout_ms": 5000 }).to_string()
+                }]
+            }),
+            root.clone(),
+        ),
+    )
+    .await
+    .expect("failed mutating command must return instead of leaking a lock");
+    assert_eq!(first["results"][0]["success"], false);
+
+    let retry = tokio::time::timeout(
+        Duration::from_secs(10),
+        command_run::execute_async_value(
+            json!({
+                "commands": [{
+                    "step": 1,
+                    "command": "shell_command",
+                    "command_line": json!({ "command": retry_command, "timeout_ms": 5000 }).to_string()
+                }]
+            }),
+            root.clone(),
+        ),
+    )
+    .await
+    .expect("retry should not block on a leaked workspace lock");
+    assert_eq!(retry["results"][0]["success"], true);
+    assert!(
+        fs::read_to_string(root.join("retry-after-failure.txt"))
+            .expect("retry file should exist")
+            .contains("retry-ok"),
+        "retry command should write after failed command releases the lock"
+    );
 }
 
 #[test]

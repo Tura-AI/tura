@@ -47,6 +47,8 @@ impl ExecutionService {
                 ));
             }
         }
+        let active_guard =
+            ActiveSessionGuard::new(self.active_sessions.clone(), &request.session_id);
 
         let run_request = payload_to_run_agent_request(&request)?;
         if debug_runtime_enabled() {
@@ -56,7 +58,7 @@ impl ExecutionService {
             );
         }
         let (status, body) = dispatch_run_agent(state, run_request).await;
-        self.active_sessions.lock().remove(&request.session_id);
+        active_guard.finish();
         if debug_runtime_enabled() {
             eprintln!(
                 "router debug: enqueue_turn finished session_id={} status={} body={}",
@@ -100,6 +102,36 @@ impl ExecutionService {
 
     pub fn active_session_count(&self) -> usize {
         self.active_sessions.lock().len()
+    }
+}
+
+struct ActiveSessionGuard {
+    sessions: Arc<Mutex<HashSet<String>>>,
+    session_id: String,
+    active: std::sync::atomic::AtomicBool,
+}
+
+impl ActiveSessionGuard {
+    fn new(sessions: Arc<Mutex<HashSet<String>>>, session_id: &str) -> Self {
+        Self {
+            sessions,
+            session_id: session_id.to_string(),
+            active: std::sync::atomic::AtomicBool::new(true),
+        }
+    }
+
+    fn finish(&self) {
+        self.active
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.sessions.lock().remove(&self.session_id);
+    }
+}
+
+impl Drop for ActiveSessionGuard {
+    fn drop(&mut self) {
+        if self.active.load(std::sync::atomic::Ordering::SeqCst) {
+            self.sessions.lock().remove(&self.session_id);
+        }
     }
 }
 
