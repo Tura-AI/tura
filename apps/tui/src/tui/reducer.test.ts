@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { messageText } from "../types/session.js";
-import { initialState, reducer } from "./reducer.js";
+import { displayMessages, initialState, reducer } from "./reducer.js";
 
 const session = {
   id: "sess-1",
@@ -35,6 +35,131 @@ test("reducer wraps settings selection at panel edges", () => {
 
   state = reducer(state, { type: "select-settings", delta: 1 });
   assert.equal(state.selectedSettingsIndex, 0);
+});
+
+test("reducer includes create-new-session in session picker selection", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "sessions",
+    value: [session],
+    open: true,
+  });
+  assert.equal(state.selectedSessionIndex, 0);
+
+  state = reducer(state, { type: "select-session", delta: 1 });
+  assert.equal(state.selectedSessionIndex, 1);
+
+  state = reducer(state, { type: "select-session", delta: 1 });
+  assert.equal(state.selectedSessionIndex, 0);
+});
+
+test("reducer keeps session picker selection during active-session polling hydrate", () => {
+  const other = {
+    id: "sess-2",
+    title: "Other",
+    directory: "C:/repo",
+    status: "idle" as const,
+    updated_at: 2,
+  };
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [],
+    permissions: [],
+    sessions: [session, other],
+  });
+
+  state = reducer(state, { type: "sessions", value: [session, other], open: true });
+  state = reducer(state, { type: "select-session", delta: 1 });
+  assert.equal(state.selectedSessionIndex, 1);
+
+  state = reducer(state, {
+    type: "hydrate",
+    session,
+    messages: [],
+    permissions: [],
+    sessions: [session, other],
+  });
+
+  assert.equal(state.sessionsOpen, true);
+  assert.equal(state.selectedSessionIndex, 1);
+});
+
+test("reducer clears old transcript when hydrating a different session", () => {
+  const nextSession = {
+    id: "sess-2",
+    title: "New Session",
+    directory: "C:/repo",
+    status: "idle" as const,
+  };
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-old-user",
+        sessionID: "sess-1",
+        role: "user",
+        created_at: 1,
+        parts: [{ id: "part-old-user", type: "text", text: "old prompt" }],
+      },
+      {
+        id: "msg-old-assistant",
+        sessionID: "sess-1",
+        role: "assistant",
+        created_at: 2,
+        parts: [{ id: "part-old-assistant", type: "text", text: "old reply" }],
+      },
+    ],
+    permissions: [],
+    sessions: [session, nextSession],
+  });
+
+  state = reducer(state, {
+    type: "hydrate",
+    session: nextSession,
+    messages: [],
+    permissions: [],
+    sessions: [nextSession, session],
+  });
+
+  assert.equal(state.session?.id, "sess-2");
+  assert.deepEqual(state.messages, []);
+  assert.equal(state.selectedSessionIndex, 0);
+});
+
+test("reducer can hydrate a selected session and close panels atomically", () => {
+  const nextSession = {
+    id: "sess-2",
+    title: "New Session",
+    directory: "C:/repo",
+    status: "idle" as const,
+  };
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [],
+    permissions: [],
+    sessions: [session, nextSession],
+  });
+  state = reducer(state, { type: "sessions", value: [nextSession, session], open: true });
+  assert.equal(state.sessionsOpen, true);
+
+  state = reducer(state, {
+    type: "hydrate",
+    session: nextSession,
+    messages: [],
+    permissions: [],
+    sessions: [nextSession, session],
+    closePanels: true,
+  });
+
+  assert.equal(state.session?.id, "sess-2");
+  assert.equal(state.sessionsOpen, false);
+  assert.equal(state.modelsOpen, false);
+  assert.equal(state.authOpen, false);
+  assert.equal(state.settingsOpen, false);
+  assert.equal(state.personasOpen, false);
+  assert.equal(state.help, false);
 });
 
 test("reducer ignores events for another workspace", () => {
@@ -182,8 +307,166 @@ test("reducer keeps streaming deltas that arrive before full message hydration",
     },
   });
 
-  assert.equal(state.messages[0].id, "msg-stream");
-  assert.equal(state.messages[0].parts[0].text, "hello");
+  assert.equal(state.messages.length, 0);
+  assert.equal(Object.values(state.liveStreams)[0]?.text, "hello");
+  assert.equal(displayMessages(state)[0].id, "msg-stream");
+  assert.equal(displayMessages(state)[0].parts[0].text, "hello");
+});
+
+test("reducer ignores message deltas without a session for an active session", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [],
+    permissions: [],
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.part.delta",
+        properties: {
+          message_id: "msg-unknown-session",
+          part_id: "part-unknown-session",
+          field: "text",
+          delta: "must not leak into the active chat",
+        },
+      },
+    },
+  });
+
+  assert.equal(Object.values(state.liveStreams).length, 0);
+  assert.deepEqual(displayMessages(state), []);
+});
+
+test("reducer ignores part updates without a session for an active session", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [],
+    permissions: [],
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "part-unknown-session",
+            messageID: "msg-unknown-session",
+            type: "text",
+            text: "must not create an active-session message",
+          },
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(state.messages, []);
+});
+
+test("reducer clears sessionless live stream when its durable message arrives", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [],
+    permissions: [],
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      sessionID: "sess-1",
+      payload: {
+        type: "message.part.delta",
+        properties: {
+          message_id: "msg-sessionless-stream",
+          part_id: "part-sessionless-stream",
+          field: "text",
+          delta: "duplicated live text",
+        },
+      },
+    },
+  });
+
+  assert.equal(Object.values(state.liveStreams).length, 1);
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.updated",
+        properties: {
+          session_id: "sess-1",
+          info: {
+            id: "msg-sessionless-stream",
+            sessionID: "sess-1",
+            role: "assistant",
+            created_at: 2,
+            parts: [
+              {
+                id: "part-final-durable",
+                type: "text",
+                text: "duplicated live text",
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(Object.values(state.liveStreams).length, 0);
+  assert.equal(messageText(displayMessages(state)[0]), "duplicated live text");
+  assert.equal(
+    displayMessages(state)[0].parts.length,
+    1,
+    "durable final text must replace, not sit next to, sessionless live text",
+  );
+});
+
+test("reducer overlays later deltas on durable part text without mutating history", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-durable-part",
+        sessionID: "sess-1",
+        role: "assistant",
+        created_at: 1,
+        parts: [{ id: "part-durable", type: "text", text: "hello " }],
+      },
+    ],
+    permissions: [],
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.part.delta",
+        properties: {
+          session_id: "sess-1",
+          message_id: "msg-durable-part",
+          part_id: "part-durable",
+          field: "text",
+          delta: "world",
+        },
+      },
+    },
+  });
+
+  assert.equal(messageText(state.messages[0]), "hello ");
+  assert.equal(messageText(displayMessages(state)[0]), "hello world");
 });
 
 test("reducer normalizes streamed agent terminal controls into plain text", () => {
@@ -211,7 +494,8 @@ test("reducer normalizes streamed agent terminal controls into plain text", () =
     },
   });
 
-  assert.equal(state.messages[0].parts[0].text, "命令完成\n新的回复");
+  assert.equal(state.messages.length, 0);
+  assert.equal(displayMessages(state)[0].parts[0].text, "命令完成\n新的回复");
 });
 
 test("reducer preserves busy streamed assistant text across polling hydrate", () => {
@@ -254,9 +538,9 @@ test("reducer preserves busy streamed assistant text across polling hydrate", ()
     permissions: [],
   });
 
-  assert.equal(state.messages.length, 2);
+  assert.equal(state.messages.length, 1);
   assert.equal(
-    state.messages.find((message) => message.id === "msg-stream-runtime-1")?.parts[0].text,
+    displayMessages(state).find((message) => message.id === "msg-stream-runtime-1")?.parts[0].text,
     "streaming reply",
   );
 });
@@ -311,7 +595,7 @@ test("reducer keeps streamed assistant text when final hydrate only has task_sta
     permissions: [],
   });
 
-  const assistant = state.messages.find((message) => message.id === "msg-stream-runtime-1");
+  const assistant = displayMessages(state).find((message) => message.id === "msg-stream-runtime-1");
   assert.equal(assistant?.parts[0].text, "可以吃牛肉面。");
   assert.equal(messageText(assistant!), "可以吃牛肉面。");
 });
@@ -357,7 +641,7 @@ test("reducer keeps streamed runtime response when final hydrate omits the visib
     permissions: [],
   });
 
-  const visibleResponses = state.messages
+  const visibleResponses = displayMessages(state)
     .filter((message) => message.role !== "user")
     .map((message) => messageText(message).trim())
     .filter(Boolean);
@@ -406,7 +690,7 @@ test("reducer keeps current visible agent text even when the message id is alrea
     permissions: [],
   });
 
-  const visibleResponses = state.messages
+  const visibleResponses = displayMessages(state)
     .filter((message) => message.role !== "user")
     .map((message) => messageText(message).trim())
     .filter(Boolean);
@@ -414,7 +698,7 @@ test("reducer keeps current visible agent text even when the message id is alrea
   assert.notEqual(visibleResponses[0], input);
 });
 
-test("reducer keeps current visible text when final hydrate also includes durable assistant text", () => {
+test("reducer replaces temporary streamed text when final hydrate includes durable assistant text", () => {
   const userMessage = {
     id: "msg-user-durable",
     sessionID: "sess-1",
@@ -464,11 +748,87 @@ test("reducer keeps current visible text when final hydrate also includes durabl
     permissions: [],
   });
 
-  const visibleResponses = state.messages
+  const visibleResponses = displayMessages(state)
     .filter((message) => message.role !== "user")
     .map((message) => messageText(message).trim())
     .filter(Boolean);
-  assert.deepEqual(visibleResponses, ["stream copy", "durable copy"]);
+  assert.deepEqual(visibleResponses, ["durable copy"]);
+});
+
+test("reducer does not duplicate temporary streamed text across repeated polling hydrates", () => {
+  const userMessage = {
+    id: "msg-user-refresh",
+    sessionID: "sess-1",
+    role: "user" as const,
+    parts: [{ id: "part-user-refresh", type: "text", text: "refresh ordering" }],
+    created_at: 100,
+    updated_at: 100,
+  };
+  const commandMessage = {
+    id: "msg-command-refresh",
+    sessionID: "sess-1",
+    role: "assistant" as const,
+    parts: [
+      {
+        id: "part-command-refresh",
+        type: "tool",
+        tool: "command_run",
+        state: { status: "completed", input: { command_line: "node refresh-check.mjs" } },
+      },
+    ],
+    created_at: 101,
+    updated_at: 101,
+  };
+  const durableMessage = {
+    id: "msg-durable-refresh",
+    sessionID: "sess-1",
+    role: "assistant" as const,
+    parts: [{ id: "part-durable-refresh", type: "text", text: "DURABLE_REFRESH_FINAL" }],
+    created_at: 102,
+    updated_at: 102,
+  };
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: { ...session, status: "busy" },
+    messages: [userMessage, commandMessage],
+    permissions: [],
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.part.delta",
+        properties: {
+          session_id: "sess-1",
+          message_id: "msg-temp-refresh",
+          part_id: "part-temp-refresh",
+          field: "text",
+          delta: "TEMP_REFRESH_STREAM",
+        },
+      },
+    },
+  });
+
+  for (let index = 0; index < 3; index += 1) {
+    state = reducer(state, {
+      type: "hydrate",
+      session: { ...session, status: "idle" },
+      messages: [userMessage, commandMessage, durableMessage],
+      permissions: [],
+    });
+  }
+
+  assert.deepEqual(
+    state.messages.map((message) => message.id),
+    ["msg-user-refresh", "msg-command-refresh", "msg-durable-refresh"],
+  );
+  const text = displayMessages(state)
+    .map((message) => messageText(message))
+    .join("\n");
+  assert.equal(text.includes("TEMP_REFRESH_STREAM"), false);
+  assert.equal(text.match(/DURABLE_REFRESH_FINAL/gu)?.length, 1);
 });
 
 test("reducer keeps command updates under the original assistant reply when completion lacks created_at", () => {
@@ -549,7 +909,7 @@ test("reducer keeps command updates under the original assistant reply when comp
   });
 
   assert.deepEqual(
-    state.messages.map((message) => message.id),
+    displayMessages(state).map((message) => message.id),
     ["msg-user", "msg-agent", "msg-command", "msg-final"],
   );
   assert.equal(state.messages[2].created_at, 3);
@@ -614,9 +974,99 @@ test("reducer appends later streamed assistant replies after command results", (
 
   assert.deepEqual(
     state.messages.map((message) => message.id),
+    ["msg-user", "msg-agent", "msg-command"],
+  );
+  assert.deepEqual(
+    displayMessages(state).map((message) => message.id),
     ["msg-user", "msg-agent", "msg-command", "msg-final"],
   );
-  assert.equal(messageText(state.messages.at(-1)!).trim(), "Acceptance passed. Final marker is visible.");
+  assert.equal(
+    messageText(displayMessages(state).at(-1)!).trim(),
+    "Acceptance passed. Final marker is visible.",
+  );
+});
+
+test("reducer appends incremental polling pages without rewriting displayed history", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: { ...session, message_count: 1 },
+    messages: [
+      {
+        id: "msg-1",
+        sessionID: "sess-1",
+        role: "user",
+        created_at: 1,
+        parts: [{ id: "part-1", type: "text", text: "one" }],
+      },
+    ],
+    permissions: [],
+  });
+
+  state = reducer(state, {
+    type: "messages-incremental",
+    sessionID: "sess-1",
+    session: { ...session, message_count: 2 },
+    messages: [
+      {
+        id: "msg-2",
+        sessionID: "sess-1",
+        role: "assistant",
+        created_at: 2,
+        parts: [{ id: "part-2", type: "text", text: "two" }],
+      },
+    ],
+  });
+  state = reducer(state, {
+    type: "messages-incremental",
+    sessionID: "sess-1",
+    session: { ...session, message_count: 2 },
+    messages: [
+      {
+        id: "msg-2",
+        sessionID: "sess-1",
+        role: "assistant",
+        created_at: 2,
+        updated_at: 3,
+        parts: [{ id: "part-2", type: "text", text: "two updated" }],
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    state.messages.map((message) => message.id),
+    ["msg-1", "msg-2"],
+  );
+  assert.equal(messageText(state.messages[1]), "two");
+  assert.equal(state.refreshState["sess-1"]?.lastFinalMessageID, "msg-2");
+  assert.equal(state.refreshState["sess-1"]?.lastFinalMessageCount, 2);
+});
+
+test("reducer keeps refresh cursor stable on event reconnect", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-1",
+        sessionID: "sess-1",
+        role: "assistant",
+        created_at: 1,
+        parts: [{ id: "part-1", type: "text", text: "one" }],
+      },
+    ],
+    permissions: [],
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "global",
+      payload: { type: "server.connected", properties: {} },
+    },
+  });
+
+  assert.equal(state.refreshState["sess-1"]?.lastFinalMessageID, "msg-1");
+  assert.equal(state.refreshState["sess-1"]?.lastFinalMessageCount, 1);
 });
 
 test("reducer orders assistant text before command parts even when tool arrives first", () => {

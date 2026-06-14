@@ -106,6 +106,7 @@ function ensureDebugBackend() {
 }
 
 function runChecked(command, args, options = {}) {
+  const shell = process.platform === "win32" && command.endsWith(".cmd");
   const result = spawnSync(command, args, {
     cwd: options.cwd || repoRoot,
     env: { ...process.env, ...(options.env || {}) },
@@ -113,12 +114,12 @@ function runChecked(command, args, options = {}) {
     text: true,
     timeout: options.timeoutMs || 120_000,
     windowsHide: true,
-    shell: false,
+    shell,
     maxBuffer: 64 * 1024 * 1024,
   });
   if (result.status !== 0) {
     throw new Error(
-      `${command} ${args.join(" ")} failed with ${result.status || result.signal}\nSTDOUT:\n${result.stdout || ""}\nSTDERR:\n${result.stderr || ""}`,
+      `${command} ${args.join(" ")} failed with ${result.status || result.signal || result.error}\nSTDOUT:\n${result.stdout || ""}\nSTDERR:\n${result.stderr || ""}`,
     );
   }
 }
@@ -482,7 +483,7 @@ async function runLoggedProcess(command, args, ctx, options = {}) {
 
 async function finishCase(ctx, definition, result, extras = {}) {
   const lastMessage = await readText(ctx.lastMessagePath);
-  const finalAnswerText = [result?.stdout || "", lastMessage].join("\n");
+  const finalAnswerText = [result?.stdout || "", result?.stderr || "", lastMessage].join("\n");
   const validation = await definition.validate();
   validation.push(
     check("process exited 0", result?.status === 0, {

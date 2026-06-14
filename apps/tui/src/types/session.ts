@@ -4,6 +4,7 @@ export type SessionStatusValue = "idle" | "busy" | "error";
 
 export interface Session {
   id: string;
+  draft?: boolean;
   name?: string | null;
   parent_id?: string | null;
   created_at?: number;
@@ -97,6 +98,10 @@ export function sessionTitle(session: Session): string {
   return (session.session_display_name || session.name || session.id || "New Session").toString();
 }
 
+export function isDraftSession(session: Session | undefined): boolean {
+  return session?.draft === true;
+}
+
 export function sessionUpdatedAt(session: Session): number {
   return session.updated_at ?? 0;
 }
@@ -155,8 +160,13 @@ export function messageSortValue(message: Message): number {
 }
 
 export function lastAssistantText(messages: Message[]): string {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
+  const ordered = messages
+    .map((message, index) => ({ message, index }))
+    .sort(
+      (left, right) =>
+        messageSortValue(right.message) - messageSortValue(left.message) || right.index - left.index,
+    );
+  for (const { message } of ordered) {
     if (message.role === "assistant") {
       const text = messageText(message).trim();
       if (isUserFacingAssistantText(text)) return text;

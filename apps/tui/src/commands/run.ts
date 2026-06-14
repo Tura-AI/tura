@@ -25,6 +25,8 @@ import { NdjsonOutput } from "../output/ndjson.js";
 import { userFacingError } from "../gateway/errors.js";
 import type { CommandRunShell } from "./config-values.js";
 
+const RUN_COMPLETION_STABLE_MS = 1000;
+
 export interface RunOptions {
   prompt: string;
   sessionID?: string;
@@ -165,6 +167,10 @@ async function waitWithEvents(
   const controller = new AbortController();
   const deadline = Date.now() + timeoutSec * 1000;
   const stream = client.streamEvents(controller.signal)[Symbol.asyncIterator]();
+  let candidate: { result: RunResult; signature: string; since: number } | undefined;
+  let lastRelevantEventAt = Date.now();
+  const eventTexts = new Map<string, string>();
+  let latestEventText = "";
   try {
     while (Date.now() < deadline) {
       const remaining = Math.max(1, Math.min(1000, deadline - Date.now()));
@@ -175,12 +181,18 @@ async function waitWithEvents(
           normalized.directory === "global" ||
           sameDirectory(normalized.directory, client.directory);
         if (directoryMatches && (!normalized.sessionID || normalized.sessionID === session.id)) {
+          lastRelevantEventAt = Date.now();
+          latestEventText = updateEventText(eventTexts, latestEventText, normalized);
           human?.event(normalized);
           ndjson?.event(normalized);
         }
       }
       const completed = await completionResult(client, session.id, initialCount);
-      if (completed) return completed;
+      candidate = stableCompletionCandidate(candidate, completed);
+      const stableSince = Math.max(candidate?.since ?? 0, lastRelevantEventAt);
+      if (candidate && Date.now() - stableSince >= RUN_COMPLETION_STABLE_MS) {
+        return resultWithEventText(candidate.result, latestEventText);
+      }
     }
   } finally {
     controller.abort();
@@ -190,6 +202,33 @@ async function waitWithEvents(
   throw new TimeoutError(`timed out after ${timeoutSec}s`);
 }
 
+function updateEventText(
+  texts: Map<string, string>,
+  latest: string,
+  event: ReturnType<typeof normalizeEvent>,
+): string {
+  if (event.text === undefined) return latest;
+  if (event.type === "message.part.delta") {
+    const key = event.messageID && event.partID ? `${event.messageID}\u0000${event.partID}` : "";
+    if (!key) return latest;
+    const text = `${texts.get(key) ?? ""}${event.text}`;
+    texts.set(key, text);
+    return text.trim() ? text : latest;
+  }
+  if (event.type === "message.updated") {
+    const key = event.messageID ?? "assistant";
+    texts.set(key, event.text);
+    return event.text.trim() ? event.text : latest;
+  }
+  return latest;
+}
+
+function resultWithEventText(result: RunResult, eventText: string): RunResult {
+  const text = eventText.trim();
+  if (!text || text.length < result.finalText.trim().length) return result;
+  return { ...result, finalText: text };
+}
+
 async function waitByPolling(
   client: GatewayClient,
   session: Session,
@@ -197,9 +236,12 @@ async function waitByPolling(
   timeoutSec: number,
 ): Promise<RunResult> {
   const deadline = Date.now() + timeoutSec * 1000;
+  let candidate: { result: RunResult; signature: string; since: number } | undefined;
   while (Date.now() < deadline) {
     const completed = await completionResult(client, session.id, initialCount);
-    if (completed) return completed;
+    candidate = stableCompletionCandidate(candidate, completed);
+    if (candidate && Date.now() - candidate.since >= RUN_COMPLETION_STABLE_MS)
+      return candidate.result;
     await delay(1000);
   }
   await client.abort(session.id).catch(() => undefined);
@@ -223,4 +265,20 @@ async function completionResult(
     return buildRunResult(sessionID, messages, "completed");
   }
   return undefined;
+}
+
+function stableCompletionCandidate(
+  previous: { result: RunResult; signature: string; since: number } | undefined,
+  result: RunResult | undefined,
+): { result: RunResult; signature: string; since: number } | undefined {
+  if (!result) return undefined;
+  const signature = JSON.stringify({
+    status: result.status,
+    finalText: result.finalText,
+    count: result.messages.length,
+    lastID: result.messages.at(-1)?.id,
+    lastUpdated: result.messages.at(-1)?.updated_at,
+  });
+  if (previous?.signature === signature) return previous;
+  return { result, signature, since: Date.now() };
 }

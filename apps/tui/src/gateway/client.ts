@@ -45,6 +45,11 @@ export interface GatewayClientOptions {
 }
 
 export type GatewayHttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
+export interface ListMessagesOptions {
+  limit?: number;
+  before?: string;
+  after?: string;
+}
 
 export class GatewayClient {
   readonly baseUrl: string;
@@ -144,9 +149,14 @@ export class GatewayClient {
     return session;
   }
 
-  async listMessages(sessionID: string): Promise<Message[]> {
+  async listMessages(sessionID: string, options: ListMessagesOptions = {}): Promise<Message[]> {
+    const query: Record<string, string | number | boolean> = {};
+    if (options.limit) query.limit = options.limit;
+    if (options.before) query.before = options.before;
+    if (options.after) query.after = options.after;
     const response = await this.get<Array<Message | MessageEnvelope>>(
       `/session/${encodeURIComponent(sessionID)}/message`,
+      query,
     );
     return response.map(normalizeMessage);
   }

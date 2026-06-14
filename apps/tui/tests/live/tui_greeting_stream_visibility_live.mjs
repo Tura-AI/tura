@@ -303,7 +303,9 @@ async function waitForVisibleGreetingResponse(page) {
     if (sawBusy && /空闲|idle/i.test(screen)) break;
     await delay(500);
   }
-  throw new Error(`timed out waiting for visible greeting response after ${Math.min(timeoutMs, 45_000)}ms`);
+  throw new Error(
+    `timed out waiting for visible greeting response after ${Math.min(timeoutMs, 45_000)}ms`,
+  );
 }
 
 async function terminalText(page) {

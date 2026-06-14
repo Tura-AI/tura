@@ -104,9 +104,7 @@ export async function ensureGatewayAvailable(
   }
 
   const launchBinary = binary;
-  const instanceHome = process.env.TURA_HOME?.trim()
-    ? canonical(process.env.TURA_HOME)
-    : myRoot;
+  const instanceHome = process.env.TURA_HOME?.trim() ? canonical(process.env.TURA_HOME) : myRoot;
   const port = portOf(desiredUrl);
   const spawnPort = port || process.env.PORT;
   const startupState: GatewayStartupState = {};
@@ -290,8 +288,8 @@ async function runWithSpinner(options: {
 }): Promise<void> {
   let frame = 0;
   const frames = options.capabilities.unicode
-    ? ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-    : ["|", "/", "-", "\\"];
+    ? ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "⠋", "⠙", "⠹", "⠸", "⠼"]
+    : ["|", "/", "-", "\\", "-", "/"];
   const draw = () => {
     if (!process.stdout.isTTY) return;
     const prefix = frames[frame % frames.length];

@@ -85,7 +85,6 @@ export interface PersonaMediaConfig {
 export interface PersonaExpression {
   id: string;
   name: string;
-  emoji_aliases?: string[];
   source_directory: string;
   grid_path: string;
   frames: Record<string, string>;

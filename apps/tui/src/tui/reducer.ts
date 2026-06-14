@@ -7,6 +7,7 @@ import {
   messageText,
   messageSortValue,
   partMessageID,
+  partSessionID,
   sessionStatusText,
   sessionUpdatedAt,
 } from "../types/session.js";
@@ -40,6 +41,7 @@ export interface SettingInputState {
 }
 
 const SETTINGS_ENTRY_COUNT = 8;
+const SESSION_CREATE_ENTRY_COUNT = 1;
 const rawAnsiControlPattern = /\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-_]/g;
 
 export interface AppState {
@@ -47,6 +49,8 @@ export interface AppState {
   session?: Session;
   sessions: Session[];
   messages: Message[];
+  liveStreams: Record<string, LiveStream>;
+  refreshState: Record<string, RefreshSessionState>;
   sessionPreviews: Record<string, string>;
   seenSessionMessageCounts: Record<string, number>;
   permissions: PermissionRequest[];
@@ -75,7 +79,23 @@ export interface AppState {
   selectedSettingsIndex: number;
   selectedSettingOptionIndex: number;
   thinkingFrame: number;
-  scrollOffset: number;
+}
+
+export interface LiveStream {
+  sessionID?: string;
+  messageID: string;
+  partID: string;
+  field: "text" | "content";
+  text: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface RefreshSessionState {
+  lastFinalMessageID?: string;
+  lastFinalMessageCount: number;
+  updatedAt?: number;
+  preview?: string;
 }
 
 export type AppAction =
@@ -91,8 +111,10 @@ export type AppAction =
       authMethods?: ProviderAuthMethodsResponse;
       authStatuses?: Record<string, ProviderAuthStatus>;
       sessionConfig?: SessionConfig;
+      closePanels?: boolean;
     }
   | { type: "event"; event: GatewayEventEnvelope }
+  | { type: "messages-incremental"; sessionID: string; messages: Message[]; session?: Session }
   | { type: "composer"; value: string }
   | { type: "notice"; value?: string }
   | { type: "status"; value: AppState["status"] }
@@ -124,14 +146,15 @@ export type AppAction =
   | { type: "toggle-auth" }
   | { type: "toggle-settings" }
   | { type: "toggle-personas" }
-  | { type: "close-panels" }
-  | { type: "scroll"; delta: number };
+  | { type: "close-panels" };
 
 export function initialState(cwd: string): AppState {
   return {
     cwd,
     sessions: [],
     messages: [],
+    liveStreams: {},
+    refreshState: {},
     sessionPreviews: {},
     seenSessionMessageCounts: {},
     permissions: [],
@@ -156,20 +179,35 @@ export function initialState(cwd: string): AppState {
     selectedSettingsIndex: 0,
     selectedSettingOptionIndex: 0,
     thinkingFrame: 0,
-    scrollOffset: 0,
   };
 }
 
 export function reducer(state: AppState, action: AppAction): AppState {
   if (action.type === "hydrate") {
     const sessionID = action.session.id;
+    const sessionChanged = Boolean(state.session && state.session.id !== sessionID);
+    const nextSessions = action.sessions ?? state.sessions;
     const hydratedMessages = normalizeMessagesForDisplay(action.messages);
+    const nextMessages = sessionChanged
+      ? hydratedMessages
+      : mergeStableMessages(state.messages, hydratedMessages);
     const currentPreview = lastMessagePreview(hydratedMessages);
+    const panelState = action.closePanels ? closedPanelsState() : {};
     return {
       ...state,
+      ...panelState,
       session: action.session,
-      sessions: action.sessions ?? state.sessions,
-      messages: mergeHydratedMessages(hydratedMessages, state.messages),
+      sessions: nextSessions,
+      messages: nextMessages,
+      liveStreams: sessionChanged
+        ? {}
+        : clearLiveStreamsForDurableMessages(state.liveStreams, sessionID, hydratedMessages),
+      refreshState: refreshStateAfterMessages(
+        state.refreshState,
+        sessionID,
+        nextMessages,
+        action.session,
+      ),
       sessionPreviews: currentPreview
         ? { ...state.sessionPreviews, [sessionID]: currentPreview }
         : state.sessionPreviews,
@@ -186,10 +224,10 @@ export function reducer(state: AppState, action: AppAction): AppState {
       authStatuses: action.authStatuses ?? state.authStatuses,
       sessionConfig: action.sessionConfig ?? state.sessionConfig,
       status: action.session.status ?? "idle",
-      selectedSessionIndex: selectedSessionIndex(
-        action.sessions ?? state.sessions,
-        action.session.id,
-      ),
+      selectedSessionIndex:
+        state.sessionsOpen && !sessionChanged
+          ? boundedSessionIndex(state.selectedSessionIndex, nextSessions)
+          : selectedSessionIndex(nextSessions, action.session.id),
       selectedPersonaIndex: selectedPersonaIndex(
         action.personas ?? state.personas,
         action.agents ?? state.agents,
@@ -202,17 +240,22 @@ export function reducer(state: AppState, action: AppAction): AppState {
     const normalized = normalizeEvent(action.event);
     if (normalized.directory !== "global" && !sameDirectory(normalized.directory, state.cwd))
       return state;
+    if (action.event.payload?.type === "server.connected") {
+      return state;
+    }
     if (action.event.payload?.type === "message.updated") {
       const message = (action.event.payload.properties as { info?: Message } | undefined)?.info;
       if (!message) return state;
       const sessionID = normalized.sessionID || message.sessionID || message.session_id;
       if (state.session && sessionID && sessionID !== state.session.id) {
+        const preview = messagePreview(message) ?? state.sessionPreviews[sessionID] ?? "";
         return {
           ...state,
           sessionPreviews: {
             ...state.sessionPreviews,
-            [sessionID]: messagePreview(message) ?? state.sessionPreviews[sessionID] ?? "",
+            [sessionID]: preview,
           },
+          refreshState: refreshStateAfterBackgroundMessage(state.refreshState, sessionID, message),
           sessions: state.sessions.map((session) =>
             session.id === sessionID
               ? {
@@ -224,28 +267,53 @@ export function reducer(state: AppState, action: AppAction): AppState {
           ),
         };
       }
-      return { ...state, messages: upsertMessage(state.messages, message) };
+      const messages = upsertMessage(state.messages, message);
+      return {
+        ...state,
+        messages,
+        liveStreams: clearLiveStreamsForDurableMessages(state.liveStreams, sessionID, [message]),
+        refreshState: refreshStateAfterMessages(
+          state.refreshState,
+          sessionID,
+          messages,
+          state.session,
+        ),
+      };
     }
     if (action.event.payload?.type === "message.part.updated") {
       const part = (action.event.payload.properties as { part?: MessagePart } | undefined)?.part;
       if (!part) return state;
-      if (state.session && normalized.sessionID && normalized.sessionID !== state.session.id)
+      const sessionID = normalized.sessionID ?? partSessionID(part);
+      if (state.session && sessionID !== state.session.id)
         return state;
-      return { ...state, messages: upsertPart(state.messages, part, normalized.sessionID) };
+      const messages = upsertPart(state.messages, part, sessionID);
+      return {
+        ...state,
+        messages,
+        liveStreams: clearLiveStreamForPart(state.liveStreams, sessionID, part),
+        refreshState: refreshStateAfterMessages(
+          state.refreshState,
+          sessionID,
+          messages,
+          state.session,
+        ),
+      };
     }
     if (action.event.payload?.type === "message.part.delta") {
       const properties = action.event.payload.properties as Record<string, unknown> | undefined;
-      if (state.session && normalized.sessionID && normalized.sessionID !== state.session.id)
+      const sessionID = normalized.sessionID;
+      if (state.session && sessionID !== state.session.id)
         return state;
       return {
         ...state,
-        messages: applyPartDelta(
+        liveStreams: applyPartDelta(
+          state.liveStreams,
           state.messages,
           readString(properties, "message_id") ?? readString(properties, "messageID"),
           readString(properties, "part_id") ?? readString(properties, "partID"),
           readString(properties, "field"),
           readString(properties, "delta"),
-          normalized.sessionID,
+          sessionID,
         ),
       };
     }
@@ -256,6 +324,12 @@ export function reducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         messages: state.messages.filter((message) => message.id !== properties?.message_id),
+        liveStreams: clearLiveStreamsForMessageID(
+          state.liveStreams,
+          normalized.sessionID,
+          properties?.message_id,
+        ),
+        refreshState: invalidateRefreshState(state.refreshState, normalized.sessionID),
       };
     }
     if (action.event.payload?.type === "session.status") {
@@ -324,12 +398,43 @@ export function reducer(state: AppState, action: AppAction): AppState {
     }
     return state;
   }
+  if (action.type === "messages-incremental") {
+    const sessionID = action.sessionID;
+    const incoming = normalizeMessagesForDisplay(action.messages);
+    if (state.session?.id !== sessionID) {
+      return {
+        ...state,
+        sessionPreviews: updatePreviewForMessages(state.sessionPreviews, sessionID, incoming),
+        refreshState: refreshStateAfterMessages(
+          state.refreshState,
+          sessionID,
+          incoming,
+          action.session,
+        ),
+      };
+    }
+    const messages = mergeStableMessages(state.messages, incoming);
+    return {
+      ...state,
+      session: action.session ?? state.session,
+      messages,
+      liveStreams: clearLiveStreamsForDurableMessages(state.liveStreams, sessionID, incoming),
+      sessionPreviews: updatePreviewForMessages(state.sessionPreviews, sessionID, messages),
+      refreshState: refreshStateAfterMessages(
+        state.refreshState,
+        sessionID,
+        messages,
+        action.session ?? state.session,
+      ),
+    };
+  }
   if (action.type === "composer") return { ...state, composer: action.value };
   if (action.type === "notice") return { ...state, notice: action.value };
   if (action.type === "status") return { ...state, status: action.value };
   if (action.type === "permissions") return { ...state, permissions: action.value };
   if (action.type === "questions") return { ...state, questions: action.value };
   if (action.type === "sessions") {
+    const keepSelection = state.sessionsOpen && action.open;
     return {
       ...state,
       sessions: action.value,
@@ -339,7 +444,9 @@ export function reducer(state: AppState, action: AppAction): AppState {
         state.session?.id,
       ),
       sessionsOpen: action.open ?? state.sessionsOpen,
-      selectedSessionIndex: selectedSessionIndex(action.value, state.session?.id),
+      selectedSessionIndex: keepSelection
+        ? boundedSessionIndex(state.selectedSessionIndex, action.value)
+        : selectedSessionIndex(action.value, state.session?.id),
     };
   }
   if (action.type === "session-previews") {
@@ -398,7 +505,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
       ...state,
       selectedSessionIndex: wrapIndex(
         state.selectedSessionIndex + action.delta,
-        state.sessions.length,
+        state.sessions.length + SESSION_CREATE_ENTRY_COUNT,
       ),
     };
   }
@@ -539,9 +646,120 @@ export function reducer(state: AppState, action: AppAction): AppState {
       personasOpen: false,
       help: false,
     };
-  if (action.type === "scroll")
-    return { ...state, scrollOffset: Math.max(0, state.scrollOffset + action.delta) };
   return state;
+}
+
+function closedPanelsState(): Pick<
+  AppState,
+  | "sessionsOpen"
+  | "modelsOpen"
+  | "authOpen"
+  | "settingsOpen"
+  | "settingDetail"
+  | "selectedProviderID"
+  | "settingInput"
+  | "personasOpen"
+  | "help"
+> {
+  return {
+    sessionsOpen: false,
+    modelsOpen: false,
+    authOpen: false,
+    settingsOpen: false,
+    settingDetail: undefined,
+    selectedProviderID: undefined,
+    settingInput: undefined,
+    personasOpen: false,
+    help: false,
+  };
+}
+
+export function displayMessages(state: AppState): Message[] {
+  const streams = Object.values(state.liveStreams).filter((stream) =>
+    state.session?.id ? stream.sessionID === state.session.id : true,
+  );
+  if (!streams.length) return state.messages;
+  let messages = state.messages;
+  for (const stream of streams.sort((left, right) => left.updatedAt - right.updatedAt)) {
+    messages = applyLiveStream(messages, stream);
+  }
+  return messages;
+}
+
+function mergeStableMessages(current: Message[], incoming: Message[]): Message[] {
+  let changed = false;
+  const next = [...current];
+  const indexes = new Map(next.map((message, index) => [message.id, index]));
+  for (const message of incoming) {
+    const index = indexes.get(message.id);
+    if (index === undefined) {
+      indexes.set(message.id, next.length);
+      next.push(message);
+      changed = true;
+    }
+  }
+  return changed ? next : current;
+}
+
+function updatePreviewForMessages(
+  previews: Record<string, string>,
+  sessionID: string,
+  messages: Message[],
+): Record<string, string> {
+  const preview = lastMessagePreview(messages);
+  return preview ? { ...previews, [sessionID]: preview } : previews;
+}
+
+function refreshStateAfterBackgroundMessage(
+  current: Record<string, RefreshSessionState>,
+  sessionID: string | undefined,
+  message: Message,
+): Record<string, RefreshSessionState> {
+  if (!sessionID) return current;
+  const existing = current[sessionID];
+  return {
+    ...current,
+    [sessionID]: {
+      lastFinalMessageID: message.id,
+      lastFinalMessageCount:
+        existing?.lastFinalMessageID === message.id
+          ? existing.lastFinalMessageCount
+          : (existing?.lastFinalMessageCount ?? 0) + 1,
+      updatedAt: message.updated_at ?? message.created_at ?? Date.now(),
+      preview: messagePreview(message) ?? existing?.preview,
+    },
+  };
+}
+
+function refreshStateAfterMessages(
+  current: Record<string, RefreshSessionState>,
+  sessionID: string | undefined,
+  messages: Message[],
+  session: Session | undefined,
+): Record<string, RefreshSessionState> {
+  if (!sessionID) return current;
+  const last = messages.at(-1);
+  const preview = lastMessagePreview(messages) ?? current[sessionID]?.preview;
+  return {
+    ...current,
+    [sessionID]: {
+      lastFinalMessageID: last?.id,
+      lastFinalMessageCount: messages.length,
+      updatedAt: session?.updated_at ?? last?.updated_at ?? last?.created_at ?? Date.now(),
+      preview,
+    },
+  };
+}
+
+function invalidateRefreshState(
+  current: Record<string, RefreshSessionState>,
+  sessionID?: string,
+): Record<string, RefreshSessionState> {
+  if (sessionID) {
+    const { [sessionID]: _removed, ...rest } = current;
+    return rest;
+  }
+  return {};
 }
 
 function settingOptionCount(state: AppState): number {
@@ -605,6 +823,10 @@ function seedSeenSessionCounts(
     next[session.id] = session.message_count ?? next[session.id] ?? 0;
   }
   return next;
+}
+
+function boundedSessionIndex(index: number, sessions: Session[]): number {
+  return wrapIndex(index, sessions.length + SESSION_CREATE_ENTRY_COUNT);
 }
 
 function lastMessagePreview(messages: Message[]): string | undefined {
@@ -677,42 +899,6 @@ function mergePartsPreservingExistingText(
   return merged.length ? merged : incomingParts;
 }
 
-function mergeHydratedMessages(hydrated: Message[], current: Message[]): Message[] {
-  const currentByID = new Map(current.map((message) => [message.id, message]));
-  const normalizedHydrated = hydrated.map((message) =>
-    mergeMessageForDisplay(currentByID.get(message.id), message),
-  );
-  const hydratedIDs = new Set(normalizedHydrated.map((message) => message.id));
-  const visibleCurrentResponses = currentVisibleResponsesMissingFromHydrate(current, hydratedIDs);
-  if (!visibleCurrentResponses.length) return normalizedHydrated;
-  const next = [...normalizedHydrated, ...normalizeMessagesForDisplay(visibleCurrentResponses)];
-  next.sort((left, right) => messageSortValue(left) - messageSortValue(right));
-  return next;
-}
-
-function currentVisibleResponsesMissingFromHydrate(
-  current: Message[],
-  hydratedIDs: Set<string>,
-): Message[] {
-  const lastUser = lastUserSortValue(current);
-  if (!Number.isFinite(lastUser)) return [];
-  return current.filter(
-    (message) =>
-      !hydratedIDs.has(message.id) &&
-      message.role !== "user" &&
-      messageSortValue(message) > lastUser &&
-      Boolean(messageText(message).trim()),
-  );
-}
-
-function lastUserSortValue(messages: Message[]): number {
-  let lastUser = Number.NEGATIVE_INFINITY;
-  for (const message of messages) {
-    if (message.role === "user") lastUser = Math.max(lastUser, messageSortValue(message));
-  }
-  return lastUser;
-}
-
 function upsertPart(
   messages: Message[],
   part: MessagePart,
@@ -749,74 +935,147 @@ function upsertPart(
 }
 
 function applyPartDelta(
+  streams: Record<string, LiveStream>,
   messages: Message[],
   messageID: string | undefined,
   partID: string | undefined,
   field: string | undefined,
   delta: string | undefined,
   sessionID: string | undefined,
-): Message[] {
+): Record<string, LiveStream> {
   if (!messageID || !partID || delta === undefined || !["text", "content"].includes(field ?? ""))
-    return messages;
+    return streams;
   const textDelta = sanitizeStreamDelta(delta);
-  if (!textDelta) return messages;
+  if (!textDelta) return streams;
+  const key = liveStreamKey(sessionID, messageID, partID);
+  const existing = streams[key];
+  return {
+    ...streams,
+    [key]: {
+      sessionID,
+      messageID,
+      partID,
+      field: field as "text" | "content",
+      text: `${existing?.text ?? ""}${textDelta}`,
+      createdAt: existing?.createdAt ?? streamedMessageCreatedAt(messages),
+      updatedAt: Date.now(),
+    },
+  };
+}
+
+function applyLiveStream(messages: Message[], stream: LiveStream): Message[] {
   let foundMessage = false;
   let foundPart = false;
   const next = messages.map((message) => {
-    if (message.id !== messageID) return message;
+    if (message.id !== stream.messageID) return message;
     foundMessage = true;
     return {
       ...message,
       parts: message.parts.map((part) => {
-        if (part.id !== partID) return part;
+        if (part.id !== stream.partID) return part;
         foundPart = true;
-        if (field === "text") return { ...part, text: `${part.text ?? ""}${textDelta}` };
-        if (field === "content") return { ...part, content: `${part.content ?? ""}${textDelta}` };
-        return part;
+        const base = isInternalTaskStatusPart(part)
+          ? ""
+          : stream.field === "text"
+            ? (part.text ?? "")
+            : (part.content ?? "");
+        if (stream.field === "text") return { ...part, text: `${base}${stream.text}` };
+        return { ...part, content: `${base}${stream.text}` };
       }),
-      updated_at: Date.now(),
+      updated_at: stream.updatedAt,
     };
   });
   if (foundMessage && !foundPart) {
     return next.map((message) => {
-      if (message.id !== messageID) return message;
+      if (message.id !== stream.messageID) return message;
       return {
         ...message,
-        parts: [
-          ...message.parts,
-          {
-            id: partID,
-            sessionID,
-            messageID,
-            type: "text",
-            [field as "text" | "content"]: textDelta,
-          },
-        ].sort(partDisplayComparator),
-        updated_at: Date.now(),
+        parts: orderMessagePartsForDisplay([...message.parts, liveStreamPart(stream)]),
+        updated_at: stream.updatedAt,
       };
     });
   }
   if (!foundMessage) {
-    const createdAt = streamedMessageCreatedAt(next);
     next.push({
-      id: messageID,
-      sessionID,
+      id: stream.messageID,
+      sessionID: stream.sessionID,
       role: "assistant",
-      parts: [
-        {
-          id: partID,
-          sessionID,
-          messageID,
-          type: "text",
-          [field as "text" | "content"]: textDelta,
-        },
-      ],
-      created_at: createdAt,
-      updated_at: Date.now(),
+      parts: [liveStreamPart(stream)],
+      created_at: stream.createdAt,
+      updated_at: stream.updatedAt,
     });
   }
   next.sort((left, right) => messageSortValue(left) - messageSortValue(right));
   return next;
+}
+
+function liveStreamPart(stream: LiveStream): MessagePart {
+  return {
+    id: stream.partID,
+    sessionID: stream.sessionID,
+    messageID: stream.messageID,
+    type: "text",
+    [stream.field]: stream.text,
+  };
+}
+
+function liveStreamKey(sessionID: string | undefined, messageID: string, partID: string): string {
+  return `${sessionID ?? ""}\u0000${messageID}\u0000${partID}`;
+}
+
+function clearLiveStreamsForDurableMessages(
+  streams: Record<string, LiveStream>,
+  sessionID: string | undefined,
+  messages: Message[],
+): Record<string, LiveStream> {
+  if (!messages.some((message) => message.role !== "user" && messageText(message).trim())) {
+    return streams;
+  }
+  return filterLiveStreams(
+    streams,
+    (stream) => Boolean(sessionID) && Boolean(stream.sessionID) && stream.sessionID !== sessionID,
+  );
+}
+
+function clearLiveStreamForPart(
+  streams: Record<string, LiveStream>,
+  sessionID: string | undefined,
+  part: MessagePart,
+): Record<string, LiveStream> {
+  const messageID = partMessageID(part);
+  return filterLiveStreams(
+    streams,
+    (stream) =>
+      stream.partID !== part.id ||
+      (Boolean(messageID) && stream.messageID !== messageID) ||
+      (Boolean(sessionID) && stream.sessionID !== sessionID),
+  );
+}
+
+function clearLiveStreamsForMessageID(
+  streams: Record<string, LiveStream>,
+  sessionID: string | undefined,
+  messageID: string | undefined,
+): Record<string, LiveStream> {
+  if (!messageID) return streams;
+  return filterLiveStreams(
+    streams,
+    (stream) =>
+      stream.messageID !== messageID || (Boolean(sessionID) && stream.sessionID !== sessionID),
+  );
+}
+
+function filterLiveStreams(
+  streams: Record<string, LiveStream>,
+  keep: (stream: LiveStream) => boolean,
+): Record<string, LiveStream> {
+  let changed = false;
+  const entries = Object.entries(streams).filter(([, stream]) => {
+    const include = keep(stream);
+    if (!include) changed = true;
+    return include;
+  });
+  return changed ? Object.fromEntries(entries) : streams;
 }
 
 function orderMessagePartsForDisplay(parts: MessagePart[]): MessagePart[] {
@@ -833,13 +1092,9 @@ function partDisplayRank(part: MessagePart): number {
   return 1;
 }
 
-// Anchor a freshly streamed assistant reply right after the most recent user
-// message instead of stamping it with wall-clock time. Wall-clock time sorts the
-// reply *below* command messages that the gateway created earlier in the turn,
-// and then the finalizing `message.updated` (carrying the real, earlier
-// timestamp) snaps it back above them — a visible jump that made streaming text
-// and the command section look like they were colliding.
 function streamedMessageCreatedAt(messages: Message[]): number {
+  const runningAssistant = latestRunningAssistantSort(messages);
+  if (Number.isFinite(runningAssistant)) return runningAssistant + 0.5;
   let lastUser = Number.NEGATIVE_INFINITY;
   let latestAfterUser = Number.NEGATIVE_INFINITY;
   let visibleAssistantAfterUser = false;
@@ -859,6 +1114,28 @@ function streamedMessageCreatedAt(messages: Message[]): number {
     return latestAfterUser + 0.5;
   }
   return Number.isFinite(lastUser) ? lastUser + 0.5 : Date.now();
+}
+
+function latestRunningAssistantSort(messages: Message[]): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === "assistant" && messageHasRunningPart(message)) {
+      return messageSortValue(message);
+    }
+  }
+  return Number.NEGATIVE_INFINITY;
+}
+
+function messageHasRunningPart(message: Message): boolean {
+  return (message.parts ?? []).some((part) => partIsRunning(part));
+}
+
+function partIsRunning(part: MessagePart): boolean {
+  if (part.tool !== "command_run" && part.type !== "tool") return false;
+  const state =
+    part.state && typeof part.state === "object" ? (part.state as Record<string, unknown>) : {};
+  const status = typeof state.status === "string" ? state.status : "";
+  return /run|progress|pending|busy|question|in[_ -]?progress|execut|start/i.test(status);
 }
 
 function sanitizeStreamDelta(value: string): string {

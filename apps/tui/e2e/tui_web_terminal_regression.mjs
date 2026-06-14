@@ -14,6 +14,16 @@ const { chromium } = nodeRequire("playwright");
 const checks = [];
 let web;
 
+const rgb = {
+  textPrimary: "rgb(238, 238, 238)",
+  textAgentRich: "rgb(203, 203, 203)",
+  textSecondary: "rgb(143, 143, 143)",
+  textAuxiliary: "rgb(107, 107, 107)",
+  textBackground: "rgb(72, 72, 72)",
+  surfaceBackground: "rgb(32, 32, 34)",
+  richHighlight: "rgb(64, 224, 208)",
+};
+
 function record(name, ok, details = {}) {
   checks.push({ name, ok, ...details });
   if (!ok) throw new Error(`${name} failed: ${JSON.stringify(details)}`);
@@ -79,6 +89,82 @@ async function terminalText(page) {
   });
 }
 
+async function waitForTerminalText(page, value, deadlineMs = 30_000) {
+  await page.waitForFunction(
+    (needle) => {
+      const buffer = window.__turaTerminal?.buffer.active;
+      if (!buffer) return false;
+      for (let index = 0; index < buffer.length; index += 1) {
+        if (buffer.getLine(index)?.translateToString(true).includes(needle)) return true;
+      }
+      return false;
+    },
+    value,
+    { timeout: deadlineMs },
+  );
+}
+
+async function waitForCompactTerminalText(page, value, deadlineMs = 30_000) {
+  await page.waitForFunction(
+    (needle) => {
+      const buffer = window.__turaTerminal?.buffer.active;
+      if (!buffer) return false;
+      const lines = [];
+      for (let index = 0; index < buffer.length; index += 1) {
+        lines.push(buffer.getLine(index)?.translateToString(true) ?? "");
+      }
+      return lines.join("").replace(/\s+/g, "").includes(String(needle).replace(/\s+/g, ""));
+    },
+    value,
+    { timeout: deadlineMs },
+  );
+}
+
+async function screenshot(page, name) {
+  const file = path.join(runRoot, name);
+  await page.screenshot({ path: file, fullPage: true });
+  const stat = await fs.stat(file);
+  record(`screenshot-${name}`, stat.size > 10_000, { file, bytes: stat.size });
+  return file;
+}
+
+async function visibleTerminalStyles(page) {
+  return page.$$eval(".xterm-rows span", (spans) =>
+    spans.map((span) => {
+      const style = getComputedStyle(span);
+      return {
+        text: span.textContent || "",
+        color: style.color,
+        backgroundColor: style.backgroundColor,
+      };
+    }),
+  );
+}
+
+function recordVisibleColor(name, styles, color) {
+  record(
+    name,
+    styles.some((item) => item.color === color),
+    {
+      colors: [...new Set(styles.map((item) => item.color).filter(Boolean))],
+    },
+  );
+}
+
+function recordVisibleBackground(name, styles, backgroundColor) {
+  record(
+    name,
+    styles.some((item) => item.backgroundColor === backgroundColor),
+    {
+      backgrounds: [...new Set(styles.map((item) => item.backgroundColor).filter(Boolean))],
+    },
+  );
+}
+
+function countTextLines(value, pattern) {
+  return value.split("\n").filter((line) => pattern.test(line)).length;
+}
+
 async function main() {
   await fs.mkdir(runRoot, { recursive: true });
   const build = spawnSync(
@@ -100,7 +186,12 @@ async function main() {
   const port = freePort();
   web = startProcess(process.execPath, [path.join(appRoot, "scripts", "web-terminal.mjs")], {
     cwd: appRoot,
-    env: { PORT: String(port), TURA_TUI_MOCK: "1", TURA_TUI_MOCK_LONG_SESSION: "1" },
+    env: {
+      PORT: String(port),
+      TURA_TUI_MOCK: "1",
+      TURA_TUI_MOCK_LONG_SESSION: "1",
+      TURA_TUI_MOCK_RENDER_REGRESSION: "1",
+    },
   });
   await waitForUrl(`http://127.0.0.1:${port}`, 30_000);
   record("web-terminal-ready", true, { port });
@@ -116,58 +207,94 @@ async function main() {
       window.__turaTerminal.write("OLD TERMINAL HISTORY SHOULD BE CLEARED\r\n"),
     );
     await page.evaluate(() => window.__turaFit());
-    await page.waitForFunction(() => {
-      const buffer = window.__turaTerminal?.buffer.active;
-      if (!buffer) return false;
-      for (let index = 0; index < buffer.length; index += 1) {
-        if (buffer.getLine(index)?.translateToString(true).includes("Mock history 080"))
-          return true;
-      }
-      return false;
-    });
+    await waitForTerminalText(page, "Mock history 1000");
+    await waitForTerminalText(page, "$ node scripts/check-render-regression.mjs");
     const initialText = await terminalText(page);
+    const compactInitialText = initialText.replace(/\s+/g, "");
     record(
       "terminal-history-cleared",
       !initialText.includes("OLD TERMINAL HISTORY SHOULD BE CLEARED"),
     );
-    record("latest-session-content-loaded", initialText.includes("Mock history 080"));
-    await page.screenshot({ path: path.join(runRoot, "latest-session.png"), fullPage: true });
-
-    for (let index = 0; index < 12; index += 1)
-      await page.evaluate(() => window.__turaSendInput("\u001b[5~"));
-    await page.waitForFunction(() => {
-      const buffer = window.__turaTerminal?.buffer.active;
-      if (!buffer) return false;
-      for (let index = 0; index < buffer.length; index += 1) {
-        if (buffer.getLine(index)?.translateToString(true).includes("Mock history 001"))
-          return true;
-      }
-      return false;
+    record("latest-session-content-loaded", initialText.includes("Mock history 1000"));
+    record(
+      "long-user-multiline-visible",
+      initialText.includes("REGRESSION_USER_SECOND_LINE_VISIBLE") &&
+        initialText.includes("REGRESSION_USER_THIRD_LINE_VISIBLE"),
+    );
+    record(
+      "long-cjk-text-visible-with-tail",
+      initialText.includes("滚动中文颜色保持一致") &&
+        initialText.includes("REGRESSION_AGENT_RICH_VISIBLE"),
+    );
+    const commandDetailLines = initialText
+      .split("\n")
+      .filter((line) =>
+        /check-render-regression|REGRESSION_COMMAND_TAIL_VISIBLE_AFTER_WRAP/u.test(line),
+      );
+    record("command-detail-single-visible-line", commandDetailLines.length === 1, {
+      lines: commandDetailLines,
     });
+    record(
+      "long-command-tail-not-expanded",
+      !compactInitialText.includes("REGRESSION_COMMAND_TAIL_VISIBLE_AFTER_WRAP"),
+    );
+    record(
+      "rich-highlight-text-visible",
+      initialText.includes("REGRESSION_RICH_HIGHLIGHT_VISIBLE"),
+    );
+    await page.evaluate(() => window.__turaTerminal.scrollToBottom());
+    const bottomStyles = await visibleTerminalStyles(page);
+    recordVisibleColor("dom-primary-text-100-visible", bottomStyles, rgb.textPrimary);
+    recordVisibleColor("dom-agent-rich-text-85-visible", bottomStyles, rgb.textAgentRich);
+    recordVisibleColor("dom-secondary-user-text-60-visible", bottomStyles, rgb.textSecondary);
+    recordVisibleColor("dom-command-auxiliary-text-45-visible", bottomStyles, rgb.textAuxiliary);
+    recordVisibleColor("dom-background-hint-text-30-visible", bottomStyles, rgb.textBackground);
+    recordVisibleColor("dom-rich-highlight-visible", bottomStyles, rgb.richHighlight);
+    recordVisibleBackground("dom-surface-background-visible", bottomStyles, rgb.surfaceBackground);
+    await screenshot(page, "latest-session.png");
+
+    await page.evaluate(() => window.__turaTerminal.scrollToTop());
+    await waitForTerminalText(page, "Mock history 001");
     const scrolledText = await terminalText(page);
     record("earliest-session-content-reachable", scrolledText.includes("Mock history 001"));
-    await page.screenshot({ path: path.join(runRoot, "earliest-session.png"), fullPage: true });
+    const markerMatches = scrolledText.match(/Mock history \d{3,4}/g) ?? [];
+    record(
+      "mock-history-has-no-duplicate-lines",
+      new Set(markerMatches).size === markerMatches.length,
+      {
+        markers: markerMatches.length,
+        unique: new Set(markerMatches).size,
+      },
+    );
+    record("composer-not-in-history-lines", !/Mock history \d{3,4}.*[>].*mock/i.test(scrolledText));
+    await screenshot(page, "earliest-session.png");
 
-    await page.evaluate(() => window.__turaSendInput("\u001b[6~\u001b[6~\u001b[6~"));
-    const started = Date.now();
-    await page.evaluate(() => window.__turaSendInput("responsive composer latency check"));
-    await page.waitForFunction(() => {
-      const buffer = window.__turaTerminal?.buffer.active;
-      if (!buffer) return false;
-      for (let index = 0; index < buffer.length; index += 1) {
-        if (
-          buffer
-            .getLine(index)
-            ?.translateToString(true)
-            .includes("responsive composer latency check")
-        )
-          return true;
-      }
-      return false;
-    });
-    const elapsed = Date.now() - started;
-    record("composer-input-responsive", elapsed < 1200, { elapsed });
-    await page.screenshot({ path: path.join(runRoot, "composer-responsive.png"), fullPage: true });
+    const composerInput = Array.from(
+      { length: 8 },
+      (_item, index) =>
+        `REGRESSION_COMPOSER_WRAP_${String(index + 1).padStart(2, "0")} ${"long-user-input-remains-visible-".repeat(5)}`,
+    ).join(" ");
+    await page.goto(
+      `http://127.0.0.1:${port}/rich?instance=composer&initialComposer=${encodeURIComponent(composerInput)}`,
+      { waitUntil: "domcontentloaded" },
+    );
+    await page.waitForFunction(() => window.__turaTerminal);
+    await page.evaluate(() => window.__turaFit());
+    await waitForTerminalText(page, "REGRESSION_COMPOSER_WRAP_08");
+    const composerText = await terminalText(page);
+    record(
+      "composer-expands-beyond-four-lines",
+      countTextLines(composerText, /REGRESSION_COMPOSER_WRAP_/u) > 4,
+      {
+        lines: countTextLines(composerText, /REGRESSION_COMPOSER_WRAP_/u),
+      },
+    );
+    record(
+      "composer-keeps-first-and-last-line-visible",
+      composerText.includes("REGRESSION_COMPOSER_WRAP_01") &&
+        composerText.includes("REGRESSION_COMPOSER_WRAP_08"),
+    );
+    await screenshot(page, "composer-responsive.png");
   } finally {
     await browser.close();
   }

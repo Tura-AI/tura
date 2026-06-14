@@ -108,10 +108,6 @@ apps/tui/
     web-terminal.mjs
   e2e/
     business/
-      run_all_release.mjs
-      tui_single_request_release.mjs
-      tui_snake_release.mjs
-      tui_password_zip_release.mjs
     tui_gateway_cli_e2e.mjs
     tui_real_gateway_snake_playwright.mjs
     tui_zip_password_playwright.mjs
@@ -393,7 +389,9 @@ Gateway already extracts:
   `model_acceleration_enabled`
 
 The same prompt shape should be reused by the later interactive TUI so terminal
-clients behave consistently.
+clients behave consistently. Both CLI `run` and the interactive TUI default
+`model_acceleration_enabled` to `true`; explicit saved config or run flags may
+still set it to `false`.
 
 ## Completion Detection
 
@@ -486,6 +484,10 @@ through gateway config APIs.
 Requirement: the transcript must stay responsive and fully navigable for
 sessions with thousands of messages. A long history must never make the TUI
 unresponsive or force the user to switch/abandon the session to recover.
+
+The Codex-inspired repair plan for streaming smoothness, scroll stability, and
+delta-only live rendering is documented in
+[`docs/tui-streaming-render-plan.md`](../../docs/tui-streaming-render-plan.md).
 
 Existing scroll system — preserve exactly, do not regress:
 
@@ -597,23 +599,73 @@ Non-interactive CLI:
 
 ## Testing Strategy
 
-Initial tests:
+The test suite should be layered. Keep fast invariant tests in `src/**/*.test.ts`
+and use Playwright only where a browser/xterm/user-agent boundary is required.
+Do not use live provider calls for ordinary regressions; mock gateway scripts own
+the terminal surface, and root live tests own release acceptance.
+
+Fast unit and edge tests:
 
 - unit tests for CLI parsing and output formatting
 - gateway client tests against a mock HTTP server
 - SSE envelope parser tests
 - NDJSON golden tests for non-interactive `run`
 - timeout and gateway-unavailable tests
+- terminal capability tests for CI/non-TTY, dumb/unknown terminals, ANSI
+  terminals, and rich user-agent signals (`TERM_PROGRAM`, WezTerm, Kitty,
+  Ghostty, Windows Terminal, VS Code, xterm-256color)
+- keyboard input tests for printable Unicode, control characters, escape
+  sequences, and malformed key payloads
+- terminal rendering edge tests for ANSI preservation, truncation, CJK width,
+  emoji width, combining marks, narrow columns, and plain/rich fallbacks
+- reducer tests for idempotent event replay, cross-workspace filtering,
+  out-of-order streaming deltas, session picker stability, setting selection,
+  error/notice state, and stale-session transcript clearing
+- lightweight performance smoke tests for large wrapped/streamed terminal output
+  so rendering regressions are caught before they become “why is my terminal a
+  toaster” incidents
 
-Later interactive tests:
+Interactive and browser tests:
 
 - reducer tests for gateway event ingestion
 - terminal UI snapshot tests for transcript/status/permission panes
 - resize tests for compact and wide terminal widths
+- Playwright web-terminal profile smoke for `/plain`, `/ansi`, `/rich`
+- Playwright mobile user-agent smoke for small viewport wrapping and horizontal
+  overflow checks
+- Playwright regression tests for transcript history, composer wrapping, colors,
+  xterm rendering, and raw ANSI/control leak prevention
+- mock-gateway business tests for streaming, multi-session, refresh/replay, and
+  local task workflows
+
+Current app-owned commands:
+
+```text
+npm test                         # build + all src unit/edge/perf smoke tests
+npm run test:e2e                 # mock gateway CLI and web-terminal e2e
+npm run test:e2e:profiles        # Playwright profile + mobile user-agent smoke
+npm run test:stream              # mock gateway stream flow
+npm run test:business            # local business suite
+npm run test:live:*              # real gateway/provider acceptance, opt-in only
+```
+
+Coverage expectations by boundary:
+
+```text
+CLI parser/output        unit tests + mock gateway e2e
+Gateway HTTP client      mock HTTP unit tests: success, HTTP error, timeout, concurrency
+SSE parsing              parser/normalizer unit tests + stream e2e
+Reducer/event state      unit tests for replay, filters, panels, sessions, settings
+Renderer                 unit tests for width/wrap/truncate + render snapshots
+Keyboard/composer        unit tests + Playwright xterm smoke
+Terminal capabilities    unit tests for env/user-agent signals + profile e2e
+Web terminal wrapper     Playwright profile/mobile/regression tests
+Live release surface     root live tests only
+```
 
 Release-entry acceptance tests that validate the registered release
-command surface belong in `apps/tui/e2e/business/` for the TUI surface. Root
-`tests/release/release_entry_*.mjs` owns CLI release-entry scripts;
+command surface belong in root `tests/live/tui_release_*.mjs` for the TUI
+surface. Root `tests/release/release_entry_*.mjs` owns CLI release-entry scripts;
 `tests/benchmark/` owns comparison and scoring benchmarks.
 
 ## Implementation Phases

@@ -60,7 +60,8 @@ export function parseSseBlock(block: string): GatewayEventEnvelope | undefined {
 export function normalizeEvent(raw: GatewayEventEnvelope): NormalizedEvent {
   const payload = raw.payload;
   const type = payload?.type ?? "unknown";
-  const sessionID = eventSessionID(payload);
+  const sessionID =
+    eventSessionID(payload) ?? readString(raw, "sessionID") ?? readString(raw, "session_id");
   let messageID: string | undefined;
   let partID: string | undefined;
   let text: string | undefined;

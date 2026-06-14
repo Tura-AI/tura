@@ -31,6 +31,7 @@ let session = {
   updated_at: now,
   message_count: 1,
 };
+let promptCounter = 0;
 const config = {
   model: "openai/gpt-test",
   active_model: "openai/gpt-test",
@@ -80,14 +81,26 @@ function gatewayEvent(type, properties) {
   emit({ directory: workspace, payload: { type, properties } });
 }
 
-function streamDelta(delta) {
-  gatewayEvent("message.part.delta", {
-    session_id: sessionID,
-    message_id: "msg-stream-main",
-    part_id: "part-stream-main",
+function streamDeltaFor(messageID, partID, delta, sessionPlacement = "properties") {
+  const properties = {
+    message_id: messageID,
+    part_id: partID,
     field: "text",
     delta,
+  };
+  if (sessionPlacement === "properties") {
+    gatewayEvent("message.part.delta", { session_id: sessionID, ...properties });
+    return;
+  }
+  emit({
+    directory: workspace,
+    sessionID,
+    payload: { type: "message.part.delta", properties },
   });
+}
+
+function streamDelta(delta) {
+  streamDeltaFor("msg-stream-main", "part-stream-main", delta);
 }
 
 function upsertMessage(message) {
@@ -96,6 +109,45 @@ function upsertMessage(message) {
   else messages.push(message);
   session = { ...session, status: "busy", updated_at: Date.now(), message_count: messages.length };
   gatewayEvent("message.updated", { session_id: sessionID, info: message });
+}
+
+function userTextFromPromptPayload(payload) {
+  return (payload?.parts ?? [])
+    .map((part) => part?.text ?? part?.content ?? "")
+    .join("")
+    .trim();
+}
+
+function handlePromptPayload(payload) {
+  promptCounter += 1;
+  const index = promptCounter;
+  const text = userTextFromPromptPayload(payload) || `TYPED_USER_${index}`;
+  upsertMessage({
+    id: payload?.messageID || `msg-typed-user-${index}`,
+    sessionID,
+    role: "user",
+    parts: [{ id: `part-typed-user-${index}`, type: "text", text }],
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  });
+
+  const reply =
+    index === 1 ? "TYPED_REPLY_1 你好。今天折腾什么？" : "TYPED_REPLY_2 第二轮继续处理。";
+  void (async () => {
+    const messageID = `msg-typed-reply-${index}`;
+    const partID = `part-typed-reply-${index}`;
+    await streamShortChunks(reply, messageID, partID, "properties");
+    upsertMessage({
+      id: messageID,
+      sessionID,
+      role: "assistant",
+      parts: [{ id: partID, type: "text", text: reply }],
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    });
+    session = { ...session, status: "idle", updated_at: Date.now() };
+    gatewayEvent("session.status", { sessionID, status: "idle" });
+  })();
 }
 
 async function delay(ms) {
@@ -164,7 +216,7 @@ function createGatewayServer() {
         [...messages].sort((left, right) => (left.created_at ?? 0) - (right.created_at ?? 0)),
       );
     if (req.method === "POST" && url.pathname === `/session/${sessionID}/prompt_async`) {
-      await readJson(req);
+      handlePromptPayload(await readJson(req));
       return sendJson(res, {});
     }
     if (req.method === "POST" && url.pathname === `/session/${sessionID}/abort`)
@@ -231,6 +283,142 @@ async function terminalText(page) {
   );
 }
 
+async function terminalBufferText(page) {
+  return page.evaluate(() => {
+    const buffer = window.__turaTerminal?.buffer.active;
+    if (!buffer) return "";
+    const lines = [];
+    for (let index = 0; index < buffer.length; index += 1) {
+      lines.push(buffer.getLine(index)?.translateToString(true) ?? "");
+    }
+    return lines.join("\n");
+  });
+}
+
+async function scrollTerminalTo(page, target, marker = undefined) {
+  await page.evaluate((nextTarget) => {
+    const term = window.__turaTerminal;
+    if (!term) return;
+    if (nextTarget === "top") {
+      if (typeof term.scrollToLine === "function") term.scrollToLine(0);
+      else term.scrollToTop();
+      return;
+    }
+    if (typeof term.scrollToBottom === "function") term.scrollToBottom();
+  }, target);
+  if (!marker) {
+    await delay(200);
+    return;
+  }
+  await page.waitForFunction(
+    (needle) => {
+      const rows = [...document.querySelectorAll(".xterm-rows > div")]
+        .map((node) => node.textContent ?? "")
+        .join("\n");
+      return rows.includes(needle);
+    },
+    marker,
+    { timeout: 5_000 },
+  );
+}
+
+function markerCount(text, marker) {
+  return text.split(marker).length - 1;
+}
+
+function regexCount(text, pattern) {
+  return Array.from(text.matchAll(pattern)).length;
+}
+
+function assertNoDuplicatedFrameText(text, label, markers = []) {
+  assert.ok(
+    regexCount(text, /回车输入|Enter to send/gu) <= 1,
+    `${label} should not retain a duplicated composer/input box`,
+  );
+  assert.ok(
+    markerCount(text, "Mock Stream") <= 1,
+    `${label} should not retain duplicated session title chrome`,
+  );
+  assert.ok(
+    regexCount(text, /tokens\s+\d+|tokens\s+-/gu) <= 1,
+    `${label} should not retain duplicated token/status chrome`,
+  );
+  for (const marker of markers) {
+    assert.equal(markerCount(text, marker), 1, `${label} should show ${marker} exactly once`);
+  }
+  assert.doesNotMatch(
+    text,
+    /置{8,}/u,
+    `${label} should not leave repeated composer hint fragments behind`,
+  );
+}
+
+async function waitForComposer(page, timeoutMs = 5000) {
+  await page.waitForFunction(() => /回车输入|Enter to send/.test(document.body.innerText), null, {
+    timeout: timeoutMs,
+  });
+}
+
+async function submitTypedPrompt(page, text) {
+  await page.evaluate((value) => window.__turaSendInput(value), text);
+  await page.evaluate(() => window.__turaSendInput("\r"));
+}
+
+async function seedTerminalScrollback(page, marker) {
+  await page.evaluate((staleMarker) => {
+    const term = window.__turaTerminal;
+    if (!term) return;
+    const rows = Number(term.rows) || 24;
+    for (let index = 0; index < rows + 12; index += 1) {
+      term.write(`\r\n${staleMarker}_${String(index).padStart(2, "0")}`);
+    }
+    term.scrollToTop?.();
+  }, marker);
+  await delay(200);
+}
+
+async function waitForSessionPicker(page, timeoutMs = 5000) {
+  await page.waitForFunction(
+    () => /新会话|New session|New Session/.test(document.body.innerText),
+    null,
+    { timeout: timeoutMs },
+  );
+}
+
+function assertSessionPickerCleared(text, label, staleMarker) {
+  assert.doesNotMatch(
+    text,
+    new RegExp(staleMarker, "u"),
+    `${label} should clear stale terminal scrollback before the session picker renders`,
+  );
+  assert.doesNotMatch(
+    text,
+    /回车输入|Enter to send/u,
+    `${label} should not carry the chat composer into the session picker`,
+  );
+  assert.equal(
+    markerCount(text, "TYPED_USER_1"),
+    0,
+    `${label} should not carry older chat rows into the session picker`,
+  );
+  assert.ok(
+    markerCount(text, "TYPED_REPLY_2") <= 1,
+    `${label} may show the active session preview once, but not duplicate it`,
+  );
+}
+
+async function streamShortChunks(
+  text,
+  messageID = "msg-stream-main",
+  partID = "part-stream-main",
+  sessionPlacement = "properties",
+) {
+  for (const char of Array.from(text)) {
+    streamDeltaFor(messageID, partID, char, sessionPlacement);
+    await delay(12);
+  }
+}
+
 async function capture(page, name) {
   await delay(300);
   const file = path.join(screenshotsDir, `${name}.png`);
@@ -253,6 +441,8 @@ async function capture(page, name) {
     name,
     path: file,
     hasComposerHint: /回车输入|Enter to send/.test(text),
+    composerHintCount: regexCount(text, /回车输入|Enter to send/gu),
+    defaultTitleCount: regexCount(text, /^tura$/gmu),
     hasBottomMeta: /tokens|openai\/gpt-test/.test(text),
     hasCommand: /command_run|命令:|Commands:/.test(text),
     hasRawControlLeak: /\x1b|\[2K|\[K/.test(text),
@@ -274,10 +464,17 @@ async function main() {
   const web = startWebTerminal(`http://127.0.0.1:${gatewayPort}`, webPort);
   const captures = [];
   let browser;
+  let page;
+  const pageErrors = [];
+  const consoleMessages = [];
   try {
     await waitForUrl(`http://127.0.0.1:${webPort}/`);
     browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+    page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+    page.on("pageerror", (error) =>
+      pageErrors.push(String(error?.stack || error?.message || error)),
+    );
+    page.on("console", (message) => consoleMessages.push(`${message.type()}: ${message.text()}`));
     await page.goto(`http://127.0.0.1:${webPort}/rich?instance=mock-stream`, {
       waitUntil: "domcontentloaded",
     });
@@ -286,20 +483,93 @@ async function main() {
     });
     captures.push(await capture(page, "00-initial"));
 
+    await submitTypedPrompt(page, "TYPED_USER_1 你好啊");
+    await page.waitForFunction(() => document.body.innerText.includes("TYPED_REPLY_1"), null, {
+      timeout: 15_000,
+    });
+    await waitForComposer(page);
+    captures.push(await capture(page, "00-typed-round-1"));
+    assertNoDuplicatedFrameText(captures.at(-1).visibleText, "typed round 1", [
+      "TYPED_USER_1",
+      "TYPED_REPLY_1",
+    ]);
+    await scrollTerminalTo(page, "top");
+    captures.push(await capture(page, "00-typed-round-1-scrolled-top"));
+    assertNoDuplicatedFrameText(captures.at(-1).visibleText, "typed round 1 scrolled top", [
+      "TYPED_USER_1",
+      "TYPED_REPLY_1",
+    ]);
+
+    await submitTypedPrompt(page, "TYPED_USER_2 继续第二轮");
+    await page.waitForFunction(() => document.body.innerText.includes("TYPED_REPLY_2"), null, {
+      timeout: 15_000,
+    });
+    await waitForComposer(page);
+    captures.push(await capture(page, "00-typed-round-2"));
+    assertNoDuplicatedFrameText(captures.at(-1).visibleText, "typed round 2", [
+      "TYPED_USER_1",
+      "TYPED_REPLY_1",
+      "TYPED_USER_2",
+      "TYPED_REPLY_2",
+    ]);
+    await scrollTerminalTo(page, "top");
+    captures.push(await capture(page, "00-typed-round-2-scrolled-top"));
+    await scrollTerminalTo(page, "bottom");
+    captures.push(await capture(page, "00-typed-round-2-scrolled-bottom"));
+    for (const typedPhase of captures.filter((item) => item.name.startsWith("00-typed-round-2"))) {
+      assertNoDuplicatedFrameText(typedPhase.visibleText, typedPhase.name);
+    }
+
+    const staleSessionMarker = "STALE_BEFORE_SESSION_PICKER";
+    await seedTerminalScrollback(page, staleSessionMarker);
+    assert.match(
+      await terminalBufferText(page),
+      new RegExp(staleSessionMarker, "u"),
+      "test setup must create stale terminal content before opening the session picker",
+    );
+    await page.evaluate(() => window.__turaSendInput("\t"));
+    await waitForSessionPicker(page);
+    captures.push(await capture(page, "00-session-picker-cleared"));
+    assertSessionPickerCleared(
+      captures.at(-1).visibleText,
+      "session picker after typed rounds",
+      staleSessionMarker,
+    );
+    assertSessionPickerCleared(
+      await terminalBufferText(page),
+      "session picker buffer after typed rounds",
+      staleSessionMarker,
+    );
+    await scrollTerminalTo(page, "top");
+    captures.push(await capture(page, "00-session-picker-scrolled-top"));
+    assertSessionPickerCleared(
+      captures.at(-1).visibleText,
+      "session picker scrolled top",
+      staleSessionMarker,
+    );
+    await scrollTerminalTo(page, "bottom");
+    captures.push(await capture(page, "00-session-picker-scrolled-bottom"));
+    assertSessionPickerCleared(
+      captures.at(-1).visibleText,
+      "session picker scrolled bottom",
+      staleSessionMarker,
+    );
+    await page.evaluate(() => window.__turaSendInput("\x1b"));
+    await waitForComposer(page);
+
     gatewayEvent("session.status", { sessionID, status: "busy" });
 
     // Phase 1: stream an intro plus a multi-item list. The whole list must stay
     // visible — assistant text used to be capped at 8 lines, hiding the rest.
     const listIntro = "我先给一段 stream 文本，下面是要执行的步骤清单：\n";
     const listItems = Array.from(
-      { length: 6 },
-      (_item, index) => `- 步骤 ${index + 1}: stream list item ${index + 1}`,
+      { length: 10 },
+      (_item, index) =>
+        `- 步骤 ${index + 1}: SHORT_STREAM_MARKER_${String(index + 1).padStart(2, "0")}`,
     );
-    streamDelta(listIntro);
-    await delay(60);
+    await streamShortChunks(listIntro);
     for (const item of listItems) {
-      streamDelta(`${item}\n`);
-      await delay(60);
+      await streamShortChunks(`${item}\n`);
     }
     captures.push(await capture(page, "01-stream-list"));
 
@@ -334,8 +604,7 @@ async function main() {
     upsertCommand(commands[0], "running");
     captures.push(await capture(page, "02-command-1-running"));
 
-    streamDelta("命令运行时继续 stream，文本不应被命令遮挡。\n");
-    await delay(60);
+    await streamShortChunks("命令运行时继续 stream，文本不应被命令遮挡。\n");
     upsertCommand(commands[1], "running");
     captures.push(await capture(page, "03-command-2-running"));
 
@@ -346,12 +615,27 @@ async function main() {
       "用于把面板内容撑高，",
       "以验证滚动与省略行为。\n",
     ]) {
-      streamDelta(chunk);
-      await delay(60);
+      await streamShortChunks(chunk);
     }
     captures.push(await capture(page, "04-stream-overflow"));
 
-    // Phase 3: finalize. All commands complete and the consolidated reply
+    // Phase 3: resize while the response is still streaming, then scroll the
+    // terminal buffer and keep streaming. This is the failure shape: repeated
+    // absolute full-frame repaints looked fine in a one-shot test, then moved,
+    // duplicated, or failed to refresh once xterm had real scrollback plus a resize.
+    await page.setViewportSize({ width: 900, height: 320 });
+    await page.evaluate(() => window.__turaFit());
+    await streamShortChunks("RESIZE_STREAM_MARKER_A 窗口变小时继续逐字刷新。\n");
+    await scrollTerminalTo(page, "top");
+    await streamShortChunks("RESIZE_STREAM_MARKER_B 滚动后继续逐字刷新。\n");
+    captures.push(await capture(page, "05-stream-resize-compact"));
+
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.evaluate(() => window.__turaFit());
+    await streamShortChunks("RESIZE_STREAM_MARKER_C 窗口恢复后继续逐字刷新。\n");
+    captures.push(await capture(page, "06-stream-resize-restored"));
+
+    // Phase 4: finalize. All commands complete and the consolidated reply
     // replaces the streamed message; ordering must remain stable.
     for (const entry of commands) upsertCommand(entry, "completed");
     upsertMessage({
@@ -366,7 +650,10 @@ async function main() {
             listIntro +
             listItems.join("\n") +
             "\n命令运行时继续 stream，文本不应被命令遮挡。\n" +
-            "再补充几行说明文字，用于把面板内容撑高，以验证滚动与省略行为。",
+            "再补充几行说明文字，用于把面板内容撑高，以验证滚动与省略行为。\n" +
+            "RESIZE_STREAM_MARKER_A 窗口变小时继续逐字刷新。\n" +
+            "RESIZE_STREAM_MARKER_B 滚动后继续逐字刷新。\n" +
+            "RESIZE_STREAM_MARKER_C 窗口恢复后继续逐字刷新。",
         },
       ],
       created_at: now + 1,
@@ -374,23 +661,38 @@ async function main() {
     });
     session = { ...session, status: "idle" };
     gatewayEvent("session.status", { sessionID, status: "idle" });
-    captures.push(await capture(page, "05-final"));
+    await waitForComposer(page);
+    captures.push(await capture(page, "07-final"));
 
-    // Phase 4: open the same session in a short panel so the transcript
-    // overflows, proving the renderer keeps the latest content and marks the
-    // rest as hidden rather than splicing the middle of the list together with
-    // the command section.
+    const bufferText = await terminalBufferText(page);
+    for (const item of listItems) {
+      const marker = item.match(/SHORT_STREAM_MARKER_\d+/u)?.[0];
+      assert.ok(
+        markerCount(bufferText, marker) <= 1,
+        `${marker} should not duplicate in the active xterm buffer after many short stream redraws`,
+      );
+    }
+    await scrollTerminalTo(page, "top");
+    await scrollTerminalTo(page, "bottom");
+    const bufferTextAfterScroll = await terminalBufferText(page);
+    for (const item of listItems) {
+      const marker = item.match(/SHORT_STREAM_MARKER_\d+/u)?.[0];
+      assert.ok(
+        markerCount(bufferTextAfterScroll, marker) <= 1,
+        `${marker} should remain singular after scrolling the terminal buffer`,
+      );
+    }
+
+    // Phase 4: shrink the same terminal so the transcript overflows without
+    // creating a second isolated runtime. The previous test did that, which was
+    // a lovely little false-negative machine.
     await page.setViewportSize({ width: 900, height: 320 });
-    await page.goto(`http://127.0.0.1:${webPort}/rich?instance=mock-stream-compact`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.waitForFunction(() => /Mock Stream/.test(document.body.innerText), null, {
-      timeout: 15_000,
-    });
+    await page.evaluate(() => window.__turaFit());
     await delay(600);
-    captures.push(await capture(page, "06-compact-overflow"));
+    await waitForComposer(page);
+    captures.push(await capture(page, "10-compact-overflow"));
 
-    const final = captures.find((item) => item.name === "05-final");
+    const final = captures.find((item) => item.name === "07-final");
     const finalLines = final.visibleText.split("\n").map((line) => line.trim());
     assert.equal(final.overflow, false, "terminal should not overflow horizontally");
     assert.equal(final.hasComposerHint, true, "composer hint should remain visible");
@@ -403,42 +705,155 @@ async function main() {
     );
 
     for (let index = 1; index <= listItems.length; index += 1) {
+      const marker = `SHORT_STREAM_MARKER_${String(index).padStart(2, "0")}`;
       assert.ok(
-        final.visibleText.includes(`stream list item ${index}`),
-        `list item ${index} should stay visible (no assistant line cap)`,
+        markerCount(bufferTextAfterScroll, marker) <= 1,
+        `list item ${index} should not duplicate in the active terminal buffer`,
       );
     }
     assert.ok(
       /snake_playwright/.test(final.visibleText),
       "later command output should remain visible",
     );
-    const firstListIndex = finalLines.findIndex((line) => line.includes("stream list item 1"));
-    const commandSummaryIndex = finalLines.findIndex((line) => /命令:|Commands:/.test(line));
-    assert.ok(firstListIndex >= 0, "streamed list should be visible at final");
-    assert.ok(
-      commandSummaryIndex > firstListIndex,
-      "command section must stay below the streamed text (stable ordering, no jump)",
-    );
+    for (const marker of [
+      "RESIZE_STREAM_MARKER_A",
+      "RESIZE_STREAM_MARKER_B",
+      "RESIZE_STREAM_MARKER_C",
+    ]) {
+      assert.ok(
+        markerCount(bufferTextAfterScroll, marker) <= 1,
+        `${marker} should not duplicate after streaming, scrolling, and resizing`,
+      );
+    }
+    await scrollTerminalTo(page, "top");
+    captures.push(await capture(page, "08-final-scrolled-top"));
+    await scrollTerminalTo(page, "bottom");
+    captures.push(await capture(page, "09-final-scrolled-bottom"));
 
-    const compact = captures.at(-1);
+    const visibleStreamIndex = finalLines.findIndex((line) =>
+      /SHORT_STREAM_MARKER_|RESIZE_STREAM_MARKER_/u.test(line),
+    );
+    const commandSummaryIndex = finalLines.findIndex((line) => /命令:|Commands:/.test(line));
+    if (visibleStreamIndex >= 0 && commandSummaryIndex >= 0) {
+      assert.ok(
+        visibleStreamIndex < commandSummaryIndex,
+        "command section must stay below visible streamed text",
+      );
+    }
+
+    const compact = captures.find((item) => item.name === "10-compact-overflow") ?? captures.at(-1);
     assert.equal(compact.overflow, false, "compact terminal should not overflow horizontally");
-    assert.ok(
-      /snake_playwright|命令:|Commands:/.test(compact.visibleText),
-      "compact view should keep the most recent content (the command section)",
-    );
-    // Scroll-based design: when the transcript overflows a short panel the
-    // renderer keeps the latest content pinned and trims the earliest lines off
-    // the top (reachable by scrolling) instead of drawing an "earlier output
-    // hidden" marker or splicing the middle of the list together.
-    assert.ok(
-      !/触发 mock gateway stream/.test(compact.visibleText),
-      "overflowing transcript should trim the earliest lines from the top",
-    );
+    assert.equal(compact.hasComposerHint, true, "compact view should keep composer visible");
+    assert.equal(compact.hasBottomMeta, true, "compact view should keep bottom meta visible");
     assert.equal(
       compact.hasRawControlLeak,
       false,
       "compact view should not leak raw terminal controls",
     );
+
+    // Phase 5: a second user/assistant turn while the terminal has real
+    // scrollback. This covers the production shape that a single long stream
+    // missed: stream, scroll away from the bottom, keep streaming, then replace
+    // the live overlay with durable text.
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.evaluate(() => window.__turaFit());
+    await waitForComposer(page);
+
+    const round2User = {
+      id: "msg-user-2",
+      sessionID,
+      role: "user",
+      parts: [{ id: "part-user-2", type: "text", text: "ROUND2_USER_PROMPT 继续第二轮。" }],
+      created_at: now + 20,
+      updated_at: Date.now(),
+    };
+    upsertMessage(round2User);
+    gatewayEvent("session.status", { sessionID, status: "busy" });
+
+    const round2MessageID = "msg-stream-round-2";
+    const round2PartID = "part-stream-round-2";
+    const round2Text =
+      "ROUND2_STREAM_MARKER_A 第二轮开始。\n" +
+      "ROUND2_STREAM_MARKER_B 滚动到顶部时继续输出。\n" +
+      "ROUND2_STREAM_MARKER_C 回到底部后完成。\n";
+    await streamShortChunks(
+      "ROUND2_STREAM_MARKER_A 第二轮开始。\n",
+      round2MessageID,
+      round2PartID,
+      "envelope",
+    );
+    await scrollTerminalTo(page, "top");
+    await streamShortChunks(
+      "ROUND2_STREAM_MARKER_B 滚动到顶部时继续输出。\n",
+      round2MessageID,
+      round2PartID,
+      "envelope",
+    );
+    await scrollTerminalTo(page, "bottom");
+    await streamShortChunks(
+      "ROUND2_STREAM_MARKER_C 回到底部后完成。\n",
+      round2MessageID,
+      round2PartID,
+      "envelope",
+    );
+    captures.push(await capture(page, "11-round2-stream-scroll"));
+
+    upsertMessage({
+      id: round2MessageID,
+      sessionID,
+      role: "assistant",
+      parts: [
+        {
+          id: "part-stream-round-2-final",
+          type: "text",
+          text: round2Text.trimEnd(),
+        },
+      ],
+      created_at: now + 21,
+      updated_at: Date.now(),
+    });
+    session = { ...session, status: "idle" };
+    gatewayEvent("session.status", { sessionID, status: "idle" });
+    await waitForComposer(page);
+    captures.push(await capture(page, "12-round2-final"));
+
+    await scrollTerminalTo(page, "top");
+    await scrollTerminalTo(page, "bottom");
+    const round2Visible =
+      captures.find((item) => item.name === "12-round2-final")?.visibleText ?? "";
+    const round2Buffer = await terminalBufferText(page);
+    for (const marker of [
+      "ROUND2_USER_PROMPT",
+      "ROUND2_STREAM_MARKER_A",
+      "ROUND2_STREAM_MARKER_B",
+      "ROUND2_STREAM_MARKER_C",
+    ]) {
+      assert.ok(
+        markerCount(round2Visible, marker) <= 1,
+        `${marker} should not duplicate in the final visible second turn`,
+      );
+      assert.ok(
+        markerCount(round2Buffer, marker) <= 1,
+        `${marker} should not duplicate in the terminal buffer after second-turn scrolling`,
+      );
+    }
+
+    for (const phase of captures) {
+      assert.ok(
+        phase.composerHintCount <= 1,
+        `${phase.name} should not retain an old composer/input box`,
+      );
+      assert.equal(
+        phase.defaultTitleCount,
+        0,
+        `${phase.name} should not retain the pre-hydrate default title`,
+      );
+      assert.doesNotMatch(
+        phase.visibleText,
+        /置{8,}/u,
+        `${phase.name} should not leave repeated composer hint fragments behind`,
+      );
+    }
 
     const summary = {
       ok: true,
@@ -458,6 +873,9 @@ async function main() {
       phases: captures.map(({ visibleText, ...item }) => item),
       error: error instanceof Error ? error.message : String(error),
       webTerminalLog: web.logs(),
+      pageText: page ? await page.evaluate(() => document.body.innerText).catch(() => "") : "",
+      pageErrors,
+      consoleMessages: consoleMessages.slice(-20),
     };
     await fs.writeFile(summaryPath, JSON.stringify(summary, null, 2));
     console.log(JSON.stringify(summary, null, 2));

@@ -11,10 +11,11 @@ test("run shell flags override the command-run surface", () => {
   assert.throws(() => parseRun(["-c", "command_run_shell=zash", "inspect"], false), /bash/);
 });
 
-test("run defaults to medium thinking with priority routing", () => {
+test("run defaults to high thinking with priority routing", () => {
   const parsed = parseRun(["hello"], false);
 
-  assert.equal(parsed.modelVariant, "medium");
+  assert.equal(parsed.agent, "thinking");
+  assert.equal(parsed.modelVariant, "high");
   assert.equal(parsed.modelAccelerationEnabled, true);
 });
 

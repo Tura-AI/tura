@@ -7,19 +7,34 @@ import { ensureGatewayAvailable, killOwnedGateway } from "../gateway/autostart.j
 import { userFacingError } from "../gateway/errors.js";
 import { MockGatewayClient } from "../gateway/mock-client.js";
 import { CliUsageError, type CliContext } from "../types/common.js";
-import type { Session } from "../types/session.js";
+import type { CreateSessionRequest, Message, PromptPayload, Session } from "../types/session.js";
 import type { ProviderAuthStatus } from "../types/provider.js";
-import { messageText, sessionUpdatedAt } from "../types/session.js";
+import { isDraftSession, sessionUpdatedAt } from "../types/session.js";
 import { promptPayload } from "../commands/run.js";
 import { sessionConfigPatchFromAssignments } from "../commands/config-values.js";
-import { initialState, reducer, type AppState, type SettingDetail } from "./reducer.js";
-import { renderFrame, settingOptions, settingsEntries } from "./render.js";
+import { initialState, reducer, type AppState } from "./reducer.js";
+import { renderChatFrameParts, renderFrame, settingOptions } from "./render.js";
 import { clear as terminalClear } from "./render-terminal.js";
 import { detectTerminalCapabilities, type TerminalCapabilities } from "./capabilities.js";
-import { TUI_ANIMATION_TICKS, TUI_DRAW_DEBOUNCE_MS, TUI_TICK_INTERVAL_MS } from "./frame-rate.js";
+import {
+  TUI_ANIMATION_INTERVAL_MS,
+  TUI_MIN_DRAW_INTERVAL_MS,
+  TUI_TICK_INTERVAL_MS,
+} from "./frame-rate.js";
 import { t } from "../i18n.js";
+import { keySequence, printableSequence } from "./interactions/keyboard.js";
+import {
+  selectedModel,
+  selectedPersonaID,
+  selectedSettingDetail,
+  promptRuntimeSelection,
+  settingPatch,
+} from "./logic/selection.js";
+import { lastMessagePreview } from "./services/message-preview.js";
 
 type TuiGatewayClient = GatewayClient | MockGatewayClient;
+const SESSION_PREVIEW_FETCH_LIMIT = 8;
+let draftSessionCounter = 0;
 
 export async function runTui(context: CliContext, initialPrompt?: string): Promise<void> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
@@ -56,30 +71,39 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
     await client.syncWorkspace();
   }
   let state = initialState(context.cwd);
+  resetDrawState();
   if (devLogPath) {
     state = reducer(state, { type: "notice", value: t("devModeActive", { path: devLogPath }) });
   }
   let lastFrame = "";
-  if (capabilities.cursorControl) process.stdout.write(terminalClear);
+  clearTerminalForSurfaceTransition();
   let pendingDraw: ReturnType<typeof setTimeout> | undefined;
-  let pendingImmediateDraw: ReturnType<typeof setImmediate> | undefined;
+  let pendingDrawAt = 0;
+  let lastDrawAt = 0;
   const flushDraw = () => {
-    if (pendingImmediateDraw) {
-      clearImmediate(pendingImmediateDraw);
-      pendingImmediateDraw = undefined;
-    }
     if (pendingDraw) {
       clearTimeout(pendingDraw);
       pendingDraw = undefined;
+      pendingDrawAt = 0;
     }
     lastFrame = draw(state, capabilities, lastFrame);
+    lastDrawAt = Date.now();
   };
   const scheduleDraw = () => {
-    if (pendingDraw || pendingImmediateDraw) return;
-    pendingDraw = setTimeout(() => {
-      pendingDraw = undefined;
-      lastFrame = draw(state, capabilities, lastFrame);
-    }, TUI_DRAW_DEBOUNCE_MS);
+    const now = Date.now();
+    const nextDrawAt = Math.max(now, lastDrawAt + TUI_MIN_DRAW_INTERVAL_MS);
+    if (pendingDraw && pendingDrawAt <= nextDrawAt) return;
+    if (pendingDraw) clearTimeout(pendingDraw);
+    pendingDrawAt = nextDrawAt;
+    pendingDraw = setTimeout(
+      () => {
+        pendingDraw = undefined;
+        pendingDrawAt = 0;
+        lastFrame = draw(state, capabilities, lastFrame);
+        lastDrawAt = Date.now();
+      },
+      Math.max(0, nextDrawAt - now),
+    );
   };
   const dispatch = (action: Parameters<typeof reducer>[1]) => {
     state = reducer(state, action);
@@ -91,10 +115,11 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
       scheduleDraw();
       return;
     }
-    // Composer: use setImmediate so single keystrokes draw instantly while
-    // paste (all chars dispatched synchronously) coalesces into one draw.
+    // Composer input uses the same Codex-style frame limiter as streaming so
+    // pasted text coalesces into one paint instead of hundreds of synchronous
+    // terminal rewrites.
     if (action.type === "composer") {
-      flushDraw();
+      scheduleDraw();
       return;
     }
     flushDraw();
@@ -110,19 +135,16 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
     void eventLoop(client, controller.signal, dispatch);
     void pollingLoop(client, () => state, dispatch, controller.signal);
   }
-  // Timer fires at 20fps for UI responsiveness. thinkingFrame (spinner) only
-  // advances every TUI_ANIMATION_TICKS firings to keep animation at 2fps.
-  let tickCount = 0;
-  const thinkingTimer = setInterval(() => {
+  const heartbeatTimer = setInterval(() => {
     const current = state.status || state.session?.status;
     if (current !== "busy" && !state.questions.length && !state.permissions.length) return;
-    tickCount += 1;
-    if (tickCount % TUI_ANIMATION_TICKS === 0) {
-      dispatch({ type: "tick" }); // advances thinkingFrame (spinner)
-    } else {
-      scheduleDraw(); // heartbeat redraw without advancing animation
-    }
+    scheduleDraw();
   }, TUI_TICK_INTERVAL_MS);
+  const animationTimer = setInterval(() => {
+    const current = state.status || state.session?.status;
+    if (current !== "busy" && !state.questions.length && !state.permissions.length) return;
+    if (hasActiveAnimation(state)) dispatch({ type: "tick" });
+  }, TUI_ANIMATION_INTERVAL_MS);
 
   // Load the initial session + transcript in the background. Keeping it off the
   // startup path means a slow or wedged gateway can never freeze the UI or block
@@ -130,7 +152,7 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
   // Any failure surfaces as a notice instead of hanging or crashing the TUI.
   void (async () => {
     try {
-      const session = await pickInitialSession(client);
+      const session = await pickInitialSession(client, context.cwd);
       const next = await hydrate(initialState(context.cwd), client, session);
       if (!shouldApplyInitialHydrate(state, session.id)) return;
       dispatch({
@@ -146,6 +168,8 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
         authStatuses: next.authStatuses,
         sessionConfig: next.sessionConfig,
       });
+      const mockInitialComposer = context.mock ? process.env.TURA_TUI_MOCK_INITIAL_COMPOSER : "";
+      if (mockInitialComposer) dispatch({ type: "composer", value: mockInitialComposer });
       dispatch({ type: "questions", value: next.questions });
       if (initialPrompt?.trim()) {
         await submitPrompt(client, () => state, dispatch, initialPrompt);
@@ -158,18 +182,20 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
   await inputLoop(client, () => state, dispatch, capabilities);
   // Normal exit path: kill gateway immediately so it doesn't outlive the TUI.
   killOwnedGateway();
-  clearInterval(thinkingTimer);
+  clearInterval(heartbeatTimer);
+  clearInterval(animationTimer);
   controller.abort();
   flushDraw();
   if (process.stdin.isTTY) process.stdin.setRawMode(false);
-  if (capabilities.cursorControl) process.stdout.write("\x1b[?25h\x1b[0m\n");
+  if (process.stdout.isTTY) process.stdout.write("\x1b[?25h\x1b[0m\n");
   else process.stdout.write("\n");
 }
 
-async function pickInitialSession(client: TuiGatewayClient): Promise<Session> {
+async function pickInitialSession(client: TuiGatewayClient, cwd: string): Promise<Session> {
   const sessions = await client.listSessions({ limit: 20 });
   sessions.sort((left, right) => sessionUpdatedAt(right) - sessionUpdatedAt(left));
-  return sessions[0] ?? client.createSession();
+  if (sessions[0]) return sessions[0];
+  return client.createSession().catch(() => createDraftSession(cwd));
 }
 
 async function hydrate(
@@ -177,8 +203,9 @@ async function hydrate(
   client: TuiGatewayClient,
   session: Session,
 ): Promise<AppState> {
+  const draft = isDraftSession(session);
   const [messages, providers, sessionConfig, agents, personas] = await Promise.all([
-    client.listMessages(session.id).catch(() => []),
+    draft ? Promise.resolve([]) : client.listMessages(session.id).catch(() => []),
     client.listProviders().catch(() => undefined),
     client.getSessionConfig().catch(() => undefined),
     client.listAgents().catch(() => []),
@@ -243,24 +270,32 @@ async function pollingLoop(
 ): Promise<void> {
   while (!signal.aborted) {
     const sessionID = getState().session?.id;
-    if (sessionID) {
-      const messages = await client.listMessages(sessionID).catch(() => undefined);
-      const session = getState().session;
-      if (messages && session) {
-        dispatch({
-          type: "hydrate",
-          session,
-          messages,
-          permissions: getState().permissions,
-          providers: getState().providers,
-          agents: getState().agents,
-          personas: getState().personas,
-          sessions: getState().sessions,
-        });
-      }
+    if (sessionID && !isDraftSession(getState().session)) {
+      await refreshActiveMessages(client, getState, dispatch, sessionID);
     }
     await delay(1500);
   }
+}
+
+async function refreshActiveMessages(
+  client: TuiGatewayClient,
+  getState: () => AppState,
+  dispatch: (action: Parameters<typeof reducer>[1]) => void,
+  sessionID: string,
+): Promise<void> {
+  const state = getState();
+  const session = state.session;
+  if (!session || session.id !== sessionID) return;
+  const cursor = state.refreshState[sessionID];
+  const messages = await client
+    .listMessages(sessionID, cursor?.lastFinalMessageID ? { after: cursor.lastFinalMessageID } : {})
+    .catch(() => undefined);
+  if (!messages) return;
+  const current = getState();
+  const active = current.session;
+  if (!active || active.id !== sessionID) return;
+  if (!messages.length) return;
+  dispatch({ type: "messages-incremental", sessionID, messages, session: active });
 }
 
 async function inputLoop(
@@ -271,7 +306,7 @@ async function inputLoop(
 ): Promise<void> {
   emitKeypressEvents(process.stdin);
   if (process.stdin.isTTY && capabilities.interactive) process.stdin.setRawMode(true);
-  if (capabilities.cursorControl) process.stdout.write("\x1b[?25h");
+  if (process.stdout.isTTY) process.stdout.write("\x1b[?25h");
   return new Promise((resolve) => {
     const onResize = () => dispatch({ type: "notice", value: getState().notice });
     const onKeypress = async (
@@ -293,7 +328,10 @@ async function inputLoop(
         }
         if (key?.name === "escape") {
           if (state.help) dispatch({ type: "toggle-help" });
-          if (state.sessionsOpen) dispatch({ type: "toggle-sessions" });
+          if (state.sessionsOpen) {
+            clearTerminalForSurfaceTransition();
+            dispatch({ type: "toggle-sessions" });
+          }
           if (state.modelsOpen) dispatch({ type: "toggle-models" });
           if (state.authOpen) dispatch({ type: "toggle-auth" });
           if (state.settingInput) {
@@ -324,19 +362,13 @@ async function inputLoop(
           else if (state.settingsOpen && state.settingDetail)
             dispatch({ type: "select-setting-option", delta });
           else if (state.settingsOpen) dispatch({ type: "select-settings", delta });
-          else {
-            // Scroll transcript: up arrow = older content (+offset), down = newer (-offset)
-            dispatch({ type: "scroll", delta: delta === -1 ? 1 : -1 });
-          }
+          else return;
           return;
         }
-        // Page Up / Page Down for larger scroll jumps
         if (key?.name === "pageup" || sequence === "\x1b[5~") {
-          if (!isAnyPanelOpen(state)) dispatch({ type: "scroll", delta: 10 });
           return;
         }
         if (key?.name === "pagedown" || sequence === "\x1b[6~") {
-          if (!isAnyPanelOpen(state)) dispatch({ type: "scroll", delta: -10 });
           return;
         }
         if (key?.name === "return") {
@@ -345,8 +377,14 @@ async function inputLoop(
             return;
           }
           if (state.sessionsOpen && !state.composer.trim()) {
-            const target = state.sessions[state.selectedSessionIndex];
+            if (state.selectedSessionIndex === 0) {
+              clearTerminalForSurfaceTransition();
+              await createAndSelectSession(client, getState, dispatch, true);
+              return;
+            }
+            const target = state.sessions[state.selectedSessionIndex - 1];
             if (target) {
+              clearTerminalForSurfaceTransition();
               const next = await hydrate(getState(), client, target);
               dispatch({
                 type: "hydrate",
@@ -357,9 +395,9 @@ async function inputLoop(
                 agents: next.agents,
                 personas: next.personas,
                 sessions: next.sessions,
+                closePanels: true,
               });
               dispatch({ type: "questions", value: next.questions });
-              dispatch({ type: "toggle-sessions" });
             }
             return;
           }
@@ -367,17 +405,7 @@ async function inputLoop(
             const model = selectedModel(state);
             const sessionID = state.session?.id;
             if (model && sessionID) {
-              const session = await client.updateSession(sessionID, { model });
-              dispatch({
-                type: "hydrate",
-                session,
-                messages: state.messages,
-                permissions: state.permissions,
-                providers: state.providers,
-                agents: state.agents,
-                personas: state.personas,
-                sessions: state.sessions,
-              });
+              await updateActiveSession(client, getState, dispatch, { model });
             }
             return;
           }
@@ -414,11 +442,7 @@ async function inputLoop(
               process.stdout.off("resize", onResize);
               resolve();
             }
-          } else {
-            // Always scroll to bottom when the user sends a new message
-            dispatch({ type: "scroll", delta: -Number.MAX_SAFE_INTEGER });
-            await submitPrompt(client, getState, dispatch, value);
-          }
+          } else await submitPrompt(client, getState, dispatch, value);
           return;
         }
         if (state.settingsOpen && !state.settingInput) return;
@@ -447,31 +471,6 @@ async function inputLoop(
   });
 }
 
-function isAnyPanelOpen(state: AppState): boolean {
-  return (
-    state.help ||
-    state.sessionsOpen ||
-    state.modelsOpen ||
-    state.authOpen ||
-    state.settingsOpen ||
-    state.personasOpen
-  );
-}
-
-function printableSequence(sequence: string | undefined): string | undefined {
-  if (!sequence || sequence.length !== 1) return undefined;
-  const code = sequence.charCodeAt(0);
-  return code >= 0x20 && code !== 0x7f ? sequence : undefined;
-}
-
-function keySequence(
-  key: { name?: string; ctrl?: boolean; meta?: boolean } | undefined,
-): string | undefined {
-  return typeof (key as { sequence?: unknown } | undefined)?.sequence === "string"
-    ? (key as { sequence: string }).sequence
-    : undefined;
-}
-
 async function slashCommand(
   client: TuiGatewayClient,
   getState: () => AppState,
@@ -496,21 +495,8 @@ async function slashCommand(
       dispatch({ type: "open-setting-detail", detail: "commands" });
     }
   } else if (name === "quit" || name === "exit") return true;
-  else if (name === "new") {
-    const session = await client.createSession();
-    const next = await hydrate(getState(), client, session);
-    dispatch({
-      type: "hydrate",
-      session: next.session!,
-      messages: next.messages,
-      permissions: next.permissions,
-      providers: next.providers,
-      agents: next.agents,
-      personas: next.personas,
-      sessions: next.sessions,
-    });
-    dispatch({ type: "questions", value: next.questions });
-  } else if (name === "resume") {
+  else if (name === "new") await createAndSelectSession(client, getState, dispatch);
+  else if (name === "resume") {
     const id = args[0];
     if (!id) dispatch({ type: "notice", value: t("usageResume") });
     else {
@@ -586,17 +572,7 @@ async function slashCommand(
     if (!model) {
       dispatch({ type: "toggle-models" });
     } else if (sessionID) {
-      const session = await client.updateSession(sessionID, { model });
-      dispatch({
-        type: "hydrate",
-        session,
-        messages: getState().messages,
-        permissions: getState().permissions,
-        providers: getState().providers,
-        agents: getState().agents,
-        personas: getState().personas,
-        sessions: getState().sessions,
-      });
+      await updateActiveSession(client, getState, dispatch, { model });
     }
   } else if (name === "agent") {
     const agent = args[0];
@@ -605,17 +581,7 @@ async function slashCommand(
       dispatch({ type: "session-config", value: await client.getSessionConfig(), open: true });
       dispatch({ type: "open-setting-detail", detail: "agent" });
     } else if (sessionID) {
-      const session = await client.updateSession(sessionID, { agent });
-      dispatch({
-        type: "hydrate",
-        session,
-        messages: getState().messages,
-        permissions: getState().permissions,
-        providers: getState().providers,
-        agents: getState().agents,
-        personas: getState().personas,
-        sessions: getState().sessions,
-      });
+      await updateActiveSession(client, getState, dispatch, { agent });
     }
   } else if (name === "persona") {
     const persona = args[0];
@@ -634,7 +600,7 @@ async function slashCommand(
     }
   } else if (name === "abort" || name === "stop") {
     const sessionID = getState().session?.id;
-    if (sessionID) {
+    if (sessionID && !isDraftSession(getState().session)) {
       await client.abort(sessionID);
       dispatch({ type: "notice", value: t("abortRequested") });
     }
@@ -739,21 +705,77 @@ async function slashCommand(
   return false;
 }
 
-async function submitPrompt(
+export async function createAndSelectSession(
+  client: TuiGatewayClient,
+  getState: () => AppState,
+  dispatch: (action: Parameters<typeof reducer>[1]) => void,
+  closePanels = false,
+): Promise<void> {
+  const current = getState();
+  const runtimeSelection = promptRuntimeSelection(current);
+  const session = await client
+    .createSession(createSessionRequest(runtimeSelection))
+    .catch(() => createDraftSession(current.cwd));
+  dispatch({
+    type: "hydrate",
+    session,
+    messages: [],
+    permissions: [],
+    providers: current.providers,
+    agents: current.agents,
+    personas: current.personas,
+    sessions: isDraftSession(session)
+      ? current.sessions
+      : upsertSessionLocal(current.sessions, session),
+    authMethods: current.authMethods,
+    authStatuses: current.authStatuses,
+    sessionConfig: current.sessionConfig,
+    closePanels,
+  });
+  dispatch({ type: "questions", value: [] });
+}
+
+function hasActiveAnimation(state: AppState): boolean {
+  if (state.questions.length || state.permissions.length) return true;
+  const sessionID = state.session?.id;
+  if (
+    Object.values(state.liveStreams).some(
+      (stream) => !sessionID || !stream.sessionID || stream.sessionID === sessionID,
+    )
+  )
+    return true;
+  if (state.messages.at(-1)?.role === "user") return true;
+  return state.messages.some((message) =>
+    (message.parts ?? []).some((part) => {
+      if (part.tool !== "command_run" && part.type !== "tool") return false;
+      const status = commandStatus(part.state);
+      return /run|progress|pending|busy|question|in[_ -]?progress|execut|start/i.test(status);
+    }),
+  );
+}
+
+function commandStatus(value: unknown): string {
+  if (!value || typeof value !== "object") return "";
+  const status = (value as { status?: unknown }).status;
+  return typeof status === "string" ? status : "";
+}
+
+export async function submitPrompt(
   client: TuiGatewayClient,
   getState: () => AppState,
   dispatch: (action: Parameters<typeof reducer>[1]) => void,
   prompt: string,
 ): Promise<void> {
   let session = getState().session;
-  if (!session) {
-    session = await client.createSession();
+  const runtimeSelection = promptRuntimeSelection(getState());
+  if (!session || isDraftSession(session)) {
+    session = await client.createSession(createSessionRequest(runtimeSelection));
     const current = getState();
     dispatch({
       type: "hydrate",
       session,
-      messages: current.messages,
-      permissions: current.permissions,
+      messages: isDraftSession(current.session) ? [] : current.messages,
+      permissions: isDraftSession(current.session) ? [] : current.permissions,
       providers: current.providers,
       agents: current.agents,
       personas: current.personas,
@@ -763,17 +785,18 @@ async function submitPrompt(
       sessionConfig: current.sessionConfig,
     });
   }
-  await client.sendPromptAsync(
-    session.id,
-    promptPayload(richPromptFromInput(prompt), {
-      source: "tui",
-      model: session.model ?? undefined,
-      agent: session.agent ?? undefined,
-      modelVariant: session.model_variant ?? undefined,
-      modelAccelerationEnabled: session.model_acceleration_enabled,
-    }),
-  );
+  const payload = promptPayload(richPromptFromInput(prompt), {
+    source: "tui",
+    ...runtimeSelection,
+  });
   dispatch({ type: "close-panels" });
+  dispatch({
+    type: "messages-incremental",
+    sessionID: session.id,
+    messages: [localUserMessage(session.id, payload)],
+    session: { ...session, status: "busy" },
+  });
+  await client.sendPromptAsync(session.id, payload);
   if (client instanceof MockGatewayClient) {
     const next = await hydrate(getState(), client, session);
     dispatch({
@@ -791,6 +814,45 @@ async function submitPrompt(
     return;
   }
   dispatch({ type: "status", value: "busy" });
+}
+
+function localUserMessage(sessionID: string, payload: PromptPayload): Message {
+  const now = Date.now();
+  return {
+    id: payload.messageID,
+    sessionID,
+    session_id: sessionID,
+    role: "user",
+    created_at: now,
+    updated_at: now,
+    parts: payload.parts.map((part) => ({ ...part, sessionID, session_id: sessionID })),
+  };
+}
+
+function createDraftSession(cwd: string): Session {
+  draftSessionCounter += 1;
+  return {
+    id: `draft-session-${Date.now()}-${draftSessionCounter}`,
+    draft: true,
+    name: t("newSession"),
+    directory: cwd,
+    status: "idle",
+    updated_at: Date.now(),
+    message_count: 0,
+  };
+}
+
+function createSessionRequest(
+  runtimeSelection: ReturnType<typeof promptRuntimeSelection>,
+): CreateSessionRequest {
+  return {
+    ...(runtimeSelection.model ? { model: runtimeSelection.model } : {}),
+    ...(runtimeSelection.agent ? { agent: runtimeSelection.agent } : {}),
+    ...(runtimeSelection.modelVariant ? { model_variant: runtimeSelection.modelVariant } : {}),
+    ...(runtimeSelection.modelAccelerationEnabled !== undefined
+      ? { model_acceleration_enabled: runtimeSelection.modelAccelerationEnabled }
+      : {}),
+  };
 }
 
 function shouldApplyInitialHydrate(state: AppState, sessionID: string): boolean {
@@ -825,30 +887,36 @@ async function fetchAuthSurface(
   return { methods, statuses };
 }
 
-async function openSessionPicker(
+export async function openSessionPicker(
   client: TuiGatewayClient,
   getState: () => AppState,
   dispatch: (action: Parameters<typeof reducer>[1]) => void,
 ): Promise<void> {
   const state = getState();
   if (state.sessionsOpen) {
+    clearTerminalForSurfaceTransition();
     dispatch({ type: "toggle-sessions" });
     return;
   }
-  const sessions = await client.listSessions({ includeChildren: true }).catch(() => state.sessions);
-  sessions.sort((left, right) => sessionUpdatedAt(right) - sessionUpdatedAt(left));
-  dispatch({ type: "sessions", value: sessions, open: true });
-  const previews = await sessionPreviews(client, sessions);
-  dispatch({ type: "session-previews", value: previews });
+  clearTerminalForSurfaceTransition();
+  dispatch({
+    type: "sessions",
+    value: sortedSessions(state.sessions.length ? state.sessions : activeSessionList(state)),
+    open: true,
+  });
+  void refreshOpenSessionPicker(client, getState, dispatch);
 }
 
 async function sessionPreviews(
   client: TuiGatewayClient,
   sessions: Session[],
+  cachedPreviews: Record<string, string> = {},
 ): Promise<Record<string, string>> {
   const entries = await Promise.all(
-    sessions.slice(0, 30).map(async (session) => {
-      const messages = await client.listMessages(session.id).catch(() => []);
+    sessions.slice(0, SESSION_PREVIEW_FETCH_LIMIT).map(async (session) => {
+      const cached = cachedPreviews[session.id];
+      if (cached) return [session.id, cached] as const;
+      const messages = await client.listMessages(session.id, { limit: 1 }).catch(() => []);
       const preview = lastMessagePreview(messages);
       return preview ? ([session.id, preview] as const) : undefined;
     }),
@@ -858,34 +926,27 @@ async function sessionPreviews(
   );
 }
 
-function lastMessagePreview(
-  messages: Awaited<ReturnType<TuiGatewayClient["listMessages"]>>,
-): string {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const text = messageText(messages[index]).replace(/\s+/g, " ").trim();
-    if (text) return text;
-  }
-  return "";
+async function refreshOpenSessionPicker(
+  client: TuiGatewayClient,
+  getState: () => AppState,
+  dispatch: (action: Parameters<typeof reducer>[1]) => void,
+): Promise<void> {
+  const sessions = sortedSessions(
+    await client.listSessions({ includeChildren: true }).catch(() => getState().sessions),
+  );
+  if (!getState().sessionsOpen) return;
+  dispatch({ type: "sessions", value: sessions, open: true });
+  const previews = await sessionPreviews(client, sessions, getState().sessionPreviews);
+  if (!getState().sessionsOpen) return;
+  dispatch({ type: "session-previews", value: previews });
 }
 
-function selectedModel(state: AppState): string | undefined {
-  let row = 0;
-  for (const provider of state.providers?.all ?? []) {
-    for (const model of Object.keys(provider.models ?? {})) {
-      if (row === state.selectedModelIndex) return `${provider.id}/${model}`;
-      row += 1;
-    }
-  }
-  return undefined;
+function activeSessionList(state: AppState): Session[] {
+  return state.session && !isDraftSession(state.session) ? [state.session] : [];
 }
 
-function selectedPersonaID(state: AppState): string | undefined {
-  const persona = state.personas[state.selectedPersonaIndex];
-  return personaID(persona);
-}
-
-function selectedSettingDetail(state: AppState): SettingDetail | undefined {
-  return settingsEntries(state)[state.selectedSettingsIndex]?.detail;
+function sortedSessions(sessions: Session[]): Session[] {
+  return [...sessions].sort((left, right) => sessionUpdatedAt(right) - sessionUpdatedAt(left));
 }
 
 async function applySelectedSetting(
@@ -901,25 +962,13 @@ async function applySelectedSetting(
   const value = selected[2];
   if (detail === "model") {
     if (typeof value !== "string" || !state.session?.id) return;
-    const session = await client.updateSession(state.session.id, { model: value });
-    dispatchHydrateFromState(
-      dispatch,
-      state,
-      session,
-      await client.getSessionConfig().catch(() => state.sessionConfig),
-    );
+    await updateActiveSession(client, getState, dispatch, { model: value });
     dispatch({ type: "notice", value: t("settingsUpdated") });
     return;
   }
   if (detail === "agent") {
     if (typeof value !== "string" || !state.session?.id) return;
-    const session = await client.updateSession(state.session.id, { agent: value });
-    dispatchHydrateFromState(
-      dispatch,
-      state,
-      session,
-      await client.getSessionConfig().catch(() => state.sessionConfig),
-    );
+    await updateActiveSession(client, getState, dispatch, { agent: value });
     dispatch({ type: "notice", value: t("settingsUpdated") });
     return;
   }
@@ -947,6 +996,27 @@ async function applySelectedSetting(
   dispatch({ type: "notice", value: t("settingsUpdated") });
 }
 
+async function updateActiveSession(
+  client: TuiGatewayClient,
+  getState: () => AppState,
+  dispatch: (action: Parameters<typeof reducer>[1]) => void,
+  patch: Partial<Session>,
+): Promise<Session | undefined> {
+  const state = getState();
+  const active = state.session;
+  if (!active) return undefined;
+  const session = isDraftSession(active)
+    ? { ...active, ...patch, updated_at: Date.now() }
+    : await client.updateSession(active.id, patch);
+  dispatchHydrateFromState(
+    dispatch,
+    state,
+    session,
+    await client.getSessionConfig().catch(() => state.sessionConfig),
+  );
+  return session;
+}
+
 function dispatchHydrateFromState(
   dispatch: (action: Parameters<typeof reducer>[1]) => void,
   state: AppState,
@@ -964,14 +1034,6 @@ function dispatchHydrateFromState(
     sessions: state.sessions,
     sessionConfig,
   });
-}
-
-function settingPatch(detail: SettingDetail, value: unknown): Record<string, unknown> | undefined {
-  if (detail === "variant") return { model_variant: value };
-  if (detail === "priority") return { model_acceleration_enabled: value };
-  if (detail === "commands") return { show_command_instructions: value };
-  if (detail === "stallGuard") return { command_run_stall_guard_profile: value };
-  return undefined;
 }
 
 async function applyProviderAuthAction(
@@ -1130,54 +1192,171 @@ function storedAgentID(agent: AppState["agents"][number]): string | undefined {
   return agent.summary?.id ?? (agent as unknown as { name?: string }).name;
 }
 
-let lastDrawDimensions = "";
+let lastDrawSurface = "";
+let lastDrawSessionID = "";
+let lastChatCacheFrame = "";
+let lastChatLiveFrame = "";
+let lastChatChromeFrame = "";
+let lastChatChromeCursor: { row: number; column: number } | undefined;
 
-function draw(state: AppState, capabilities: TerminalCapabilities, previousFrame = ""): string {
+export function resetDrawState(): void {
+  lastDrawSurface = "";
+  lastDrawSessionID = "";
+  lastChatCacheFrame = "";
+  lastChatLiveFrame = "";
+  lastChatChromeFrame = "";
+  lastChatChromeCursor = undefined;
+}
+
+export function clearTerminalForSurfaceTransition(): void {
+  if (!process.stdout.isTTY) return;
+  resetDrawState();
+  process.stdout.write(terminalSurfaceClear());
+}
+
+export function draw(
+  state: AppState,
+  capabilities: TerminalCapabilities,
+  previousFrame = "",
+): string {
   if (!process.stdout.isTTY) return previousFrame;
-  const rendered = renderFrame(state, capabilities);
+  const surface = drawSurface(state);
+  const rendered =
+    surface === "chat"
+      ? renderChatFrameParts(state, capabilities)
+      : renderFrame(state, capabilities);
   const frame = rendered.frame;
+  const sessionID = state.session?.id ?? "";
+  const previousSurface = lastDrawSurface;
+  const previousSessionID = lastDrawSessionID;
+  const sessionSurfaceBoundary =
+    (surface === "sessions" && previousSurface !== surface) ||
+    (previousSurface === "sessions" && previousSurface !== surface);
+  const shouldClearForSessionSurface = previousSessionID !== sessionID || sessionSurfaceBoundary;
+  lastDrawSurface = surface;
+  lastDrawSessionID = sessionID;
 
-  if (!capabilities.cursorControl) {
-    // Non-interactive / plain terminal: simple full repaint, skip if identical
-    if (frame === previousFrame) return previousFrame;
-    process.stdout.write(`${terminalClear}${frame}`);
-    return frame;
+  if (surface === "chat") {
+    return drawChatFrame(
+      rendered as ReturnType<typeof renderChatFrameParts>,
+      previousFrame,
+      shouldClearForSessionSurface || previousSurface !== "chat",
+    );
   }
 
-  // Force a full clear when the terminal is resized so stale rows from the old
-  // geometry can't linger. The clear sequence carries `\x1b[3J`, which the web
-  // terminal uses as its "reset + scroll to top" marker.
-  const dimensions = `${process.stdout.rows ?? 30}x${process.stdout.columns ?? 100}`;
-  const resized = dimensions !== lastDrawDimensions;
-  lastDrawDimensions = dimensions;
-
-  if (frame === previousFrame && !resized) {
-    // Nothing changed — only make sure the cursor sits in the composer.
-    if (rendered.cursor) {
-      process.stdout.write(`\x1b[${rendered.cursor.row};${rendered.cursor.column}H`);
-    }
-    return frame;
-  }
-
-  // Stable repaint: position every line at an absolute row and erase it before
-  // writing its content. We never emit a newline, so the terminal can never
-  // scroll and content can never be pushed into scrollback — the root cause of
-  // the duplicated-while-scrolling artifacts. The trailing `\x1b[J` clears any
-  // rows left over when the frame got shorter (e.g. composer shrank).
-  const lines = frame.split("\n");
-  let output = "\x1b[?25l"; // hide cursor while painting to avoid flicker
-  if (!previousFrame || resized) output += terminalClear; // baseline / post-resize clear
-  output += "\x1b[H";
-  for (let row = 0; row < lines.length; row += 1) {
-    output += `\x1b[${row + 1};1H\x1b[2K${lines[row]}`;
-  }
-  output += `\x1b[${lines.length + 1};1H\x1b[J`;
-  if (rendered.cursor) {
-    output += `\x1b[${rendered.cursor.row};${rendered.cursor.column}H`;
-  }
-  output += "\x1b[?25h"; // restore cursor
+  let output = "\x1b[?25l";
+  output += terminalSurfaceClear();
+  output += terminalAppendFrame(frame);
+  output += cursorOutputFromFrameEnd(frame, rendered.cursor);
   process.stdout.write(output);
+  lastChatCacheFrame = "";
+  lastChatLiveFrame = "";
+  lastChatChromeFrame = "";
+  lastChatChromeCursor = undefined;
   return frame;
+}
+
+function drawChatFrame(
+  rendered: ReturnType<typeof renderChatFrameParts>,
+  previousFrame: string,
+  forceReset: boolean,
+): string {
+  const frame = rendered.frame;
+  if (frame === previousFrame && !forceReset) {
+    return frame;
+  }
+
+  let output = "\x1b[?25l";
+  if (forceReset || !lastChatCacheFrame || rendered.cacheFrame !== lastChatCacheFrame) {
+    output += terminalSurfaceClear();
+    output += terminalAppendFrame(frame);
+    output += cursorOutputFromFrameEnd(frame, rendered.cursor);
+  } else {
+    output += terminalRewriteChatLiveAndChrome(rendered);
+  }
+  process.stdout.write(output);
+  lastChatCacheFrame = rendered.cacheFrame;
+  lastChatLiveFrame = rendered.liveFrame;
+  lastChatChromeFrame = rendered.chromeFrame;
+  lastChatChromeCursor = rendered.chromeCursor;
+  return frame;
+}
+
+function drawSurface(state: AppState): string {
+  if (state.help) return "help";
+  if (state.sessionsOpen) return "sessions";
+  if (state.authOpen) return "auth";
+  if (state.settingsOpen) return "settings";
+  if (state.personasOpen) return "personas";
+  if (state.modelsOpen) return "models";
+  return "chat";
+}
+
+function terminalAppendFrame(frame: string): string {
+  if (!frame) return "";
+  return frame.replace(/\n/g, "\r\n");
+}
+
+function terminalRewriteChatLiveAndChrome(
+  rendered: ReturnType<typeof renderChatFrameParts>,
+): string {
+  const previousLiveLines = frameLines(lastChatLiveFrame);
+  const nextLiveLines = frameLines(rendered.liveFrame);
+  const diffIndex = firstDifferentLine(previousLiveLines, nextLiveLines);
+  const currentChromeCursorRow =
+    lastChatChromeCursor?.row ?? Math.max(1, frameLineCount(lastChatChromeFrame));
+  const rowsUp = Math.max(0, currentChromeCursorRow - 1 + previousLiveLines.length - diffIndex);
+  const repaintLines = [...nextLiveLines.slice(diffIndex), ...frameLines(rendered.chromeFrame)];
+  const repaintFrame = repaintLines.join("\n");
+  const repaintCursor = rendered.chromeCursor
+    ? {
+        row: nextLiveLines.length - diffIndex + rendered.chromeCursor.row,
+        column: rendered.chromeCursor.column,
+      }
+    : undefined;
+  return [
+    "\x1b[1G",
+    rowsUp > 0 ? `\x1b[${rowsUp}A` : "",
+    "\x1b[J",
+    terminalAppendFrame(repaintFrame),
+    cursorOutputFromFrameEnd(repaintFrame, repaintCursor),
+  ].join("");
+}
+
+function frameLines(frame: string): string[] {
+  return frame ? frame.split("\n") : [];
+}
+
+function firstDifferentLine(left: string[], right: string[]): number {
+  const count = Math.min(left.length, right.length);
+  for (let index = 0; index < count; index += 1) {
+    if (left[index] !== right[index]) return index;
+  }
+  return count;
+}
+
+function cursorOutputFromFrameEnd(frame: string, cursor?: { row: number; column: number }): string {
+  if (!cursor) return "";
+  return `${cursorPositionFromFrameEnd(frame, cursor)}\x1b[?25h`;
+}
+
+function cursorPositionFromFrameEnd(
+  frame: string,
+  cursor: { row: number; column: number },
+): string {
+  const frameRows = frameLineCount(frame);
+  const cursorRow = Math.max(1, Math.min(frameRows, cursor.row));
+  const rowsBelowCursor = frameRows - cursorRow;
+  const column = Math.max(1, cursor.column);
+  return `${rowsBelowCursor > 0 ? `\x1b[${rowsBelowCursor}A` : ""}\x1b[${column}G`;
+}
+
+function frameLineCount(frame: string): number {
+  return frame ? frame.split("\n").length : 1;
+}
+
+function terminalSurfaceClear(): string {
+  return `\x1b[0m${terminalClear}`;
 }
 
 function richPromptFromInput(value: string): string {

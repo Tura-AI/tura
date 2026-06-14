@@ -7,13 +7,13 @@ import {
   gray,
   inverse,
   italic,
-  opencodeTextWeak,
   pad,
   reset,
   richBlockBg,
   richInlineBg,
   strike,
   stripAnsi,
+  textAgentRich,
   truncate,
   underline,
   visibleTextWidth,
@@ -34,8 +34,11 @@ export function displayMessageText(role: string, value: string): string {
   if (!text) return "";
   if (/completed without a user-facing message/i.test(text)) return "";
   if (role === "user") {
-    const first = text.split(/\r?\n/).find((line) => line.trim()) ?? text;
-    return truncate(first.trim(), 140);
+    return text
+      .split(/\r?\n/)
+      .map((line) => line.trimEnd())
+      .join("\n")
+      .trim();
   }
   const lines = text
     .split(/\r?\n/)
@@ -161,13 +164,19 @@ function renderHtmlSubset(source: string): string {
   const replacements: Array<[RegExp, (body: string, attr?: string) => string]> = [
     [
       /<(?:b|strong)>([\s\S]*?)<\/(?:b|strong)>/giu,
-      (body) => `${bold}${renderHtmlSubset(body)}${reset}`,
+      (body) => `${textAgentRich}${bold}${renderHtmlSubset(body)}${reset}`,
     ],
-    [/<(?:i|em)>([\s\S]*?)<\/(?:i|em)>/giu, (body) => `${italic}${renderHtmlSubset(body)}${reset}`],
-    [/<u>([\s\S]*?)<\/u>/giu, (body) => `${underline}${renderHtmlSubset(body)}${reset}`],
+    [
+      /<(?:i|em)>([\s\S]*?)<\/(?:i|em)>/giu,
+      (body) => `${textAgentRich}${italic}${renderHtmlSubset(body)}${reset}`,
+    ],
+    [
+      /<u>([\s\S]*?)<\/u>/giu,
+      (body) => `${textAgentRich}${underline}${renderHtmlSubset(body)}${reset}`,
+    ],
     [
       /<(?:s|del)>([\s\S]*?)<\/(?:s|del)>/giu,
-      (body) => `${strike}${renderHtmlSubset(body)}${reset}`,
+      (body) => `${textAgentRich}${strike}${renderHtmlSubset(body)}${reset}`,
     ],
     [/<code>([\s\S]*?)<\/code>/giu, (body) => inlineRegion(decodeHtml(stripHtml(body)))],
     [
@@ -221,7 +230,7 @@ function renderMarkdownRegions(source: string): string {
     const heading = lines[index].match(/^\s{0,3}(#{1,6})\s+(.+)$/u);
     if (heading) {
       output.push(
-        `${bold}${heading[1]} ${stripAnsi(renderInlineMarkdown(heading[2] ?? ""))}${reset}`,
+        `${textAgentRich}${bold}${heading[1]} ${stripAnsi(renderInlineMarkdown(heading[2] ?? ""))}${reset}`,
       );
       continue;
     }
@@ -237,19 +246,19 @@ function renderMarkdownRegions(source: string): string {
 
 function blockRegion(value: string): string {
   if (activeCapabilities.level !== "rich") return value;
-  return `${richBlockBg}${opencodeTextWeak}${value.replaceAll(reset, `${reset}${richBlockBg}${opencodeTextWeak}`)}${reset}`;
+  return `${richBlockBg}${textAgentRich}${value.replaceAll(reset, `${reset}${richBlockBg}${textAgentRich}`)}${reset}`;
 }
 
 function quoteRegion(value: string): string {
   if (activeCapabilities.level !== "rich") return value;
-  return `${richBlockBg}${value.replaceAll(reset, `${reset}${richBlockBg}`)}${reset}`;
+  return `${richBlockBg}${textAgentRich}${value.replaceAll(reset, `${reset}${richBlockBg}${textAgentRich}`)}${reset}`;
 }
 
 function inlineRegion(value: string): string {
   if (activeCapabilities.level !== "rich") return value;
   const normalized = value.replace(/\s+/gu, " ").trim();
   if (!normalized) return "";
-  return `${richInlineBg}${opencodeTextWeak} ${normalized.replaceAll(reset, `${reset}${richInlineBg}${opencodeTextWeak}`)} ${reset}`;
+  return `${richInlineBg}${textAgentRich} ${normalized.replaceAll(reset, `${reset}${richInlineBg}${textAgentRich}`)} ${reset}`;
 }
 
 function renderMarkdownTables(source: string): string {
@@ -321,7 +330,7 @@ function compactMarkdownTable(rows: string[][]): string[] {
         return header ? `${header}: ${value}` : value;
       })
       .filter(Boolean);
-    return `${gray}◇${reset} ${opencodeTextWeak}${cells.join("  ")}${reset}`;
+    return `${gray}◇${reset} ${textAgentRich}${cells.join("  ")}${reset}`;
   });
 }
 
@@ -349,21 +358,24 @@ function restoreAnsiSequences(source: string, tokens: string[]): string {
 
 function renderInlineDecorations(source: string): string {
   return source
-    .replace(/(?<!\\)\*\*([^*\n]+)\*\*/gu, (_match, body) => `${bold}${body}${reset}`)
-    .replace(/(?<!\\)__([^_\n]+)__/gu, (_match, body) => `${bold}${body}${reset}`)
+    .replace(
+      /(?<!\\)\*\*([^*\n]+)\*\*/gu,
+      (_match, body) => `${textAgentRich}${bold}${body}${reset}`,
+    )
+    .replace(/(?<!\\)__([^_\n]+)__/gu, (_match, body) => `${textAgentRich}${bold}${body}${reset}`)
     .replace(/(?<!\\)`([^`\n]+)`/gu, (_match, body) => inlineRegion(String(body)));
 }
 
 function renderMediaToken(path: string): string {
   const label = path;
   return isLinkTarget(path)
-    ? terminalLink(linkTargetUrl(path), `${opencodeTextWeak}${label}${reset}`)
-    : `${opencodeTextWeak}${label}${reset}`;
+    ? terminalLink(linkTargetUrl(path), `${textAgentRich}${label}${reset}`)
+    : `${textAgentRich}${label}${reset}`;
 }
 
 function renderLinkTarget(target: string, label: string): string {
   if (!isLinkTarget(target)) return `${label} (${target})`;
-  const visible = `${stripAnsi(label)} ${opencodeTextWeak}(${target})${reset}`;
+  const visible = `${stripAnsi(label)} ${textAgentRich}(${target})${reset}`;
   return terminalLink(linkTargetUrl(target), visible);
 }
 
@@ -381,7 +393,7 @@ function linkLocalPaths(source: string): string {
     const trailing = raw.slice(path.length);
     if (!isLocalPath(path)) return raw;
     if (activeCapabilities.level === "rich" || activeCapabilities.level === "ansi")
-      return `${terminalLink(linkTargetUrl(path), `${opencodeTextWeak}${path}${reset}`)}${trailing}`;
+      return `${terminalLink(linkTargetUrl(path), `${textAgentRich}${path}${reset}`)}${trailing}`;
     return `${path}${trailing}`;
   });
 }
@@ -505,7 +517,7 @@ export function extractCommandsFromUnknown(value: unknown): string[] {
   for (const key of ["command_line", "command"]) {
     const command = object[key];
     if (typeof command === "string" && looksLikeCommand(command))
-      commands.push(firstCommandLine(command));
+      commands.push(sanitizeRawTerminalText(command).trim());
   }
   for (const key of ["commands", "results", "steps", "input", "output"]) {
     commands.push(...extractCommandsFromUnknown(object[key]));
@@ -517,7 +529,7 @@ export function firstCommandLine(value: string): string {
   return sanitizeRawTerminalText(value).trim().split(/\n/)[0]?.trim() ?? "";
 }
 
-function looksLikeCommand(value: string): boolean {
+export function looksLikeCommand(value: string): boolean {
   const command = firstCommandLine(value);
   return (
     Boolean(command) &&

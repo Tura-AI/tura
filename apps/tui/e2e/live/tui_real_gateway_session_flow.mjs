@@ -11,8 +11,7 @@ import {
 } from "../../../../tests/business/business_lib_business_paths.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..", "..");
-const runId =
-  process.env.TUI_BUSINESS_RUN_ID || `tui-real-gateway-${Date.now()}`;
+const runId = process.env.TUI_BUSINESS_RUN_ID || `tui-real-gateway-${Date.now()}`;
 const runPaths = businessRunPaths("tui-real-gateway", runId);
 const runRoot = runPaths.run_root;
 const workspace = path.join(runRoot, "workspace");
@@ -215,9 +214,7 @@ function userFacingAssistantMessages(messages) {
     .filter((message) => messageRole(message) === "assistant")
     .map(messageText)
     .map((text) => text.trim())
-    .filter(
-      (text) => text && !/completed without a user-facing message/i.test(text),
-    );
+    .filter((text) => text && !/completed without a user-facing message/i.test(text));
 }
 
 async function requestJson(url, options = {}) {
@@ -231,9 +228,7 @@ async function requestJson(url, options = {}) {
   });
   const text = await response.text();
   if (!response.ok)
-    throw new Error(
-      `${options.method || "GET"} ${url} returned ${response.status}: ${text}`,
-    );
+    throw new Error(`${options.method || "GET"} ${url} returned ${response.status}: ${text}`);
   return text.trim() ? JSON.parse(text) : undefined;
 }
 
@@ -253,8 +248,7 @@ async function webTerminalBusiness(gatewayUrl) {
   try {
     await waitForUrl(`${url}/`, 30_000).catch(async () => {
       const response = await fetch(`${url}/`);
-      if (!response.ok)
-        throw new Error(`web terminal returned ${response.status}`);
+      if (!response.ok) throw new Error(`web terminal returned ${response.status}`);
     });
     const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({
@@ -353,14 +347,8 @@ async function webTerminalBusiness(gatewayUrl) {
   } finally {
     const logs = child.logs();
     await stopProcess(child);
-    await fs.writeFile(
-      path.join(runRoot, "web-terminal.stdout.log"),
-      logs.stdout,
-    );
-    await fs.writeFile(
-      path.join(runRoot, "web-terminal.stderr.log"),
-      logs.stderr,
-    );
+    await fs.writeFile(path.join(runRoot, "web-terminal.stdout.log"), logs.stdout);
+    await fs.writeFile(path.join(runRoot, "web-terminal.stderr.log"), logs.stderr);
   }
 }
 
@@ -398,33 +386,23 @@ async function main() {
         "inspect",
         "gateway",
         "completion",
-      ].every((command) =>
-        new RegExp(`^  ${command}\\s`, "m").test(help.stdout),
-      ),
+      ].every((command) => new RegExp(`^  ${command}\\s`, "m").test(help.stdout)),
       { help: help.stdout },
     );
-    record(
-      "help-session-scope-minimal",
-      /session\s+list or show sessions/.test(help.stdout),
-      { help: help.stdout },
-    );
+    record("help-session-scope-minimal", /session\s+list or show sessions/.test(help.stdout), {
+      help: help.stdout,
+    });
 
     const config = jsonFrom(runTuiOk(gateway.url, ["--json", "config", "get"]));
-    record(
-      "session-config-readable",
-      typeof config === "object" && config !== null,
-      { keys: Object.keys(config).slice(0, 12) },
-    );
+    record("session-config-readable", typeof config === "object" && config !== null, {
+      keys: Object.keys(config).slice(0, 12),
+    });
     const patch = {};
     if (config.active_agent) patch.agent = config.active_agent;
     if (config.model_variant) patch.model_variant = config.model_variant;
     if (Object.keys(patch).length) {
-      const args = Object.entries(patch).map(
-        ([key, value]) => `${key}=${value}`,
-      );
-      const patched = jsonFrom(
-        runTuiOk(gateway.url, ["--json", "config", "set", ...args]),
-      );
+      const args = Object.entries(patch).map(([key, value]) => `${key}=${value}`);
+      const patched = jsonFrom(runTuiOk(gateway.url, ["--json", "config", "set", ...args]));
       record(
         "session-config-write-roundtrip",
         Object.entries(patch).every(([key, value]) => {
@@ -442,27 +420,20 @@ async function main() {
     record(
       "appearance-config-rejected",
       themeAttempt.status !== 0 &&
-        /unsupported session config key/.test(
-          themeAttempt.stderr + themeAttempt.stdout,
-        ),
+        /unsupported session config key/.test(themeAttempt.stderr + themeAttempt.stdout),
     );
 
-    const providerList = jsonFrom(
-      runTuiOk(gateway.url, ["--json", "provider", "list"]),
-    );
+    const providerList = jsonFrom(runTuiOk(gateway.url, ["--json", "provider", "list"]));
     record("provider-list-readable", Array.isArray(providerList.all), {
       count: providerList.all?.length ?? 0,
     });
     const providerID = providerList.all?.[0]?.id;
     if (providerID) {
-      const status = jsonFrom(
-        runTuiOk(gateway.url, ["provider", "status", providerID]),
-      );
-      record(
-        "provider-status-readable",
-        typeof status === "object" && status !== null,
-        { providerID, authenticated: status.authenticated },
-      );
+      const status = jsonFrom(runTuiOk(gateway.url, ["provider", "status", providerID]));
+      record("provider-status-readable", typeof status === "object" && status !== null, {
+        providerID,
+        authenticated: status.authenticated,
+      });
     } else {
       record("provider-status-readable", true, {
         skipped: "real gateway returned no providers",
@@ -475,14 +446,8 @@ async function main() {
     });
     const agentID = agents[0]?.id ?? agents[0]?.name;
     if (agentID) {
-      const agent = jsonFrom(
-        runTuiOk(gateway.url, ["--json", "agent", "show", String(agentID)]),
-      );
-      record(
-        "agent-show-readonly",
-        Boolean(agent.summary || agent.name || agent.id),
-        { agentID },
-      );
+      const agent = jsonFrom(runTuiOk(gateway.url, ["--json", "agent", "show", String(agentID)]));
+      record("agent-show-readonly", Boolean(agent.summary || agent.name || agent.id), { agentID });
     } else {
       record("agent-show-readonly", true, {
         skipped: "real gateway returned no agents",
@@ -509,17 +474,14 @@ async function main() {
         agent: agentID,
         model: config.model ?? undefined,
         model_variant: config.model_variant ?? undefined,
-        model_acceleration_enabled:
-          config.model_acceleration_enabled ?? undefined,
+        model_acceleration_enabled: config.model_acceleration_enabled ?? undefined,
       }),
     });
     record("real-session-created-for-tui-flow", Boolean(createdSession?.id), {
       sessionID: createdSession?.id,
     });
 
-    const sessions = jsonFrom(
-      runTuiOk(gateway.url, ["--json", "session", "list"]),
-    );
+    const sessions = jsonFrom(runTuiOk(gateway.url, ["--json", "session", "list"]));
     record("session-list-readable", Array.isArray(sessions), {
       count: sessions.length,
     });
@@ -529,8 +491,7 @@ async function main() {
       );
       record(
         "session-show-readable",
-        shown.session?.id === createdSession.id &&
-          Array.isArray(shown.messages),
+        shown.session?.id === createdSession.id && Array.isArray(shown.messages),
         { sessionID: createdSession.id },
       );
       const transcript = runTuiOk(gateway.url, ["resume", createdSession.id]);
@@ -556,9 +517,7 @@ async function main() {
         `${gateway.url}/session?directory=${encodeURIComponent(workspace)}&includeChildren=true&limit=20`,
       ).catch(() => []);
       const beforeSessionIds = new Set(
-        Array.isArray(beforeSessions)
-          ? beforeSessions.map((session) => session.id)
-          : [],
+        Array.isArray(beforeSessions) ? beforeSessions.map((session) => session.id) : [],
       );
       const liveResult = runTui(
         gateway.url,
@@ -572,20 +531,12 @@ async function main() {
         ],
         { timeoutMs: timeoutMs + 30_000 },
       );
-      await fs.writeFile(
-        path.join(runRoot, "live-run.stdout.log"),
-        liveResult.stdout,
-      );
-      await fs.writeFile(
-        path.join(runRoot, "live-run.stderr.log"),
-        liveResult.stderr,
-      );
+      await fs.writeFile(path.join(runRoot, "live-run.stdout.log"), liveResult.stdout);
+      await fs.writeFile(path.join(runRoot, "live-run.stderr.log"), liveResult.stderr);
 
       let parsedResult = null;
       try {
-        parsedResult = liveResult.stdout.trim()
-          ? JSON.parse(liveResult.stdout)
-          : null;
+        parsedResult = liveResult.stdout.trim() ? JSON.parse(liveResult.stdout) : null;
       } catch (error) {
         parsedResult = { parse_error: String(error.message || error) };
       }
@@ -595,14 +546,9 @@ async function main() {
           `${gateway.url}/session?directory=${encodeURIComponent(workspace)}&includeChildren=true&limit=20`,
         ).catch(() => []);
         if (Array.isArray(afterSessions)) {
-          const created = afterSessions.find(
-            (session) => !beforeSessionIds.has(session.id),
-          );
+          const created = afterSessions.find((session) => !beforeSessionIds.has(session.id));
           sessionID = created?.id ?? afterSessions[0]?.id;
-          await saveJson(
-            path.join(runRoot, "live-sessions-after-timeout.json"),
-            afterSessions,
-          );
+          await saveJson(path.join(runRoot, "live-sessions-after-timeout.json"), afterSessions);
         }
       }
       const messages = sessionID
@@ -610,28 +556,20 @@ async function main() {
             `${gateway.url}/session/${encodeURIComponent(sessionID)}/message`,
           ).catch((error) => ({ error: String(error.message || error) }))
         : [];
-      await saveJson(
-        path.join(runRoot, "live-session-messages.json"),
-        messages,
-      );
+      await saveJson(path.join(runRoot, "live-session-messages.json"), messages);
 
       const afterProviderLogs = await listProviderLogs();
       const newProviderLogs = afterProviderLogs.filter(
         (log) => !beforeKeys.has(providerLogKey(log)),
       );
-      await saveJson(
-        path.join(runRoot, "live-provider-logs.json"),
-        newProviderLogs,
-      );
+      await saveJson(path.join(runRoot, "live-provider-logs.json"), newProviderLogs);
       record(
         "live-conversation-run",
         liveResult.status === 0 &&
           parsedResult?.status === "completed" &&
           /TUI_BUSINESS_OK/i.test(parsedResult?.finalText ?? "") &&
           Array.isArray(messages) &&
-          userFacingAssistantMessages(messages).some((text) =>
-            /TUI_BUSINESS_OK/i.test(text),
-          ) &&
+          userFacingAssistantMessages(messages).some((text) => /TUI_BUSINESS_OK/i.test(text)) &&
           newProviderLogs.length > 0,
         {
           exitStatus: liveResult.status,
@@ -687,9 +625,7 @@ main().catch(async (error) => {
     runPaths,
   );
   await fs.mkdir(runRoot, { recursive: true }).catch(() => {});
-  await fs
-    .writeFile(summaryPath, JSON.stringify(summary, null, 2))
-    .catch(() => {});
+  await fs.writeFile(summaryPath, JSON.stringify(summary, null, 2)).catch(() => {});
   console.error(error);
   process.exitCode = 1;
 });

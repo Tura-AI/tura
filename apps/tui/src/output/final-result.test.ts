@@ -35,3 +35,28 @@ test("run result ignores internal assistant completion placeholders", () => {
   assert.equal(hasUserFacingAssistantText(messages, 1), true);
   assert.equal(buildRunResult("sess-1", messages).finalText, "TUI_BUSINESS_OK");
 });
+
+test("run result uses the newest assistant text when gateway messages are unordered", () => {
+  const messages: Message[] = [
+    {
+      id: "msg-final",
+      role: "assistant",
+      created_at: 30,
+      parts: [{ id: "part-final", type: "text", text: "FINAL_MARKER" }],
+    },
+    {
+      id: "msg-user",
+      role: "user",
+      created_at: 10,
+      parts: [{ id: "part-user", type: "text", text: "hello" }],
+    },
+    {
+      id: "msg-progress",
+      role: "assistant",
+      created_at: 20,
+      parts: [{ id: "part-progress", type: "text", text: "working" }],
+    },
+  ];
+
+  assert.equal(buildRunResult("sess-1", messages).finalText, "FINAL_MARKER");
+});

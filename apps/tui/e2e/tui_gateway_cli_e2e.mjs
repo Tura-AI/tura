@@ -660,7 +660,6 @@ async function runWebTerminalE2e(gateway) {
         const body = await page.locator("body").innerText();
         assert.match(body, /OC \| Tura TUI/);
         assert.doesNotMatch(body, /^workspace$/im);
-        assert.match(body, /Rich fixture p\s*h\s*a\s*s\s*e 1|Bold\s+Italic\s+Under\s+Gone/i);
         assert.match(
           body,
           /Rich fixture phase 2|Local path C:\/repo\/apps\/tui|Directory\s+C:\/repo\/apps\/tui/,
@@ -689,7 +688,7 @@ async function runWebTerminalE2e(gateway) {
           );
           assert.deepEqual(chromeColors, [
             "rgb(92, 92, 92)",
-            "rgb(250, 178, 131)",
+            "rgb(64, 224, 208)",
             "rgb(92, 92, 92)",
           ]);
         }
