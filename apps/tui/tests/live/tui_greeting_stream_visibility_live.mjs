@@ -34,7 +34,7 @@ const screenshotsDir = path.join(runRoot, "screenshots");
 const turaHome = path.join(runRoot, "tura-home");
 const summaryPath = path.join(runRoot, "summary.json");
 const timeoutMs = Number(process.env.TURA_TUI_LIVE_TIMEOUT_MS || 60_000);
-const input = process.env.TURA_TUI_LIVE_GREETING_PROMPT || "你好，简单打个招呼。";
+const input = process.env.TURA_TUI_LIVE_GREETING_PROMPT || "Hello, briefly greet me.";
 const instance = `greeting-${runId.replace(/[^\w-]/g, "-")}`;
 
 await main();
@@ -67,11 +67,9 @@ async function main() {
     page = await browser.newPage({ viewport: { width: 1280, height: 760 } });
     const terminalUrl = `${web.url}/rich?instance=${encodeURIComponent(instance)}`;
     await page.goto(terminalUrl, { waitUntil: "domcontentloaded" });
-    await page.waitForFunction(
-      () => /Enter to send|回车输入|Tura/i.test(document.body.innerText),
-      null,
-      { timeout: 45_000 },
-    );
+    await page.waitForFunction(() => /Enter to send|Tura/i.test(document.body.innerText), null, {
+      timeout: 45_000,
+    });
 
     await startRichTerminal(page);
     await submitRich(page, input);
@@ -235,6 +233,7 @@ async function startWebTerminal(gatewayUrl) {
       TURA_PROJECT_ROOT: repoRoot,
       TURA_TUI_DISABLE_MOUSE: "1",
       FORCE_COLOR: "1",
+      TURA_LANG: "en",
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
@@ -252,7 +251,7 @@ async function startRichTerminal(page) {
   });
   await page.evaluate(() => window.__turaFit());
   await focusTerminal(page);
-  await waitForScreenText(page, /Enter to send|回车输入/u, 20_000);
+  await waitForScreenText(page, /Enter to send/u, 20_000);
 }
 
 async function submitRich(page, value) {
@@ -289,7 +288,7 @@ async function waitForVisibleGreetingResponse(page) {
   let sawBusy = false;
   while (Date.now() < deadline) {
     const screen = await terminalText(page);
-    sawBusy ||= /忙碌|busy/i.test(screen);
+    sawBusy ||= /busy/i.test(screen);
     const extracted = extractVisibleResponses(screen, input);
     if (extracted.candidates.length) {
       latest = {
@@ -308,7 +307,7 @@ async function waitForVisibleGreetingResponse(page) {
         screen: stableScreen,
       };
     }
-    if (sawBusy && /空闲|idle/i.test(screen)) break;
+    if (sawBusy && /idle/i.test(screen)) break;
     await delay(500);
   }
   throw new Error(
@@ -345,15 +344,15 @@ function cleanLine(value) {
 function isVisibleResponseLine(line, userInput) {
   if (!line || line === userInput || line.includes(userInput)) return false;
   if (/^session-\d+/iu.test(line)) return false;
-  if (/^(dev\s+模式|provider\s+llm|llm\s+log)/iu.test(line)) return false;
-  if (/^(enter to send|回车输入|tura|oc \||gateway|workspace|directory|目录)/iu.test(line)) {
+  if (/^(provider\s+llm|llm\s+log)/iu.test(line)) return false;
+  if (/^(enter to send|tura|oc \||gateway|workspace|directory)/iu.test(line)) {
     return false;
   }
-  if (/(tokens|codex\/|openai\/|anthropic\/|优先|priority|空闲|忙碌|idle|busy)/iu.test(line)) {
+  if (/(tokens|codex\/|openai\/|anthropic\/|priority|idle|busy)/iu.test(line)) {
     return false;
   }
   if (/thinking\s+\d+s?/iu.test(line)) return false;
-  if (/(command_run|commands?:|命令:|事件流|unable to connect|mano failed)/iu.test(line)) {
+  if (/(command_run|commands?:|unable to connect|mano failed)/iu.test(line)) {
     return false;
   }
   if (/^(doing|done|question)\s*:/iu.test(line)) return false;

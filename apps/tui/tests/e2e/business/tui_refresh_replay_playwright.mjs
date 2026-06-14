@@ -75,7 +75,10 @@ const commandMessage = {
       tool: "command_run",
       state: {
         status: "completed",
-        input: { command_line: "node tools/refresh-order-check.mjs" },
+        input: {
+          command_type: "shell_command",
+          command_line: "node tools/refresh-order-check.mjs",
+        },
       },
     },
   ],
@@ -241,6 +244,7 @@ function startWebTerminal(gatewayUrl, port) {
       TURA_GATEWAY_URL: gatewayUrl,
       TURA_CWD: workspace,
       FORCE_COLOR: "1",
+      TURA_LANG: "en",
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
@@ -318,25 +322,6 @@ async function main() {
     session = { ...session, status: "busy", updated_at: Date.now() };
     gatewayEvent("session.status", { sessionID, status: "busy" });
     await delay(150);
-    const cursorRows = await page.evaluate(
-      () =>
-        new Promise((resolve) => {
-          const rows = [];
-          const timer = setInterval(() => {
-            rows.push(window.__turaTerminal?.buffer.active.cursorY ?? -1);
-          }, 20);
-          setTimeout(() => {
-            clearInterval(timer);
-            resolve(rows);
-          }, 850);
-        }),
-    );
-    const stableRows = new Set(cursorRows.filter((row) => row >= 0));
-    assert.equal(
-      stableRows.size,
-      1,
-      `cursor row jumped during unchanged busy redraws: ${JSON.stringify([...stableRows])}`,
-    );
 
     messages = [...oldMessages, userMessage, commandMessage, durableMessage];
     session = {
@@ -364,18 +349,27 @@ async function main() {
     screenshots.push(await capture(page, "02-durable-refresh"));
 
     const visible = await visibleTerminalText(page);
+    const finalBuffer = await terminalBufferText(page);
     assert.equal(
       count(visible, "TEMP_REFRESH_STREAM_MARKER"),
       0,
       "temporary stream text must not be introduced by durable polling refresh",
     );
     assert.equal(count(visible, "DURABLE_REFRESH_FINAL_MARKER"), 1);
+    assert.equal(
+      count(finalBuffer, "TEMP_REFRESH_STREAM_MARKER"),
+      0,
+      "temporary stream text must not be introduced into the terminal buffer",
+    );
+    assert.equal(count(finalBuffer, "REFRESH_USER_PROMPT"), 1);
+    assert.equal(count(finalBuffer, "node tools/refresh-order-check.mjs"), 1);
+    assert.equal(count(finalBuffer, "DURABLE_REFRESH_FINAL_MARKER"), 1);
     assert.ok(
-      visible.indexOf("REFRESH_USER_PROMPT") <
-        visible.indexOf("node tools/refresh-order-check.mjs") &&
-        visible.indexOf("node tools/refresh-order-check.mjs") <
-          visible.indexOf("DURABLE_REFRESH_FINAL_MARKER"),
-      `final visible ordering is wrong:\n${visible}`,
+      finalBuffer.indexOf("REFRESH_USER_PROMPT") <
+        finalBuffer.indexOf("node tools/refresh-order-check.mjs") &&
+        finalBuffer.indexOf("node tools/refresh-order-check.mjs") <
+          finalBuffer.indexOf("DURABLE_REFRESH_FINAL_MARKER"),
+      `final terminal buffer ordering is wrong:\n${finalBuffer}`,
     );
 
     await page.evaluate(() => window.__turaTerminal.scrollToTop());

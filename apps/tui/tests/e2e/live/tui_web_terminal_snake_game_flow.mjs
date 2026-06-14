@@ -188,7 +188,7 @@ function parseRunJson(stdout) {
 function phasePrompt(phase) {
   if (phase === 1) {
     return [
-      "**Snake / 贪吃蛇 Phase 1: GUI reference and first Playwright contract**",
+      "**Snake Phase 1: GUI reference and first Playwright contract**",
       "",
       "TUI Snake business Playwright phase 1. You must call the real model and answer in concise rich Markdown.",
       "Reference the GUI test apps/gui/e2e/snake_playwright_frontend_interaction_e2e.py and the app-local TUI business Snake script under apps/tui/tests/e2e/business/.",
@@ -205,7 +205,7 @@ function phasePrompt(phase) {
   }
   if (phase === 2) {
     return [
-      "**Snake / 贪吃蛇 Phase 2: TUI panel switching evidence**",
+      "**Snake Phase 2: TUI panel switching evidence**",
       "",
       "TUI Snake business Playwright phase 2. Continue the same session with concise rich Markdown.",
       "Classify the TUI evidence panels that should be captured while switching `/chat`, `/sessions`, `/models`, `/settings`.",
@@ -226,7 +226,7 @@ function phasePrompt(phase) {
     ].join("\n");
   }
   return [
-    "**Snake / 贪吃蛇 Phase 3: Playwright interaction verification**",
+    "**Snake Phase 3: Playwright interaction verification**",
     "",
     "TUI Snake business Playwright phase 3. Final verification summary in concise rich Markdown.",
     "State that the script used real LLM calls with model codex/gpt-5.5, agent fast, low reasoning, and priority enabled by default.",
@@ -250,7 +250,7 @@ function phaseEvidenceMarkdown(phase, llmText) {
   const excerpt = llmText.trim().replace(/\s+/g, " ").slice(0, 500) || "real LLM response captured";
   if (phase === 1) {
     return [
-      "**Snake / 贪吃蛇 Phase 1: GUI reference and first Playwright contract**",
+      "**Snake Phase 1: GUI reference and first Playwright contract**",
       "",
       "- Real LLM: `codex/gpt-5.5` / agent `fast` / priority `true`",
       "- GUI reference: `apps/gui/e2e/snake_playwright_frontend_interaction_e2e.py`",
@@ -266,7 +266,7 @@ function phaseEvidenceMarkdown(phase, llmText) {
   }
   if (phase === 2) {
     return [
-      "**Snake / 贪吃蛇 Phase 2: TUI panel switching evidence**",
+      "**Snake Phase 2: TUI panel switching evidence**",
       "",
       "1. `/chat` keeps the rich transcript visible.",
       "2. `/sessions` shows the real session list.",
@@ -285,7 +285,7 @@ function phaseEvidenceMarkdown(phase, llmText) {
     ].join("\n");
   }
   return [
-    "**Snake / 贪吃蛇 Phase 3: Playwright interaction verification**",
+    "**Snake Phase 3: Playwright interaction verification**",
     "",
     "- desktop.png ok",
     "- mobile.png ok",
@@ -429,7 +429,7 @@ async function appendAssistantRichEvidence(gatewayUrl, sessionID, phase, suffix)
   const concise = [
     `**assistant-message-phase-${phase}-${suffix}**`,
     "",
-    `Snake / 贪吃蛇 Phase ${phase}`,
+    `Snake Phase ${phase}`,
     phase === 1
       ? "`src/App.jsx` · `node tools/snake_playwright.mjs`"
       : phase === 2
@@ -544,20 +544,19 @@ async function captureTui(gatewayUrl, sessionID) {
     );
   }
   function panelPattern(command) {
-    if (command === "/sessions")
-      return /会话[\s\S]*上下选择[\s\S]*Enter\s*打开|Sessions[\s\S]*(?:Up\/Down|Enter)/i;
+    if (command === "/sessions") return /Sessions[\s\S]*(?:Up\/Down|Enter)/i;
     if (command === "/models")
-      return /模型[\s\S]*上下选择[\s\S]*Enter\s*设置[\s\S]*(?:provider\/model|codex\/gpt-5\.5)|models[\s\S]*(?:Up\/Down|provider\/model|codex\/gpt-5\.5)|(?:codex\/gpt|deepseek\/|qwen\/|azure\/gpt|github-copilot\/copilot-chat)[\s\S]*(?:已连接|默认|Azure|DeepSeek|Qwen|Copilot|Mistral)/i;
-    if (command === "/settings") return /会话设置|Session Settings/i;
-    if (command === "/chat") return /assistant-message-phase-[123]-visible|Snake \/ 贪吃蛇 Phase/i;
+      return /models[\s\S]*(?:Up\/Down|provider\/model|codex\/gpt-5\.5)|(?:codex\/gpt|deepseek\/|qwen\/|azure\/gpt|github-copilot\/copilot-chat)[\s\S]*(?:Azure|DeepSeek|Qwen|Copilot|Mistral)/i;
+    if (command === "/settings") return /Session Settings/i;
+    if (command === "/chat") return /assistant-message-phase-[123]-visible|Snake Phase/i;
     return /Tura/i;
   }
   async function waitForStableComposer() {
     await page
       .waitForFunction(
         () =>
-          /(?:Enter to send|回车输入)/i.test(document.body.innerText) &&
-          !/(?:\bthinking\b|思考中)/i.test(document.body.innerText),
+          /Enter to send/i.test(document.body.innerText) &&
+          !/\bthinking\b/i.test(document.body.innerText),
         null,
         { timeout: 20_000 },
       )
@@ -581,7 +580,7 @@ async function captureTui(gatewayUrl, sessionID) {
     await appendAssistantRichEvidence(gatewayUrl, sessionID, 1, "visible");
     await page.waitForTimeout(900);
     await waitText(
-      /assistant-message-phase-1-visible|Snake \/ 贪吃蛇 Phase 1|src\/App\.jsx|node tools\/snake_playwright\.mjs/,
+      /assistant-message-phase-1-visible|Snake Phase 1|src\/App\.jsx|node tools\/snake_playwright\.mjs/,
     );
     visibleEvidence.phase1 = true;
     await shot("01-phase1-chat-rich-contract");

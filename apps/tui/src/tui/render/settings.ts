@@ -34,7 +34,11 @@ export function settingsEntries(state: AppState): SettingEntry[] {
     },
     { detail: "provider", label: t("settingProvider"), value: configuredProviderSummary(state) },
     { detail: "agent", label: t("settingAgent"), value: config.active_agent ?? t("unknown") },
-    { detail: "persona", label: t("settingPersona"), value: activePersonaID(state) ?? t("unknown") },
+    {
+      detail: "persona",
+      label: t("settingPersona"),
+      value: activePersonaID(state) ?? t("unknown"),
+    },
     { detail: "language", label: t("settingLanguage"), value: config.language ?? "zh-CN" },
     { detail: "session", label: t("settingSession"), value: config.session_type ?? "coding" },
     { detail: "variant", label: t("settingReasoning"), value: config.model_variant ?? "high" },
@@ -271,7 +275,10 @@ function authAction(value: unknown): { action?: string } | undefined {
 function settingDetailLines(state: AppState, cols: number, maxLines: number): string[] {
   const options = settingOptions(state);
   if (!options.length) return [sectionBodyLine(t("noOptions"), cols)];
-  const width = menuLabelWidthFor(options.map(([label]) => label), cols);
+  const width = menuLabelWidthFor(
+    options.map(([label]) => label),
+    cols,
+  );
   const lines: string[] = [];
   const active = activeSettingValue(state);
   for (const [index, [label, description, value]] of options.entries()) {

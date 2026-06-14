@@ -19,7 +19,7 @@ const runRoot = path.join(
 const nodeRequire = createRequire(path.join(appRoot, "package.json"));
 const { chromium, devices } = nodeRequire("playwright");
 let web;
-const visibleTerminalPattern = /tura|Enter to send|回车输入|OC \| Tura TUI/u;
+const visibleTerminalPattern = /tura|Enter to send|OC \| Tura TUI/u;
 
 function freePort() {
   return 24_000 + Math.floor(Math.random() * 20_000);
@@ -283,7 +283,7 @@ async function main() {
   const port = freePort();
   web = startProcess(process.execPath, [path.join(appRoot, "scripts", "web-terminal.mjs")], {
     cwd: appRoot,
-    env: { PORT: String(port), TURA_TUI_MOCK: "1" },
+    env: { PORT: String(port), TURA_TUI_MOCK: "1", TURA_LANG: "en" },
   });
   await waitForUrl(`http://127.0.0.1:${port}`);
 
@@ -298,6 +298,7 @@ async function main() {
       await page.waitForFunction(() => window.__turaTerminal);
       await page.evaluate(() => window.__turaFit());
       await waitForText(page, visibleTerminalPattern);
+      await waitForText(page, /Mock TUI/);
       const text = await terminalText(page);
       assert.match(text, visibleTerminalPattern);
       assert.doesNotMatch(text, /\x1b\[[0-9;]/u, `${profile} leaked raw ANSI controls`);
@@ -314,6 +315,7 @@ async function main() {
     await mobile.waitForFunction(() => window.__turaTerminal);
     await mobile.evaluate(() => window.__turaFit());
     await waitForText(mobile, visibleTerminalPattern);
+    await waitForText(mobile, /Mock TUI/);
     const userAgent = await mobile.evaluate(() => navigator.userAgent);
     assert.match(userAgent, /Mobile|Android|Pixel/i);
     await assertNoHorizontalOverflow(mobile);

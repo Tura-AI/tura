@@ -308,12 +308,9 @@ async function webTerminalBusiness(gatewayUrl) {
       });
       await sendRich("\r");
       await page
-        .waitForFunction(
-          () =>
-            document.body.innerText.includes("忙碌") ||
-            document.body.innerText.toLowerCase().includes("busy"),
-          { timeout: 8_000 },
-        )
+        .waitForFunction(() => document.body.innerText.toLowerCase().includes("busy"), {
+          timeout: 8_000,
+        })
         .catch(() => undefined);
       await page.waitForTimeout(1200);
       await page.screenshot({
@@ -321,12 +318,9 @@ async function webTerminalBusiness(gatewayUrl) {
         fullPage: false,
       });
       await page
-        .waitForFunction(
-          () =>
-            document.body.innerText.includes("空闲") ||
-            document.body.innerText.toLowerCase().includes("idle"),
-          { timeout: 30_000 },
-        )
+        .waitForFunction(() => document.body.innerText.toLowerCase().includes("idle"), {
+          timeout: 30_000,
+        })
         .catch(() => undefined);
       await page.screenshot({
         path: path.join(screenshotsDir, "11-rich-live-prompt-result.png"),

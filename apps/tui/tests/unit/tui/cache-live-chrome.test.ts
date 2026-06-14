@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { setLanguage } from "../../../src/i18n.js";
 import { initialState, reducer } from "../../../src/tui/reducer.js";
 import { renderChatFrameParts, renderFrame } from "../../../src/tui/render.js";
 import {
@@ -9,6 +10,8 @@ import {
 } from "../../../src/tui/render/transcript.js";
 import { richCapabilities } from "../../../src/tui/capabilities.js";
 import { stripAnsi } from "../../../src/tui/render-terminal.js";
+
+setLanguage("en");
 
 test("rapid panel switching keeps composer and chrome out of transcript cache", () => {
   const session = { id: "sess-cache-switch", title: "Cache Switch", status: "busy" as const };
@@ -273,10 +276,10 @@ test("adjacent command parts render as separate command blocks", () => {
       .join("\n"),
   );
 
-  assert.equal(output.match(/(?:Commands|命令)(?!:)/g)?.length ?? 0, 2);
+  assert.equal(output.match(/Commands(?!:)/g)?.length ?? 0, 2);
   assert.match(output, /npm run first/);
   assert.match(output, /npm run second/);
-  assert.doesNotMatch(output, /(?:Commands|命令):\s*\d+/);
+  assert.doesNotMatch(output, /Commands:\s*\d+/);
 });
 
 test("concurrent streaming deltas from other sessions do not enter active live output", () => {

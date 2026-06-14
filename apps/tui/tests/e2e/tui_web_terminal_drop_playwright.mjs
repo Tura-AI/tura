@@ -92,6 +92,7 @@ async function main() {
       PORT: String(port),
       TURA_TUI_MOCK: "1",
       TURA_CWD: runRoot,
+      TURA_LANG: "en",
     },
   });
   try {
@@ -109,7 +110,7 @@ async function main() {
       await page.waitForFunction(() => Boolean(globalThis.__turaTerminal), null, {
         timeout: 10_000,
       });
-      await waitForTerminalText(page, /Enter to send|回车输入/u);
+      await waitForTerminalText(page, /Enter to send/u);
 
       await page.evaluate(async () => {
         const dataTransfer = new DataTransfer();

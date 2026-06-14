@@ -69,7 +69,6 @@ test("GatewayClient deletes and forks sessions through session endpoints", async
   assert.deepEqual(seen[1].body, { directory: "C:/repo", copy_context: true });
 });
 
-
 test("GatewayClient surfaces HTTP error status and body", async () => {
   await withServer(
     async (_req, res) => {

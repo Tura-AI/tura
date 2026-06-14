@@ -11,7 +11,6 @@ import { detectTerminalCapabilities, type TerminalCapabilities } from "./capabil
 import {
   TUI_ANIMATION_INTERVAL_MS,
   TUI_MIN_DRAW_INTERVAL_MS,
-  TUI_RESIZE_DRAW_PAUSE_MS,
   TUI_TICK_INTERVAL_MS,
 } from "./frame-rate.js";
 import { parseLanguage, setLanguage, t } from "../i18n.js";
@@ -42,8 +41,10 @@ import {
 } from "./settings-actions.js";
 import { hasActiveAnimation, isBusyState } from "./busy-state.js";
 import { createAndSelectSession, submitPrompt } from "./session-actions.js";
+import { createResizeDrawGate, createTerminalResizeHandler } from "./resize.js";
 
 export { clearTerminalForSurfaceTransition, draw, resetDrawState } from "./draw.js";
+export { createResizeDrawGate, createTerminalResizeHandler } from "./resize.js";
 export {
   deleteSelectedSession,
   forkSelectedSession,
@@ -407,81 +408,6 @@ async function inputLoop(
     process.stdin.on("keypress", onKeypress);
     process.stdout.on("resize", onTerminalResize);
   });
-}
-
-export function createResizeDrawGate(options: {
-  drawNow: () => void;
-  clearPendingDraw: () => void;
-  resizePauseMs?: number;
-  setTimeoutFn?: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>;
-  clearTimeoutFn?: (timer: ReturnType<typeof setTimeout>) => void;
-}): {
-  isFrozen: () => boolean;
-  enterResize: () => void;
-  dispose: () => void;
-} {
-  const resizePauseMs = options.resizePauseMs ?? TUI_RESIZE_DRAW_PAUSE_MS;
-  const setTimeoutFn = options.setTimeoutFn ?? setTimeout;
-  const clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
-  let frozen = false;
-  let resizeEndTimer: ReturnType<typeof setTimeout> | undefined;
-
-  const clearResizeEndTimer = () => {
-    if (!resizeEndTimer) return;
-    clearTimeoutFn(resizeEndTimer);
-    resizeEndTimer = undefined;
-  };
-  const finishResize = () => {
-    resizeEndTimer = undefined;
-    if (!frozen) return;
-    frozen = false;
-    options.drawNow();
-  };
-
-  return {
-    isFrozen: () => frozen,
-    enterResize: () => {
-      if (!frozen) {
-        options.drawNow();
-        frozen = true;
-      }
-      options.clearPendingDraw();
-      clearResizeEndTimer();
-      resizeEndTimer = setTimeoutFn(finishResize, resizePauseMs);
-    },
-    dispose: () => {
-      clearResizeEndTimer();
-      frozen = false;
-    },
-  };
-}
-
-export function createTerminalResizeHandler(
-  getState: () => AppState,
-  dispatch: (action: Parameters<typeof reducer>[1]) => void,
-  options: { onResize?: () => void; onHeightResize?: () => void } = {},
-): () => void {
-  let lastResizeSize = terminalSize();
-  return () => {
-    const size = terminalSize();
-    if (size.columns === lastResizeSize.columns && size.rows === lastResizeSize.rows) return;
-    const columnsChanged = size.columns !== lastResizeSize.columns;
-    const rowsChanged = size.rows !== lastResizeSize.rows;
-    lastResizeSize = size;
-    options.onResize?.();
-    if (columnsChanged) {
-      dispatch({ type: "notice", value: getState().notice });
-      return;
-    }
-    if (rowsChanged) options.onHeightResize?.();
-  };
-}
-
-function terminalSize(): { columns: number; rows: number } {
-  return {
-    columns: process.stdout.columns || 0,
-    rows: process.stdout.rows || 0,
-  };
 }
 
 async function slashCommand(

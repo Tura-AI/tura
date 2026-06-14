@@ -5,7 +5,7 @@ import { keySequence, printableSequence } from "../../../../src/tui/interactions
 test("printableSequence accepts exactly one printable character", () => {
   assert.equal(printableSequence("a"), "a");
   assert.equal(printableSequence(" "), " ");
-  assert.equal(printableSequence("中"), "中");
+  assert.equal(printableSequence("é"), "é");
   assert.equal(printableSequence(""), undefined);
   assert.equal(printableSequence("ab"), undefined);
 });

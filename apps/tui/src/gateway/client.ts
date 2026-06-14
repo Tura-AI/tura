@@ -144,10 +144,11 @@ export class GatewayClient {
   }
 
   async forkSession(sessionID: string, payload: ForkSessionRequest = {}): Promise<Session> {
-    return this.post(
-      `/session/${encodeURIComponent(sessionID)}/fork`,
-      { directory: this.directory, copy_context: true, ...payload },
-    );
+    return this.post(`/session/${encodeURIComponent(sessionID)}/fork`, {
+      directory: this.directory,
+      copy_context: true,
+      ...payload,
+    });
   }
 
   async getSession(sessionID: string): Promise<Session> {

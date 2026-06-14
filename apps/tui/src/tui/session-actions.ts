@@ -4,11 +4,7 @@ import { isDraftSession } from "../types/session.js";
 import { promptRuntimeSelection } from "./logic/selection.js";
 import { hydrate, type TuiDispatch, type TuiGatewayClient, type TuiGetState } from "./runtime.js";
 import { richPromptFromInput } from "./rich-prompt.js";
-import {
-  createDraftSession,
-  createSessionRequest,
-  upsertSessionLocal,
-} from "./session-state.js";
+import { createDraftSession, createSessionRequest, upsertSessionLocal } from "./session-state.js";
 
 export async function createAndSelectSession(
   client: TuiGatewayClient,

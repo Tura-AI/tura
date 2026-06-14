@@ -1,11 +1,28 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import http from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
+import {
+  assertNoDuplicatedFrameText,
+  assertSessionPickerCleared,
+  delay,
+  listen,
+  markerCount,
+  regexCount,
+  scrollTerminalTo,
+  seedTerminalScrollback,
+  startWebTerminal,
+  submitTypedPrompt,
+  terminalBufferText,
+  terminalText,
+  waitForTerminalBufferText,
+  waitForComposer,
+  waitForSessionPicker,
+  waitForUrl,
+} from "../helpers/mock_stream_terminal.mjs";
 
 const repoRoot =
   process.env.REPO_ROOT || path.resolve(import.meta.dirname, "..", "..", "..", "..", "..");
@@ -31,7 +48,7 @@ let session = {
   session_display_name: "Mock Stream",
   directory: workspace,
   status: "idle",
-  model: "openai/gpt-test",
+  model: "mock/gpt-test",
   agent: "fast",
   model_variant: "medium",
   model_acceleration_enabled: true,
@@ -41,9 +58,9 @@ let session = {
 };
 let promptCounter = 0;
 const config = {
-  model: "openai/gpt-test",
-  active_model: "openai/gpt-test",
-  active_provider: "openai",
+  model: "mock/gpt-test",
+  active_model: "mock/gpt-test",
+  active_provider: "mock",
   active_agent: "fast",
   model_variant: "medium",
   model_acceleration_enabled: true,
@@ -54,7 +71,9 @@ const messages = [
     id: "msg-user-1",
     sessionID,
     role: "user",
-    parts: [{ id: "part-user-1", type: "text", text: "触发 mock gateway stream 文本和命令。" }],
+    parts: [
+      { id: "part-user-1", type: "text", text: "Trigger mock gateway stream text and commands." },
+    ],
     created_at: now,
     updated_at: now,
   },
@@ -136,7 +155,9 @@ function handlePromptPayload(payload) {
   });
 
   const reply =
-    index === 1 ? "TYPED_REPLY_1 你好。今天折腾什么？" : "TYPED_REPLY_2 第二轮继续处理。";
+    index === 1
+      ? "TYPED_REPLY_1 Hello. What are we working on today?"
+      : "TYPED_REPLY_2 Continue the second round.";
   void (async () => {
     const messageID = `msg-typed-reply-${index}`;
     const partID = `part-typed-reply-${index}`;
@@ -154,38 +175,20 @@ function handlePromptPayload(payload) {
   })();
 }
 
-async function delay(ms) {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForUrl(url, timeoutMs = 10_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(url);
-      if (response.ok) return;
-    } catch {
-      // Retry.
-    }
-    await delay(100);
-  }
-  throw new Error(`timed out waiting for ${url}`);
-}
-
 function createGatewayServer() {
   const providerList = {
     all: [
       {
-        id: "openai",
-        name: "OpenAI",
-        source: "config",
-        env: ["OPENAI_API_KEY"],
+        id: "mock",
+        name: "Mock Provider",
+        source: "mock",
+        env: [],
         options: {},
         models: { "gpt-test": { id: "gpt-test", name: "gpt-test" } },
       },
     ],
-    default: { openai: "gpt-test" },
-    connected: ["openai"],
+    default: { mock: "gpt-test" },
+    connected: ["mock"],
     enums: { domains: [], capabilities: [], api_styles: [], auth_methods: [], statuses: [] },
   };
   const agent = {
@@ -247,170 +250,6 @@ function createGatewayServer() {
   return server;
 }
 
-async function listen(server) {
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  return server.address().port;
-}
-
-function startWebTerminal(gatewayUrl, port) {
-  const child = spawn(
-    process.execPath,
-    [path.join(repoRoot, "apps", "tui", "scripts", "web-terminal.mjs")],
-    {
-      cwd: path.join(repoRoot, "apps", "tui"),
-      env: {
-        ...process.env,
-        PORT: String(port),
-        TURA_GATEWAY_URL: gatewayUrl,
-        TURA_CWD: workspace,
-        FORCE_COLOR: "1",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    },
-  );
-  let logs = "";
-  child.stdout.on("data", (chunk) => {
-    logs += chunk.toString();
-  });
-  child.stderr.on("data", (chunk) => {
-    logs += chunk.toString();
-  });
-  return { child, logs: () => logs };
-}
-
-async function terminalText(page) {
-  return page.evaluate(() =>
-    [...document.querySelectorAll(".xterm-rows > div")]
-      .map((node) => node.textContent ?? "")
-      .join("\n"),
-  );
-}
-
-async function terminalBufferText(page) {
-  return page.evaluate(() => {
-    const buffer = window.__turaTerminal?.buffer.active;
-    if (!buffer) return "";
-    const lines = [];
-    for (let index = 0; index < buffer.length; index += 1) {
-      lines.push(buffer.getLine(index)?.translateToString(true) ?? "");
-    }
-    return lines.join("\n");
-  });
-}
-
-async function scrollTerminalTo(page, target, marker = undefined) {
-  await page.evaluate((nextTarget) => {
-    const term = window.__turaTerminal;
-    if (!term) return;
-    if (nextTarget === "top") {
-      if (typeof term.scrollToLine === "function") term.scrollToLine(0);
-      else term.scrollToTop();
-      return;
-    }
-    if (typeof term.scrollToBottom === "function") term.scrollToBottom();
-  }, target);
-  if (!marker) {
-    await delay(200);
-    return;
-  }
-  await page.waitForFunction(
-    (needle) => {
-      const rows = [...document.querySelectorAll(".xterm-rows > div")]
-        .map((node) => node.textContent ?? "")
-        .join("\n");
-      return rows.includes(needle);
-    },
-    marker,
-    { timeout: 5_000 },
-  );
-}
-
-function markerCount(text, marker) {
-  return text.split(marker).length - 1;
-}
-
-function regexCount(text, pattern) {
-  return Array.from(text.matchAll(pattern)).length;
-}
-
-function assertNoDuplicatedFrameText(text, label, markers = []) {
-  assert.ok(
-    regexCount(text, /回车输入|Enter to send/gu) <= 1,
-    `${label} should not retain a duplicated composer/input box`,
-  );
-  assert.ok(
-    markerCount(text, "Mock Stream") <= 1,
-    `${label} should not retain duplicated session title chrome`,
-  );
-  assert.ok(
-    regexCount(text, /tokens\s+\d+|tokens\s+-/gu) <= 1,
-    `${label} should not retain duplicated token/status chrome`,
-  );
-  for (const marker of markers) {
-    assert.equal(markerCount(text, marker), 1, `${label} should show ${marker} exactly once`);
-  }
-  assert.doesNotMatch(
-    text,
-    /置{8,}/u,
-    `${label} should not leave repeated composer hint fragments behind`,
-  );
-}
-
-async function waitForComposer(page, timeoutMs = 5000) {
-  await page.waitForFunction(() => /回车输入|Enter to send/.test(document.body.innerText), null, {
-    timeout: timeoutMs,
-  });
-}
-
-async function submitTypedPrompt(page, text) {
-  await page.evaluate((value) => window.__turaSendInput(value), text);
-  await page.evaluate(() => window.__turaSendInput("\r"));
-}
-
-async function seedTerminalScrollback(page, marker) {
-  await page.evaluate((staleMarker) => {
-    const term = window.__turaTerminal;
-    if (!term) return;
-    const rows = Number(term.rows) || 24;
-    for (let index = 0; index < rows + 12; index += 1) {
-      term.write(`\r\n${staleMarker}_${String(index).padStart(2, "0")}`);
-    }
-    term.scrollToTop?.();
-  }, marker);
-  await delay(200);
-}
-
-async function waitForSessionPicker(page, timeoutMs = 5000) {
-  await page.waitForFunction(
-    () => /新会话|New session|New Session/.test(document.body.innerText),
-    null,
-    { timeout: timeoutMs },
-  );
-}
-
-function assertSessionPickerCleared(text, label, staleMarker) {
-  assert.doesNotMatch(
-    text,
-    new RegExp(staleMarker, "u"),
-    `${label} should clear stale terminal scrollback before the session picker renders`,
-  );
-  assert.doesNotMatch(
-    text,
-    /回车输入|Enter to send/u,
-    `${label} should not carry the chat composer into the session picker`,
-  );
-  assert.equal(
-    markerCount(text, "TYPED_USER_1"),
-    0,
-    `${label} should not carry older chat rows into the session picker`,
-  );
-  assert.ok(
-    markerCount(text, "TYPED_REPLY_2") <= 1,
-    `${label} may show the active session preview once, but not duplicate it`,
-  );
-}
-
 async function streamShortChunks(
   text,
   messageID = "msg-stream-main",
@@ -444,11 +283,11 @@ async function capture(page, name) {
   return {
     name,
     path: file,
-    hasComposerHint: /回车输入|Enter to send/.test(text),
-    composerHintCount: regexCount(text, /回车输入|Enter to send/gu),
+    hasComposerHint: /Enter to send/.test(text),
+    composerHintCount: regexCount(text, /Enter to send/gu),
     defaultTitleCount: regexCount(text, /^tura$/gmu),
-    hasBottomMeta: /tokens|openai\/gpt-test/.test(text),
-    hasCommand: /command_run|命令:|Commands:/.test(text),
+    hasBottomMeta: /tokens|mock\/gpt-test/.test(text),
+    hasCommand: /\bCommands\b|shell_command/.test(text),
     hasRawControlLeak: /\x1b|\[2K|\[K/.test(text),
     overflow:
       metrics.bodyScrollWidth > metrics.bodyClientWidth + 2 ||
@@ -465,7 +304,12 @@ async function main() {
   const webServer = http.createServer((_, res) => res.end("placeholder"));
   const webPort = await listen(webServer);
   await new Promise((resolve) => webServer.close(resolve));
-  const web = startWebTerminal(`http://127.0.0.1:${gatewayPort}`, webPort);
+  const web = startWebTerminal({
+    repoRoot,
+    workspace,
+    gatewayUrl: `http://127.0.0.1:${gatewayPort}`,
+    port: webPort,
+  });
   const captures = [];
   let browser;
   let page;
@@ -487,7 +331,7 @@ async function main() {
     });
     captures.push(await capture(page, "00-initial"));
 
-    await submitTypedPrompt(page, "TYPED_USER_1 你好啊");
+    await submitTypedPrompt(page, "TYPED_USER_1 hello there");
     await page.waitForFunction(() => document.body.innerText.includes("TYPED_REPLY_1"), null, {
       timeout: 15_000,
     });
@@ -504,11 +348,10 @@ async function main() {
       "TYPED_REPLY_1",
     ]);
 
-    await submitTypedPrompt(page, "TYPED_USER_2 继续第二轮");
-    await page.waitForFunction(() => document.body.innerText.includes("TYPED_REPLY_2"), null, {
-      timeout: 15_000,
-    });
+    await submitTypedPrompt(page, "TYPED_USER_2 continue the second round");
+    await waitForTerminalBufferText(page, "TYPED_REPLY_2 Continue the second round.", 15_000);
     await waitForComposer(page);
+    await scrollTerminalTo(page, "bottom", "TYPED_REPLY_2");
     captures.push(await capture(page, "00-typed-round-2"));
     assertNoDuplicatedFrameText(captures.at(-1).visibleText, "typed round 2", [
       "TYPED_USER_1",
@@ -566,11 +409,11 @@ async function main() {
 
     // Phase 1: stream an intro plus a multi-item list. The whole list must stay
     // visible — assistant text used to be capped at 8 lines, hiding the rest.
-    const listIntro = "我先给一段 stream 文本，下面是要执行的步骤清单：\n";
+    const listIntro = "First stream text, then a checklist of steps to execute:\n";
     const listItems = Array.from(
       { length: 10 },
       (_item, index) =>
-        `- 步骤 ${index + 1}: SHORT_STREAM_MARKER_${String(index + 1).padStart(2, "0")}`,
+        `- Step ${index + 1}: SHORT_STREAM_MARKER_${String(index + 1).padStart(2, "0")}`,
     );
     await streamShortChunks(listIntro);
     for (const item of listItems) {
@@ -596,7 +439,7 @@ async function main() {
       tool: "command_run",
       state: {
         status,
-        input: { command_line: entry.cmd },
+        input: { command_type: "shell_command", command_line: entry.cmd },
         output: status === "running" ? "working\r\x1b[2Kstill working" : "working\ncompleted",
       },
     });
@@ -613,16 +456,18 @@ async function main() {
     upsertCommand(commands[0], "running");
     captures.push(await capture(page, "02-command-1-running"));
 
-    await streamShortChunks("命令运行时继续 stream，文本不应被命令遮挡。\n");
+    await streamShortChunks(
+      "Keep streaming while commands run; text must not be covered by command output.\n",
+    );
     upsertCommand(commands[1], "running");
     captures.push(await capture(page, "03-command-2-running"));
 
     upsertCommand(commands[0], "completed");
     upsertCommand(commands[2], "running");
     for (const chunk of [
-      "再补充几行说明文字，",
-      "用于把面板内容撑高，",
-      "以验证滚动与省略行为。\n",
+      "Add a few more explanation lines, ",
+      "to make the panel taller, ",
+      "so scrolling and truncation behavior is covered.\n",
     ]) {
       await streamShortChunks(chunk);
     }
@@ -634,14 +479,16 @@ async function main() {
     // duplicated, or failed to refresh once xterm had real scrollback plus a resize.
     await page.setViewportSize({ width: 900, height: 320 });
     await page.evaluate(() => window.__turaFit());
-    await streamShortChunks("RESIZE_STREAM_MARKER_A 窗口变小时继续逐字刷新。\n");
+    await streamShortChunks("RESIZE_STREAM_MARKER_A keeps streaming while the viewport shrinks.\n");
     await scrollTerminalTo(page, "top");
-    await streamShortChunks("RESIZE_STREAM_MARKER_B 滚动后继续逐字刷新。\n");
+    await streamShortChunks("RESIZE_STREAM_MARKER_B keeps streaming after scrolling.\n");
     captures.push(await capture(page, "05-stream-resize-compact"));
 
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.evaluate(() => window.__turaFit());
-    await streamShortChunks("RESIZE_STREAM_MARKER_C 窗口恢复后继续逐字刷新。\n");
+    await streamShortChunks(
+      "RESIZE_STREAM_MARKER_C keeps streaming after restoring the viewport.\n",
+    );
     captures.push(await capture(page, "06-stream-resize-restored"));
 
     // Phase 4: finalize. All commands complete and the consolidated reply
@@ -658,11 +505,11 @@ async function main() {
           text:
             listIntro +
             listItems.join("\n") +
-            "\n命令运行时继续 stream，文本不应被命令遮挡。\n" +
-            "再补充几行说明文字，用于把面板内容撑高，以验证滚动与省略行为。\n" +
-            "RESIZE_STREAM_MARKER_A 窗口变小时继续逐字刷新。\n" +
-            "RESIZE_STREAM_MARKER_B 滚动后继续逐字刷新。\n" +
-            "RESIZE_STREAM_MARKER_C 窗口恢复后继续逐字刷新。",
+            "\nKeep streaming while commands run; text must not be covered by command output.\n" +
+            "Add a few more explanation lines to make the panel taller and cover scrolling/truncation.\n" +
+            "RESIZE_STREAM_MARKER_A keeps streaming while the viewport shrinks.\n" +
+            "RESIZE_STREAM_MARKER_B keeps streaming after scrolling.\n" +
+            "RESIZE_STREAM_MARKER_C keeps streaming after restoring the viewport.",
         },
       ],
       created_at: streamStartedAt + 1,
@@ -720,7 +567,7 @@ async function main() {
       );
     }
     assert.ok(
-      /command_run|命令:|Commands:/.test(bufferTextAfterScroll),
+      /\bCommands\b|shell_command/.test(bufferTextAfterScroll),
       "command should remain in terminal buffer after later stream text",
     );
     assert.ok(
@@ -745,7 +592,7 @@ async function main() {
     const visibleStreamIndex = finalLines.findIndex((line) =>
       /SHORT_STREAM_MARKER_|RESIZE_STREAM_MARKER_/u.test(line),
     );
-    const commandSummaryIndex = finalLines.findIndex((line) => /命令:|Commands:/.test(line));
+    const commandSummaryIndex = finalLines.findIndex((line) => /\bCommands\b/.test(line));
     if (visibleStreamIndex >= 0 && commandSummaryIndex >= 0) {
       assert.ok(
         visibleStreamIndex < commandSummaryIndex,
@@ -775,7 +622,9 @@ async function main() {
       id: "msg-user-2",
       sessionID,
       role: "user",
-      parts: [{ id: "part-user-2", type: "text", text: "ROUND2_USER_PROMPT 继续第二轮。" }],
+      parts: [
+        { id: "part-user-2", type: "text", text: "ROUND2_USER_PROMPT continue the second round." },
+      ],
       created_at: now + 20,
       updated_at: Date.now(),
     };
@@ -785,25 +634,25 @@ async function main() {
     const round2MessageID = "msg-stream-round-2";
     const round2PartID = "part-stream-round-2";
     const round2Text =
-      "ROUND2_STREAM_MARKER_A 第二轮开始。\n" +
-      "ROUND2_STREAM_MARKER_B 滚动到顶部时继续输出。\n" +
-      "ROUND2_STREAM_MARKER_C 回到底部后完成。\n";
+      "ROUND2_STREAM_MARKER_A second round starts.\n" +
+      "ROUND2_STREAM_MARKER_B keeps streaming while scrolled to top.\n" +
+      "ROUND2_STREAM_MARKER_C finishes after returning to bottom.\n";
     await streamShortChunks(
-      "ROUND2_STREAM_MARKER_A 第二轮开始。\n",
+      "ROUND2_STREAM_MARKER_A second round starts.\n",
       round2MessageID,
       round2PartID,
       "envelope",
     );
     await scrollTerminalTo(page, "top");
     await streamShortChunks(
-      "ROUND2_STREAM_MARKER_B 滚动到顶部时继续输出。\n",
+      "ROUND2_STREAM_MARKER_B keeps streaming while scrolled to top.\n",
       round2MessageID,
       round2PartID,
       "envelope",
     );
     await scrollTerminalTo(page, "bottom");
     await streamShortChunks(
-      "ROUND2_STREAM_MARKER_C 回到底部后完成。\n",
+      "ROUND2_STREAM_MARKER_C finishes after returning to bottom.\n",
       round2MessageID,
       round2PartID,
       "envelope",
@@ -826,6 +675,7 @@ async function main() {
     });
     session = { ...session, status: "idle" };
     gatewayEvent("session.status", { sessionID, status: "idle" });
+    await scrollTerminalTo(page, "bottom");
     await waitForComposer(page);
     captures.push(await capture(page, "12-round2-final"));
 
@@ -859,11 +709,6 @@ async function main() {
         phase.defaultTitleCount,
         0,
         `${phase.name} should not retain the pre-hydrate default title`,
-      );
-      assert.doesNotMatch(
-        phase.visibleText,
-        /置{8,}/u,
-        `${phase.name} should not leave repeated composer hint fragments behind`,
       );
     }
 

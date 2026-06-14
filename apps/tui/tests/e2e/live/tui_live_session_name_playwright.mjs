@@ -201,7 +201,7 @@ async function waitForName(gatewayUrl, page) {
       .catch(() => "");
     last = { session, assistantText, terminalTail: terminalText.slice(-1000) };
     if (
-      /模型调用失败|all providers failed|rate_limit|insufficient_quota|model call failed/i.test(
+      /all providers failed|rate_limit|insufficient_quota|model call failed/i.test(
         `${assistantText}\n${terminalText}`,
       )
     ) {

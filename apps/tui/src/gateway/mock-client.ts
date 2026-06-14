@@ -111,7 +111,9 @@ export class MockGatewayClient {
       },
     );
     const copyContext = payload.copy_context ?? payload.copyContext ?? true;
-    const copiedMessages = copyContext ? cloneMessagesForSession(session.id, this.messagesBySession.get(source.id) ?? []) : [];
+    const copiedMessages = copyContext
+      ? cloneMessagesForSession(session.id, this.messagesBySession.get(source.id) ?? [])
+      : [];
     this.sessions = [
       { ...session, parent_id: source.id, message_count: copiedMessages.length },
       ...this.sessions,
@@ -566,16 +568,18 @@ function cloneMessagesForSession(sessionID: string, messages: Message[]): Messag
       id,
       sessionID,
       session_id: sessionID,
-      parentID: message.parentID ? idMap.get(message.parentID) ?? null : null,
-      parent_id: message.parent_id ? idMap.get(message.parent_id) ?? null : null,
-      parts: (message.parts ?? []).map((part, partIndex): MessagePart => ({
-        ...part,
-        id: `mock-copy-${now}-${index}-${partIndex}`,
-        sessionID,
-        session_id: sessionID,
-        messageID: part.messageID ? id : part.messageID,
-        message_id: part.message_id ? id : part.message_id,
-      })),
+      parentID: message.parentID ? (idMap.get(message.parentID) ?? null) : null,
+      parent_id: message.parent_id ? (idMap.get(message.parent_id) ?? null) : null,
+      parts: (message.parts ?? []).map(
+        (part, partIndex): MessagePart => ({
+          ...part,
+          id: `mock-copy-${now}-${index}-${partIndex}`,
+          sessionID,
+          session_id: sessionID,
+          messageID: part.messageID ? id : part.messageID,
+          message_id: part.message_id ? id : part.message_id,
+        }),
+      ),
     };
   });
 }

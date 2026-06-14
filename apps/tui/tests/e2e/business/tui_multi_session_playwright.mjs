@@ -31,9 +31,9 @@ const promptRecords = [];
 let nextSessionNumber = 1;
 
 const config = {
-  model: "openai/gpt-test",
-  active_model: "openai/gpt-test",
-  active_provider: "openai",
+  model: "mock/gpt-test",
+  active_model: "mock/gpt-test",
+  active_provider: "mock",
   active_agent: "fast",
   model_variant: "medium",
   model_acceleration_enabled: true,
@@ -43,16 +43,16 @@ const config = {
 const providerList = {
   all: [
     {
-      id: "openai",
-      name: "OpenAI",
-      source: "config",
-      env: ["OPENAI_API_KEY"],
+      id: "mock",
+      name: "Mock Provider",
+      source: "mock",
+      env: [],
       options: {},
       models: { "gpt-test": { id: "gpt-test", name: "gpt-test" } },
     },
   ],
-  default: { openai: "gpt-test" },
-  connected: ["openai"],
+  default: { mock: "gpt-test" },
+  connected: ["mock"],
   enums: {
     domains: [],
     capabilities: [],
@@ -91,7 +91,7 @@ function makeSession() {
     session_display_name: `Daily Session ${number}`,
     directory: workspace,
     status: "idle",
-    model: "openai/gpt-test",
+    model: "mock/gpt-test",
     agent: "fast",
     model_variant: "medium",
     model_acceleration_enabled: true,
@@ -171,7 +171,7 @@ function appendPrompt(sessionID, payload) {
     id: `msg-assistant-${index}`,
     sessionID,
     role: "assistant",
-    parts: [{ id: `part-assistant-${index}`, type: "text", text: `收到：${text}` }],
+    parts: [{ id: `part-assistant-${index}`, type: "text", text: `Received: ${text}` }],
     created_at: created + 1,
     updated_at: created + 1,
   };
@@ -254,6 +254,7 @@ function startWebTerminal(gatewayUrl, port) {
       TURA_GATEWAY_URL: gatewayUrl,
       TURA_CWD: workspace,
       FORCE_COLOR: "1",
+      TURA_LANG: "en",
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
@@ -344,31 +345,43 @@ async function main() {
       timeout: 15_000,
     });
 
-    await sendPrompt(page, session1, "日常对话 1：今天先整理一下待办。");
-    await sendPrompt(page, session1, "日常对话 2：提醒我下午检查构建。");
+    await sendPrompt(page, session1, "Daily chat 1: organize the todo list first.");
+    await sendPrompt(page, session1, "Daily chat 2: remind me to check the build this afternoon.");
 
     await sendInput(page, "/new");
     await waitForCondition(() => sessions.length === 2, "second session was not created");
     const session2 = sessions[0].id;
-    await sendPrompt(page, session2, "日常对话 3：这个会话记录晚餐计划。");
+    await sendPrompt(page, session2, "Daily chat 3: this session records dinner plans.");
 
     await sendInput(page, "/new");
     await waitForCondition(() => sessions.length === 3, "third session was not created");
     const session3 = sessions[0].id;
-    await sendPrompt(page, session3, "日常对话 4：第三个会话记录散步安排。");
+    await sendPrompt(page, session3, "Daily chat 4: the third session records walking plans.");
 
     await selectSession(page, session1);
-    await sendPrompt(page, session1, "日常对话 5：回到第一个会话继续说测试。");
+    await sendPrompt(
+      page,
+      session1,
+      "Daily chat 5: return to the first session and continue testing.",
+    );
     await selectSession(page, session2);
-    await sendPrompt(page, session2, "日常对话 6：第二个会话补充购物清单。");
+    await sendPrompt(page, session2, "Daily chat 6: add a shopping list to the second session.");
     await selectSession(page, session3);
-    await sendPrompt(page, session3, "日常对话 7：第三个会话补充天气观察。");
+    await sendPrompt(
+      page,
+      session3,
+      "Daily chat 7: add weather observations to the third session.",
+    );
     await selectSession(page, session1);
-    await sendPrompt(page, session1, "日常对话 8：第一个会话确认 session 切换正常。");
+    await sendPrompt(
+      page,
+      session1,
+      "Daily chat 8: first session confirms session switching works.",
+    );
     await selectSession(page, session2);
-    await sendPrompt(page, session2, "日常对话 9：第二个会话确认历史还在。");
+    await sendPrompt(page, session2, "Daily chat 9: second session confirms history remains.");
     await selectSession(page, session3);
-    await sendPrompt(page, session3, "日常对话 10：第三个会话做最终确认。");
+    await sendPrompt(page, session3, "Daily chat 10: third session makes the final confirmation.");
 
     const finalScreenshot = path.join(screenshotsDir, "multi-session-final.png");
     await page.screenshot({ path: finalScreenshot, fullPage: false });
@@ -391,7 +404,7 @@ async function main() {
       );
     }
     const text = await terminalText(page);
-    assert.match(text, /日常对话 10|第三个会话做最终确认/);
+    assert.match(text, /Daily chat 10|third session makes the final confirmation/);
 
     const summary = {
       ok: true,
