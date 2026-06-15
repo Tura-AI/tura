@@ -342,7 +342,7 @@ fn reads_authoritative_workspace_snapshot_when_index_is_stale() {
 }
 
 #[test]
-fn upsert_session_records_are_idempotent_without_deleting_absent_records() {
+fn upsert_session_records_replace_absent_records_from_full_snapshot() {
     let db = DirectDbGuard::new();
     let store = SessionLogStore::open_default().expect("store");
     let session_id = format!("record-upsert-{}", uuid::Uuid::new_v4());
@@ -419,13 +419,13 @@ fn upsert_session_records_are_idempotent_without_deleting_absent_records() {
         })
         .expect("records");
 
-    assert_eq!(page.total, 3);
+    assert_eq!(page.total, 2);
     assert_eq!(
         records
             .iter()
             .map(|record| record.message_id.as_str())
             .collect::<Vec<_>>(),
-        vec!["m1", "m2", "m3"]
+        vec!["m2", "m3"]
     );
     assert_eq!(
         records

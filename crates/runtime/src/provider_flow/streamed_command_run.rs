@@ -4,6 +4,9 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use tracing::warn;
 
+use crate::gateway_events::runtime_tool_part_id;
+use crate::state_machine::runtime_management::RuntimeSessionSyncStatus;
+
 const COMMAND_RUN_TOOL_NAME: &str = "command_run";
 
 pub fn command_run_stream_events_from_provider_content(
@@ -75,6 +78,7 @@ pub fn streamed_command_event_record(
     command_index: usize,
     command: &Value,
     result: Option<&Value>,
+    timestamp: DateTime<Utc>,
 ) -> Value {
     serde_json::json!({
         "status": status,
@@ -86,7 +90,7 @@ pub fn streamed_command_event_record(
         "command_line": command.get("command_line").cloned().unwrap_or(Value::Null),
         "command": command,
         "result": result.cloned().unwrap_or(Value::Null),
-        "timestamp": Utc::now().to_rfc3339(),
+        "timestamp": timestamp.to_rfc3339(),
     })
 }
 
@@ -95,6 +99,7 @@ pub fn streamed_command_result_record(
     runtime_id: &str,
     result_index: usize,
     result: &Value,
+    timestamp: DateTime<Utc>,
 ) -> Value {
     serde_json::json!({
         "status": status,
@@ -108,12 +113,12 @@ pub fn streamed_command_result_record(
             .unwrap_or(Value::Null),
         "success": result.get("success").cloned().unwrap_or(Value::Null),
         "result": result,
-        "timestamp": Utc::now().to_rfc3339(),
+        "timestamp": timestamp.to_rfc3339(),
     })
 }
 
 pub fn streamed_command_run_call_id(runtime_id: &str) -> String {
-    format!("{runtime_id}-streamed-command-run")
+    runtime_tool_part_id(runtime_id, COMMAND_RUN_TOOL_NAME)
 }
 
 pub fn command_run_live_delta_result(command: &Value, stdout: &str, stderr: &str) -> Value {
@@ -160,6 +165,7 @@ pub struct StreamedCommandRunUpdate<'a> {
     pub status: &'a str,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
+    pub runtime_status: RuntimeSessionSyncStatus,
 }
 
 pub async fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>) {
@@ -198,6 +204,9 @@ pub async fn publish_streamed_command_run_update(update: StreamedCommandRunUpdat
         "runtime_id": update.runtime_id,
         "session_id": update.session_id,
         "provider": update.provider,
+        "runtime_status": &update.runtime_status,
+        "transient": true,
+        "streaming_partial": update.status != "completed" && update.status != "error",
     });
     let mut time = serde_json::Map::new();
     time.insert(
@@ -230,6 +239,9 @@ pub async fn publish_streamed_command_run_update(update: StreamedCommandRunUpdat
         "new_learning": "",
         "media": [],
         "runtime_id": update.runtime_id,
+        "runtime_status": &update.runtime_status,
+        "created_at": update.started_at.timestamp_millis(),
+        "updated_at": update.ended_at.unwrap_or(update.started_at).timestamp_millis(),
         "tool_call": {
             "tool_name": COMMAND_RUN_TOOL_NAME,
             "call_id": update.call_id,
@@ -311,6 +323,7 @@ mod tests {
         command_run_stream_events_from_provider_content, should_replay_final_response_command_run,
         streamed_command_event_record,
     };
+    use chrono::Utc;
 
     #[test]
     fn final_response_command_run_replay_is_skipped_after_streamed_command_seen() {
@@ -352,8 +365,15 @@ mod tests {
             "step": 1
         });
 
-        let record =
-            streamed_command_event_record("ready", "runtime-1", "call-1", 0, &command, None);
+        let record = streamed_command_event_record(
+            "ready",
+            "runtime-1",
+            "call-1",
+            0,
+            &command,
+            None,
+            Utc::now(),
+        );
         let live = command_run_live_delta_result(&command, "", "");
 
         assert_eq!(record["command_type"], serde_json::Value::Null);

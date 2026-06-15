@@ -219,5 +219,5 @@ Use:
 ```text
 cargo fmt -p router
 cargo check -p router
-cargo test -p tura_workspace --test process_state_management_e2e -- --nocapture
+cargo test -p tura_workspace --features os-tests --test process_state_management_e2e -- --nocapture
 ```

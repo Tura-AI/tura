@@ -195,6 +195,141 @@ fn persisted_session_log_hydration_keeps_conversation_messages_and_skips_auxilia
     assert_eq!(persisted.todos.len(), 1);
 }
 
+#[test]
+fn persisted_session_log_hydration_preserves_command_run_runtime_state_over_event_drift() {
+    let now = chrono::Utc::now();
+    let session_id = format!("hydrate-command-run-{}", uuid::Uuid::new_v4());
+    let workspace = std::env::temp_dir()
+        .join(format!("hydrate-command-run-{}", uuid::Uuid::new_v4()))
+        .to_string_lossy()
+        .to_string();
+    let management = runtime::state_machine::session_management::SessionManagement::new(
+        session_id.clone(),
+        "command run drift".to_string(),
+        PathBuf::from(&workspace),
+        false,
+        "coding".to_string(),
+        runtime::state_machine::session_management::SessionInput {
+            user_input: "run commands".to_string(),
+            file_input: Vec::new(),
+            agent: Some("thinking".to_string()),
+            runtime_context: None,
+            planning_mode_override: None,
+        },
+        "run commands".to_string(),
+        now,
+    );
+    let info = SessionInfo::from_management(&management);
+    let runtime_start = 1_781_514_293_670_i64;
+    let runtime_end = runtime_start + 2_000;
+    let snapshot = SessionSnapshot {
+        session_id: session_id.clone(),
+        workspace,
+        name: Some("command run drift".to_string()),
+        parent_id: None,
+        created_at: runtime_start,
+        updated_at: runtime_end,
+        state: Some("completed".to_string()),
+        status: Some("idle".to_string()),
+        message_count: 3,
+        task_management: serde_json::json!({}),
+        management: serde_json::to_value(&management).expect("management json"),
+        session: serde_json::to_value(&info).expect("session json"),
+        todos: Vec::new(),
+    };
+    let records = vec![
+        session_record(
+            &session_id,
+            "command-run-message",
+            "assistant",
+            runtime_start,
+            serde_json::json!({
+                "id": "command-run-message",
+                "session_id": session_id,
+                "role": "assistant",
+                "parent_id": null,
+                "created_at": runtime_start,
+                "updated_at": runtime_end,
+                "parts": [{
+                    "id": "command-run-part",
+                    "type": "tool",
+                    "content": null,
+                    "text": null,
+                    "metadata": {
+                        "kind": "mano_tool_call",
+                        "transient": true,
+                        "streaming_partial": false
+                    },
+                    "call_id": "runtime-1-streamed-command-run",
+                    "tool": "command_run",
+                    "state": {
+                        "status": "completed",
+                        "time": {
+                            "start": runtime_start,
+                            "end": runtime_end
+                        },
+                        "input": {
+                            "commands": [{
+                                "step": 1,
+                                "command_type": "shell_command",
+                                "command_line": "npm test"
+                            }]
+                        },
+                        "output": {
+                            "streamed_command_run_result": {
+                                "results": [{
+                                    "step": 1,
+                                    "command_type": "shell_command",
+                                    "command_line": "npm test",
+                                    "success": true
+                                }]
+                            }
+                        }
+                    }
+                }]
+            }),
+        ),
+        session_record(
+            &session_id,
+            "command-run-aux-ready",
+            "event",
+            runtime_start + 7,
+            serde_json::json!({
+                "id": "command-run-aux-ready",
+                "role": "event",
+                "type": "streamed_command_event",
+                "status": "running",
+                "timestamp": runtime_start + 7,
+                "command_line": "npm test"
+            }),
+        ),
+        session_record(
+            &session_id,
+            "command-run-aux-finished",
+            "event",
+            runtime_end - 3,
+            serde_json::json!({
+                "id": "command-run-aux-finished",
+                "role": "event",
+                "type": "streamed_command_event",
+                "status": "error",
+                "timestamp": runtime_end - 3,
+                "command_line": "npm test"
+            }),
+        ),
+    ];
+
+    let persisted =
+        persisted_record_from_session_log(snapshot, records).expect("hydrate persisted session");
+
+    assert_eq!(persisted.messages.len(), 1);
+    let part = &persisted.messages[0].parts[0];
+    let state = part.state.as_ref().expect("command_run state");
+    assert_eq!(state["status"], "completed");
+    assert_eq!(state["time"]["start"], runtime_start);
+    assert_eq!(state["time"]["end"], runtime_end);
+}
+
 fn session_record(
     session_id: &str,
     message_id: &str,
@@ -239,6 +374,37 @@ fn message_record(
     })
 }
 
+fn upsert_runtime_owned_session_for_test(
+    store: &SessionStore,
+    session_id: &str,
+    parent_id: Option<String>,
+) {
+    let info = store
+        .get_session_info(session_id)
+        .unwrap_or_else(|| panic!("session {session_id} should exist before test DB upsert"));
+    let messages = store
+        .get_messages(session_id)
+        .into_iter()
+        .map(|message| serde_json::to_value(message).expect("message json"))
+        .collect::<Vec<_>>();
+    let response = session_log::ipc::call_service(&session_log::SessionLogCommand::UpsertSession(
+        session_log::UpsertSessionRequest {
+            session: serde_json::to_value(info).expect("session json"),
+            parent_id,
+            messages,
+            todos: store.get_todos(session_id),
+        },
+    ))
+    .expect("session_log upsert should reach test service");
+    match response {
+        session_log::SessionLogResponse::Ok => {}
+        session_log::SessionLogResponse::Error { error } => {
+            panic!("session_log upsert failed: {error}")
+        }
+        other => panic!("unexpected session_log upsert response: {other:?}"),
+    }
+}
+
 #[test]
 fn update_session_status_updates_stored_status() {
     let store = SessionStore::new();
@@ -266,21 +432,6 @@ fn update_session_status_updates_stored_status() {
         .get_session(&session.id)
         .expect("session should exist");
     assert_eq!(updated.status, ApiSessionStatus::Idle);
-}
-
-#[test]
-fn persist_session_ack_reports_missing_session_id() {
-    let _service = SessionDbTestService::start();
-    let store = SessionStore::new();
-
-    let error = store
-        .persist_session_ack("missing-session-for-ack")
-        .expect_err("missing session should fail ACK");
-
-    assert!(
-        error.contains("session missing-session-for-ack not found in session_db"),
-        "ACK error should include session id and durable store context: {error}"
-    );
 }
 
 #[test]
@@ -342,6 +493,56 @@ fn add_tool_message_updates_existing_call_id() {
             .and_then(serde_json::Value::as_str),
         Some("completed")
     );
+}
+
+#[test]
+fn transient_tool_message_emits_events_without_storing_messages() {
+    let store = SessionStore::new();
+    let session = store.create_session(
+        Some("C:/workspace".to_string()),
+        None,
+        None,
+        Some("coding".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+    while store.pop_event().is_some() {}
+
+    let message = store.emit_transient_tool_message_with_ids(
+        &session.id,
+        "command_run".to_string(),
+        "runtime-1.tool.command_run".to_string(),
+        serde_json::json!({
+            "status": "running",
+            "input": { "commands": [{ "command_type": "shell_command", "command_line": "npm test" }] },
+            "metadata": { "kind": "mano_tool_call", "runtime_id": "runtime-1", "transient": true, "streaming_partial": true },
+            "time": { "start": 1 }
+        }),
+        Some(serde_json::json!({
+            "kind": "mano_tool_call",
+            "runtime_id": "runtime-1",
+            "transient": true,
+            "streaming_partial": true
+        })),
+        "runtime-1.message".to_string(),
+        "runtime-1.tool.command_run".to_string(),
+    );
+
+    assert_eq!(message.id, "runtime-1.message");
+    assert!(store.get_messages(&session.id).is_empty());
+    assert!(matches!(
+        store.pop_event(),
+        Some(GlobalEvent::MessageUpdated { .. })
+    ));
+    assert!(matches!(
+        store.pop_event(),
+        Some(GlobalEvent::MessagePartUpdated { .. })
+    ));
+    assert!(store.get_messages(&session.id).is_empty());
 }
 
 #[test]
@@ -480,6 +681,7 @@ fn hydrated_child_session_keeps_parent_mapping() {
         Some("Subtask".to_string()),
         Some("read files".to_string()),
     );
+    upsert_runtime_owned_session_for_test(&store, "child-1", Some(parent.id.clone()));
 
     let hydrated = SessionStore::new();
     hydrated.hydrate_directory(Some(directory));
@@ -1215,6 +1417,7 @@ fn invalid_task_management_patch_keeps_previous_state() {
         )
         .expect("invalid date remains non-fatal");
     assert_eq!(invalid_date.task_management, previous_task_management);
+    upsert_runtime_owned_session_for_test(&store, &session.id, None);
 
     let hydrated = SessionStore::new();
     hydrated.hydrate_directory(Some(directory));
@@ -1403,6 +1606,7 @@ fn user_messages_preserve_and_hydrate_pending_task_management_state() {
         .get_session(&session.id)
         .expect("session should remain available");
     assert_eq!(after_message.task_management, previous_task_management);
+    upsert_runtime_owned_session_for_test(&store, &session.id, None);
 
     let hydrated = SessionStore::new();
     hydrated.hydrate_directory(Some(directory));
@@ -1706,6 +1910,7 @@ fn scheduler_claim_persists_next_polling_start() {
     .expect("start_at should parse")
     .with_timezone(&Utc);
     assert!(next_start > now);
+    upsert_runtime_owned_session_for_test(&store, &session.id, None);
 
     let hydrated = SessionStore::new();
     hydrated.hydrate_directory(Some(directory));

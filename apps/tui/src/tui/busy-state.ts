@@ -47,7 +47,9 @@ function hasRunningCommand(state: AppState): boolean {
     (message.parts ?? []).some((part) => {
       if (part.tool !== "command_run" && part.type !== "tool") return false;
       const status = commandStatus(part.state);
-      return /run|progress|pending|busy|question|in[_ -]?progress|execut|start/i.test(status);
+      return /run|progress|pending|busy|question|in[_ -]?progress|exec(?:ute|uting|uted|ution)?|start/i.test(
+        status,
+      );
     }),
   );
 }

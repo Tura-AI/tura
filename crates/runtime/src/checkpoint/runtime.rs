@@ -23,6 +23,8 @@ fn checkpoint_runtime_state_event(
         event_seq,
         event_type,
         payload,
+        started_at: None,
+        finished_at: None,
     }) {
         tracing::warn!(
             session_id = %runtime.session_id,

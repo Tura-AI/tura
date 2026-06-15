@@ -165,6 +165,202 @@ test("live assistant text keeps event order before a later user message", () => 
   assert.match(output, /USER_BEFORE_LIVE[\s\S]*LIVE_BEFORE_NEXT_USER[\s\S]*USER_AFTER_LIVE/);
 });
 
+test("runtime message stays live while its command is still running", () => {
+  const session = {
+    id: "sess-runtime-live-command",
+    title: "Runtime Live",
+    status: "busy" as const,
+  };
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-runtime-live-user",
+        sessionID: session.id,
+        role: "user",
+        created_at: 1_000,
+        parts: [{ id: "part-runtime-live-user", type: "text", text: "run checks" }],
+      },
+    ],
+    permissions: [],
+    sessions: [session],
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.part.delta",
+        properties: {
+          session_id: session.id,
+          message_id: "runtime-live.message",
+          part_id: "runtime-live.message",
+          field: "text",
+          delta: "I will run the checks.",
+        },
+      },
+    },
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.part.updated",
+        properties: {
+          session_id: session.id,
+          part: {
+            id: "runtime-live.tool.command_run",
+            sessionID: session.id,
+            messageID: "runtime-live.message",
+            type: "tool",
+            tool: "command_run",
+            state: {
+              status: "running",
+              input: { commands: [{ command_type: "shell_command", command_line: "npm test" }] },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  let cacheRows = stripAnsi(transcriptLines(state, 100).join("\n"));
+  let liveRows = stripAnsi(transcriptLiveLines(state, 100).join("\n"));
+  assert.doesNotMatch(cacheRows, /I will run the checks/);
+  assert.match(liveRows, /I will run the checks/);
+  assert.match(liveRows, /npm test/);
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.updated",
+        properties: {
+          session_id: session.id,
+          info: {
+            id: "runtime-live.message",
+            sessionID: session.id,
+            role: "assistant",
+            created_at: 1_500,
+            updated_at: 1_600,
+            parts: [
+              {
+                id: "runtime-live.message",
+                sessionID: session.id,
+                messageID: "runtime-live.message",
+                type: "text",
+                text: "I will run the checks.",
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+
+  cacheRows = stripAnsi(transcriptLines(state, 100).join("\n"));
+  liveRows = stripAnsi(transcriptLiveLines(state, 100).join("\n"));
+  assert.doesNotMatch(cacheRows, /I will run the checks/);
+  assert.match(liveRows, /I will run the checks/);
+  assert.match(liveRows, /npm test/);
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.updated",
+        properties: {
+          session_id: session.id,
+          info: {
+            id: "runtime-live.message",
+            sessionID: session.id,
+            role: "assistant",
+            created_at: 1_500,
+            updated_at: 1_700,
+            parts: [
+              {
+                id: "runtime-live.message",
+                sessionID: session.id,
+                messageID: "runtime-live.message",
+                type: "text",
+                text: "I will run the checks.",
+              },
+              {
+                id: "runtime-live.tool.command_run",
+                sessionID: session.id,
+                messageID: "runtime-live.message",
+                type: "tool",
+                tool: "command_run",
+                state: {
+                  status: "completed",
+                  input: {
+                    commands: [{ command_type: "shell_command", command_line: "npm test" }],
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+
+  cacheRows = stripAnsi(transcriptLines(state, 100).join("\n"));
+  liveRows = stripAnsi(transcriptLiveLines(state, 100).join("\n"));
+  assert.doesNotMatch(cacheRows, /I will run the checks/);
+  assert.match(liveRows, /I will run the checks/);
+  assert.match(liveRows, /npm test/);
+
+  state = reducer(state, {
+    type: "messages-incremental",
+    sessionID: session.id,
+    session: { ...session, status: "idle" },
+    messages: [
+      {
+        id: "runtime-live.message",
+        sessionID: session.id,
+        role: "assistant",
+        created_at: 1_500,
+        updated_at: 1_700,
+        parts: [
+          {
+            id: "runtime-live.message",
+            sessionID: session.id,
+            messageID: "runtime-live.message",
+            type: "text",
+            text: "I will run the checks.",
+          },
+          {
+            id: "runtime-live.tool.command_run",
+            sessionID: session.id,
+            messageID: "runtime-live.message",
+            type: "tool",
+            tool: "command_run",
+            state: {
+              status: "completed",
+              input: {
+                commands: [{ command_type: "shell_command", command_line: "npm test" }],
+              },
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  cacheRows = stripAnsi(transcriptLines(state, 100).join("\n"));
+  liveRows = stripAnsi(transcriptLiveLines(state, 100).join("\n"));
+  assert.match(cacheRows, /I will run the checks/);
+  assert.match(cacheRows, /npm test/);
+  assert.doesNotMatch(liveRows, /I will run the checks|npm test/);
+});
+
 test("live transcript rows append below the complete history, independent of viewport height", () => {
   const session = {
     id: "sess-live-after-history",

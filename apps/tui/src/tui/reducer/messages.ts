@@ -42,11 +42,53 @@ export function mergeStableMessages(current: Message[], incoming: Message[]): Me
   return changed ? sortMessages(next) : current;
 }
 
+export function mergeStableMessagesIgnoringLive(
+  current: Message[],
+  incoming: Message[],
+  streams: Record<string, LiveStream>,
+  sessionID: string | undefined,
+): { messages: Message[]; liveStreams: Record<string, LiveStream> } {
+  const { messages, liveStreams } = commitLiveStreamsForMessages(
+    current,
+    streams,
+    sessionID,
+    incoming,
+  );
+  const filtered = incoming.filter(
+    (message) => !messageMatchesLiveStream(message, streams, sessionID),
+  );
+  return {
+    messages: mergeStableMessages(messages, filtered),
+    liveStreams,
+  };
+}
+
 export function appendNewStableMessages(current: Message[], incoming: Message[]): Message[] {
   const existingIDs = new Set(current.map((message) => message.id));
   const additions = incoming.filter((message) => !existingIDs.has(message.id));
   if (!additions.length) return current;
   return sortMessages([...current, ...additions]);
+}
+
+export function appendNewStableMessagesIgnoringLive(
+  current: Message[],
+  incoming: Message[],
+  streams: Record<string, LiveStream>,
+  sessionID: string | undefined,
+): { messages: Message[]; liveStreams: Record<string, LiveStream> } {
+  const { messages, liveStreams } = commitLiveStreamsForMessages(
+    current,
+    streams,
+    sessionID,
+    incoming,
+  );
+  const filtered = incoming.filter(
+    (message) => !messageMatchesLiveStream(message, streams, sessionID),
+  );
+  return {
+    messages: appendNewStableMessages(messages, filtered),
+    liveStreams,
+  };
 }
 
 export function updatePreviewForMessages(
@@ -132,6 +174,20 @@ export function upsertMessage(messages: Message[], message: Message): Message[] 
   return next;
 }
 
+export function upsertMessageIgnoringLive(
+  messages: Message[],
+  streams: Record<string, LiveStream>,
+  sessionID: string | undefined,
+  message: Message,
+): { messages: Message[]; liveStreams: Record<string, LiveStream> } {
+  if (!messageMatchesLiveStream(message, streams, sessionID)) {
+    return { messages: upsertMessage(messages, message), liveStreams: streams };
+  }
+  const stableMessage = messageWithoutLiveStreamParts(message, streams, sessionID);
+  if (!stableMessage.parts.length) return { messages, liveStreams: streams };
+  return { messages: upsertMessage(messages, stableMessage), liveStreams: streams };
+}
+
 function sortMessages(messages: Message[]): Message[] {
   return [...messages].sort((left, right) => messageSortValue(left) - messageSortValue(right));
 }
@@ -149,39 +205,13 @@ function mergeMessageForDisplay(existing: Message | undefined, incoming: Message
     time.created = existing.time.created;
   }
   const incomingParts = incoming.parts ?? existing?.parts ?? [];
-  const existingText = existing ? messageText(existing).trim() : "";
-  const incomingText = messageText({ ...incoming, parts: incomingParts }).trim();
-  const parts =
-    existing && existingText && !incomingText
-      ? mergePartsPreservingExistingText(existing.parts, incomingParts)
-      : incomingParts;
   return {
     ...existing,
     ...incoming,
     created_at: incomingCreated ?? existingCreated,
     time,
-    parts: orderMessagePartsForDisplay(parts),
+    parts: orderMessagePartsForDisplay(incomingParts),
   };
-}
-
-function mergePartsPreservingExistingText(
-  existingParts: MessagePart[],
-  incomingParts: MessagePart[],
-): MessagePart[] {
-  const existingTextParts = existingParts.filter(
-    (part) =>
-      (part.type === "text" || part.type === "message" || !part.type) &&
-      !isInternalTaskStatusPart(part),
-  );
-  const incomingUsefulParts = incomingParts.filter((part) => !isInternalTaskStatusPart(part));
-  const seen = new Set<string>();
-  const merged: MessagePart[] = [];
-  for (const part of [...existingTextParts, ...incomingUsefulParts]) {
-    if (seen.has(part.id)) continue;
-    seen.add(part.id);
-    merged.push(part);
-  }
-  return merged.length ? merged : incomingParts;
 }
 
 export function upsertPart(
@@ -217,6 +247,15 @@ export function upsertPart(
   }
   next.sort((left, right) => messageSortValue(left) - messageSortValue(right));
   return next;
+}
+
+export function upsertPartIgnoringLive(
+  messages: Message[],
+  streams: Record<string, LiveStream>,
+  sessionID: string | undefined,
+  part: MessagePart,
+): { messages: Message[]; liveStreams: Record<string, LiveStream> } {
+  return { messages: upsertPart(messages, part, sessionID), liveStreams: streams };
 }
 
 export function applyPartDelta(
@@ -308,33 +347,21 @@ function liveStreamKey(sessionID: string | undefined, messageID: string, partID:
   return `${sessionID ?? ""}\u0000${messageID}\u0000${partID}`;
 }
 
-export function clearLiveStreamsForDurableMessages(
-  streams: Record<string, LiveStream>,
-  sessionID: string | undefined,
+export function commitLiveStreams(
   messages: Message[],
-): Record<string, LiveStream> {
-  if (!messages.some((message) => message.role !== "user" && messageText(message).trim())) {
-    return streams;
-  }
-  return filterLiveStreams(
-    streams,
-    (stream) => Boolean(sessionID) && Boolean(stream.sessionID) && stream.sessionID !== sessionID,
-  );
-}
-
-export function clearLiveStreamForPart(
   streams: Record<string, LiveStream>,
   sessionID: string | undefined,
-  part: MessagePart,
-): Record<string, LiveStream> {
-  const messageID = partMessageID(part);
-  return filterLiveStreams(
-    streams,
-    (stream) =>
-      stream.partID !== part.id ||
-      (Boolean(messageID) && stream.messageID !== messageID) ||
-      (Boolean(sessionID) && stream.sessionID !== sessionID),
-  );
+  shouldCommit: (stream: LiveStream) => boolean = () => true,
+): { messages: Message[]; liveStreams: Record<string, LiveStream> } {
+  let nextMessages = messages;
+  let nextStreams = streams;
+  for (const [key, stream] of Object.entries(streams)) {
+    if (!streamMatchesSession(stream, sessionID) || !shouldCommit(stream)) continue;
+    nextMessages = applyLiveStream(nextMessages, stream);
+    const { [key]: _committed, ...rest } = nextStreams;
+    nextStreams = rest;
+  }
+  return { messages: nextMessages, liveStreams: nextStreams };
 }
 
 export function clearLiveStreamsForMessageID(
@@ -348,6 +375,141 @@ export function clearLiveStreamsForMessageID(
     (stream) =>
       stream.messageID !== messageID || (Boolean(sessionID) && stream.sessionID !== sessionID),
   );
+}
+
+function commitLiveStreamsForMessages(
+  messages: Message[],
+  streams: Record<string, LiveStream>,
+  sessionID: string | undefined,
+  incoming: Message[],
+): { messages: Message[]; liveStreams: Record<string, LiveStream> } {
+  if (!incoming.some((message) => messageMatchesLiveStream(message, streams, sessionID))) {
+    return { messages, liveStreams: streams };
+  }
+  let nextMessages = messages;
+  let nextStreams = streams;
+  for (const message of incoming) {
+    const matching = Object.entries(nextStreams).filter(
+      ([, stream]) =>
+        streamMatchesSession(stream, sessionID) && liveStreamMatchesMessage(stream, message),
+    );
+    if (!matching.length) continue;
+    nextMessages = upsertMessage(
+      nextMessages,
+      messageWithLiveStreams(
+        message,
+        matching.map(([, stream]) => stream),
+      ),
+    );
+    nextStreams = Object.fromEntries(
+      Object.entries(nextStreams).filter(([key]) => !matching.some(([matched]) => matched === key)),
+    );
+  }
+  return { messages: nextMessages, liveStreams: nextStreams };
+}
+
+function messageWithLiveStreams(message: Message, streams: LiveStream[]): Message {
+  let parts = message.parts ?? [];
+  for (const stream of streams) {
+    parts = partsWithLiveStream(parts, stream);
+  }
+  const updatedAt =
+    message.updated_at ?? streams.reduce((latest, stream) => Math.max(latest, stream.updatedAt), 0);
+  return {
+    ...message,
+    parts: orderMessagePartsForDisplay(parts),
+    updated_at: updatedAt || message.updated_at,
+  };
+}
+
+function partsWithLiveStream(parts: MessagePart[], stream: LiveStream): MessagePart[] {
+  const exactPartIndex = parts.findIndex((part) => part.id === stream.partID);
+  if (exactPartIndex >= 0) {
+    return parts.map((part, index) =>
+      index === exactPartIndex ? { ...part, [stream.field]: stream.text } : part,
+    );
+  }
+  const messageTextPartIndex = parts.findIndex(
+    (part) => part.type === "text" || part.type === "message" || !part.type,
+  );
+  if (messageTextPartIndex >= 0) {
+    return parts.map((part, index) =>
+      index === messageTextPartIndex ? { ...part, [stream.field]: stream.text } : part,
+    );
+  }
+  return [...parts, liveStreamPart(stream)];
+}
+
+function messageShouldRemainLive(messages: Message[], incoming: Message): boolean {
+  if (messageHasRunningPart(incoming)) return true;
+  const existing = messages.find((message) => message.id === incoming.id);
+  if (!existing) return false;
+  const incomingPartsByID = new Map((incoming.parts ?? []).map((part) => [part.id, part]));
+  return (existing.parts ?? []).some((part) => {
+    if (!partIsRunning(part)) return false;
+    const incomingPart = incomingPartsByID.get(part.id);
+    return !incomingPart || partIsRunning(incomingPart);
+  });
+}
+
+function messageWithoutLiveStreamParts(
+  message: Message,
+  streams: Record<string, LiveStream>,
+  sessionID: string | undefined,
+): Message {
+  const liveStreamMessageIDs = new Set(
+    Object.values(streams)
+      .filter((stream) => streamMatchesSession(stream, sessionID))
+      .map((stream) => stream.messageID),
+  );
+  const parts = (message.parts ?? []).filter(
+    (part) => !partMatchesLiveStreamText(message, part, streams, sessionID, liveStreamMessageIDs),
+  );
+  return { ...message, parts };
+}
+
+function partMatchesLiveStreamText(
+  message: Message,
+  part: MessagePart,
+  streams: Record<string, LiveStream>,
+  sessionID: string | undefined,
+  liveStreamMessageIDs: Set<string>,
+): boolean {
+  if (!partIsText(part)) return false;
+  const messageID = partMessageID(part);
+  if (liveStreamMessageIDs.has(message.id)) return true;
+  return Object.values(streams).some(
+    (stream) =>
+      streamMatchesSession(stream, sessionID) &&
+      (stream.partID === part.id || (Boolean(messageID) && stream.messageID === messageID)),
+  );
+}
+
+function partIsText(part: MessagePart): boolean {
+  return part.type === "text" || part.type === "message" || !part.type;
+}
+
+function messageMatchesLiveStream(
+  message: Message,
+  streams: Record<string, LiveStream>,
+  sessionID: string | undefined,
+): boolean {
+  return Object.values(streams).some(
+    (stream) =>
+      streamMatchesSession(stream, sessionID) && liveStreamMatchesMessage(stream, message),
+  );
+}
+
+function liveStreamMatchesMessage(stream: LiveStream, message: Message): boolean {
+  if (stream.messageID === message.id) return true;
+  return (message.parts ?? []).some((part) => {
+    const messageID = partMessageID(part);
+    return stream.partID === part.id || (Boolean(messageID) && stream.messageID === messageID);
+  });
+}
+
+function streamMatchesSession(stream: LiveStream, sessionID: string | undefined): boolean {
+  return !sessionID || !stream.sessionID || stream.sessionID === sessionID;
 }
 
 function filterLiveStreams(
@@ -420,7 +582,9 @@ function partIsRunning(part: MessagePart): boolean {
   const state =
     part.state && typeof part.state === "object" ? (part.state as Record<string, unknown>) : {};
   const status = typeof state.status === "string" ? state.status : "";
-  return /run|progress|pending|busy|question|in[_ -]?progress|execut|start/i.test(status);
+  return /run|progress|pending|busy|question|in[_ -]?progress|exec(?:ute|uting|uted|ution)?|start/i.test(
+    status,
+  );
 }
 
 function sanitizeStreamDelta(value: string): string {

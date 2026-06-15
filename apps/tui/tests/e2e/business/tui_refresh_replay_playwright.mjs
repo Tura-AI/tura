@@ -57,8 +57,9 @@ const oldMessages = Array.from({ length: 36 }, (_item, index) => {
   );
 });
 const userMessage = message("msg-refresh-user", "user", "REFRESH_USER_PROMPT", base + 100);
+const historicalRuntimeID = "runtime-refresh-history";
 const commandMessage = {
-  id: "msg-refresh-command",
+  id: `${historicalRuntimeID}.message`,
   sessionID,
   session_id: sessionID,
   role: "assistant",
@@ -66,13 +67,25 @@ const commandMessage = {
   updated_at: base + 101,
   parts: [
     {
-      id: "part-refresh-command",
+      id: `${historicalRuntimeID}.message`,
       sessionID,
       session_id: sessionID,
-      messageID: "msg-refresh-command",
-      message_id: "msg-refresh-command",
+      messageID: `${historicalRuntimeID}.message`,
+      message_id: `${historicalRuntimeID}.message`,
+      type: "text",
+      text: "HISTORICAL_RUNTIME_TEXT_MARKER",
+      content: "HISTORICAL_RUNTIME_TEXT_MARKER",
+    },
+    {
+      id: `${historicalRuntimeID}.tool.command_run`,
+      sessionID,
+      session_id: sessionID,
+      messageID: `${historicalRuntimeID}.message`,
+      message_id: `${historicalRuntimeID}.message`,
       type: "tool",
       tool: "command_run",
+      callID: `${historicalRuntimeID}.tool.command_run`,
+      call_id: `${historicalRuntimeID}.tool.command_run`,
       state: {
         status: "completed",
         input: {
@@ -213,7 +226,10 @@ function createGatewayServer() {
     if (req.method === "GET" && url.pathname === "/provider/auth") return sendJson(res, {});
     if (req.method === "GET" && url.pathname === "/agent") return sendJson(res, [agent]);
     if (req.method === "GET" && url.pathname === "/persona") return sendJson(res, []);
-    if (req.method === "GET" && url.pathname === "/event") {
+    if (
+      req.method === "GET" &&
+      (url.pathname === "/event" || url.pathname === `/session/${sessionID}/events`)
+    ) {
       res.writeHead(200, {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
@@ -309,7 +325,7 @@ async function main() {
     await page.waitForFunction(() => window.__turaTerminal);
     await page.evaluate(() => window.__turaFit());
     await page.waitForFunction(
-      () => document.body.innerText.includes("REFRESH_USER_PROMPT"),
+      () => document.body.innerText.includes("HISTORICAL_RUNTIME_TEXT_MARKER"),
       null,
       { timeout: 15_000 },
     );
@@ -317,6 +333,8 @@ async function main() {
 
     const initialBuffer = await terminalBufferText(page);
     assert.equal(count(initialBuffer, "REFRESH_USER_PROMPT"), 1);
+    assert.equal(count(initialBuffer, "HISTORICAL_RUNTIME_TEXT_MARKER"), 1);
+    assert.equal(count(initialBuffer, "node tools/refresh-order-check.mjs"), 1);
 
     await waitForEventClient();
     session = { ...session, status: "busy", updated_at: Date.now() };
@@ -330,6 +348,7 @@ async function main() {
       message_count: messages.length,
       updated_at: Date.now(),
     };
+    gatewayEvent("message.updated", { sessionID, info: durableMessage });
     gatewayEvent("session.status", { sessionID, status: "idle" });
 
     await page
@@ -353,7 +372,7 @@ async function main() {
     assert.equal(
       count(visible, "TEMP_REFRESH_STREAM_MARKER"),
       0,
-      "temporary stream text must not be introduced by durable polling refresh",
+      "temporary stream text must not be introduced by durable event refresh",
     );
     assert.equal(count(visible, "DURABLE_REFRESH_FINAL_MARKER"), 1);
     assert.equal(
@@ -362,11 +381,14 @@ async function main() {
       "temporary stream text must not be introduced into the terminal buffer",
     );
     assert.equal(count(finalBuffer, "REFRESH_USER_PROMPT"), 1);
+    assert.equal(count(finalBuffer, "HISTORICAL_RUNTIME_TEXT_MARKER"), 1);
     assert.equal(count(finalBuffer, "node tools/refresh-order-check.mjs"), 1);
     assert.equal(count(finalBuffer, "DURABLE_REFRESH_FINAL_MARKER"), 1);
     assert.ok(
       finalBuffer.indexOf("REFRESH_USER_PROMPT") <
-        finalBuffer.indexOf("node tools/refresh-order-check.mjs") &&
+        finalBuffer.indexOf("HISTORICAL_RUNTIME_TEXT_MARKER") &&
+        finalBuffer.indexOf("HISTORICAL_RUNTIME_TEXT_MARKER") <
+          finalBuffer.indexOf("node tools/refresh-order-check.mjs") &&
         finalBuffer.indexOf("node tools/refresh-order-check.mjs") <
           finalBuffer.indexOf("DURABLE_REFRESH_FINAL_MARKER"),
       `final terminal buffer ordering is wrong:\n${finalBuffer}`,

@@ -19,21 +19,19 @@ import {
   wrapIndex,
 } from "./reducer/navigation.js";
 import {
-  appendNewStableMessages,
   applyPartDelta,
-  clearLiveStreamForPart,
-  clearLiveStreamsForDurableMessages,
   clearLiveStreamsForMessageID,
   invalidateRefreshState,
   lastMessagePreview,
-  mergeStableMessages,
+  appendNewStableMessagesIgnoringLive,
+  mergeStableMessagesIgnoringLive,
   messagePreview,
   normalizeMessagesForDisplay,
   refreshStateAfterBackgroundMessage,
   refreshStateAfterMessages,
   updatePreviewForMessages,
-  upsertMessage,
-  upsertPart,
+  upsertMessageIgnoringLive,
+  upsertPartIgnoringLive,
 } from "./reducer/messages.js";
 
 export { displayMessages } from "./reducer/messages.js";
@@ -54,9 +52,14 @@ export function reducer(state: AppState, action: AppAction): AppState {
     const sessionChanged = Boolean(state.session && state.session.id !== sessionID);
     const nextSessions = action.sessions ?? state.sessions;
     const hydratedMessages = normalizeMessagesForDisplay(action.messages);
-    const nextMessages = sessionChanged
-      ? hydratedMessages
-      : mergeStableMessages(state.messages, hydratedMessages);
+    const merged = sessionChanged
+      ? { messages: hydratedMessages, liveStreams: {} }
+      : appendNewStableMessagesIgnoringLive(
+          state.messages,
+          hydratedMessages,
+          state.liveStreams,
+          sessionID,
+        );
     const currentPreview = lastMessagePreview(hydratedMessages);
     const panelState = action.closePanels ? closedPanelsState() : {};
     return {
@@ -64,14 +67,12 @@ export function reducer(state: AppState, action: AppAction): AppState {
       ...panelState,
       session: action.session,
       sessions: nextSessions,
-      messages: nextMessages,
-      liveStreams: sessionChanged
-        ? {}
-        : clearLiveStreamsForDurableMessages(state.liveStreams, sessionID, hydratedMessages),
+      messages: merged.messages,
+      liveStreams: merged.liveStreams,
       refreshState: refreshStateAfterMessages(
         state.refreshState,
         sessionID,
-        nextMessages,
+        merged.messages,
         action.session,
       ),
       sessionPreviews: currentPreview
@@ -133,15 +134,20 @@ export function reducer(state: AppState, action: AppAction): AppState {
           ),
         };
       }
-      const messages = upsertMessage(state.messages, message);
+      const updated = upsertMessageIgnoringLive(
+        state.messages,
+        state.liveStreams,
+        sessionID,
+        message,
+      );
       return {
         ...state,
-        messages,
-        liveStreams: clearLiveStreamsForDurableMessages(state.liveStreams, sessionID, [message]),
+        messages: updated.messages,
+        liveStreams: updated.liveStreams,
         refreshState: refreshStateAfterMessages(
           state.refreshState,
           sessionID,
-          messages,
+          updated.messages,
           state.session,
         ),
       };
@@ -151,15 +157,15 @@ export function reducer(state: AppState, action: AppAction): AppState {
       if (!part) return state;
       const sessionID = normalized.sessionID ?? partSessionID(part);
       if (state.session && sessionID !== state.session.id) return state;
-      const messages = upsertPart(state.messages, part, sessionID);
+      const updated = upsertPartIgnoringLive(state.messages, state.liveStreams, sessionID, part);
       return {
         ...state,
-        messages,
-        liveStreams: clearLiveStreamForPart(state.liveStreams, sessionID, part),
+        messages: updated.messages,
+        liveStreams: updated.liveStreams,
         refreshState: refreshStateAfterMessages(
           state.refreshState,
           sessionID,
-          messages,
+          updated.messages,
           state.session,
         ),
       };
@@ -200,6 +206,9 @@ export function reducer(state: AppState, action: AppAction): AppState {
       const properties = action.event.payload.properties as Record<string, unknown> | undefined;
       const status = sessionStatusText(properties?.status);
       const sessionID = readString(properties, "sessionID") ?? readString(properties, "session_id");
+      const activeSession = Boolean(
+        state.session && (!sessionID || state.session.id === sessionID),
+      );
       return {
         ...state,
         status: state.session?.id === sessionID || !sessionID ? status : state.status,
@@ -208,10 +217,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
               session.id === sessionID ? { ...session, status } : session,
             )
           : state.sessions,
-        session:
-          state.session && state.session.id === sessionID
-            ? { ...state.session, status }
-            : state.session,
+        session: activeSession && state.session ? { ...state.session, status } : state.session,
       };
     }
     if (action.event.payload?.type === "session.updated") {
@@ -277,17 +283,22 @@ export function reducer(state: AppState, action: AppAction): AppState {
         ),
       };
     }
-    const messages = appendNewStableMessages(state.messages, incoming);
+    const updated = appendNewStableMessagesIgnoringLive(
+      state.messages,
+      incoming,
+      state.liveStreams,
+      sessionID,
+    );
     return {
       ...state,
       session: action.session ?? state.session,
-      messages,
-      liveStreams: clearLiveStreamsForDurableMessages(state.liveStreams, sessionID, incoming),
-      sessionPreviews: updatePreviewForMessages(state.sessionPreviews, sessionID, messages),
+      messages: updated.messages,
+      liveStreams: updated.liveStreams,
+      sessionPreviews: updatePreviewForMessages(state.sessionPreviews, sessionID, updated.messages),
       refreshState: refreshStateAfterMessages(
         state.refreshState,
         sessionID,
-        messages,
+        updated.messages,
         action.session ?? state.session,
       ),
     };

@@ -29,9 +29,15 @@ name = "command_interceptor_static_flow"
 path = "tests/business/command_interceptor_static_flow.rs"
 required-features = ["business-tests"]
 
+[[test]]
+name = "command_run_shell_process_hooks"
+path = "tests/os_testing/command_run_shell_process_hooks.rs"
+required-features = ["os-tests"]
+
 [features]
 business-tests = []
 live-tests = []
+os-tests = []
 
 [dependencies]
 async-trait.workspace = true

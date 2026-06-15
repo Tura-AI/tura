@@ -10,7 +10,7 @@ use crate::path::{normalize_workspace, workspace_session_log_db};
 use crate::protocol::{DeleteSessionRequest, DeleteWorkspaceRequest, UpsertSessionRequest};
 use crate::SessionState;
 use anyhow::{Context, Result};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, params_from_iter, OptionalExtension};
 use std::path::Path;
 
 impl SessionLogStore {
@@ -108,10 +108,12 @@ impl SessionLogStore {
                         updated_at=excluded.updated_at,
                         record_json=excluded.record_json",
                 )?;
+                let mut message_ids = Vec::new();
                 for message in messages {
                     let created = i64_at(&message, &["created_at"]).unwrap_or_default();
                     let message_id = string_at(&message, &["id"])
                         .unwrap_or_else(|| format!("{session_id}:{created}"));
+                    message_ids.push(message_id.clone());
                     let role = string_at(&message, &["role"]).unwrap_or_default();
                     let updated = i64_at(&message, &["updated_at"]).unwrap_or(created);
                     let record_json = serde_json::to_string(&message)?;
@@ -123,6 +125,23 @@ impl SessionLogStore {
                         updated,
                         record_json,
                     ])?;
+                }
+                drop(stmt);
+                if message_ids.is_empty() {
+                    tx.execute(
+                        "DELETE FROM session_records WHERE session_id = ?1",
+                        params![session_id],
+                    )?;
+                } else {
+                    let placeholders = std::iter::repeat_n("?", message_ids.len())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let sql = format!(
+                        "DELETE FROM session_records
+                         WHERE session_id = ? AND message_id NOT IN ({placeholders})"
+                    );
+                    let params = std::iter::once(session_id.clone()).chain(message_ids);
+                    tx.execute(&sql, params_from_iter(params))?;
                 }
             }
             let message_count = tx.query_row(

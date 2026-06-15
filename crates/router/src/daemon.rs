@@ -1,0 +1,222 @@
+use serde_json::json;
+use std::collections::HashSet;
+use std::sync::{atomic::Ordering, Arc};
+
+use crate::app::build_state;
+use crate::ipc;
+use crate::ipc_handlers::{enqueue_turn_session_id, handle_ipc_request};
+use crate::process_info::current_process_start_time;
+use crate::services::{
+    recovery::recover_after_start, runtime_orphans::cleanup_orphan_runtime_workers,
+};
+use crate::shutdown::start_idle_shutdown_monitor;
+
+pub(crate) async fn serve_stdio() -> anyhow::Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let state = build_state();
+    let _ = recover_after_start(&state.session_db)?;
+    let stdin = tokio::io::stdin();
+    // Shared, locked writer: each request is handled on its own task and writes
+    // its response (tagged with `request_id`) when ready, so a slow call (e.g. a
+    // long-running `execution.enqueue_turn`) never head-of-line blocks a
+    // concurrent `health_check`. The gateway client multiplexes responses back
+    // to per-call mailboxes by `request_id`.
+    let stdout = Arc::new(tokio::sync::Mutex::new(tokio::io::stdout()));
+    let mut lines = BufReader::new(stdin).lines();
+    while let Some(line) = lines.next_line().await? {
+        let trimmed = line.trim().to_string();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let state = state.clone();
+        let stdout = Arc::clone(&stdout);
+        tokio::spawn(async move {
+            let response = match serde_json::from_str::<ipc::IpcRequest>(&trimmed) {
+                Ok(request) => handle_ipc_request(&state, request).await,
+                Err(error) => {
+                    ipc::IpcResponse::error("invalid", format!("invalid ipc request: {error}"))
+                }
+            };
+            if let Ok(encoded) = serde_json::to_string(&response) {
+                let mut out = stdout.lock().await;
+                let _ = out.write_all(format!("{encoded}\n").as_bytes()).await;
+                let _ = out.flush().await;
+            }
+        });
+    }
+    Ok(())
+}
+
+/// File (under the instance's db dir) recording the running router daemon's
+/// socket endpoint, so any front can probe-and-connect rather than spawn its own.
+pub(crate) fn router_addr_path() -> std::path::PathBuf {
+    session_log::path::default_db_dir().join("router.addr")
+}
+
+fn publish_router_addr(addr: &std::net::SocketAddr) -> anyhow::Result<()> {
+    let path = router_addr_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let pid = std::process::id();
+    let record = json!({
+        "addr": addr.to_string(),
+        "version": tura_path::instance_version(),
+        "pid": pid,
+        "process_start_time": current_process_start_time(pid),
+    });
+    let tmp = path.with_extension("addr.tmp");
+    std::fs::write(&tmp, serde_json::to_string(&record)?)?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+pub(crate) fn unpublish_router_addr() {
+    let _ = std::fs::remove_file(router_addr_path());
+}
+
+pub(crate) async fn serve_socket() -> anyhow::Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpListener;
+    use tokio::sync::Mutex as AsyncMutex;
+    use tokio::time::{timeout, Duration};
+
+    let _router_lock = RouterDaemonLock::acquire()?;
+    let orphan_report = cleanup_orphan_runtime_workers();
+    if !orphan_report.killed.is_empty() {
+        eprintln!(
+            "router startup cleanup: killed orphan runtime workers {:?}",
+            orphan_report.killed
+        );
+    }
+    let state = build_state();
+    let _ = recover_after_start(&state.session_db)?;
+    // The daemon owns the backend: bring up the single session_db owner now.
+    let _ = state.session_db.start();
+
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    publish_router_addr(&addr)?;
+    std::env::set_var("TURA_ROUTER_ADDR", addr.to_string());
+    eprintln!("router socket daemon listening on {addr}");
+    start_idle_shutdown_monitor(state.clone());
+
+    while !state.shutdown.load(Ordering::SeqCst) {
+        let accepted = match timeout(Duration::from_millis(250), listener.accept()).await {
+            Ok(accepted) => accepted?,
+            Err(_) => continue,
+        };
+        let (stream, _) = accepted;
+        let state = state.clone();
+        state.lifecycle.connection_opened();
+        tokio::spawn(async move {
+            let (read, write) = stream.into_split();
+            let write = Arc::new(AsyncMutex::new(write));
+            let active_sessions = Arc::new(AsyncMutex::new(HashSet::<String>::new()));
+            let pending_tasks =
+                Arc::new(AsyncMutex::new(Vec::<tokio::task::JoinHandle<()>>::new()));
+            let mut lines = BufReader::new(read).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let trimmed = line.trim().to_string();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let parsed = match serde_json::from_str::<ipc::IpcRequest>(&trimmed) {
+                    Ok(request) => request,
+                    Err(e) => {
+                        let response =
+                            ipc::IpcResponse::error("invalid", format!("invalid ipc request: {e}"));
+                        if let Ok(encoded) = serde_json::to_string(&response) {
+                            let mut w = write.lock().await;
+                            let _ = w.write_all(format!("{encoded}\n").as_bytes()).await;
+                            let _ = w.flush().await;
+                        }
+                        continue;
+                    }
+                };
+                state.lifecycle.mark_activity();
+                let active_session_id = enqueue_turn_session_id(&parsed);
+                if let Some(session_id) = active_session_id.as_ref() {
+                    active_sessions.lock().await.insert(session_id.clone());
+                }
+                let state = state.clone();
+                let write = Arc::clone(&write);
+                let active_sessions = Arc::clone(&active_sessions);
+                let handle = tokio::spawn(async move {
+                    let response = handle_ipc_request(&state, parsed).await;
+                    if let Some(session_id) = active_session_id.as_ref() {
+                        active_sessions.lock().await.remove(session_id);
+                    }
+                    if let Ok(encoded) = serde_json::to_string(&response) {
+                        let mut w = write.lock().await;
+                        let _ = w.write_all(format!("{encoded}\n").as_bytes()).await;
+                        let _ = w.flush().await;
+                    }
+                });
+                pending_tasks.lock().await.push(handle);
+            }
+            let sessions = active_sessions
+                .lock()
+                .await
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>();
+            for session_id in sessions {
+                let _ = state
+                    .execution
+                    .cancel_turn(&state, json!({ "session_id": session_id }))
+                    .await;
+            }
+            let tasks = pending_tasks.lock().await.drain(..).collect::<Vec<_>>();
+            for task in tasks {
+                task.abort();
+            }
+            state.lifecycle.connection_closed();
+        });
+    }
+    unpublish_router_addr();
+    Ok(())
+}
+
+struct RouterDaemonLock {
+    file: std::fs::File,
+    path: std::path::PathBuf,
+}
+
+impl RouterDaemonLock {
+    fn acquire() -> anyhow::Result<Self> {
+        use fs2::FileExt;
+        use std::io::{Seek, SeekFrom, Write};
+
+        let dir = tura_path::locks_dir();
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join(format!("router-{}.lock", tura_path::build_kind()));
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)?;
+        file.try_lock_exclusive().map_err(|error| {
+            anyhow::anyhow!(
+                "another router daemon already owns {}: {error}",
+                path.display()
+            )
+        })?;
+        file.set_len(0)?;
+        file.seek(SeekFrom::Start(0))?;
+        writeln!(file, "pid={}", std::process::id())?;
+        writeln!(file, "kind=router")?;
+        writeln!(file, "build_kind={}", tura_path::build_kind())?;
+        writeln!(file, "home={}", tura_path::instance_home().display())?;
+        Ok(Self { file, path })
+    }
+}
+
+impl Drop for RouterDaemonLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+        let _ = std::fs::remove_file(&self.path);
+    }
+}

@@ -127,6 +127,10 @@ pub fn build_router() -> Router {
             post(api::session::stream_agent_message),
         )
         .route(
+            "/session/{sessionID}/events",
+            get(api::global::session_event),
+        )
+        .route(
             "/session/{sessionID}/prompt_async",
             post(api::session::prompt_async),
         )
@@ -197,20 +201,6 @@ pub fn build_router() -> Router {
         .route("/service/status", get(api::service::get_service_status))
         // Path
         .route("/path", get(api::path::get_paths))
-        // TUI compatibility routes
-        .route("/tui/submit-prompt", post(api::session::tui_action))
-        .route("/tui/select-session", post(api::session::create_session))
-        .route("/tui/append-prompt", post(api::session::tui_action))
-        .route("/tui/clear-prompt", post(api::session::tui_action))
-        .route("/tui/control/next", post(api::session::tui_action))
-        .route("/tui/control/response", post(api::session::tui_action))
-        .route("/tui/execute-command", post(api::session::tui_action))
-        .route("/tui/open-help", post(api::session::tui_action))
-        .route("/tui/open-models", post(api::session::tui_action))
-        .route("/tui/open-sessions", post(api::session::tui_action))
-        .route("/tui/open-themes", post(api::session::tui_action))
-        .route("/tui/publish", post(api::session::tui_action))
-        .route("/tui/show-toast", post(api::session::tui_action))
         // Experimental
         .route("/experimental/session", get(api::session::list_sessions));
 

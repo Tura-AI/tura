@@ -162,6 +162,7 @@ fn context_business_flow_accumulates_tool_result_with_metadata_and_strips_report
         }),
         true,
         None,
+        Some("runtime-context-1"),
         Some(json!({"provider": "local", "request_id": "req-context-1"})),
     )
     .expect("tool result should log");
@@ -177,6 +178,12 @@ fn context_business_flow_accumulates_tool_result_with_metadata_and_strips_report
     assert!(serialized.contains("model-only-status"), "{serialized}");
     assert!(!serialized.contains("model-only-summary"), "{serialized}");
     assert!(!serialized.contains("\"success\":false"), "{serialized}");
+
+    let raw_log = session.session_log.join("\n");
+    assert!(
+        raw_log.contains("\"runtime_id\":\"runtime-context-1\""),
+        "{raw_log}"
+    );
 
     let stored = session
         .session_log

@@ -244,9 +244,10 @@ mod tests {
     fn truncate_chars_preserves_start_and_end_on_unicode_boundaries() {
         let text = "alpha😀beta😀gamma😀delta";
         let truncated = truncate_chars(text, 8);
+        let expected_start = text.chars().take(4).collect::<String>();
 
         assert!(truncated.contains("[read_media text truncated]"));
-        assert!(truncated.starts_with("alph"));
+        assert!(truncated.starts_with(&expected_start));
         assert!(truncated.ends_with("elta"));
     }
 

@@ -4,9 +4,10 @@ This directory contains opt-in workspace tests that may use provider credentials
 public network access, model quota, live gateway calls, or third-party services.
 Keep files directly under `tests/live`; do not create child directories.
 
-`tests/live`, `tests/business`, `tests/performance`, `tests/benchmark`, and
-`tests/release` are peer test types. Local deterministic tests belong in
-`tests/business`; backend release-binary validation belongs in `tests/release`;
+`tests/live`, `tests/business`, `tests/os_testing`, `tests/performance`,
+`tests/benchmark`, and `tests/release` are peer test types. Local deterministic
+tests belong in `tests/business`; process/OS-sensitive deterministic tests
+belong in `tests/os_testing`; backend release-binary validation belongs in `tests/release`;
 TUI/GUI release flows that drive real provider execution are live release tests
 and use the `tui_release_*.mjs` or `gui_release_*.mjs` prefixes here. Scoring and
 comparison suites belong in `tests/benchmark`; performance, load, soak, and
@@ -48,8 +49,8 @@ Backend crate live tests are selected by directory scan:
 ```
 
 ```bash
-./scripts/run-backend-live-tests.sh --list
-./scripts/run-backend-live-tests.sh --crate provider --timeout-seconds 300
+sh scripts/run-backend-live-tests.sh --list
+sh scripts/run-backend-live-tests.sh --crate provider --timeout-seconds 300
 ```
 
 Backend release-binary tests live in `tests/release`; TUI/GUI release live tests

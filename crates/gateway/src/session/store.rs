@@ -13,6 +13,7 @@ use crate::session::manager::{
 use crate::session_db_client::SessionDbClient;
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
+use runtime::state_machine::runtime_management::RuntimeSessionSyncStatus;
 use runtime::state_machine::session_management::{
     PlanStatus, PollInterval, SessionState, StartCondition, TaskStep,
 };
@@ -56,9 +57,19 @@ pub struct MessagePart {
 }
 
 #[derive(Clone)]
+struct LiveMessageOverlay {
+    runtime_id: Option<String>,
+    message: Message,
+}
+
+#[derive(Clone)]
 pub struct SessionStore {
     sessions: Arc<RwLock<HashMap<String, SessionInfo>>>,
     messages: Arc<RwLock<HashMap<String, Vec<Message>>>>,
+    session_db_messages: Arc<RwLock<HashMap<String, Vec<Message>>>>,
+    session_db_loaded: Arc<RwLock<HashSet<String>>>,
+    session_db_refresh_needed: Arc<RwLock<HashSet<String>>>,
+    live_messages: Arc<RwLock<HashMap<String, Vec<LiveMessageOverlay>>>>,
     todos: Arc<RwLock<HashMap<String, Vec<serde_json::Value>>>>,
     children: Arc<RwLock<HashMap<String, Vec<String>>>>,
     user_commands: Arc<RwLock<HashMap<String, Vec<String>>>>,
@@ -112,7 +123,10 @@ use store_task_management::{
 
 #[path = "store_frontend.rs"]
 mod store_frontend;
-use store_frontend::{frontend_safe_part_value, normalize_tool_message_state};
+#[cfg(test)]
+pub(crate) use store_frontend::frontend_safe_value;
+use store_frontend::normalize_tool_message_state;
+pub(crate) use store_frontend::{frontend_safe_part_state, frontend_safe_part_value};
 
 #[path = "store_messages.rs"]
 mod store_messages;
@@ -128,6 +142,10 @@ impl SessionStore {
         let store = Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             messages: Arc::new(RwLock::new(HashMap::new())),
+            session_db_messages: Arc::new(RwLock::new(HashMap::new())),
+            session_db_loaded: Arc::new(RwLock::new(HashSet::new())),
+            session_db_refresh_needed: Arc::new(RwLock::new(HashSet::new())),
+            live_messages: Arc::new(RwLock::new(HashMap::new())),
             todos: Arc::new(RwLock::new(HashMap::new())),
             children: Arc::new(RwLock::new(HashMap::new())),
             user_commands: Arc::new(RwLock::new(HashMap::new())),
@@ -244,6 +262,10 @@ impl SessionStore {
         record.info.management.use_last_tool_call_response =
             record.info.use_last_tool_call_response;
         let session_id = record.info.id.clone();
+        self.session_db_messages
+            .write()
+            .insert(session_id.clone(), record.messages.clone());
+        self.session_db_loaded.write().insert(session_id.clone());
 
         if self.sessions.read().contains_key(&session_id) {
             return Ok(());
@@ -266,104 +288,54 @@ impl SessionStore {
         Ok(())
     }
 
-    fn persist_session(&self, session_id: &str) {
-        if let Err(err) = self.persist_session_result(session_id) {
-            tracing::warn!(session_id, error = %err, "failed to persist session");
-        }
-    }
-
-    fn persist_session_background(&self, session_id: &str) {
-        #[cfg(test)]
-        {
-            self.persist_session(session_id);
-        }
-
-        #[cfg(not(test))]
-        {
-            let session_id = session_id.to_string();
-            let store = self.clone();
-            std::thread::spawn(move || {
-                if let Err(err) = store.persist_session_result(&session_id) {
-                    tracing::warn!(session_id, error = %err, "failed to persist session");
-                }
-            });
-        }
-    }
-
-    pub fn persist_session_ack(&self, session_id: &str) -> Result<(), String> {
-        // When the session is live in the in-memory store, flush it to session_db
-        // so the runtime worker can load it before the turn is enqueued.
-        if self.sessions.read().get(session_id).is_some() {
-            return self.persist_session_result(session_id);
-        }
-        // Otherwise the session may already be durable in session_db but not yet
-        // hydrated into this process's in-memory store (e.g. a persisted session
-        // opened after a gateway restart, or one still being hydrated in the
-        // background). An already-persisted session is a valid ACK — the worker
-        // loads it straight from session_db — so don't fail the enqueue.
-        match SessionDbClient::discover()
-            .map_err(|err| {
-                format!("failed to discover session_db while ACKing session {session_id}: {err}")
-            })?
+    pub fn refresh_session_db_cache(&self, session_id: &str) -> Result<Vec<Message>, String> {
+        let client = SessionDbClient::discover()
+            .map_err(|err| format!("failed to discover session_log client: {err}"))?;
+        let Some(snapshot) = client
             .get_session(session_id.to_string())
-        {
-            Ok(Some(_)) => Ok(()),
-            Ok(None) => Err(format!("session {session_id} not found in session_db")),
-            Err(err) => Err(format!(
-                "failed to read session {session_id} from session_db during ACK: {err}"
-            )),
-        }
-    }
-
-    fn persist_session_result(&self, session_id: &str) -> Result<(), String> {
-        let info = self
-            .sessions
-            .read()
-            .get(session_id)
-            .cloned()
-            .ok_or_else(|| format!("session {session_id} not found in memory"))?;
-        let messages = self
-            .messages
-            .read()
-            .get(session_id)
-            .cloned()
-            .unwrap_or_default();
-        let todos = self
-            .todos
-            .read()
-            .get(session_id)
-            .cloned()
-            .unwrap_or_default();
-        let parent_id = self.parent_for_child(session_id);
-        let record = PersistedSessionRecord {
-            info,
-            parent_id,
-            messages,
-            todos,
+            .map_err(|err| format!("failed to read session snapshot from session_log: {err}"))?
+        else {
+            self.session_db_messages.write().remove(session_id);
+            self.session_db_loaded
+                .write()
+                .insert(session_id.to_string());
+            self.session_db_refresh_needed.write().remove(session_id);
+            return Ok(Vec::new());
         };
+        let (_, records) = client
+            .list_session_records(session_id.to_string(), 0, 10_000)
+            .map_err(|err| format!("failed to read session records from session_log: {err}"))?;
+        let mut record = persisted_record_from_session_log(snapshot, records)?;
+        record.info.message_count = record.messages.len();
+        record.info.use_last_tool_call_response = default_use_last_tool_call_response_for_session(
+            record.info.session_type.as_deref().unwrap_or("coding"),
+            record.info.agent.as_deref(),
+        );
+        record.info.management.use_last_tool_call_response =
+            record.info.use_last_tool_call_response;
+        let messages = record.messages.clone();
 
-        SessionDbClient::discover()
-            .map_err(|err| {
-                format!(
-                    "failed to discover session_db while persisting session {session_id}: {err}"
-                )
-            })?
-            .upsert_session(
-                serde_json::to_value(&record.info)
-                    .map_err(|err| format!("failed to serialize session {session_id}: {err}"))?,
-                record.parent_id,
-                record
-                    .messages
-                    .into_iter()
-                    .map(serde_json::to_value)
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|err| {
-                        format!("failed to serialize messages for session {session_id}: {err}")
-                    })?,
-                record.todos,
-            )
-            .map_err(|err| format!("failed to upsert session {session_id}: {err}"))?;
-        Ok(())
+        self.sessions
+            .write()
+            .insert(session_id.to_string(), record.info);
+        self.session_db_messages
+            .write()
+            .insert(session_id.to_string(), messages.clone());
+        self.todos
+            .write()
+            .insert(session_id.to_string(), record.todos);
+        self.session_db_loaded
+            .write()
+            .insert(session_id.to_string());
+        self.session_db_refresh_needed.write().remove(session_id);
+        if let Some(parent_id) = record.parent_id.filter(|value| !value.trim().is_empty()) {
+            let mut children = self.children.write();
+            let entry = children.entry(parent_id).or_default();
+            if !entry.iter().any(|id| id == session_id) {
+                entry.push(session_id.to_string());
+            }
+        }
+        Ok(messages)
     }
 
     fn persist_active_config(&self, session: &ApiSession) {
@@ -613,7 +585,6 @@ impl SessionStore {
         self.messages.write().insert(session_id, Vec::new());
         self.todos.write().insert(session.id.clone(), Vec::new());
         self.persist_active_config(&session);
-        self.persist_session_background(&session.id);
 
         session
     }
@@ -700,7 +671,6 @@ impl SessionStore {
         let session = api_session_from_info(info, parent_id);
         drop(sessions);
         self.persist_active_config(&session);
-        self.persist_session(session_id);
         Some(session)
     }
 
@@ -716,7 +686,6 @@ impl SessionStore {
         info.updated_at = Utc::now().timestamp_millis();
         let session = api_session_from_info(info, parent_id);
         drop(sessions);
-        self.persist_session(session_id);
         Some(session)
     }
 
@@ -783,7 +752,6 @@ impl SessionStore {
             info.status = SessionStatusMano::from_state(info.management.state);
             info.updated_at = now.timestamp_millis();
         }
-        self.persist_session_background(session_id);
         self.push_event(GlobalEvent::SessionStatus {
             properties: crate::api::types::SessionStatusProperties {
                 session_id: session_id.to_string(),
@@ -804,7 +772,7 @@ impl SessionStore {
 
     pub fn claim_due_task_runs(&self, now: DateTime<Utc>) -> Vec<ScheduledTaskRun> {
         let mut claimed = Vec::new();
-        let mut persist_ids = Vec::new();
+        let mut claimed_ids = Vec::new();
         {
             let mut sessions = self.sessions.write();
             for info in sessions.values_mut() {
@@ -847,12 +815,11 @@ impl SessionStore {
                     task_summary,
                     start_condition,
                 });
-                persist_ids.push(info.id.clone());
+                claimed_ids.push(info.id.clone());
             }
         }
 
-        for session_id in persist_ids {
-            self.persist_session(&session_id);
+        for session_id in claimed_ids {
             if let Some(session) = self.get_session(&session_id) {
                 self.push_event(GlobalEvent::SessionUpdated {
                     properties: crate::api::types::SessionUpdatedProperties {
@@ -882,7 +849,6 @@ impl SessionStore {
             info.updated_at = Utc::now().timestamp_millis();
             info.status = SessionStatusMano::from_state(info.management.state);
         }
-        self.persist_session(session_id);
     }
 
     pub fn session_count(&self) -> usize {

@@ -1,10 +1,11 @@
 use super::*;
+use runtime::state_machine::runtime_management::RuntimeSessionSyncStatus;
 
 pub async fn list_messages(
     Path(session_id): Path<String>,
     Query(params): Query<MessageListParams>,
 ) -> Json<Vec<serde_json::Value>> {
-    let messages = page_messages(session_store().get_messages(&session_id), &params);
+    let messages = page_messages(session_store().get_frontend_messages(&session_id), &params);
     let api_messages: Vec<serde_json::Value> = messages
         .into_iter()
         .map(message_with_parts_from_store)
@@ -97,28 +98,52 @@ pub async fn send_agent_message(
     Json(payload): Json<SendAgentMessageRequest>,
 ) -> Json<SendAgentMessageResponse> {
     let content = agent_message_content(&payload);
+    if is_progress_only_agent_message(&content, &payload) {
+        return Json(SendAgentMessageResponse {
+            ok: true,
+            session_id,
+            message_id: payload.runtime_id.as_deref().map(runtime_message_id),
+            event: None,
+            error: None,
+        });
+    }
+    if let Some(response) = runtime_managed_message_response(&session_id, &payload, &content) {
+        sync_auto_session_name_from_agent_tool_call(&session_id, payload.tool_call.as_ref());
+        return Json(response);
+    }
+    if content.trim().is_empty() {
+        if let Some(response) = transient_tool_message_response(&session_id, &payload) {
+            sync_auto_session_name_from_agent_tool_call(&session_id, payload.tool_call.as_ref());
+            return Json(response);
+        }
+    }
+
     let message = if content.trim().is_empty() {
-        None
-    } else if payload
-        .message_id
-        .as_deref()
-        .and_then(|message_id| existing_text_message(&session_id, message_id))
-        .is_some()
-    {
         None
     } else {
         session_store().add_message_with_ids(
             &session_id,
             SessionMessageRole::Assistant,
             content,
-            payload.message_id.clone(),
-            payload.part_id.clone(),
+            None,
+            None,
             agent_message_metadata(&payload),
         )
     };
+    let visible_tool_call = payload
+        .tool_call
+        .as_ref()
+        .is_some_and(tool_call_visible_to_frontend);
+    let persistent_tool_call = payload
+        .tool_call
+        .as_ref()
+        .is_some_and(tool_call_persistent_to_store);
     let tool_message = payload.tool_call.as_ref().and_then(|tool_call| {
         if let Some(todos) = planning_todos(tool_call) {
             session_store().set_todos(&session_id, todos);
+        }
+        if !visible_tool_call || !persistent_tool_call {
+            return None;
         }
         session_store().add_tool_message_with_message_id(
             &session_id,
@@ -126,7 +151,7 @@ pub async fn send_agent_message(
             tool_call.call_id.clone(),
             tool_call.state.clone(),
             tool_call.metadata.clone(),
-            payload.message_id.clone(),
+            None,
         )
     });
     sync_auto_session_name_from_agent_tool_call(&session_id, payload.tool_call.as_ref());
@@ -146,6 +171,15 @@ pub async fn send_agent_message(
             },
             error: None,
         }),
+        None if payload.tool_call.is_some() && (!visible_tool_call || !persistent_tool_call) => {
+            Json(SendAgentMessageResponse {
+                ok: true,
+                session_id,
+                message_id: None,
+                event: None,
+                error: None,
+            })
+        }
         None => Json(SendAgentMessageResponse {
             ok: false,
             session_id,
@@ -156,22 +190,244 @@ pub async fn send_agent_message(
     }
 }
 
-fn existing_text_message(session_id: &str, message_id: &str) -> Option<crate::session::Message> {
-    session_store()
-        .get_messages(session_id)
-        .into_iter()
-        .find(|message| {
-            message.id == message_id
-                && message.role == SessionMessageRole::Assistant
-                && message.parts.iter().any(|part| {
-                    part.part_type == "text"
-                        && part
-                            .text
-                            .as_deref()
-                            .or(part.content.as_deref())
-                            .is_some_and(|text| !text.trim().is_empty())
-                })
-        })
+fn is_progress_only_agent_message(content: &str, payload: &SendAgentMessageRequest) -> bool {
+    payload.tool_call.is_none()
+        && payload.media.is_empty()
+        && content.trim_start().starts_with("Step summary:")
+}
+
+fn tool_call_persistent_to_store(tool_call: &SendAgentToolCall) -> bool {
+    tool_call.tool_name != "command_run" && !is_transient_tool_call(tool_call)
+}
+
+fn tool_call_visible_to_frontend(tool_call: &SendAgentToolCall) -> bool {
+    tool_call.tool_name != "command_run"
+        || !task_status_payload(&tool_call.state)
+            && !tool_call.metadata.as_ref().is_some_and(task_status_payload)
+}
+
+fn task_status_payload(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(object) => {
+            object.contains_key("task_status")
+                || object
+                    .get("command_type")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|value| value.eq_ignore_ascii_case("task_status"))
+                || object.values().any(task_status_payload)
+        }
+        serde_json::Value::Array(items) => items.iter().any(task_status_payload),
+        serde_json::Value::String(text) => serde_json::from_str::<serde_json::Value>(text)
+            .ok()
+            .is_some_and(|value| task_status_payload(&value)),
+        _ => false,
+    }
+}
+
+fn transient_tool_message_response(
+    session_id: &str,
+    payload: &SendAgentMessageRequest,
+) -> Option<SendAgentMessageResponse> {
+    let tool_call = payload.tool_call.as_ref()?;
+    if !is_transient_tool_call(tool_call) {
+        return None;
+    }
+
+    Some(SendAgentMessageResponse {
+        ok: true,
+        session_id: session_id.to_string(),
+        message_id: None,
+        event: None,
+        error: None,
+    })
+}
+
+fn runtime_managed_message_response(
+    session_id: &str,
+    payload: &SendAgentMessageRequest,
+    content: &str,
+) -> Option<SendAgentMessageResponse> {
+    let status = payload.runtime_status.as_ref()?;
+    let runtime_message_id = runtime_message_id(&status.runtime_id);
+    if status.should_refresh_session_db() {
+        let final_message = runtime_final_message(session_id, payload, content, status);
+        let messages = session_store().finalize_runtime_live_messages(
+            session_id,
+            &status.runtime_id,
+            final_message,
+        );
+        let event = messages
+            .last()
+            .cloned()
+            .map(|message| GlobalEvent::MessageUpdated {
+                properties: MessageUpdatedProperties {
+                    session_id: session_id.to_string(),
+                    info: api_message_from_store(message),
+                },
+            });
+        return Some(SendAgentMessageResponse {
+            ok: true,
+            session_id: session_id.to_string(),
+            message_id: Some(runtime_message_id),
+            event,
+            error: None,
+        });
+    }
+
+    if !status.live_overlay_active() {
+        return Some(SendAgentMessageResponse {
+            ok: true,
+            session_id: session_id.to_string(),
+            message_id: Some(runtime_message_id),
+            event: None,
+            error: None,
+        });
+    }
+
+    if content.trim().is_empty() {
+        return runtime_live_tool_message_response(session_id, payload, status);
+    }
+
+    let (created_at, updated_at) = runtime_message_times(payload);
+    let message = session_store().build_text_message_with_ids_and_times(
+        session_id,
+        SessionMessageRole::Assistant,
+        content.to_string(),
+        Some(runtime_message_id),
+        Some(runtime_text_part_id(&status.runtime_id)),
+        agent_message_metadata(payload),
+        created_at,
+        updated_at,
+    );
+    let message_id = message.id.clone();
+    let event =
+        session_store().upsert_live_message(session_id, Some(status.runtime_id.clone()), message);
+    Some(SendAgentMessageResponse {
+        ok: true,
+        session_id: session_id.to_string(),
+        message_id: Some(message_id),
+        event: Some(event),
+        error: None,
+    })
+}
+
+fn runtime_final_message(
+    session_id: &str,
+    payload: &SendAgentMessageRequest,
+    content: &str,
+    status: &RuntimeSessionSyncStatus,
+) -> Option<crate::session::Message> {
+    let (created_at, updated_at) = runtime_message_times(payload);
+    if !content.trim().is_empty() {
+        return Some(session_store().build_text_message_with_ids_and_times(
+            session_id,
+            SessionMessageRole::Assistant,
+            content.to_string(),
+            Some(runtime_message_id(&status.runtime_id)),
+            Some(runtime_text_part_id(&status.runtime_id)),
+            agent_message_metadata(payload),
+            created_at,
+            updated_at,
+        ));
+    }
+
+    let tool_call = payload.tool_call.as_ref()?;
+    if !tool_call_visible_to_frontend(tool_call) {
+        return None;
+    }
+    Some(
+        session_store().build_transient_tool_message_with_ids_and_times(
+            session_id,
+            tool_call.tool_name.clone(),
+            tool_call.call_id.clone(),
+            tool_call.state.clone(),
+            tool_call.metadata.clone(),
+            runtime_message_id(&status.runtime_id),
+            runtime_tool_part_id(&status.runtime_id, &tool_call.tool_name),
+            created_at,
+            updated_at,
+        ),
+    )
+}
+
+fn runtime_live_tool_message_response(
+    session_id: &str,
+    payload: &SendAgentMessageRequest,
+    status: &RuntimeSessionSyncStatus,
+) -> Option<SendAgentMessageResponse> {
+    let tool_call = payload.tool_call.as_ref()?;
+    if !tool_call_visible_to_frontend(tool_call) {
+        return Some(SendAgentMessageResponse {
+            ok: true,
+            session_id: session_id.to_string(),
+            message_id: Some(runtime_message_id(&status.runtime_id)),
+            event: None,
+            error: None,
+        });
+    }
+
+    let message_id = runtime_message_id(&status.runtime_id);
+    let part_id = runtime_tool_part_id(&status.runtime_id, &tool_call.tool_name);
+    let (created_at, updated_at) = runtime_message_times(payload);
+    let message = session_store().build_transient_tool_message_with_ids_and_times(
+        session_id,
+        tool_call.tool_name.clone(),
+        tool_call.call_id.clone(),
+        tool_call.state.clone(),
+        tool_call.metadata.clone(),
+        message_id.clone(),
+        part_id,
+        created_at,
+        updated_at,
+    );
+    let event =
+        session_store().upsert_live_message(session_id, Some(status.runtime_id.clone()), message);
+    Some(SendAgentMessageResponse {
+        ok: true,
+        session_id: session_id.to_string(),
+        message_id: Some(message_id),
+        event: Some(event),
+        error: None,
+    })
+}
+
+fn runtime_message_times(payload: &SendAgentMessageRequest) -> (i64, i64) {
+    let now = chrono::Utc::now().timestamp_millis();
+    let created_at = payload.created_at.unwrap_or(now);
+    let updated_at = payload.updated_at.unwrap_or(created_at);
+    (created_at, updated_at)
+}
+
+fn runtime_message_id(runtime_id: &str) -> String {
+    format!("{runtime_id}.message")
+}
+
+fn runtime_text_part_id(runtime_id: &str) -> String {
+    format!("{runtime_id}.message")
+}
+
+fn runtime_tool_part_id(runtime_id: &str, tool_name: &str) -> String {
+    format!("{runtime_id}.tool.{tool_name}")
+}
+
+fn is_transient_tool_call(tool_call: &SendAgentToolCall) -> bool {
+    tool_call.tool_name == "command_run"
+        || bool_field(&tool_call.state, "transient")
+        || tool_call
+            .metadata
+            .as_ref()
+            .is_some_and(|metadata| bool_field(metadata, "transient"))
+        || tool_call
+            .state
+            .get("metadata")
+            .is_some_and(|metadata| bool_field(metadata, "transient"))
+}
+
+fn bool_field(value: &serde_json::Value, key: &str) -> bool {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
 }
 
 pub async fn stream_agent_message(
@@ -181,14 +437,16 @@ pub async fn stream_agent_message(
     if payload.delta.is_empty() {
         return Json(serde_json::json!({ "ok": true }));
     }
+    let message_id = runtime_message_id(&payload.runtime_id);
+    let part_id = runtime_text_part_id(&payload.runtime_id);
     // Transient streaming overlay only: emit the delta so the frontend renders
     // tokens live. The persisted message arrives later via `send_agent_message`
     // reusing the same ids, which replaces these deltas with the full reply.
     session_store().push_event(GlobalEvent::MessagePartDelta {
         properties: crate::api::types::MessagePartDeltaProperties {
             session_id: session_id.clone(),
-            message_id: payload.message_id,
-            part_id: payload.part_id,
+            message_id,
+            part_id,
             field: "text".to_string(),
             delta: payload.delta,
         },
@@ -317,6 +575,7 @@ fn collect_string_field(value: &serde_json::Value, field: &str, values: &mut Vec
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SendAgentMessageRequest {
     pub reply_message: String,
     pub new_learning: String,
@@ -325,20 +584,17 @@ pub struct SendAgentMessageRequest {
     pub media: Vec<SendAgentMedia>,
     pub runtime_id: Option<String>,
     pub tool_call: Option<SendAgentToolCall>,
-    /// Stable id pair from the streamed assistant text so the persisted message
-    /// reuses the same ids without dropping already-visible frontend text.
-    pub message_id: Option<String>,
-    pub part_id: Option<String>,
+    pub runtime_status: Option<RuntimeSessionSyncStatus>,
+    pub created_at: Option<i64>,
+    pub updated_at: Option<i64>,
 }
 
 /// One incremental assistant text token streamed from the runtime, re-emitted by
 /// the gateway as a `message.part.delta` so the frontend renders tokens live.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct StreamAgentTextRequest {
-    pub message_id: String,
-    pub part_id: String,
     pub delta: String,
-    pub runtime_id: Option<String>,
+    pub runtime_id: String,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -613,7 +869,7 @@ fn todo_content(step: &serde_json::Value, number: usize) -> String {
 pub async fn get_message(
     Path((session_id, message_id)): Path<(String, String)>,
 ) -> Json<serde_json::Value> {
-    let messages = session_store().get_messages(&session_id);
+    let messages = session_store().get_frontend_messages(&session_id);
     let message = messages
         .into_iter()
         .find(|m| m.id == message_id)
@@ -636,7 +892,7 @@ pub async fn get_message(
 pub async fn get_message_part(
     Path((session_id, message_id, part_id)): Path<(String, String, String)>,
 ) -> Json<serde_json::Value> {
-    let messages = session_store().get_messages(&session_id);
+    let messages = session_store().get_frontend_messages(&session_id);
     let message = messages.into_iter().find(|m| m.id == message_id);
 
     let part = message
@@ -722,8 +978,9 @@ mod tests {
             media: Vec::new(),
             runtime_id: None,
             tool_call: None,
-            message_id: None,
-            part_id: None,
+            runtime_status: None,
+            created_at: None,
+            updated_at: None,
         }
     }
 
@@ -809,6 +1066,23 @@ mod tests {
     }
 
     #[test]
+    fn step_summary_agent_messages_are_progress_only() {
+        let mut payload = request("Step summary: inspect files");
+        payload.runtime_id = Some("runtime-1".to_string());
+
+        assert!(is_progress_only_agent_message(
+            &agent_message_content(&payload),
+            &payload
+        ));
+
+        payload.reply_message = "Final answer".to_string();
+        assert!(!is_progress_only_agent_message(
+            &agent_message_content(&payload),
+            &payload
+        ));
+    }
+
+    #[test]
     fn planning_todos_requires_planning_tool_and_nonempty_steps() {
         let non_planning = SendAgentToolCall {
             tool_name: "command_run".to_string(),
@@ -825,6 +1099,66 @@ mod tests {
             metadata: None,
         };
         assert!(planning_todos(&empty_steps).is_none());
+    }
+
+    #[test]
+    fn command_run_tool_calls_are_transient_and_not_persistent_without_marker() {
+        let tool_call = SendAgentToolCall {
+            tool_name: "command_run".to_string(),
+            call_id: "call-command-run".to_string(),
+            state: json!({
+                "status": "completed",
+                "metadata": {
+                    "kind": "mano_tool_call"
+                }
+            }),
+            metadata: Some(json!({
+                "kind": "mano_tool_call",
+                "tool": "command_run"
+            })),
+        };
+
+        assert!(is_transient_tool_call(&tool_call));
+        assert!(!tool_call_persistent_to_store(&tool_call));
+        assert!(tool_call_visible_to_frontend(&tool_call));
+    }
+
+    #[test]
+    fn command_run_task_status_is_neither_visible_nor_persistent() {
+        let tool_call = SendAgentToolCall {
+            tool_name: "command_run".to_string(),
+            call_id: "call-task-status".to_string(),
+            state: json!({
+                "status": "running",
+                "input": {
+                    "commands": [{
+                        "command_type": "task_status",
+                        "task_status": { "status": "working" }
+                    }]
+                }
+            }),
+            metadata: None,
+        };
+
+        assert!(is_transient_tool_call(&tool_call));
+        assert!(!tool_call_visible_to_frontend(&tool_call));
+        assert!(!tool_call_persistent_to_store(&tool_call));
+    }
+
+    #[test]
+    fn explicit_transient_tool_calls_are_not_persistent() {
+        let tool_call = SendAgentToolCall {
+            tool_name: "grep".to_string(),
+            call_id: "call-grep".to_string(),
+            state: json!({
+                "status": "running",
+                "transient": true
+            }),
+            metadata: None,
+        };
+
+        assert!(is_transient_tool_call(&tool_call));
+        assert!(!tool_call_persistent_to_store(&tool_call));
     }
 
     #[test]

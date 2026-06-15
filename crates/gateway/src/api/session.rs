@@ -998,21 +998,17 @@ use session_prompt::{
 };
 use session_prompt::{final_agent_message, frontend_safe_reply_message, run_mano_for_prompt};
 pub use session_prompt::{prompt_async, start_task_scheduler};
-#[cfg(feature = "business-tests")]
+#[cfg(any(feature = "business-tests", feature = "os-tests"))]
 pub use session_prompt::{
     run_due_task_scheduler_tick_for_business_test,
     run_due_task_scheduler_tick_for_store_business_test,
 };
 #[path = "session_format.rs"]
 mod session_format;
-pub(crate) use session_format::api_message_from_store;
 #[cfg(test)]
-use session_format::frontend_safe_value;
+use crate::session::store::frontend_safe_value;
+pub(crate) use session_format::api_message_from_store;
 use session_format::{message_with_parts_from_store, part_json};
-
-#[path = "session_tui.rs"]
-mod session_tui;
-pub use session_tui::tui_action;
 
 #[cfg(test)]
 #[path = "session_tests.rs"]

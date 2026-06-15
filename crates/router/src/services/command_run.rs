@@ -62,6 +62,7 @@ mod tests {
     use super::{CommandRunRequest, CommandRunService};
     use serde_json::json;
     use std::collections::BTreeSet;
+    use std::time::{Duration, Instant};
 
     #[tokio::test]
     async fn command_run_service_executes_inside_requested_workspace() {
@@ -113,5 +114,52 @@ mod tests {
                 "task_status".to_string()
             ]))
         );
+    }
+
+    #[tokio::test]
+    async fn command_run_service_handles_read_only_requests_concurrently() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let service = CommandRunService::new();
+        let request = |label: &str| {
+            json!({
+                "session_id": format!("session-{label}"),
+                "runtime_id": format!("runtime-{label}"),
+                "session_directory": workspace.path().display().to_string(),
+                "arguments": {
+                    "commands": [{
+                        "step": 1,
+                        "command": "shell_command",
+                        "command_line": json!({
+                            "command": delayed_read_only_command(label),
+                            "timeout_ms": 5000
+                        }).to_string()
+                    }]
+                }
+            })
+        };
+
+        let started = Instant::now();
+        let (first, second) = tokio::join!(
+            service.execute(request("first")),
+            service.execute(request("second"))
+        );
+        let elapsed = started.elapsed();
+
+        let first = first.expect("first command_run should finish");
+        let second = second.expect("second command_run should finish");
+        assert_eq!(first["result"]["results"][0]["success"], true);
+        assert_eq!(second["result"]["results"][0]["success"], true);
+        assert!(
+            elapsed < Duration::from_millis(2300),
+            "read-only command_run requests should overlap instead of serializing; elapsed={elapsed:?}"
+        );
+    }
+
+    fn delayed_read_only_command(label: &str) -> String {
+        if cfg!(windows) {
+            format!("Test-Path .; Start-Sleep -Milliseconds 1200; Write-Output {label}")
+        } else {
+            format!("find . -maxdepth 0; sleep 1.2; printf {label}")
+        }
     }
 }

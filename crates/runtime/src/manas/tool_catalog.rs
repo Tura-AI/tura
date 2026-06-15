@@ -458,7 +458,7 @@ fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
         "- Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.",
         "- Context compaction: after a meaningful phase completes, or when context is near 200,000 tokens and feels crowded, put `compact_context` as the final command in the highest step with a concise handoff summary for the next turn.",
         "- Example investigation batch: independent `rg --files`, targeted `rg -n`, and candidate file reads all use step 1.",
-        "- Example repair batch: step 1 `apply_patch` across related files, step 2 write or update a focused test script when needed, step 3 run the narrow test and focused validation searches.",
+        "- Example repair batch: step 1 `apply_patch` across related files, step 2 run the known build command, step 3 run multiple known test commands in the same step.",
         "- Example frontend batch: step 1 write or reuse the focused frontend test script, step 2 run that script and inspect generated textual outputs.",
     ];
     if allowed_commands.contains("read_media") || allowed_commands.contains("web_discover") {

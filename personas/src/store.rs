@@ -704,10 +704,7 @@ mod tests {
     fn delete_dynamic_persona_is_idempotent_for_missing_and_removes_existing() {
         let temp = project();
 
-        assert_eq!(
-            delete_dynamic_persona(temp.path(), "missing").expect("missing delete"),
-            false
-        );
+        assert!(!delete_dynamic_persona(temp.path(), "missing").expect("missing delete"));
         save_dynamic_persona(
             temp.path(),
             &test_config(temp.path(), "remove-me"),
@@ -716,15 +713,9 @@ mod tests {
         )
         .expect("save");
 
-        assert_eq!(
-            delete_dynamic_persona(temp.path(), "remove-me").expect("delete"),
-            true
-        );
+        assert!(delete_dynamic_persona(temp.path(), "remove-me").expect("delete"));
         assert!(load_persona(temp.path(), "remove-me").is_none());
-        assert_eq!(
-            delete_dynamic_persona(temp.path(), "remove-me").expect("second delete"),
-            false
-        );
+        assert!(!delete_dynamic_persona(temp.path(), "remove-me").expect("second delete"));
     }
 
     #[test]

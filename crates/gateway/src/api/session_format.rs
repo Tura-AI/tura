@@ -1,4 +1,5 @@
 use super::*;
+use crate::session::store::{frontend_safe_part_state, frontend_safe_part_value};
 
 pub(crate) fn api_message_from_store(message: crate::session::store::Message) -> Message {
     Message {
@@ -20,7 +21,7 @@ pub(crate) fn api_message_from_store(message: crate::session::store::Message) ->
                 metadata: frontend_safe_part_value(&part, part.metadata.clone()),
                 call_id: part.call_id.clone(),
                 tool: part.tool.clone(),
-                state: frontend_safe_part_value(&part, part.state.clone()),
+                state: frontend_safe_part_state(&part, part.state.clone()),
             })
             .collect(),
         created_at: message.created_at,
@@ -65,39 +66,8 @@ pub(super) fn part_json(
         "metadata": frontend_safe_part_value(&part, part.metadata.clone()),
         "callID": &part.call_id,
         "tool": &part.tool,
-        "state": frontend_safe_part_value(&part, part.state.clone()),
+        "state": frontend_safe_part_state(&part, part.state.clone()),
     })
-}
-
-pub(super) fn frontend_safe_value(value: Option<serde_json::Value>) -> Option<serde_json::Value> {
-    value.map(sanitize_frontend_value)
-}
-
-fn frontend_safe_part_value(
-    part: &crate::session::store::MessagePart,
-    value: Option<serde_json::Value>,
-) -> Option<serde_json::Value> {
-    if part.part_type == "tool" && part.tool.as_deref() == Some("runtime") {
-        return value;
-    }
-    frontend_safe_value(value)
-}
-
-fn sanitize_frontend_value(value: serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(object) => {
-            let object = object
-                .into_iter()
-                .filter(|(key, _)| !matches!(key.as_str(), "new_learning" | "runtime_id"))
-                .map(|(key, value)| (key, sanitize_frontend_value(value)))
-                .collect();
-            serde_json::Value::Object(object)
-        }
-        serde_json::Value::Array(items) => {
-            serde_json::Value::Array(items.into_iter().map(sanitize_frontend_value).collect())
-        }
-        value => value,
-    }
 }
 
 #[cfg(test)]
@@ -105,7 +75,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn frontend_safe_value_removes_internal_keys_recursively() {
+    fn frontend_safe_part_value_removes_internal_keys_recursively() {
+        let part = store_part("tool", Some("shell"), None, None, None, None);
         let value = serde_json::json!({
             "visible": true,
             "runtime_id": "runtime-secret",
@@ -119,7 +90,7 @@ mod tests {
             ]
         });
 
-        let sanitized = frontend_safe_value(Some(value)).expect("sanitized value");
+        let sanitized = frontend_safe_part_value(&part, Some(value)).expect("sanitized value");
 
         assert_eq!(
             sanitized,
@@ -193,6 +164,55 @@ mod tests {
     }
 
     #[test]
+    fn command_run_parts_expose_canonical_commands_from_legacy_state() {
+        let part = store_part(
+            "tool",
+            Some("command_run"),
+            None,
+            None,
+            None,
+            Some(serde_json::json!({
+                "status": "running",
+                "input": {
+                    "commands": [
+                        {
+                            "step": 3,
+                            "command_type": "shell_command",
+                            "command_line": "npm run build"
+                        }
+                    ]
+                },
+                "output": {
+                    "streamed_command_run_result": {
+                        "results": [
+                            {
+                                "step": 3,
+                                "status": "completed",
+                                "command_type": "shell_command",
+                                "command_line": "npm run build"
+                            }
+                        ]
+                    }
+                }
+            })),
+        );
+
+        let value = part_json("session-1", "message-1", part);
+
+        assert_eq!(
+            value["state"]["commands"],
+            serde_json::json!([
+                {
+                    "command": "npm run build",
+                    "name": "shell_command",
+                    "step": 3,
+                    "status": "completed"
+                }
+            ])
+        );
+    }
+
+    #[test]
     fn api_message_from_store_maps_roles_parts_and_parent_id() {
         let message = crate::session::store::Message {
             id: "message-1".to_string(),
@@ -250,6 +270,119 @@ mod tests {
         assert_eq!(value["info"]["parts"], value["parts"]);
         assert_eq!(value["parts"][0]["text"], "first");
         assert_eq!(value["parts"][1]["text"], "second content");
+    }
+
+    #[test]
+    fn command_run_request_projection_keeps_runtime_state_times_and_final_status() {
+        let cases = [
+            (
+                "completed",
+                serde_json::json!({"success": true}),
+                "completed",
+            ),
+            ("error", serde_json::json!({"success": false}), "failed"),
+            (
+                "running",
+                serde_json::json!({"status": "running"}),
+                "running",
+            ),
+        ];
+
+        for (index, (final_status, result_status, command_status)) in cases.into_iter().enumerate()
+        {
+            let runtime_start = 1_781_514_293_670_i64 + index as i64 * 10_000;
+            let runtime_end = runtime_start + 4_321;
+            let conflicting_event_start = runtime_start + 7;
+            let conflicting_event_end = runtime_end - 5;
+            let result = serde_json::json!({
+                "step": 1,
+                "command_type": "shell_command",
+                "command_line": "npm test",
+                "status": result_status.get("status").cloned().unwrap_or(serde_json::Value::Null),
+                "success": result_status.get("success").cloned().unwrap_or(serde_json::Value::Null),
+            });
+            let state = serde_json::json!({
+                "status": final_status,
+                "input": {
+                    "commands": [{
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "command_line": "npm test",
+                        "started_at": runtime_start,
+                    }]
+                },
+                "output": {
+                    "streamed_command_run_result": {
+                        "results": [result]
+                    }
+                },
+                "streamed_command_run_result": {
+                    "command_events": [
+                        {
+                            "status": "running",
+                            "timestamp": conflicting_event_start,
+                            "command_line": "npm test"
+                        },
+                        {
+                            "status": "error",
+                            "timestamp": conflicting_event_end,
+                            "command_line": "npm test"
+                        }
+                    ],
+                    "results": [result]
+                },
+                "time": {
+                    "start": runtime_start,
+                    "end": runtime_end
+                }
+            });
+            let metadata = serde_json::json!({
+                "kind": "mano_tool_call",
+                "transient": true,
+                "streaming_partial": final_status == "running",
+                "output": {
+                    "streamed_command_run_result": {
+                        "command_events": [
+                            {
+                                "status": "ready",
+                                "timestamp": conflicting_event_start,
+                                "command_line": "npm test"
+                            },
+                            {
+                                "status": "completed",
+                                "timestamp": conflicting_event_end,
+                                "command_line": "npm test"
+                            }
+                        ]
+                    }
+                }
+            });
+            let message = crate::session::store::Message {
+                id: format!("message-{index}"),
+                session_id: "session-command-run-times".to_string(),
+                role: crate::session::store::MessageRole::Assistant,
+                parent_id: None,
+                parts: vec![store_part(
+                    "tool",
+                    Some("command_run"),
+                    None,
+                    None,
+                    Some(metadata),
+                    Some(state),
+                )],
+                created_at: runtime_start,
+                updated_at: runtime_end,
+            };
+
+            let value = message_with_parts_from_store(message);
+            let state = &value["parts"][0]["state"];
+
+            assert_eq!(state["status"], final_status);
+            assert_eq!(state["time"]["start"], runtime_start);
+            assert_eq!(state["time"]["end"], runtime_end);
+            assert_eq!(state["commands"][0]["status"], command_status);
+            assert_eq!(value["info"]["parts"], value["parts"]);
+        }
     }
 
     fn store_part(

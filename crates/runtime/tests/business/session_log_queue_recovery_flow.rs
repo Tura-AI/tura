@@ -260,18 +260,18 @@ fn runtime_session_log_business_flow_online_reads_are_workspace_scoped_paged_and
     let updated = client
         .get_session(session_a1.clone())?
         .ok_or_else(|| anyhow!("expected updated workspace A session"))?;
-    assert_eq!(updated.message_count, 3);
+    assert_eq!(updated.message_count, 2);
     assert_eq!(updated.todos[0]["status"], "done");
 
     let (records_page, records) = client.list_session_records(session_a1.clone(), 0, 10)?;
-    assert_eq!(records_page.total, 3);
+    assert_eq!(records_page.total, 2);
     assert_eq!(
         records
             .iter()
             .map(|record| record.message_id.as_str())
             .collect::<Vec<_>>(),
-        vec!["a1-m1", "a1-m2", "a1-m3"],
-        "online upsert should update by message id without deleting absent records"
+        vec!["a1-m2", "a1-m3"],
+        "online upsert is a full snapshot and deletes records absent from the runtime source"
     );
     let updated_m2 = records
         .iter()
@@ -280,15 +280,15 @@ fn runtime_session_log_business_flow_online_reads_are_workspace_scoped_paged_and
     assert_eq!(updated_m2.record["parts"][0]["text"], "assistant updated");
 
     let (tail_page, tail_records) = client.list_session_records(session_a1, 0, 2)?;
-    assert_eq!(tail_page.total, 3);
-    assert_eq!(tail_page.page, 1);
+    assert_eq!(tail_page.total, 2);
+    assert_eq!(tail_page.page, 0);
     assert_eq!(
         tail_records
             .iter()
             .map(|record| record.message_id.as_str())
             .collect::<Vec<_>>(),
-        vec!["a1-m3"],
-        "record page 0 resolves to the final bounded page even when it is not full"
+        vec!["a1-m2", "a1-m3"],
+        "record page 0 returns the full bounded page after snapshot replacement"
     );
 
     drop(service);

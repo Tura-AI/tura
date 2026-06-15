@@ -368,6 +368,13 @@ export class MockGatewayClient {
     }
   }
 
+  streamSessionEvents(
+    _sessionID: string,
+    signal?: AbortSignal,
+  ): AsyncGenerator<GatewayEventEnvelope> {
+    return this.streamEvents(signal);
+  }
+
   private streamingOrderMessages(sessionID: string): Message[] {
     const base = Date.now() - 10_000;
     let index = 0;

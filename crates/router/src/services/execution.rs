@@ -48,7 +48,7 @@ impl ExecutionService {
             }
         }
         let active_guard =
-            ActiveSessionGuard::new(self.active_sessions.clone(), &request.session_id);
+            ActiveSessionGuard::new(Arc::clone(&self.active_sessions), &request.session_id);
 
         let run_request = payload_to_run_agent_request(&request)?;
         if debug_runtime_enabled() {

@@ -140,12 +140,10 @@ impl Serialize for Message {
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("Message", 14)?;
+        let mut state = serializer.serialize_struct("Message", 12)?;
         state.serialize_field("id", &self.id)?;
         state.serialize_field("sessionID", &self.session_id)?;
-        state.serialize_field("session_id", &self.session_id)?;
         state.serialize_field("parentID", &self.parent_id)?;
-        state.serialize_field("parent_id", &self.parent_id)?;
         state.serialize_field("role", &self.role)?;
         state.serialize_field("parts", &self.parts)?;
         state.serialize_field(
@@ -582,14 +580,19 @@ pub struct MessageUpdatedProperties {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageRemovedProperties {
+    #[serde(rename = "sessionID")]
     pub session_id: String,
+    #[serde(rename = "messageID")]
     pub message_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessagePartDeltaProperties {
+    #[serde(rename = "sessionID")]
     pub session_id: String,
+    #[serde(rename = "messageID")]
     pub message_id: String,
+    #[serde(rename = "partID")]
     pub part_id: String,
     pub field: String,
     pub delta: String,

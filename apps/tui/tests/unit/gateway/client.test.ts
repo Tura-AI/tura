@@ -130,6 +130,33 @@ test("GatewayClient handles concurrent requests without sharing response state",
   assert.equal(paths.length, 3);
 });
 
+test("GatewayClient streams session-scoped events from the session events endpoint", async () => {
+  let seenUrl = "";
+  await withServer(
+    async (req, res) => {
+      seenUrl = req.url ?? "";
+      const event = {
+        directory: "C:/repo",
+        payload: {
+          type: "message.updated",
+          properties: { sessionID: "sess 1", info: { id: "runtime.message" } },
+        },
+      };
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.end(`data: ${JSON.stringify(event)}\n\n`);
+    },
+    async (baseUrl) => {
+      const client = new GatewayClient({ baseUrl, directory: "C:/repo" });
+      const stream = client.streamSessionEvents("sess 1");
+      const next = await stream.next();
+      assert.equal(next.done, false);
+      assert.equal(next.value.payload?.type, "message.updated");
+    },
+  );
+
+  assert.equal(seenUrl, "/session/sess%201/events");
+});
+
 async function withServer(
   handler: (req: http.IncomingMessage, res: http.ServerResponse) => void | Promise<void>,
   callback: (baseUrl: string) => Promise<void>,

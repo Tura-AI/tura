@@ -144,12 +144,12 @@ fn run_due_task_scheduler_tick_for_store_with_launcher(
     }
 }
 
-#[cfg(feature = "business-tests")]
+#[cfg(any(feature = "business-tests", feature = "os-tests"))]
 pub fn run_due_task_scheduler_tick_for_business_test() {
     run_due_task_scheduler_tick_with_launcher(|_, _| {});
 }
 
-#[cfg(feature = "business-tests")]
+#[cfg(any(feature = "business-tests", feature = "os-tests"))]
 pub fn run_due_task_scheduler_tick_for_store_business_test(store: &crate::session::SessionStore) {
     run_due_task_scheduler_tick_for_store_with_launcher(store, false, |_, _| {});
 }
@@ -400,8 +400,7 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
         "worker_env": worker_env,
     });
 
-    let result = flush_session_to_session_db(&session_id)
-        .and_then(|_| forward_run_agent_to_router(&turn_id, &session_id, &body));
+    let result = forward_run_agent_to_router(&turn_id, &session_id, &body);
 
     if session_store().is_cancelled(&session_id) {
         session_store().finish_todos(&session_id, false);
@@ -465,12 +464,6 @@ fn forward_run_agent_to_router(
             "router rejected turn {turn_id} for session {session_id}: {error}"
         ))
     }
-}
-
-fn flush_session_to_session_db(session_id: &str) -> Result<(), String> {
-    session_store()
-        .persist_session_ack(session_id)
-        .map_err(|error| format!("session_db ACK failed before enqueue: {error}"))
 }
 
 fn prompt_model_override(payload: &serde_json::Value) -> Option<String> {

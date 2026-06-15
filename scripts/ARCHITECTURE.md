@@ -25,10 +25,24 @@ Important scripts:
 - `register-cli.*`: add `target/release` to the user PATH. No wrapper directory is created; the registered CLI command is `tura exec`. The POSIX script updates `.profile`, `.bash_profile`, `.bashrc`, `.zprofile`, and `.zshrc` when present, and creates `.zprofile`/`.zshrc` on macOS so new Terminal sessions work.
 - `unregister-cli.*`: remove `target/release` from PATH and delete a stale `cli-bin` directory if present.
 - `start.*`: convenience runner for `target/debug` by default, or `target/release` with `--release`. The runner repeats the same shell coverage checks before launching; set `TURA_STRICT_SHELL_TOOL_COVERAGE=1` when optional zsh/PowerShell gaps should fail the run.
-- Typed Rust test directories are peers: `tests/business`, `tests/performance`,
-  `tests/live`, `tests/release`, and `tests/benchmark`. Keep files directly under the typed
-  directory, encode categories in filenames, and do not keep empty typed
-  directories. The workspace root `tests/benchmark` is the manual benchmark
+- `check-backend-quality.*`: CI smell gate. It runs backend Rust test-layout
+  policy, Rust formatting, TUI formatting, Rust dependency policy, and spelling.
+  It intentionally does not run `cargo test --workspace`; crate tests are owned
+  by `run-ci-crate-tests.*`.
+- `run-ci-crate-tests.*`: GitHub-style crate matrix runner. It discovers
+  default backend workspace packages, excludes `src-tauri`, and runs clippy plus
+  `cargo test -p <crate>` for each crate. Local runs can batch crates in
+  parallel.
+- `run-ci.*`: local CI orchestrator. It runs `check-backend-quality.*` first,
+  then monitors crate tests, backend business tests, and TUI business tests in
+  parallel.
+- `run-release-dry-run.*`: release dry-run orchestrator. It runs install, the CI
+  flow, and release artifact build without publishing.
+- Typed Rust test directories are peers: `tests/business`, `tests/os_testing`,
+  `tests/performance`, `tests/live`, `tests/release`, and `tests/benchmark`.
+  Business and OS testing may use `helpers/` plus target-owned module
+  directories beside the top-level entrypoint; other crate-owned typed
+  directories stay flat. Do not keep empty typed directories. The workspace root `tests/benchmark` is the manual benchmark
   exception and keeps historical second-level categories such as `bug-fix`,
   `frontend-playwright`, `project-rebuild-refactor`, and `tui`.
 - Typed test runners discover cases by scanning the matching directory type.
@@ -37,11 +51,14 @@ Important scripts:
 - `run-backend-business-tests.*`: run root Rust business tests plus
   crate-owned Rust tests from `crates/*/tests/business`, `commands/*/tests/business`,
   `agents/*/tests/business`, and `personas/*/tests/business` using one-level
-  typed-directory scans. Process-sensitive unit checks and every typed
-  integration target run serially because backend business tests may own
-  process-global env, local sockets, owner locks, and child-process cleanup.
-  These backend runners do not execute `.mjs` app, TUI, or GUI scripts; run app
-  suites from `apps/tui` or `apps/gui`.
+  typed-directory scans. Business targets run in parallel batches; process,
+  daemon, service-owner, lifecycle, and OS policy coverage belongs to
+  `run-backend-os-tests.*`. These backend runners do not execute `.mjs` app,
+  TUI, or GUI scripts; run app suites from `apps/tui` or `apps/gui`.
+- `run-backend-os-tests.*`: run root and crate-owned Rust tests from
+  `tests/os_testing` with the `os-tests` feature gate. Every target runs
+  serially with `--test-threads=1` to avoid process-global env, local socket,
+  owner-lock, daemon, and child-process cleanup conflicts.
 - `run-backend-live-tests.*`: run opt-in root/backend Rust live tests and
   backend-owned root live scripts using one-level typed-directory scans and the
   `live-tests` feature gate when the package declares it. These backend
@@ -65,10 +82,10 @@ Script tests:
 
 GitHub Actions:
 
-- `.github/workflows/scripts-install-release.yml` runs the script tests on
-  Windows, macOS, and Linux hosted runners.
-- `.github/workflows/release.yml` only treats tags matching `release-v*` as real
-  release tags. Manual dry runs use the same script tests and a `release-v...`
-  probe without publishing a GitHub release.
+- `.github/workflows/ci.yml` runs the smell gate first. After that, crate matrix
+  jobs, backend business tests, and TUI business tests run in parallel with
+  Cargo and npm caches. Tags starting with `release` trigger a release dry-run
+  job after CI completes; the job builds release artifacts and does not publish
+  a GitHub release.
 
 Wrapper/package routes are intentionally not used; release commands resolve directly from `target/release`.

@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{Notify, RwLock};
 
 use super::file_locks;
@@ -380,6 +381,33 @@ impl ExternalCommandHandler {
     }
 }
 
+const DEFAULT_EXTERNAL_COMMAND_TIMEOUT_MS: u64 = 15_000;
+
+fn take_external_command_timeout(arguments: &mut Value) -> Duration {
+    let Some(object) = arguments.as_object_mut() else {
+        return Duration::from_millis(DEFAULT_EXTERNAL_COMMAND_TIMEOUT_MS);
+    };
+    let timeout_ms = take_u64_field(object, &["timeout_ms", "timeoutMs"])
+        .or_else(|| {
+            take_u64_field(object, &["timeout_secs", "timeoutSecs"])
+                .map(|seconds| seconds.saturating_mul(1000))
+        })
+        .unwrap_or(DEFAULT_EXTERNAL_COMMAND_TIMEOUT_MS)
+        .max(1);
+    Duration::from_millis(timeout_ms)
+}
+
+fn take_u64_field(object: &mut serde_json::Map<String, Value>, keys: &[&str]) -> Option<u64> {
+    for key in keys {
+        if let Some(value) = object.remove(*key) {
+            return value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|text| text.parse::<u64>().ok()));
+        }
+    }
+    None
+}
+
 #[async_trait::async_trait]
 impl ToolHandler for ExternalCommandHandler {
     fn tool_name(&self) -> &'static str {
@@ -395,8 +423,9 @@ impl ToolHandler for ExternalCommandHandler {
     }
 
     async fn access(&self, call: &ToolCall, ctx: &ToolContext) -> file_locks::Access {
-        let arguments = call.payload.code_mode_input();
-        let response = crate::external::launcher::invoke(
+        let mut arguments = call.payload.code_mode_input();
+        let timeout = take_external_command_timeout(&mut arguments);
+        let response = crate::external::launcher::invoke_with_timeout(
             self.command_id,
             "access",
             serde_json::json!({
@@ -404,6 +433,7 @@ impl ToolHandler for ExternalCommandHandler {
                 "session_dir": ctx.session_dir.display().to_string(),
                 "call_id": call.call_id,
             }),
+            timeout,
         )
         .await;
         response
@@ -417,12 +447,14 @@ impl ToolHandler for ExternalCommandHandler {
         call: ToolCall,
         ctx: ToolContext,
     ) -> Result<FunctionToolOutput, ToolError> {
-        let arguments = call.payload.code_mode_input();
-        let output = crate::external::launcher::execute(
+        let mut arguments = call.payload.code_mode_input();
+        let timeout = take_external_command_timeout(&mut arguments);
+        let output = crate::external::launcher::execute_with_timeout(
             self.command_id,
             arguments,
             &ctx.session_dir,
             &call.call_id,
+            timeout,
         )
         .await?;
         Ok(FunctionToolOutput::from_value(output, Some(true)))
@@ -555,6 +587,35 @@ mod tests {
 
         assert!(!read_only.access(&call, &context).await.workspace_write);
         assert!(mutating.access(&call, &context).await.workspace_write);
+    }
+
+    #[test]
+    fn external_command_timeout_is_taken_from_arguments_without_forwarding() {
+        let mut arguments = json!({
+            "path": "image.png",
+            "timeout_ms": 2500
+        });
+
+        let timeout = take_external_command_timeout(&mut arguments);
+
+        assert_eq!(timeout, std::time::Duration::from_millis(2500));
+        assert_eq!(arguments, json!({"path": "image.png"}));
+    }
+
+    #[test]
+    fn external_command_timeout_defaults_and_rounds_up_to_one_millisecond() {
+        let mut missing = json!({"path": "image.png"});
+        assert_eq!(
+            take_external_command_timeout(&mut missing),
+            std::time::Duration::from_millis(15_000)
+        );
+
+        let mut zero = json!({"timeout_secs": 0});
+        assert_eq!(
+            take_external_command_timeout(&mut zero),
+            std::time::Duration::from_millis(1)
+        );
+        assert_eq!(zero, json!({}));
     }
 
     #[test]

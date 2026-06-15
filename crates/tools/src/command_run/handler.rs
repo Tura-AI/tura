@@ -710,7 +710,10 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
             if looks_like_removed_structured_tool_call(&command.command, &command.command_line) {
                 continue;
             }
-            if command.command_line.is_empty() && looks_like_shell_command_text(&command.command) {
+            if command.command_line.is_empty()
+                && (looks_like_shell_command_text(&command.command)
+                    || looks_like_shell_request_payload(&command.command))
+            {
                 command.command_line = command.command.clone();
                 command.command = crate::commands::active_shell_command_name().to_string();
             } else if !command.command_line.is_empty() {
@@ -731,16 +734,34 @@ fn normalize_json_or_cli_command_arguments(
     command_name: &str,
 ) -> Result<Value, String> {
     let trimmed = command.command_line.trim();
-    if trimmed.is_empty() {
+    let arguments = if trimmed.is_empty() {
         if let Some(arguments) = &command.inline_arguments {
-            return Ok(arguments.clone());
+            Ok(arguments.clone())
+        } else {
+            Ok(json!({ "cli": command.command_line }))
         }
-    }
-    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+    } else if trimmed.starts_with('{') || trimmed.starts_with('[') {
         normalize_json_command_arguments(command, command_name)
     } else {
         Ok(json!({ "cli": command.command_line }))
+    }?;
+    Ok(with_command_timeout(arguments, command))
+}
+
+fn with_command_timeout(mut arguments: Value, command: &CommandItem) -> Value {
+    if let Some(object) = arguments.as_object_mut() {
+        let has_timeout = object.contains_key("timeout_ms")
+            || object.contains_key("timeoutMs")
+            || object.contains_key("timeout_secs")
+            || object.contains_key("timeoutSecs");
+        if !has_timeout {
+            object.insert(
+                "timeout_ms".to_string(),
+                json!(command.effective_timeout_ms()),
+            );
+        }
     }
+    arguments
 }
 
 fn validate_compact_context_position(commands: &[CommandItem]) -> Result<(), String> {
@@ -950,6 +971,26 @@ fn looks_like_shell_command_text(command: &str) -> bool {
         || trimmed.starts_with("./")
         || trimmed.starts_with(".\\")
         || KNOWN_SHELL_COMMANDS.contains(&first)
+}
+
+fn looks_like_shell_request_payload(command: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<Value>(command.trim()) else {
+        return false;
+    };
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    [
+        "command",
+        "command_line",
+        "commandLine",
+        "command_code",
+        "commandCode",
+        "script",
+        "code",
+    ]
+    .iter()
+    .any(|name| object.get(*name).and_then(Value::as_str).is_some())
 }
 
 fn looks_like_removed_structured_tool_call(command: &str, command_line: &str) -> bool {

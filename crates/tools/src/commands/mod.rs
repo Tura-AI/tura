@@ -10,6 +10,7 @@ pub mod zsh;
 use crate::runtime::file_locks::Access;
 use serde_json::Value;
 use std::path::Path;
+use std::time::Duration;
 
 #[derive(Clone, Debug)]
 pub struct CommandResponse {
@@ -32,9 +33,9 @@ pub fn execute(
         "bash" => bash::execute(command_line, session_dir, timeout_secs),
         "compact_context" => compact_context::execute(command_line, session_dir),
         "planning" if planning_command_enabled() => planning::execute(command_line, session_dir),
-        "read_media" => execute_external("read_media", command_line, session_dir),
+        "read_media" => execute_external("read_media", command_line, session_dir, timeout_secs),
         "shell_command" => shell_command::execute(command_line, session_dir, timeout_secs),
-        "web_discover" => execute_external("web_discover", command_line, session_dir),
+        "web_discover" => execute_external("web_discover", command_line, session_dir, timeout_secs),
         "zsh" => zsh::execute(command_line, session_dir, timeout_secs),
         other => CommandResponse {
             success: false,
@@ -144,14 +145,20 @@ fn planning_command_enabled() -> bool {
         })
 }
 
-fn execute_external(command: &str, command_line: &str, session_dir: &Path) -> CommandResponse {
+fn execute_external(
+    command: &str,
+    command_line: &str,
+    session_dir: &Path,
+    timeout_secs: u64,
+) -> CommandResponse {
     let command_for_run = command.to_string();
     let command_for_error = command.to_string();
     let payload = Value::String(command_line.to_string());
     let session_dir_for_run = session_dir.display().to_string();
     let session_dir_for_error = session_dir_for_run.clone();
+    let timeout = Duration::from_secs(timeout_secs.max(1));
     let run = async move {
-        crate::external::launcher::invoke(
+        crate::external::launcher::invoke_with_timeout(
             &command_for_run,
             "execute",
             serde_json::json!({
@@ -159,6 +166,7 @@ fn execute_external(command: &str, command_line: &str, session_dir: &Path) -> Co
                 "session_dir": session_dir_for_run,
                 "call_id": "command_run",
             }),
+            timeout,
         )
         .await
     };
@@ -263,7 +271,7 @@ mod tests {
     fn external_command_error_includes_command_and_workspace() {
         let workspace = Path::new("workspace-for-external-error");
 
-        let stderr = assert_failed(execute_external("missing_external", "{}", workspace));
+        let stderr = assert_failed(execute_external("missing_external", "{}", workspace, 15));
 
         assert!(
             stderr.contains("external command missing_external execute failed"),

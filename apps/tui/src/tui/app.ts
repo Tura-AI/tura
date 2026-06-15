@@ -22,7 +22,6 @@ import {
   fetchAuthSurface,
   hydrate,
   pickInitialSession,
-  pollingLoop,
   type TuiGatewayClient,
 } from "./runtime.js";
 import { shouldApplyInitialHydrate } from "./session-state.js";
@@ -165,8 +164,7 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
 
   const controller = new AbortController();
   if (!context.mock) {
-    void eventLoop(client, controller.signal, dispatch);
-    void pollingLoop(client, () => state, dispatch, controller.signal);
+    void eventLoop(client, () => state, controller.signal, dispatch);
   }
   const heartbeatTimer = setInterval(() => {
     if (!isBusyState(state) && !state.questions.length && !state.permissions.length) return;

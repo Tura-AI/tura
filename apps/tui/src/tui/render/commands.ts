@@ -357,7 +357,9 @@ function statusSymbol(status: string | undefined, frame: number): string {
 }
 
 export function commandIsRunning(status: string | undefined): boolean {
-  return /run|progress|pending|busy|question|in[_ -]?progress|execut|start/i.test(status ?? "");
+  return /run|progress|pending|busy|question|in[_ -]?progress|exec(?:ute|uting|uted|ution)?|start/i.test(
+    status ?? "",
+  );
 }
 
 export function commandPartStatus(part: MessagePart): string | undefined {

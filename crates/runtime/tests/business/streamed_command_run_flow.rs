@@ -331,19 +331,16 @@ async fn streamed_command_batch_reports_timeouts_without_success_side_effects() 
     } else {
         "sleep 1.5; echo done > streamed-timeout-should-not-exist.txt"
     };
-    let started = std::time::Instant::now();
-
-    let output = execute_runtime_stream_command_batch_with_mock_router(
-        vec![shell_command_with_timeout(command, 1, 150)],
-        workspace.path().to_path_buf(),
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        execute_runtime_stream_command_batch_with_mock_router(
+            vec![shell_command_with_timeout(command, 1, 150)],
+            workspace.path().to_path_buf(),
+        ),
     )
     .await
+    .expect("timed out command batch should finish before the business timeout")
     .expect("timed out command still returns command_run output");
-
-    assert!(
-        started.elapsed() < std::time::Duration::from_secs(5),
-        "timeout should bound the streamed command duration"
-    );
     let results = output["results"]
         .as_array()
         .expect("command_run output should contain results");

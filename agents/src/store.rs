@@ -363,8 +363,8 @@ mod tests {
             PathBuf::from("agents/src/custom-agent")
         );
         assert_eq!(config.description.as_deref(), Some("Custom Tura agent"));
-        assert_eq!(config.report_to_user, true);
-        assert_eq!(config.default_config, false);
+        assert!(config.report_to_user);
+        assert!(!config.default_config);
         assert_eq!(config.provider["tura_llm_name"], "flagship_thinking");
         assert_eq!(config.provider["tool_choice"], "Auto");
         assert!(config
@@ -508,22 +508,13 @@ mod tests {
     fn delete_dynamic_agent_is_idempotent_for_missing_agents_and_removes_existing() {
         let temp = project();
 
-        assert_eq!(
-            delete_dynamic_agent(temp.path(), "missing").expect("missing delete"),
-            false
-        );
+        assert!(!delete_dynamic_agent(temp.path(), "missing").expect("missing delete"));
         save_dynamic_agent(temp.path(), &test_config(temp.path(), "remove-me"), None)
             .expect("save");
 
-        assert_eq!(
-            delete_dynamic_agent(temp.path(), "remove-me").expect("delete"),
-            true
-        );
+        assert!(delete_dynamic_agent(temp.path(), "remove-me").expect("delete"));
         assert!(load_agent(temp.path(), "remove-me").is_none());
-        assert_eq!(
-            delete_dynamic_agent(temp.path(), "remove-me").expect("second delete"),
-            false
-        );
+        assert!(!delete_dynamic_agent(temp.path(), "remove-me").expect("second delete"));
     }
 
     #[test]

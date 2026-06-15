@@ -219,7 +219,10 @@ function createGatewayServer() {
     if (req.method === "GET" && url.pathname === "/provider/auth") return sendJson(res, {});
     if (req.method === "GET" && url.pathname === "/agent") return sendJson(res, [agent]);
     if (req.method === "GET" && url.pathname === "/persona") return sendJson(res, []);
-    if (req.method === "GET" && url.pathname === "/event") {
+    if (
+      req.method === "GET" &&
+      (url.pathname === "/event" || /^\/session\/[^/]+\/events$/.test(url.pathname))
+    ) {
       res.writeHead(200, {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",

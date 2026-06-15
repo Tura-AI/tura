@@ -247,14 +247,14 @@ test("render shows streamed command_run results before the whole command batch f
     session,
     messages: [
       {
-        id: "msg-streamed-command-user",
+        id: "msg-command-user",
         sessionID: "sess-streamed-commands",
         role: "user",
         created_at: 1_000,
-        parts: [{ id: "part-streamed-command-user", type: "text", text: "Run build and tests" }],
+        parts: [{ id: "part-command-user", type: "text", text: "Run build and tests" }],
       },
       {
-        id: "msg-streamed-command-tool",
+        id: "msg-command-tool",
         sessionID: "sess-streamed-commands",
         role: "assistant",
         created_at: 2_000,

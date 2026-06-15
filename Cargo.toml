@@ -109,26 +109,35 @@ router.workspace = true
 runtime.workspace = true
 tools.workspace = true
 
+[features]
+os-tests = []
+
 [[test]]
 name = "process_state_management_e2e"
-path = "tests/business/process_state_management_e2e.rs"
+path = "tests/os_testing/process_state_management_e2e.rs"
+required-features = ["os-tests"]
 
 [[test]]
 name = "session_db_workspace_flow_e2e"
-path = "tests/business/session_db_workspace_flow_e2e.rs"
+path = "tests/os_testing/session_db_workspace_flow_e2e.rs"
+required-features = ["os-tests"]
 
 [[test]]
 name = "session_db_restart_queue_resilience"
-path = "tests/business/session_db_restart_queue_resilience.rs"
+path = "tests/os_testing/session_db_restart_queue_resilience.rs"
+required-features = ["os-tests"]
 
 [[test]]
 name = "process_scope_management_e2e"
-path = "tests/business/process_scope_management_e2e.rs"
+path = "tests/os_testing/process_scope_management_e2e.rs"
+required-features = ["os-tests"]
 
 [[test]]
 name = "process_lifecycle_policy_matrix"
-path = "tests/business/process_lifecycle_policy_matrix.rs"
+path = "tests/os_testing/process_lifecycle_policy_matrix.rs"
+required-features = ["os-tests"]
 
 [[test]]
 name = "command_run_router_ownership_e2e"
-path = "tests/business/command_run_router_ownership_e2e.rs"
+path = "tests/os_testing/command_run_router_ownership_e2e.rs"
+required-features = ["os-tests"]

@@ -6,6 +6,7 @@ use tracing::warn;
 use crate::manas::constants::gateway_callbacks_disabled;
 use crate::manas::final_response::summarize_tool_results_for_user;
 use crate::manas::tool_catalog::env_flag;
+use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeSessionSyncStatus};
 
 const DEFAULT_GATEWAY_CALLBACK_TIMEOUT_MS: u64 = 2_000;
 
@@ -51,17 +52,22 @@ fn emit_cli_agent_message(reply_message: &str) {
     let _ = std::io::stdout().flush();
 }
 
-/// Stable message id for the streamed assistant text of a given provider turn.
-/// Both the incremental `message.part.delta` events and the final persisted
-/// message reuse this id so the frontend can merge them without dropping
-/// already-visible text.
-pub(crate) fn stream_agent_message_id(runtime_id: &str) -> String {
-    format!("msg-stream-{runtime_id}")
+/// Canonical frontend message id for a runtime-owned assistant turn.
+///
+/// Runtime callbacks, live overlays, and persisted session snapshots all derive
+/// the same id from `runtime_id` so one provider call has one assistant message.
+pub(crate) fn runtime_message_id(runtime_id: &str) -> String {
+    format!("{runtime_id}.message")
 }
 
-/// Stable text part id paired with [`stream_agent_message_id`].
-pub(crate) fn stream_agent_part_id(runtime_id: &str) -> String {
-    format!("part-stream-{runtime_id}")
+/// Canonical text part id paired with [`runtime_message_id`].
+pub(crate) fn runtime_text_part_id(runtime_id: &str) -> String {
+    format!("{runtime_id}.message")
+}
+
+/// Canonical tool part id for a runtime-owned assistant turn.
+pub(crate) fn runtime_tool_part_id(runtime_id: &str, tool_name: &str) -> String {
+    format!("{runtime_id}.tool.{tool_name}")
 }
 
 /// Publish one incremental assistant text delta to the gateway, which re-emits it
@@ -76,8 +82,6 @@ pub(crate) async fn publish_streamed_agent_text(session_id: &str, runtime_id: &s
         gateway_callback_base_url()
     );
     let payload = serde_json::json!({
-        "message_id": stream_agent_message_id(runtime_id),
-        "part_id": stream_agent_part_id(runtime_id),
         "delta": delta,
         "runtime_id": runtime_id,
     });
@@ -102,6 +106,44 @@ pub(crate) fn publish_gateway_agent_message(
     reply_message: String,
     new_learning: String,
 ) -> Result<(), String> {
+    publish_gateway_agent_message_with_sync(
+        session_id,
+        runtime_id,
+        reply_message,
+        new_learning,
+        None,
+        None,
+        None,
+    )
+}
+
+pub(crate) fn publish_gateway_agent_message_from_runtime(
+    session_id: &str,
+    runtime: &RuntimeManagement,
+    reply_message: String,
+    new_learning: String,
+) -> Result<(), String> {
+    let (created_at, updated_at) = runtime.assistant_message_timestamps();
+    publish_gateway_agent_message_with_sync(
+        session_id,
+        &runtime.runtime_id,
+        reply_message,
+        new_learning,
+        Some(runtime.session_sync_status()),
+        Some(created_at),
+        Some(updated_at),
+    )
+}
+
+fn publish_gateway_agent_message_with_sync(
+    session_id: &str,
+    runtime_id: &str,
+    reply_message: String,
+    new_learning: String,
+    runtime_status: Option<RuntimeSessionSyncStatus>,
+    created_at: Option<i64>,
+    updated_at: Option<i64>,
+) -> Result<(), String> {
     if gateway_callbacks_disabled() {
         return Ok(());
     }
@@ -114,8 +156,9 @@ pub(crate) fn publish_gateway_agent_message(
         "new_learning": new_learning,
         "media": [],
         "runtime_id": runtime_id,
-        "message_id": stream_agent_message_id(runtime_id),
-        "part_id": stream_agent_part_id(runtime_id),
+        "runtime_status": runtime_status,
+        "created_at": created_at,
+        "updated_at": updated_at,
     });
 
     tokio::runtime::Runtime::new()
@@ -196,17 +239,11 @@ mod tests {
 
     #[test]
     fn stream_message_ids_are_stable_and_runtime_scoped() {
-        assert_eq!(
-            stream_agent_message_id("runtime-123"),
-            "msg-stream-runtime-123"
-        );
-        assert_eq!(
-            stream_agent_part_id("runtime-123"),
-            "part-stream-runtime-123"
-        );
+        assert_eq!(runtime_message_id("runtime-123"), "runtime-123.message");
+        assert_eq!(runtime_text_part_id("runtime-123"), "runtime-123.message");
         assert_ne!(
-            stream_agent_message_id("runtime-123"),
-            stream_agent_message_id("runtime-456")
+            runtime_message_id("runtime-123"),
+            runtime_message_id("runtime-456")
         );
     }
 
@@ -316,9 +353,12 @@ mod tests {
         assert_eq!(payload["reply_message"], "visible reply");
         assert_eq!(payload["new_learning"], "new learning");
         assert_eq!(payload["runtime_id"], "runtime-42");
-        assert_eq!(payload["message_id"], "msg-stream-runtime-42");
-        assert_eq!(payload["part_id"], "part-stream-runtime-42");
+        assert!(payload.get("message_id").is_none());
+        assert!(payload.get("part_id").is_none());
         assert_eq!(payload["media"], serde_json::json!([]));
+        assert_eq!(payload["runtime_status"], serde_json::Value::Null);
+        assert_eq!(payload["created_at"], serde_json::Value::Null);
+        assert_eq!(payload["updated_at"], serde_json::Value::Null);
     }
 
     #[test]
@@ -366,8 +406,8 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_str(body).expect("json body");
         assert_eq!(payload["delta"], "hello");
         assert_eq!(payload["runtime_id"], "runtime-7");
-        assert_eq!(payload["message_id"], "msg-stream-runtime-7");
-        assert_eq!(payload["part_id"], "part-stream-runtime-7");
+        assert!(payload.get("message_id").is_none());
+        assert!(payload.get("part_id").is_none());
     }
 
     struct TestServer {

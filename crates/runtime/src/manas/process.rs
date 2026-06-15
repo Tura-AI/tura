@@ -1,5 +1,6 @@
 use crate::gateway_events::{
-    publish_gateway_agent_message, publish_runtime_failure_message, publish_runtime_usage_record,
+    publish_gateway_agent_message_from_runtime, publish_runtime_failure_message,
+    publish_runtime_usage_record,
 };
 use crate::manas::prompt_messages::{
     messages_for_turn, push_no_tool_task_status_retry_message, push_task_status_nudge,
@@ -161,9 +162,9 @@ pub fn process_manas_internal(
         last_runtime_id = Some(runtime.runtime_id.clone());
 
         accumulate_session_from_runtime(session, &runtime, true)?;
-        publish_runtime_usage_record(session, &runtime);
         increment_turn_with_fresh_timestamp(session);
         persist_session_checkpoint(session, "runtime");
+        publish_runtime_usage_record(session, &runtime);
 
         if runtime.call_result_status == RuntimeCallResultStatus::TimedOut
             || runtime_failure_allows_retry(&runtime)
@@ -268,9 +269,9 @@ pub fn process_manas_internal(
             let visible_reply_published_before_terminal_status =
                 visible_reply_before_tool.is_some();
             if let Some(content) = visible_reply_before_tool {
-                if let Err(error) = publish_gateway_agent_message(
+                if let Err(error) = publish_gateway_agent_message_from_runtime(
                     &session.session_id,
-                    &runtime.runtime_id,
+                    &runtime,
                     content,
                     String::new(),
                 ) {
@@ -316,6 +317,7 @@ pub fn process_manas_internal(
                     tool_result.result.clone(),
                     tool_result.success,
                     tool_result.error.clone(),
+                    Some(&runtime.runtime_id),
                     tool_calls
                         .get(index)
                         .and_then(|tool_call| tool_call.provider_metadata.clone()),
@@ -531,10 +533,14 @@ fn run_terminal_final_response_turn(
         .as_ref()
         .map(|text| !text.trim().is_empty())
         .unwrap_or(false);
-    if let Some(content) = visible_text.filter(|text| !text.trim().is_empty()) {
-        if let Err(error) = publish_gateway_agent_message(
+    let visible_text = visible_text.filter(|text| !text.trim().is_empty());
+    accumulate_session_from_runtime(session, &runtime, true)?;
+    session.increment_turn(Utc::now());
+    persist_session_checkpoint(session, "terminal_final_response");
+    if let Some(content) = visible_text {
+        if let Err(error) = publish_gateway_agent_message_from_runtime(
             &session.session_id,
-            &runtime.runtime_id,
+            &runtime,
             content,
             String::new(),
         ) {
@@ -546,10 +552,7 @@ fn run_terminal_final_response_turn(
             );
         }
     }
-    accumulate_session_from_runtime(session, &runtime, true)?;
     publish_runtime_usage_record(session, &runtime);
-    session.increment_turn(Utc::now());
-    persist_session_checkpoint(session, "terminal_final_response");
     Ok(has_visible_text)
 }
 

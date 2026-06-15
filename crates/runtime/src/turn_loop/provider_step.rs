@@ -1,10 +1,10 @@
 use chrono::Utc;
 
+use crate::gateway_events::{runtime_message_id, runtime_text_part_id};
 use crate::manas::{user_visible_runtime_output_text, user_visible_runtime_text};
 use crate::provider_flow::usage::runtime_cache_diagnostics;
 use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::state_machine::session_management::SessionManagement;
-use crate::{gateway_events::stream_agent_message_id, gateway_events::stream_agent_part_id};
 
 pub(crate) fn accumulate_session_from_runtime(
     session: &mut SessionManagement,
@@ -40,21 +40,108 @@ pub(crate) fn accumulate_session_from_runtime(
     });
 
     if let Some(content) = visible_text {
+        let (created_at, updated_at) = runtime.assistant_message_timestamps();
+        let message_timestamp = runtime
+            .call_finished_at
+            .or(runtime.first_token_at)
+            .or(runtime.called_at)
+            .unwrap_or(runtime.created_at);
         session.push_log(
             serde_json::json!({
-                "id": stream_agent_message_id(&runtime.runtime_id),
+                "id": runtime_message_id(&runtime.runtime_id),
                 "role": "assistant",
                 "content": content,
-                "part_id": stream_agent_part_id(&runtime.runtime_id),
+                "part_id": runtime_text_part_id(&runtime.runtime_id),
                 "runtime_id": runtime.runtime_id,
-                "created_at": now.timestamp_millis(),
-                "updated_at": now.timestamp_millis(),
-                "timestamp": now.to_rfc3339(),
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "timestamp": message_timestamp.to_rfc3339(),
             })
             .to_string(),
-            now,
+            message_timestamp,
         );
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::accumulate_session_from_runtime;
+    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
+    use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
+    use crate::state_machine::session_management::{SessionInput, SessionManagement};
+    use chrono::{Duration, Utc};
+    use std::path::PathBuf;
+
+    #[test]
+    fn assistant_session_log_reuses_runtime_message_ids_and_timestamps() {
+        let session_created_at = Utc::now();
+        let mut session = SessionManagement::new(
+            "session-provider-step".to_string(),
+            "provider step".to_string(),
+            PathBuf::from("C:/workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "hello".to_string(),
+                file_input: Vec::new(),
+                agent: Some("fast".to_string()),
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "hello".to_string(),
+            session_created_at,
+        );
+        let mut runtime = RuntimeManagement::new(
+            "runtime-provider-step".to_string(),
+            session.session_id.clone(),
+            "agent-provider-step".to_string(),
+            provider_config(),
+            session_created_at + Duration::milliseconds(5),
+        );
+        let called_at = runtime.created_at + Duration::milliseconds(10);
+        let first_token_at = called_at + Duration::milliseconds(20);
+        let finished_at = first_token_at + Duration::milliseconds(30);
+        runtime.mark_called(called_at).expect("mark called");
+        runtime
+            .mark_waiting_first_token()
+            .expect("mark waiting first token");
+        runtime
+            .mark_first_token(first_token_at)
+            .expect("mark first token");
+        runtime.append_text("Visible assistant reply");
+        runtime.finish_success(finished_at, None).expect("finish");
+
+        accumulate_session_from_runtime(&mut session, &runtime, true).expect("accumulate");
+
+        let entry = session
+            .session_log
+            .last()
+            .expect("assistant message should be appended");
+        let value: serde_json::Value = serde_json::from_str(entry).expect("assistant log json");
+        assert_eq!(value["id"], "runtime-provider-step.message");
+        assert_eq!(value["part_id"], "runtime-provider-step.message");
+        assert_eq!(value["created_at"], first_token_at.timestamp_millis());
+        assert_eq!(value["updated_at"], finished_at.timestamp_millis());
+        assert_eq!(value["timestamp"], finished_at.to_rfc3339());
+    }
+
+    fn provider_config() -> RuntimeProviderConfig {
+        RuntimeProviderConfig {
+            base: ProviderConfig {
+                tura_llm_name: "fast".to_string(),
+                stream: true,
+                temperature: 0.0,
+                max_tokens: 1024,
+                tool_choice: ToolChoice::Auto,
+                time_out_ms: 30_000,
+            },
+            thinking: false,
+            provider_name: "openai".to_string(),
+            model_name: "gpt-test".to_string(),
+            provider_url_name: "openai".to_string(),
+            llm_provider_name: "openai".to_string(),
+        }
+    }
 }

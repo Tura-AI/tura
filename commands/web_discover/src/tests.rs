@@ -1029,10 +1029,10 @@ fn exa_web_results_dedupe_limit_and_skip_metadata_lines() {
 }
 
 #[test]
-fn exa_web_results_report_unparseable_and_empty_payloads() {
-    let unparseable = parse_exa_web_results("event: done\ndata: {not-json}", 5)
-        .expect_err("unparseable exa payload");
-    assert_eq!(unparseable, "exa web search returned no parseable content");
+fn exa_web_results_report_unparsable_and_empty_payloads() {
+    let unparsable = parse_exa_web_results("event: done\ndata: {not-json}", 5)
+        .expect_err("unparsable exa payload");
+    assert_eq!(unparsable, "exa web search returned no parseable content");
 
     let empty = parse_exa_web_results(
         &json!({"result": {"content": [{"type": "text", "text": "Title: no url"}]}}).to_string(),

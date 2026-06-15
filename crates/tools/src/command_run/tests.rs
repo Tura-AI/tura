@@ -1,7 +1,10 @@
 use super::handler_parse::{
     command_values, parse_arguments_value, parse_command_item, string_field, u64_field,
 };
-use super::{normalize_command_steps, normalize_shell_command_arguments, parse_args};
+use super::{
+    normalize_command_steps, normalize_json_or_cli_command_arguments,
+    normalize_shell_command_arguments, parse_args,
+};
 use serde_json::json;
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -128,6 +131,48 @@ fn normalize_shell_commands_default_to_15_second_timeout() {
         normalize_shell_command_arguments(&args.commands[0]).expect("normalize shell arguments");
 
     assert_eq!(arguments["timeout_ms"], json!(15_000));
+}
+
+#[test]
+fn normalize_external_commands_default_to_15_second_timeout() {
+    let args = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "read_media",
+                "path": "note.txt",
+                "step": 1
+            }
+        ]
+    }))
+    .expect("parse command_run args");
+
+    let arguments = normalize_json_or_cli_command_arguments(&args.commands[0], "read_media")
+        .expect("normalize read_media arguments");
+
+    assert_eq!(arguments["path"], json!("note.txt"));
+    assert_eq!(arguments["timeout_ms"], json!(15_000));
+}
+
+#[test]
+fn normalize_external_commands_keep_explicit_timeout_fields() {
+    let args = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "web_discover",
+                "command_line": "{\"query\":\"docs\",\"timeout_secs\":2}",
+                "timeout_ms": 5000,
+                "step": 1
+            }
+        ]
+    }))
+    .expect("parse command_run args");
+
+    let arguments = normalize_json_or_cli_command_arguments(&args.commands[0], "web_discover")
+        .expect("normalize web_discover arguments");
+
+    assert_eq!(arguments["query"], json!("docs"));
+    assert_eq!(arguments["timeout_secs"], json!(2));
+    assert!(arguments.get("timeout_ms").is_none());
 }
 
 #[test]
@@ -278,6 +323,26 @@ fn parse_single_shell_object_without_commands_is_wrapped() {
 
     assert_eq!(args.commands.len(), 1);
     assert_eq!(args.commands[0].command_line, "echo ok");
+    assert_eq!(args.commands[0].timeout_ms, Some(120000));
+}
+
+#[test]
+fn parse_single_stringified_shell_object_without_commands_is_wrapped() {
+    let args = parse_args(&json!({
+        "command": json!({ "command": "echo ok", "timeout_ms": 5000 }).to_string(),
+        "timeoutMs": 120000
+    }))
+    .expect("parse args");
+
+    assert_eq!(args.commands.len(), 1);
+    assert_eq!(
+        args.commands[0].command,
+        crate::commands::active_shell_command_name()
+    );
+    assert_eq!(
+        args.commands[0].command_line,
+        json!({ "command": "echo ok", "timeout_ms": 5000 }).to_string()
+    );
     assert_eq!(args.commands[0].timeout_ms, Some(120000));
 }
 

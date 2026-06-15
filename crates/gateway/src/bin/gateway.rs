@@ -209,17 +209,8 @@ fn install_stdin_eof_shutdown_watcher() {
                 Err(_) => break,
             }
         }
-        if let Err(error) = shutdown_owned_backend_before_exit() {
-            eprintln!("gateway stdin EOF backend shutdown failed: {error:#}");
-        }
         std::process::exit(0);
     });
-}
-
-fn shutdown_owned_backend_before_exit() -> anyhow::Result<()> {
-    let router = gateway::router_process::global_router_process()?;
-    let _ = router.shutdown()?;
-    Ok(())
 }
 
 fn start_router_front_heartbeat() {

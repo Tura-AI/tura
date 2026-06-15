@@ -127,27 +127,47 @@ sh scripts/tests/scripts/test-install.sh
 sh scripts/tests/scripts/test-build-release.sh --skip-tui --release-probe release-v0.0.0-ci
 ```
 
+GitHub-style CI flow:
+
+```powershell
+.\scripts\check-backend-quality.ps1
+.\scripts\run-ci.ps1
+.\scripts\run-release-dry-run.ps1
+```
+
+```bash
+sh scripts/check-backend-quality.sh
+sh scripts/run-ci.sh
+sh scripts/run-release-dry-run.sh
+```
+
+`check-backend-quality` is the smell gate: backend Rust test layout, Rust
+formatting, TUI formatting, dependency policy, and spelling. It does not run
+`cargo test --workspace`. The CI flow runs crate clippy/tests, backend business
+tests, and TUI business tests in parallel after the smell gate passes.
+
 ## Business Tests And Benchmarks
 
 Workspace tests are classified by top-level peer directory:
-`tests/business`, `tests/performance`, `tests/live`, `tests/release`, and
-`tests/benchmark`.
+`tests/business`, `tests/os_testing`, `tests/performance`, `tests/live`,
+`tests/release`, and `tests/benchmark`.
 Crate-owned Rust tests use the same peer names under each package `tests/`
 directory. Business tests are required local business/link flows and must not
 depend on third-party services, provider tokens, API keys, paid providers, or
-public live systems. Live tests contain those external/key-dependent checks and
-are opt-in. Performance tests contain stress, load, soak, and stability checks.
-Benchmark tests contain scoring and comparison suites.
+public live systems. OS testing contains process, daemon, socket-owner,
+shutdown, and cross-OS policy checks and runs serially. Live tests contain
+external/key-dependent checks and are opt-in. Performance tests contain
+non-process stress, load, soak, and stability checks. Benchmark tests contain
+scoring and comparison suites.
 
-Backend business and performance runners discover tests by package and
-directory type; keep typed test files directly under `business`, `performance`,
-`live`, or `benchmark`, do not add empty type directories, and do not hard-code
+Backend business, OS, and performance runners discover tests by package and
+directory type; do not add empty type directories, and do not hard-code
 individual test script paths when a one-level directory scan can select the
 suite. Run backend business coverage through `scripts/run-backend-business-tests`
-instead of a single `cargo test --features ...` command, because process-owning
-business checks are serialized by the runner. CI and default
-`cargo test --workspace --exclude src-tauri` run only unit tests, default crate
-tests, and required non-foldered integration tests.
+for parallel business batches, then run `scripts/run-backend-os-tests` for
+serial process/OS coverage. The GitHub CI workflow does not use a single
+workspace cargo test as its main check; it runs per-crate clippy/tests through
+the crate matrix plus typed business runners.
 
 Run the release binary suite after `build-release` and registration:
 
@@ -160,7 +180,7 @@ bun run --cwd apps\gui e2e:live:release
 
 ```bash
 ./scripts/build-release.sh; scripts/register-cli.sh
-./scripts/run-backend-release-tests.sh
+sh scripts/run-backend-release-tests.sh
 npm --prefix apps/tui run test:live:release
 bun run --cwd apps/gui e2e:live:release
 ```
@@ -171,6 +191,7 @@ bun run --cwd apps/gui e2e:live:release
 - [Architecture boundaries](ARCHITECTURE.md)
 - [Scripts architecture](scripts/ARCHITECTURE.md)
 - [Business test guide](tests/business/README.md)
+- [OS testing guide](tests/os_testing/README.md)
 - [Live test guide](tests/live/README.md)
 - [Release test guide](tests/release/README.md)
 - [Benchmark guide](tests/benchmark/README.md)

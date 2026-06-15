@@ -116,6 +116,11 @@ pub struct RouterCommandRunExecutor {
     halted: bool,
 }
 
+pub(crate) struct RouterCommandRunCommandResult {
+    pub(crate) results: Vec<Value>,
+    pub(crate) halted: bool,
+}
+
 impl RouterCommandRunExecutor {
     pub fn new_with_allowed(
         session_directory: PathBuf,
@@ -137,37 +142,19 @@ impl RouterCommandRunExecutor {
         if self.halted {
             return Vec::new();
         }
-        let fallback_command = command.clone();
-        let output = match execute_command_run_value(
-            json!({ "commands": [command] }),
+        let result = execute_command_value_results(
+            command,
             self.session_directory.clone(),
             Some(&self.session_id),
             Some(&self.runtime_id),
             self.allowed_commands.clone(),
         )
-        .await
-        {
-            Ok(output) => output,
-            Err(error) => {
-                let result = command_failure_result(&fallback_command, &error);
-                if is_failed_apply_patch_result(&result) {
-                    self.halted = true;
-                    self.ctx.cancellation.cancel();
-                }
-                return vec![result];
-            }
-        };
-        let results = command_run_results(&output).unwrap_or_else(|| {
-            vec![command_failure_result(
-                &fallback_command,
-                "router command_run did not return results",
-            )]
-        });
-        if results.iter().any(is_failed_apply_patch_result) {
+        .await;
+        if result.halted {
             self.halted = true;
             self.ctx.cancellation.cancel();
         }
-        results
+        result.results
     }
 
     pub async fn finish(self) -> Vec<Value> {
@@ -181,6 +168,43 @@ impl RouterCommandRunExecutor {
     pub fn event_context(&self) -> code_tools::runtime::tool::ToolContext {
         self.ctx.child()
     }
+}
+
+pub(crate) async fn execute_command_value_results(
+    command: Value,
+    session_directory: PathBuf,
+    session_id: Option<&str>,
+    runtime_id: Option<&str>,
+    allowed_commands: Option<BTreeSet<String>>,
+) -> RouterCommandRunCommandResult {
+    let fallback_command = command.clone();
+    let output = match execute_command_run_value(
+        json!({ "commands": [command] }),
+        session_directory,
+        session_id,
+        runtime_id,
+        allowed_commands,
+    )
+    .await
+    {
+        Ok(output) => output,
+        Err(error) => {
+            let result = command_failure_result(&fallback_command, &error);
+            let halted = is_failed_apply_patch_result(&result);
+            return RouterCommandRunCommandResult {
+                results: vec![result],
+                halted,
+            };
+        }
+    };
+    let results = command_run_results(&output).unwrap_or_else(|| {
+        vec![command_failure_result(
+            &fallback_command,
+            "router command_run did not return results",
+        )]
+    });
+    let halted = results.iter().any(is_failed_apply_patch_result);
+    RouterCommandRunCommandResult { results, halted }
 }
 
 fn command_run_results(output: &Value) -> Option<Vec<Value>> {
@@ -201,6 +225,7 @@ fn command_failure_result(command: &Value, error: &str) -> Value {
     let command_type = command
         .get("command")
         .and_then(Value::as_str)
+        .or_else(|| command.get("command_type").and_then(Value::as_str))
         .unwrap_or("command_run");
     json!({
         "step": step,

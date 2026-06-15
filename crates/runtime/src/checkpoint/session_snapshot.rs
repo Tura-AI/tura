@@ -4,6 +4,7 @@ use crate::session_log_client::SessionLogClient;
 use crate::state_machine::session_management::SessionManagement;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use std::collections::HashMap;
 
 pub(crate) fn persist_session_snapshot(session: &SessionManagement) -> Result<(), String> {
     let record = persisted_record(session);
@@ -70,12 +71,39 @@ fn persisted_record(session: &SessionManagement) -> serde_json::Value {
 
 fn persisted_messages(session: &SessionManagement) -> Vec<Value> {
     let base_time = session.session_created_at.timestamp_millis();
-    session
-        .session_log
-        .iter()
-        .enumerate()
-        .map(|(index, entry)| persisted_message(session, index, entry, base_time))
-        .collect()
+    let mut messages = Vec::new();
+    let mut runtime_message_indexes = HashMap::new();
+
+    for (index, entry) in session.session_log.iter().enumerate() {
+        if let Some((runtime_id, tool_part, created_at, updated_at)) =
+            runtime_tool_part_from_log_entry(index, entry, base_time)
+        {
+            merge_runtime_tool_part(
+                session,
+                &mut messages,
+                &mut runtime_message_indexes,
+                &runtime_id,
+                tool_part,
+                created_at,
+                updated_at,
+            );
+            continue;
+        }
+
+        let message = persisted_message(session, index, entry, base_time);
+        if let Some(runtime_id) = assistant_runtime_id(&message) {
+            if let Some(existing_index) = runtime_message_indexes.get(&runtime_id).copied() {
+                merge_runtime_message(&mut messages[existing_index], message);
+            } else {
+                runtime_message_indexes.insert(runtime_id, messages.len());
+                messages.push(message);
+            }
+        } else {
+            messages.push(message);
+        }
+    }
+
+    messages
 }
 
 fn persisted_message(
@@ -125,6 +153,11 @@ fn persisted_message(
         .or_else(|| object.get("timestamp").and_then(timestamp_millis))
         .unwrap_or(created_at);
 
+    if is_user_context_without_frontend_id(object) {
+        normalize_user_context_record(session, index, object, created_at, updated_at);
+        return value;
+    }
+
     if let Some(message) =
         conversation_message_record(session, index, object, created_at, updated_at)
     {
@@ -150,6 +183,212 @@ fn persisted_message(
     value
 }
 
+fn runtime_tool_part_from_log_entry(
+    index: usize,
+    entry: &str,
+    base_time: i64,
+) -> Option<(String, Value, i64, i64)> {
+    let value = serde_json::from_str::<Value>(entry).ok()?;
+    let object = value.as_object()?;
+    if object.get("type").and_then(Value::as_str) != Some("tool_result") {
+        return None;
+    }
+    let runtime_id = object
+        .get("runtime_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|runtime_id| !runtime_id.is_empty())?
+        .to_string();
+    let tool_name = object
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|tool_name| !tool_name.is_empty())?;
+    let fallback_time = base_time.saturating_add(index as i64);
+    let created_at = object
+        .get("created_at")
+        .and_then(Value::as_i64)
+        .or_else(|| object.get("timestamp").and_then(timestamp_millis))
+        .unwrap_or(fallback_time);
+    let updated_at = object
+        .get("updated_at")
+        .and_then(Value::as_i64)
+        .or_else(|| object.get("timestamp").and_then(timestamp_millis))
+        .unwrap_or(created_at);
+    Some((
+        runtime_id.clone(),
+        runtime_tool_part(&runtime_id, tool_name, object, created_at, updated_at),
+        created_at,
+        updated_at,
+    ))
+}
+
+fn runtime_tool_part(
+    runtime_id: &str,
+    tool_name: &str,
+    object: &serde_json::Map<String, Value>,
+    created_at: i64,
+    updated_at: i64,
+) -> Value {
+    let input = object.get("input").cloned().unwrap_or(Value::Null);
+    let output = object.get("output").cloned().unwrap_or(Value::Null);
+    let success = object.get("success").and_then(Value::as_bool);
+    let error = object.get("error").cloned().unwrap_or(Value::Null);
+    let status = match success {
+        Some(false) => "failed",
+        _ => "completed",
+    };
+    let part_id = crate::gateway_events::runtime_tool_part_id(runtime_id, tool_name);
+    let metadata = serde_json::json!({
+        "kind": "mano_tool_call",
+        "tool": tool_name,
+        "runtime_id": runtime_id,
+        "input": input,
+        "output": output,
+        "success": success,
+        "error": error,
+        "transient": true,
+        "streaming_partial": false,
+    });
+    serde_json::json!({
+        "id": part_id,
+        "type": "tool",
+        "content": null,
+        "text": null,
+        "metadata": metadata,
+        "call_id": part_id,
+        "tool": tool_name,
+        "state": {
+            "status": status,
+            "input": input,
+            "output": output,
+            "metadata": metadata,
+            "time": {
+                "start": created_at,
+                "end": updated_at,
+            }
+        }
+    })
+}
+
+fn merge_runtime_tool_part(
+    session: &SessionManagement,
+    messages: &mut Vec<Value>,
+    runtime_message_indexes: &mut HashMap<String, usize>,
+    runtime_id: &str,
+    tool_part: Value,
+    created_at: i64,
+    updated_at: i64,
+) {
+    let message_index = runtime_message_indexes
+        .get(runtime_id)
+        .copied()
+        .unwrap_or_else(|| {
+            let message = serde_json::json!({
+                "id": crate::gateway_events::runtime_message_id(runtime_id),
+                "session_id": session.session_id,
+                "role": "assistant",
+                "parent_id": null,
+                "parts": [],
+                "created_at": created_at,
+                "updated_at": updated_at,
+            });
+            messages.push(message);
+            let message_index = messages.len() - 1;
+            runtime_message_indexes.insert(runtime_id.to_string(), message_index);
+            message_index
+        });
+    merge_part_into_message(&mut messages[message_index], tool_part);
+    merge_message_times(&mut messages[message_index], created_at, updated_at);
+}
+
+fn merge_runtime_message(existing: &mut Value, incoming: Value) {
+    let incoming_created_at = incoming.get("created_at").and_then(Value::as_i64);
+    let incoming_updated_at = incoming.get("updated_at").and_then(Value::as_i64);
+    if let Some(parts) = incoming.get("parts").and_then(Value::as_array) {
+        for part in parts {
+            merge_part_into_message(existing, part.clone());
+        }
+    }
+    if let Some(created_at) = incoming_created_at {
+        merge_message_created_at(existing, created_at);
+    }
+    if let Some(updated_at) = incoming_updated_at {
+        merge_message_updated_at(existing, updated_at);
+    }
+}
+
+fn merge_part_into_message(message: &mut Value, part: Value) {
+    let Some(parts) = message.get_mut("parts").and_then(Value::as_array_mut) else {
+        return;
+    };
+    let part_id = part
+        .get("id")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    if let Some(part_id) = part_id {
+        if let Some(existing) = parts
+            .iter_mut()
+            .find(|existing| existing.get("id").and_then(Value::as_str) == Some(part_id.as_str()))
+        {
+            *existing = part;
+            return;
+        }
+    }
+    parts.push(part);
+    parts.sort_by_key(runtime_part_order);
+}
+
+fn runtime_part_order(part: &Value) -> u8 {
+    match part.get("type").and_then(Value::as_str) {
+        Some("text") => 0,
+        Some("tool") => 1,
+        _ => 2,
+    }
+}
+
+fn merge_message_times(message: &mut Value, created_at: i64, updated_at: i64) {
+    merge_message_created_at(message, created_at);
+    merge_message_updated_at(message, updated_at);
+}
+
+fn merge_message_created_at(message: &mut Value, created_at: i64) {
+    let existing = message
+        .get("created_at")
+        .and_then(Value::as_i64)
+        .unwrap_or(created_at);
+    if let Some(object) = message.as_object_mut() {
+        object.insert(
+            "created_at".to_string(),
+            Value::Number(existing.min(created_at).into()),
+        );
+    }
+}
+
+fn merge_message_updated_at(message: &mut Value, updated_at: i64) {
+    let existing = message
+        .get("updated_at")
+        .and_then(Value::as_i64)
+        .unwrap_or(updated_at);
+    if let Some(object) = message.as_object_mut() {
+        object.insert(
+            "updated_at".to_string(),
+            Value::Number(existing.max(updated_at).into()),
+        );
+    }
+}
+
+fn assistant_runtime_id(message: &Value) -> Option<String> {
+    if message.get("role").and_then(Value::as_str) != Some("assistant") {
+        return None;
+    }
+    message
+        .get("id")
+        .and_then(Value::as_str)
+        .and_then(|id| id.strip_suffix(".message"))
+        .map(str::to_string)
+}
+
 fn conversation_message_record(
     session: &SessionManagement,
     index: usize,
@@ -160,6 +399,9 @@ fn conversation_message_record(
     if object.get("parts").and_then(Value::as_array).is_some() {
         let role = object.get("role").and_then(Value::as_str);
         if !matches!(role, Some("user" | "assistant" | "system")) {
+            return None;
+        }
+        if matches!(role, Some("user")) && !has_frontend_message_id(object) {
             return None;
         }
         let mut message = Value::Object(object.clone());
@@ -182,6 +424,9 @@ fn conversation_message_record(
 
     let role = object.get("role").and_then(Value::as_str)?;
     if !matches!(role, "user" | "assistant" | "system") {
+        return None;
+    }
+    if role == "user" && !has_frontend_message_id(object) {
         return None;
     }
     let content = conversation_content_text(object.get("content")?)?;
@@ -223,6 +468,47 @@ fn conversation_message_record(
         "created_at": created_at,
         "updated_at": updated_at,
     }))
+}
+
+fn is_user_context_without_frontend_id(object: &serde_json::Map<String, Value>) -> bool {
+    matches!(object.get("role").and_then(Value::as_str), Some("user"))
+        && !has_frontend_message_id(object)
+}
+
+fn has_frontend_message_id(object: &serde_json::Map<String, Value>) -> bool {
+    object
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|id| !id.is_empty() && !id.contains(":log:"))
+}
+
+fn normalize_user_context_record(
+    session: &SessionManagement,
+    index: usize,
+    object: &mut serde_json::Map<String, Value>,
+    created_at: i64,
+    updated_at: i64,
+) {
+    object
+        .entry("id".to_string())
+        .or_insert_with(|| Value::String(format!("{}:context:{index}", session.session_id)));
+    object
+        .entry("type".to_string())
+        .or_insert_with(|| Value::String("user_context".to_string()));
+    object
+        .entry("source_role".to_string())
+        .or_insert_with(|| Value::String("user".to_string()));
+    object.insert("role".to_string(), Value::String("log".to_string()));
+    object
+        .entry("created_at".to_string())
+        .or_insert_with(|| Value::Number(created_at.into()));
+    object
+        .entry("updated_at".to_string())
+        .or_insert_with(|| Value::Number(updated_at.into()));
+    object
+        .entry("session_id".to_string())
+        .or_insert_with(|| Value::String(session.session_id.clone()));
 }
 
 fn conversation_content_text(value: &Value) -> Option<String> {
@@ -284,7 +570,7 @@ fn session_status(session: &SessionManagement) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::persisted_message;
+    use super::{persisted_message, persisted_messages};
     use crate::state_machine::session_management::{SessionInput, SessionManagement};
     use chrono::Utc;
     use std::path::PathBuf;
@@ -328,8 +614,8 @@ mod tests {
             &session,
             7,
             &serde_json::json!({
-                "id": "msg-stream-runtime-1",
-                "part_id": "part-stream-runtime-1",
+                "id": "runtime-1.message",
+                "part_id": "runtime-1.message",
                 "role": "assistant",
                 "content": "final visible reply",
                 "created_at": 42,
@@ -340,19 +626,107 @@ mod tests {
             1_000,
         );
 
-        assert_eq!(value["id"], "msg-stream-runtime-1");
+        assert_eq!(value["id"], "runtime-1.message");
         assert_eq!(value["session_id"], "snapshot-session");
         assert_eq!(value["role"], "assistant");
         assert_eq!(value["created_at"], 42);
         assert_eq!(value["updated_at"], 43);
-        assert_eq!(value["parts"][0]["id"], "part-stream-runtime-1");
+        assert_eq!(value["parts"][0]["id"], "runtime-1.message");
         assert_eq!(value["parts"][0]["type"], "text");
         assert_eq!(value["parts"][0]["text"], "final visible reply");
         assert_eq!(value["parts"][0]["content"], "final visible reply");
     }
 
     #[test]
-    fn persisted_message_normalizes_user_and_system_content_but_keeps_runtime_usage_auxiliary() {
+    fn persisted_messages_merges_runtime_tool_result_into_runtime_assistant_message() {
+        let mut session = session();
+        let assistant_created_at = chrono::DateTime::parse_from_rfc3339("2026-06-14T08:09:11Z")
+            .expect("timestamp")
+            .timestamp_millis();
+        let assistant_updated_at = assistant_created_at + 100;
+        let tool_finished_at = "2026-06-14T08:09:14Z";
+        session.push_log(
+            serde_json::json!({
+                "id": "runtime-merge-1.message",
+                "part_id": "runtime-merge-1.message",
+                "role": "assistant",
+                "content": "I checked the workspace.",
+                "created_at": assistant_created_at,
+                "updated_at": assistant_updated_at,
+                "runtime_id": "runtime-merge-1"
+            })
+            .to_string(),
+            Utc::now(),
+        );
+        session.push_log(
+            serde_json::json!({
+                "type": "tool_result",
+                "runtime_id": "runtime-merge-1",
+                "tool_name": "command_run",
+                "input": {
+                    "commands": [{
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "command_line": "Get-ChildItem"
+                    }]
+                },
+                "output": {
+                    "streamed_command_run_result": {
+                        "results": [{
+                            "step": 1,
+                            "command_type": "shell_command",
+                            "command_line": "Get-ChildItem",
+                            "success": true
+                        }]
+                    }
+                },
+                "success": true,
+                "error": null,
+                "timestamp": tool_finished_at
+            })
+            .to_string(),
+            Utc::now(),
+        );
+
+        let messages = persisted_messages(&session);
+
+        assert_eq!(messages.len(), 1, "{messages:#?}");
+        let message = &messages[0];
+        assert_eq!(message["id"], "runtime-merge-1.message");
+        assert_eq!(message["role"], "assistant");
+        assert_eq!(message["created_at"], assistant_created_at);
+        assert_eq!(
+            message["updated_at"],
+            chrono::DateTime::parse_from_rfc3339(tool_finished_at)
+                .expect("timestamp")
+                .timestamp_millis()
+        );
+        assert_eq!(message["parts"].as_array().expect("parts").len(), 2);
+        assert_eq!(message["parts"][0]["id"], "runtime-merge-1.message");
+        assert_eq!(message["parts"][0]["text"], "I checked the workspace.");
+        assert_eq!(
+            message["parts"][1]["id"],
+            "runtime-merge-1.tool.command_run"
+        );
+        assert_eq!(message["parts"][1]["tool"], "command_run");
+        assert_eq!(
+            message["parts"][1]["call_id"],
+            "runtime-merge-1.tool.command_run"
+        );
+        assert_eq!(message["parts"][1]["state"]["status"], "completed");
+        assert_eq!(
+            message["parts"][1]["state"]["input"]["commands"][0]["command_line"],
+            "Get-ChildItem"
+        );
+        assert_eq!(
+            message["parts"][1]["state"]["output"]["streamed_command_run_result"]["results"][0]
+                ["success"],
+            true
+        );
+    }
+
+    #[test]
+    fn persisted_message_keeps_user_context_without_frontend_id_auxiliary() {
         let session = session();
         let user = persisted_message(
             &session,
@@ -364,6 +738,61 @@ mod tests {
             .to_string(),
             1_000,
         );
+        let user_with_parts = persisted_message(
+            &session,
+            2,
+            &serde_json::json!({
+                "role": "user",
+                "parts": [{
+                    "id": "synthetic-part",
+                    "type": "text",
+                    "text": "hello from context",
+                    "content": "hello from context"
+                }]
+            })
+            .to_string(),
+            1_000,
+        );
+
+        assert_eq!(user["id"], "snapshot-session:context:1");
+        assert_eq!(user["role"], "log");
+        assert_eq!(user["source_role"], "user");
+        assert_eq!(user["type"], "user_context");
+        assert_eq!(user["content"][0]["text"], "hello");
+        assert!(user.get("parts").is_none());
+
+        assert_eq!(user_with_parts["id"], "snapshot-session:context:2");
+        assert_eq!(user_with_parts["role"], "log");
+        assert_eq!(user_with_parts["source_role"], "user");
+        assert_eq!(user_with_parts["type"], "user_context");
+        assert_eq!(user_with_parts["parts"][0]["text"], "hello from context");
+    }
+
+    #[test]
+    fn persisted_message_keeps_frontend_user_id_hydratable() {
+        let session = session();
+        let value = persisted_message(
+            &session,
+            1,
+            &serde_json::json!({
+                "id": "msg_tui_frontend-1",
+                "part_id": "part_tui_frontend-1",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}, {"text": " world"}]
+            })
+            .to_string(),
+            1_000,
+        );
+
+        assert_eq!(value["id"], "msg_tui_frontend-1");
+        assert_eq!(value["role"], "user");
+        assert_eq!(value["parts"][0]["id"], "part_tui_frontend-1");
+        assert_eq!(value["parts"][0]["text"], "hello world");
+    }
+
+    #[test]
+    fn persisted_message_normalizes_system_content_but_keeps_runtime_usage_auxiliary() {
+        let session = session();
         let system = persisted_message(
             &session,
             2,
@@ -387,8 +816,6 @@ mod tests {
             1_000,
         );
 
-        assert_eq!(user["role"], "user");
-        assert_eq!(user["parts"][0]["text"], "hello world");
         assert_eq!(system["role"], "system");
         assert_eq!(system["parts"][0]["text"], "guardrail");
         assert_eq!(usage["role"], "runtime");

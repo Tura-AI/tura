@@ -315,6 +315,13 @@ export class GatewayClient {
     return this.eventStream("/event", signal);
   }
 
+  streamSessionEvents(
+    sessionID: string,
+    signal?: AbortSignal,
+  ): AsyncGenerator<GatewayEventEnvelope> {
+    return this.eventStream(`/session/${encodeURIComponent(sessionID)}/events`, signal);
+  }
+
   private async *eventStream(
     path: string,
     signal?: AbortSignal,

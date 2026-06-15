@@ -108,9 +108,14 @@ pub fn accumulate_tool_result(
         tool_success,
         tool_error,
         None,
+        None,
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "tool result checkpoints keep runtime id and provider metadata explicit at the persistence boundary"
+)]
 pub fn accumulate_tool_result_with_provider_metadata(
     session: &mut SessionManagement,
     tool_name: &str,
@@ -118,6 +123,7 @@ pub fn accumulate_tool_result_with_provider_metadata(
     tool_output: serde_json::Value,
     tool_success: bool,
     tool_error: Option<String>,
+    runtime_id: Option<&str>,
     provider_metadata: Option<serde_json::Value>,
 ) -> Result<(), String> {
     let now = Utc::now();
@@ -138,6 +144,9 @@ pub fn accumulate_tool_result_with_provider_metadata(
         "sequence": sequence,
         "timestamp": now.to_rfc3339(),
     });
+    if let Some(runtime_id) = runtime_id {
+        tool_result_json["runtime_id"] = serde_json::Value::String(runtime_id.to_string());
+    }
     if let Some(provider_metadata) = provider_metadata {
         tool_result_json["provider_metadata"] = provider_metadata;
     }
