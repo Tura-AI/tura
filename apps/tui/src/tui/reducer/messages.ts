@@ -394,19 +394,50 @@ function commitLiveStreamsForMessages(
         streamMatchesSession(stream, sessionID) && liveStreamMatchesMessage(stream, message),
     );
     if (!matching.length) continue;
-    if (messageShouldRemainLive(nextMessages, message)) {
-      const stableMessage = messageWithoutLiveStreamParts(message, nextStreams, sessionID);
-      if (stableMessage.parts.length) nextMessages = upsertMessage(nextMessages, stableMessage);
-      continue;
-    }
-    for (const [, stream] of matching) {
-      nextMessages = applyLiveStream(nextMessages, stream);
-    }
+    nextMessages = upsertMessage(
+      nextMessages,
+      messageWithLiveStreams(
+        message,
+        matching.map(([, stream]) => stream),
+      ),
+    );
     nextStreams = Object.fromEntries(
       Object.entries(nextStreams).filter(([key]) => !matching.some(([matched]) => matched === key)),
     );
   }
   return { messages: nextMessages, liveStreams: nextStreams };
+}
+
+function messageWithLiveStreams(message: Message, streams: LiveStream[]): Message {
+  let parts = message.parts ?? [];
+  for (const stream of streams) {
+    parts = partsWithLiveStream(parts, stream);
+  }
+  const updatedAt =
+    message.updated_at ?? streams.reduce((latest, stream) => Math.max(latest, stream.updatedAt), 0);
+  return {
+    ...message,
+    parts: orderMessagePartsForDisplay(parts),
+    updated_at: updatedAt || message.updated_at,
+  };
+}
+
+function partsWithLiveStream(parts: MessagePart[], stream: LiveStream): MessagePart[] {
+  const exactPartIndex = parts.findIndex((part) => part.id === stream.partID);
+  if (exactPartIndex >= 0) {
+    return parts.map((part, index) =>
+      index === exactPartIndex ? { ...part, [stream.field]: stream.text } : part,
+    );
+  }
+  const messageTextPartIndex = parts.findIndex(
+    (part) => part.type === "text" || part.type === "message" || !part.type,
+  );
+  if (messageTextPartIndex >= 0) {
+    return parts.map((part, index) =>
+      index === messageTextPartIndex ? { ...part, [stream.field]: stream.text } : part,
+    );
+  }
+  return [...parts, liveStreamPart(stream)];
 }
 
 function messageShouldRemainLive(messages: Message[], incoming: Message): boolean {

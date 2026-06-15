@@ -456,7 +456,7 @@ test("reducer does not duplicate temporary streamed text across repeated polling
 
   assert.deepEqual(
     state.messages.map((message) => message.id),
-    ["msg-user-refresh", "msg-durable-refresh", "msg-command-refresh"],
+    ["msg-user-refresh", "msg-command-refresh", "msg-durable-refresh"],
   );
   const text = displayMessages(state)
     .map((message) => messageText(message))
