@@ -141,6 +141,26 @@ export function reducer(state: AppState, action: AppAction): AppState {
           ),
         };
       }
+      if (messageConfirmsLiveHandoff(state.liveHandoffBarrier, state.liveStreams, sessionID, message)) {
+        const incoming = normalizeMessagesForDisplay([message]);
+        const confirmed = appendNewStableMessagesIgnoringLive(
+          state.messages,
+          incoming,
+          state.liveStreams,
+          sessionID,
+        );
+        return releasePendingLiveEventsIfConfirmed({
+          ...state,
+          messages: confirmed.messages,
+          liveStreams: confirmed.liveStreams,
+          refreshState: refreshStateAfterMessages(
+            state.refreshState,
+            sessionID,
+            confirmed.messages,
+            state.session,
+          ),
+        });
+      }
       const updated = upsertMessageIgnoringLive(
         state.messages,
         state.liveStreams,
@@ -149,6 +169,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
       );
       const barrier = liveHandoffBarrierAfterFinalMessage(
         state.liveHandoffBarrier,
+        updated.messages,
         state.liveStreams,
         sessionID,
         message,
@@ -600,11 +621,14 @@ function closedPanelsState(): Pick<
 
 function liveHandoffBarrierAfterFinalMessage(
   barrier: LiveHandoffBarrier | undefined,
+  messages: Message[],
   streams: Record<string, LiveStream>,
   sessionID: string | undefined,
   message: Message,
 ): LiveHandoffBarrier | undefined {
   if (messageHasRunningPart(message)) return barrier;
+  const currentMessage = messages.find((item) => item.id === message.id);
+  if (currentMessage && messageHasRunningPart(currentMessage)) return barrier;
   const messageIDs = liveStreamMessageIDsMatchingMessage(streams, sessionID, message);
   if (!messageIDs.length) return barrier;
   if (barrier && sessionsMatch(barrier.sessionID, sessionID)) {
@@ -621,6 +645,18 @@ function shouldBufferLiveEvent(
   if (!barrier || !messageID) return false;
   if (!sessionsMatch(barrier.sessionID, sessionID)) return false;
   return !barrier.messageIDs.includes(messageID);
+}
+
+function messageConfirmsLiveHandoff(
+  barrier: LiveHandoffBarrier | undefined,
+  streams: Record<string, LiveStream>,
+  sessionID: string | undefined,
+  message: Message,
+): boolean {
+  if (!barrier || !sessionsMatch(barrier.sessionID, sessionID)) return false;
+  return liveStreamMessageIDsMatchingMessage(streams, sessionID, message).some((messageID) =>
+    barrier.messageIDs.includes(messageID),
+  );
 }
 
 function releasePendingLiveEventsIfConfirmed(state: AppState): AppState {
