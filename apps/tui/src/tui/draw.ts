@@ -6,9 +6,10 @@ import type { TerminalCapabilities } from "./capabilities.js";
 let lastDrawSurface = "";
 let lastDrawSessionID = "";
 let lastChatCacheLineCount = 0;
-let lastChatCommittedLiveLineCount = 0;
+let lastChatSpilledLiveLineCount = 0;
 let lastChatReservationLineCount = 0;
 let lastChatLiveFrame = "";
+let lastChatSpilledLiveFrame = "";
 let lastChatChromeFrame = "";
 let lastChatLiveStreamKey = "";
 let lastChatRenderCols = 0;
@@ -18,9 +19,10 @@ export function resetDrawState(): void {
   lastDrawSurface = "";
   lastDrawSessionID = "";
   lastChatCacheLineCount = 0;
-  lastChatCommittedLiveLineCount = 0;
+  lastChatSpilledLiveLineCount = 0;
   lastChatReservationLineCount = 0;
   lastChatLiveFrame = "";
+  lastChatSpilledLiveFrame = "";
   lastChatChromeFrame = "";
   lastChatLiveStreamKey = "";
   lastChatRenderCols = 0;
@@ -70,6 +72,38 @@ export function draw(
   return frame;
 }
 
+export function drawChatChromeOverlay(
+  state: AppState,
+  capabilities: TerminalCapabilities,
+  previousFrame = "",
+): string {
+  if (!process.stdout.isTTY) return previousFrame;
+  if (drawSurface(state) !== "chat" || lastDrawSurface !== "chat") return previousFrame;
+  const rendered = renderChatFrameParts(state, capabilities);
+  const sessionID = state.session?.id ?? "";
+  if (lastDrawSessionID !== sessionID || lastChatRenderCols !== rendered.renderCols) {
+    return previousFrame;
+  }
+  const target = chatScrollbackTarget(rendered);
+  const bodyLineCount = lastChatCacheLineCount + lastChatSpilledLiveLineCount;
+  if (target.bodyLines.length !== bodyLineCount || lastChatReservationLineCount <= 0) {
+    return previousFrame;
+  }
+  const chromeLayout = terminalChromeLayout(
+    frameLines(rendered.chromeFrame),
+    rendered.chromeCursor,
+    bodyLineCount,
+    target.pendingLiveLines.length,
+    lastChatReservationLineCount,
+  );
+  let output = "\x1b[?25l";
+  output += terminalWriteOverlayFrame(chromeLayout.frame, chromeLayout.startRow);
+  output += cursorOutputFromAbsoluteCursor(chromeLayout.cursor);
+  if (output) process.stdout.write(output);
+  lastChatChromeFrame = rendered.chromeFrame;
+  return rendered.frame;
+}
+
 function drawChatFrame(
   rendered: ReturnType<typeof renderChatFrameParts>,
   _previousFrame: string,
@@ -77,13 +111,19 @@ function drawChatFrame(
 ): string {
   const frame = rendered.frame;
   const renderWidthChanged = lastChatRenderCols !== 0 && rendered.renderCols !== lastChatRenderCols;
-  const liveStreamChanged = lastChatLiveStreamKey !== rendered.liveStreamKey;
-  const target = chatScrollbackTarget(rendered, liveStreamChanged || renderWidthChanged);
-  const previousBodyLineCount = lastChatCacheLineCount + lastChatCommittedLiveLineCount;
+  const target = chatScrollbackTarget(rendered);
+  const previousBodyLineCount = lastChatCacheLineCount + lastChatSpilledLiveLineCount;
   const previousTotalLineCount = previousBodyLineCount + lastChatReservationLineCount;
   const bodyShrank = previousBodyLineCount !== 0 && target.bodyLines.length < previousBodyLineCount;
   const firstChatDraw = lastChatRenderCols === 0;
-  const rewriteAllRegions = forceReset || renderWidthChanged || bodyShrank || firstChatDraw;
+  const spilledLiveFrame = target.spilledLiveLines.join("\n");
+  const spilledLiveChanged =
+    lastChatSpilledLiveLineCount > 0 &&
+    target.spilledLiveLines.length >= lastChatSpilledLiveLineCount &&
+    target.spilledLiveLines.slice(0, lastChatSpilledLiveLineCount).join("\n") !==
+      lastChatSpilledLiveFrame;
+  const rewriteAllRegions =
+    forceReset || renderWidthChanged || bodyShrank || firstChatDraw || spilledLiveChanged;
   const liveChanged = lastChatLiveFrame !== rendered.liveFrame;
   const chromeChanged = lastChatChromeFrame !== rendered.chromeFrame;
   const bodyChanged = target.bodyLines.length !== previousBodyLineCount;
@@ -105,14 +145,14 @@ function drawChatFrame(
     hasSavedChatScrollbackCursor = true;
   } else {
     const newBodyLines = target.bodyLines.slice(previousBodyLineCount);
-    const materializedReservationLineCount = Math.min(
+    const replacedReservationLineCount = Math.min(
       newBodyLines.length,
       lastChatReservationLineCount,
     );
-    const materializedLines = newBodyLines.slice(0, materializedReservationLineCount);
-    const appendedBodyLines = newBodyLines.slice(materializedReservationLineCount);
+    const replacementBodyLines = newBodyLines.slice(0, replacedReservationLineCount);
+    const appendedBodyLines = newBodyLines.slice(replacedReservationLineCount);
     const residualReservationLineCount =
-      lastChatReservationLineCount - materializedReservationLineCount;
+      lastChatReservationLineCount - replacedReservationLineCount;
     const appendBlankLineCount = appendedBodyLines.length
       ? target.mutableLines.length
       : Math.max(0, target.mutableLines.length - residualReservationLineCount);
@@ -127,7 +167,7 @@ function drawChatFrame(
       previousTotalLineCount,
     );
     output += terminalWriteLogicalLines(
-      materializedLines,
+      replacementBodyLines,
       previousBodyLineCount + 1,
       previousTotalLineCount,
     );
@@ -147,9 +187,10 @@ function drawChatFrame(
   output += cursorOutputFromAbsoluteCursor(mutableLayout.cursor);
   if (output) process.stdout.write(output);
   lastChatCacheLineCount = target.cacheLines.length;
-  lastChatCommittedLiveLineCount = target.committedLiveLines.length;
+  lastChatSpilledLiveLineCount = target.spilledLiveLines.length;
   lastChatReservationLineCount = effectiveReservationLineCount;
   lastChatLiveFrame = rendered.liveFrame;
+  lastChatSpilledLiveFrame = spilledLiveFrame;
   lastChatChromeFrame = rendered.chromeFrame;
   lastChatLiveStreamKey = rendered.liveStreamKey;
   lastChatRenderCols = rendered.renderCols;
@@ -232,7 +273,7 @@ type MutableLayout = {
 
 type ChatScrollbackTarget = {
   cacheLines: string[];
-  committedLiveLines: string[];
+  spilledLiveLines: string[];
   pendingLiveLines: string[];
   mutableLines: string[];
   bodyLines: string[];
@@ -240,36 +281,22 @@ type ChatScrollbackTarget = {
 
 function chatScrollbackTarget(
   rendered: ReturnType<typeof renderChatFrameParts>,
-  resetCommittedLiveCount: boolean,
 ): ChatScrollbackTarget {
   const cacheLines = frameLines(rendered.cacheFrame);
   const liveLines = frameLines(rendered.liveFrame);
   const chromeLines = frameLines(rendered.chromeFrame);
-  const liveRows = rendered.liveRows.slice(0, liveLines.length);
-  const previousCommittedLiveLineCount = resetCommittedLiveCount
-    ? 0
-    : lastChatCommittedLiveLineCount;
-  const committedLiveLineCount = Math.min(
-    liveLines.length,
-    Math.max(previousCommittedLiveLineCount, completeLiveLineCount(liveRows)),
-  );
-  const committedLiveLines = liveLines.slice(0, committedLiveLineCount);
-  const pendingLiveLines = liveLines.slice(committedLiveLineCount);
+  const liveTailLineBudget = Math.max(0, terminalRows() - chromeLines.length);
+  const spilledLiveLineCount = Math.max(0, liveLines.length - liveTailLineBudget);
+  const spilledLiveLines = liveLines.slice(0, spilledLiveLineCount);
+  const pendingLiveLines = liveLines.slice(spilledLiveLineCount);
   const mutableLines = [...pendingLiveLines, ...chromeLines];
   return {
     cacheLines,
-    committedLiveLines,
+    spilledLiveLines,
     pendingLiveLines,
     mutableLines,
-    bodyLines: [...cacheLines, ...committedLiveLines],
+    bodyLines: [...cacheLines, ...spilledLiveLines],
   };
-}
-
-function completeLiveLineCount(lines: ReturnType<typeof renderChatFrameParts>["liveRows"]): number {
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    if (lines[index]?.kind !== "gap") return Math.max(0, index);
-  }
-  return 0;
 }
 
 function terminalMutableLayout(
@@ -299,6 +326,38 @@ function terminalMutableLayout(
     startRow,
     skippedRows,
     cursor: adjustMutableCursor(chromeCursor, pendingLiveLineCount, skippedRows, startRow),
+  };
+}
+
+function terminalChromeLayout(
+  chromeLines: string[],
+  chromeCursor: { row: number; column: number } | undefined,
+  bodyLineCount: number,
+  pendingLiveLineCount: number,
+  reservationLineCount: number,
+): MutableLayout {
+  const totalLineCount = bodyLineCount + reservationLineCount;
+  const chromeStartLogicalLine = bodyLineCount + pendingLiveLineCount + 1;
+  const visibleFirstLogicalLine = visibleFirstLogicalLineForTotal(totalLineCount);
+  const visibleStartLogicalLine = Math.max(chromeStartLogicalLine, visibleFirstLogicalLine);
+  const visibleChromeLineCount = Math.max(
+    0,
+    Math.min(
+      chromeLines.length - (visibleStartLogicalLine - chromeStartLogicalLine),
+      totalLineCount - visibleStartLogicalLine + 1,
+    ),
+  );
+  const skippedRows = Math.max(0, visibleStartLogicalLine - chromeStartLogicalLine);
+  const visibleLines =
+    visibleChromeLineCount > 0
+      ? chromeLines.slice(skippedRows, skippedRows + visibleChromeLineCount)
+      : [];
+  const startRow = Math.max(1, visibleStartLogicalLine - visibleFirstLogicalLine + 1);
+  return {
+    frame: visibleLines.join("\n"),
+    startRow,
+    skippedRows,
+    cursor: adjustChromeCursor(chromeCursor, skippedRows, startRow),
   };
 }
 
@@ -362,6 +421,17 @@ function adjustMutableCursor(
   if (!cursor) return undefined;
   const mutableRow = pendingLiveLineCount + cursor.row;
   const row = mutableRow - skippedRows;
+  if (row < 1) return undefined;
+  return { row: startRow + row - 1, column: cursor.column };
+}
+
+function adjustChromeCursor(
+  cursor: { row: number; column: number } | undefined,
+  skippedRows: number,
+  startRow: number,
+): { row: number; column: number } | undefined {
+  if (!cursor) return undefined;
+  const row = cursor.row - skippedRows;
   if (row < 1) return undefined;
   return { row: startRow + row - 1, column: cursor.column };
 }

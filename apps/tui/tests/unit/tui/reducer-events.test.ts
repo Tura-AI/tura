@@ -372,7 +372,234 @@ test("reducer keeps final live stream until cache snapshot confirms the message"
   assert.equal(Object.values(state.liveStreams).length, 0);
   assert.equal(messageText(displayMessages(state)[0]), "duplicated live text");
   assert.equal(displayMessages(state)[0].parts.length, 1);
-  assert.equal(displayMessages(state)[0].parts[0].id, "part-final-durable");
+  assert.equal(displayMessages(state)[0].parts[0].id, "part-sessionless-stream");
+});
+
+test("reducer commits the last live command shape instead of the cache confirmation shape", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: { ...session, status: "busy" },
+    messages: [],
+    permissions: [],
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.part.delta",
+        properties: {
+          session_id: "sess-1",
+          message_id: "runtime-live-order.message",
+          part_id: "runtime-live-order.message",
+          field: "text",
+          delta: "checking",
+        },
+      },
+    },
+  });
+
+  for (const [id, command_line] of [
+    ["runtime-live-order.tool.command_run.1", "first-live-command"],
+    ["runtime-live-order.tool.command_run.2", "second-live-command"],
+  ]) {
+    state = reducer(state, {
+      type: "event",
+      event: {
+        directory: "C:/repo",
+        payload: {
+          type: "message.part.updated",
+          properties: {
+            session_id: "sess-1",
+            part: {
+              id,
+              sessionID: "sess-1",
+              messageID: "runtime-live-order.message",
+              type: "tool",
+              tool: "command_run",
+              state: {
+                status: "completed",
+                input: { commands: [{ command_type: "shell_command", command_line }] },
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  state = reducer(state, {
+    type: "messages-incremental",
+    sessionID: "sess-1",
+    messages: [
+      {
+        id: "runtime-live-order.message",
+        sessionID: "sess-1",
+        role: "assistant",
+        created_at: 2,
+        updated_at: 3,
+        parts: [
+          {
+            id: "runtime-live-order.message",
+            sessionID: "sess-1",
+            messageID: "runtime-live-order.message",
+            type: "text",
+            text: "checking",
+          },
+          {
+            id: "runtime-live-order.tool.command_run.2",
+            sessionID: "sess-1",
+            messageID: "runtime-live-order.message",
+            type: "tool",
+            tool: "command_run",
+            state: {
+              status: "completed",
+              input: {
+                commands: [{ command_type: "shell_command", command_line: "second-db-command" }],
+              },
+            },
+          },
+          {
+            id: "runtime-live-order.tool.command_run.1",
+            sessionID: "sess-1",
+            messageID: "runtime-live-order.message",
+            type: "tool",
+            tool: "command_run",
+            state: {
+              status: "completed",
+              input: {
+                commands: [{ command_type: "shell_command", command_line: "first-db-command" }],
+              },
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  const assistant = displayMessages(state)[0];
+  const commands = assistant.parts
+    .filter((part) => part.tool === "command_run")
+    .map((part) =>
+      (part.state as { input?: { commands?: Array<{ command_line?: string }> } }).input?.commands?.[0]
+        ?.command_line,
+    );
+
+  assert.equal(Object.values(state.liveStreams).length, 0);
+  assert.deepEqual(commands, ["first-live-command", "second-live-command"]);
+});
+
+test("reducer buffers the next runtime live event until the previous runtime is cache-confirmed", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: { ...session, status: "busy" },
+    messages: [],
+    permissions: [],
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.part.delta",
+        properties: {
+          session_id: "sess-1",
+          message_id: "runtime-a.message",
+          part_id: "runtime-a.message",
+          field: "text",
+          delta: "A streamed",
+        },
+      },
+    },
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.updated",
+        properties: {
+          session_id: "sess-1",
+          info: {
+            id: "runtime-a.message",
+            sessionID: "sess-1",
+            role: "assistant",
+            created_at: 2,
+            updated_at: 3,
+            parts: [
+              {
+                id: "runtime-a.message",
+                sessionID: "sess-1",
+                messageID: "runtime-a.message",
+                type: "text",
+                text: "A durable",
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.part.delta",
+        properties: {
+          session_id: "sess-1",
+          message_id: "runtime-b.message",
+          part_id: "runtime-b.message",
+          field: "text",
+          delta: "B hidden",
+        },
+      },
+    },
+  });
+
+  assert.equal(Object.values(state.liveStreams).length, 1);
+  assert.equal(state.pendingLiveEvents.length, 1);
+  assert.deepEqual(
+    displayMessages(state).map((message) => message.id),
+    ["runtime-a.message"],
+  );
+  assert.equal(messageText(displayMessages(state)[0]), "A streamed");
+
+  state = reducer(state, {
+    type: "messages-incremental",
+    sessionID: "sess-1",
+    messages: [
+      {
+        id: "runtime-a.message",
+        sessionID: "sess-1",
+        role: "assistant",
+        created_at: 2,
+        updated_at: 3,
+        parts: [
+          {
+            id: "runtime-a.message",
+            sessionID: "sess-1",
+            messageID: "runtime-a.message",
+            type: "text",
+            text: "A durable",
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(Object.values(state.liveStreams).length, 1);
+  assert.equal(state.pendingLiveEvents.length, 0);
+  assert.deepEqual(
+    displayMessages(state).map((message) => message.id),
+    ["runtime-a.message", "runtime-b.message"],
+  );
+  assert.equal(messageText(displayMessages(state)[0]), "A streamed");
+  assert.equal(messageText(displayMessages(state)[1]), "B hidden");
 });
 
 test("reducer overlays later deltas on durable part text without mutating history", () => {

@@ -160,7 +160,7 @@ test("draw rewrites streaming chat updates without clearing terminal scrollback"
   assert.match(output, /streaming/);
 });
 
-test("draw commits completed rendered live rows while appending only blank reservation rows", () => {
+test("draw keeps every rendered live row mutable while appending blank reservation rows", () => {
   const busySession = { ...activeSession, status: "busy" as const };
   let state = reducer(initialState("C:/repo"), {
     type: "hydrate",
@@ -210,28 +210,27 @@ test("draw commits completed rendered live rows while appending only blank reser
   const output = writes.join("");
   const clearIndex = output.search(liveRegionClearPattern(0));
   const blankAppendIndex = output.indexOf("\x1b[u\r\n");
-  const committedIndex = output.indexOf("LIVE_WRAP_START");
+  const firstLiveIndex = output.indexOf("LIVE_WRAP_START");
   const pendingIndex = output.indexOf("LIVE_WRAP_SECOND");
   const chromeIndex = output.indexOf("Active", pendingIndex);
+  const firstLiveAnchor = lastAbsoluteCursorBefore(output, firstLiveIndex);
   const pendingAnchor = lastAbsoluteCursorBefore(output, pendingIndex);
 
   assert.equal(output.includes(terminalClear), false);
   assert.ok(clearIndex >= 0, "old live/chrome reservation must be cleared first");
+  assert.ok(blankAppendIndex > clearIndex, "growing live/chrome must append blank rows");
   assert.ok(
-    committedIndex > clearIndex,
-    "the completed rendered live row must be materialized after clearing",
+    blankAppendIndex < firstLiveIndex,
+    "blank reservation rows must be appended before repainting live overlay",
   );
+  assert.ok(firstLiveIndex > clearIndex, "the first live row must be redrawn after clearing");
+  assert.ok(pendingIndex > firstLiveIndex, "the pending live row must render after earlier live");
+  assert.ok(firstLiveAnchor, "earlier live text must be painted with an absolute overlay cursor");
+  assert.ok(pendingAnchor, "pending live text must be painted with an absolute overlay cursor");
   assert.ok(
-    blankAppendIndex > committedIndex,
-    "growing live/chrome must append blank reservation rows after materializing completed rows",
+    firstLiveAnchor.row <= pendingAnchor.row,
+    "all live rows must remain inside the mutable overlay",
   );
-  assert.doesNotMatch(
-    output.slice(clearIndex, blankAppendIndex),
-    /LIVE_WRAP_SECOND/,
-    "materialized scrollback rows must not contain the active live row",
-  );
-  assert.ok(pendingAnchor, "active live text must be painted with an absolute overlay cursor");
-  assert.ok(pendingIndex > blankAppendIndex, "active live row must be overlaid after blank rows");
   assert.ok(chromeIndex > pendingIndex, "chrome must still render after pending live");
 });
 
@@ -330,7 +329,7 @@ test("draw keeps only the active rendered command row mutable", () => {
   );
 });
 
-test("draw materializes message gap before a running command starts", () => {
+test("draw keeps message text mutable when a running command starts", () => {
   const busySession = { ...activeSession, status: "busy" as const };
   let liveTextState = reducer(initialState("C:/repo"), {
     type: "hydrate",
@@ -399,26 +398,25 @@ test("draw materializes message gap before a running command starts", () => {
     draw(commandState, plainCapabilities(), previous);
   });
   const output = writes.join("");
+  const clearIndex = output.search(liveRegionClearPattern(0));
   const markerIndex = output.indexOf("COMMAND_GAP_PREFACE");
   const commandIndex = output.indexOf("npm run command-gap");
-  const materializedGapIndex = output.indexOf(
-    "\x1b[2K",
-    markerIndex + "COMMAND_GAP_PREFACE".length,
-  );
+  const markerAnchor = lastAbsoluteCursorBefore(output, markerIndex);
+  const commandAnchor = lastAbsoluteCursorBefore(output, commandIndex);
 
-  assert.ok(markerIndex >= 0, "message text must be materialized before the command");
-  assert.ok(
-    materializedGapIndex > markerIndex,
-    "the message/command separator gap must be materialized into cache",
-  );
-  assert.ok(
-    commandIndex > materializedGapIndex,
-    "running command must render after the cached gap",
-  );
   assert.equal(output.includes(terminalClear), false);
+  assert.ok(clearIndex >= 0, "old live/chrome reservation must be cleared first");
+  assert.ok(markerIndex > clearIndex, "message text must be redrawn after clearing");
+  assert.ok(commandIndex > markerIndex, "running command must render after message text");
+  assert.ok(markerAnchor, "message text must stay in the mutable overlay");
+  assert.ok(commandAnchor, "running command must stay in the mutable overlay");
+  assert.ok(
+    markerAnchor.row <= commandAnchor.row,
+    "message and command must keep their live overlay order",
+  );
 });
 
-test("draw materializes a running command row once a following live row starts", () => {
+test("draw keeps a running command row mutable when a following live row starts", () => {
   const busySession = { ...activeSession, status: "busy" as const };
   const commandMessage = {
     id: "msg-command-before-followup",
@@ -484,26 +482,24 @@ test("draw materializes a running command row once a following live row starts",
   const clearIndex = output.search(liveRegionClearPattern(0));
   const commandIndex = output.indexOf("npm run long-lived");
   const followingIndex = output.indexOf("FOLLOWING_ASSISTANT_CONTENT");
+  const commandAnchor = lastAbsoluteCursorBefore(output, commandIndex);
+  const followingAnchor = lastAbsoluteCursorBefore(output, followingIndex);
 
   assert.equal(output.includes(terminalClear), false);
   assert.ok(clearIndex >= 0, "old live/chrome reservation must be cleared first");
   assert.ok(commandIndex > clearIndex, "running command must render after the mutable clear");
   assert.ok(followingIndex > commandIndex, "following content must render after the command block");
-  assert.match(
-    output,
-    /\x1b\[\d+;1H\x1b\[2K(?:(?!\x1b\[\d+;1H)[\s\S])*npm run long-lived/u,
-    "running command rows may be materialized once a later rendered row exists",
-  );
-  assert.doesNotMatch(
-    output,
-    /\x1b\[\d+;1H\x1b\[2K(?:(?!\x1b\[\d+;1H)[\s\S])*FOLLOWING_ASSISTANT_CONTENT/u,
-    "following content must stay mutable until another content row starts",
+  assert.ok(commandAnchor, "running command must be painted as mutable overlay");
+  assert.ok(followingAnchor, "following content must be painted as mutable overlay");
+  assert.ok(
+    commandAnchor.row <= followingAnchor.row,
+    "command and following content must keep their live overlay order",
   );
   assert.equal(regexCount(output, /npm run long-lived/gu), 1);
   assert.equal(regexCount(output, /FOLLOWING_ASSISTANT_CONTENT/gu), 1);
 });
 
-test("draw materializes completed command calls even when a background command still runs", () => {
+test("draw renders completed command calls even when a background command still runs", () => {
   const busySession = { ...activeSession, status: "busy" as const };
   const runningState = reducer(initialState("C:/repo"), {
     type: "hydrate",
@@ -592,12 +588,12 @@ test("draw materializes completed command calls even when a background command s
   const chromeIndex = output.indexOf("Active", commandIndex);
 
   assert.equal(output.includes(terminalClear), false);
-  assert.ok(commandIndex >= 0, "completed command call must be materialized");
-  assert.ok(chromeIndex > commandIndex, "chrome must render after the materialized command block");
+  assert.ok(commandIndex >= 0, "completed command call must be rendered");
+  assert.ok(chromeIndex > commandIndex, "chrome must render after the command block");
   assert.match(output, /shell_command running[\s\S]*npm run dev/);
 });
 
-test("draw materializes finalized live as new cache without repainting fixed cache", () => {
+test("draw promotes finalized live as new cache without repainting fixed cache", () => {
   const busySession = { ...activeSession, status: "busy" as const };
   const idleSession = { ...activeSession, status: "idle" as const };
   const baseMessages = [

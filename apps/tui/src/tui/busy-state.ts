@@ -8,15 +8,23 @@ export function hasActiveAnimation(state: AppState): boolean {
 
 export function isBusyState(state: AppState): boolean {
   if (state.status === "error" || state.session?.status === "error") return false;
-  if (activeSessionListStatus(state) === "error") return false;
+  const listStatus = activeSessionListStatus(state);
+  if (listStatus === "error") return false;
   return (
     state.status === "busy" ||
     state.session?.status === "busy" ||
-    activeSessionListStatus(state) === "busy" ||
-    hasActiveLiveStream(state) ||
+    listStatus === "busy" ||
     hasPendingUserTurn(state) ||
-    hasRunningCommand(state)
+    (!hasExplicitIdleState(state, listStatus) &&
+      (hasActiveLiveStream(state) || hasRunningCommand(state)))
   );
+}
+
+function hasExplicitIdleState(
+  state: AppState,
+  listStatus: AppState["status"] | undefined,
+): boolean {
+  return state.status === "idle" || state.session?.status === "idle" || listStatus === "idle";
 }
 
 function commandStatus(value: unknown): string {

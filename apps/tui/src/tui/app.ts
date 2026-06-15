@@ -6,7 +6,7 @@ import { MockGatewayClient } from "../gateway/mock-client.js";
 import { CliUsageError, type CliContext } from "../types/common.js";
 import { isDraftSession } from "../types/session.js";
 import { sessionConfigPatchFromAssignments } from "../commands/config-values.js";
-import { initialState, reducer, type AppState } from "./reducer.js";
+import { initialState, reducer, type AppAction, type AppState } from "./reducer.js";
 import { detectTerminalCapabilities, type TerminalCapabilities } from "./capabilities.js";
 import {
   TUI_ANIMATION_INTERVAL_MS,
@@ -16,7 +16,12 @@ import {
 import { parseLanguage, setLanguage, t } from "../i18n.js";
 import { keySequence, printableSequence } from "./interactions/keyboard.js";
 import { selectedModel, selectedPersonaID, selectedSettingDetail } from "./logic/selection.js";
-import { clearTerminalForSurfaceTransition, draw, resetDrawState } from "./draw.js";
+import {
+  clearTerminalForSurfaceTransition,
+  draw,
+  drawChatChromeOverlay,
+  resetDrawState,
+} from "./draw.js";
 import {
   eventLoop,
   fetchAuthSurface,
@@ -51,6 +56,28 @@ export {
   refreshOpenSessionPicker,
 } from "./session-picker.js";
 export { createAndSelectSession, submitPrompt } from "./session-actions.js";
+
+function isActiveSessionIdleEvent(action: AppAction, state: AppState): boolean {
+  if (action.type !== "event") return false;
+  const payload = action.event.payload;
+  if (!payload) return false;
+  if (payload.type === "session.status") {
+    const properties = payload.properties as Record<string, unknown> | undefined;
+    const sessionID = stringField(properties, "sessionID") ?? stringField(properties, "session_id");
+    return (!sessionID || sessionID === state.session?.id) && properties?.status === "idle";
+  }
+  if (payload.type === "session.updated") {
+    const session = (payload.properties as { info?: { id?: string; status?: unknown } } | undefined)
+      ?.info;
+    return Boolean(session && session.id === state.session?.id && session.status === "idle");
+  }
+  return false;
+}
+
+function stringField(record: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" ? value : undefined;
+}
 
 export async function runTui(context: CliContext, initialPrompt?: string): Promise<void> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
@@ -141,6 +168,10 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
     state = reducer(state, action);
     if (action.type === "event" && action.event.payload?.type === "message.part.delta") {
       scheduleDraw();
+      return;
+    }
+    if (isActiveSessionIdleEvent(action, state)) {
+      lastFrame = drawChatChromeOverlay(state, capabilities, lastFrame);
       return;
     }
     if (action.type === "tick") {

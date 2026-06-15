@@ -11,6 +11,7 @@ import {
   assertMutableRegionClearedBefore,
   captureDrawWrites,
   lastAbsoluteCursorBefore,
+  restoreProperty,
 } from "./helpers/app-harness.js";
 
 test("draw clears terminal when opening the session picker over chat scrollback", () => {
@@ -477,8 +478,10 @@ test("draw renders chrome directly below cache when there is no live", () => {
   assert.ok(chromeAnchorIndex >= 0, "chrome must start immediately after cache when live is empty");
 });
 
-test("draw keeps overflowing live rows mutable and chrome visible at the reservation tail", () => {
+test("draw spills overflowing live rows into scrollback and keeps the tail mutable", () => {
   const busySession = { ...activeSession, status: "busy" as const };
+  const rows = Object.getOwnPropertyDescriptor(process.stdout, "rows");
+  Object.defineProperty(process.stdout, "rows", { configurable: true, value: 12 });
   let state = reducer(initialState("C:/repo"), {
     type: "hydrate",
     session: busySession,
@@ -510,14 +513,97 @@ test("draw keeps overflowing live rows mutable and chrome visible at the reserva
     },
   });
 
-  const writes = captureDrawWrites(() => {
-    draw(state, richCapabilities(), "");
-  });
-  const output = writes.join("");
+  try {
+    const writes = captureDrawWrites(() => {
+      draw(state, richCapabilities(), "");
+    });
+    const output = writes.join("");
+    const saveCursorIndex = output.indexOf("\x1b[s");
+    const spilledIndex = output.indexOf("LIVE_OVERFLOW_0");
+    const tailIndex = output.indexOf("LIVE_OVERFLOW_29");
+    const tailAnchor = lastAbsoluteCursorBefore(output, tailIndex);
 
-  assert.match(output, /LIVE_OVERFLOW_29/);
-  assert.match(output, /Active[\s\S]*Enter to send/);
-  assert.match(output, /LIVE_OVERFLOW_28[\s\S]*LIVE_OVERFLOW_29[\s\S]*Active/);
+    assert.ok(saveCursorIndex >= 0, "chat draw must save the scrollback cursor");
+    assert.ok(spilledIndex >= 0, "overflowing live prefix must be written to scrollback");
+    assert.ok(
+      spilledIndex < saveCursorIndex,
+      "overflowing live prefix must be appended before overlay painting",
+    );
+    assert.ok(tailIndex > saveCursorIndex, "live tail must remain mutable after the saved cursor");
+    assert.ok(tailAnchor, "live tail must be painted through the mutable overlay");
+    assert.match(output, /Active[\s\S]*Enter to send/);
+  } finally {
+    restoreProperty(process.stdout, "rows", rows);
+  }
+});
+
+test("draw promotes spilled live through cache handoff without duplicating the prefix", () => {
+  const busySession = { ...activeSession, status: "busy" as const };
+  const idleSession = { ...activeSession, status: "idle" as const };
+  const rows = Object.getOwnPropertyDescriptor(process.stdout, "rows");
+  Object.defineProperty(process.stdout, "rows", { configurable: true, value: 12 });
+  let liveState = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: busySession,
+    messages: [],
+    permissions: [],
+    sessions: [busySession],
+  });
+  const liveText = Array.from({ length: 30 }, (_, index) => `HANDOFF_OVERFLOW_${index}`).join("\n");
+  liveState = reducer(liveState, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.part.delta",
+        properties: {
+          session_id: "sess-1",
+          message_id: "msg-handoff-overflow",
+          part_id: "part-handoff-overflow",
+          field: "text",
+          delta: liveText,
+        },
+      },
+    },
+  });
+  const cacheState = reducer(liveState, {
+    type: "hydrate",
+    session: idleSession,
+    messages: [
+      {
+        id: "msg-handoff-overflow",
+        sessionID: "sess-1",
+        role: "assistant",
+        parts: [{ id: "part-handoff-overflow", type: "text", text: liveText }],
+      },
+    ],
+    permissions: [],
+    sessions: [idleSession],
+  });
+
+  try {
+    const writes = captureDrawWrites((writes) => {
+      const previous = draw(liveState, richCapabilities(), "");
+      writes.length = 0;
+      draw(cacheState, richCapabilities(), previous);
+    });
+    const output = writes.join("");
+
+    assert.equal(output.includes(terminalClear), false);
+    assert.doesNotMatch(
+      output,
+      /HANDOFF_OVERFLOW_0(?!\d)/,
+      "cache handoff must not rewrite the already spilled prefix",
+    );
+    assert.match(
+      output,
+      /HANDOFF_OVERFLOW_29/,
+      "cache handoff must append the remaining live tail",
+    );
+    assert.match(output, /Active[\s\S]*Enter to send/);
+  } finally {
+    restoreProperty(process.stdout, "rows", rows);
+  }
 });
 
 test("draw renders chrome in reserved scrollback tail when cache fills the viewport", () => {
