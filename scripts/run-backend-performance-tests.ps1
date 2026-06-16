@@ -54,7 +54,7 @@ function Invoke-CargoTestWithTimeout {
 function Test-IsProcessSensitivePerformanceTest {
   param([string]$Package, [string]$Target, [string]$Path)
   $name = "$Package::$Target $Path".ToLowerInvariant()
-  foreach ($pattern in @("process", "lifecycle", "router", "session_db", "service")) {
+  foreach ($pattern in @("gateway_session_concurrency_stress", "process", "lifecycle", "router", "session_db", "service", "queue")) {
     if ($name.Contains($pattern)) {
       return $true
     }
@@ -73,11 +73,12 @@ function Get-CargoTestArguments {
 }
 
 function Start-CargoTestProcess {
-  param($Case)
+  param($Case, [string]$GroupKey = "")
   $arguments = Get-CargoTestArguments $Case
   $group = if ($Case.Serial) { "serial" } else { "parallel" }
   Write-Host ""
-  Write-Host "==> Running backend performance test $($Case.Package)::$($Case.Target) [$group]"
+  $lane = if ($GroupKey) { " lane=$GroupKey" } else { "" }
+  Write-Host "==> Running backend performance test $($Case.Package)::$($Case.Target) [$group$lane]"
   $startInfo = New-Object System.Diagnostics.ProcessStartInfo
   $startInfo.FileName = "cargo"
   $startInfo.UseShellExecute = $false
@@ -88,9 +89,32 @@ function Start-CargoTestProcess {
   [pscustomobject]@{
     Process = $process
     Case = $Case
+    GroupKey = $GroupKey
     StartedAt = Get-Date
     Arguments = $arguments
   }
+}
+
+function New-PerformanceCaseGroup {
+  param([string]$Key, [object[]]$Cases)
+  $queue = [System.Collections.Queue]::new()
+  foreach ($case in $Cases) {
+    $queue.Enqueue($case)
+  }
+  [pscustomobject]@{
+    Key = $Key
+    Cases = $queue
+  }
+}
+
+function Start-NextPerformanceGroupCase {
+  param($Group)
+  if ($Group.Cases.Count -eq 0) {
+    return $null
+  }
+  $entry = Start-CargoTestProcess $Group.Cases.Dequeue() $Group.Key
+  $entry | Add-Member -NotePropertyName Group -NotePropertyValue $Group
+  $entry
 }
 
 function Invoke-PerformanceTestCases {
@@ -100,16 +124,25 @@ function Invoke-PerformanceTestCases {
   $maxParallel = [Math]::Max(1, $Parallelism)
   if ($parallelCases.Count -gt 0) {
     Write-Host ""
-    Write-Host "==> Running $($parallelCases.Count) backend performance tests with parallelism $maxParallel"
+    Write-Host "==> Running $($parallelCases.Count) non-conflicting backend performance tests with crate-lane parallelism $maxParallel"
   }
   $pending = [System.Collections.Queue]::new()
-  foreach ($case in $parallelCases) {
-    $pending.Enqueue($case)
+  $parallelCases |
+    Group-Object -Property Package |
+    Sort-Object Name |
+    ForEach-Object {
+      $pending.Enqueue((New-PerformanceCaseGroup $_.Name @($_.Group | Sort-Object Target)))
+    }
+  if ($pending.Count -gt 0) {
+    Write-Host "==> Non-conflicting crate lanes: $($pending.Count)"
   }
   $running = @()
   while ($pending.Count -gt 0 -or $running.Count -gt 0) {
     while ($pending.Count -gt 0 -and $running.Count -lt $maxParallel) {
-      $running += Start-CargoTestProcess $pending.Dequeue()
+      $entry = Start-NextPerformanceGroupCase $pending.Dequeue()
+      if ($null -ne $entry) {
+        $running += $entry
+      }
     }
     Start-Sleep -Milliseconds 200
     $nextRunning = @()
@@ -127,6 +160,12 @@ function Invoke-PerformanceTestCases {
             }
           }
           exit $entry.Process.ExitCode
+        }
+        if ($entry.Group) {
+          $nextEntry = Start-NextPerformanceGroupCase $entry.Group
+          if ($null -ne $nextEntry) {
+            $nextRunning += $nextEntry
+          }
         }
       } else {
         $nextRunning += $entry

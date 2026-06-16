@@ -187,6 +187,57 @@ pub(crate) fn gateway_callback_http_client() -> reqwest::Client {
         .unwrap_or_else(|_| reqwest::Client::new())
 }
 
+pub(crate) fn post_gateway_callback_detached(
+    endpoint: String,
+    payload: serde_json::Value,
+    session_id: String,
+    runtime_id: String,
+    context: &'static str,
+) {
+    std::thread::spawn(move || {
+        let Ok(runtime) = tokio::runtime::Runtime::new() else {
+            warn!(
+                session_id = %session_id,
+                runtime_id = %runtime_id,
+                context = context,
+                "failed to create detached gateway callback runtime"
+            );
+            return;
+        };
+        runtime.block_on(async move {
+            match gateway_callback_http_client()
+                .post(endpoint)
+                .json(&payload)
+                .send()
+                .await
+            {
+                Ok(response) if response.status().is_success() => {}
+                Ok(response) => {
+                    let status = response.status();
+                    let body = response.text().await.unwrap_or_default();
+                    warn!(
+                        session_id = %session_id,
+                        runtime_id = %runtime_id,
+                        context = context,
+                        gateway_status = %status,
+                        body = %body,
+                        "detached gateway callback returned non-success"
+                    );
+                }
+                Err(error) => {
+                    warn!(
+                        session_id = %session_id,
+                        runtime_id = %runtime_id,
+                        context = context,
+                        error = %error,
+                        "detached gateway callback failed"
+                    );
+                }
+            }
+        });
+    });
+}
+
 pub(crate) fn gateway_callback_http_timeout() -> std::time::Duration {
     let millis = std::env::var("TURA_GATEWAY_CALLBACK_TIMEOUT_MS")
         .ok()

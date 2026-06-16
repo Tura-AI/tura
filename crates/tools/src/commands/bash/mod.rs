@@ -3,11 +3,12 @@ pub const PROMPT: &str = include_str!("prompt.md");
 pub const POLICY: &str = include_str!("policy.toml");
 pub const SCHEMA: &str = include_str!("schema.json");
 
-use super::{shell_command, CommandResponse};
+use super::CommandResponse;
 use crate::runtime::file_locks::Access;
 use crate::runtime::tool::{
     FunctionToolOutput, ToolCall, ToolContext, ToolError, ToolHandler, ToolPayload,
 };
+use crate::shell_executor::{self, ShellKind};
 use std::path::Path;
 
 pub struct BashHandler;
@@ -23,7 +24,7 @@ impl ToolHandler for BashHandler {
     }
 
     async fn is_mutating(&self, call: &ToolCall, _ctx: &ToolContext) -> bool {
-        !shell_command::looks_read_only(&payload_command_line(&call.payload))
+        !shell_executor::looks_read_only(&payload_command_line(&call.payload))
     }
 
     async fn access(&self, call: &ToolCall, ctx: &ToolContext) -> Access {
@@ -42,30 +43,24 @@ impl ToolHandler for BashHandler {
         call: ToolCall,
         ctx: ToolContext,
     ) -> Result<FunctionToolOutput, ToolError> {
-        let response = shell_command::execute_async_with_shell(
+        let response = shell_executor::execute_async(
             &payload_command_line(&call.payload),
             &ctx.session_dir,
             120,
-            "bash",
+            ShellKind::Bash,
             &ctx,
         )
         .await;
         let success = response.success;
         Ok(FunctionToolOutput::from_value(
-            shell_command::json_like_output(
-                response.exit_code,
-                response.stdout,
-                response.stderr,
-                response.output,
-                response.changes,
-            ),
+            shell_executor::shell_output_value(response),
             Some(success),
         ))
     }
 }
 
 pub fn execute(command_line: &str, session_dir: &Path, timeout_secs: u64) -> CommandResponse {
-    shell_command::execute_with_shell(command_line, session_dir, timeout_secs, "bash")
+    shell_executor::execute(command_line, session_dir, timeout_secs, ShellKind::Bash)
 }
 
 fn payload_command_line(payload: &ToolPayload) -> String {

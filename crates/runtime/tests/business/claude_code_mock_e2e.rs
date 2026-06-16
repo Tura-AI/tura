@@ -39,7 +39,6 @@ static ENV_LOCK: Mutex<()> = Mutex::new(());
 const MOCK_COMMAND_TIMEOUT_MS: u64 = 3_000;
 const MOCK_PROVIDER_TIMEOUT_MS: &str = "30000";
 const MOCK_PROVIDER_STREAM_TIMEOUT_MS: &str = "1000";
-const MOCK_POST_COMMAND_TIMEOUT_MS: &str = "250";
 
 #[test]
 #[ignore = "Claude compatibility coverage is run explicitly; global business runners skip claude targets"]
@@ -73,10 +72,6 @@ fn claude_code_gateway_session_tool_calling_mock_e2e() {
         (
             "TURA_PROVIDER_IDLE_OUTPUT_TIMEOUT_MS",
             MOCK_PROVIDER_STREAM_TIMEOUT_MS,
-        ),
-        (
-            "TURA_STREAMED_COMMAND_RUN_POST_RESULT_TIMEOUT_MS",
-            MOCK_POST_COMMAND_TIMEOUT_MS,
         ),
     ]);
 

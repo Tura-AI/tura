@@ -429,25 +429,6 @@ async fn oauth_business_concurrent_auth_writes_keep_env_and_config_complete() {
                     response.message
                 );
             }
-            "churn" => {
-                let key = std::env::var(AUTH_CHILD_KEY_ENV).expect("child auth key env");
-                for round in 0..4 {
-                    assert!(
-                        write_api_auth(&provider_id, &format!("{key}-round-{round}")).await,
-                        "child process churn write should be saved"
-                    );
-                    let Json(response) = provider_auth_logout(Path(provider_id.clone())).await;
-                    assert!(
-                        response.ok,
-                        "child process churn logout should succeed: {}",
-                        response.message
-                    );
-                }
-                assert!(
-                    write_api_auth(&provider_id, &key).await,
-                    "child process final churn write should be saved"
-                );
-            }
             action => panic!("unknown child auth action: {action}"),
         }
         return;
@@ -467,14 +448,10 @@ async fn oauth_business_concurrent_auth_writes_keep_env_and_config_complete() {
     let logout_provider_ids = (0..6usize)
         .map(|index| format!("business_logout_{index}"))
         .collect::<Vec<_>>();
-    let churn_provider_ids = (0..6usize)
-        .map(|index| format!("business_churn_{index}"))
-        .collect::<Vec<_>>();
     let dynamic_env_keys = provider_ids
         .iter()
         .chain(process_provider_ids.iter())
         .chain(logout_provider_ids.iter())
-        .chain(churn_provider_ids.iter())
         .flat_map(|provider_id| {
             [
                 format!("{}_API_KEY", provider_id.to_ascii_uppercase()),
@@ -551,27 +528,6 @@ async fn oauth_business_concurrent_auth_writes_keep_env_and_config_complete() {
                 .expect("spawn auth logout child"),
         ));
     }
-    for (index, provider_id) in churn_provider_ids.iter().enumerate() {
-        children.push((
-            provider_id.clone(),
-            format!("business-churn-final-key-{index}"),
-            Command::new(&current_exe)
-                .arg("--exact")
-                .arg("oauth_business_concurrent_auth_writes_keep_env_and_config_complete")
-                .arg("--nocapture")
-                .arg("--test-threads=1")
-                .env("TURA_ENV_PATH", &env_path)
-                .env("TURA_PROVIDER_CONFIG", &provider_config)
-                .env(AUTH_CHILD_PROVIDER_ENV, provider_id)
-                .env(AUTH_CHILD_ACTION_ENV, "churn")
-                .env(
-                    AUTH_CHILD_KEY_ENV,
-                    format!("business-churn-final-key-{index}"),
-                )
-                .spawn()
-                .expect("spawn auth churn child"),
-        ));
-    }
     for (provider_id, _key, mut child) in children {
         let status = child.wait().expect("wait auth writer child");
         assert!(
@@ -607,14 +563,6 @@ async fn oauth_business_concurrent_auth_writes_keep_env_and_config_complete() {
     }
     for provider_id in &logout_provider_ids {
         assert_revoked_api_auth(&env_content, provider_auth, provider_id);
-    }
-    for (index, provider_id) in churn_provider_ids.iter().enumerate() {
-        assert_persisted_api_auth(
-            &env_content,
-            provider_auth,
-            provider_id,
-            &format!("business-churn-final-key-{index}"),
-        );
     }
 }
 

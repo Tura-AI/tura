@@ -11,7 +11,7 @@ use tura_router::registry::resolve_binary_target;
 /// Maximum recursion depth for child sub-sessions (fork-bomb guard, T5.4).
 const MAX_PLANNING_DEPTH: usize = 3;
 /// Concurrent runtime-worker cap (fork-bomb guard, T5.4).
-const MAX_RUNTIME_WORKERS: usize = 16;
+const MAX_RUNTIME_WORKERS: usize = 24;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct RunAgentRequest {
@@ -382,7 +382,7 @@ mod tests {
             assert_eq!(body["session_id"], "over-limit-session");
             assert!(
                 body["error"].as_str().is_some_and(
-                    |error| error.contains("runtime worker concurrency limit reached (16/16)")
+                    |error| error.contains("runtime worker concurrency limit reached (24/24)")
                 ),
                 "unexpected limit error body: {body}"
             );

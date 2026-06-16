@@ -3,7 +3,7 @@ mod cli_live;
 mod progress;
 mod tool_message;
 
-pub(crate) use agent_message::gateway_callback_http_client;
+pub(crate) use agent_message::post_gateway_callback_detached;
 pub(crate) use agent_message::{
     publish_gateway_agent_message_from_runtime, publish_runtime_failure_message,
     publish_streamed_agent_text, runtime_message_id, runtime_text_part_id, runtime_tool_part_id,

@@ -32,6 +32,18 @@ path = "tests/live/codex_priority_tps_live.rs"
 required-features = ["live-tests"]
 
 [[test]]
+name = "final_turn_cache_live"
+path = "tests/live/final_turn_cache_live.rs"
+harness = false
+required-features = ["live-tests"]
+
+[[test]]
+name = "workspace_session_cache_live"
+path = "tests/live/workspace_session_cache_live.rs"
+harness = false
+required-features = ["live-tests"]
+
+[[test]]
 name = "live_model_smoke"
 path = "tests/live/live_model_smoke.rs"
 required-features = ["live-tests"]

@@ -36,10 +36,6 @@ fn coding_agent_can_call_command_run_tool_e2e() {
             "TURA_PROVIDER_IDLE_OUTPUT_TIMEOUT_MS",
             MOCK_PROVIDER_STREAM_TIMEOUT_MS,
         ),
-        (
-            "TURA_STREAMED_COMMAND_RUN_POST_RESULT_TIMEOUT_MS",
-            MOCK_POST_COMMAND_TIMEOUT_MS,
-        ),
     ]);
 
     let result = mano::process_from_gateway_session_in_directory(
@@ -143,10 +139,6 @@ fn coding_agent_executes_command_run_command_before_stream_finishes() {
             "TURA_PROVIDER_IDLE_OUTPUT_TIMEOUT_MS",
             MOCK_MULTI_COMMAND_STREAM_TIMEOUT_MS,
         ),
-        (
-            "TURA_STREAMED_COMMAND_RUN_POST_RESULT_TIMEOUT_MS",
-            MOCK_MULTI_COMMAND_POST_TIMEOUT_MS,
-        ),
     ]);
 
     let result = mano::process_from_gateway_session_in_directory(
@@ -204,10 +196,6 @@ fn coding_agent_provider_retry_exhaustion_preserves_provider_error() {
         (
             "TURA_PROVIDER_IDLE_OUTPUT_TIMEOUT_MS",
             MOCK_PROVIDER_STREAM_TIMEOUT_MS,
-        ),
-        (
-            "TURA_STREAMED_COMMAND_RUN_POST_RESULT_TIMEOUT_MS",
-            MOCK_POST_COMMAND_TIMEOUT_MS,
         ),
     ]);
 

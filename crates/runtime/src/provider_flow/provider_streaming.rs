@@ -8,9 +8,8 @@ use tracing::error;
 
 use crate::gateway_events::publish_streamed_agent_text;
 use crate::provider_flow::command_run_streaming::{
-    apply_cancelled_streamed_command_run_result,
-    apply_post_result_timeout_streamed_command_run_result, spawn_streamed_command_run_task,
-    streamed_command_run_post_result_timeout, SpawnStreamedCommandRunTask, StreamedCommandRunState,
+    apply_cancelled_streamed_command_run_result, spawn_streamed_command_run_task,
+    SpawnStreamedCommandRunTask, StreamedCommandRunState,
 };
 use crate::provider_flow::errors::{
     finish_runtime_failure, finish_runtime_failure_with_usage, runtime_timeout,
@@ -101,7 +100,6 @@ pub(crate) async fn call_runtime_streaming(
         runtime_status: runtime.session_sync_status(),
     });
 
-    let post_command_result_timeout = streamed_command_run_post_result_timeout();
     let route_config_for_task = route_config.clone();
     let tura_config_for_task = Arc::clone(tura_config);
     let provider_task = tokio::spawn(async move {
@@ -217,37 +215,6 @@ pub(crate) async fn call_runtime_streaming(
                         RuntimeCallResultStatus::Cancelled,
                         Some(usage),
                     )?;
-                    provider_task.abort();
-                    let _ = (&mut provider_task).await;
-                    drop(final_response_stream_tx);
-                    let _ = command_task.join();
-                    return Ok(());
-                }
-                if command_state.should_finish_after(post_command_result_timeout) {
-                    let finished_at = Utc::now();
-                    let snapshot = command_state.snapshot();
-                    apply_post_result_timeout_streamed_command_run_result(
-                        runtime,
-                        &snapshot.commands,
-                        &snapshot.events,
-                        &snapshot.results,
-                        post_command_result_timeout,
-                        finished_at,
-                    );
-                    let first_token_at = first_stream_output_or(&first_stream_output_at, finished_at);
-                    runtime
-                        .mark_first_token(first_token_at)
-                        .map_err(|e| format!("failed to mark first token: {e}"))?;
-                    let usage = estimated_usage_report_for_interrupted_runtime(
-                        runtime,
-                        started_at,
-                        finished_at,
-                        first_token_at,
-                        "runtime_estimate_post_command_run_stream_timeout",
-                    );
-                    runtime
-                        .finish_success(finished_at, Some(usage))
-                        .map_err(|e| format!("failed to finish runtime success: {e}"))?;
                     provider_task.abort();
                     let _ = (&mut provider_task).await;
                     drop(final_response_stream_tx);

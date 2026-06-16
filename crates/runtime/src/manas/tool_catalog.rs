@@ -33,17 +33,9 @@ pub(super) fn load_agent_capabilities(
 
 pub(crate) fn filter_tools_for_turn(
     tools: Vec<serde_json::Value>,
-    is_final_turn: bool,
-    force_no_tools: bool,
+    _is_final_turn: bool,
+    _force_no_tools: bool,
 ) -> Result<Vec<serde_json::Value>, String> {
-    if force_no_tools {
-        return Ok(Vec::new());
-    }
-
-    if is_final_turn {
-        return Ok(Vec::new());
-    }
-
     Ok(keep_command_run_only(tools))
 }
 
@@ -621,6 +613,8 @@ mod tests {
         );
         assert!(
             description.contains("Reminder: task_status only updates internal task state")
+                && description.contains("Before changing task_status `status`")
+                && description.contains("then call task_status in the same assistant response")
                 && description
                     .contains("Mark `done` only after the task is complete and verified.")
                 && description.contains("if the user says hello or asks a simple question"),
@@ -649,6 +643,8 @@ mod tests {
 
         assert!(description.contains("task_status"));
         assert!(description.contains("Reminder: task_status only updates internal task state"));
+        assert!(description.contains("Before changing task_status `status`"));
+        assert!(description.contains("then call task_status in the same assistant response"));
         assert!(description.contains("Mark `done` only after the task is complete and verified."));
         assert!(description.contains("if the user says hello or asks a simple question"));
         assert!(!description.contains("Continue working toward the active thread goal."));
@@ -678,6 +674,22 @@ mod tests {
             vec![tool(COMMAND_RUN_TOOL), tool(PLANNING_TOOL)],
             false,
             false,
+        )
+        .expect("filter should succeed");
+
+        assert_eq!(names(filtered), vec![COMMAND_RUN_TOOL]);
+    }
+
+    #[test]
+    fn final_turn_keeps_command_run_schema_for_prompt_cache() {
+        let filtered = filter_tools_for_turn(
+            vec![
+                tool(COMMAND_RUN_TOOL),
+                tool(PLANNING_TOOL),
+                tool("web_search"),
+            ],
+            true,
+            true,
         )
         .expect("filter should succeed");
 

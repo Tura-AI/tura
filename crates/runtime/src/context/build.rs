@@ -1,6 +1,8 @@
 use chrono::Utc;
+use std::time::Instant;
 use tracing::info;
 
+use crate::profile_timings;
 use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::state_machine::session_management::SessionManagement;
 
@@ -22,7 +24,27 @@ pub struct ContextOutput {
 }
 
 pub fn build_context(input: ContextInput) -> Result<ContextOutput, String> {
+    let total_start = Instant::now();
+    let profiling = profile_timings::enabled();
+    let build_messages_start = Instant::now();
     let mut messages = build_messages_from_session_with_options(&input.session);
+    let build_messages_elapsed = build_messages_start.elapsed();
+    let initial_message_count = messages.len();
+    let initial_messages_bytes = if profiling {
+        profile_timings::json_vec_bytes(&messages)
+    } else {
+        0
+    };
+    profile_timings::log_duration(
+        "build_context.build_messages_from_session",
+        build_messages_elapsed,
+        serde_json::json!({
+            "session_id": input.session.session_id,
+            "session_log_entries": input.session.session_log.len(),
+            "message_count": initial_message_count,
+            "messages_bytes": initial_messages_bytes,
+        }),
+    );
 
     let mut context_state = ContextState {
         session_id: input.session.session_id.clone(),
@@ -76,13 +98,45 @@ pub fn build_context(input: ContextInput) -> Result<ContextOutput, String> {
         messages.push(msg.clone());
     }
 
+    let clone_start = Instant::now();
     context_state.messages = messages.clone();
+    let clone_elapsed = clone_start.elapsed();
+    profile_timings::log_duration(
+        "build_context.clone_messages_to_context_state",
+        clone_elapsed,
+        serde_json::json!({
+            "session_id": input.session.session_id,
+            "message_count": messages.len(),
+            "messages_bytes": if profiling {
+                profile_timings::json_vec_bytes(&messages)
+            } else {
+                0
+            },
+        }),
+    );
 
     info!(
         session_id = %input.session.session_id,
         message_count = messages.len(),
         tool_result_count = context_state.tool_results.len(),
         "context built"
+    );
+
+    let total_elapsed = total_start.elapsed();
+    profile_timings::log_duration(
+        "build_context.total",
+        total_elapsed,
+        serde_json::json!({
+            "session_id": input.session.session_id,
+            "session_log_entries": input.session.session_log.len(),
+            "message_count": messages.len(),
+            "tool_result_count": context_state.tool_results.len(),
+            "messages_bytes": if profiling {
+                profile_timings::json_vec_bytes(&messages)
+            } else {
+                0
+            },
+        }),
     );
 
     Ok(ContextOutput {
@@ -126,7 +180,20 @@ pub fn accumulate_tool_result_with_provider_metadata(
     runtime_id: Option<&str>,
     provider_metadata: Option<serde_json::Value>,
 ) -> Result<(), String> {
+    let total_start = Instant::now();
+    let profiling = profile_timings::enabled();
+    let tool_input_bytes = if profiling {
+        profile_timings::json_bytes(&tool_input)
+    } else {
+        0
+    };
+    let tool_output_bytes = if profiling {
+        profile_timings::json_bytes(&tool_output)
+    } else {
+        0
+    };
     let now = Utc::now();
+    let sequence_start = Instant::now();
     let sequence = session
         .session_log
         .iter()
@@ -134,31 +201,147 @@ pub fn accumulate_tool_result_with_provider_metadata(
         .filter(|value| value.get("type").and_then(|kind| kind.as_str()) == Some("tool_result"))
         .count()
         + 1;
+    profile_timings::log_elapsed(
+        "accumulate_tool_result.sequence_scan",
+        sequence_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "session_log_entries": session.session_log.len(),
+            "sequence": sequence,
+        }),
+    );
+    let strip_input_start = Instant::now();
+    let stripped_input = strip_tool_reporting_fields(tool_input);
+    let strip_input_elapsed = strip_input_start.elapsed();
+    profile_timings::log_duration(
+        "accumulate_tool_result.strip_input",
+        strip_input_elapsed,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "input_bytes": tool_input_bytes,
+            "stripped_input_bytes": if profiling {
+                profile_timings::json_bytes(&stripped_input)
+            } else {
+                0
+            },
+        }),
+    );
+    let base_json_start = Instant::now();
     let mut tool_result_json = serde_json::json!({
         "type": "tool_result",
         "tool_name": tool_name,
-        "input": strip_tool_reporting_fields(tool_input),
+        "input": stripped_input,
         "output": tool_output,
         "success": tool_success,
         "error": tool_error,
         "sequence": sequence,
         "timestamp": now.to_rfc3339(),
     });
+    let base_json_elapsed = base_json_start.elapsed();
+    profile_timings::log_duration(
+        "accumulate_tool_result.base_json",
+        base_json_elapsed,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "output_bytes": tool_output_bytes,
+            "tool_result_bytes": if profiling {
+                profile_timings::json_bytes(&tool_result_json)
+            } else {
+                0
+            },
+        }),
+    );
     if let Some(runtime_id) = runtime_id {
         tool_result_json["runtime_id"] = serde_json::Value::String(runtime_id.to_string());
     }
     if let Some(provider_metadata) = provider_metadata {
         tool_result_json["provider_metadata"] = provider_metadata;
     }
+    let context_cache_start = Instant::now();
     tool_result_json["context_cache"] = tool_result_context_cache(&tool_result_json);
+    let context_cache_elapsed = context_cache_start.elapsed();
+    profile_timings::log_duration(
+        "accumulate_tool_result.context_cache",
+        context_cache_elapsed,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "context_cache_bytes": if profiling {
+                profile_timings::json_bytes(&tool_result_json["context_cache"])
+            } else {
+                0
+            },
+        }),
+    );
+    let context_message_start = Instant::now();
     tool_result_json["context_message"] = immutable_tool_result_context_message(&tool_result_json);
+    let context_message_elapsed = context_message_start.elapsed();
+    profile_timings::log_duration(
+        "accumulate_tool_result.context_message",
+        context_message_elapsed,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "context_message_bytes": if profiling {
+                profile_timings::json_bytes(&tool_result_json["context_message"])
+            } else {
+                0
+            },
+        }),
+    );
+    let context_messages_start = Instant::now();
     tool_result_json["context_messages"] =
         serde_json::Value::Array(immutable_tool_result_context_messages(&tool_result_json));
+    let context_messages_elapsed = context_messages_start.elapsed();
+    profile_timings::log_duration(
+        "accumulate_tool_result.context_messages",
+        context_messages_elapsed,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "context_messages_bytes": if profiling {
+                profile_timings::json_bytes(&tool_result_json["context_messages"])
+            } else {
+                0
+            },
+        }),
+    );
 
-    session.push_log(
-        serde_json::to_string(&tool_result_json)
-            .unwrap_or_else(|_| format!("tool_result: {tool_name}")),
-        now,
+    let serialize_start = Instant::now();
+    let serialized = serde_json::to_string(&tool_result_json)
+        .unwrap_or_else(|_| format!("tool_result: {tool_name}"));
+    profile_timings::log_elapsed(
+        "accumulate_tool_result.serialize",
+        serialize_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "tool_result_bytes": serialized.len(),
+        }),
+    );
+    let push_start = Instant::now();
+    session.push_log(serialized, now);
+    profile_timings::log_elapsed(
+        "accumulate_tool_result.push_log",
+        push_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "session_log_entries": session.session_log.len(),
+        }),
+    );
+    profile_timings::log_elapsed(
+        "accumulate_tool_result.total",
+        total_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "session_log_entries": session.session_log.len(),
+            "tool_result_bytes": session.session_log.last().map(|entry| entry.len()).unwrap_or(0),
+        }),
     );
 
     Ok(())

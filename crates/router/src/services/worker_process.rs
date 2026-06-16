@@ -1,4 +1,6 @@
-use std::{fs::OpenOptions, path::Path, process::Stdio, sync::Arc, time::Duration};
+use std::{
+    fs::OpenOptions, io::Write as StdWrite, path::Path, process::Stdio, sync::Arc, time::Duration,
+};
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
@@ -453,6 +455,12 @@ impl WorkerProcess {
                 .map_err(|err| anyhow!("failed to join one-shot stderr reader: {err}"))??,
         )
         .to_string();
+        append_one_shot_worker_stderr_log(
+            &self.worker_id,
+            &self.service_name,
+            &self.spawn_env,
+            &stderr,
+        );
 
         if !stdout.trim().is_empty() {
             info!(
@@ -495,6 +503,46 @@ impl WorkerProcess {
                 Err(anyhow!("worker returned invalid response"))
             }
         }
+    }
+}
+
+fn append_one_shot_worker_stderr_log(
+    worker_id: &str,
+    service_name: &str,
+    env: &[(String, String)],
+    stderr: &str,
+) {
+    if stderr.is_empty() {
+        return;
+    }
+    let Some(path) = worker_stderr_log_path(worker_id, service_name, env) else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            warn!(
+                path = %path.display(),
+                error = %error,
+                "failed to create one-shot worker stderr log directory"
+            );
+            return;
+        }
+    }
+    match OpenOptions::new().create(true).append(true).open(&path) {
+        Ok(mut file) => {
+            if let Err(error) = file.write_all(stderr.as_bytes()) {
+                warn!(
+                    path = %path.display(),
+                    error = %error,
+                    "failed to append one-shot worker stderr log"
+                );
+            }
+        }
+        Err(error) => warn!(
+            path = %path.display(),
+            error = %error,
+            "failed to open one-shot worker stderr log"
+        ),
     }
 }
 

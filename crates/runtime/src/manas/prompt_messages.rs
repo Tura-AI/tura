@@ -1,4 +1,9 @@
-use crate::prompt_style::{compact_context, task_status, user_new_command, PromptBuilder};
+use std::time::Instant;
+
+use crate::profile_timings;
+use crate::prompt_style::{
+    compact_context, tail_injection, task_status, user_new_command, PromptBuilder,
+};
 use crate::state_machine::session_management::{
     PlanStatus, SessionManagement, StartCondition, TaskStep,
 };
@@ -8,25 +13,77 @@ pub(crate) fn messages_for_turn(
     session: &SessionManagement,
     original_user_task: &str,
 ) -> Vec<serde_json::Value> {
+    let total_start = Instant::now();
+    let profiling = profile_timings::enabled();
+    let clone_start = Instant::now();
     let mut messages = current_messages.to_vec();
+    profile_timings::log_elapsed(
+        "messages_for_turn.clone_current_messages",
+        clone_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "input_message_count": current_messages.len(),
+            "output_message_count": messages.len(),
+            "input_messages_bytes": if profiling {
+                profile_timings::json_vec_bytes(current_messages)
+            } else {
+                0
+            },
+        }),
+    );
     if should_append_original_user_task(&messages, original_user_task) {
         messages.push(serde_json::json!({
             "role": "user",
             "content": original_user_task.trim(),
         }));
     }
-    if let Some(content) = user_new_command_message(&session.session_id) {
-        messages.push(serde_json::json!({
-            "role": "system",
-            "content": content,
-        }));
+    let user_command_start = Instant::now();
+    let user_command = user_new_command_message(&session.session_id);
+    profile_timings::log_elapsed(
+        "messages_for_turn.user_new_command_message",
+        user_command_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "has_user_command": user_command.is_some(),
+        }),
+    );
+    if let Some(content) = user_command {
+        tail_injection::append_tail_prompt(
+            &mut messages,
+            tail_injection::TailPrompt::system(content),
+        );
     }
-    if approximate_message_tokens(&messages) >= compact_context_token_threshold() {
-        messages.push(serde_json::json!({
-            "role": "user",
-            "content": compact_context_required_message(),
-        }));
+    let token_estimate_start = Instant::now();
+    let token_estimate = approximate_message_tokens(&messages);
+    profile_timings::log_elapsed(
+        "messages_for_turn.approximate_message_tokens",
+        token_estimate_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "message_count": messages.len(),
+            "estimated_tokens": token_estimate,
+            "messages_bytes": if profiling {
+                profile_timings::json_vec_bytes(&messages)
+            } else {
+                0
+            },
+        }),
+    );
+    if token_estimate >= compact_context_token_threshold() {
+        tail_injection::append_tail_prompt(
+            &mut messages,
+            tail_injection::TailPrompt::user(compact_context_required_message()),
+        );
     }
+    profile_timings::log_elapsed(
+        "messages_for_turn.total",
+        total_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "message_count": messages.len(),
+            "estimated_tokens": token_estimate,
+        }),
+    );
     messages
 }
 
@@ -196,14 +253,15 @@ pub(super) fn fetch_user_commands(session_id: &str) -> Vec<String> {
     else {
         return Vec::new();
     };
+    let timeout = user_command_fetch_timeout();
     runtime
         .block_on(async move {
-            let response = reqwest::Client::new()
-                .get(endpoint)
-                .timeout(std::time::Duration::from_secs(2))
-                .send()
-                .await
+            let client = reqwest::Client::builder()
+                .connect_timeout(timeout)
+                .timeout(timeout)
+                .build()
                 .ok()?;
+            let response = client.get(endpoint).send().await.ok()?;
             if !response.status().is_success() {
                 return None;
             }
@@ -222,6 +280,15 @@ pub(super) fn fetch_user_commands(session_id: &str) -> Vec<String> {
             )
         })
         .unwrap_or_default()
+}
+
+fn user_command_fetch_timeout() -> std::time::Duration {
+    std::env::var("TURA_USER_COMMAND_FETCH_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|millis| *millis > 0)
+        .map(std::time::Duration::from_millis)
+        .unwrap_or_else(|| std::time::Duration::from_millis(100))
 }
 
 fn gateway_base_url() -> String {
@@ -254,26 +321,18 @@ fn url_escape(value: &str) -> String {
 /// work (command_run turns) without ever writing or settling the task state.
 /// Used by the runtime loop after N consecutive no-write command_run turns.
 pub(crate) fn push_task_status_nudge(messages: &mut Vec<serde_json::Value>) {
-    messages.push(serde_json::json!({
-        "role": "system",
-        "content": task_status::TASK_STATUS,
-    }));
+    tail_injection::append_tail_prompt(
+        messages,
+        tail_injection::TailPrompt::system(task_status::TASK_STATUS),
+    );
 }
 
 pub(crate) fn push_no_tool_task_status_retry_message(
     messages: &mut Vec<serde_json::Value>,
     session: &SessionManagement,
 ) {
-    let content = PromptBuilder::new()
-        .part(task_status::planning_objective_context(&planning_objective_block(
-            session,
-        )))
-        .part("If more command_run calls are required to complete the task, call command_run with task_status status doing. If user feedback, missing information, permissions, credentials, or keys are required, call command_run with task_status status question. If the task is complete and verified, call command_run with task_status status done. Every task_status status change must also have a normal assistant-channel reply.")
-        .render();
-    messages.push(serde_json::json!({
-        "role": "system",
-        "content": content,
-    }));
+    let content = task_status::no_tool_retry(&planning_objective_block(session));
+    tail_injection::append_tail_prompt(messages, tail_injection::TailPrompt::system(content));
 }
 
 pub(crate) fn planning_objective_block(session: &SessionManagement) -> String {
@@ -309,7 +368,9 @@ fn current_planning_task(session: &SessionManagement) -> Option<(usize, &TaskSte
 mod tests {
     use super::{
         messages_for_turn, planning_objective_block, push_no_tool_task_status_retry_message,
+        push_task_status_nudge,
     };
+    use crate::prompt_style::{compact_context, task_status};
     use crate::state_machine::session_management::{
         PlanStatus, SessionInput, SessionManagement, StartCondition, TaskStep,
     };
@@ -406,6 +467,8 @@ mod tests {
         assert!(content.contains("task_status status question"));
         assert!(content.contains("task_status status done"));
         assert!(content.contains("task_status status doing"));
+        assert!(content.contains("first send the user-facing assistant reply"));
+        assert!(content.contains("then call command_run with task_status status done"));
         assert!(!content.contains("original_user_task:"));
     }
 
@@ -449,8 +512,26 @@ mod tests {
     }
 
     #[test]
+    fn task_status_nudge_appends_tail_system_prompt_without_moving_fixed_system() {
+        let mut messages = vec![
+            serde_json::json!({"role": "system", "content": "fixed system prefix"}),
+            serde_json::json!({"role": "user", "content": "work"}),
+        ];
+
+        push_task_status_nudge(&mut messages);
+
+        assert_eq!(messages[0]["content"], "fixed system prefix");
+        let last_message = messages
+            .last()
+            .expect("task status nudge should append a message");
+        assert_eq!(last_message["role"], "system");
+        assert_eq!(last_message["content"], task_status::TASK_STATUS);
+    }
+
+    #[test]
     fn messages_for_turn_injects_compact_context_prompt_above_threshold() {
         let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
         std::env::set_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD", "10");
         let now = Utc::now();
         let session = SessionManagement::new(
@@ -487,11 +568,39 @@ mod tests {
         assert!(joined.contains("above about 220,000 tokens"));
         assert!(joined.contains("compact_context as the final command"));
         std::env::remove_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD");
+        std::env::remove_var("TURA_GATEWAY_CALLBACKS");
+    }
+
+    #[test]
+    fn messages_for_turn_appends_temporary_prompt_after_fixed_system_prefix() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
+        std::env::set_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD", "10");
+        let session = test_session("tail task");
+        let messages = messages_for_turn(
+            &[
+                serde_json::json!({"role": "system", "content": "fixed system prefix"}),
+                serde_json::json!({"role": "user", "content": "x".repeat(100)}),
+            ],
+            &session,
+            "tail task",
+        );
+        let last = messages.last().expect("temporary prompt should be last");
+
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "fixed system prefix");
+        assert_eq!(last["role"], "user");
+        assert!(last["content"]
+            .as_str()
+            .is_some_and(|content| content.contains(compact_context::COMPACT_CONTEXT_REQUIRED)));
+        std::env::remove_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD");
+        std::env::remove_var("TURA_GATEWAY_CALLBACKS");
     }
 
     #[test]
     fn image_data_urls_are_discounted_for_compact_threshold_estimation() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
         std::env::set_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD", "50000");
         let now = Utc::now();
         let session = SessionManagement::new(
@@ -533,11 +642,13 @@ mod tests {
 
         assert!(!joined.contains("above about 220,000 tokens"));
         std::env::remove_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD");
+        std::env::remove_var("TURA_GATEWAY_CALLBACKS");
     }
 
     #[test]
     fn audio_payloads_are_discounted_for_compact_threshold_estimation() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
         std::env::set_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD", "50000");
         let now = Utc::now();
         let session = SessionManagement::new(
@@ -582,10 +693,13 @@ mod tests {
 
         assert!(!joined.contains("above about 220,000 tokens"));
         std::env::remove_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD");
+        std::env::remove_var("TURA_GATEWAY_CALLBACKS");
     }
 
     #[test]
     fn messages_for_turn_injects_compact_context_prompt_at_default_220k_threshold() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
         let now = Utc::now();
         let session = SessionManagement::new(
             "sess-compact-default-threshold".to_string(),
@@ -620,5 +734,6 @@ mod tests {
 
         assert!(last.contains("above about 220,000 tokens"));
         assert!(last.contains("compact_context as the final command"));
+        std::env::remove_var("TURA_GATEWAY_CALLBACKS");
     }
 }

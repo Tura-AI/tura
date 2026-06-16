@@ -1,8 +1,10 @@
 use chrono::Utc;
+use std::time::Instant;
 use tracing::warn;
 
 use crate::manas::constants::gateway_callbacks_disabled;
 use crate::manas::tool_catalog::env_flag;
+use crate::profile_timings;
 use crate::prompt_style::{runtime_fallback, tool_progress};
 use crate::runtime::types::ToolCallData;
 use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeSessionSyncStatus};
@@ -222,9 +224,46 @@ pub(crate) fn publish_tool_call_record(
     error: Option<&str>,
     started_at: chrono::DateTime<Utc>,
 ) {
+    let total_start = Instant::now();
+    let profiling = profile_timings::enabled();
+    let input_bytes = if profiling {
+        profile_timings::json_bytes(&input)
+    } else {
+        0
+    };
+    let output_bytes = if profiling {
+        profile_timings::json_bytes(output)
+    } else {
+        0
+    };
     let ended_at = Utc::now();
+    let call_id_start = Instant::now();
     let call_id = stable_tool_call_id(&runtime.runtime_id, &tool_call.tool_name, &input);
+    profile_timings::log_elapsed(
+        "publish_tool_call_record.stable_tool_call_id",
+        call_id_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "runtime_id": runtime.runtime_id,
+            "tool_name": tool_call.tool_name,
+            "input_bytes": input_bytes,
+        }),
+    );
+    let output_text_start = Instant::now();
     let output_text = tool_output_text(output, error);
+    let output_text_len = output_text.len();
+    profile_timings::log_elapsed(
+        "publish_tool_call_record.tool_output_text",
+        output_text_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "runtime_id": runtime.runtime_id,
+            "tool_name": tool_call.tool_name,
+            "output_bytes": output_bytes,
+            "output_text_len": output_text_len,
+        }),
+    );
+    let metadata_start = Instant::now();
     let metadata = serde_json::json!({
         "kind": "mano_tool_call",
         "tool": tool_call.tool_name,
@@ -237,6 +276,21 @@ pub(crate) fn publish_tool_call_record(
         "session_id": session.session_id,
         "provider": runtime.provider,
     });
+    profile_timings::log_elapsed(
+        "publish_tool_call_record.metadata",
+        metadata_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "runtime_id": runtime.runtime_id,
+            "tool_name": tool_call.tool_name,
+            "metadata_bytes": if profiling {
+                profile_timings::json_bytes(&metadata)
+            } else {
+                0
+            },
+        }),
+    );
+    let state_start = Instant::now();
     let state = if success {
         serde_json::json!({
             "status": "completed",
@@ -261,8 +315,23 @@ pub(crate) fn publish_tool_call_record(
             }
         })
     };
+    profile_timings::log_elapsed(
+        "publish_tool_call_record.state",
+        state_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "runtime_id": runtime.runtime_id,
+            "tool_name": tool_call.tool_name,
+            "state_bytes": if profiling {
+                profile_timings::json_bytes(&state)
+            } else {
+                0
+            },
+        }),
+    );
 
-    if let Err(error) = publish_gateway_tool_message(GatewayToolMessage {
+    let publish_start = Instant::now();
+    let publish_result = publish_gateway_tool_message(GatewayToolMessage {
         session_id: &gateway_callback_session_id(&session.session_id),
         runtime_id: &runtime.runtime_id,
         tool_name: &tool_call.tool_name,
@@ -272,7 +341,18 @@ pub(crate) fn publish_tool_call_record(
         runtime_status: None,
         created_at: None,
         updated_at: None,
-    }) {
+    });
+    profile_timings::log_elapsed(
+        "publish_tool_call_record.publish_gateway_tool_message",
+        publish_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "runtime_id": runtime.runtime_id,
+            "tool_name": tool_call.tool_name,
+            "success": publish_result.is_ok(),
+        }),
+    );
+    if let Err(error) = publish_result {
         warn!(
             session_id = %session.session_id,
             tool_name = %tool_call.tool_name,
@@ -280,6 +360,18 @@ pub(crate) fn publish_tool_call_record(
             "failed to publish tool call record"
         );
     }
+    profile_timings::log_elapsed(
+        "publish_tool_call_record.total",
+        total_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "runtime_id": runtime.runtime_id,
+            "tool_name": tool_call.tool_name,
+            "input_bytes": input_bytes,
+            "output_bytes": output_bytes,
+            "output_text_len": output_text_len,
+        }),
+    );
 }
 
 pub(crate) fn publish_tool_call_started(
@@ -400,9 +492,12 @@ fn publish_gateway_tool_message(message: GatewayToolMessage<'_>) -> Result<(), S
         return Ok(());
     }
 
+    let total_start = Instant::now();
+    let profiling = profile_timings::enabled();
     let target_session_id = gateway_callback_session_id(message.session_id);
     let gateway_base = gateway_callback_base_url();
     let endpoint = format!("{gateway_base}/session/{target_session_id}/message/agent");
+    let payload_start = Instant::now();
     let payload = serde_json::json!({
         "reply_message": "",
         "new_learning": "",
@@ -418,24 +513,50 @@ fn publish_gateway_tool_message(message: GatewayToolMessage<'_>) -> Result<(), S
             "metadata": message.metadata,
         }
     });
+    let payload_bytes = if profiling {
+        profile_timings::json_bytes(&payload)
+    } else {
+        0
+    };
+    profile_timings::log_elapsed(
+        "publish_gateway_tool_message.payload",
+        payload_start,
+        serde_json::json!({
+            "target_session_id": target_session_id,
+            "runtime_id": message.runtime_id,
+            "tool_name": message.tool_name,
+            "payload_bytes": payload_bytes,
+        }),
+    );
 
-    tokio::runtime::Runtime::new()
-        .map_err(|err| format!("failed to create gateway callback runtime: {err}"))?
-        .block_on(async {
-            let response = crate::gateway_events::gateway_callback_http_client()
-                .post(endpoint)
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|err| format!("failed to call gateway: {err}"))?;
-            if response.status().is_success() {
-                Ok(())
-            } else {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                Err(format!("gateway returned {status}: {body}"))
-            }
-        })
+    let spawn_start = Instant::now();
+    let runtime_id = message.runtime_id.to_string();
+    crate::gateway_events::post_gateway_callback_detached(
+        endpoint,
+        payload,
+        target_session_id,
+        runtime_id.clone(),
+        "tool_message",
+    );
+    profile_timings::log_elapsed(
+        "publish_gateway_tool_message.detached_spawn",
+        spawn_start,
+        serde_json::json!({
+            "runtime_id": runtime_id,
+            "tool_name": message.tool_name,
+            "payload_bytes": payload_bytes,
+        }),
+    );
+    profile_timings::log_elapsed(
+        "publish_gateway_tool_message.total",
+        total_start,
+        serde_json::json!({
+            "runtime_id": runtime_id,
+            "tool_name": message.tool_name,
+            "payload_bytes": payload_bytes,
+        }),
+    );
+    Ok(())
 }
 
 pub(crate) fn publish_task_plan_todos(session: &SessionManagement) {
@@ -477,19 +598,13 @@ pub(crate) fn publish_task_plan_todos(session: &SessionManagement) {
         "{}/session/{target_session_id}/todo",
         gateway_callback_base_url()
     );
-    let _ = tokio::runtime::Runtime::new()
-        .map_err(|_| ())
-        .and_then(|runtime| {
-            runtime.block_on(async {
-                crate::gateway_events::gateway_callback_http_client()
-                    .post(endpoint)
-                    .json(&todos)
-                    .send()
-                    .await
-                    .map(|_| ())
-                    .map_err(|_| ())
-            })
-        });
+    crate::gateway_events::post_gateway_callback_detached(
+        endpoint,
+        serde_json::Value::Array(todos),
+        target_session_id,
+        "task-plan".to_string(),
+        "task_plan_todos",
+    );
 }
 
 fn first_non_empty<const N: usize>(items: [&str; N]) -> Option<String> {

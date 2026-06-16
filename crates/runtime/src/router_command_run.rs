@@ -300,6 +300,7 @@ mod tests {
 
     #[tokio::test]
     async fn router_executor_halts_after_failed_apply_patch() {
+        let _router_addr = EnvGuard::remove("TURA_ROUTER_ADDR");
         let workspace = tempfile::tempdir().expect("workspace");
         let mut executor = RouterCommandRunExecutor::new_with_allowed(
             workspace.path().to_path_buf(),
@@ -332,5 +333,26 @@ mod tests {
             Some(vec![json!({"success": true})])
         );
         assert_eq!(command_run_results(&json!({"ok": false})), None);
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::remove_var(key);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                std::env::set_var(self.key, previous);
+            }
+        }
     }
 }

@@ -9,6 +9,7 @@ use crate::manas::runtime_turn::execute_turn;
 use crate::manas::tool_catalog::{command_run_commands_for_agent, planning_child_depth};
 use crate::manas::{user_visible_runtime_output_text, user_visible_runtime_text};
 use crate::manas::{COMMAND_RUN_TOOL, TASK_STATUS_COMMAND};
+use crate::prompt_style::{provider_retry, tail_injection, terminal_final_response};
 use crate::tool_flow::execute::execute_tool_calls;
 use chrono::Utc;
 use std::thread;
@@ -214,17 +215,22 @@ pub fn process_manas_internal(
                 );
                 thread::sleep(wait_duration);
                 if let Some((content_type, removed)) = removed_media {
-                    current_messages.push(serde_json::json!({
-                        "role": "system",
-                        "content": format!(
-                            "The provider rejected `{content_type}` media content. {removed} item(s) were omitted from the next request and replaced with text placeholders; continue using the remaining text and supported media."
-                        )
-                    }));
+                    tail_injection::append_tail_prompt(
+                        &mut current_messages,
+                        tail_injection::TailPrompt::system(provider_retry::media_fallback(
+                            content_type,
+                            removed,
+                        )),
+                    );
                 }
-                current_messages.push(serde_json::json!({
-                    "role": "system",
-                    "content": format!("Provider failure while waiting for the model response: {error_text}. This is transient provider failure retry {} of 3, not task completion. Retry the current task with the normal command_run tool unless the requested edits and validation are actually complete.", provider_timeout_retries)
-                }));
+                tail_injection::append_tail_prompt(
+                    &mut current_messages,
+                    tail_injection::TailPrompt::system(provider_retry::transient_failure_retry(
+                        &error_text,
+                        provider_timeout_retries,
+                        3,
+                    )),
+                );
                 continue;
             }
 
@@ -515,10 +521,10 @@ fn run_terminal_final_response_turn(
     original_user_task: &str,
 ) -> Result<bool, String> {
     let mut final_messages = messages_for_turn(current_messages, session, original_user_task);
-    final_messages.push(serde_json::json!({
-        "role": "system",
-        "content": "The task was marked done. Now send the user-facing assistant reply directly, without calling tools and without mentioning task_status, command_run, or internal status updates.",
-    }));
+    tail_injection::append_tail_prompt(
+        &mut final_messages,
+        tail_injection::TailPrompt::system(terminal_final_response::TERMINAL_FINAL_RESPONSE),
+    );
     let (runtime, _tool_calls) = execute_turn(
         agents,
         session,

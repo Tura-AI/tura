@@ -36,10 +36,15 @@ pub struct ToolContext {
     events: Arc<std::sync::Mutex<Vec<ToolRuntimeEvent>>>,
     hooks: Arc<std::sync::Mutex<ToolHooks>>,
     current_call_id: Option<String>,
+    lock_scope: Option<String>,
 }
 
 impl ToolContext {
     pub fn new(session_dir: PathBuf) -> Self {
+        Self::new_with_lock_scope(session_dir, None)
+    }
+
+    pub fn new_with_lock_scope(session_dir: PathBuf, lock_scope: Option<String>) -> Self {
         Self {
             session_dir,
             cancellation: CancellationToken::new(),
@@ -47,6 +52,7 @@ impl ToolContext {
             events: Arc::new(std::sync::Mutex::new(Vec::new())),
             hooks: Arc::new(std::sync::Mutex::new(ToolHooks::default())),
             current_call_id: None,
+            lock_scope: normalize_lock_scope(lock_scope),
         }
     }
 
@@ -58,6 +64,7 @@ impl ToolContext {
             events: Arc::clone(&self.events),
             hooks: Arc::clone(&self.hooks),
             current_call_id: self.current_call_id.clone(),
+            lock_scope: self.lock_scope.clone(),
         }
     }
 
@@ -69,6 +76,10 @@ impl ToolContext {
 
     pub fn current_call_id(&self) -> Option<&str> {
         self.current_call_id.as_deref()
+    }
+
+    pub fn lock_scope(&self) -> Option<&str> {
+        self.lock_scope.as_deref()
     }
 
     pub fn record_event(&self, event: ToolRuntimeEvent) {
@@ -105,6 +116,12 @@ impl ToolContext {
             .unwrap_or_else(|err| err.into_inner())
             .clone()
     }
+}
+
+fn normalize_lock_scope(lock_scope: Option<String>) -> Option<String> {
+    lock_scope
+        .map(|scope| scope.trim().to_string())
+        .filter(|scope| !scope.is_empty())
 }
 
 #[derive(Clone, Debug)]
@@ -539,6 +556,7 @@ mod tests {
 
         assert_eq!(child.session_dir, PathBuf::from("workspace"));
         assert_eq!(child.current_call_id(), Some("call-1"));
+        assert_eq!(child.lock_scope(), None);
         child.record_event(ToolRuntimeEvent::ToolStarted {
             call_id: "call-1".to_string(),
             tool_name: "shell_command".to_string(),

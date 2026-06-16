@@ -38,6 +38,12 @@ required-features = ["os-tests"]
 business-tests = []
 live-tests = []
 os-tests = []
+performance-tests = []
+
+[[test]]
+name = "command_run_pressure_test"
+path = "tests/performance/command_run_pressure_test.rs"
+required-features = ["performance-tests"]
 
 [dependencies]
 async-trait.workspace = true

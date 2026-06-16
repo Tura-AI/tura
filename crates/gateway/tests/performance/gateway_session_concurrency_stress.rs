@@ -38,9 +38,19 @@ const EXPECTED_MESSAGES_PER_SESSION: usize =
     ROUTER_TURNS_PER_SESSION * 2 + MOCK_RUNTIME_WRITES_PER_SESSION;
 const EXPECTED_TOTAL_MESSAGES: usize = SESSION_COUNT * EXPECTED_MESSAGES_PER_SESSION;
 const OPERATION_BUDGET: Duration = Duration::from_secs(30);
+const TEST_TIMEOUT: Duration = Duration::from_secs(90);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn gateway_session_db_mock_runtime_handles_1000_plus_messages_under_30s() -> Result<()> {
+    tokio::time::timeout(
+        TEST_TIMEOUT,
+        gateway_session_db_mock_runtime_pressure_impl(),
+    )
+    .await
+    .context("gateway/session_db performance stress exceeded total timeout")?
+}
+
+async fn gateway_session_db_mock_runtime_pressure_impl() -> Result<()> {
     let _guard = ENV_LOCK.lock().await;
     let root = tempfile::tempdir().context("temp root")?;
     let home = root.path().join("home");

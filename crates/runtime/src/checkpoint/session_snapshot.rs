@@ -1,36 +1,110 @@
 //! Whole-session snapshot compatibility checkpoints.
 
+use crate::profile_timings;
 use crate::session_log_client::SessionLogClient;
 use crate::state_machine::session_management::SessionManagement;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::time::Instant;
 
 pub(crate) fn persist_session_snapshot(session: &SessionManagement) -> Result<(), String> {
+    persist_session_snapshot_for_stage(session, None)
+}
+
+fn persist_session_snapshot_for_stage(
+    session: &SessionManagement,
+    stage: Option<&str>,
+) -> Result<(), String> {
+    let total_start = Instant::now();
+    let record_start = Instant::now();
     let record = persisted_record(session);
+    let record_elapsed = record_start.elapsed();
+    let profiling = profile_timings::enabled();
+    let record_bytes = if profiling {
+        profile_timings::json_bytes(&record)
+    } else {
+        0
+    };
+    profile_timings::log_duration(
+        "persist_session_snapshot.persisted_record",
+        record_elapsed,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "stage": stage,
+            "session_log_entries": session.session_log.len(),
+            "record_bytes": record_bytes,
+        }),
+    );
     let session_info = record
         .get("info")
         .cloned()
         .ok_or_else(|| "persisted session info missing".to_string())?;
+    let messages_start = Instant::now();
     let messages = persisted_messages(session);
-    SessionLogClient::discover()
-        .map_err(|err| {
-            format!(
-                "failed to discover session_log client for session snapshot {}: {err}",
-                session.session_id
-            )
-        })?
-        .upsert_session(session_info, None, messages, Vec::new())
-        .map_err(|err| {
-            format!(
-                "failed to persist session snapshot {}: {err}",
-                session.session_id
-            )
-        })
+    let messages_elapsed = messages_start.elapsed();
+    let messages_bytes = if profiling {
+        profile_timings::json_vec_bytes(&messages)
+    } else {
+        0
+    };
+    profile_timings::log_duration(
+        "persist_session_snapshot.persisted_messages_for_upsert",
+        messages_elapsed,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "stage": stage,
+            "session_log_entries": session.session_log.len(),
+            "message_count": messages.len(),
+            "messages_bytes": messages_bytes,
+        }),
+    );
+    let discover_start = Instant::now();
+    let client = SessionLogClient::discover().map_err(|err| {
+        format!(
+            "failed to discover session_log client for session snapshot {}: {err}",
+            session.session_id
+        )
+    })?;
+    profile_timings::log_elapsed(
+        "persist_session_snapshot.discover_client",
+        discover_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "stage": stage,
+        }),
+    );
+    let upsert_start = Instant::now();
+    let upsert_result = client.upsert_session(session_info, None, messages, Vec::new());
+    profile_timings::log_elapsed(
+        "persist_session_snapshot.upsert_session",
+        upsert_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "stage": stage,
+            "success": upsert_result.is_ok(),
+        }),
+    );
+    let result = upsert_result.map_err(|err| {
+        format!(
+            "failed to persist session snapshot {}: {err}",
+            session.session_id
+        )
+    });
+    profile_timings::log_elapsed(
+        "persist_session_snapshot.total",
+        total_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "stage": stage,
+            "success": result.is_ok(),
+        }),
+    );
+    result
 }
 
 pub(crate) fn persist_session_checkpoint(session: &SessionManagement, stage: &str) {
-    if let Err(err) = persist_session_snapshot(session) {
+    if let Err(err) = persist_session_snapshot_for_stage(session, Some(stage)) {
         tracing::warn!(
             session_id = %session.session_id,
             stage,
@@ -42,6 +116,24 @@ pub(crate) fn persist_session_checkpoint(session: &SessionManagement, stage: &st
 }
 
 fn persisted_record(session: &SessionManagement) -> serde_json::Value {
+    let messages_start = Instant::now();
+    let messages = persisted_messages(session);
+    let messages_elapsed = messages_start.elapsed();
+    let messages_bytes = if profile_timings::enabled() {
+        profile_timings::json_vec_bytes(&messages)
+    } else {
+        0
+    };
+    profile_timings::log_duration(
+        "persisted_record.messages",
+        messages_elapsed,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "session_log_entries": session.session_log.len(),
+            "message_count": messages.len(),
+            "messages_bytes": messages_bytes,
+        }),
+    );
     serde_json::json!({
         "info": {
             "id": session.session_id,
@@ -64,7 +156,7 @@ fn persisted_record(session: &SessionManagement) -> serde_json::Value {
             "management": session,
         },
         "parent_id": null,
-        "messages": persisted_messages(session),
+        "messages": messages,
         "todos": [],
     })
 }

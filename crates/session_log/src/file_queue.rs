@@ -29,6 +29,11 @@ pub fn is_async_write(command: &SessionLogCommand) -> bool {
 }
 
 pub fn enqueue_command(command: &SessionLogCommand) -> Result<PathBuf> {
+    let payload = serde_json::to_vec(command)?;
+    enqueue_serialized_command(&payload)
+}
+
+pub fn enqueue_serialized_command(payload: &[u8]) -> Result<PathBuf> {
     let pending = queue_root().join(PENDING_DIR);
     fs::create_dir_all(&pending)
         .with_context(|| format!("failed to create session queue {}", pending.display()))?;
@@ -40,7 +45,6 @@ pub fn enqueue_command(command: &SessionLogCommand) -> Result<PathBuf> {
     let name = queue_item_name(now, std::process::id(), id);
     let tmp_path = pending.join(format!("{name}.tmp"));
     let final_path = pending.join(name);
-    let payload = serde_json::to_vec(command)?;
     fs::write(&tmp_path, payload)
         .with_context(|| format!("failed to write session queue item {}", tmp_path.display()))?;
     fs::rename(&tmp_path, &final_path).with_context(|| {

@@ -8,7 +8,7 @@ use std::sync::{
     Arc, Mutex,
 };
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tracing::error;
 
 use crate::gateway_events::{emit_cli_live_command_run_results, emit_cli_live_command_run_started};
@@ -24,7 +24,6 @@ use crate::state_machine::runtime_management::{
 };
 
 const COMMAND_RUN_TOOL_NAME: &str = "command_run";
-const DEFAULT_STREAMED_COMMAND_RUN_POST_RESULT_TIMEOUT_MS: u64 = 15_000;
 
 #[derive(Clone)]
 pub(crate) struct StreamedCommandRunState {
@@ -32,7 +31,6 @@ pub(crate) struct StreamedCommandRunState {
     pub(crate) inputs: Arc<Mutex<Vec<Value>>>,
     pub(crate) events: Arc<Mutex<Vec<Value>>>,
     pub(crate) seen: Arc<AtomicBool>,
-    pub(crate) last_result_at: Arc<Mutex<Option<Instant>>>,
     pub(crate) cancelled: Arc<AtomicBool>,
 }
 
@@ -43,7 +41,6 @@ impl StreamedCommandRunState {
             inputs: Arc::new(Mutex::new(Vec::new())),
             events: Arc::new(Mutex::new(Vec::new())),
             seen: Arc::new(AtomicBool::new(false)),
-            last_result_at: Arc::new(Mutex::new(None)),
             cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -58,18 +55,6 @@ impl StreamedCommandRunState {
 
     pub(crate) fn should_cancel_after_results(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst) && !self.snapshot_results().is_empty()
-    }
-
-    pub(crate) fn should_finish_after(&self, post_result_timeout: Duration) -> bool {
-        let has_results = !self.snapshot_results().is_empty();
-        let last_result_at = *self
-            .last_result_at
-            .lock()
-            .unwrap_or_else(|err| err.into_inner());
-        has_results
-            && last_result_at
-                .map(|last| last.elapsed() >= post_result_timeout)
-                .unwrap_or(false)
     }
 
     pub(crate) fn snapshot(&self) -> StreamedCommandRunSnapshot {
@@ -136,22 +121,11 @@ struct OrderedStreamResult {
     result: Value,
 }
 
-#[derive(Default)]
-struct StreamStepNormalizer {
-    previous_step: Option<u64>,
-    previous_repaired: bool,
-}
+struct StreamStepNormalizer;
 
 impl StreamStepNormalizer {
     fn normalize(&mut self, command: &mut Value) -> u64 {
-        let requested_step = command_step(command);
-        let step = match self.previous_step {
-            Some(previous) if requested_step < previous => previous + 1,
-            Some(previous) if requested_step == previous && self.previous_repaired => previous + 1,
-            _ => requested_step,
-        };
-        self.previous_step = Some(step);
-        self.previous_repaired = step != requested_step;
+        let step = command_step(command);
         if let Some(object) = command.as_object_mut() {
             object.insert("step".to_string(), serde_json::json!(step));
         }
@@ -163,10 +137,6 @@ pub(crate) fn spawn_streamed_command_run_task(
     input: SpawnStreamedCommandRunTask,
 ) -> JoinHandle<Vec<Value>> {
     std::thread::spawn(move || {
-        let runtime = match tokio::runtime::Runtime::new() {
-            Ok(runtime) => runtime,
-            Err(_) => return Vec::new(),
-        };
         let mut results = Vec::new();
         let mut ordered_results = Vec::new();
         let mut streamed_commands = Vec::new();
@@ -178,7 +148,7 @@ pub(crate) fn spawn_streamed_command_run_task(
         let mut receiver_open = true;
         let mut halted_before_finish = false;
         let mut next_order = 0usize;
-        let mut step_normalizer = StreamStepNormalizer::default();
+        let mut step_normalizer = StreamStepNormalizer;
         let (completion_tx, completion_rx) = mpsc::channel::<StreamCommandCompletion>();
 
         loop {
@@ -198,32 +168,26 @@ pub(crate) fn spawn_streamed_command_run_task(
                     halted_before_finish = true;
                     input.state.cancelled.store(true, Ordering::SeqCst);
                 }
-                runtime.block_on(publish_streamed_command_run_update(
-                    StreamedCommandRunUpdate {
-                        session_id: &input.session_id,
-                        runtime_id: &input.runtime_id,
-                        provider: &input.provider,
-                        call_id: &input.call_id,
-                        commands: &streamed_commands,
-                        results: &results,
-                        status: "running",
-                        started_at: input.started_at,
-                        ended_at: None,
-                        runtime_status: input.runtime_status.clone(),
-                    },
-                ));
+                publish_streamed_command_run_update(StreamedCommandRunUpdate {
+                    session_id: &input.session_id,
+                    runtime_id: &input.runtime_id,
+                    provider: &input.provider,
+                    call_id: &input.call_id,
+                    commands: &streamed_commands,
+                    results: &results,
+                    status: "running",
+                    started_at: input.started_at,
+                    ended_at: None,
+                    runtime_status: input.runtime_status.clone(),
+                });
             }
 
-            if running == 0 {
-                active_step = None;
-            }
             if input.state.cancelled.load(Ordering::SeqCst) {
                 receiver_open = false;
                 pending.clear();
             }
             start_ready_stream_commands(
                 &input,
-                &runtime,
                 &completion_tx,
                 &mut pending,
                 &mut active_step,
@@ -248,7 +212,6 @@ pub(crate) fn spawn_streamed_command_run_task(
                     };
                     let queued = match prepare_stream_command(
                         &input,
-                        &runtime,
                         command_event,
                         &mut command_run_started,
                         &mut streamed_commands,
@@ -265,7 +228,6 @@ pub(crate) fn spawn_streamed_command_run_task(
                     next_order += 1;
                     enqueue_or_start_stream_command(
                         &input,
-                        &runtime,
                         &completion_tx,
                         queued,
                         &mut pending,
@@ -285,24 +247,22 @@ pub(crate) fn spawn_streamed_command_run_task(
         let checkpoint_ack_failed = input.state.cancelled.load(Ordering::SeqCst);
         if !streamed_commands.is_empty() {
             let finished_at = Utc::now();
-            runtime.block_on(publish_streamed_command_run_update(
-                StreamedCommandRunUpdate {
-                    session_id: &input.session_id,
-                    runtime_id: &input.runtime_id,
-                    provider: &input.provider,
-                    call_id: &input.call_id,
-                    commands: &streamed_commands,
-                    results: &final_results,
-                    status: if halted_before_finish || checkpoint_ack_failed {
-                        "error"
-                    } else {
-                        "completed"
-                    },
-                    started_at: input.started_at,
-                    ended_at: Some(finished_at),
-                    runtime_status: input.runtime_status.clone(),
+            publish_streamed_command_run_update(StreamedCommandRunUpdate {
+                session_id: &input.session_id,
+                runtime_id: &input.runtime_id,
+                provider: &input.provider,
+                call_id: &input.call_id,
+                commands: &streamed_commands,
+                results: &final_results,
+                status: if halted_before_finish || checkpoint_ack_failed {
+                    "error"
+                } else {
+                    "completed"
                 },
-            ));
+                started_at: input.started_at,
+                ended_at: Some(finished_at),
+                runtime_status: input.runtime_status.clone(),
+            });
             let command_run_status = if halted_before_finish || checkpoint_ack_failed {
                 "error"
             } else {
@@ -355,13 +315,8 @@ fn poll_stream_event(
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "streamed command preparation keeps checkpoint and live update context explicit"
-)]
 fn prepare_stream_command(
     input: &SpawnStreamedCommandRunTask,
-    runtime: &tokio::runtime::Runtime,
     command_event: StreamedCommandEvent,
     command_run_started: &mut bool,
     streamed_commands: &mut Vec<Value>,
@@ -445,20 +400,18 @@ fn prepare_stream_command(
             "failed to persist command_ready checkpoint"
         );
     }
-    runtime.block_on(publish_streamed_command_run_update(
-        StreamedCommandRunUpdate {
-            session_id: &input.session_id,
-            runtime_id: &input.runtime_id,
-            provider: &input.provider,
-            call_id: &input.call_id,
-            commands: streamed_commands,
-            results,
-            status: "running",
-            started_at: input.started_at,
-            ended_at: None,
-            runtime_status: input.runtime_status.clone(),
-        },
-    ));
+    publish_streamed_command_run_update(StreamedCommandRunUpdate {
+        session_id: &input.session_id,
+        runtime_id: &input.runtime_id,
+        provider: &input.provider,
+        call_id: &input.call_id,
+        commands: streamed_commands,
+        results,
+        status: "running",
+        started_at: input.started_at,
+        ended_at: None,
+        runtime_status: input.runtime_status.clone(),
+    });
     Some(QueuedStreamCommand {
         tool_call_id,
         command_index,
@@ -474,7 +427,6 @@ fn prepare_stream_command(
 )]
 fn enqueue_or_start_stream_command(
     input: &SpawnStreamedCommandRunTask,
-    runtime: &tokio::runtime::Runtime,
     completion_tx: &mpsc::Sender<StreamCommandCompletion>,
     command: QueuedStreamCommand,
     pending: &mut VecDeque<QueuedStreamCommand>,
@@ -484,9 +436,8 @@ fn enqueue_or_start_stream_command(
     results: &[Value],
 ) {
     match *active_step {
-        Some(step) if step == command.step => start_stream_command(
+        Some(step) if command.step <= step => start_stream_command(
             input,
-            runtime,
             completion_tx,
             command,
             running,
@@ -498,7 +449,6 @@ fn enqueue_or_start_stream_command(
             *active_step = Some(command.step);
             start_stream_command(
                 input,
-                runtime,
                 completion_tx,
                 command,
                 running,
@@ -509,13 +459,8 @@ fn enqueue_or_start_stream_command(
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "ready stream commands need shared scheduler and checkpoint context"
-)]
 fn start_ready_stream_commands(
     input: &SpawnStreamedCommandRunTask,
-    runtime: &tokio::runtime::Runtime,
     completion_tx: &mpsc::Sender<StreamCommandCompletion>,
     pending: &mut VecDeque<QueuedStreamCommand>,
     active_step: &mut Option<u64>,
@@ -523,15 +468,22 @@ fn start_ready_stream_commands(
     streamed_commands: &[Value],
     results: &[Value],
 ) {
-    if active_step.is_none() {
-        *active_step = pending.front().map(|command| command.step);
+    if *running != 0 {
+        return;
+    }
+    let Some(next_pending_step) = pending.iter().map(|command| command.step).min() else {
+        return;
+    };
+    match *active_step {
+        Some(step) if step >= next_pending_step => {}
+        _ => *active_step = Some(next_pending_step),
     }
     let Some(step) = *active_step else {
         return;
     };
     let mut index = 0;
     while index < pending.len() {
-        if pending[index].step != step {
+        if pending[index].step > step {
             index += 1;
             continue;
         }
@@ -540,7 +492,6 @@ fn start_ready_stream_commands(
             .expect("pending index should be valid while starting ready commands");
         start_stream_command(
             input,
-            runtime,
             completion_tx,
             command,
             running,
@@ -552,7 +503,6 @@ fn start_ready_stream_commands(
 
 fn start_stream_command(
     input: &SpawnStreamedCommandRunTask,
-    runtime: &tokio::runtime::Runtime,
     completion_tx: &mpsc::Sender<StreamCommandCompletion>,
     queued: QueuedStreamCommand,
     running: &mut usize,
@@ -577,23 +527,7 @@ fn start_stream_command(
             "failed to persist command_started checkpoint"
         );
     }
-    let mut live_results = results.to_vec();
-    live_results.push(command_run_live_delta_result(&queued.command, "", ""));
-    runtime.block_on(publish_streamed_command_run_update(
-        StreamedCommandRunUpdate {
-            session_id: &input.session_id,
-            runtime_id: &input.runtime_id,
-            provider: &input.provider,
-            call_id: &input.call_id,
-            commands: streamed_commands,
-            results: &live_results,
-            status: "running",
-            started_at: input.started_at,
-            ended_at: None,
-            runtime_status: input.runtime_status.clone(),
-        },
-    ));
-
+    let live_command = queued.command.clone();
     let command = queued.command;
     let session_directory = input.session_directory.clone();
     let allowed_commands = input.allowed_command_run_commands.clone();
@@ -626,6 +560,21 @@ fn start_stream_command(
             completed: result.results,
             halted: result.halted,
         });
+    });
+
+    let mut live_results = results.to_vec();
+    live_results.push(command_run_live_delta_result(&live_command, "", ""));
+    publish_streamed_command_run_update(StreamedCommandRunUpdate {
+        session_id: &input.session_id,
+        runtime_id: &input.runtime_id,
+        provider: &input.provider,
+        call_id: &input.call_id,
+        commands: streamed_commands,
+        results: &live_results,
+        status: "running",
+        started_at: input.started_at,
+        ended_at: None,
+        runtime_status: input.runtime_status.clone(),
     });
 }
 
@@ -672,10 +621,6 @@ fn record_completed_results(
             let mut shared = state.results.lock().unwrap_or_else(|err| err.into_inner());
             shared.extend(completed.to_vec());
         }
-        *state
-            .last_result_at
-            .lock()
-            .unwrap_or_else(|err| err.into_inner()) = Some(Instant::now());
     }
     for (offset, result) in completed.iter().enumerate() {
         if let Err(error) = checkpointing::streamed_command_finished(
@@ -710,14 +655,6 @@ fn record_completed_results(
     results.extend_from_slice(completed);
 }
 
-pub(crate) fn streamed_command_run_post_result_timeout() -> Duration {
-    let millis = std::env::var("TURA_STREAMED_COMMAND_RUN_POST_RESULT_TIMEOUT_MS")
-        .ok()
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .unwrap_or(DEFAULT_STREAMED_COMMAND_RUN_POST_RESULT_TIMEOUT_MS);
-    Duration::from_millis(millis.max(1))
-}
-
 pub(crate) fn apply_cancelled_streamed_command_run_result(
     runtime: &mut RuntimeManagement,
     commands: &[Value],
@@ -747,43 +684,6 @@ fn cancelled_streamed_command_run_output(
     })
 }
 
-pub(crate) fn apply_post_result_timeout_streamed_command_run_result(
-    runtime: &mut RuntimeManagement,
-    commands: &[Value],
-    events: &[Value],
-    results: &[Value],
-    post_command_result_timeout: Duration,
-    finished_at: DateTime<Utc>,
-) {
-    runtime.set_output(post_result_timeout_streamed_command_run_output(
-        commands,
-        events,
-        results,
-        post_command_result_timeout,
-    ));
-    runtime.push_tool_call(streamed_command_run_tool_record(commands, finished_at));
-}
-
-fn post_result_timeout_streamed_command_run_output(
-    commands: &[Value],
-    events: &[Value],
-    results: &[Value],
-    post_command_result_timeout: Duration,
-) -> Value {
-    serde_json::json!({
-        "provider_content": {
-            "text": "Provider stream did not finish after streamed command_run completed; advancing with completed command_run results."
-        },
-        "streamed_command_run_result": {
-            "commands": commands,
-            "command_events": events,
-            "results": results,
-            "early_finish_reason": "post_command_run_stream_timeout",
-            "post_result_timeout_ms": post_command_result_timeout.as_millis(),
-        }
-    })
-}
-
 fn streamed_command_run_tool_record(
     commands: &[Value],
     finished_at: DateTime<Utc>,
@@ -806,10 +706,8 @@ fn streamed_command_run_tool_record(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_cancelled_streamed_command_run_result,
-        apply_post_result_timeout_streamed_command_run_result, spawn_streamed_command_run_task,
-        streamed_command_run_post_result_timeout, SpawnStreamedCommandRunTask,
-        StreamedCommandRunState,
+        apply_cancelled_streamed_command_run_result, spawn_streamed_command_run_task,
+        SpawnStreamedCommandRunTask, StreamedCommandRunState,
     };
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::{
@@ -888,50 +786,6 @@ mod tests {
     }
 
     #[test]
-    fn post_result_timeout_streamed_command_run_result_keeps_provider_notice() {
-        let mut runtime = runtime();
-        let commands = vec![json!({ "command": "echo ok" })];
-        let events = vec![json!({ "status": "ready" })];
-        let results = vec![json!({ "success": true, "output": "ok" })];
-        let finished_at = runtime.created_at;
-
-        apply_post_result_timeout_streamed_command_run_result(
-            &mut runtime,
-            &commands,
-            &events,
-            &results,
-            Duration::from_millis(25),
-            finished_at,
-        );
-
-        let output = runtime.output.as_ref().expect("output should be set");
-        assert_eq!(
-            output.pointer("/provider_content/text"),
-            Some(&json!(
-                "Provider stream did not finish after streamed command_run completed; advancing with completed command_run results."
-            ))
-        );
-        assert_eq!(
-            output.pointer("/streamed_command_run_result/early_finish_reason"),
-            Some(&json!("post_command_run_stream_timeout"))
-        );
-        assert_eq!(
-            output.pointer("/streamed_command_run_result/post_result_timeout_ms"),
-            Some(&json!(25))
-        );
-        assert_eq!(runtime.tool_call.len(), 1);
-        assert_eq!(
-            runtime.tool_call[0].tool_called_input,
-            json!({ "commands": commands })
-        );
-    }
-
-    #[test]
-    fn streamed_command_post_result_timeout_default_is_positive() {
-        assert!(streamed_command_run_post_result_timeout() >= Duration::from_millis(1));
-    }
-
-    #[test]
     fn streaming_queue_runs_late_same_step_concurrently_and_waits_later_steps() {
         let _guard = STREAMING_TEST_ENV
             .lock()
@@ -1000,6 +854,130 @@ mod tests {
         assert_eq!(results[2]["step"], 2);
     }
 
+    #[test]
+    fn streaming_queue_runs_late_lower_step_with_current_active_step() {
+        let _guard = STREAMING_TEST_ENV
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let router = MockStreamingRouter::start();
+        let _router_env = EnvGuard::set("TURA_ROUTER_ADDR", &router.addr);
+        let _gateway_env = EnvGuard::set("TURA_GATEWAY_CALLBACKS", "off");
+        let (stream_tx, stream_rx) = mpsc::channel();
+        let state = StreamedCommandRunState::new();
+        let handle = spawn_streamed_command_run_task(SpawnStreamedCommandRunTask {
+            stream_rx,
+            session_directory: std::env::temp_dir(),
+            allowed_command_run_commands: None,
+            session_id: "stream-session-late-lower".to_string(),
+            runtime_id: "stream-runtime-late-lower".to_string(),
+            provider: json!({ "provider": "test" }),
+            call_id: "stream-call-late-lower".to_string(),
+            started_at: Utc::now(),
+            state,
+            runtime_status: runtime().session_sync_status(),
+        });
+
+        stream_tx
+            .send(stream_command_event("initial-step1", 1, 0))
+            .expect("initial command event should send");
+        router.wait_for_started(&["initial-step1"], Duration::from_secs(2));
+        std::thread::sleep(Duration::from_millis(100));
+
+        stream_tx
+            .send(stream_command_event("step2-block", 2, 1))
+            .expect("current active step command event should send");
+        router.wait_for_started(&["step2-block"], Duration::from_secs(2));
+
+        stream_tx
+            .send(stream_command_event("late-lower-step1", 1, 2))
+            .expect("late lower step command event should send");
+        router.wait_for_started(
+            &["initial-step1", "step2-block", "late-lower-step1"],
+            Duration::from_secs(2),
+        );
+        assert!(
+            router.max_active() >= 2,
+            "late lower step should run alongside the current active step"
+        );
+
+        stream_tx
+            .send(stream_command_event("step3", 3, 3))
+            .expect("future step command event should send");
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(
+            !router.started().iter().any(|label| label == "step3"),
+            "future step must still wait while the current active step is running"
+        );
+
+        router.release_step2();
+        drop(stream_tx);
+        let results = handle
+            .join()
+            .expect("streamed command task should not panic");
+
+        router.wait_for_started(
+            &["initial-step1", "step2-block", "late-lower-step1", "step3"],
+            Duration::from_secs(2),
+        );
+        let labels = results
+            .iter()
+            .map(|result| {
+                result
+                    .get("output")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            labels,
+            vec!["initial-step1", "step2-block", "late-lower-step1", "step3"]
+        );
+        assert_eq!(results[0]["step"], 1);
+        assert_eq!(results[1]["step"], 2);
+        assert_eq!(results[2]["step"], 1);
+        assert_eq!(results[3]["step"], 3);
+    }
+
+    #[test]
+    fn streaming_gateway_callbacks_do_not_delay_command_start() {
+        let _guard = STREAMING_TEST_ENV
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let router = MockStreamingRouter::start();
+        let gateway = HangingGateway::start(Duration::from_secs(5));
+        let _router_env = EnvGuard::set("TURA_ROUTER_ADDR", &router.addr);
+        let _gateway_enabled = EnvGuard::set("TURA_GATEWAY_CALLBACKS", "1");
+        let _gateway_url = EnvGuard::set("TURA_GATEWAY_URL", &gateway.endpoint);
+        let _gateway_timeout = EnvGuard::set("TURA_GATEWAY_CALLBACK_TIMEOUT_MS", "2000");
+        let (stream_tx, stream_rx) = mpsc::channel();
+        let state = StreamedCommandRunState::new();
+        let handle = spawn_streamed_command_run_task(SpawnStreamedCommandRunTask {
+            stream_rx,
+            session_directory: std::env::temp_dir(),
+            allowed_command_run_commands: None,
+            session_id: "stream-session-callback".to_string(),
+            runtime_id: "stream-runtime-callback".to_string(),
+            provider: json!({ "provider": "test" }),
+            call_id: "stream-call-callback".to_string(),
+            started_at: Utc::now(),
+            state,
+            runtime_status: runtime().session_sync_status(),
+        });
+
+        stream_tx
+            .send(stream_command_event("callback-fast", 1, 0))
+            .expect("callback test command event should send");
+        router.wait_for_started(&["callback-fast"], Duration::from_millis(750));
+
+        drop(stream_tx);
+        let results = handle
+            .join()
+            .expect("streamed command task should not panic");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["output"], "callback-fast");
+    }
+
     fn stream_command_event(
         label: &str,
         step: u64,
@@ -1028,6 +1006,7 @@ mod tests {
     struct MockStreamingRouterState {
         started: Mutex<Vec<String>>,
         release_step1: AtomicBool,
+        release_step2: AtomicBool,
         active: AtomicUsize,
         max_active: AtomicUsize,
         release_notify: tokio::sync::Notify,
@@ -1047,6 +1026,7 @@ mod tests {
             let state = Arc::new(MockStreamingRouterState {
                 started: Mutex::new(Vec::new()),
                 release_step1: AtomicBool::new(false),
+                release_step2: AtomicBool::new(false),
                 active: AtomicUsize::new(0),
                 max_active: AtomicUsize::new(0),
                 release_notify: tokio::sync::Notify::new(),
@@ -1108,6 +1088,11 @@ mod tests {
             self.state.release_notify.notify_waiters();
         }
 
+        fn release_step2(&self) {
+            self.state.release_step2.store(true, Ordering::SeqCst);
+            self.state.release_notify.notify_waiters();
+        }
+
         fn max_active(&self) -> usize {
             self.state.max_active.load(Ordering::SeqCst)
         }
@@ -1133,6 +1118,11 @@ mod tests {
             self.record_started(label.clone());
             if label.starts_with("step1-") {
                 while !self.release_step1.load(Ordering::SeqCst) {
+                    self.release_notify.notified().await;
+                }
+            }
+            if label == "step2-block" {
+                while !self.release_step2.load(Ordering::SeqCst) {
                     self.release_notify.notified().await;
                 }
             }
@@ -1176,6 +1166,32 @@ mod tests {
                     Ok(_) => break,
                     Err(next) => current = next,
                 }
+            }
+        }
+    }
+
+    struct HangingGateway {
+        endpoint: String,
+    }
+
+    impl HangingGateway {
+        fn start(delay: Duration) -> Self {
+            let listener =
+                std::net::TcpListener::bind("127.0.0.1:0").expect("hanging gateway should bind");
+            let addr = listener
+                .local_addr()
+                .expect("hanging gateway should have addr");
+            std::thread::spawn(move || {
+                while let Ok((mut stream, _)) = listener.accept() {
+                    std::thread::spawn(move || {
+                        let mut buffer = [0_u8; 512];
+                        let _ = std::io::Read::read(&mut stream, &mut buffer);
+                        std::thread::sleep(delay);
+                    });
+                }
+            });
+            Self {
+                endpoint: format!("http://{addr}"),
             }
         }
     }

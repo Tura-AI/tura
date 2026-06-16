@@ -28,9 +28,9 @@ If verification should be runnable but the current environment truly cannot run 
 
 If user feedback, missing information, permissions, credentials, or keys are required, call task_status status `question`
 
-Every time you change `status`, you MUST also send a normal assistant-channel natural language reply to the user. `task_status` only updates internal task state; it is never a substitute for the user-visible assistant message.
+Before changing `status` to `done` or `question`, first send the user-facing assistant-channel natural language reply that contains the actual completion summary, answer, blocker, or question. Then call task_status to update the internal state. `task_status` only updates internal task state; it is never a substitute for the user-visible assistant message.
 
-For simple questions, greetings, acknowledgements, or ordinary conversation, answer the user naturally in the assistant channel. Do not use `task_status` as the only response. If you also mark `done` or `question`, the assistant-channel reply must contain the actual answer, explanation, or question for the user.
+For simple questions, greetings, acknowledgements, or ordinary conversation, answer the user naturally in the assistant channel before any terminal status update. Do not use `task_status` as the only response. If you also mark `done` or `question`, the assistant-channel reply must contain the actual answer, explanation, or question for the user and must appear before the task_status call in the same assistant response.
 
 Example: if the user says hello or asks a simple question that needs no tool call, reply directly to the user first. Then call task_status status `done` when the conversation is answered, or status `question` when you need user input. Do not mark `doing` for ordinary conversation.
 
@@ -43,4 +43,4 @@ Update `status` separately when the task state changes to `doing`, `question`, o
 Example `command_line`:
 - Update task detail: {"task_detail":"update planning prompts"}
 - Continue work that still needs command_run: {"status":"doing"}
-- Update status: {"status":"done"}
+- Finish after first sending a user-facing assistant reply in the same response: {"status":"done"}

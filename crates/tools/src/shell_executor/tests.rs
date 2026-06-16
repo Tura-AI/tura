@@ -1,4 +1,4 @@
-use super::execute_with_shell;
+use super::{execute, ShellKind};
 use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -14,12 +14,12 @@ fn executed_simple_batch_reads_emit_plain_output_with_blank_line_separator() {
     let (command, shell_kind) = if cfg!(windows) {
         (
             "Get-Content src/a.txt; Get-Content src/b.txt",
-            "shell_command",
+            ShellKind::ShellCommand,
         )
     } else {
-        ("cat src/a.txt; cat src/b.txt", "bash")
+        ("cat src/a.txt; cat src/b.txt", ShellKind::Bash)
     };
-    let response = execute_with_shell(command, &root, 10, shell_kind);
+    let response = execute(command, &root, 10, shell_kind);
     let _ = fs::remove_dir_all(&root);
 
     assert!(response.success, "{}", response.stderr);
@@ -36,11 +36,11 @@ fn executed_simple_batch_reads_emit_plain_output_with_blank_line_separator() {
 #[test]
 fn timeout_kills_descendants_that_hold_output_pipes() {
     let started = Instant::now();
-    let response = execute_with_shell(
+    let response = execute(
         r#"{"command":"sh -c 'sleep 10 & wait'","timeout_ms":1000}"#,
         Path::new("."),
         120,
-        "bash",
+        ShellKind::Bash,
     );
 
     assert!(!response.success);
@@ -55,11 +55,11 @@ fn timeout_kills_descendants_that_hold_output_pipes() {
 #[cfg(unix)]
 fn exited_parent_returns_even_when_descendant_holds_output_pipes() {
     let started = Instant::now();
-    let response = execute_with_shell(
+    let response = execute(
         r#"{"command":"sh -c 'sleep 3 &'","timeout_ms":10000}"#,
         Path::new("."),
         120,
-        "bash",
+        ShellKind::Bash,
     );
 
     assert!(response.success);

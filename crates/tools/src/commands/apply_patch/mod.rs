@@ -3,11 +3,12 @@ pub const PROMPT: &str = include_str!("prompt.md");
 pub const POLICY: &str = include_str!("policy.toml");
 pub const SCHEMA: &str = include_str!("schema.json");
 
-use super::{shell_command, CommandResponse};
+use super::CommandResponse;
 use crate::runtime::file_locks::Access;
 use crate::runtime::tool::{
     FunctionToolOutput, ToolCall, ToolContext, ToolError, ToolHandler, ToolPayload,
 };
+use crate::shell_executor;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -53,7 +54,7 @@ impl ToolHandler for ApplyPatchHandler {
         let response = execute(&patch_text, &ctx.session_dir);
         let success = response.success;
         Ok(FunctionToolOutput::from_value(
-            shell_command::json_like_output(
+            shell_executor::json_like_output(
                 response.exit_code,
                 response.stdout,
                 response.stderr,

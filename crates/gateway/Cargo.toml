@@ -134,8 +134,8 @@ required-features = ["os-tests"]
 
 [[test]]
 name = "gateway_session_concurrency_stress"
-path = "tests/os_testing/gateway_session_concurrency_stress.rs"
-required-features = ["os-tests"]
+path = "tests/performance/gateway_session_concurrency_stress.rs"
+required-features = ["performance-tests"]
 
 [[test]]
 name = "provider_auth_churn_test"

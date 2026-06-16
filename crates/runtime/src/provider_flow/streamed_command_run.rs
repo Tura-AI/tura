@@ -2,7 +2,6 @@
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use tracing::warn;
 
 use crate::gateway_events::runtime_tool_part_id;
 use crate::state_machine::runtime_management::RuntimeSessionSyncStatus;
@@ -168,7 +167,7 @@ pub struct StreamedCommandRunUpdate<'a> {
     pub runtime_status: RuntimeSessionSyncStatus,
 }
 
-pub async fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>) {
+pub fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>) {
     if gateway_callbacks_disabled() {
         return;
     }
@@ -250,33 +249,13 @@ pub async fn publish_streamed_command_run_update(update: StreamedCommandRunUpdat
         }
     });
 
-    let result = crate::gateway_events::gateway_callback_http_client()
-        .post(endpoint)
-        .json(&payload)
-        .send()
-        .await;
-    match result {
-        Ok(response) if response.status().is_success() => {}
-        Ok(response) => {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            warn!(
-                session_id = %update.session_id,
-                runtime_id = %update.runtime_id,
-                gateway_status = %status,
-                body = %body,
-                "failed to publish streamed command_run update"
-            );
-        }
-        Err(error) => {
-            warn!(
-                session_id = %update.session_id,
-                runtime_id = %update.runtime_id,
-                error = %error,
-                "failed to call gateway for streamed command_run update"
-            );
-        }
-    }
+    crate::gateway_events::post_gateway_callback_detached(
+        endpoint,
+        payload,
+        update.session_id.to_string(),
+        update.runtime_id.to_string(),
+        "streamed_command_run_update",
+    );
 }
 
 fn gateway_callbacks_disabled() -> bool {

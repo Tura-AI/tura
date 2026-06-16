@@ -672,9 +672,9 @@ fn pass_file_lock_allows_parallel_reads_and_blocks_write() {
 }
 
 #[test]
-fn pass_file_lock_high_concurrency_readers_release_before_writer() {
+fn pass_file_lock_many_readers_release_before_writer() {
     let reader_count = 16;
-    let key = format!("high-concurrency-readers-{}", std::process::id());
+    let key = format!("many-readers-{}", std::process::id());
     let read_access = Access {
         read_paths: vec![key.clone()],
         ..Access::default()

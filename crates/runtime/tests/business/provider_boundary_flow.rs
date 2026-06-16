@@ -11,6 +11,7 @@ use std::net::{SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader};
 use tokio::net::TcpListener as TokioTcpListener;
 use tura_llm_rust::{
@@ -377,6 +378,7 @@ async fn runtime_prompt_cache_key_reuses_root_session_for_forked_sessions() {
             Vec::new(),
         )
         .expect("child session should persist");
+    wait_for_session_parent(&client, child_session_id, root_session_id);
 
     let provider = LocalProvider::start(vec![ProviderReply::Json {
         status: "200 OK",
@@ -609,6 +611,35 @@ fn session_snapshot_json(session_id: &str, workspace: &str) -> Value {
             "task_plan": {"plan_summary": "", "detailed_tasks": []}
         }
     })
+}
+
+fn wait_for_session_parent(
+    client: &runtime::session_log_client::SessionLogClient,
+    session_id: &str,
+    parent_id: &str,
+) {
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(10) {
+        if client
+            .get_session(session_id.to_string())
+            .ok()
+            .flatten()
+            .and_then(|snapshot| snapshot.parent_id)
+            .as_deref()
+            == Some(parent_id)
+        {
+            return;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    let latest_parent = client
+        .get_session(session_id.to_string())
+        .ok()
+        .flatten()
+        .and_then(|snapshot| snapshot.parent_id);
+    panic!(
+        "session parent was not applied within 10s; session={session_id}; expected_parent={parent_id}; latest_parent={latest_parent:?}"
+    );
 }
 
 fn command_run_tool_schema() -> Value {

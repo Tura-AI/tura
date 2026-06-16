@@ -33,6 +33,7 @@ required-features = ["live-tests"]
 [features]
 business-tests = []
 live-tests = []
+performance-tests = []
 
 [[test]]
 name = "claude_code_mock_e2e"
@@ -78,6 +79,16 @@ required-features = ["business-tests"]
 name = "runtime_context_business_flow"
 path = "tests/business/runtime_context_business_flow.rs"
 required-features = ["business-tests"]
+
+[[test]]
+name = "streamed_command_run_pressure_test"
+path = "tests/performance/streamed_command_run_pressure_test.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "session_log_queue_pressure_test"
+path = "tests/performance/session_log_queue_pressure_test.rs"
+required-features = ["performance-tests"]
 
 [[test]]
 name = "child_dispatch_test"

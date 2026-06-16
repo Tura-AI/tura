@@ -89,7 +89,7 @@ fn runtime_checkpoint_business_flow_writes_applied_rows_idempotently() -> Result
         run_finished_at,
     ))?;
 
-    let rows = checkpoint_rows(&home, &session_id)?;
+    let rows = wait_for_checkpoint_rows(&home, &session_id, 5, Duration::from_secs(10))?;
     assert_eq!(
         rows.len(),
         5,

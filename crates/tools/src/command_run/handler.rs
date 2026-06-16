@@ -93,17 +93,35 @@ pub async fn execute_async_value(arguments: Value, session_dir: std::path::PathB
     execute_async_value_with_allowed(arguments, session_dir, None).await
 }
 
+pub async fn execute_async_value_with_lock_scope(
+    arguments: Value,
+    session_dir: std::path::PathBuf,
+    lock_scope: Option<String>,
+) -> Value {
+    execute_async_value_with_allowed_and_lock_scope(arguments, session_dir, None, lock_scope).await
+}
+
 pub async fn execute_async_value_with_allowed(
     arguments: Value,
     session_dir: std::path::PathBuf,
     allowed_commands: Option<BTreeSet<String>>,
+) -> Value {
+    execute_async_value_with_allowed_and_lock_scope(arguments, session_dir, allowed_commands, None)
+        .await
+}
+
+pub async fn execute_async_value_with_allowed_and_lock_scope(
+    arguments: Value,
+    session_dir: std::path::PathBuf,
+    allowed_commands: Option<BTreeSet<String>>,
+    lock_scope: Option<String>,
 ) -> Value {
     let mut args = match parse_args(&arguments) {
         Ok(args) => args,
         Err(message) => return error_payload(message),
     };
     args.allowed_commands = allowed_commands;
-    execute_async_args(args, session_dir).await
+    execute_async_args_with_lock_scope(args, session_dir, lock_scope).await
 }
 
 pub async fn execute_streamed_command_value(
@@ -166,9 +184,17 @@ impl StreamingCommandRunExecutor {
         session_dir: std::path::PathBuf,
         allowed_commands: Option<BTreeSet<String>>,
     ) -> Self {
+        Self::new_with_allowed_and_lock_scope(session_dir, allowed_commands, None)
+    }
+
+    pub fn new_with_allowed_and_lock_scope(
+        session_dir: std::path::PathBuf,
+        allowed_commands: Option<BTreeSet<String>>,
+        lock_scope: Option<String>,
+    ) -> Self {
         Self {
             router: Arc::new(ToolRouter::new()),
-            ctx: ToolContext::new(session_dir),
+            ctx: ToolContext::new_with_lock_scope(session_dir, lock_scope),
             allowed_commands,
             active_step: None,
             active_step_repaired: false,
@@ -333,7 +359,15 @@ fn command_type_for_execution(command: &CommandItem) -> Option<String> {
 }
 
 async fn execute_async_args(args: CommandRunArgs, session_dir: std::path::PathBuf) -> Value {
-    let ctx = ToolContext::new(session_dir);
+    execute_async_args_with_lock_scope(args, session_dir, None).await
+}
+
+async fn execute_async_args_with_lock_scope(
+    args: CommandRunArgs,
+    session_dir: std::path::PathBuf,
+    lock_scope: Option<String>,
+) -> Value {
+    let ctx = ToolContext::new_with_lock_scope(session_dir, lock_scope);
     let output = execute_async(args, ctx).await;
     serde_json::to_value(output).unwrap_or_else(|err| error_payload(err.to_string()))
 }

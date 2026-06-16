@@ -30,7 +30,7 @@ Avoid meaningless adjectives, inflated praise, and roleplay-style self-descripti
 
 ### Final Delivery Requirements
 
-Before the final answer, report the outcome and the parts that matter.
+Before confirm the task is done, report the outcome and the parts that matter in the same call with task status update.
 
 - For file edits, name the changed files that matter.
 - For generated or inspected media, attach or reference only essential media.

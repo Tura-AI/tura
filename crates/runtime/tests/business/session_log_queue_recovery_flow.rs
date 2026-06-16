@@ -208,6 +208,24 @@ fn runtime_session_log_business_flow_online_reads_are_workspace_scoped_paged_and
 
     let workspace_a_key = session_log::path::normalize_workspace(&workspace_a.to_string_lossy());
     let workspace_b_key = session_log::path::normalize_workspace(&workspace_b.to_string_lossy());
+    wait_until(Duration::from_secs(10), || {
+        let Ok(mut workspaces) = client.list_workspaces() else {
+            return false;
+        };
+        workspaces.sort_by(|left, right| left.directory.cmp(&right.directory));
+        if workspaces.len() != 2
+            || workspaces[0].directory != workspace_a_key
+            || workspaces[0].session_count != 2
+            || workspaces[1].directory != workspace_b_key
+            || workspaces[1].session_count != 1
+        {
+            return false;
+        }
+        session_records_have_ids(&client, &session_a1, &["a1-m1", "a1-m2"])
+            && session_records_have_ids(&client, &session_a2, &["a2-m1"])
+            && session_records_have_ids(&client, &session_b1, &["b1-m1"])
+    })?;
+
     let mut workspaces = client.list_workspaces()?;
     workspaces.sort_by(|left, right| left.directory.cmp(&right.directory));
     assert_eq!(workspaces.len(), 2);
@@ -257,6 +275,19 @@ fn runtime_session_log_business_flow_online_reads_are_workspace_scoped_paged_and
         ],
         vec![json!({ "id": "a1-todo", "status": "done" })],
     )?;
+    wait_until(Duration::from_secs(10), || {
+        let Some(updated) = client.get_session(session_a1.clone()).ok().flatten() else {
+            return false;
+        };
+        updated.message_count == 2
+            && updated
+                .todos
+                .first()
+                .and_then(|todo| todo.get("status"))
+                .and_then(serde_json::Value::as_str)
+                == Some("done")
+            && session_records_have_ids(&client, &session_a1, &["a1-m2", "a1-m3"])
+    })?;
     let updated = client
         .get_session(session_a1.clone())?
         .ok_or_else(|| anyhow!("expected updated workspace A session"))?;
@@ -329,6 +360,37 @@ fn all_sessions_and_records_visible(
     })
 }
 
+fn wait_for_session(
+    client: &SessionLogClient,
+    session_id: &str,
+    mut condition: impl FnMut(&session_log::SessionSnapshot) -> bool,
+) -> Result<()> {
+    wait_until(Duration::from_secs(10), || {
+        client
+            .get_session(session_id.to_string())
+            .ok()
+            .flatten()
+            .is_some_and(|snapshot| condition(&snapshot))
+    })
+}
+
+fn session_records_have_ids(
+    client: &SessionLogClient,
+    session_id: &str,
+    expected_ids: &[&str],
+) -> bool {
+    client
+        .list_session_records(session_id.to_string(), 0, expected_ids.len() as u64 + 1)
+        .is_ok_and(|(page, records)| {
+            page.total == expected_ids.len() as u64
+                && records
+                    .iter()
+                    .map(|record| record.message_id.as_str())
+                    .collect::<Vec<_>>()
+                    == expected_ids
+        })
+}
+
 #[test]
 fn runtime_session_log_business_flow_restart_marks_running_session_interrupted() -> Result<()> {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
@@ -348,12 +410,20 @@ fn runtime_session_log_business_flow_restart_marks_running_session_interrupted()
         vec![message_payload(&session_id, "running-m-1", "assistant", 1)],
         vec![json!({ "id": "running-todo", "status": "in_progress" })],
     )?;
+    wait_for_session(&client, &session_id, |snapshot| {
+        snapshot.state.as_deref() == Some("running") && snapshot.message_count == 1
+    })?;
     drop(service);
     wait_until(Duration::from_secs(5), || {
         !session_log::ipc::service_is_running()
     })?;
 
     let restarted = ServiceThread::start()?;
+    wait_for_session(&client, &session_id, |snapshot| {
+        snapshot.state.as_deref() == Some("interrupted")
+            && snapshot.status.as_deref() == Some("error")
+            && snapshot.message_count == 1
+    })?;
     let recovered = client
         .get_session(session_id.clone())?
         .ok_or_else(|| anyhow!("expected recovered runtime session"))?;
@@ -396,12 +466,20 @@ fn runtime_session_log_business_flow_resumes_interrupted_session_without_losing_
         ],
         vec![json!({ "id": "resume-todo-1", "status": "doing" })],
     )?;
+    wait_for_session(&client, &session_id, |snapshot| {
+        snapshot.state.as_deref() == Some("running") && snapshot.message_count == 2
+    })?;
     drop(service);
     wait_until(Duration::from_secs(5), || {
         !session_log::ipc::service_is_running()
     })?;
 
     let restarted = ServiceThread::start()?;
+    wait_for_session(&client, &session_id, |snapshot| {
+        snapshot.state.as_deref() == Some("interrupted")
+            && snapshot.status.as_deref() == Some("error")
+            && snapshot.message_count == 2
+    })?;
     let interrupted = client
         .get_session(session_id.clone())?
         .ok_or_else(|| anyhow!("expected interrupted runtime session"))?;
@@ -420,6 +498,11 @@ fn runtime_session_log_business_flow_resumes_interrupted_session_without_losing_
         ],
         vec![json!({ "id": "resume-todo-1", "status": "done" })],
     )?;
+    wait_for_session(&client, &session_id, |snapshot| {
+        snapshot.state.as_deref() == Some("created")
+            && snapshot.status.as_deref() == Some("idle")
+            && snapshot.message_count == 4
+    })?;
 
     let resumed = client
         .get_session(session_id.clone())?

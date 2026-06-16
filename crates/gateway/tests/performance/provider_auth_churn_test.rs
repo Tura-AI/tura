@@ -6,13 +6,22 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::Path as FsPath;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 const CHILD_PROVIDER_ENV: &str = "TURA_PROVIDER_AUTH_CHURN_CHILD_PROVIDER";
 const CHILD_KEY_ENV: &str = "TURA_PROVIDER_AUTH_CHURN_CHILD_KEY";
 const CHILD_ROUNDS_ENV: &str = "TURA_PROVIDER_AUTH_CHURN_CHILD_ROUNDS";
+const TEST_TIMEOUT: Duration = Duration::from_secs(120);
+const CHILD_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn provider_auth_performance_churn_keeps_shared_files_consistent() {
+    tokio::time::timeout(TEST_TIMEOUT, provider_auth_churn_impl())
+        .await
+        .expect("provider auth performance churn exceeded total timeout");
+}
+
+async fn provider_auth_churn_impl() {
     if let Ok(provider_id) = std::env::var(CHILD_PROVIDER_ENV) {
         let key = std::env::var(CHILD_KEY_ENV).expect("child key");
         let rounds = std::env::var(CHILD_ROUNDS_ENV)
@@ -92,7 +101,7 @@ async fn provider_auth_performance_churn_keeps_shared_files_consistent() {
         ));
     }
     for (provider_id, _key, mut child) in children {
-        let status = child.wait().expect("wait auth churn child");
+        let status = wait_child_with_timeout(&provider_id, &mut child, CHILD_TIMEOUT);
         assert!(
             status.success(),
             "auth churn child for {provider_id} should exit successfully: {status}"
@@ -115,6 +124,25 @@ async fn provider_auth_performance_churn_keeps_shared_files_consistent() {
             provider_id,
             &format!("performance-churn-final-key-{index}"),
         );
+    }
+}
+
+fn wait_child_with_timeout(
+    provider_id: &str,
+    child: &mut std::process::Child,
+    timeout: Duration,
+) -> std::process::ExitStatus {
+    let started = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait().expect("poll auth churn child") {
+            return status;
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("auth churn child for {provider_id} timed out after {timeout:?}");
+        }
+        std::thread::sleep(Duration::from_millis(25));
     }
 }
 

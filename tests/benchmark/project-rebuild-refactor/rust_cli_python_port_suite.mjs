@@ -1205,6 +1205,15 @@ async function runTuraPlanning(workspace, agentDir, prompt, agentPrompt, onProgr
     TURA_COMMAND_RUN_STRICT_JSON: "0",
     TURA_SESSION_REASONING_EFFORT: reasoning,
     SESSION_LOG_DB_ROOT: sessionDbRoot,
+    ...optionalEnv([
+      "TURA_PROFILE_TURN_TIMINGS",
+      "TURA_PROFILE_TIMINGS",
+      "TURA_PROFILE_TURN_TIMING_BYTES",
+      "TURA_PROFILE_TIMING_BYTES",
+      "TURA_RUNTIME_WORKER_STDERR_LOG",
+      "TURA_ROUTER_STDERR_LOG",
+      "TURA_DEBUG_RUNTIME",
+    ]),
     ...(planningMode ? { TURA_FORCE_EXECUTE_TOOLS_PLANNING: "1" } : {}),
     COMMAND_RUN_AGENT_TIMEOUT_MS: String(timeoutMs),
     COMMAND_RUN_AGENT_CONTEXT_ARCHIVE: "1",
@@ -1235,6 +1244,14 @@ async function runTuraPlanning(workspace, agentDir, prompt, agentPrompt, onProgr
     onProgress,
     env,
   })
+}
+
+function optionalEnv(keys) {
+  return Object.fromEntries(
+    keys
+      .map((key) => [key, process.env[key]])
+      .filter(([, value]) => value != null && String(value).trim() !== ""),
+  )
 }
 
 async function runExternalCliAgent(workspace, agentDir, prompt, agentId, onProgress) {

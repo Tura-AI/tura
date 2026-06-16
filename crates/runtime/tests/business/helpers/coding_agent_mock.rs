@@ -25,8 +25,6 @@ pub(crate) const MOCK_COMMAND_TIMEOUT_MS: u64 = 3_000;
 pub(crate) const MOCK_PROVIDER_TIMEOUT_MS: &str = "30000";
 pub(crate) const MOCK_PROVIDER_STREAM_TIMEOUT_MS: &str = "1000";
 pub(crate) const MOCK_MULTI_COMMAND_STREAM_TIMEOUT_MS: &str = "5000";
-pub(crate) const MOCK_POST_COMMAND_TIMEOUT_MS: &str = "250";
-pub(crate) const MOCK_MULTI_COMMAND_POST_TIMEOUT_MS: &str = "5000";
 
 pub(crate) fn mock_command_run_router_addr() -> String {
     if let Some(addr) = MOCK_ROUTER_ADDR.get() {

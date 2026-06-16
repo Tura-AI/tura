@@ -8,6 +8,7 @@ pub mod task_status;
 pub mod zsh;
 
 use crate::runtime::file_locks::Access;
+use crate::shell_executor;
 use serde_json::Value;
 use std::path::Path;
 use std::time::Duration;
@@ -55,7 +56,7 @@ pub fn access(command: &str, command_line: &str, session_dir: &Path) -> Access {
         "planning" if planning_command_enabled() => Access::default(),
         "read_media" => access_external("read_media", command_line, session_dir),
         "web_discover" => access_external("web_discover", command_line, session_dir),
-        "shell_command" | "bash" | "zsh" if shell_command::looks_read_only(command_line) => {
+        "shell_command" | "bash" | "zsh" if shell_executor::looks_read_only(command_line) => {
             Access::default()
         }
         "shell_command" | "bash" | "zsh" => Access {
@@ -87,7 +88,7 @@ pub fn display_command(
     if canonical_command(command) == "web_discover" {
         return "web_discover".to_string();
     }
-    shell_command::display_command(command_line, session_dir, timeout_secs)
+    shell_executor::display_command(command_line, session_dir, timeout_secs)
 }
 
 pub fn result_command_name(command: &str) -> String {

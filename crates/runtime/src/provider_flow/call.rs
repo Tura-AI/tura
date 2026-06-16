@@ -2,8 +2,10 @@ use chrono::Utc;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 use tracing::error;
 
+use crate::profile_timings;
 use crate::provider_flow::checkpointing;
 use crate::provider_flow::errors::{
     finish_runtime_failure, finish_runtime_failure_with_usage, runtime_timeout,
@@ -43,9 +45,46 @@ pub async fn call_runtime(
 ) -> Result<RuntimeManagement, String> {
     let mut runtime = input.runtime;
     let now = Utc::now();
+    let profiling = profile_timings::enabled();
+    let normalize_start = Instant::now();
     let provider_messages = normalize_provider_messages(input.messages);
+    profile_timings::log_elapsed(
+        "call_runtime.normalize_provider_messages",
+        normalize_start,
+        serde_json::json!({
+            "session_id": runtime.session_id,
+            "runtime_id": runtime.runtime_id,
+            "provider_message_count": provider_messages.len(),
+            "provider_messages_bytes": if profiling {
+                profile_timings::json_vec_bytes(&provider_messages)
+            } else {
+                0
+            },
+        }),
+    );
+    let clone_input_start = Instant::now();
     let input_messages = provider_messages.clone();
     let input_tools = input.tools.clone();
+    profile_timings::log_elapsed(
+        "call_runtime.clone_provider_input",
+        clone_input_start,
+        serde_json::json!({
+            "session_id": runtime.session_id,
+            "runtime_id": runtime.runtime_id,
+            "message_count": input_messages.len(),
+            "messages_bytes": if profiling {
+                profile_timings::json_vec_bytes(&input_messages)
+            } else {
+                0
+            },
+            "tool_count": input_tools.len(),
+            "tools_bytes": if profiling {
+                profile_timings::json_vec_bytes(&input_tools)
+            } else {
+                0
+            },
+        }),
+    );
 
     runtime
         .transition(RuntimeState::Dispatching)
@@ -56,7 +95,16 @@ pub async fn call_runtime(
     runtime
         .mark_waiting_first_token()
         .map_err(|e| format!("failed to mark runtime waiting for first token: {e}"))?;
+    let turn_started_start = Instant::now();
     checkpointing::turn_started(&runtime)?;
+    profile_timings::log_elapsed(
+        "call_runtime.checkpoint_turn_started",
+        turn_started_start,
+        serde_json::json!({
+            "session_id": runtime.session_id,
+            "runtime_id": runtime.runtime_id,
+        }),
+    );
 
     let configured_route = route_by_name(tura_settings.as_ref(), &input.provider_name)
         .ok_or_else(|| format!("unknown provider route: {}", input.provider_name))?;
@@ -86,6 +134,7 @@ pub async fn call_runtime(
         tool_choice: input.tool_choice.clone(),
         ..Default::default()
     };
+    let set_input_start = Instant::now();
     runtime.set_input(serde_json::json!({
         "messages": input_messages,
         "tools": input_tools,
@@ -101,8 +150,25 @@ pub async fn call_runtime(
             "tool_choice": call_options.tool_choice.clone(),
         }
     }));
+    profile_timings::log_elapsed(
+        "call_runtime.set_input",
+        set_input_start,
+        serde_json::json!({
+            "session_id": runtime.session_id,
+            "runtime_id": runtime.runtime_id,
+        }),
+    );
 
+    let provider_call_started_start = Instant::now();
     checkpointing::provider_call_started(&runtime)?;
+    profile_timings::log_elapsed(
+        "call_runtime.checkpoint_provider_call_started",
+        provider_call_started_start,
+        serde_json::json!({
+            "session_id": runtime.session_id,
+            "runtime_id": runtime.runtime_id,
+        }),
+    );
 
     let call_result = if input.stream || !input_tools.is_empty() {
         call_runtime_streaming(

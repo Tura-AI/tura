@@ -1,6 +1,8 @@
 use crate::context::USER_AGENT_CONTEXT_ROLE;
+use crate::profile_timings;
 use crate::session_log_client::SessionLogClient;
 use crate::state_machine::session_management::SessionId;
+use std::time::Instant;
 use tura_llm_rust::{openai_compatible_usage_stream_supported, prompt_cache_key_supported};
 
 const COMMAND_RUN_TOOL_NAME: &str = "command_run";
@@ -8,6 +10,14 @@ const COMMAND_RUN_TOOL_NAME: &str = "command_run";
 pub(crate) fn normalize_provider_messages(
     messages: Vec<serde_json::Value>,
 ) -> Vec<serde_json::Value> {
+    let start = Instant::now();
+    let profiling = profile_timings::enabled();
+    let input_message_count = messages.len();
+    let input_messages_bytes = if profiling {
+        profile_timings::json_vec_bytes(&messages)
+    } else {
+        0
+    };
     let mut normalized = Vec::new();
 
     for message in messages {
@@ -79,6 +89,20 @@ pub(crate) fn normalize_provider_messages(
             "content": content
         }));
     }
+    profile_timings::log_elapsed(
+        "normalize_provider_messages.total",
+        start,
+        serde_json::json!({
+            "input_message_count": input_message_count,
+            "output_message_count": normalized.len(),
+            "input_messages_bytes": input_messages_bytes,
+            "output_messages_bytes": if profiling {
+                profile_timings::json_vec_bytes(&normalized)
+            } else {
+                0
+            },
+        }),
+    );
     normalized
 }
 

@@ -30,6 +30,7 @@ pub(crate) fn execute_turn(
 
     let agent_commands = command_run_commands_for_agent(agent);
     let planning_enabled = agent_commands.contains(PLANNING_TOOL);
+    let disable_tool_invocation = is_final_turn || force_no_tools;
     let mut tools = load_agent_capabilities(agent)?;
     if planning_tool_disabled() {
         tools.retain(|tool| tool_schema_name(tool) != Some(PLANNING_TOOL));
@@ -43,16 +44,22 @@ pub(crate) fn execute_turn(
     if planning_enabled && !planning_tool_disabled() {
         allowed_tool_names.insert(PLANNING_TOOL.to_string());
     }
+    let executable_tool_names = if disable_tool_invocation {
+        std::collections::HashSet::new()
+    } else {
+        allowed_tool_names.clone()
+    };
     tools = move_command_run_to_end(tools);
     if debug_runtime_enabled() {
         eprintln!(
-            "tura runtime debug [{}]: agent={} allowed_tools={:?}",
+            "tura runtime debug [{}]: agent={} provider_tools={:?} executable_tools={:?}",
             debug_runtime_timestamp(),
             agent.agent_name,
             tools
                 .iter()
                 .filter_map(tool_schema_name)
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
+            executable_tool_names
         );
     }
     let turn_messages = messages.to_vec();
@@ -110,7 +117,7 @@ pub(crate) fn execute_turn(
                 provider_name: queue_item.provider_name,
                 stream: agent.provider.stream,
                 max_tokens: agent.provider.max_tokens,
-                tool_choice: tool_choice_for_turn(&allowed_tool_names),
+                tool_choice: tool_choice_for_turn(disable_tool_invocation),
                 session_directory: session.session_directory.clone(),
                 allowed_command_run_commands: Some(agent_commands),
             },
@@ -123,7 +130,7 @@ pub(crate) fn execute_turn(
     let tool_calls: Vec<ToolCallData> = runtime
         .tool_call
         .iter()
-        .filter(|record| allowed_tool_names.contains(&record.tool_called_name))
+        .filter(|record| executable_tool_names.contains(&record.tool_called_name))
         .map(|record| ToolCallData {
             tool_name: record.tool_called_name.clone(),
             arguments: record.tool_called_input.clone(),
@@ -177,9 +184,8 @@ fn debug_runtime_timestamp() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
-fn tool_choice_for_turn(
-    _allowed_tool_names: &std::collections::HashSet<String>,
-) -> Option<serde_json::Value> {
+fn tool_choice_for_turn(disable_tool_invocation: bool) -> Option<serde_json::Value> {
+    let _ = disable_tool_invocation;
     Some(serde_json::json!("auto"))
 }
 
@@ -197,31 +203,16 @@ mod tests {
 
     #[test]
     fn non_final_turn_uses_auto_tool_choice() {
-        let names = std::collections::HashSet::from([COMMAND_RUN_TOOL.to_string()]);
-
-        assert_eq!(
-            tool_choice_for_turn(&names),
-            Some(serde_json::json!("auto"))
-        );
+        assert_eq!(tool_choice_for_turn(false), Some(serde_json::json!("auto")));
     }
 
     #[test]
-    fn final_turn_uses_auto_tool_choice() {
-        let names = std::collections::HashSet::from([COMMAND_RUN_TOOL.to_string()]);
-
-        assert_eq!(
-            tool_choice_for_turn(&names),
-            Some(serde_json::json!("auto"))
-        );
+    fn final_turn_keeps_auto_tool_choice_for_prompt_cache() {
+        assert_eq!(tool_choice_for_turn(true), Some(serde_json::json!("auto")));
     }
 
     #[test]
-    fn tool_choice_uses_auto_when_required_tool_is_not_available() {
-        let names = std::collections::HashSet::new();
-
-        assert_eq!(
-            tool_choice_for_turn(&names),
-            Some(serde_json::json!("auto"))
-        );
+    fn force_no_tools_keeps_auto_tool_choice_without_removing_schema() {
+        assert_eq!(tool_choice_for_turn(true), Some(serde_json::json!("auto")));
     }
 }

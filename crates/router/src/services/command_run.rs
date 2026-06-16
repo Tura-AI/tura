@@ -35,10 +35,11 @@ impl CommandRunService {
         if request.session_directory.as_os_str().is_empty() {
             return Err(anyhow!("command_run session_directory is required"));
         }
-        let output = code_tools::command_run::execute_async_value_with_allowed(
+        let output = code_tools::command_run::execute_async_value_with_allowed_and_lock_scope(
             request.arguments,
             request.session_directory,
             request.allowed_commands,
+            request.session_id.clone(),
         )
         .await;
         Ok(json!({
@@ -62,7 +63,7 @@ mod tests {
     use super::{CommandRunRequest, CommandRunService};
     use serde_json::json;
     use std::collections::BTreeSet;
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     #[tokio::test]
     async fn command_run_service_executes_inside_requested_workspace() {
@@ -138,20 +139,33 @@ mod tests {
             })
         };
 
-        let started = Instant::now();
+        let sequential_started = Instant::now();
+        let seq_first = service
+            .execute(request("seq-first"))
+            .await
+            .expect("sequential first command_run should finish");
+        let seq_second = service
+            .execute(request("seq-second"))
+            .await
+            .expect("sequential second command_run should finish");
+        let sequential_elapsed = sequential_started.elapsed();
+        assert_eq!(seq_first["result"]["results"][0]["success"], true);
+        assert_eq!(seq_second["result"]["results"][0]["success"], true);
+
+        let concurrent_started = Instant::now();
         let (first, second) = tokio::join!(
             service.execute(request("first")),
             service.execute(request("second"))
         );
-        let elapsed = started.elapsed();
+        let concurrent_elapsed = concurrent_started.elapsed();
 
         let first = first.expect("first command_run should finish");
         let second = second.expect("second command_run should finish");
         assert_eq!(first["result"]["results"][0]["success"], true);
         assert_eq!(second["result"]["results"][0]["success"], true);
         assert!(
-            elapsed < Duration::from_millis(2300),
-            "read-only command_run requests should overlap instead of serializing; elapsed={elapsed:?}"
+            concurrent_elapsed.as_nanos() * 10 < sequential_elapsed.as_nanos() * 9,
+            "read-only command_run requests should overlap instead of serializing; sequential_elapsed={sequential_elapsed:?}; concurrent_elapsed={concurrent_elapsed:?}"
         );
     }
 
