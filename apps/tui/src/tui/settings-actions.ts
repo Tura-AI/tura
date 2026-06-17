@@ -25,19 +25,19 @@ export async function applySelectedSetting(
   if (detail === "model") {
     if (typeof value !== "string" || !state.session?.id) return;
     await updateActiveSession(client, getState, dispatch, { model: value });
-    dispatch({ type: "notice", value: t("settingsUpdated") });
+    dispatch({ type: "notice", value: undefined });
     return;
   }
   if (detail === "agent") {
     if (typeof value !== "string" || !state.session?.id) return;
     await updateActiveSession(client, getState, dispatch, { agent: value });
-    dispatch({ type: "notice", value: t("settingsUpdated") });
+    dispatch({ type: "notice", value: undefined });
     return;
   }
   if (detail === "persona" && typeof value === "string") {
     await applyPersonaToActiveAgent(client, getState, dispatch, value);
     dispatch({ type: "close-setting-detail" });
-    dispatch({ type: "notice", value: t("settingsUpdated") });
+    dispatch({ type: "notice", value: undefined });
     return;
   }
   if (detail === "provider" && typeof value === "string") {
@@ -56,9 +56,8 @@ export async function applySelectedSetting(
   if (detail === "language" && typeof value === "string") {
     setLanguage(parseLanguage(value));
   }
-  dispatch({ type: "session-config", value: config, open: true });
-  dispatch({ type: "open-setting-detail", detail });
-  dispatch({ type: "notice", value: t("settingsUpdated") });
+  dispatch({ type: "session-config", value: config });
+  dispatch({ type: "notice", value: undefined });
 }
 
 export async function updateActiveSession(
@@ -149,7 +148,7 @@ async function applyProviderAuthAction(
       open: false,
     });
     dispatch({ type: "open-setting-detail", detail: "providerAuth", providerID });
-    dispatch({ type: "notice", value: t("settingsUpdated") });
+    dispatch({ type: "notice", value: undefined });
     return;
   }
   if (action.action === "api-key") {
@@ -207,7 +206,7 @@ export async function submitSettingInput(
   dispatch({ type: "setting-input", value: undefined });
   dispatch({ type: "composer", value: "" });
   dispatch({ type: "open-setting-detail", detail: "providerAuth", providerID: input.providerID });
-  dispatch({ type: "notice", value: t("settingsUpdated") });
+  dispatch({ type: "notice", value: undefined });
 }
 
 function personaID(persona: AppState["personas"][number] | undefined): string | undefined {

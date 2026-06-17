@@ -10,9 +10,7 @@ use crate::runtime::types::ToolCallData;
 use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeSessionSyncStatus};
 use crate::state_machine::session_management::SessionManagement;
 
-use super::agent_message::{
-    gateway_callback_base_url, gateway_callback_session_id, publish_gateway_agent_message,
-};
+use super::agent_message::{gateway_callback_session_id, publish_gateway_agent_message};
 
 pub(crate) fn summarize_single_tool_output(tool_name: &str, output: &serde_json::Value) -> String {
     if let Some(markdown) = first_summary_markdown(output) {
@@ -495,8 +493,6 @@ fn publish_gateway_tool_message(message: GatewayToolMessage<'_>) -> Result<(), S
     let total_start = Instant::now();
     let profiling = profile_timings::enabled();
     let target_session_id = gateway_callback_session_id(message.session_id);
-    let gateway_base = gateway_callback_base_url();
-    let endpoint = format!("{gateway_base}/session/{target_session_id}/message/agent");
     let payload_start = Instant::now();
     let payload = serde_json::json!({
         "reply_message": "",
@@ -532,7 +528,7 @@ fn publish_gateway_tool_message(message: GatewayToolMessage<'_>) -> Result<(), S
     let spawn_start = Instant::now();
     let runtime_id = message.runtime_id.to_string();
     crate::gateway_events::post_gateway_callback_detached(
-        endpoint,
+        "session.agent_message",
         payload,
         target_session_id,
         runtime_id.clone(),
@@ -594,12 +590,8 @@ pub(crate) fn publish_task_plan_todos(session: &SessionManagement) {
         .collect::<Vec<_>>();
 
     let target_session_id = gateway_callback_session_id(&session.session_id);
-    let endpoint = format!(
-        "{}/session/{target_session_id}/todo",
-        gateway_callback_base_url()
-    );
     crate::gateway_events::post_gateway_callback_detached(
-        endpoint,
+        "session.todos",
         serde_json::Value::Array(todos),
         target_session_id,
         "task-plan".to_string(),

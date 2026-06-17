@@ -47,7 +47,8 @@ async fn run_agent_cli() -> anyhow::Result<()> {
     let req: RunAgentRequest = serde_json::from_str(raw.trim())
         .map_err(|error| anyhow::anyhow!("invalid run-agent request json: {error}"))?;
     let state = build_state();
-    let (_status, body) = dispatch_run_agent(&state, req).await;
+    let (_status, body) =
+        dispatch_run_agent(&state, req, "router-cli-run-agent".to_string(), None).await;
     println!("{}", serde_json::to_string(&body)?);
     Ok(())
 }

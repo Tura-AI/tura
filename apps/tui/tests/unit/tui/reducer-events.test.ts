@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { messageText } from "../../../src/types/session.js";
 import { displayMessages, initialState, reducer } from "../../../src/tui/reducer.js";
+import { withNow } from "./helpers/render-harness.js";
 
 const session = {
   id: "sess-1",
@@ -99,9 +100,9 @@ test("reducer keeps streaming deltas that arrive before full message hydration",
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "runtime-stream.message",
-          part_id: "runtime-stream.message",
+          sessionID: "sess-1",
+          messageID: "runtime-stream.message",
+          partID: "runtime-stream.message",
           field: "text",
           delta: "hel",
         },
@@ -115,9 +116,9 @@ test("reducer keeps streaming deltas that arrive before full message hydration",
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "runtime-stream.message",
-          part_id: "runtime-stream.message",
+          sessionID: "sess-1",
+          messageID: "runtime-stream.message",
+          partID: "runtime-stream.message",
           field: "text",
           delta: "lo",
         },
@@ -146,9 +147,9 @@ test("reducer keeps runtime text live while command parts update", () => {
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "runtime-command.message",
-          part_id: "runtime-command.message",
+          sessionID: "sess-1",
+          messageID: "runtime-command.message",
+          partID: "runtime-command.message",
           field: "text",
           delta: "checking files",
         },
@@ -163,7 +164,7 @@ test("reducer keeps runtime text live while command parts update", () => {
       payload: {
         type: "message.part.updated",
         properties: {
-          session_id: "sess-1",
+          sessionID: "sess-1",
           part: {
             id: "runtime-command.tool.command_run",
             sessionID: "sess-1",
@@ -198,7 +199,7 @@ test("reducer keeps runtime text live while command parts update", () => {
       payload: {
         type: "message.updated",
         properties: {
-          session_id: "sess-1",
+          sessionID: "sess-1",
           info: {
             id: "runtime-command.message",
             sessionID: "sess-1",
@@ -245,8 +246,8 @@ test("reducer ignores message deltas without a session for an active session", (
       payload: {
         type: "message.part.delta",
         properties: {
-          message_id: "msg-unknown-session",
-          part_id: "part-unknown-session",
+          messageID: "msg-unknown-session",
+          partID: "part-unknown-session",
           field: "text",
           delta: "must not leak into the active chat",
         },
@@ -299,12 +300,12 @@ test("reducer commits final live stream on the ending message event", () => {
     type: "event",
     event: {
       directory: "C:/repo",
-      sessionID: "sess-1",
       payload: {
         type: "message.part.delta",
         properties: {
-          message_id: "msg-sessionless-stream",
-          part_id: "part-sessionless-stream",
+          sessionID: "sess-1",
+          messageID: "msg-sessionless-stream",
+          partID: "part-sessionless-stream",
           field: "text",
           delta: "duplicated live text",
         },
@@ -321,7 +322,7 @@ test("reducer commits final live stream on the ending message event", () => {
       payload: {
         type: "message.updated",
         properties: {
-          session_id: "sess-1",
+          sessionID: "sess-1",
           info: {
             id: "msg-sessionless-stream",
             sessionID: "sess-1",
@@ -390,9 +391,9 @@ test("reducer commits the last live command shape instead of the cache confirmat
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "runtime-live-order.message",
-          part_id: "runtime-live-order.message",
+          sessionID: "sess-1",
+          messageID: "runtime-live-order.message",
+          partID: "runtime-live-order.message",
           field: "text",
           delta: "checking",
         },
@@ -411,7 +412,7 @@ test("reducer commits the last live command shape instead of the cache confirmat
         payload: {
           type: "message.part.updated",
           properties: {
-            session_id: "sess-1",
+            sessionID: "sess-1",
             part: {
               id,
               sessionID: "sess-1",
@@ -505,9 +506,9 @@ test("reducer commits a finished live stream and renders the next runtime event 
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "runtime-a-idle-commit.message",
-          part_id: "runtime-a-idle-commit.message",
+          sessionID: "sess-1",
+          messageID: "runtime-a-idle-commit.message",
+          partID: "runtime-a-idle-commit.message",
           field: "text",
           delta: "A live",
         },
@@ -522,7 +523,7 @@ test("reducer commits a finished live stream and renders the next runtime event 
       payload: {
         type: "message.updated",
         properties: {
-          session_id: "sess-1",
+          sessionID: "sess-1",
           info: {
             id: "runtime-a-idle-commit.message",
             sessionID: "sess-1",
@@ -551,9 +552,9 @@ test("reducer commits a finished live stream and renders the next runtime event 
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "runtime-b-after-idle-commit.message",
-          part_id: "runtime-b-after-idle-commit.message",
+          sessionID: "sess-1",
+          messageID: "runtime-b-after-idle-commit.message",
+          partID: "runtime-b-after-idle-commit.message",
           field: "text",
           delta: "B should appear",
         },
@@ -575,7 +576,7 @@ test("reducer commits a finished live stream and renders the next runtime event 
       directory: "C:/repo",
       payload: {
         type: "session.status",
-        properties: { session_id: "sess-1", status: "idle" },
+        properties: { sessionID: "sess-1", status: "idle" },
       },
     },
   });
@@ -587,6 +588,57 @@ test("reducer commits a finished live stream and renders the next runtime event 
   );
   assert.equal(messageText(displayMessages(state)[0]), "A live");
   assert.equal(messageText(displayMessages(state)[1]), "B should appear");
+});
+
+test("reducer orders interleaved live streams by creation time instead of update time", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: { ...session, status: "busy" },
+    messages: [
+      {
+        id: "msg-user-live-order",
+        sessionID: "sess-1",
+        role: "user",
+        created_at: 1_000,
+        parts: [{ id: "part-user-live-order", type: "text", text: "start" }],
+      },
+    ],
+    permissions: [],
+  });
+
+  const applyDelta = (now: number, messageID: string, delta: string) => {
+    state = withNow(now, () =>
+      reducer(state, {
+        type: "event",
+        event: {
+          directory: "C:/repo",
+          payload: {
+            type: "message.part.delta",
+            properties: {
+              sessionID: "sess-1",
+              messageID: messageID,
+              partID: messageID,
+              field: "text",
+              delta,
+            },
+          },
+        },
+      }),
+    );
+  };
+
+  applyDelta(1_500, "runtime-live-a.message", "A1 ");
+  applyDelta(1_600, "runtime-live-b.message", "B1 ");
+  applyDelta(1_700, "runtime-live-a.message", "A2 ");
+  applyDelta(1_800, "runtime-live-b.message", "B2 ");
+
+  const visible = displayMessages(state);
+  assert.deepEqual(
+    visible.map((message) => message.id),
+    ["msg-user-live-order", "runtime-live-a.message", "runtime-live-b.message"],
+  );
+  assert.equal(messageText(visible[1]), "A1 A2 ");
+  assert.equal(messageText(visible[2]), "B1 B2 ");
 });
 
 test("reducer overlays later deltas on durable part text without mutating history", () => {
@@ -612,9 +664,9 @@ test("reducer overlays later deltas on durable part text without mutating histor
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "msg-durable-part",
-          part_id: "part-durable",
+          sessionID: "sess-1",
+          messageID: "msg-durable-part",
+          partID: "part-durable",
           field: "text",
           delta: "world",
         },
@@ -641,9 +693,9 @@ test("reducer normalizes streamed agent terminal controls into plain text", () =
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "runtime-stream.message",
-          part_id: "runtime-stream.message",
+          sessionID: "sess-1",
+          messageID: "runtime-stream.message",
+          partID: "runtime-stream.message",
           field: "text",
           delta: "command complete\r\x1b[2Knew reply",
         },

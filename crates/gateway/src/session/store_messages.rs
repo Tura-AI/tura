@@ -238,7 +238,7 @@ impl SessionStore {
             return false;
         }
 
-        let source_messages = self.get_messages(source_session_id);
+        let source_messages = self.get_frontend_messages(source_session_id);
         let mut id_map = HashMap::new();
         let now = Utc::now().timestamp_millis();
         let copied_messages = source_messages
@@ -336,21 +336,23 @@ impl SessionStore {
         let event_message = message.clone();
         let event_parts = message.parts.clone();
         let event = GlobalEvent::MessageUpdated {
-            properties: crate::api::types::MessageUpdatedProperties {
+            properties: crate::contracts::MessageUpdatedProperties {
                 session_id: session_id.clone(),
-                info: crate::api::types::Message {
+                info: crate::contracts::Message {
                     id: event_message.id.clone(),
                     session_id: event_message.session_id.clone(),
                     role: match event_message.role {
-                        MessageRole::User => crate::api::types::MessageRole::User,
-                        MessageRole::Assistant => crate::api::types::MessageRole::Assistant,
-                        MessageRole::System => crate::api::types::MessageRole::System,
+                        MessageRole::User => crate::contracts::MessageRole::User,
+                        MessageRole::Assistant => crate::contracts::MessageRole::Assistant,
+                        MessageRole::System => crate::contracts::MessageRole::System,
                     },
                     parts: event_message
                         .parts
                         .iter()
-                        .map(|part| crate::api::types::MessagePart {
+                        .map(|part| crate::contracts::MessagePart {
                             id: part.id.clone(),
+                            session_id: event_message.session_id.clone(),
+                            message_id: event_message.id.clone(),
                             part_type: part.part_type.clone(),
                             content: part.content.clone(),
                             text: part.text.clone(),
@@ -369,7 +371,7 @@ impl SessionStore {
         self.push_event(event.clone());
         for part in event_parts {
             self.push_event(GlobalEvent::MessagePartUpdated {
-                properties: crate::api::types::MessagePartUpdatedProperties {
+                properties: crate::contracts::MessagePartUpdatedProperties {
                     session_id: session_id.clone(),
                     part: serde_json::json!({
                         "id": part.id.clone(),
@@ -517,21 +519,23 @@ impl SessionStore {
         let event_message = message.clone();
         let event_parts = event_message.parts.clone();
         self.push_event(GlobalEvent::MessageUpdated {
-            properties: crate::api::types::MessageUpdatedProperties {
+            properties: crate::contracts::MessageUpdatedProperties {
                 session_id: session_id.to_string(),
-                info: crate::api::types::Message {
-                    id: event_message.id,
-                    session_id: event_message.session_id,
+                info: crate::contracts::Message {
+                    id: event_message.id.clone(),
+                    session_id: event_message.session_id.clone(),
                     role: match event_message.role {
-                        MessageRole::User => crate::api::types::MessageRole::User,
-                        MessageRole::Assistant => crate::api::types::MessageRole::Assistant,
-                        MessageRole::System => crate::api::types::MessageRole::System,
+                        MessageRole::User => crate::contracts::MessageRole::User,
+                        MessageRole::Assistant => crate::contracts::MessageRole::Assistant,
+                        MessageRole::System => crate::contracts::MessageRole::System,
                     },
                     parts: event_message
                         .parts
                         .into_iter()
-                        .map(|part| crate::api::types::MessagePart {
+                        .map(|part| crate::contracts::MessagePart {
                             id: part.id.clone(),
+                            session_id: event_message.session_id.clone(),
+                            message_id: event_message.id.clone(),
                             part_type: part.part_type.clone(),
                             content: part.content.clone(),
                             text: part.text.clone(),
@@ -549,7 +553,7 @@ impl SessionStore {
         });
         for part in event_parts {
             self.push_event(GlobalEvent::MessagePartUpdated {
-                properties: crate::api::types::MessagePartUpdatedProperties {
+                properties: crate::contracts::MessagePartUpdatedProperties {
                     session_id: session_id.to_string(),
                     part: serde_json::json!({
                         "id": part.id.clone(),
@@ -626,7 +630,7 @@ impl SessionStore {
                     }
                     drop(messages);
                     self.push_event(GlobalEvent::MessagePartUpdated {
-                        properties: crate::api::types::MessagePartUpdatedProperties {
+                        properties: crate::contracts::MessagePartUpdatedProperties {
                             session_id: session_id.to_string(),
                             part: serde_json::json!({
                                 "id": &part.id,
@@ -671,17 +675,19 @@ impl SessionStore {
                 }
                 drop(messages);
                 self.push_event(GlobalEvent::MessageUpdated {
-                    properties: crate::api::types::MessageUpdatedProperties {
+                    properties: crate::contracts::MessageUpdatedProperties {
                         session_id: session_id.to_string(),
-                        info: crate::api::types::Message {
+                        info: crate::contracts::Message {
                             id: message.id.clone(),
                             session_id: message.session_id.clone(),
-                            role: crate::api::types::MessageRole::Assistant,
+                            role: crate::contracts::MessageRole::Assistant,
                             parts: message
                                 .parts
                                 .iter()
-                                .map(|part| crate::api::types::MessagePart {
+                                .map(|part| crate::contracts::MessagePart {
                                     id: part.id.clone(),
+                                    session_id: message.session_id.clone(),
+                                    message_id: message.id.clone(),
                                     part_type: part.part_type.clone(),
                                     content: part.content.clone(),
                                     text: part.text.clone(),
@@ -698,7 +704,7 @@ impl SessionStore {
                     },
                 });
                 self.push_event(GlobalEvent::MessagePartUpdated {
-                    properties: crate::api::types::MessagePartUpdatedProperties {
+                    properties: crate::contracts::MessagePartUpdatedProperties {
                         session_id: session_id.to_string(),
                         part: serde_json::json!({
                             "id": &part.id,
@@ -737,14 +743,16 @@ impl SessionStore {
         drop(messages);
 
         self.push_event(GlobalEvent::MessageUpdated {
-            properties: crate::api::types::MessageUpdatedProperties {
+            properties: crate::contracts::MessageUpdatedProperties {
                 session_id: session_id.to_string(),
-                info: crate::api::types::Message {
+                info: crate::contracts::Message {
                     id: message.id.clone(),
                     session_id: message.session_id.clone(),
-                    role: crate::api::types::MessageRole::Assistant,
-                    parts: vec![crate::api::types::MessagePart {
+                    role: crate::contracts::MessageRole::Assistant,
+                    parts: vec![crate::contracts::MessagePart {
                         id: part.id.clone(),
+                        session_id: message.session_id.clone(),
+                        message_id: message.id.clone(),
                         part_type: part.part_type.clone(),
                         content: part.content.clone(),
                         text: part.text.clone(),
@@ -761,7 +769,7 @@ impl SessionStore {
         });
 
         self.push_event(GlobalEvent::MessagePartUpdated {
-            properties: crate::api::types::MessagePartUpdatedProperties {
+            properties: crate::contracts::MessagePartUpdatedProperties {
                 session_id: session_id.to_string(),
                 part: serde_json::json!({
                     "id": &part.id,

@@ -3,6 +3,7 @@ import http from "node:http";
 import test from "node:test";
 import { GatewayClient } from "../../../src/gateway/client.js";
 import { GatewayHttpError } from "../../../src/gateway/errors.js";
+import type { Message, Session } from "../../../src/types/session.js";
 
 test("GatewayClient sends workspace directory through query and header", async () => {
   const seen: Array<{ url?: string; directoryHeader?: string; body?: unknown }> = [];
@@ -14,7 +15,7 @@ test("GatewayClient sends workspace directory through query and header", async (
         directoryHeader: req.headers["x-opencode-directory"] as string,
         body,
       });
-      sendJson(res, { id: "sess-1", directory: "C:/repo with spaces", status: "idle" });
+      sendJson(res, session("sess-1", { directory: "C:/repo with spaces" }));
     },
     async (baseUrl) => {
       const client = new GatewayClient({ baseUrl, directory: "C:/repo with spaces" });
@@ -28,15 +29,10 @@ test("GatewayClient sends workspace directory through query and header", async (
   assert.deepEqual(seen[0].body, { directory: "C:/repo with spaces", agent: "fast" });
 });
 
-test("GatewayClient normalizes message envelopes", async () => {
+test("GatewayClient reads strict gateway message arrays", async () => {
   await withServer(
     async (_req, res) => {
-      sendJson(res, [
-        {
-          info: { id: "msg-1", sessionID: "sess-1", role: "assistant", parts: [] },
-          parts: [{ id: "part-1", type: "text", text: "hello" }],
-        },
-      ]);
+      sendJson(res, [message("sess-1", "msg-1", "assistant", "hello")]);
     },
     async (baseUrl) => {
       const client = new GatewayClient({ baseUrl, directory: "C:/repo" });
@@ -52,7 +48,7 @@ test("GatewayClient deletes and forks sessions through session endpoints", async
     async (req, res) => {
       seen.push({ method: req.method, url: req.url, body: await readBody(req) });
       if (req.method === "DELETE") return sendJson(res, true);
-      sendJson(res, { id: "sess-copy", parent_id: "sess-1", directory: "C:/repo" });
+      sendJson(res, session("sess-copy", { parent_id: "sess-1", directory: "C:/repo" }));
     },
     async (baseUrl) => {
       const client = new GatewayClient({ baseUrl, directory: "C:/repo" });
@@ -67,6 +63,81 @@ test("GatewayClient deletes and forks sessions through session endpoints", async
   assert.equal(seen[1].method, "POST");
   assert.equal(seen[1].url, "/session/sess-1/fork");
   assert.deepEqual(seen[1].body, { directory: "C:/repo", copy_context: true });
+});
+
+test("GatewayClient fork/delete flow observes gateway session state", async () => {
+  const sessions = new Map<string, Session>([
+    ["sess-1", session("sess-1", { name: "Root", message_count: 2 })],
+  ]);
+  const messages = new Map<string, Message[]>([
+    [
+      "sess-1",
+      [
+        message("sess-1", "msg-user", "user", "build it"),
+        message("sess-1", "msg-assistant", "assistant", "done"),
+      ],
+    ],
+  ]);
+
+  await withServer(
+    async (req, res) => {
+      const path = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (req.method === "GET" && path.pathname === "/session") {
+        return sendJson(res, [...sessions.values()]);
+      }
+      if (req.method === "GET" && path.pathname === "/session/sess-copy") {
+        return sendJson(res, sessions.get("sess-copy"));
+      }
+      if (req.method === "GET" && path.pathname === "/session/sess-copy/message") {
+        return sendJson(res, messages.get("sess-copy") ?? []);
+      }
+      if (req.method === "POST" && path.pathname === "/session/sess-1/fork") {
+        const body = await readBody(req);
+        assert.deepEqual(body, { directory: "C:/repo", copy_context: true });
+        const fork = session("sess-copy", {
+          parent_id: "sess-1",
+          name: "Root",
+          message_count: messages.get("sess-1")?.length ?? 0,
+        });
+        sessions.set(fork.id, fork);
+        messages.set(
+          fork.id,
+          (messages.get("sess-1") ?? []).map((item, index) =>
+            message(fork.id, `fork-${index}`, item.role, item.parts[0]?.text ?? ""),
+          ),
+        );
+        return sendJson(res, fork);
+      }
+      if (req.method === "DELETE" && path.pathname === "/session/sess-copy") {
+        sessions.delete("sess-copy");
+        messages.delete("sess-copy");
+        return sendJson(res, true);
+      }
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: `unexpected ${req.method} ${path.pathname}` }));
+    },
+    async (baseUrl) => {
+      const client = new GatewayClient({ baseUrl, directory: "C:/repo" });
+      const fork = await client.forkSession("sess-1", { copy_context: true });
+      assert.equal(fork.id, "sess-copy");
+      assert.equal(fork.parent_id, "sess-1");
+
+      const listedAfterFork = await client.listSessions({ includeChildren: true });
+      assert.deepEqual(listedAfterFork.map((item) => item.id).sort(), ["sess-1", "sess-copy"]);
+      assert.equal((await client.getSession("sess-copy")).parent_id, "sess-1");
+      assert.deepEqual(
+        (await client.listMessages("sess-copy")).map((item) => item.parts[0]?.text),
+        ["build it", "done"],
+      );
+
+      assert.equal(await client.deleteSession("sess-copy"), true);
+      assert.deepEqual(
+        (await client.listSessions({ includeChildren: true })).map((item) => item.id),
+        ["sess-1"],
+      );
+      assert.deepEqual(await client.listMessages("sess-copy"), []);
+    },
+  );
 });
 
 test("GatewayClient surfaces HTTP error status and body", async () => {
@@ -193,4 +264,57 @@ function readBody(req: http.IncomingMessage): Promise<unknown> {
     req.on("error", reject);
     req.on("end", () => resolve(body ? JSON.parse(body) : undefined));
   });
+}
+
+function session(id: string, overrides: Partial<Session> = {}): Session {
+  return {
+    id,
+    name: null,
+    parent_id: null,
+    created_at: 1,
+    updated_at: 1,
+    directory: "C:/repo",
+    model: "openai",
+    agent: "thinking-planning",
+    session_type: "coding",
+    auto_session_name: true,
+    kill_processes_on_start: false,
+    validator_enabled: false,
+    force_planning: false,
+    model_variant: null,
+    model_acceleration_enabled: false,
+    disable_permission_restrictions: false,
+    status: "idle",
+    message_count: 0,
+    task_management: {},
+    plan_summary: null,
+    session_display_name: null,
+    ...overrides,
+  };
+}
+
+function message(sessionID: string, id: string, role: Message["role"], text: string): Message {
+  return {
+    id,
+    sessionID,
+    parentID: null,
+    role,
+    parts: [
+      {
+        id: `${id}.part`,
+        sessionID,
+        messageID: id,
+        type: "text",
+        text,
+        content: text,
+        metadata: null,
+        callID: null,
+        tool: null,
+        state: null,
+      },
+    ],
+    created_at: 1,
+    updated_at: 1,
+    time: { created: 1, updated: 1 },
+  };
 }

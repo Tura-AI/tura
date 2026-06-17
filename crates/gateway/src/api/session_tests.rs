@@ -5,7 +5,7 @@ use super::{
     prompt_model_acceleration, prompt_model_variant, prompt_text, workspace_key, SendAgentMedia,
     SendAgentMessageRequest, SendAgentToolCall, SessionChangeRecord, SessionListParams,
 };
-use crate::api::types::{Session, SessionStatus};
+use crate::contracts::{Session, SessionContextTokens, SessionStatus};
 use crate::session::config::TuraSessionConfig;
 use crate::session_store;
 use axum::{
@@ -106,6 +106,8 @@ fn test_session(id: &str, directory: &str, parent_id: Option<&str>, updated_at: 
         status: SessionStatus::Idle,
         message_count: 0,
         task_management: serde_json::json!({}),
+        context_tokens: SessionContextTokens::default(),
+        usage: Default::default(),
         plan_summary: None,
         session_display_name: None,
     }
@@ -272,8 +274,10 @@ async fn create_session_accepts_task_management_and_serializes_session_fields() 
     assert_eq!(value["plan_summary"], "Create Route Plan");
     assert_eq!(value["session_display_name"], "Create route task");
     assert_eq!(value["auto_session_name"], true);
+    assert_eq!(value["context_tokens"]["input"], 0);
+    assert!(value["context_tokens"]["limit"].as_u64().is_some());
     let object = value.as_object().expect("session JSON should be an object");
-    assert_eq!(object.len(), 21);
+    assert_eq!(object.len(), 22);
 
     let Json(listed) = super::list_sessions(
         HeaderMap::new(),
@@ -343,8 +347,10 @@ async fn task_management_route_patches_session_and_returns_session_fields() {
     assert_eq!(value["plan_summary"], "Dedicated Patch Route");
     assert_eq!(value["session_display_name"], "Patch task");
     assert_eq!(value["auto_session_name"], true);
+    assert_eq!(value["context_tokens"]["input"], 0);
+    assert!(value["context_tokens"]["limit"].as_u64().is_some());
     let object = value.as_object().expect("session JSON should be an object");
-    assert_eq!(object.len(), 21);
+    assert_eq!(object.len(), 22);
 
     let Json(fetched) = super::get_session(Path(session.id)).await;
     assert_eq!(fetched.task_management["status"], "question");

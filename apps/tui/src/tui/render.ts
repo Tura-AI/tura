@@ -46,7 +46,7 @@ import {
   sessionEntryLine,
   sessionLabelWidth,
 } from "./render/section-ui.js";
-import { settingsLines } from "./render/settings.js";
+import { settingsLines, settingsPageInfo } from "./render/settings.js";
 
 export { settingOptions, settingsCommandEntries, settingsEntries } from "./render/settings.js";
 
@@ -76,8 +76,9 @@ export function renderFrame(
   setActiveCapabilities(capabilities);
   if (capabilities.level === "plain") return renderPlainFrame(state);
   const cols = process.stdout.columns || 100;
+  const rows = process.stdout.rows || 40;
   const renderCols = terminalRenderCols(cols);
-  const panelMaxLines = Number.MAX_SAFE_INTEGER;
+  const panelMaxLines = Math.max(1, rows - 4);
   const lines: string[] = [];
   const chatSurface = shouldShowComposer(state);
   if (!chatSurface) lines.push(sessionTitleLine(state, renderCols));
@@ -206,8 +207,9 @@ function composerSeparator(cols: number): string[] {
 
 function renderPlainFrame(state: AppState): RenderedFrame {
   const cols = process.stdout.columns || 100;
+  const rows = process.stdout.rows || 40;
   const renderCols = terminalRenderCols(cols);
-  const panelMaxLines = Number.MAX_SAFE_INTEGER;
+  const panelMaxLines = Math.max(1, rows - 4);
   const lines: string[] = [];
   const chatSurface = shouldShowComposer(state);
   if (!chatSurface) {
@@ -266,7 +268,7 @@ function shouldShowComposer(state: AppState): boolean {
 }
 
 function sessionTitleLine(state: AppState, cols: number): string {
-  const title = state.session ? sessionTitle(state.session) : "tura";
+  const title = surfaceTitle(state);
   const color =
     activeCapabilities.level === "rich"
       ? richHighlight
@@ -274,6 +276,11 @@ function sessionTitleLine(state: AppState, cols: number): string {
         ? richHighlight
         : bold;
   return truncateAnsi(`${color}${title}${reset}`, cols);
+}
+
+function surfaceTitle(state: AppState): string {
+  if (state.sessionsOpen) return state.cwd.trim() || state.session?.directory?.trim() || "tura";
+  return state.session ? sessionTitle(state.session) : "tura";
 }
 
 function bottomTitleLines(state: AppState, cols: number): string[] {
@@ -290,16 +297,26 @@ function bottomMetaLine(state: AppState, cols: number): string {
 }
 
 function bottomMetaPieces(state: AppState): string[] {
-  const model = [
+  const panelPage = panelPageInfo(state);
+  if (panelPage) return [`${panelPage.label} ${panelPage.current}/${panelPage.total}`];
+  const pieces = [
     bottomMetaModel(state),
-    state.session?.model_variant ?? state.sessionConfig?.model_variant,
-    (state.session?.model_acceleration_enabled ?? state.sessionConfig?.model_acceleration_enabled)
-      ? t("priority")
-      : undefined,
-  ]
-    .filter(Boolean)
-    .join(" ");
-  return [statusIndicator(state), model || "-", tokenSummary(state)];
+    bottomMetaVariant(state),
+    bottomMetaPriority(state),
+    bottomMetaAgent(state),
+    bottomMetaPersona(state),
+    contextTokenSummary(state),
+  ].filter((item): item is string => Boolean(item));
+  return pieces.length ? pieces : [statusIndicator(state)];
+}
+
+type PanelPageInfo = { label: string; current: number; total: number };
+
+function panelPageInfo(state: AppState): PanelPageInfo | undefined {
+  const maxLines = Math.max(1, (process.stdout.rows || 40) - 4);
+  if (state.settingsOpen) return settingsPageInfo(state, maxLines);
+  if (state.sessionsOpen) return sessionPageInfo(state, maxLines);
+  return undefined;
 }
 
 function bottomMetaModel(state: AppState): string | undefined {
@@ -315,6 +332,33 @@ function bottomMetaModel(state: AppState): string | undefined {
   if (provider && sessionModel) return `${provider}/${sessionModel}`;
   if (provider && configuredModel) return `${provider}/${configuredModel}`;
   return sessionModel ?? configuredModel ?? activeModel;
+}
+
+function bottomMetaVariant(state: AppState): string | undefined {
+  return (
+    stringOrUndefined(state.sessionConfig?.model_variant) ??
+    stringOrUndefined(state.session?.model_variant)
+  );
+}
+
+function bottomMetaPriority(state: AppState): string | undefined {
+  const enabled =
+    state.sessionConfig?.model_acceleration_enabled ?? state.session?.model_acceleration_enabled;
+  return enabled ? "priority" : undefined;
+}
+
+function bottomMetaAgent(state: AppState): string | undefined {
+  return (
+    stringOrUndefined(state.sessionConfig?.active_agent) ?? stringOrUndefined(state.session?.agent)
+  );
+}
+
+function bottomMetaPersona(state: AppState): string | undefined {
+  return (
+    stringField(state.sessionConfig, "active_persona") ??
+    stringField(state.session as Record<string, unknown> | undefined, "persona") ??
+    activePersonaID(state)
+  );
 }
 
 function bottomMetaDivider(): string {
@@ -337,48 +381,49 @@ function statusIndicator(state: AppState): string {
   return "-";
 }
 
-function tokenSummary(state: AppState): string {
-  const total = state.messages.reduce((sum, message) => sum + tokenTotal(message.tokens), 0);
-  return `tokens ${total || "-"}`;
-}
-
-function tokenTotal(value: unknown): number {
-  if (!value || typeof value !== "object") return 0;
-  const record = value as Record<string, unknown>;
-  for (const key of ["total_tokens", "total", "tokens"]) {
-    const current = record[key];
-    if (typeof current === "number" && Number.isFinite(current)) return current;
-  }
-  return (
-    numberField(record, "input_tokens") +
-    numberField(record, "prompt_tokens") +
-    numberField(record, "input") +
-    numberField(record, "output_tokens") +
-    numberField(record, "completion_tokens") +
-    numberField(record, "output") +
-    numberField(record, "reasoning_tokens") +
-    numberField(record, "reasoning_output_tokens") +
-    numberField(record, "reasoning") +
-    numberField(record, "cached_input_tokens") +
-    numberField(record, "cache_read_input_tokens") +
-    nestedNumberField(record, "cache", "read") +
-    nestedNumberField(record, "cache", "write")
-  );
-}
-
 function numberField(record: Record<string, unknown>, key: string): number {
   const value = record[key];
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-function nestedNumberField(
-  record: Record<string, unknown>,
-  key: string,
-  nestedKey: string,
-): number {
-  const value = record[key];
-  if (!value || typeof value !== "object") return 0;
-  return numberField(value as Record<string, unknown>, nestedKey);
+function contextTokenSummary(state: AppState): string | undefined {
+  const context = state.session?.context_tokens;
+  const limit = numberField(context ?? {}, "limit");
+  if (limit <= 0) return undefined;
+  const input = Math.max(0, numberField(context ?? {}, "input"));
+  return `context ${compactTokenCount(input)}/${compactTokenCount(limit)} ${contextBar(input, limit)}`;
+}
+
+function compactTokenCount(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0";
+  if (value >= 1_000_000) return `${trimDecimal(value / 1_000_000)}m`;
+  if (value >= 1_000) return `${trimDecimal(value / 1_000)}k`;
+  return Math.round(value).toString();
+}
+
+function trimDecimal(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1);
+}
+
+function contextBar(input: number, limit: number): string {
+  const cells = 6;
+  const unitsPerCell = 10;
+  const totalUnits = cells * unitsPerCell;
+  const filledUnits = Math.max(0, Math.min(totalUnits, (input / limit) * totalUnits));
+  let bar = "";
+  for (let index = 0; index < cells; index += 1) {
+    const cellUnits = Math.max(0, Math.min(unitsPerCell, filledUnits - index * unitsPerCell));
+    bar += contextBarCell(cellUnits, unitsPerCell);
+  }
+  return bar;
+}
+
+function contextBarCell(units: number, unitsPerCell: number): string {
+  if (units >= unitsPerCell) return "█";
+  if (units <= 0) return "░";
+  if (units < unitsPerCell * 0.66) return "▒";
+  return "▓";
 }
 
 function richPrimary(): string {
@@ -422,24 +467,51 @@ function sessionLines(state: AppState, cols: number, maxLines: number): string[]
     return [label, preview] as [string, string];
   });
   const width = sessionLabelWidth([t("newSession"), ...entries.map(([label]) => label)], cols);
-  lines.push(
-    sessionEntryLine(
-      t("newSession"),
-      t("createSession"),
-      width,
-      cols,
-      state.selectedSessionIndex === 0,
-    ),
-  );
-  if (!state.sessions.length) lines.push(sectionBodyLine(t("noSessions"), cols));
-  for (const [index, [label, description]] of entries.entries()) {
-    if (lines.length + 1 >= maxLines - 2) break;
+  const items: Array<[string, string]> = [[t("newSession"), t("createSession")], ...entries];
+  const visibleEntries = Math.max(1, maxLines - lines.length - 1);
+  const start = pageStartForIndex(state.selectedSessionIndex, visibleEntries, items.length);
+  for (const [offset, [label, description]] of items.slice(start).entries()) {
+    const index = start + offset;
+    if (offset >= visibleEntries) break;
     lines.push(
-      sessionEntryLine(label, description, width, cols, index + 1 === state.selectedSessionIndex),
+      sessionEntryLine(label, description, width, cols, index === state.selectedSessionIndex),
     );
   }
+  if (!state.sessions.length && lines.length < maxLines - 1)
+    lines.push(sectionBodyLine(t("noSessions"), cols));
   lines.push(sectionBlankLine(cols));
   return lines.slice(0, maxLines);
+}
+
+function sessionPageInfo(state: AppState, maxLines: number): PanelPageInfo {
+  const headerLines = sectionLines(t("sessions"), 80).length + 1;
+  const visibleEntries = Math.max(1, maxLines - headerLines - 1);
+  return {
+    label: t("sessionSelectPage"),
+    ...pageInfoForIndex(state.selectedSessionIndex, visibleEntries, state.sessions.length + 1),
+  };
+}
+
+function pageStartForIndex(index: number, pageSize: number, total: number): number {
+  if (total <= 0) return 0;
+  const safePageSize = Math.max(1, pageSize);
+  const safeIndex = Math.max(0, Math.min(index, total - 1));
+  return Math.floor(safeIndex / safePageSize) * safePageSize;
+}
+
+function pageInfoForIndex(
+  index: number,
+  pageSize: number,
+  total: number,
+): { current: number; total: number } {
+  if (total <= 0) return { current: 1, total: 1 };
+  const safePageSize = Math.max(1, pageSize);
+  const totalPages = Math.max(1, Math.ceil(total / safePageSize));
+  const safeIndex = Math.max(0, Math.min(index, total - 1));
+  return {
+    current: Math.min(totalPages, Math.floor(safeIndex / safePageSize) + 1),
+    total: totalPages,
+  };
 }
 
 function authLines(state: AppState, cols: number, maxLines: number): string[] {
@@ -655,7 +727,7 @@ function activePersonaID(state: AppState): string | undefined {
   const runtimePersonas = (
     agent as unknown as { options?: { personas?: AppState["personas"] } } | undefined
   )?.options?.personas;
-  return runtimePersonas?.[0] ? personaID(runtimePersonas[0]) : undefined;
+  return runtimePersonas?.[0] ? personaID(runtimePersonas[0]) : "tura";
 }
 
 function storedAgentID(agent: AppState["agents"][number]): string | undefined {

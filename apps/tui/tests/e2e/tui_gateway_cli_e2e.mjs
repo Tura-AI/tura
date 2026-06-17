@@ -114,6 +114,11 @@ async function runWebTerminalE2e(gateway) {
           null,
           { timeout: 10_000 },
         );
+        await page.waitForFunction(
+          () => /context\s+90k\/200k\s+██▓░░░/u.test(document.body.innerText),
+          null,
+          { timeout: 10_000 },
+        );
         await page.screenshot({
           path: path.join(screenshotsDir, `${profile}.png`),
           fullPage: false,
@@ -127,10 +132,23 @@ async function runWebTerminalE2e(gateway) {
         const body = await page.locator("body").innerText();
         assert.match(body, /OC \| Tura TUI/);
         assert.doesNotMatch(body, /^workspace$/im);
+        assert.match(body, /context\s+90k\/200k\s+██▓░░░/u);
+        assert.doesNotMatch(body, /tokens\s+\d+|tokens\s+-/u);
         assert.match(
           body,
           /Rich fixture phase 2|Local path C:\/repo\/apps\/tui|Directory\s+C:\/repo\/apps\/tui/,
         );
+        assert.match(
+          body,
+          /Paragraph before intentional blank line\.[\s\S]*Paragraph after intentional blank line\./,
+        );
+        assert.match(body, /Cited text or summary/);
+        assert.doesNotMatch(body, /│ Cited text or summary/);
+        assert.match(
+          body,
+          /(?:Status\s+Table rendering stays compact and readable|Item: Status\s+Target: Table rendering stays compact and readable)/,
+        );
+        assert.match(body, /pnpm test --filter @tura\/tui -- --rich-fixture/);
         assert.match(body, /Protocol fixture complete|Search Link|README/);
         assert.doesNotMatch(body, /commands?:[\s\u00a0]*\d+/i);
         assert.doesNotMatch(body, /\[EMOJI:/);
@@ -233,7 +251,7 @@ async function runWebTerminalE2e(gateway) {
         { timeout: 10_000 },
       );
       await page.waitForFunction(
-        () => document.body.innerText.includes("node tools/snake_playwright.mjs"),
+        () => document.body.innerText.includes("Protocol fixture complete"),
         null,
         { timeout: 10_000 },
       );
@@ -243,7 +261,7 @@ async function runWebTerminalE2e(gateway) {
       });
       {
         const body = await page.locator("body").innerText();
-        assert.match(body, /node tools\/snake_playwright\.mjs/);
+        assert.match(body, /pnpm test --filter @tura\/tui -- --rich-fixture/);
         assert.match(body, /\[shell: collecting rich terminal screenshots\]/);
         assert.doesNotMatch(body, /◆\s+◇\s+Commands/);
       }
@@ -255,7 +273,7 @@ async function runWebTerminalE2e(gateway) {
       });
       await sendRichCommandInput("/chat\r");
       await page.waitForFunction(
-        () => document.body.innerText.includes("node tools/snake_playwright.mjs"),
+        () => document.body.innerText.includes("Protocol fixture complete"),
         null,
         { timeout: 10_000 },
       );
@@ -278,7 +296,7 @@ async function runWebTerminalE2e(gateway) {
       }
       await sendRichCommandInput("\u001b");
       await page.waitForFunction(
-        () => document.body.innerText.includes("node tools/snake_playwright.mjs"),
+        () => document.body.innerText.includes("Protocol fixture complete"),
         null,
         { timeout: 10_000 },
       );
@@ -287,7 +305,7 @@ async function runWebTerminalE2e(gateway) {
       await page.screenshot({ path: path.join(screenshotsDir, "rich-auth.png"), fullPage: false });
       await sendRichCommandInput("\u001b");
       await page.waitForFunction(
-        () => document.body.innerText.includes("node tools/snake_playwright.mjs"),
+        () => document.body.innerText.includes("Protocol fixture complete"),
         null,
         { timeout: 10_000 },
       );
@@ -322,7 +340,7 @@ async function runWebTerminalE2e(gateway) {
       }
       await sendRichCommandInput("\u001b");
       await page.waitForFunction(
-        () => document.body.innerText.includes("node tools/snake_playwright.mjs"),
+        () => document.body.innerText.includes("Protocol fixture complete"),
         null,
         { timeout: 10_000 },
       );

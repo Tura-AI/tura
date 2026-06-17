@@ -24,7 +24,7 @@ pub async fn prompt_async(
                 "kind": "user_new_command",
             })),
         );
-        session_store().append_user_command(&session_id, content);
+        append_user_command_for_runtime(&session_id, content);
         return StatusCode::NO_CONTENT;
     }
     let _ = session_store().add_message_with_ids(
@@ -353,6 +353,12 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
     // Worker env contract: router injects these values into the runtime worker.
     let mut worker_env: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
+    if let Some(message_id) = prompt_message_id(&payload) {
+        worker_env.insert("TURA_FRONTEND_MESSAGE_ID".to_string(), message_id);
+    }
+    if let Some(part_id) = first_prompt_part_id(&payload) {
+        worker_env.insert("TURA_FRONTEND_PART_ID".to_string(), part_id);
+    }
     if let Some(reasoning) = reasoning_effort
         .as_deref()
         .map(str::trim)

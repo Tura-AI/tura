@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::HashSet, sync::Arc};
 
-use crate::{dispatch_run_agent, AppState, RunAgentRequest};
+use crate::{dispatch_run_agent, ipc, AppState, RunAgentRequest};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnqueueTurnRequest {
@@ -30,7 +30,19 @@ impl ExecutionService {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn enqueue_turn(&self, state: &AppState, input: Value) -> Result<Value> {
+        self.enqueue_turn_with_notifications(state, input, "", None)
+            .await
+    }
+
+    pub async fn enqueue_turn_with_notifications(
+        &self,
+        state: &AppState,
+        input: Value,
+        request_id: &str,
+        notifications: Option<ipc::IpcNotificationSender>,
+    ) -> Result<Value> {
         let request: EnqueueTurnRequest = serde_json::from_value(input)?;
         if debug_runtime_enabled() {
             eprintln!(
@@ -57,7 +69,8 @@ impl ExecutionService {
                 request.session_id
             );
         }
-        let (status, body) = dispatch_run_agent(state, run_request).await;
+        let (status, body) =
+            dispatch_run_agent(state, run_request, request_id.to_string(), notifications).await;
         active_guard.finish();
         if debug_runtime_enabled() {
             eprintln!(

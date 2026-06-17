@@ -1,4 +1,4 @@
-use crate::api::types::PathResponse;
+use crate::contracts::{PathParams, PathResponse};
 use axum::{extract::Query, http::HeaderMap, Json};
 
 pub async fn get_paths(headers: HeaderMap, Query(params): Query<PathParams>) -> Json<PathResponse> {
@@ -22,11 +22,6 @@ pub async fn get_paths(headers: HeaderMap, Query(params): Query<PathParams>) -> 
         worktree: worktree.clone(),
         directory: worktree,
     })
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct PathParams {
-    pub directory: Option<String>,
 }
 
 fn encoded_header(headers: &HeaderMap, name: &str) -> Option<String> {

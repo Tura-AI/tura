@@ -4,7 +4,7 @@ use gateway::api::session::{
     stream_agent_message, update_todos, MessageListParams, SendAgentMedia, SendAgentMessageRequest,
     SendAgentToolCall, StreamAgentTextRequest,
 };
-use gateway::api::types::GlobalEvent;
+use gateway::contracts::GlobalEvent;
 use gateway::session_store;
 use runtime::state_machine::runtime_management::{
     RuntimeCallResultStatus, RuntimeSessionSyncStatus, RuntimeState,

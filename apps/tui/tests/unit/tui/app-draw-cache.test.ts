@@ -9,7 +9,7 @@ import { clear as terminalClear } from "../../../src/tui/render-terminal.js";
 import {
   activeSession,
   otherSession,
-  assertMutableRegionClearedBefore,
+  assertMutableRegionRepaintedWithoutClearBefore,
   captureDrawWrites,
   lastAbsoluteCursorBefore,
   restoreProperty,
@@ -104,7 +104,7 @@ test("draw keeps cursor hidden on pages without an input box", () => {
   });
   const output = writes.join("");
 
-  assert.match(output, /^\x1b\[\?25l/);
+  assert.match(output, /\x1b\[\?25l/);
   assert.doesNotMatch(output, /\x1b\[\?25h/);
 });
 
@@ -179,7 +179,7 @@ test("draw writes chat as fixed history plus live output without screen-window r
 
   assert.ok(output.includes(terminalClear));
   assert.match(output, /chat transcript/);
-  assert.match(output, /chat transcript[\s\S]*Active[\s\S]*Enter to send/);
+  assert.match(output, /chat transcript[\s\S]*Active[\s\S]*Enter: send/);
   assert.doesNotMatch(output, /\x1b\[999;1H/);
   assert.doesNotMatch(output, /\x1b7|\x1b8/);
   assert.match(output, /\x1b\[\d+(?:;\d+)?[HG]\x1b\[\?25h$/);
@@ -224,18 +224,19 @@ test("draw appends new cache lines once before live and chrome", () => {
     writes.length = 0;
     draw(appended, richCapabilities(), previous);
     assert.ok(previousLiveRegion);
-    assertMutableRegionClearedBefore(
-      writes.join(""),
-      previousLiveRegion.row,
-      "CACHE_NEVER_LIVE_MARKER",
-    );
+    assertMutableRegionRepaintedWithoutClearBefore(writes.join(""), "CACHE_NEVER_LIVE_MARKER");
   });
   const output = writes.join("");
 
   assert.equal(output.includes(terminalClear), false);
   assert.doesNotMatch(output, /CACHE_BASE_MARKER/);
   assert.match(output, /CACHE_NEVER_LIVE_MARKER/);
-  assert.match(output, /CACHE_NEVER_LIVE_MARKER[\s\S]*Active[\s\S]*Enter to send/);
+  assert.match(output, /CACHE_NEVER_LIVE_MARKER[\s\S]*Active[\s\S]*Enter: send/);
+  assert.doesNotMatch(
+    output,
+    /\x1b\[K\x1b\[0m\x1b\[K/u,
+    "rich message rows must not clear the line tail again after resetting panel background",
+  );
 });
 
 test("draw redraws cache live and chrome on terminal width resize", () => {
@@ -267,9 +268,9 @@ test("draw redraws cache live and chrome on terminal width resize", () => {
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "msg-resize-live-assistant",
-          part_id: "part-resize-live-assistant",
+          sessionID: "sess-1",
+          messageID: "msg-resize-live-assistant",
+          partID: "part-resize-live-assistant",
           field: "text",
           delta: "RESIZE_STREAM_MARKER",
         },
@@ -289,7 +290,7 @@ test("draw redraws cache live and chrome on terminal width resize", () => {
   assert.match(output, /RESIZE_CACHE_MARKER/);
   assert.match(output, /RESIZE_LIVE_MARKER/);
   assert.match(output, /RESIZE_STREAM_MARKER/);
-  assert.match(output, /Active[\s\S]*Enter to send/);
+  assert.match(output, /Active[\s\S]*Enter: send/);
 });
 
 test("draw ignores terminal height resize without rewriting", () => {
@@ -321,9 +322,9 @@ test("draw ignores terminal height resize without rewriting", () => {
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "msg-height-resize-live",
-          part_id: "part-height-resize-live",
+          sessionID: "sess-1",
+          messageID: "msg-height-resize-live",
+          partID: "part-height-resize-live",
           field: "text",
           delta: "HEIGHT_STREAM_MARKER",
         },
@@ -365,9 +366,9 @@ test("draw force reset redraws cache live and chrome for resize snapshots", () =
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "msg-force-resize-live",
-          part_id: "part-force-resize-live",
+          sessionID: "sess-1",
+          messageID: "msg-force-resize-live",
+          partID: "part-force-resize-live",
           field: "text",
           delta: "FORCE_RESIZE_LIVE",
         },
@@ -386,7 +387,7 @@ test("draw force reset redraws cache live and chrome for resize snapshots", () =
   assert.ok(output.includes(terminalClear));
   assert.match(output, /FORCE_RESIZE_CACHE/);
   assert.match(output, /FORCE_RESIZE_LIVE/);
-  assert.match(output, /Active[\s\S]*Enter to send/);
+  assert.match(output, /Active[\s\S]*Enter: send/);
 });
 
 test("draw appends completed live rows before painting chrome in the reservation tail", () => {
@@ -412,9 +413,9 @@ test("draw appends completed live rows before painting chrome in the reservation
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "msg-anchor-live",
-          part_id: "part-anchor-live",
+          sessionID: "sess-1",
+          messageID: "msg-anchor-live",
+          partID: "part-anchor-live",
           field: "text",
           delta: "LIVE_ANCHOR_MARKER",
         },
@@ -504,9 +505,9 @@ test("draw spills overflowing live rows into scrollback and keeps the tail mutab
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "msg-live-overflow-stream",
-          part_id: "part-live-overflow-stream",
+          sessionID: "sess-1",
+          messageID: "msg-live-overflow-stream",
+          partID: "part-live-overflow-stream",
           field: "text",
           delta: Array.from({ length: 30 }, (_, index) => `LIVE_OVERFLOW_${index}`).join("\n"),
         },
@@ -532,7 +533,7 @@ test("draw spills overflowing live rows into scrollback and keeps the tail mutab
     );
     assert.ok(tailIndex > saveCursorIndex, "live tail must remain mutable after the saved cursor");
     assert.ok(tailAnchor, "live tail must be painted through the mutable overlay");
-    assert.match(output, /Active[\s\S]*Enter to send/);
+    assert.match(output, /Active[\s\S]*Enter: send/);
   } finally {
     restoreProperty(process.stdout, "rows", rows);
   }
@@ -558,9 +559,9 @@ test("draw promotes spilled live through cache handoff without duplicating the p
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "msg-handoff-overflow",
-          part_id: "part-handoff-overflow",
+          sessionID: "sess-1",
+          messageID: "msg-handoff-overflow",
+          partID: "part-handoff-overflow",
           field: "text",
           delta: liveText,
         },
@@ -601,7 +602,7 @@ test("draw promotes spilled live through cache handoff without duplicating the p
       /HANDOFF_OVERFLOW_29/,
       "cache handoff must append the remaining live tail",
     );
-    assert.match(output, /Active[\s\S]*Enter to send/);
+    assert.match(output, /Active[\s\S]*Enter: send/);
   } finally {
     restoreProperty(process.stdout, "rows", rows);
   }
@@ -636,7 +637,7 @@ test("draw renders chrome in reserved scrollback tail when cache fills the viewp
 
   assert.equal(cacheLineCount, 19);
   assert.match(output, /CACHE_ALMOST_FULL_MARKER_4/);
-  assert.match(output, /Active[\s\S]*Enter to send/);
+  assert.match(output, /Active[\s\S]*Enter: send/);
   assert.match(output, /\r\n/, "chrome reservation must add blank scrollback rows");
 });
 
@@ -672,9 +673,9 @@ test("draw appends reservation rows so live and chrome remain visible after full
           payload: {
             type: "message.part.delta",
             properties: {
-              session_id: "sess-1",
-              message_id: "msg-cache-fill-live",
-              part_id: "part-cache-fill-live",
+              sessionID: "sess-1",
+              messageID: "msg-cache-fill-live",
+              partID: "part-cache-fill-live",
               field: "text",
               delta: "FULL_CACHE_LIVE_MARKER",
             },
@@ -691,10 +692,10 @@ test("draw appends reservation rows so live and chrome remain visible after full
   assert.doesNotMatch(output, /CACHE_FILL_MARKER_0/);
   assert.match(output, /\r\n/, "live/chrome reservation must extend scrollback");
   assert.match(output, /FULL_CACHE_LIVE_MARKER/);
-  assert.match(output, /Active[\s\S]*Enter to send/);
+  assert.match(output, /Active[\s\S]*Enter: send/);
 });
 
-test("idle chrome overlay clears stale busy chrome after command insertion", () => {
+test("idle chrome overlay repaints stale busy chrome without clearing first", () => {
   const busySession = { ...activeSession, status: "busy" as const };
   const idleSession = { ...activeSession, status: "idle" as const };
   const cacheMessages = Array.from({ length: 30 }, (_item, index) => ({
@@ -764,10 +765,9 @@ test("idle chrome overlay clears stale busy chrome after command insertion", () 
     drawChatChromeOverlay(idleState, richCapabilities(), previous);
   });
   const output = writes.join("");
-  const clearIndex = output.indexOf("\x1b[J");
   const titleIndex = output.indexOf("Active");
 
-  assert.ok(clearIndex >= 0, "idle chrome overlay must clear stale busy chrome first");
-  assert.ok(titleIndex > clearIndex, "idle chrome must be written after the clear");
+  assert.doesNotMatch(output, /\x1b\[\d+;1H\x1b\[J/u);
+  assert.ok(titleIndex >= 0, "idle chrome must be written");
   assert.doesNotMatch(output, /thinking/);
 });

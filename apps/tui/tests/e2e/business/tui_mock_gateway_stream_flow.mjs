@@ -110,18 +110,18 @@ function gatewayEvent(type, properties) {
 
 function streamDeltaFor(messageID, partID, delta, sessionPlacement = "properties") {
   const properties = {
-    message_id: messageID,
-    part_id: partID,
+    sessionID,
+    messageID,
+    partID,
     field: "text",
     delta,
   };
   if (sessionPlacement === "properties") {
-    gatewayEvent("message.part.delta", { session_id: sessionID, ...properties });
+    gatewayEvent("message.part.delta", properties);
     return;
   }
   emit({
     directory: workspace,
-    sessionID,
     payload: { type: "message.part.delta", properties },
   });
 }
@@ -131,7 +131,7 @@ function upsertMessage(message) {
   if (index >= 0) messages[index] = message;
   else messages.push(message);
   session = { ...session, status: "busy", updated_at: Date.now(), message_count: messages.length };
-  gatewayEvent("message.updated", { session_id: sessionID, info: message });
+  gatewayEvent("message.updated", { sessionID, info: message });
 }
 
 function userTextFromPromptPayload(payload) {

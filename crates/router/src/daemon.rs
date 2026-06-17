@@ -4,7 +4,9 @@ use std::sync::{atomic::Ordering, Arc};
 
 use crate::app::build_state;
 use crate::ipc;
-use crate::ipc_handlers::{enqueue_turn_session_id, handle_ipc_request};
+use crate::ipc_handlers::{
+    enqueue_turn_session_id, handle_ipc_request, handle_ipc_request_with_notifications,
+};
 use crate::process_info::current_process_start_time;
 use crate::services::{
     recovery::recover_after_start, runtime_orphans::cleanup_orphan_runtime_workers,
@@ -144,7 +146,27 @@ pub(crate) async fn serve_socket() -> anyhow::Result<()> {
                 let write = Arc::clone(&write);
                 let active_sessions = Arc::clone(&active_sessions);
                 let handle = tokio::spawn(async move {
-                    let response = handle_ipc_request(&state, parsed).await;
+                    let (notification_tx, mut notification_rx) =
+                        tokio::sync::mpsc::unbounded_channel::<ipc::IpcNotification>();
+                    let notification_writer = {
+                        let write = Arc::clone(&write);
+                        tokio::spawn(async move {
+                            while let Some(notification) = notification_rx.recv().await {
+                                if let Ok(encoded) = serde_json::to_string(&notification) {
+                                    let mut w = write.lock().await;
+                                    let _ = w.write_all(format!("{encoded}\n").as_bytes()).await;
+                                    let _ = w.flush().await;
+                                }
+                            }
+                        })
+                    };
+                    let response = handle_ipc_request_with_notifications(
+                        &state,
+                        parsed,
+                        Some(notification_tx),
+                    )
+                    .await;
+                    let _ = notification_writer.await;
                     if let Some(session_id) = active_session_id.as_ref() {
                         active_sessions.lock().await.remove(session_id);
                     }

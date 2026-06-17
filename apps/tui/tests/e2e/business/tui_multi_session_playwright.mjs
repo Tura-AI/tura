@@ -101,7 +101,7 @@ function makeSession() {
   };
   sessions.unshift(session);
   messagesBySession.set(id, []);
-  emit("session.created", { info: session });
+  emit("session.created", { sessionID: id, info: session });
   return session;
 }
 
@@ -180,9 +180,9 @@ function appendPrompt(sessionID, payload) {
   promptRecords.push({ sessionID, text });
   const updated = { ...session, updated_at: created + 1, message_count: list.length };
   upsertSession(updated);
-  emit("message.updated", { session_id: sessionID, info: user });
-  emit("message.updated", { session_id: sessionID, info: assistant });
-  emit("session.updated", { info: updated });
+  emit("message.updated", { sessionID, info: user });
+  emit("message.updated", { sessionID, info: assistant });
+  emit("session.updated", { sessionID, info: updated });
   return updated;
 }
 

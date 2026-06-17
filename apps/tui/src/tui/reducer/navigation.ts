@@ -34,7 +34,7 @@ export function selectedSettingOptionIndex(state: AppState, detail: SettingDetai
   }
   if (detail === "persona") return state.selectedPersonaIndex;
   if (detail === "language")
-    return Math.max(0, ["zh-CN", "en"].indexOf(String(config?.language ?? "zh-CN")));
+    return Math.max(0, ["en", "zh-CN"].indexOf(String(config?.language ?? "en")));
   if (detail === "session")
     return Math.max(
       0,
@@ -131,7 +131,7 @@ function activePersonaID(
   if (typeof name === "string" && name.trim()) return name.trim();
   const runtimePersonas = (agent as unknown as { options?: { personas?: StoredPersona[] } }).options
     ?.personas;
-  return runtimePersonas?.[0] ? personaID(runtimePersonas[0]) : undefined;
+  return runtimePersonas?.[0] ? personaID(runtimePersonas[0]) : "tura";
 }
 
 function storedAgentID(agent: StoredAgent): string | undefined {

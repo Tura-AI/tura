@@ -8,14 +8,30 @@ let draftSessionCounter = 0;
 
 export function createDraftSession(cwd: string): Session {
   draftSessionCounter += 1;
+  const now = Date.now();
   return {
-    id: `draft-session-${Date.now()}-${draftSessionCounter}`,
+    id: `draft-session-${now}-${draftSessionCounter}`,
     draft: true,
     name: t("newSession"),
+    parent_id: null,
+    created_at: now,
     directory: cwd,
+    model: null,
+    agent: null,
+    session_type: "coding",
+    auto_session_name: true,
+    kill_processes_on_start: false,
+    validator_enabled: false,
+    force_planning: false,
+    model_variant: null,
+    model_acceleration_enabled: false,
+    disable_permission_restrictions: false,
     status: "idle",
-    updated_at: Date.now(),
+    updated_at: now,
     message_count: 0,
+    task_management: {},
+    plan_summary: null,
+    session_display_name: t("newSession"),
   };
 }
 

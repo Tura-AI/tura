@@ -251,7 +251,7 @@ export function sessionDirectory(session: Session): string {
 }
 
 export function messageSessionId(message: Message): string {
-  return message.sessionID || message.session_id || "";
+  return message.sessionID;
 }
 
 export function messageCreatedAt(message: Message): number {

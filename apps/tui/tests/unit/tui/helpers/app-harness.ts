@@ -36,18 +36,13 @@ export function lastAbsoluteCursorBefore(
   return cursor;
 }
 
-export function assertMutableRegionClearedBefore(
-  output: string,
-  _cursorRow: number,
-  marker: string,
-): void {
-  const clearMatch = output.match(/\x1b\[\d+;1H\x1b\[J/u);
-  assert.ok(clearMatch?.index !== undefined, "live/chrome rewrite must clear mutable region first");
+export function assertMutableRegionRepaintedWithoutClearBefore(output: string, marker: string): void {
   const markerIndex = output.indexOf(marker);
   assert.ok(markerIndex >= 0, `expected rewritten output to include ${marker}`);
+  const clearIndex = output.search(/\x1b\[\d+;1H\x1b\[J/u);
   assert.ok(
-    clearMatch.index < markerIndex,
-    "live/chrome content must be written only after clearing the old mutable region",
+    clearIndex < 0 || clearIndex > markerIndex,
+    "live/cache handoff must repaint visible rows without first clearing the mutable region",
   );
 }
 

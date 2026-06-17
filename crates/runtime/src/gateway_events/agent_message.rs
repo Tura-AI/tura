@@ -8,8 +8,6 @@ use crate::manas::final_response::summarize_tool_results_for_user;
 use crate::manas::tool_catalog::env_flag;
 use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeSessionSyncStatus};
 
-const DEFAULT_GATEWAY_CALLBACK_TIMEOUT_MS: u64 = 2_000;
-
 pub(crate) fn publish_runtime_failure_message(
     session: &SessionManagement,
     runtime_id: &str,
@@ -77,25 +75,15 @@ pub(crate) async fn publish_streamed_agent_text(session_id: &str, runtime_id: &s
         return;
     }
     let target_session_id = gateway_callback_session_id(session_id);
-    let endpoint = format!(
-        "{}/session/{target_session_id}/message/agent/stream",
-        gateway_callback_base_url()
-    );
     let payload = serde_json::json!({
         "delta": delta,
         "runtime_id": runtime_id,
     });
-    if let Err(error) = gateway_callback_http_client()
-        .post(endpoint)
-        .json(&payload)
-        .send()
-        .await
-    {
+    if !publish_gateway_callback_ipc("session.agent_stream", &target_session_id, payload) {
         warn!(
             session_id = %session_id,
             runtime_id = %runtime_id,
-            error = %error,
-            "failed to publish streamed agent text delta"
+            "dropping streamed agent text delta because gateway callback IPC is not enabled"
         );
     }
 }
@@ -149,8 +137,6 @@ fn publish_gateway_agent_message_with_sync(
     }
 
     let target_session_id = gateway_callback_session_id(session_id);
-    let gateway_base = gateway_callback_base_url();
-    let endpoint = format!("{gateway_base}/session/{target_session_id}/message/agent");
     let payload = serde_json::json!({
         "reply_message": reply_message,
         "new_learning": new_learning,
@@ -160,103 +146,74 @@ fn publish_gateway_agent_message_with_sync(
         "created_at": created_at,
         "updated_at": updated_at,
     });
-
-    tokio::runtime::Runtime::new()
-        .map_err(|err| format!("failed to create gateway callback runtime: {err}"))?
-        .block_on(async {
-            let response = gateway_callback_http_client()
-                .post(endpoint)
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|err| format!("failed to call gateway: {err}"))?;
-            if response.status().is_success() {
-                Ok(())
-            } else {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                Err(format!("gateway returned {status}: {body}"))
-            }
-        })
-}
-
-pub(crate) fn gateway_callback_http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(gateway_callback_http_timeout())
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
+    if publish_gateway_callback_ipc("session.agent_message", &target_session_id, payload.clone()) {
+        return Ok(());
+    }
+    Err("gateway callback IPC transport is not enabled".to_string())
 }
 
 pub(crate) fn post_gateway_callback_detached(
-    endpoint: String,
+    method: &'static str,
     payload: serde_json::Value,
     session_id: String,
     runtime_id: String,
     context: &'static str,
 ) {
-    std::thread::spawn(move || {
-        let Ok(runtime) = tokio::runtime::Runtime::new() else {
-            warn!(
-                session_id = %session_id,
-                runtime_id = %runtime_id,
-                context = context,
-                "failed to create detached gateway callback runtime"
-            );
-            return;
-        };
-        runtime.block_on(async move {
-            match gateway_callback_http_client()
-                .post(endpoint)
-                .json(&payload)
-                .send()
-                .await
-            {
-                Ok(response) if response.status().is_success() => {}
-                Ok(response) => {
-                    let status = response.status();
-                    let body = response.text().await.unwrap_or_default();
-                    warn!(
-                        session_id = %session_id,
-                        runtime_id = %runtime_id,
-                        context = context,
-                        gateway_status = %status,
-                        body = %body,
-                        "detached gateway callback returned non-success"
-                    );
-                }
-                Err(error) => {
-                    warn!(
-                        session_id = %session_id,
-                        runtime_id = %runtime_id,
-                        context = context,
-                        error = %error,
-                        "detached gateway callback failed"
-                    );
-                }
-            }
-        });
+    if publish_gateway_callback_ipc(method, &session_id, payload) {
+        return;
+    }
+    warn!(
+        session_id = %session_id,
+        runtime_id = %runtime_id,
+        context = context,
+        method,
+        "dropping gateway callback because IPC transport is not enabled"
+    );
+}
+
+pub(crate) fn publish_gateway_callback_ipc(
+    method: &str,
+    session_id: &str,
+    body: serde_json::Value,
+) -> bool {
+    if !gateway_callback_ipc_enabled() {
+        return false;
+    }
+    let frame = serde_json::json!({
+        "kind": "gateway.callback",
+        "method": method,
+        "payload": {
+            "session_id": session_id,
+            "body": body,
+        },
     });
+    let encoded = match serde_json::to_string(&frame) {
+        Ok(encoded) => encoded,
+        Err(error) => {
+            warn!(method, session_id, error = %error, "failed to encode gateway callback IPC frame");
+            return true;
+        }
+    };
+    let mut stdout = std::io::stdout().lock();
+    if let Err(error) = stdout.write_all(encoded.as_bytes()) {
+        warn!(method, session_id, error = %error, "failed to write gateway callback IPC frame");
+        return true;
+    }
+    if let Err(error) = stdout.write_all(b"\n").and_then(|_| stdout.flush()) {
+        warn!(method, session_id, error = %error, "failed to flush gateway callback IPC frame");
+    }
+    true
 }
 
-pub(crate) fn gateway_callback_http_timeout() -> std::time::Duration {
-    let millis = std::env::var("TURA_GATEWAY_CALLBACK_TIMEOUT_MS")
+pub(crate) fn gateway_callback_ipc_enabled() -> bool {
+    std::env::var("TURA_GATEWAY_CALLBACK_TRANSPORT")
         .ok()
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .unwrap_or(DEFAULT_GATEWAY_CALLBACK_TIMEOUT_MS);
-    std::time::Duration::from_millis(millis.max(1))
-}
-
-pub(super) fn gateway_callback_base_url() -> String {
-    std::env::var("TURA_GATEWAY_URL")
-        .or_else(|_| std::env::var("GATEWAY_BASE_URL"))
-        .unwrap_or_else(|_| {
-            let port = std::env::var("TURA_GATEWAY_PORT")
-                .or_else(|_| std::env::var("PORT"))
-                .unwrap_or_else(|_| "4156".to_string());
-            format!("http://127.0.0.1:{port}")
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "ipc" | "router-ipc" | "stdout"
+            )
         })
-        .trim_end_matches('/')
-        .to_string()
 }
 
 pub(super) fn gateway_callback_session_id(session_id: &str) -> String {
@@ -283,7 +240,6 @@ fn planning_child_depth_from_env() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read, Write};
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -299,27 +255,20 @@ mod tests {
     }
 
     #[test]
-    fn gateway_callback_base_url_prefers_explicit_urls_then_port_defaults() {
+    fn gateway_callback_ipc_enabled_accepts_known_transports() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_gateway_env();
 
-        std::env::set_var("TURA_GATEWAY_URL", "http://127.0.0.1:9000///");
-        std::env::set_var("GATEWAY_BASE_URL", "http://127.0.0.1:8000");
-        std::env::set_var("TURA_GATEWAY_PORT", "7000");
-        assert_eq!(gateway_callback_base_url(), "http://127.0.0.1:9000");
+        assert!(!gateway_callback_ipc_enabled());
 
-        std::env::remove_var("TURA_GATEWAY_URL");
-        assert_eq!(gateway_callback_base_url(), "http://127.0.0.1:8000");
+        std::env::set_var("TURA_GATEWAY_CALLBACK_TRANSPORT", "ipc");
+        assert!(gateway_callback_ipc_enabled());
 
-        std::env::remove_var("GATEWAY_BASE_URL");
-        assert_eq!(gateway_callback_base_url(), "http://127.0.0.1:7000");
+        std::env::set_var("TURA_GATEWAY_CALLBACK_TRANSPORT", "router-ipc");
+        assert!(gateway_callback_ipc_enabled());
 
-        std::env::remove_var("TURA_GATEWAY_PORT");
-        std::env::set_var("PORT", "6000");
-        assert_eq!(gateway_callback_base_url(), "http://127.0.0.1:6000");
-
-        clear_gateway_env();
-        assert_eq!(gateway_callback_base_url(), "http://127.0.0.1:4156");
+        std::env::set_var("TURA_GATEWAY_CALLBACK_TRANSPORT", "http");
+        assert!(!gateway_callback_ipc_enabled());
     }
 
     #[test]
@@ -365,7 +314,6 @@ mod tests {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_gateway_env();
         std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
-        std::env::set_var("TURA_GATEWAY_URL", "http://127.0.0.1:9");
 
         let result = publish_gateway_agent_message(
             "session-1",
@@ -378,174 +326,27 @@ mod tests {
     }
 
     #[test]
-    fn publish_gateway_agent_message_posts_visible_reply_payload() {
+    fn publish_gateway_agent_message_requires_ipc_transport_when_callbacks_enabled() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_gateway_env();
-        let server = TestServer::spawn(200, r#"{"ok":true}"#);
-        std::env::set_var("TURA_GATEWAY_URL", server.base_url());
-        std::env::set_var("TURA_PLANNING_DEPTH", "1");
-        std::env::set_var("TURA_PARENT_SESSION_ID", "parent-session");
-
-        let result = publish_gateway_agent_message(
-            "child-session",
-            "runtime-42",
-            "visible reply".to_string(),
-            "new learning".to_string(),
-        );
-
-        assert_eq!(result, Ok(()));
-        let request = server.join();
-        assert!(
-            request.starts_with("POST /session/parent-session/message/agent "),
-            "{request}"
-        );
-        let body = request_body(&request);
-        let payload: serde_json::Value = serde_json::from_str(body).expect("json body");
-        assert_eq!(payload["reply_message"], "visible reply");
-        assert_eq!(payload["new_learning"], "new learning");
-        assert_eq!(payload["runtime_id"], "runtime-42");
-        assert!(payload.get("message_id").is_none());
-        assert!(payload.get("part_id").is_none());
-        assert_eq!(payload["media"], serde_json::json!([]));
-        assert_eq!(payload["runtime_status"], serde_json::Value::Null);
-        assert_eq!(payload["created_at"], serde_json::Value::Null);
-        assert_eq!(payload["updated_at"], serde_json::Value::Null);
-    }
-
-    #[test]
-    fn publish_gateway_agent_message_reports_non_success_status_and_body() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
-        clear_gateway_env();
-        let server = TestServer::spawn(503, "gateway unavailable");
-        std::env::set_var("TURA_GATEWAY_URL", server.base_url());
 
         let error = publish_gateway_agent_message(
             "session-1",
-            "runtime-1",
-            "reply".to_string(),
-            "learning".to_string(),
+            "runtime-42",
+            "visible reply".to_string(),
+            "new learning".to_string(),
         )
-        .expect_err("gateway failure should be reported");
-
-        assert!(error.contains("gateway returned 503 Service Unavailable"));
-        assert!(error.contains("gateway unavailable"));
-        let request = server.join();
-        assert!(
-            request.starts_with("POST /session/session-1/message/agent "),
-            "{request}"
-        );
-    }
-
-    #[test]
-    fn publish_streamed_agent_text_posts_delta_payload_and_skips_empty_delta() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
-        clear_gateway_env();
-        let server = TestServer::spawn(200, r#"{"ok":true}"#);
-        std::env::set_var("TURA_GATEWAY_URL", server.base_url());
-
-        tokio_test::block_on(async {
-            publish_streamed_agent_text("session-1", "runtime-7", "").await;
-            publish_streamed_agent_text("session-1", "runtime-7", "hello").await;
-        });
-
-        let request = server.join();
-        assert!(
-            request.starts_with("POST /session/session-1/message/agent/stream "),
-            "{request}"
-        );
-        let body = request_body(&request);
-        let payload: serde_json::Value = serde_json::from_str(body).expect("json body");
-        assert_eq!(payload["delta"], "hello");
-        assert_eq!(payload["runtime_id"], "runtime-7");
-        assert!(payload.get("message_id").is_none());
-        assert!(payload.get("part_id").is_none());
-    }
-
-    struct TestServer {
-        addr: std::net::SocketAddr,
-        handle: std::thread::JoinHandle<String>,
-    }
-
-    impl TestServer {
-        fn spawn(status: u16, body: &'static str) -> Self {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind gateway");
-            let addr = listener.local_addr().expect("local addr");
-            let handle = std::thread::spawn(move || {
-                let (mut stream, _) = listener.accept().expect("accept gateway request");
-                let request = read_http_request(&mut stream);
-                let reason = match status {
-                    200 => "OK",
-                    503 => "Service Unavailable",
-                    _ => "Test",
-                };
-                let response = format!(
-                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                stream
-                    .write_all(response.as_bytes())
-                    .expect("write response");
-                request
-            });
-            Self { addr, handle }
-        }
-
-        fn base_url(&self) -> String {
-            format!("http://{}", self.addr)
-        }
-
-        fn join(self) -> String {
-            self.handle.join().expect("server thread")
-        }
-    }
-
-    fn read_http_request(stream: &mut std::net::TcpStream) -> String {
-        stream
-            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
-            .expect("set read timeout");
-        let mut data = Vec::new();
-        let mut buffer = [0_u8; 1024];
-        loop {
-            let size = stream.read(&mut buffer).expect("read request");
-            assert!(size > 0, "request stream closed before body completed");
-            data.extend_from_slice(&buffer[..size]);
-            if http_request_complete(&data) {
-                return String::from_utf8_lossy(&data).into_owned();
-            }
-        }
-    }
-
-    fn http_request_complete(data: &[u8]) -> bool {
-        let request = String::from_utf8_lossy(data);
-        let Some((headers, body)) = request.split_once("\r\n\r\n") else {
-            return false;
-        };
-        let content_length = headers
-            .lines()
-            .find_map(|line| line.split_once(':'))
-            .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-            .and_then(|(_, value)| value.trim().parse::<usize>().ok())
-            .unwrap_or(0);
-        body.len() >= content_length
-    }
-
-    fn request_body(request: &str) -> &str {
-        request
-            .split_once("\r\n\r\n")
-            .map(|(_, body)| body)
-            .unwrap_or_default()
+        .expect_err("gateway callbacks require router IPC");
+        assert!(error.contains("IPC transport is not enabled"));
     }
 
     fn clear_gateway_env() {
         for key in [
-            "TURA_GATEWAY_URL",
-            "GATEWAY_BASE_URL",
-            "TURA_GATEWAY_PORT",
-            "PORT",
             "TURA_PARENT_SESSION_ID",
             "TURA_PLANNING_DEPTH",
             "TURA_EXECUTE_TOOLS_DEPTH",
             "TURA_GATEWAY_CALLBACKS",
+            "TURA_GATEWAY_CALLBACK_TRANSPORT",
             "TURA_CLI_LIVE_JSONL",
         ] {
             std::env::remove_var(key);

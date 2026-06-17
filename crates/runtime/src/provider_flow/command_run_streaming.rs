@@ -945,11 +945,9 @@ mod tests {
             .lock()
             .unwrap_or_else(|err| err.into_inner());
         let router = MockStreamingRouter::start();
-        let gateway = HangingGateway::start(Duration::from_secs(5));
         let _router_env = EnvGuard::set("TURA_ROUTER_ADDR", &router.addr);
         let _gateway_enabled = EnvGuard::set("TURA_GATEWAY_CALLBACKS", "1");
-        let _gateway_url = EnvGuard::set("TURA_GATEWAY_URL", &gateway.endpoint);
-        let _gateway_timeout = EnvGuard::set("TURA_GATEWAY_CALLBACK_TIMEOUT_MS", "2000");
+        let _gateway_transport = EnvGuard::set("TURA_GATEWAY_CALLBACK_TRANSPORT", "off");
         let (stream_tx, stream_rx) = mpsc::channel();
         let state = StreamedCommandRunState::new();
         let handle = spawn_streamed_command_run_task(SpawnStreamedCommandRunTask {
@@ -1166,32 +1164,6 @@ mod tests {
                     Ok(_) => break,
                     Err(next) => current = next,
                 }
-            }
-        }
-    }
-
-    struct HangingGateway {
-        endpoint: String,
-    }
-
-    impl HangingGateway {
-        fn start(delay: Duration) -> Self {
-            let listener =
-                std::net::TcpListener::bind("127.0.0.1:0").expect("hanging gateway should bind");
-            let addr = listener
-                .local_addr()
-                .expect("hanging gateway should have addr");
-            std::thread::spawn(move || {
-                while let Ok((mut stream, _)) = listener.accept() {
-                    std::thread::spawn(move || {
-                        let mut buffer = [0_u8; 512];
-                        let _ = std::io::Read::read(&mut stream, &mut buffer);
-                        std::thread::sleep(delay);
-                    });
-                }
-            });
-            Self {
-                endpoint: format!("http://{addr}"),
             }
         }
     }

@@ -3,6 +3,7 @@ import type { Message, MessagePart } from "../../types/session.js";
 import { messageText } from "../../types/session.js";
 import {
   activeCapabilities,
+  richBlockBg,
   richHighlight,
   reset,
   stripAnsi,
@@ -12,6 +13,7 @@ import {
   thinkingWaveGlow,
   thinkingWaveLow,
   thinkingWaveMid,
+  visibleTextWidth,
   wrapAnsi,
 } from "../render-terminal.js";
 import {
@@ -327,7 +329,15 @@ function partText(part: MessagePart): string {
 }
 
 function richContentLine(content: string, cols: number, role = "assistant"): string {
-  return panelLine(content, cols, role);
+  return panelLine(expandRichBlockBackground(content, cols), cols, role);
+}
+
+function expandRichBlockBackground(content: string, cols: number): string {
+  if (activeCapabilities.level !== "rich" || !content.includes(richBlockBg)) return content;
+  const innerWidth = Math.max(1, cols - 3);
+  const missing = innerWidth - visibleTextWidth(content);
+  if (missing <= 0) return content;
+  return `${content}${richBlockBg}${" ".repeat(missing)}${reset}`;
 }
 
 function richBlankRailLine(role = "assistant", cols = 80): string {

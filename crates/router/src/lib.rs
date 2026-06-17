@@ -1,3 +1,4 @@
+pub mod ipc;
 #[path = "services/manager.rs"]
 pub mod manager;
 #[path = "services/models.rs"]

@@ -166,7 +166,7 @@ test("render shows assistant command summaries, command details setting, and thi
     .find((line) => stripAnsi(line).includes("Commands"));
   assert.ok(collapsedCommandLine);
   assert.match(stripAnsi(collapsedCommandLine), /^[◆◇] Commands$/u);
-  assert.doesNotMatch(collapsedCommandLine, /\x1b\[48;2;16;19;20m/);
+  assert.doesNotMatch(collapsedCommandLine, /\x1b\[48;2;20;23;24m/);
   assert.match(collapsed, /\x1b\[38;2;103;116;111m/);
   assert.doesNotMatch(collapsed, /last.*Get-ChildItem -Force/);
   assert.doesNotMatch(collapsed, /show commands/);
@@ -192,7 +192,7 @@ test("render shows assistant command summaries, command details setting, and thi
     .find((line) => stripAnsi(line).includes("Commands"));
   assert.ok(expandedCommandLine);
   assert.match(stripAnsi(expandedCommandLine), /^[◆◇] Commands$/u);
-  assert.doesNotMatch(expandedCommandLine, /\x1b\[48;2;16;19;20m/);
+  assert.doesNotMatch(expandedCommandLine, /\x1b\[48;2;20;23;24m/);
   assert.match(expanded, /#1 shell_command completed\s+\$ npm test -- --runInBand/);
   assert.match(expanded, /#1 shell_command completed\s+\$ node tools\/snake_playwright\.mjs/);
   assert.match(expanded, /#7 shell_command completed\s+\$ Get-ChildItem -Force/);
@@ -204,7 +204,7 @@ test("render shows assistant command summaries, command details setting, and thi
     .split("\n")
     .find((line) => stripAnsi(line).includes("$ npm test -- --runInBand"));
   assert.ok(npmTestLine);
-  assert.doesNotMatch(npmTestLine, /\x1b\[48;2;16;19;20m/);
+  assert.doesNotMatch(npmTestLine, /\x1b\[48;2;20;23;24m/);
   assert.doesNotMatch(expanded, /\{"command_line"/);
   assert.equal(
     expanded

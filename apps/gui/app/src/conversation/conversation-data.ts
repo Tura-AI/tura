@@ -143,7 +143,6 @@ function sessionThinkingMessage(session: Session): Message {
   return {
     id: `session-thinking:${session.id}`,
     sessionID: session.id,
-    session_id: session.id,
     role: "assistant",
     created_at: updatedAt,
     updated_at: updatedAt,

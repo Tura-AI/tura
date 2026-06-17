@@ -7,7 +7,7 @@
 use anyhow::{anyhow, Context, Result};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex as ParkingMutex;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::{
     io::{BufRead, BufReader, Write},
     net::{SocketAddr, TcpStream},
@@ -336,12 +336,92 @@ fn call_router_addr(
     writer.write_all(format!("{request}\n").as_bytes())?;
     writer.flush()?;
 
+    let mut reader = BufReader::new(stream);
     let mut line = String::new();
-    BufReader::new(stream).read_line(&mut line)?;
-    if line.trim().is_empty() {
-        return Err(anyhow!("router daemon closed without a response"));
+    loop {
+        line.clear();
+        let bytes_read = reader.read_line(&mut line)?;
+        if bytes_read == 0 {
+            return Err(anyhow!("router daemon closed without a response"));
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: Value =
+            serde_json::from_str(line.trim()).context("failed to decode router daemon response")?;
+        if handle_router_notification(&value) {
+            continue;
+        }
+        return Ok(value);
     }
-    serde_json::from_str(line.trim()).context("failed to decode router daemon response")
+}
+
+fn handle_router_notification(value: &Value) -> bool {
+    if value.get("kind").and_then(Value::as_str) != Some("gateway.callback") {
+        return false;
+    }
+    if let Err(error) = apply_gateway_callback_notification(value) {
+        tracing::warn!(error = %error, notification = %value, "failed to apply router gateway callback");
+    }
+    true
+}
+
+fn apply_gateway_callback_notification(value: &Value) -> Result<()> {
+    let method = value
+        .get("method")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("gateway callback notification missing method"))?;
+    let payload = value
+        .get("payload")
+        .ok_or_else(|| anyhow!("gateway callback notification missing payload"))?;
+    let session_id = payload
+        .get("session_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("gateway callback notification missing session_id"))?
+        .to_string();
+    let body = payload.get("body").cloned().unwrap_or(Value::Null);
+    match method {
+        "session.agent_message" => {
+            let request: crate::api::session::SendAgentMessageRequest =
+                serde_json::from_value(body)
+                    .context("failed to decode session.agent_message callback body")?;
+            let response = crate::api::session::send_agent_message_payload(session_id, request);
+            if !response.ok {
+                return Err(anyhow!(
+                    "{}",
+                    response
+                        .error
+                        .unwrap_or_else(|| "session.agent_message callback failed".to_string())
+                ));
+            }
+        }
+        "session.agent_stream" => {
+            let request: crate::api::session::StreamAgentTextRequest = serde_json::from_value(body)
+                .context("failed to decode session.agent_stream callback body")?;
+            let response = crate::api::session::stream_agent_message_payload(session_id, request);
+            if response
+                .get("ok")
+                .and_then(Value::as_bool)
+                .is_some_and(|ok| !ok)
+            {
+                return Err(anyhow!("session.agent_stream callback failed: {response}"));
+            }
+        }
+        "session.todos" => {
+            let todos = serde_json::from_value::<Vec<Value>>(body)
+                .context("failed to decode session.todos callback body")?;
+            crate::session::session_store().set_todos(&session_id, todos);
+        }
+        other => {
+            tracing::warn!(
+                method = other,
+                "dropping unknown gateway callback notification"
+            );
+        }
+    }
+    Ok(())
 }
 
 fn read_timeout_for(method: &str) -> Duration {

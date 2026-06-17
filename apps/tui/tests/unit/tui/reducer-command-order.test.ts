@@ -138,12 +138,12 @@ test("reducer appends later streamed assistant replies after command results", (
     type: "event",
     event: {
       directory: "C:/repo",
-      sessionID: "sess-1",
       payload: {
         type: "message.part.delta",
         properties: {
-          message_id: "msg-final",
-          part_id: "part-final",
+          sessionID: "sess-1",
+          messageID: "msg-final",
+          partID: "part-final",
           field: "text",
           delta: "Acceptance passed. Final marker is visible.",
         },

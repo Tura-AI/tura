@@ -45,7 +45,7 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
       };
     }
     case "session.deleted": {
-      const sessionId = readString(properties, "sessionID") || readString(properties, "session_id");
+      const sessionId = readId(properties, "sessionID", "session_id");
       if (!sessionId) {
         return next;
       }
@@ -64,7 +64,7 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
       };
     }
     case "session.status": {
-      const sessionId = readString(properties, "sessionID") || readString(properties, "session_id");
+      const sessionId = readId(properties, "sessionID", "session_id");
       const status = normalizeStatus(properties.status);
       if (!sessionId || !status) {
         return next;
@@ -82,9 +82,7 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
         return next;
       }
       const sessionId =
-        readString(properties, "sessionID") ||
-        readString(properties, "session_id") ||
-        messageSessionId(message);
+        readId(properties, "sessionID", "session_id") || messageSessionId(message);
       if (!sessionId) {
         return next;
       }
@@ -97,8 +95,8 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
       };
     }
     case "message.removed": {
-      const sessionId = readString(properties, "session_id") || readString(properties, "sessionID");
-      const messageId = readString(properties, "message_id") || readString(properties, "messageID");
+      const sessionId = readId(properties, "sessionID", "session_id");
+      const messageId = readId(properties, "messageID", "message_id");
       if (!sessionId || !messageId) {
         return next;
       }
@@ -113,9 +111,9 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
       };
     }
     case "message.part.delta": {
-      const sessionId = readString(properties, "session_id") || readString(properties, "sessionID");
-      const messageId = readString(properties, "message_id") || readString(properties, "messageID");
-      const partId = readString(properties, "part_id") || readString(properties, "partID");
+      const sessionId = readId(properties, "sessionID", "session_id");
+      const messageId = readId(properties, "messageID", "message_id");
+      const partId = readId(properties, "partID", "part_id");
       const field = readString(properties, "field");
       const delta = readString(properties, "delta");
       if (!sessionId || !messageId || !partId || delta === undefined) {
@@ -137,18 +135,12 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
       };
     }
     case "message.part.updated": {
-      const sessionId = readString(properties, "sessionID") || readString(properties, "session_id");
-      const part = properties.part as
-        | (MessagePart & {
-            messageID?: string;
-            message_id?: string;
-            sessionID?: string;
-          })
-        | undefined;
+      const sessionId = readId(properties, "sessionID", "session_id");
+      const part = properties.part as MessagePart | undefined;
       if (!sessionId || !part?.id) {
         return next;
       }
-      const messageId = part.messageID || part.message_id;
+      const messageId = part.messageID;
       const messages = next.messagesBySession[sessionId] ?? [];
       const hasMessage = messageId
         ? messages.some((message) => message.id === messageId)
@@ -175,10 +167,12 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
             : [
                 ...messages,
                 {
-                  id: messageId ?? `message:${part.id}`,
+                  id: messageId,
                   sessionID: sessionId,
                   role: "assistant",
                   parts: [part],
+                  created_at: Date.now(),
+                  updated_at: Date.now(),
                   time: { created: Date.now(), updated: Date.now() },
                 },
               ],
@@ -192,10 +186,7 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
       return files ? { ...next, diff: files } : next;
     }
     case "todo.updated": {
-      const sessionId =
-        readString(properties, "sessionID") ||
-        readString(properties, "session_id") ||
-        next.selectedSessionId;
+      const sessionId = readId(properties, "sessionID", "session_id") || next.selectedSessionId;
       const todos = Array.isArray(properties.todos) ? (properties.todos as TodoItem[]) : undefined;
       if (!sessionId || !todos) {
         return next;
@@ -368,7 +359,7 @@ function applyPartDelta(
                 messageID: messageId,
                 type: "text",
                 [field]: delta,
-              } as MessagePart & { messageID: string; sessionID: string },
+              } as MessagePart,
             ],
           }
         : message,
@@ -390,7 +381,7 @@ function applyPartDelta(
           messageID: messageId,
           type: "text",
           [field]: delta,
-        } as MessagePart & { messageID: string; sessionID: string },
+        } as MessagePart,
       ],
     });
   }
@@ -415,6 +406,14 @@ function readMessage(properties: Record<string, unknown>): Message | undefined {
 function readString(properties: Record<string, unknown>, key: string): string | undefined {
   const value = properties[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function readId(
+  properties: Record<string, unknown>,
+  camelKey: string,
+  snakeKey: string,
+): string | undefined {
+  return readString(properties, camelKey) ?? readString(properties, snakeKey);
 }
 
 function normalizeStatus(value: unknown): "idle" | "busy" | "error" | undefined {

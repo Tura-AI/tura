@@ -22,8 +22,8 @@
   },
   "agent_persona": [
     {
-      "persona_directory": "personas/src/tura",
-      "persona_name": "tura"
+      "persona_directory": "personas/src/pidan",
+      "persona_name": "pidan"
     }
   ],
   "agent_prompt": [

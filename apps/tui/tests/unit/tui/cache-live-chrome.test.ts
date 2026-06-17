@@ -47,7 +47,7 @@ test("rapid panel switching keeps composer and chrome out of transcript cache", 
   const live = stripAnsi(transcriptLiveLines(state, 100).join("\n"));
   const chrome = stripAnsi(renderChatFrameParts(state, richCapabilities()).chromeFrame);
 
-  assert.doesNotMatch(cache, /DRAFT_INPUT_MARKER|tokens|Enter to send|thinking/i);
+  assert.doesNotMatch(cache, /DRAFT_INPUT_MARKER|tokens|Enter: send|thinking/i);
   assert.match(cache, /USER_LIVE_MARKER/);
   assert.doesNotMatch(live, /USER_LIVE_MARKER/);
   assert.doesNotMatch(live, /thinking/i);
@@ -312,9 +312,9 @@ test("concurrent streaming deltas from other sessions do not enter active live o
         payload: {
           type: "message.part.delta",
           properties: {
-            session_id: sessionID,
-            message_id: `msg-${sessionID}`,
-            part_id: `part-${sessionID}`,
+            sessionID: sessionID,
+            messageID: `msg-${sessionID}`,
+            partID: `part-${sessionID}`,
             field: "text",
             delta: marker,
           },
@@ -378,9 +378,9 @@ test("high-frequency live updates keep history cached once and active turn live-
         payload: {
           type: "message.part.delta",
           properties: {
-            session_id: session.id,
-            message_id: "msg-live-stress-agent",
-            part_id: "part-live-stress-agent",
+            sessionID: session.id,
+            messageID: "msg-live-stress-agent",
+            partID: "part-live-stress-agent",
             field: "text",
             delta: `LIVE_AGENT_CHUNK_${index};`,
           },

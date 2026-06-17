@@ -1,6 +1,6 @@
 //! File API handlers
 
-use crate::api::types::*;
+use crate::contracts::*;
 use crate::mock::global_store;
 use axum::{extract::Query, http::StatusCode, Json};
 use base64::Engine;
@@ -12,25 +12,6 @@ use std::time::UNIX_EPOCH;
 // ============================================================================
 // File List
 // ============================================================================
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ListFilesQuery {
-    pub directory: Option<String>,
-    pub path: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct FileInfo {
-    pub name: String,
-    pub path: String,
-    #[serde(rename = "type")]
-    pub file_type: String,
-    pub absolute: String,
-    pub ignored: bool,
-    pub git_status: Option<String>,
-    pub size_bytes: Option<u64>,
-    pub modified_at: Option<u64>,
-}
 
 pub async fn list_files(Query(params): Query<ListFilesQuery>) -> Json<Vec<FileInfo>> {
     let Some(root) = workspace_root(params.directory) else {
@@ -203,12 +184,6 @@ fn normalize_git_path(path: &str) -> String {
 // File Content
 // ============================================================================
 
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct FileContentQuery {
-    pub path: String,
-    pub directory: Option<String>,
-}
-
 pub async fn get_file_content(
     Query(params): Query<FileContentQuery>,
 ) -> Result<Json<FileContentResponse>, (StatusCode, String)> {
@@ -330,12 +305,6 @@ fn resolve_workspace_file_path(
         )
     })?;
     Ok((root, path))
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct FileOpenResponse {
-    pub path: String,
-    pub opened: bool,
 }
 
 fn workspace_root(directory: Option<String>) -> Option<PathBuf> {

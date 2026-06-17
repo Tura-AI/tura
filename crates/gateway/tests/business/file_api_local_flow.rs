@@ -1,8 +1,7 @@
 use axum::extract::{Json, Query};
 use axum::http::StatusCode;
-use gateway::api::file::{
-    get_file_content, list_files, open_file, open_file_location, FileContentQuery, ListFilesQuery,
-};
+use gateway::api::file::{get_file_content, list_files, open_file, open_file_location};
+use gateway::contracts::{FileContentQuery, ListFilesQuery};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};

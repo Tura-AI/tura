@@ -1,11 +1,8 @@
 use axum::extract::Path;
 use axum::Json;
-use gateway::api::agent::{
-    create_agent, delete_agent, get_agent, list_agents, update_agent, UpsertAgentRequest,
-};
-use gateway::api::persona::{
-    create_persona, delete_persona, get_persona, list_personas, UpsertPersonaRequest,
-};
+use gateway::api::agent::{create_agent, delete_agent, get_agent, list_agents, update_agent};
+use gateway::api::persona::{create_persona, delete_persona, get_persona, list_personas};
+use gateway::contracts::{UpsertAgentRequest, UpsertPersonaRequest};
 use serde_json::json;
 use std::ffi::OsString;
 use tokio::sync::Mutex;

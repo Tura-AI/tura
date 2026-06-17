@@ -1,6 +1,6 @@
 import type { AppState } from "./reducer.js";
 import { renderChatFrameParts, renderFrame } from "./render.js";
-import { clear as terminalClear } from "./render-terminal.js";
+import { clear as terminalClear, padVisible } from "./render-terminal.js";
 import type { TerminalCapabilities } from "./capabilities.js";
 
 let lastDrawSurface = "";
@@ -64,10 +64,9 @@ export function draw(
     );
   }
 
-  let output = "\x1b[?25l";
-  output += terminalSurfaceClear();
+  let output = terminalSurfaceClear();
+  output += "\x1b[?25l";
   output += terminalAppendFrame(frame);
-  output += cursorOutputFromFrameEnd(frame, rendered.cursor);
   process.stdout.write(output);
   return frame;
 }
@@ -97,8 +96,11 @@ export function drawChatChromeOverlay(
     lastChatReservationLineCount,
   );
   let output = "\x1b[?25l";
-  output += clearChatVisibleRowsFrom(chromeLayout.startRow);
-  output += terminalWriteOverlayFrame(chromeLayout.frame, chromeLayout.startRow);
+  output += terminalWriteOverlayFrame(
+    chromeLayout.frame,
+    chromeLayout.startRow,
+    chromeLayout.lineCount,
+  );
   output += cursorOutputFromAbsoluteCursor(chromeLayout.cursor);
   if (output) process.stdout.write(output);
   lastChatChromeFrame = rendered.chromeFrame;
@@ -162,11 +164,6 @@ function drawChatFrame(
       : residualReservationLineCount + appendBlankLineCount;
 
     output += "\x1b[?25l";
-    output += clearChatReservationRegion(
-      previousBodyLineCount,
-      lastChatReservationLineCount,
-      previousTotalLineCount,
-    );
     output += terminalWriteLogicalLines(
       replacementBodyLines,
       previousBodyLineCount + 1,
@@ -184,7 +181,11 @@ function drawChatFrame(
     target.bodyLines.length,
     effectiveReservationLineCount,
   );
-  output += terminalWriteOverlayFrame(mutableLayout.frame, mutableLayout.startRow);
+  output += terminalWriteOverlayFrame(
+    mutableLayout.frame,
+    mutableLayout.startRow,
+    mutableLayout.lineCount,
+  );
   output += cursorOutputFromAbsoluteCursor(mutableLayout.cursor);
   if (output) process.stdout.write(output);
   lastChatCacheLineCount = target.cacheLines.length;
@@ -246,6 +247,10 @@ function terminalRows(): number {
   return Math.max(1, process.stdout.rows || 1);
 }
 
+function terminalColumns(): number {
+  return Math.max(1, process.stdout.columns || 1);
+}
+
 function terminalSaveCursor(): string {
   return "\x1b[s";
 }
@@ -267,6 +272,7 @@ function terminalAppendScrollbackLines(lines: string[], previousTotalLineCount: 
 
 type MutableLayout = {
   frame: string;
+  lineCount: number;
   startRow: number;
   skippedRows: number;
   cursor?: { row: number; column: number };
@@ -313,17 +319,18 @@ function terminalMutableLayout(
   const visibleStartLogicalLine = Math.max(reservationStartLogicalLine, visibleFirstLogicalLine);
   const visibleReservationLineCount = Math.max(0, totalLineCount - visibleStartLogicalLine + 1);
   const skippedRows = Math.max(0, visibleStartLogicalLine - reservationStartLogicalLine);
-  const visibleMutableLineCount = Math.max(
-    0,
-    Math.min(mutableLines.length - skippedRows, visibleReservationLineCount),
-  );
+  const visibleMutableLineCount = visibleReservationLineCount;
   const visibleLines =
     visibleMutableLineCount > 0
-      ? mutableLines.slice(skippedRows, skippedRows + visibleMutableLineCount)
+      ? padLines(
+          mutableLines.slice(skippedRows, skippedRows + visibleMutableLineCount),
+          visibleMutableLineCount,
+        )
       : [];
   const startRow = Math.max(1, visibleStartLogicalLine - visibleFirstLogicalLine + 1);
   return {
     frame: visibleLines.join("\n"),
+    lineCount: visibleLines.length,
     startRow,
     skippedRows,
     cursor: adjustMutableCursor(chromeCursor, pendingLiveLineCount, skippedRows, startRow),
@@ -341,21 +348,19 @@ function terminalChromeLayout(
   const chromeStartLogicalLine = bodyLineCount + pendingLiveLineCount + 1;
   const visibleFirstLogicalLine = visibleFirstLogicalLineForTotal(totalLineCount);
   const visibleStartLogicalLine = Math.max(chromeStartLogicalLine, visibleFirstLogicalLine);
-  const visibleChromeLineCount = Math.max(
-    0,
-    Math.min(
-      chromeLines.length - (visibleStartLogicalLine - chromeStartLogicalLine),
-      totalLineCount - visibleStartLogicalLine + 1,
-    ),
-  );
+  const visibleChromeLineCount = Math.max(0, totalLineCount - visibleStartLogicalLine + 1);
   const skippedRows = Math.max(0, visibleStartLogicalLine - chromeStartLogicalLine);
   const visibleLines =
     visibleChromeLineCount > 0
-      ? chromeLines.slice(skippedRows, skippedRows + visibleChromeLineCount)
+      ? padLines(
+          chromeLines.slice(skippedRows, skippedRows + visibleChromeLineCount),
+          visibleChromeLineCount,
+        )
       : [];
   const startRow = Math.max(1, visibleStartLogicalLine - visibleFirstLogicalLine + 1);
   return {
     frame: visibleLines.join("\n"),
+    lineCount: visibleLines.length,
     startRow,
     skippedRows,
     cursor: adjustChromeCursor(chromeCursor, skippedRows, startRow),
@@ -370,18 +375,8 @@ function blankLines(count: number): string[] {
   return Array.from({ length: Math.max(0, count) }, () => "");
 }
 
-function clearChatReservationRegion(
-  bodyLineCount: number,
-  reservationLineCount: number,
-  totalLineCount: number,
-): string {
-  if (reservationLineCount <= 0 || totalLineCount <= 0) return "";
-  const reservationStartLogicalLine = bodyLineCount + 1;
-  const visibleFirstLogicalLine = visibleFirstLogicalLineForTotal(totalLineCount);
-  const visibleStartLogicalLine = Math.max(reservationStartLogicalLine, visibleFirstLogicalLine);
-  if (visibleStartLogicalLine > totalLineCount) return "";
-  const startRow = visibleStartLogicalLine - visibleFirstLogicalLine + 1;
-  return `${absoluteCursor(startRow, 1)}\x1b[J`;
+function padLines(lines: string[], count: number): string[] {
+  return lines.length >= count ? lines : [...lines, ...blankLines(count - lines.length)];
 }
 
 function terminalWriteLogicalLines(
@@ -396,25 +391,25 @@ function terminalWriteLogicalLines(
       const logicalLine = startLogicalLine + index;
       if (logicalLine < visibleFirstLogicalLine || logicalLine > totalLineCount) return "";
       const row = logicalLine - visibleFirstLogicalLine + 1;
-      return `${absoluteCursor(row, 1)}\x1b[2K${line}`;
+      return `${absoluteCursor(row, 1)}${lineRewriteText(line)}`;
     })
     .join("");
-}
-
-function clearChatVisibleRowsFrom(startRow: number): string {
-  return `${absoluteCursor(startRow, 1)}\x1b[J`;
 }
 
 function visibleFirstLogicalLineForTotal(totalLineCount: number): number {
   return Math.max(1, totalLineCount - terminalRows() + 1);
 }
 
-function terminalWriteOverlayFrame(frame: string, startRow: number): string {
-  if (!frame) return "";
-  return frame
-    .split("\n")
-    .map((line, index) => `${absoluteCursor(startRow + index, 1)}${line}`)
+function terminalWriteOverlayFrame(frame: string, startRow: number, lineCount: number): string {
+  if (lineCount <= 0) return "";
+  const lines = frame ? frame.split("\n") : blankLines(lineCount);
+  return lines
+    .map((line, index) => `${absoluteCursor(startRow + index, 1)}${lineRewriteText(line)}`)
     .join("");
+}
+
+function lineRewriteText(line: string): string {
+  return line.includes("\x1b[K") ? line : padVisible(line, terminalColumns());
 }
 
 function adjustMutableCursor(

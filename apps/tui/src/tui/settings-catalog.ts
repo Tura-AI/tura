@@ -4,12 +4,9 @@ export const SETTING_DETAILS = [
   "agent",
   "persona",
   "language",
-  "session",
   "variant",
   "priority",
-  "commands",
-  "validator",
-  "stallGuard",
 ] as const;
 
-export type SettingDetail = (typeof SETTING_DETAILS)[number] | "providerAuth";
+export type HiddenSettingDetail = "session" | "commands" | "validator" | "stallGuard";
+export type SettingDetail = (typeof SETTING_DETAILS)[number] | HiddenSettingDetail | "providerAuth";

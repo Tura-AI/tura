@@ -1,23 +1,15 @@
 use super::*;
 use runtime::state_machine::runtime_management::RuntimeSessionSyncStatus;
-
 pub async fn list_messages(
     Path(session_id): Path<String>,
     Query(params): Query<MessageListParams>,
-) -> Json<Vec<serde_json::Value>> {
+) -> Json<Vec<Message>> {
     let messages = page_messages(session_store().get_frontend_messages(&session_id), &params);
-    let api_messages: Vec<serde_json::Value> = messages
+    let api_messages: Vec<Message> = messages
         .into_iter()
         .map(message_with_parts_from_store)
         .collect();
     Json(api_messages)
-}
-
-#[derive(Debug, Clone, Default, serde::Deserialize)]
-pub struct MessageListParams {
-    pub limit: Option<usize>,
-    pub before: Option<String>,
-    pub after: Option<String>,
 }
 
 fn page_messages<T: Clone + MessageId>(messages: Vec<T>, params: &MessageListParams) -> Vec<T> {
@@ -97,24 +89,31 @@ pub async fn send_agent_message(
     Path(session_id): Path<String>,
     Json(payload): Json<SendAgentMessageRequest>,
 ) -> Json<SendAgentMessageResponse> {
+    Json(send_agent_message_payload(session_id, payload))
+}
+
+pub fn send_agent_message_payload(
+    session_id: String,
+    payload: SendAgentMessageRequest,
+) -> SendAgentMessageResponse {
     let content = agent_message_content(&payload);
     if is_progress_only_agent_message(&content, &payload) {
-        return Json(SendAgentMessageResponse {
+        return SendAgentMessageResponse {
             ok: true,
             session_id,
             message_id: payload.runtime_id.as_deref().map(runtime_message_id),
             event: None,
             error: None,
-        });
+        };
     }
     if let Some(response) = runtime_managed_message_response(&session_id, &payload, &content) {
         sync_auto_session_name_from_agent_tool_call(&session_id, payload.tool_call.as_ref());
-        return Json(response);
+        return response;
     }
     if content.trim().is_empty() {
         if let Some(response) = transient_tool_message_response(&session_id, &payload) {
             sync_auto_session_name_from_agent_tool_call(&session_id, payload.tool_call.as_ref());
-            return Json(response);
+            return response;
         }
     }
 
@@ -157,7 +156,7 @@ pub async fn send_agent_message(
     sync_auto_session_name_from_agent_tool_call(&session_id, payload.tool_call.as_ref());
 
     match message.or(tool_message) {
-        Some(message) => Json(SendAgentMessageResponse {
+        Some(message) => SendAgentMessageResponse {
             ok: true,
             session_id: session_id.clone(),
             message_id: Some(message.id.clone()),
@@ -170,23 +169,23 @@ pub async fn send_agent_message(
                 Some(event)
             },
             error: None,
-        }),
+        },
         None if payload.tool_call.is_some() && (!visible_tool_call || !persistent_tool_call) => {
-            Json(SendAgentMessageResponse {
+            SendAgentMessageResponse {
                 ok: true,
                 session_id,
                 message_id: None,
                 event: None,
                 error: None,
-            })
+            }
         }
-        None => Json(SendAgentMessageResponse {
+        None => SendAgentMessageResponse {
             ok: false,
             session_id,
             message_id: None,
             event: None,
             error: Some("failed to store agent message".to_string()),
-        }),
+        },
     }
 }
 
@@ -250,6 +249,11 @@ fn runtime_managed_message_response(
     let status = payload.runtime_status.as_ref()?;
     let runtime_message_id = runtime_message_id(&status.runtime_id);
     if status.should_refresh_session_db() {
+        if let Some(usage) = runtime_usage_from_payload(payload) {
+            if session_store().update_session_runtime_usage(session_id, usage) {
+                session_store().push_current_session_status_event(session_id);
+            }
+        }
         let final_message = runtime_final_message(session_id, payload, content, status);
         let messages = session_store().finalize_runtime_live_messages(
             session_id,
@@ -434,8 +438,15 @@ pub async fn stream_agent_message(
     Path(session_id): Path<String>,
     Json(payload): Json<StreamAgentTextRequest>,
 ) -> Json<serde_json::Value> {
+    Json(stream_agent_message_payload(session_id, payload))
+}
+
+pub fn stream_agent_message_payload(
+    session_id: String,
+    payload: StreamAgentTextRequest,
+) -> serde_json::Value {
     if payload.delta.is_empty() {
-        return Json(serde_json::json!({ "ok": true }));
+        return serde_json::json!({ "ok": true });
     }
     let message_id = runtime_message_id(&payload.runtime_id);
     let part_id = runtime_text_part_id(&payload.runtime_id);
@@ -443,7 +454,7 @@ pub async fn stream_agent_message(
     // tokens live. The persisted message arrives later via `send_agent_message`
     // reusing the same ids, which replaces these deltas with the full reply.
     session_store().push_event(GlobalEvent::MessagePartDelta {
-        properties: crate::api::types::MessagePartDeltaProperties {
+        properties: crate::contracts::MessagePartDeltaProperties {
             session_id: session_id.clone(),
             message_id,
             part_id,
@@ -451,7 +462,7 @@ pub async fn stream_agent_message(
             delta: payload.delta,
         },
     });
-    Json(serde_json::json!({ "ok": true, "session_id": session_id }))
+    serde_json::json!({ "ok": true, "session_id": session_id })
 }
 
 fn sync_auto_session_name_from_agent_tool_call(
@@ -574,53 +585,6 @@ fn collect_string_field(value: &serde_json::Value, field: &str, values: &mut Vec
     }
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SendAgentMessageRequest {
-    pub reply_message: String,
-    pub new_learning: String,
-    pub step_summary: Option<String>,
-    #[serde(default)]
-    pub media: Vec<SendAgentMedia>,
-    pub runtime_id: Option<String>,
-    pub tool_call: Option<SendAgentToolCall>,
-    pub runtime_status: Option<RuntimeSessionSyncStatus>,
-    pub created_at: Option<i64>,
-    pub updated_at: Option<i64>,
-}
-
-/// One incremental assistant text token streamed from the runtime, re-emitted by
-/// the gateway as a `message.part.delta` so the frontend renders tokens live.
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct StreamAgentTextRequest {
-    pub delta: String,
-    pub runtime_id: String,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct SendAgentToolCall {
-    pub tool_name: String,
-    pub call_id: String,
-    pub state: serde_json::Value,
-    pub metadata: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct SendAgentMedia {
-    pub path: String,
-    #[serde(rename = "type")]
-    pub media_type: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct SendAgentMessageResponse {
-    pub ok: bool,
-    pub session_id: String,
-    pub message_id: Option<String>,
-    pub event: Option<GlobalEvent>,
-    pub error: Option<String>,
-}
-
 pub(super) fn agent_message_content(payload: &SendAgentMessageRequest) -> String {
     if payload.tool_call.is_some()
         && payload.reply_message.trim().is_empty()
@@ -731,6 +695,30 @@ fn visible_text_from_runtime_value(value: serde_json::Value) -> Option<String> {
 fn visible_text_from_runtime_string(text: &str) -> Option<String> {
     let text = frontend_safe_reply_message(&tura_llm_rust::strip_thought_blocks(text));
     (!text.trim().is_empty()).then_some(text)
+}
+
+fn runtime_usage_from_payload(payload: &SendAgentMessageRequest) -> Option<serde_json::Value> {
+    let tool_call = payload.tool_call.as_ref()?;
+    if !is_runtime_output_tool_call(tool_call) {
+        return None;
+    }
+    for root in [
+        tool_call.metadata.as_ref(),
+        Some(&tool_call.state),
+        tool_call.state.get("metadata"),
+        tool_call
+            .state
+            .get("metadata")
+            .and_then(|metadata| metadata.get("metadata")),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if root.get("kind").and_then(serde_json::Value::as_str) == Some("mano_runtime_usage") {
+            return root.get("usage").cloned().or(Some(serde_json::Value::Null));
+        }
+    }
+    None
 }
 
 pub(super) fn agent_message_metadata(
@@ -866,46 +854,44 @@ fn todo_content(step: &serde_json::Value, number: usize) -> String {
         .unwrap_or_else(|| format!("Step {number}"))
 }
 
-pub async fn get_message(
-    Path((session_id, message_id)): Path<(String, String)>,
-) -> Json<serde_json::Value> {
+pub async fn get_message(Path((session_id, message_id)): Path<(String, String)>) -> Json<Message> {
     let messages = session_store().get_frontend_messages(&session_id);
     let message = messages
         .into_iter()
         .find(|m| m.id == message_id)
         .map(message_with_parts_from_store)
-        .unwrap_or_else(|| {
-            serde_json::json!({
-                "info": {
-                    "id": message_id,
-                    "sessionID": session_id,
-                    "role": "user",
-                    "time": { "created": 0 },
-                    "parts": [],
-                },
-                "parts": [],
-            })
+        .unwrap_or_else(|| Message {
+            id: message_id,
+            session_id,
+            role: MessageRole::User,
+            parts: Vec::new(),
+            created_at: 0,
+            updated_at: 0,
+            parent_id: None,
         });
     Json(message)
 }
 
 pub async fn get_message_part(
     Path((session_id, message_id, part_id)): Path<(String, String, String)>,
-) -> Json<serde_json::Value> {
+) -> Json<MessagePart> {
     let messages = session_store().get_frontend_messages(&session_id);
     let message = messages.into_iter().find(|m| m.id == message_id);
 
     let part = message
         .and_then(|m| m.parts.into_iter().find(|p| p.id == part_id))
         .map(|p| part_json(&session_id, &message_id, p))
-        .unwrap_or_else(|| {
-            serde_json::json!({
-                "id": part_id,
-                "sessionID": session_id,
-                "messageID": message_id,
-                "type": "text",
-                "text": "",
-            })
+        .unwrap_or_else(|| MessagePart {
+            id: part_id,
+            session_id,
+            message_id,
+            part_type: "text".to_string(),
+            content: None,
+            text: Some(String::new()),
+            metadata: None,
+            call_id: None,
+            tool: None,
+            state: None,
         });
     Json(part)
 }
@@ -916,39 +902,20 @@ pub async fn get_message_part(
 
 pub async fn session_command(
     Path(session_id): Path<String>,
-    Json(payload): Json<CommandRequest>,
-) -> Json<CommandResponse> {
+    Json(payload): Json<SessionCommandRequest>,
+) -> Json<SessionCommandResponse> {
     let directory = session_store()
         .get_session(&session_id)
         .and_then(|session| session.directory)
         .unwrap_or_else(|| ".".to_string());
     let output = run_session_shell_command(&directory, &payload.command)
         .unwrap_or_else(|error| format!("failed to run session command: {error}"));
-    Json(CommandResponse { output })
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct CommandRequest {
-    pub command: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct CommandResponse {
-    pub output: String,
+    Json(SessionCommandResponse { output })
 }
 
 // ============================================================================
 // Session Todo
 // ============================================================================
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-#[allow(dead_code)]
-pub struct TodoItem {
-    pub id: String,
-    pub content: String,
-    pub status: String,
-    pub priority: String,
-}
 
 pub async fn get_todos(Path(session_id): Path<String>) -> Json<Vec<serde_json::Value>> {
     Json(session_store().get_todos(&session_id))
@@ -1063,6 +1030,98 @@ mod tests {
 
         payload.step_summary = Some("   ".to_string());
         assert_eq!(agent_message_metadata(&payload), None);
+    }
+
+    #[test]
+    fn terminal_runtime_usage_callback_updates_session_usage_and_emits_status_event() {
+        let session = session_store().create_session(
+            Some("C:/workspace".to_string()),
+            None,
+            None,
+            Some("coding".to_string()),
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        let mut info = session_store()
+            .get_session_info(&session.id)
+            .expect("session info should exist");
+        info.management.context_tokens =
+            runtime::state_machine::session_management::ContextTokenStats {
+                input: 42_000,
+                limit: 128_000,
+            };
+        session_store().replace_management(&session.id, info.management);
+        let mut cursor = session_store().event_cursor();
+        let usage = json!({
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "total_tokens": 120,
+            "total_cost": 0.012,
+            "currency": "USD"
+        });
+
+        let response = send_agent_message_payload(
+            session.id.clone(),
+            SendAgentMessageRequest {
+                reply_message: String::new(),
+                new_learning: String::new(),
+                step_summary: None,
+                media: Vec::new(),
+                runtime_id: Some("runtime-usage-event".to_string()),
+                tool_call: Some(SendAgentToolCall {
+                    tool_name: "runtime".to_string(),
+                    call_id: "runtime-usage-event".to_string(),
+                    state: json!({
+                        "metadata": {
+                            "kind": "mano_runtime_usage",
+                            "usage": usage,
+                            "output": {"reply_message": "done"}
+                        }
+                    }),
+                    metadata: Some(json!({
+                        "kind": "mano_runtime_usage",
+                        "usage": usage,
+                        "output": {"reply_message": "done"}
+                    })),
+                }),
+                runtime_status: Some(
+                    runtime::state_machine::runtime_management::RuntimeSessionSyncStatus {
+                        runtime_id: "runtime-usage-event".to_string(),
+                        state: runtime::state_machine::runtime_management::RuntimeState::Finished,
+                        call_result_status: runtime::state_machine::runtime_management::RuntimeCallResultStatus::Succeeded,
+                        live: false,
+                        session_db_refresh_required: true,
+                    },
+                ),
+                created_at: Some(1),
+                updated_at: Some(2),
+            },
+        );
+
+        assert!(response.ok);
+        let event = session_store()
+            .next_event(&mut cursor)
+            .expect("usage status event should be published");
+        match event {
+            GlobalEvent::SessionStatus { properties } => {
+                assert_eq!(properties.session_id, session.id);
+                assert_eq!(properties.usage.context_tokens.input, 42_000);
+                assert_eq!(properties.usage.context_tokens.limit, 128_000);
+                assert_eq!(properties.usage.tokens["total_tokens"], 120);
+                assert_eq!(properties.usage.cost, Some(0.012));
+                assert_eq!(properties.usage.currency.as_deref(), Some("USD"));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+        let updated = session_store()
+            .get_session(&session.id)
+            .expect("session should exist");
+        assert_eq!(updated.usage.tokens["total_tokens"], 120);
+        assert_eq!(updated.usage.cost, Some(0.012));
     }
 
     #[test]

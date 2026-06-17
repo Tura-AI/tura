@@ -94,7 +94,7 @@ export function promptRuntimeSelection(state: AppState): PromptRuntimeSelection 
     };
   }
   return {
-    model: configuredModel(state) ?? stringOrUndefined(state.session?.model),
+    model: stringOrUndefined(state.session?.model) ?? configuredModel(state),
     agent:
       stringOrUndefined(state.sessionConfig?.active_agent) ??
       stringOrUndefined(state.session?.agent),

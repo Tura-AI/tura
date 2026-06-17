@@ -460,6 +460,8 @@ function Transcript(props: {
   let loadEarlierPromise: Promise<boolean> | undefined;
   let bottomSettleTimer: number | undefined;
   let avatarResizeObserver: ResizeObserver | undefined;
+  let measuredHeightFrame: number | undefined;
+  const pendingMeasuredHeights = new Map<string, { height: number; top: number }>();
   const measuredHeights = new Map<string, number>();
   let lastScrollUpdateAt = 0;
   let lastScrolledAwayFromBottomAt = 0;
@@ -592,30 +594,63 @@ function Transcript(props: {
     setClientHeight(transcriptEl.clientHeight);
   }
 
-  function updateMeasuredHeight(messageId: string, height: number, top: number) {
-    const next = Math.max(1, Math.round(height));
-    const previous = measuredHeights.get(messageId);
-    if (previous === next) {
+  function markManualScrollAwayFromBottom() {
+    const element = transcriptEl;
+    if (!element) {
       return;
     }
-    const delta = next - (previous ?? VIRTUAL_MESSAGE_ESTIMATED_HEIGHT);
+    if (element.scrollHeight - element.scrollTop - element.clientHeight >= 28) {
+      lastScrolledAwayFromBottomAt = performance.now();
+    }
+  }
+
+  function flushMeasuredHeights() {
+    measuredHeightFrame = undefined;
+    if (pendingMeasuredHeights.size === 0) {
+      return;
+    }
     const wasAtBottom = transcriptEl
       ? transcriptEl.scrollHeight - transcriptEl.scrollTop - transcriptEl.clientHeight < 28
       : false;
-    measuredHeights.set(messageId, next);
-    setHeightVersion((version) => version + 1);
-    if (!transcriptEl || delta === 0) {
+    const recentlyScrolledAway = performance.now() - lastScrolledAwayFromBottomAt < 500;
+    let scrollDelta = 0;
+    let changed = false;
+    for (const [messageId, measurement] of pendingMeasuredHeights) {
+      const next = Math.max(1, Math.round(measurement.height));
+      const previous = measuredHeights.get(messageId);
+      if (previous === next) {
+        continue;
+      }
+      measuredHeights.set(messageId, next);
+      changed = true;
+      if (transcriptEl && measurement.top < transcriptEl.scrollTop) {
+        scrollDelta += next - (previous ?? VIRTUAL_MESSAGE_ESTIMATED_HEIGHT);
+      }
+    }
+    pendingMeasuredHeights.clear();
+    if (!changed) {
       return;
     }
-    const recentlyScrolledAway = performance.now() - lastScrolledAwayFromBottomAt < 500;
+    setHeightVersion((version) => version + 1);
+    if (!transcriptEl) {
+      return;
+    }
     if (wasAtBottom && !recentlyScrolledAway) {
       requestAnimationFrame(() => transcriptEl?.scrollTo({ top: transcriptEl.scrollHeight }));
       return;
     }
-    if (top < transcriptEl.scrollTop) {
-      transcriptEl.scrollTop += delta;
+    if (scrollDelta !== 0) {
+      transcriptEl.scrollTop += scrollDelta;
       updateTranscriptViewport();
     }
+  }
+
+  function updateMeasuredHeight(messageId: string, height: number, top: number) {
+    pendingMeasuredHeights.set(messageId, { height, top });
+    if (measuredHeightFrame) {
+      return;
+    }
+    measuredHeightFrame = requestAnimationFrame(flushMeasuredHeights);
   }
 
   function maybeLoadEarlierMessages() {
@@ -670,6 +705,9 @@ function Transcript(props: {
       if (avatarFrame) {
         cancelAnimationFrame(avatarFrame);
       }
+      if (measuredHeightFrame) {
+        cancelAnimationFrame(measuredHeightFrame);
+      }
     });
   });
 
@@ -708,13 +746,16 @@ function Transcript(props: {
         lastScrollUpdateAt = performance.now();
         updateTranscriptViewport();
         props.onScroll();
-        const element = transcriptEl;
-        if (element && element.scrollHeight - element.scrollTop - element.clientHeight >= 28) {
-          lastScrolledAwayFromBottomAt = performance.now();
-        }
+        markManualScrollAwayFromBottom();
         maybeLoadEarlierMessages();
         queueFloatingAvatarUpdate();
       }}
+      onWheel={(event) => {
+        if (event.deltaY < 0) {
+          lastScrolledAwayFromBottomAt = performance.now();
+        }
+      }}
+      onPointerDown={markManualScrollAwayFromBottom}
     >
       <div
         ref={(element) => {

@@ -146,42 +146,34 @@ export type MessageRole = "user" | "assistant" | "system";
 
 export type MessagePart = {
   id: string;
+  sessionID: string;
+  messageID: string;
   type: string;
   content?: string | null;
   text?: string | null;
   metadata?: unknown;
   callID?: string | null;
-  call_id?: string | null;
   tool?: string | null;
   state?: unknown;
 };
 
 export type Message = {
   id: string;
-  sessionID?: string;
-  session_id?: string;
+  sessionID: string;
   parentID?: string | null;
-  parent_id?: string | null;
   role: MessageRole;
   parts: MessagePart[];
-  time?: {
-    created?: number;
-    updated?: number;
+  time: {
+    created: number;
+    updated: number;
   };
-  created_at?: number;
-  updated_at?: number;
+  created_at: number;
+  updated_at: number;
   cost?: number;
   providerID?: string;
   modelID?: string;
   tokens?: unknown;
 };
-
-export type MessageListItem =
-  | Message
-  | {
-      info: Message;
-      parts?: MessagePart[];
-    };
 
 export type MessageListInput = {
   limit?: number;

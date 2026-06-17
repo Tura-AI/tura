@@ -8,14 +8,11 @@ import { isDraftSession } from "../types/session.js";
 import { sessionConfigPatchFromAssignments } from "../commands/config-values.js";
 import { initialState, reducer, type AppAction, type AppState } from "./reducer.js";
 import { detectTerminalCapabilities, type TerminalCapabilities } from "./capabilities.js";
-import {
-  TUI_ANIMATION_INTERVAL_MS,
-  TUI_MIN_DRAW_INTERVAL_MS,
-  TUI_TICK_INTERVAL_MS,
-} from "./frame-rate.js";
+import { TUI_ANIMATION_INTERVAL_MS, TUI_DRAW_INTERVAL_MS } from "./frame-rate.js";
 import { parseLanguage, setLanguage, t } from "../i18n.js";
 import { keySequence, printableSequence } from "./interactions/keyboard.js";
 import { selectedModel, selectedPersonaID, selectedSettingDetail } from "./logic/selection.js";
+import { settingsEntries, settingOptions } from "./render/settings.js";
 import {
   clearTerminalForSurfaceTransition,
   draw,
@@ -62,9 +59,11 @@ function isActiveSessionIdleEvent(action: AppAction, state: AppState): boolean {
   const payload = action.event.payload;
   if (!payload) return false;
   if (payload.type === "session.status") {
-    const properties = payload.properties as Record<string, unknown> | undefined;
-    const sessionID = stringField(properties, "sessionID") ?? stringField(properties, "session_id");
-    return (!sessionID || sessionID === state.session?.id) && properties?.status === "idle";
+    const properties = payload.properties as { sessionID?: string; status?: unknown } | undefined;
+    return (
+      (!properties?.sessionID || properties.sessionID === state.session?.id) &&
+      properties?.status === "idle"
+    );
   }
   if (payload.type === "session.updated") {
     const session = (payload.properties as { info?: { id?: string; status?: unknown } } | undefined)
@@ -72,11 +71,6 @@ function isActiveSessionIdleEvent(action: AppAction, state: AppState): boolean {
     return Boolean(session && session.id === state.session?.id && session.status === "idle");
   }
   return false;
-}
-
-function stringField(record: Record<string, unknown> | undefined, key: string): string | undefined {
-  const value = record?.[key];
-  return typeof value === "string" ? value : undefined;
 }
 
 function hasActiveLiveStreams(state: AppState): boolean {
@@ -156,7 +150,7 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
       return;
     }
     const now = Date.now();
-    const nextDrawAt = Math.max(now, lastDrawAt + TUI_MIN_DRAW_INTERVAL_MS);
+    const nextDrawAt = Math.max(now, lastDrawAt + TUI_DRAW_INTERVAL_MS);
     if (pendingDraw && pendingDrawAt <= nextDrawAt) return;
     if (pendingDraw) clearTimeout(pendingDraw);
     pendingDrawAt = nextDrawAt;
@@ -212,7 +206,7 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
   const heartbeatTimer = setInterval(() => {
     if (!isBusyState(state) && !state.questions.length && !state.permissions.length) return;
     scheduleDraw();
-  }, TUI_TICK_INTERVAL_MS);
+  }, TUI_DRAW_INTERVAL_MS);
   const animationTimer = setInterval(() => {
     if (!isBusyState(state) && !state.questions.length && !state.permissions.length) return;
     if (hasActiveAnimation(state)) dispatch({ type: "tick" });
@@ -337,6 +331,47 @@ async function inputLoop(
           else return;
           return;
         }
+        if (
+          key?.name === "left" ||
+          key?.name === "right" ||
+          sequence === "\x1b[D" ||
+          sequence === "\x1b[C"
+        ) {
+          if (state.settingInput) return;
+          const direction = key?.name === "left" || sequence === "\x1b[D" ? -1 : 1;
+          if (state.sessionsOpen) {
+            dispatch({
+              type: "select-session",
+              delta: pageSelectionDelta(
+                state.selectedSessionIndex,
+                sessionPanelPageSize(),
+                state.sessions.length + 1,
+                direction,
+              ),
+            });
+          } else if (state.settingsOpen && state.settingDetail) {
+            dispatch({
+              type: "select-setting-option",
+              delta: pageSelectionDelta(
+                state.selectedSettingOptionIndex,
+                settingsPanelPageSize(state),
+                settingOptions(state).length,
+                direction,
+              ),
+            });
+          } else if (state.settingsOpen) {
+            dispatch({
+              type: "select-settings",
+              delta: pageSelectionDelta(
+                state.selectedSettingsIndex,
+                settingsPanelPageSize(state),
+                settingsEntries(state).length,
+                direction,
+              ),
+            });
+          } else return;
+          return;
+        }
         if (key?.name === "pageup" || sequence === "\x1b[5~") {
           return;
         }
@@ -451,6 +486,43 @@ async function inputLoop(
   });
 }
 
+function pageSelectionDelta(
+  currentIndex: number,
+  pageSize: number,
+  totalEntries: number,
+  direction: -1 | 1,
+): number {
+  if (totalEntries <= 0) return 0;
+  const safePageSize = Math.max(1, pageSize);
+  const safeIndex = Math.max(0, Math.min(currentIndex, totalEntries - 1));
+  const pageStart = Math.floor(safeIndex / safePageSize) * safePageSize;
+  const lastPageStart = Math.floor((totalEntries - 1) / safePageSize) * safePageSize;
+  const target =
+    direction > 0
+      ? pageStart + safePageSize > totalEntries - 1
+        ? 0
+        : pageStart + safePageSize
+      : pageStart - safePageSize < 0
+        ? lastPageStart
+        : pageStart - safePageSize;
+  return target - safeIndex;
+}
+
+function panelMaxLines(): number {
+  return Math.max(1, (process.stdout.rows || 40) - 4);
+}
+
+function sessionPanelPageSize(): number {
+  return Math.max(1, panelMaxLines() - 4);
+}
+
+function settingsPanelPageSize(state: AppState): number {
+  const headerLines = 2;
+  const promptLines = 1 + (state.settingInput ? 1 : 0);
+  const pageChromeLines = state.settingDetail ? 1 : 2;
+  return Math.max(1, panelMaxLines() - headerLines - promptLines - pageChromeLines);
+}
+
 async function slashCommand(
   client: TuiGatewayClient,
   getState: () => AppState,
@@ -469,7 +541,7 @@ async function slashCommand(
         ]),
       );
       dispatch({ type: "session-config", value: config, open: true });
-      dispatch({ type: "notice", value: t("settingsUpdated") });
+      dispatch({ type: "notice", value: undefined });
     } else {
       dispatch({ type: "session-config", value: await client.getSessionConfig(), open: true });
       dispatch({ type: "open-setting-detail", detail: "commands" });
@@ -605,7 +677,7 @@ async function slashCommand(
             : getState().authStatuses,
           open: false,
         });
-        dispatch({ type: "notice", value: t("settingsUpdated") });
+        dispatch({ type: "notice", value: undefined });
       }
     } else if (!args[0]) {
       dispatch({ type: "session-config", value: await client.getSessionConfig(), open: true });
@@ -624,7 +696,7 @@ async function slashCommand(
     } else {
       const config = await client.patchSessionConfig({ model_variant: args[0] });
       dispatch({ type: "session-config", value: config, open: true });
-      dispatch({ type: "notice", value: t("settingsUpdated") });
+      dispatch({ type: "notice", value: undefined });
     }
   } else if (name === "priority") {
     if (!args[0]) {
@@ -635,7 +707,7 @@ async function slashCommand(
         model_acceleration_enabled: /^(1|true|yes|on|priority)$/iu.test(args[0]),
       });
       dispatch({ type: "session-config", value: config, open: true });
-      dispatch({ type: "notice", value: t("settingsUpdated") });
+      dispatch({ type: "notice", value: undefined });
     }
   } else if (name === "language" || name === "lang") {
     if (!args[0]) {
@@ -650,7 +722,7 @@ async function slashCommand(
       const config = await client.patchSessionConfig({ language: parsed });
       setLanguage(parsed);
       dispatch({ type: "session-config", value: config, open: true });
-      dispatch({ type: "notice", value: t("settingsUpdated") });
+      dispatch({ type: "notice", value: undefined });
     }
   } else if (name === "session") {
     if (!args[0]) {
@@ -658,7 +730,7 @@ async function slashCommand(
     } else {
       const config = await client.patchSessionConfig({ session_type: args[0] });
       dispatch({ type: "session-config", value: config, open: true });
-      dispatch({ type: "notice", value: t("settingsUpdated") });
+      dispatch({ type: "notice", value: undefined });
     }
   } else if (name === "validator") {
     if (!args[0]) {
@@ -668,7 +740,7 @@ async function slashCommand(
         validator_enabled: /^(1|true|yes|on|enabled)$/iu.test(args[0]),
       });
       dispatch({ type: "session-config", value: config, open: true });
-      dispatch({ type: "notice", value: t("settingsUpdated") });
+      dispatch({ type: "notice", value: undefined });
     }
   } else if (name === "stall-guard") {
     if (!args[0]) {
@@ -677,7 +749,7 @@ async function slashCommand(
     } else {
       const config = await client.patchSessionConfig({ command_run_stall_guard_profile: args[0] });
       dispatch({ type: "session-config", value: config, open: true });
-      dispatch({ type: "notice", value: t("settingsUpdated") });
+      dispatch({ type: "notice", value: undefined });
     }
   } else if (name === "config") {
     const subcommand = args.shift() ?? "get";
@@ -687,7 +759,7 @@ async function slashCommand(
         const config = await client.patchSessionConfig(sessionConfigPatchFromAssignments(args));
         applyConfiguredLanguage(config.language, undefined);
         dispatch({ type: "session-config", value: config, open: true });
-        dispatch({ type: "notice", value: t("settingsUpdated") });
+        dispatch({ type: "notice", value: undefined });
       }
     } else if (subcommand === "get") {
       const config = await client.getSessionConfig();

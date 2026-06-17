@@ -1,13 +1,11 @@
 //! Global API handlers (health, config, events)
 
-use crate::api::types::*;
+use crate::contracts::*;
 use crate::mock::global_store;
 use crate::session::session_store;
 use axum::{
     extract::Path as AxumPath,
-    http::{header, HeaderValue, StatusCode},
     response::sse::{Event as SseEvent, KeepAlive, Sse},
-    response::Response,
     Json,
 };
 use serde_json::Value;
@@ -98,29 +96,6 @@ pub async fn patch_config(Json(payload): Json<ConfigPatch>) -> Json<Config> {
     Json(global_store().update_config(payload))
 }
 
-pub async fn get_gui_config() -> Response<String> {
-    match std::fs::read_to_string(gui_config_path()) {
-        Ok(content) => text_response(StatusCode::OK, content),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            text_response(StatusCode::OK, String::new())
-        }
-        Err(err) => text_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-    }
-}
-
-pub async fn put_gui_config(body: String) -> Response<String> {
-    let path = gui_config_path();
-    if let Some(parent) = path.parent() {
-        if let Err(err) = std::fs::create_dir_all(parent) {
-            return text_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
-        }
-    }
-    match std::fs::write(path, body.as_bytes()) {
-        Ok(()) => text_response(StatusCode::OK, body),
-        Err(err) => text_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-    }
-}
-
 pub async fn get_tura_config() -> Json<TuraConfigResponse> {
     Json(read_tura_config_response())
 }
@@ -133,42 +108,6 @@ pub async fn put_tura_config(Json(payload): Json<TuraConfigUpdate>) -> Json<Tura
         response.error = Some(error);
     }
     Json(response)
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct TuraConfigResponse {
-    pub path: String,
-    pub tiers: Vec<TuraConfigTier>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct TuraConfigUpdate {
-    pub tier: String,
-    pub provider: String,
-    pub model: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct TuraConfigTier {
-    pub tier: String,
-    pub current: Option<TuraConfigSelection>,
-    pub options: Vec<TuraConfigOption>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct TuraConfigSelection {
-    pub provider: String,
-    pub model: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct TuraConfigOption {
-    pub provider: String,
-    pub provider_name: String,
-    pub model: String,
-    pub model_name: String,
 }
 
 fn read_tura_config_response() -> TuraConfigResponse {
@@ -440,23 +379,6 @@ fn option_exists(root: &Value, tier: &str, provider_id: &str, model: &str) -> bo
         .any(|option| option.provider == provider_id && option.model == model)
 }
 
-fn gui_config_path() -> PathBuf {
-    std::env::current_dir()
-        .unwrap_or_default()
-        .join("config")
-        .join("gui_config.toml")
-}
-
-fn text_response(status: StatusCode, body: String) -> Response<String> {
-    let mut response = Response::new(body);
-    *response.status_mut() = status;
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("text/plain; charset=utf-8"),
-    );
-    response
-}
-
 // ============================================================================
 // Global Events (SSE)
 // ============================================================================
@@ -608,7 +530,7 @@ mod tests {
     use super::{
         event_matches_session_filter, read_json_config, update_tura_config_tier, TuraConfigUpdate,
     };
-    use crate::api::types::{
+    use crate::contracts::{
         GlobalEvent, Message, MessageRole, MessageUpdatedProperties, SessionStatusProperties,
     };
 
@@ -677,6 +599,8 @@ mod tests {
             properties: SessionStatusProperties {
                 session_id: "session-b".to_string(),
                 status: serde_json::json!({"state": "busy"}),
+                context_tokens: Default::default(),
+                usage: Default::default(),
             },
         };
         let connected = GlobalEvent::ServerConnected {

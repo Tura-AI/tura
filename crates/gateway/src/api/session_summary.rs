@@ -1,4 +1,5 @@
 use super::*;
+use crate::contracts::SummaryResponse;
 
 pub async fn summarize_session(Path(session_id): Path<String>) -> Json<SummaryResponse> {
     let messages = session_store().get_frontend_messages(&session_id);
@@ -50,9 +51,4 @@ pub async fn summarize_session(Path(session_id): Path<String>) -> Json<SummaryRe
     };
 
     Json(SummaryResponse { summary })
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct SummaryResponse {
-    pub summary: String,
 }

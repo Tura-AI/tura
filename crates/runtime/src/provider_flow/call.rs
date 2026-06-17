@@ -110,6 +110,7 @@ pub async fn call_runtime(
         .ok_or_else(|| format!("unknown provider route: {}", input.provider_name))?;
     let override_route = session_model_override_route(tura_settings.as_ref(), configured_route);
     let route_config = override_route.as_ref().unwrap_or(configured_route);
+    let context_window = active_model_context_window(tura_settings.as_ref(), route_config);
 
     let prompt_cache_key = prompt_cache_key(
         route_config,
@@ -132,6 +133,7 @@ pub async fn call_runtime(
         max_tokens: session_max_tokens(input.max_tokens),
         store: Some(false),
         tool_choice: input.tool_choice.clone(),
+        context_window,
         ..Default::default()
     };
     let set_input_start = Instant::now();
@@ -148,6 +150,7 @@ pub async fn call_runtime(
             "max_tokens": call_options.max_tokens,
             "store": call_options.store,
             "tool_choice": call_options.tool_choice.clone(),
+            "context_window": call_options.context_window,
         }
     }));
     profile_timings::log_elapsed(
@@ -204,6 +207,25 @@ pub async fn call_runtime(
     }
 
     Ok(runtime)
+}
+
+fn active_model_context_window(
+    settings: &tura_llm_rust::Settings,
+    route_config: &tura_llm_rust::RouteConfig,
+) -> Option<u64> {
+    let provider = route_config.providers.first()?;
+    let catalog = settings.model_catalog.providers.get(&provider.provider)?;
+    catalog
+        .models
+        .values()
+        .flatten()
+        .find(|entry| {
+            tura_llm_rust::Settings::normalize_model_name(&provider.provider, entry.id())
+                == provider.model
+                || entry.id() == provider.model
+        })?
+        .detail()
+        .map(|detail| u64::from(detail.limit.context))
 }
 
 async fn call_runtime_non_streaming(

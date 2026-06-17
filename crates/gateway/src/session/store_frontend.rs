@@ -109,9 +109,40 @@ pub(crate) fn normalize_command_run_frontend_state(
     state: &mut serde_json::Value,
     metadata: Option<&serde_json::Value>,
 ) {
+    let results_snapshot = command_run_frontend_results_snapshot(state, metadata);
+    if let Some(object) = state.as_object_mut() {
+        if let Some(results) = results_snapshot {
+            upsert_streamed_command_run_results(object, results);
+        }
+    }
     let commands = command_run_frontend_commands(state, metadata);
     if let Some(object) = state.as_object_mut() {
         object.insert("commands".to_string(), serde_json::Value::Array(commands));
+    }
+}
+
+fn upsert_streamed_command_run_results(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    results: Vec<serde_json::Value>,
+) {
+    let results_value = serde_json::Value::Array(results.clone());
+    let stream = object
+        .entry("streamed_command_run_result".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if let Some(stream_object) = stream.as_object_mut() {
+        stream_object.insert("results".to_string(), results_value.clone());
+    }
+
+    let output = object
+        .entry("output".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if let Some(output_object) = output.as_object_mut() {
+        let output_stream = output_object
+            .entry("streamed_command_run_result".to_string())
+            .or_insert_with(|| serde_json::json!({}));
+        if let Some(output_stream_object) = output_stream.as_object_mut() {
+            output_stream_object.insert("results".to_string(), results_value);
+        }
     }
 }
 
@@ -119,8 +150,8 @@ fn command_run_frontend_commands(
     state: &serde_json::Value,
     metadata: Option<&serde_json::Value>,
 ) -> Vec<serde_json::Value> {
-    let specs = command_specs(state, metadata);
-    let results = command_results(state, metadata);
+    let specs = primary_command_specs(state, metadata);
+    let results = primary_command_results(state, metadata);
     let fallback_status = string_field_from_value(state, "status");
     let mut commands = Vec::new();
     let count = specs.len().max(results.len());
@@ -147,66 +178,218 @@ fn command_run_frontend_commands(
     commands
 }
 
-fn command_specs(
+fn command_run_frontend_results_snapshot(
+    state: &serde_json::Value,
+    metadata: Option<&serde_json::Value>,
+) -> Option<Vec<serde_json::Value>> {
+    let specs = primary_command_specs(state, metadata);
+    let results = primary_command_results(state, metadata);
+    if specs.is_empty() && results.is_empty() {
+        return None;
+    }
+    if specs.is_empty() {
+        return Some(results);
+    }
+
+    let fallback_status = string_field_from_value(state, "status");
+    let mut used_results = vec![false; results.len()];
+    let mut snapshot = Vec::new();
+    for (index, spec) in specs.iter().enumerate() {
+        if is_task_status_command(spec) {
+            continue;
+        }
+        let result_index =
+            command_result_index_for_spec(index, spec, &specs, &results, &used_results);
+        let result = result_index.map(|index| {
+            used_results[index] = true;
+            &results[index]
+        });
+        if result.is_some_and(is_task_status_command) {
+            continue;
+        }
+        snapshot.push(command_result_snapshot_item(
+            index,
+            result,
+            Some(spec),
+            fallback_status.as_deref(),
+        )?);
+    }
+
+    for (index, result) in results.iter().enumerate() {
+        if used_results[index] || is_task_status_command(result) {
+            continue;
+        }
+        snapshot.push(command_result_snapshot_item(
+            index,
+            Some(result),
+            None,
+            fallback_status.as_deref(),
+        )?);
+    }
+
+    Some(snapshot)
+}
+
+fn command_result_index_for_spec(
+    spec_index: usize,
+    spec: &serde_json::Value,
+    specs: &[serde_json::Value],
+    results: &[serde_json::Value],
+    used_results: &[bool],
+) -> Option<usize> {
+    if let Some(index) = results.iter().enumerate().find_map(|(index, result)| {
+        if used_results[index] || is_task_status_command(result) {
+            return None;
+        }
+        command_result_matches_spec(result, spec).then_some(index)
+    }) {
+        return Some(index);
+    }
+
+    let result = results.get(spec_index)?;
+    if used_results[spec_index]
+        || is_task_status_command(result)
+        || command_line_from_value(result).is_some()
+    {
+        return None;
+    }
+    if results.len() == specs.len() || spec_index < results.len() {
+        return Some(spec_index);
+    }
+    None
+}
+
+fn command_result_matches_spec(result: &serde_json::Value, spec: &serde_json::Value) -> bool {
+    let Some(result_command) = command_line_from_value(result) else {
+        return false;
+    };
+    command_line_from_value(spec).is_some_and(|spec_command| spec_command == result_command)
+}
+
+fn command_result_snapshot_item(
+    index: usize,
+    result: Option<&serde_json::Value>,
+    spec: Option<&serde_json::Value>,
+    fallback_status: Option<&str>,
+) -> Option<serde_json::Value> {
+    let Some(command) = command_line_from_result_or_spec(result, spec) else {
+        return None;
+    };
+    let Some(name) = command_name_from_result_or_spec(result, spec) else {
+        return None;
+    };
+    let step = command_step_from_result_or_spec(result, spec).unwrap_or(index + 1);
+    let status = command_status_from_result_or_spec(result, spec, fallback_status)
+        .unwrap_or_else(|| "pending".to_string());
+
+    let mut item = result
+        .and_then(record_like)
+        .map(serde_json::Value::Object)
+        .unwrap_or_else(|| serde_json::json!({}));
+    if let Some(object) = item.as_object_mut() {
+        object
+            .entry("step".to_string())
+            .or_insert_with(|| serde_json::json!(step));
+        object
+            .entry("command_type".to_string())
+            .or_insert_with(|| serde_json::json!(name));
+        object
+            .entry("command_line".to_string())
+            .or_insert_with(|| serde_json::json!(command));
+        object.insert("status".to_string(), serde_json::json!(status));
+        object
+            .entry("success".to_string())
+            .or_insert(serde_json::Value::Null);
+    }
+    Some(item)
+}
+
+fn primary_command_specs(
     state: &serde_json::Value,
     metadata: Option<&serde_json::Value>,
 ) -> Vec<serde_json::Value> {
-    let mut values = Vec::new();
-    for root in [Some(state), state.get("metadata"), metadata]
-        .into_iter()
-        .flatten()
-    {
-        collect_command_specs(root, &mut values);
-    }
-    values
-}
-
-fn collect_command_specs(root: &serde_json::Value, values: &mut Vec<serde_json::Value>) {
-    let Some(record) = record_like(root) else {
-        return;
-    };
-    values.extend(array_field(&record, "commands"));
-    if let Some(input) = object_field(&record, "input") {
-        values.extend(array_field(&input, "commands"));
-    }
-    if let Some(output) = object_field(&record, "output") {
-        values.extend(array_field(&output, "commands"));
-        if let Some(stream) = object_field(&output, "streamed_command_run_result") {
-            values.extend(array_field(&stream, "commands"));
+    for specs in [
+        command_specs_from_root(state),
+        state
+            .get("metadata")
+            .map(command_specs_from_root)
+            .unwrap_or_default(),
+        metadata.map(command_specs_from_root).unwrap_or_default(),
+    ] {
+        if !specs.is_empty() {
+            return specs;
         }
     }
-    if let Some(stream) = object_field(&record, "streamed_command_run_result") {
-        values.extend(array_field(&stream, "commands"));
-    }
+    Vec::new()
 }
 
-fn command_results(
+fn command_specs_from_root(root: &serde_json::Value) -> Vec<serde_json::Value> {
+    let Some(record) = record_like(root) else {
+        return Vec::new();
+    };
+    for values in [
+        object_field(&record, "input")
+            .map(|input| array_field(&input, "commands"))
+            .unwrap_or_default(),
+        object_field(&record, "streamed_command_run_result")
+            .map(|stream| array_field(&stream, "commands"))
+            .unwrap_or_default(),
+        object_field(&record, "output")
+            .map(|output| {
+                object_field(&output, "streamed_command_run_result")
+                    .map(|stream| array_field(&stream, "commands"))
+                    .unwrap_or_else(|| array_field(&output, "commands"))
+            })
+            .unwrap_or_default(),
+        array_field(&record, "commands"),
+    ] {
+        if !values.is_empty() {
+            return values;
+        }
+    }
+    Vec::new()
+}
+
+fn primary_command_results(
     state: &serde_json::Value,
     metadata: Option<&serde_json::Value>,
 ) -> Vec<serde_json::Value> {
-    let mut values = Vec::new();
-    for root in [Some(state), state.get("metadata"), metadata]
-        .into_iter()
-        .flatten()
-    {
-        collect_command_results(root, &mut values);
-    }
-    values
-}
-
-fn collect_command_results(root: &serde_json::Value, values: &mut Vec<serde_json::Value>) {
-    let Some(record) = record_like(root) else {
-        return;
-    };
-    if let Some(output) = object_field(&record, "output") {
-        values.extend(array_field(&output, "results"));
-        if let Some(stream) = object_field(&output, "streamed_command_run_result") {
-            values.extend(array_field(&stream, "results"));
+    for results in [
+        command_results_from_root(state),
+        state
+            .get("metadata")
+            .map(command_results_from_root)
+            .unwrap_or_default(),
+        metadata.map(command_results_from_root).unwrap_or_default(),
+    ] {
+        if !results.is_empty() {
+            return results;
         }
     }
-    if let Some(stream) = object_field(&record, "streamed_command_run_result") {
-        values.extend(array_field(&stream, "results"));
+    Vec::new()
+}
+
+fn command_results_from_root(root: &serde_json::Value) -> Vec<serde_json::Value> {
+    let Some(record) = record_like(root) else {
+        return Vec::new();
+    };
+    for values in [
+        object_field(&record, "streamed_command_run_result")
+            .map(|stream| array_field(&stream, "results"))
+            .unwrap_or_default(),
+        object_field(&record, "output")
+            .map(|output| {
+                object_field(&output, "streamed_command_run_result")
+                    .map(|stream| array_field(&stream, "results"))
+                    .unwrap_or_else(|| array_field(&output, "results"))
+            })
+            .unwrap_or_default(),
+    ] {
+        if !values.is_empty() {
+            return values;
+        }
     }
+    Vec::new()
 }
 
 fn command_line_from_result_or_spec(
@@ -455,5 +638,123 @@ fn sanitize_frontend_value(value: serde_json::Value) -> serde_json::Value {
             serde_json::Value::Array(items.into_iter().map(sanitize_frontend_value).collect())
         }
         value => value,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_command_run_frontend_state;
+    use serde_json::json;
+
+    #[test]
+    fn command_run_frontend_state_keeps_running_commands_in_partial_updates() {
+        let mut state = json!({
+            "status": "running",
+            "input": {
+                "commands": [
+                    {
+                        "step": 1,
+                        "command": "shell_command",
+                        "command_line": "npm test -- --runInBand"
+                    },
+                    {
+                        "step": 1,
+                        "command": "shell_command",
+                        "command_line": "npm run e2e"
+                    }
+                ]
+            },
+            "output": {
+                "streamed_command_run_result": {
+                    "results": [{
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "success": true,
+                        "output": "unit tests passed"
+                    }]
+                }
+            },
+            "streamed_command_run_result": {
+                "results": [{
+                    "step": 1,
+                    "command_type": "shell_command",
+                    "success": true,
+                    "output": "unit tests passed"
+                }]
+            }
+        });
+
+        normalize_command_run_frontend_state(&mut state, None);
+
+        let results = state
+            .pointer("/streamed_command_run_result/results")
+            .and_then(serde_json::Value::as_array)
+            .expect("normalized command_run results should be present");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["command_line"], "npm test -- --runInBand");
+        assert_eq!(results[0]["status"], "completed");
+        assert_eq!(results[0]["success"], true);
+        assert_eq!(results[1]["command_line"], "npm run e2e");
+        assert_eq!(results[1]["status"], "running");
+        assert!(results[1]["success"].is_null());
+
+        let output_results = state
+            .pointer("/output/streamed_command_run_result/results")
+            .and_then(serde_json::Value::as_array)
+            .expect("output stream results should mirror normalized results");
+        assert_eq!(output_results, results);
+    }
+
+    #[test]
+    fn command_run_frontend_state_preserves_command_order_for_identified_results() {
+        let mut state = json!({
+            "status": "running",
+            "input": {
+                "commands": [
+                    {
+                        "step": 1,
+                        "command": "shell_command",
+                        "command_line": "npm test -- --runInBand"
+                    },
+                    {
+                        "step": 1,
+                        "command": "shell_command",
+                        "command_line": "npm run e2e"
+                    }
+                ]
+            },
+            "streamed_command_run_result": {
+                "results": [{
+                    "step": 1,
+                    "command_type": "shell_command",
+                    "command_line": "npm run e2e",
+                    "success": true,
+                    "output": "e2e passed"
+                }]
+            }
+        });
+
+        normalize_command_run_frontend_state(&mut state, None);
+
+        let results = state
+            .pointer("/streamed_command_run_result/results")
+            .and_then(serde_json::Value::as_array)
+            .expect("normalized command_run results should be present");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["command_line"], "npm test -- --runInBand");
+        assert_eq!(results[0]["status"], "running");
+        assert!(results[0]["success"].is_null());
+        assert_eq!(results[1]["command_line"], "npm run e2e");
+        assert_eq!(results[1]["status"], "completed");
+        assert_eq!(results[1]["success"], true);
+
+        let commands = state["commands"]
+            .as_array()
+            .expect("commands should be normalized from the full snapshot");
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0]["command"], "npm test -- --runInBand");
+        assert_eq!(commands[0]["status"], "running");
+        assert_eq!(commands[1]["command"], "npm run e2e");
+        assert_eq!(commands[1]["status"], "completed");
     }
 }

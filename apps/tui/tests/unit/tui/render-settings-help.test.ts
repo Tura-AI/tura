@@ -52,23 +52,23 @@ test("settings renders with help-style section rails and no command hint copy", 
     return text.includes("───") && text.includes("Session Settings");
   });
   assert.ok(ansiTitleIndex >= 0);
-  assert.doesNotMatch(ansiLines[ansiTitleIndex - 1] ?? "", /\x1b\[48;2;16;19;20m/);
+  assert.doesNotMatch(ansiLines[ansiTitleIndex - 1] ?? "", /\x1b\[48;2;20;23;24m/);
   assert.doesNotMatch(stripAnsi(ansi), /^─{8,}$/mu);
   assert.match(
     ansi,
-    /^\x1b\[48;2;16;19;20m\x1b\[38;2;103;116;111m▏\x1b\[0m\x1b\[48;2;16;19;20m \S/m,
+    /^\x1b\[48;2;20;23;24m\x1b\[38;2;103;116;111m▏\x1b\[0m\x1b\[48;2;20;23;24m \S/m,
   );
   assert.match(ansi, /Enter opens; Esc returns to chat/);
-  assert.match(ansi, /^\x1b\[48;2;16;19;20m\x1b\[38;2;103;116;111m▏\x1b\[0m.*> Model/m);
-  assert.match(ansi, /Expand executed commands/);
+  assert.match(ansi, /^\x1b\[48;2;20;23;24m\x1b\[38;2;103;116;111m▏\x1b\[0m.*> Model/m);
+  assert.doesNotMatch(ansi, /Expand executed commands/);
   const ansiText = stripAnsi(ansi);
   assert.match(ansiText, /Language\s+en/);
-  assert.match(ansiText, /Session type\s+coding/);
-  assert.match(ansiText, /Validator\s+true/);
+  assert.doesNotMatch(ansiText, /Session type\s+coding/);
+  assert.doesNotMatch(ansiText, /Validator\s+true/);
   assert.doesNotMatch(ansi, /Context messages/);
   assert.doesNotMatch(ansi, /\/config get|\/config set|\/model provider\/model/);
   assert.doesNotMatch(ansi, /\/model <provider\/model>|\/commands/);
-  assert.doesNotMatch(ansi, /Enter to send/);
+  assert.doesNotMatch(ansi, /Enter: send/);
   assert.doesNotMatch(ansi, /system|assistant|user/);
 
   const rich = withTerminalSize(72, 20, () => render(state, richCapabilities()));
@@ -80,20 +80,15 @@ test("settings renders with help-style section rails and no command hint copy", 
     return text.includes("───") && text.includes("Session Settings");
   });
   assert.ok(richTitleIndex >= 0);
-  assert.doesNotMatch(richLines[richTitleIndex - 1] ?? "", /\x1b\[48;2;16;19;20m/);
+  assert.doesNotMatch(richLines[richTitleIndex - 1] ?? "", /\x1b\[48;2;20;23;24m/);
   assert.doesNotMatch(stripAnsi(rich), /^─{8,}$/mu);
-  assert.match(rich, /\x1b\[48;2;16;19;20m/);
+  assert.match(rich, /\x1b\[48;2;20;23;24m/);
   assert.match(
     rich,
-    /^\x1b\[48;2;16;19;20m\x1b\[38;2;103;116;111m▏\x1b\[0m\x1b\[48;2;16;19;20m .*Session Settings/m,
+    /^\x1b\[48;2;20;23;24m\x1b\[38;2;103;116;111m▏\x1b\[0m\x1b\[48;2;20;23;24m .*Session Settings/m,
   );
   assert.match(rich, /\x1b\[38;2;64;224;208m> Model\s+\x1b\[0m.*gpt-5\.5/);
-  const richSettingInstructionLine = richLines.find((line) =>
-    stripAnsi(line).includes("Expand executed commands"),
-  );
-  assert.ok(richSettingInstructionLine);
-  assert.match(richSettingInstructionLine, /\x1b\[38;2;64;224;208m {2}Expand executed commands/);
-  assert.match(richSettingInstructionLine, /false/);
+  assert.doesNotMatch(rich, /Expand executed commands/);
   const richLanguageLine = richLines.find((line) => stripAnsi(line).includes("Language"));
   assert.ok(richLanguageLine);
   assert.match(stripAnsi(richLanguageLine), /Language\s+en/);
@@ -102,7 +97,7 @@ test("settings renders with help-style section rails and no command hint copy", 
   assert.match(stripAnsi(richSettingModelLine), /Model/);
   assertWideMenuGap(richSettingModelLine, "Model", "gpt-5.5", 12);
   assert.doesNotMatch(rich, /\/config get|\/config set|\/model provider\/model/);
-  assert.doesNotMatch(rich, /\/model <provider\/model>|\/commands|Enter to send/);
+  assert.doesNotMatch(rich, /\/model <provider\/model>|\/commands|Enter: send/);
   assertOpencodePalette(rich);
 });
 
@@ -208,6 +203,66 @@ test("settings provider menus show status and auth actions without replacing des
   assert.match(stripAnsi(authOutput), /Log out\s+authenticated/);
 });
 
+test("settings detail pagination names the active setting page", () => {
+  const session = {
+    id: "sess-setting-page-name",
+    name: "Setting Page Name",
+    directory: "C:/repo",
+    created_at: 1,
+    updated_at: 1,
+    model: "openai/gpt-5",
+    agent: "build",
+    session_type: "coding",
+    auto_session_name: false,
+    kill_processes_on_start: false,
+    validator_enabled: false,
+    force_planning: false,
+    model_acceleration_enabled: true,
+    disable_permission_restrictions: false,
+    status: "idle" as const,
+    message_count: 0,
+  };
+  const base = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [],
+    permissions: [],
+    providers: {
+      all: [
+        {
+          id: "openai",
+          name: "OpenAI",
+          source: "builtin",
+          options: { domains: ["llm"] },
+          models: {
+            "gpt-5": { id: "gpt-5", name: "GPT-5" },
+            "gpt-5-mini": { id: "gpt-5-mini", name: "GPT-5 mini" },
+            "gpt-5-nano": { id: "gpt-5-nano", name: "GPT-5 nano" },
+            "gpt-5-pro": { id: "gpt-5-pro", name: "GPT-5 pro" },
+          },
+        },
+      ],
+      default: {},
+      connected: ["openai"],
+      enums: providerEnums,
+    },
+    sessions: [session],
+    sessionConfig: {
+      model: "openai/gpt-5",
+      active_provider: "openai",
+      active_agent: "build",
+    },
+  });
+  const state = reducer(reducer(base, { type: "toggle-settings" }), {
+    type: "open-setting-detail",
+    detail: "model",
+  });
+
+  const output = withTerminalSize(82, 8, () => render(state, richCapabilities()));
+
+  assert.match(stripAnsi(output), /Model setting page 1\/4/);
+});
+
 test("help renders as a system dialogue instead of a separate command panel", () => {
   const session = { id: "sess-help", title: "Help Session", status: "idle" as const };
   const state = reducer(
@@ -243,7 +298,7 @@ test("help renders as a system dialogue instead of a separate command panel", ()
     return text.includes("───") && text.includes("Help");
   });
   assert.ok(ansiTitleIndex >= 0);
-  assert.doesNotMatch(ansiLines[ansiTitleIndex - 1] ?? "", /\x1b\[48;2;16;19;20m/);
+  assert.doesNotMatch(ansiLines[ansiTitleIndex - 1] ?? "", /\x1b\[48;2;20;23;24m/);
   assert.doesNotMatch(stripAnsi(ansi), /^─{8,}$/mu);
   assert.doesNotMatch(ansi, /◇.*system/u);
   assert.doesNotMatch(ansi, /system/);
@@ -259,12 +314,12 @@ test("help renders as a system dialogue instead of a separate command panel", ()
     return text.includes("───") && text.includes("Help");
   });
   assert.ok(richTitleIndex >= 0);
-  assert.doesNotMatch(richLines[richTitleIndex - 1] ?? "", /\x1b\[48;2;16;19;20m/);
+  assert.doesNotMatch(richLines[richTitleIndex - 1] ?? "", /\x1b\[48;2;20;23;24m/);
   assert.match(
     rich,
-    /^\x1b\[48;2;16;19;20m\x1b\[38;2;103;116;111m▏\x1b\[0m\x1b\[48;2;16;19;20m .*Help/m,
+    /^\x1b\[48;2;20;23;24m\x1b\[38;2;103;116;111m▏\x1b\[0m\x1b\[48;2;20;23;24m .*Help/m,
   );
-  assert.match(rich, /^\x1b\[48;2;16;19;20m\x1b\[38;2;103;116;111m▏\x1b\[0m.*\/chat/m);
+  assert.match(rich, /^\x1b\[48;2;20;23;24m\x1b\[38;2;103;116;111m▏\x1b\[0m.*\/chat/m);
   assert.doesNotMatch(rich, /system/);
   assert.match(rich, /\x1b\[38;2;64;224;208m\/chat/);
   assert.match(rich, /\x1b\[38;2;103;116;111mclose panels/);
@@ -388,11 +443,11 @@ test("render keeps a full assistant list visible alongside command details", () 
   const commandLine = expanded.split("\n").find((line) => stripAnsi(line).includes("Commands"));
   assert.ok(commandLine);
   assert.equal(stripAnsi(commandLine), "◇ Commands");
-  assert.doesNotMatch(commandLine, /\x1b\[48;2;16;19;20m/);
+  assert.doesNotMatch(commandLine, /\x1b\[48;2;20;23;24m/);
   const npmTestLine = expanded.split("\n").find((line) => stripAnsi(line).includes("$ npm test"));
   assert.ok(npmTestLine);
   assert.match(stripAnsi(npmTestLine), /^└─ ✓ #1 shell_command completed\s+\$ npm test/u);
-  assert.doesNotMatch(npmTestLine, /\x1b\[48;2;16;19;20m/);
+  assert.doesNotMatch(npmTestLine, /\x1b\[48;2;20;23;24m/);
 
   const collapsed = render(
     reducer(state, {

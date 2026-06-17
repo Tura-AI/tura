@@ -1,16 +1,14 @@
 import type { Message, MessagePart, Session } from "../types/session.js";
 import { normalizeEvent } from "../gateway/events.js";
 import { sameDirectory } from "../gateway/directory.js";
-import { partMessageID, partSessionID, sessionStatusText } from "../types/session.js";
+import { partMessageID, sessionStatusText } from "../types/session.js";
 import type { AppAction, AppState, LiveStream } from "./reducer/state.js";
 import {
   boundedSessionIndex,
   modelCount,
-  readString,
   seedSeenSessionCounts,
   selectedPersonaIndex,
   selectedSessionIndex,
-  selectedSettingOptionIndex,
   SESSION_CREATE_ENTRY_COUNT,
   settingOptionCount,
   settingsEntryCount,
@@ -28,7 +26,7 @@ import {
   messageHasRunningPart,
   mergeStableMessagesIgnoringLive,
   messagePreview,
-  normalizeMessagesForDisplay,
+  prepareMessagesForDisplay,
   refreshStateAfterBackgroundMessage,
   refreshStateAfterMessages,
   updatePreviewForMessages,
@@ -53,7 +51,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
     const sessionID = action.session.id;
     const sessionChanged = Boolean(state.session && state.session.id !== sessionID);
     const nextSessions = action.sessions ?? state.sessions;
-    const hydratedMessages = normalizeMessagesForDisplay(action.messages);
+    const hydratedMessages = prepareMessagesForDisplay(action.messages);
     const merged = sessionChanged
       ? { messages: hydratedMessages, liveStreams: {} }
       : appendNewStableMessagesIgnoringLive(
@@ -116,7 +114,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
     if (action.event.payload?.type === "message.updated") {
       const message = (action.event.payload.properties as { info?: Message } | undefined)?.info;
       if (!message) return state;
-      const sessionID = normalized.sessionID || message.sessionID || message.session_id;
+      const sessionID = normalized.sessionID || message.sessionID;
       if (state.session && sessionID && sessionID !== state.session.id) {
         const preview = messagePreview(message) ?? state.sessionPreviews[sessionID] ?? "";
         return {
@@ -173,7 +171,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
     if (action.event.payload?.type === "message.part.updated") {
       const part = (action.event.payload.properties as { part?: MessagePart } | undefined)?.part;
       if (!part) return state;
-      const sessionID = normalized.sessionID ?? partSessionID(part);
+      const sessionID = normalized.sessionID ?? part.sessionID;
       if (state.session && sessionID !== state.session.id) return state;
       const updated = upsertPartIgnoringLive(state.messages, state.liveStreams, sessionID, part);
       return {
@@ -189,16 +187,19 @@ export function reducer(state: AppState, action: AppAction): AppState {
       };
     }
     if (action.event.payload?.type === "message.part.delta") {
-      const properties = action.event.payload.properties as Record<string, unknown> | undefined;
+      const properties = action.event.payload.properties as
+        | {
+            messageID?: string;
+            partID?: string;
+            field?: string;
+            delta?: string;
+          }
+        | undefined;
       const sessionID = normalized.sessionID;
       if (state.session && sessionID !== state.session.id) return state;
       const activeSession = Boolean(
         state.session && (!sessionID || state.session.id === sessionID),
       );
-      const messageID = readString(properties, "message_id") ?? readString(properties, "messageID");
-      const partID = readString(properties, "part_id") ?? readString(properties, "partID");
-      const field = readString(properties, "field");
-      const delta = readString(properties, "delta");
       return {
         ...state,
         status: activeSession ? "busy" : state.status,
@@ -212,33 +213,40 @@ export function reducer(state: AppState, action: AppAction): AppState {
         liveStreams: applyPartDelta(
           state.liveStreams,
           state.messages,
-          messageID,
-          partID,
-          field,
-          delta,
+          properties?.messageID,
+          properties?.partID,
+          properties?.field,
+          properties?.delta,
           sessionID,
         ),
       };
     }
     if (action.event.payload?.type === "message.removed") {
-      const properties = action.event.payload.properties as { message_id?: string } | undefined;
+      const properties = action.event.payload.properties as { messageID?: string } | undefined;
       if (state.session && normalized.sessionID && normalized.sessionID !== state.session.id)
         return state;
       return {
         ...state,
-        messages: state.messages.filter((message) => message.id !== properties?.message_id),
+        messages: state.messages.filter((message) => message.id !== properties?.messageID),
         liveStreams: clearLiveStreamsForMessageID(
           state.liveStreams,
           normalized.sessionID,
-          properties?.message_id,
+          properties?.messageID,
         ),
         refreshState: invalidateRefreshState(state.refreshState, normalized.sessionID),
       };
     }
     if (action.event.payload?.type === "session.status") {
-      const properties = action.event.payload.properties as Record<string, unknown> | undefined;
+      const properties = action.event.payload.properties as
+        | {
+            sessionID?: string;
+            status?: unknown;
+            context_tokens?: Session["context_tokens"];
+            usage?: Session["usage"];
+          }
+        | undefined;
       const status = sessionStatusText(properties?.status);
-      const sessionID = readString(properties, "sessionID") ?? readString(properties, "session_id");
+      const sessionID = properties?.sessionID;
       const activeSession = Boolean(
         state.session && (!sessionID || state.session.id === sessionID),
       );
@@ -253,10 +261,23 @@ export function reducer(state: AppState, action: AppAction): AppState {
         status: state.session?.id === sessionID || !sessionID ? status : state.status,
         sessions: sessionID
           ? state.sessions.map((session) =>
-              session.id === sessionID ? { ...session, status } : session,
+              session.id === sessionID
+                ? sessionWithUsage(
+                    { ...session, status },
+                    properties?.usage,
+                    properties?.context_tokens,
+                  )
+                : session,
             )
           : state.sessions,
-        session: activeSession && state.session ? { ...state.session, status } : state.session,
+        session:
+          activeSession && state.session
+            ? sessionWithUsage(
+                { ...state.session, status },
+                properties?.usage,
+                properties?.context_tokens,
+              )
+            : state.session,
         refreshState: activeSession
           ? refreshStateAfterMessages(
               state.refreshState,
@@ -284,8 +305,8 @@ export function reducer(state: AppState, action: AppAction): AppState {
       if (session) return { ...state, sessions: upsertSession(state.sessions, session) };
     }
     if (action.event.payload?.type === "session.deleted") {
-      const properties = action.event.payload.properties as Record<string, unknown> | undefined;
-      const sessionID = readString(properties, "sessionID") ?? readString(properties, "session_id");
+      const properties = action.event.payload.properties as { sessionID?: string } | undefined;
+      const sessionID = properties?.sessionID;
       if (sessionID)
         return { ...state, sessions: state.sessions.filter((session) => session.id !== sessionID) };
     }
@@ -317,7 +338,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
   }
   if (action.type === "messages-incremental") {
     const sessionID = action.sessionID;
-    const incoming = normalizeMessagesForDisplay(action.messages);
+    const incoming = prepareMessagesForDisplay(action.messages);
     if (state.session?.id !== sessionID) {
       return {
         ...state,
@@ -466,7 +487,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
       settingDetail: action.detail,
       selectedProviderID: action.providerID ?? state.selectedProviderID,
       settingInput: undefined,
-      selectedSettingOptionIndex: selectedSettingOptionIndex(state, action.detail),
+      selectedSettingOptionIndex: 0,
       sessionsOpen: false,
       modelsOpen: false,
       authOpen: false,
@@ -570,6 +591,21 @@ export function reducer(state: AppState, action: AppAction): AppState {
       help: false,
     };
   return state;
+}
+
+function sessionWithUsage(
+  session: Session,
+  usage: Session["usage"] | undefined,
+  contextTokens: Session["context_tokens"] | undefined,
+): Session {
+  const usageContextTokens = usage?.context_tokens ?? undefined;
+  const nextContextTokens = usageContextTokens ?? contextTokens;
+  if (!usage && !nextContextTokens) return session;
+  return {
+    ...session,
+    ...(usage ? { usage } : {}),
+    ...(nextContextTokens ? { context_tokens: nextContextTokens } : {}),
+  };
 }
 
 function closedPanelsState(): Pick<

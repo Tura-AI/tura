@@ -39,9 +39,9 @@ test("transcript cache keeps durable gateway text while live excludes chrome and
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: session.id,
-          message_id: "msg-live-delta",
-          part_id: "part-live-delta",
+          sessionID: session.id,
+          messageID: "msg-live-delta",
+          partID: "part-live-delta",
           field: "text",
           delta: "LIVE_DELTA_MARKER",
         },
@@ -54,7 +54,7 @@ test("transcript cache keeps durable gateway text while live excludes chrome and
   assert.doesNotMatch(cachedHistory, /LIVE_DELTA_MARKER/);
   assert.doesNotMatch(cachedHistory, /thinking/i);
   assert.doesNotMatch(cachedHistory, /draft input/);
-  assert.doesNotMatch(cachedHistory, /Enter to send|Enter to send/);
+  assert.doesNotMatch(cachedHistory, /Enter: send|Enter: send/);
   assert.doesNotMatch(cachedHistory, /tokens/);
 
   const liveRows = stripAnsi(transcriptLiveLines(state, 80).join("\n"));
@@ -127,9 +127,9 @@ test("live assistant text keeps event order before a later user message", () => 
         payload: {
           type: "message.part.delta",
           properties: {
-            session_id: session.id,
-            message_id: "msg-live-before-next-user",
-            part_id: "part-live-before-next-user",
+            sessionID: session.id,
+            messageID: "msg-live-before-next-user",
+            partID: "part-live-before-next-user",
             field: "text",
             delta: "LIVE_BEFORE_NEXT_USER",
           },
@@ -194,9 +194,9 @@ test("runtime message stays live while its command is still running", () => {
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: session.id,
-          message_id: "runtime-live.message",
-          part_id: "runtime-live.message",
+          sessionID: session.id,
+          messageID: "runtime-live.message",
+          partID: "runtime-live.message",
           field: "text",
           delta: "I will run the checks.",
         },
@@ -211,7 +211,7 @@ test("runtime message stays live while its command is still running", () => {
       payload: {
         type: "message.part.updated",
         properties: {
-          session_id: session.id,
+          sessionID: session.id,
           part: {
             id: "runtime-live.tool.command_run",
             sessionID: session.id,
@@ -241,7 +241,7 @@ test("runtime message stays live while its command is still running", () => {
       payload: {
         type: "message.updated",
         properties: {
-          session_id: session.id,
+          sessionID: session.id,
           info: {
             id: "runtime-live.message",
             sessionID: session.id,
@@ -276,7 +276,7 @@ test("runtime message stays live while its command is still running", () => {
       payload: {
         type: "message.updated",
         properties: {
-          session_id: session.id,
+          sessionID: session.id,
           info: {
             id: "runtime-live.message",
             sessionID: session.id,
@@ -393,9 +393,9 @@ test("live transcript rows append below the complete history, independent of vie
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: session.id,
-          message_id: "msg-live-tail",
-          part_id: "part-live-tail",
+          sessionID: session.id,
+          messageID: "msg-live-tail",
+          partID: "part-live-tail",
           field: "text",
           delta: "LIVE_STREAM_APPEND_MARKER",
         },
@@ -461,8 +461,8 @@ test("render prioritizes current content over overflow marker in very short term
   const plain = stripAnsi(output);
   assertLineWidths(output, 82);
   assert.match(plain, /CURRENT RESULT READY/);
-  assert.match(plain, /Enter to send/);
-  assert.ok(plain.split("\n").some((line) => line.includes("tokens")));
+  assert.match(plain, /Enter: send/);
+  assert.ok(plain.split("\n").some((line) => line.trim() === "tura"));
   assert.doesNotMatch(plain, /earlier output hidden|earlier output hidden/u);
 });
 

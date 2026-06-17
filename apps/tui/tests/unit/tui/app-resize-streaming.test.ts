@@ -7,7 +7,7 @@ import { plainCapabilities, richCapabilities } from "../../../src/tui/capabiliti
 import { clear as terminalClear } from "../../../src/tui/render-terminal.js";
 import {
   activeSession,
-  assertMutableRegionClearedBefore,
+  assertMutableRegionRepaintedWithoutClearBefore,
   captureDrawWrites,
   lastAbsoluteCursorBefore,
   regexCount,
@@ -130,9 +130,9 @@ test("draw rewrites streaming chat updates without clearing terminal scrollback"
           payload: {
             type: "message.part.delta",
             properties: {
-              session_id: "sess-1",
-              message_id: "msg-plain-stream",
-              part_id: "part-plain-stream",
+              sessionID: "sess-1",
+              messageID: "msg-plain-stream",
+              partID: "part-plain-stream",
               field: "text",
               delta: "streaming",
             },
@@ -143,7 +143,7 @@ test("draw rewrites streaming chat updates without clearing terminal scrollback"
       previous,
     );
     assert.ok(previousLiveRegion);
-    assertMutableRegionClearedBefore(writes.join(""), previousLiveRegion.row, "streaming");
+    assertMutableRegionRepaintedWithoutClearBefore(writes.join(""), "streaming");
   });
   const output = writes.join("");
 
@@ -151,7 +151,7 @@ test("draw rewrites streaming chat updates without clearing terminal scrollback"
   assert.doesNotMatch(output, /\x1b\[1;1H\x1b\[2K/);
   assert.doesNotMatch(output, /plain transcript/);
   assert.match(output, /^\x1b\[\?25l/);
-  assert.match(output, /streaming[\s\S]*Active[\s\S]*Enter to send/);
+  assert.match(output, /streaming[\s\S]*Active[\s\S]*Enter: send/);
   assert.match(output, /\r\n/, "streaming redraw may append reservation rows");
   assert.doesNotMatch(output, /\x1b\[999;1H/);
   assert.doesNotMatch(output, /\x1b7|\x1b8/);
@@ -176,9 +176,9 @@ test("draw keeps every rendered live row mutable while appending blank reservati
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "msg-line-commit",
-          part_id: "part-line-commit",
+          sessionID: "sess-1",
+          messageID: "msg-line-commit",
+          partID: "part-line-commit",
           field: "text",
           delta: `LIVE_WRAP_START ${"a".repeat(55)}`,
         },
@@ -196,9 +196,9 @@ test("draw keeps every rendered live row mutable while appending blank reservati
         payload: {
           type: "message.part.delta",
           properties: {
-            session_id: "sess-1",
-            message_id: "msg-line-commit",
-            part_id: "part-line-commit",
+            sessionID: "sess-1",
+            messageID: "msg-line-commit",
+            partID: "part-line-commit",
             field: "text",
             delta: " LIVE_WRAP_SECOND",
           },
@@ -208,7 +208,6 @@ test("draw keeps every rendered live row mutable while appending blank reservati
     draw(state, plainCapabilities(), previous);
   });
   const output = writes.join("");
-  const clearIndex = output.search(liveRegionClearPattern(0));
   const blankAppendIndex = output.indexOf("\x1b[u\r\n");
   const firstLiveIndex = output.indexOf("LIVE_WRAP_START");
   const pendingIndex = output.indexOf("LIVE_WRAP_SECOND");
@@ -217,13 +216,12 @@ test("draw keeps every rendered live row mutable while appending blank reservati
   const pendingAnchor = lastAbsoluteCursorBefore(output, pendingIndex);
 
   assert.equal(output.includes(terminalClear), false);
-  assert.ok(clearIndex >= 0, "old live/chrome reservation must be cleared first");
-  assert.ok(blankAppendIndex > clearIndex, "growing live/chrome must append blank rows");
+  assert.doesNotMatch(output, /\x1b\[\d+;1H\x1b\[J/u);
+  assert.ok(blankAppendIndex >= 0, "growing live/chrome must append blank rows");
   assert.ok(
     blankAppendIndex < firstLiveIndex,
     "blank reservation rows must be appended before repainting live overlay",
   );
-  assert.ok(firstLiveIndex > clearIndex, "the first live row must be redrawn after clearing");
   assert.ok(pendingIndex > firstLiveIndex, "the pending live row must render after earlier live");
   assert.ok(firstLiveAnchor, "earlier live text must be painted with an absolute overlay cursor");
   assert.ok(pendingAnchor, "pending live text must be painted with an absolute overlay cursor");
@@ -250,9 +248,9 @@ test("draw keeps a single active live content row mutable until the next content
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "msg-partial-live-row",
-          part_id: "part-partial-live-row",
+          sessionID: "sess-1",
+          messageID: "msg-partial-live-row",
+          partID: "part-partial-live-row",
           field: "text",
           delta: "PARTIAL_LIVE_ROW",
         },
@@ -317,11 +315,10 @@ test("draw keeps only the active rendered command row mutable", () => {
   });
   const output = writes.join("");
   const commandIndex = output.indexOf("npm run slow");
-  const clearIndex = output.search(liveRegionClearPattern(0));
 
   assert.equal(output.includes(terminalClear), false);
-  assert.ok(clearIndex >= 0, "running command redraw must clear only the mutable region");
-  assert.ok(commandIndex > clearIndex, "running command must be redrawn as mutable live output");
+  assert.doesNotMatch(output, /\x1b\[\d+;1H\x1b\[J/u);
+  assert.ok(commandIndex >= 0, "running command must be redrawn as mutable live output");
   assert.equal(
     output.includes("\x1b[u\r\n"),
     false,
@@ -345,9 +342,9 @@ test("draw keeps message text mutable when a running command starts", () => {
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "msg-command-gap",
-          part_id: "part-command-gap-text",
+          sessionID: "sess-1",
+          messageID: "msg-command-gap",
+          partID: "part-command-gap-text",
           field: "text",
           delta: "COMMAND_GAP_PREFACE",
         },
@@ -398,15 +395,14 @@ test("draw keeps message text mutable when a running command starts", () => {
     draw(commandState, plainCapabilities(), previous);
   });
   const output = writes.join("");
-  const clearIndex = output.search(liveRegionClearPattern(0));
   const markerIndex = output.indexOf("COMMAND_GAP_PREFACE");
   const commandIndex = output.indexOf("npm run command-gap");
   const markerAnchor = lastAbsoluteCursorBefore(output, markerIndex);
   const commandAnchor = lastAbsoluteCursorBefore(output, commandIndex);
 
   assert.equal(output.includes(terminalClear), false);
-  assert.ok(clearIndex >= 0, "old live/chrome reservation must be cleared first");
-  assert.ok(markerIndex > clearIndex, "message text must be redrawn after clearing");
+  assert.doesNotMatch(output, /\x1b\[\d+;1H\x1b\[J/u);
+  assert.ok(markerIndex >= 0, "message text must be redrawn");
   assert.ok(commandIndex > markerIndex, "running command must render after message text");
   assert.ok(markerAnchor, "message text must stay in the mutable overlay");
   assert.ok(commandAnchor, "running command must stay in the mutable overlay");
@@ -479,15 +475,14 @@ test("draw keeps a running command row mutable when a following live row starts"
     draw(followedState, richCapabilities(), previous);
   });
   const output = writes.join("");
-  const clearIndex = output.search(liveRegionClearPattern(0));
   const commandIndex = output.indexOf("npm run long-lived");
   const followingIndex = output.indexOf("FOLLOWING_ASSISTANT_CONTENT");
   const commandAnchor = lastAbsoluteCursorBefore(output, commandIndex);
   const followingAnchor = lastAbsoluteCursorBefore(output, followingIndex);
 
   assert.equal(output.includes(terminalClear), false);
-  assert.ok(clearIndex >= 0, "old live/chrome reservation must be cleared first");
-  assert.ok(commandIndex > clearIndex, "running command must render after the mutable clear");
+  assert.doesNotMatch(output, /\x1b\[\d+;1H\x1b\[J/u);
+  assert.ok(commandIndex >= 0, "running command must render");
   assert.ok(followingIndex > commandIndex, "following content must render after the command block");
   assert.ok(commandAnchor, "running command must be painted as mutable overlay");
   assert.ok(followingAnchor, "following content must be painted as mutable overlay");
@@ -624,9 +619,9 @@ test("draw promotes finalized live as new cache without repainting fixed cache",
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "msg-live-assistant",
-          part_id: "part-live-assistant",
+          sessionID: "sess-1",
+          messageID: "msg-live-assistant",
+          partID: "part-live-assistant",
           field: "text",
           delta: "LIVE_STREAM_MARKER",
         },
@@ -662,7 +657,7 @@ test("draw promotes finalized live as new cache without repainting fixed cache",
     });
     draw(finalizedState, richCapabilities(), previous);
     assert.ok(previousLiveRegion);
-    assertMutableRegionClearedBefore(writes.join(""), previousLiveRegion.row, "LIVE_STREAM_MARKER");
+    assertMutableRegionRepaintedWithoutClearBefore(writes.join(""), "LIVE_STREAM_MARKER");
   });
   const output = writes.join("");
   const finalizedIndex = output.indexOf("LIVE_STREAM_MARKER");
@@ -673,10 +668,5 @@ test("draw promotes finalized live as new cache without repainting fixed cache",
   assert.doesNotMatch(output, /LIVE_USER_MARKER/);
   assert.ok(finalizedIndex >= 0, "finalized live text must be written as new cache");
   assert.ok(chromeIndex > finalizedIndex, "chrome must render after finalized cache text");
-  assert.match(output, /Active[\s\S]*Enter to send/);
+  assert.match(output, /Active[\s\S]*Enter: send/);
 });
-
-function liveRegionClearPattern(cursorRow: number): RegExp {
-  void cursorRow;
-  return /\x1b\[\d+;1H\x1b\[J/u;
-}

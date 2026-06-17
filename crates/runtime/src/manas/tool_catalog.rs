@@ -448,7 +448,7 @@ fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
         "- Avoid embedding long generated source code or complex quoting directly in shell command lines; for complex logic, invoke a script/interpreter from the active shell rather than encoding the logic in shell syntax.",
         "- Verification: run the relevant test or build command after edits in the same command_run only when the verification command is already known.",
         "- Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.",
-        "- Context compaction: after a meaningful phase completes, or when context is near 200,000 tokens and feels crowded, put `compact_context` as the final command in the highest step with a concise handoff summary for the next turn.",
+        "- Context compaction: after a meaningful phase completes, or when context is near the active context limit and feels crowded, put `compact_context` as the final command in the highest step with a concise handoff summary for the next turn.",
         "- Example investigation batch: independent `rg --files`, targeted `rg -n`, and candidate file reads all use step 1.",
         "- Example repair batch: step 1 `apply_patch` across related files, step 2 run the known build command, step 3 run multiple known test commands in the same step.",
         "- Example frontend batch: step 1 write or reuse the focused frontend test script, step 2 run that script and inspect generated textual outputs.",

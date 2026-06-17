@@ -59,7 +59,7 @@ export interface AppState {
 }
 
 export interface LiveStream {
-  sessionID?: string;
+  sessionID: string;
   messageID: string;
   partID: string;
   field: "text" | "content";

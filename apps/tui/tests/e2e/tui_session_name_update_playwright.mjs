@@ -97,7 +97,7 @@ async function startGateway() {
     };
     const event = {
       directory: workspace,
-      payload: { type: "session.updated", properties: { session_id: info.id, info } },
+      payload: { type: "session.updated", properties: { sessionID: info.id, info } },
     };
     for (const client of clients) client.write(`data: ${JSON.stringify(event)}\n\n`);
   };

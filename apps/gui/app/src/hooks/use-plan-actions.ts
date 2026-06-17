@@ -259,7 +259,6 @@ export function usePlanActions(options: PlanActionsOptions) {
     const optimisticMessage: Message = {
       id: messageId,
       sessionID: session.id,
-      session_id: session.id,
       role: "user",
       created_at: now,
       updated_at: now,
@@ -267,6 +266,8 @@ export function usePlanActions(options: PlanActionsOptions) {
       parts: [
         {
           id: `${messageId}:text`,
+          sessionID: session.id,
+          messageID: messageId,
           type: "text",
           text,
           metadata: {
@@ -324,7 +325,6 @@ export function usePlanActions(options: PlanActionsOptions) {
             {
               id: `${messageId}:gateway-response`,
               sessionID: session.id,
-              session_id: session.id,
               role: "assistant",
               providerID: "mock",
               modelID: "gateway",
@@ -334,6 +334,8 @@ export function usePlanActions(options: PlanActionsOptions) {
               parts: [
                 {
                   id: `${messageId}:gateway-response:text`,
+                  sessionID: session.id,
+                  messageID: `${messageId}:gateway-response`,
                   type: "text",
                   text: `Gateway 已接收立即执行任务：${taskSummaryText(task)}`,
                 },

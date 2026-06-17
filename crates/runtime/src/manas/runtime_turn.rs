@@ -6,10 +6,11 @@ use crate::runtime::create_runtime::{
 use crate::runtime::types::ToolCallData;
 use crate::state_machine::agent_management::AgentManagement;
 use crate::state_machine::runtime_management::RuntimeManagement;
-use crate::state_machine::session_management::SessionManagement;
+use crate::state_machine::session_management::{SessionManagement, DEFAULT_CONTEXT_TOKEN_LIMIT};
 
 use super::agent_prompts::load_agent_system_prompt_messages;
 use super::constants::{COMMAND_RUN_TOOL, PLANNING_TOOL};
+use super::prompt_messages::{approximate_message_tokens, messages_for_turn_with_context_limit};
 use super::tool_catalog::{
     command_run_commands_for_agent, filter_tools_for_turn, load_agent_capabilities,
     planning_tool_disabled, tool_schema_name,
@@ -17,8 +18,10 @@ use super::tool_catalog::{
 
 pub(crate) fn execute_turn(
     agents: &[AgentManagement],
-    session: &SessionManagement,
-    messages: &[serde_json::Value],
+    session: &mut SessionManagement,
+    current_messages: &[serde_json::Value],
+    original_user_task: &str,
+    extra_tail_system_prompt: Option<&'static str>,
     _redis_url: &str,
     _is_first_llm_call: bool,
     is_final_turn: bool,
@@ -62,8 +65,6 @@ pub(crate) fn execute_turn(
             executable_tool_names
         );
     }
-    let turn_messages = messages.to_vec();
-
     let tura_runtime = tokio::runtime::Runtime::new()
         .map_err(|err| format!("failed to create tokio runtime: {err}"))?;
 
@@ -73,6 +74,8 @@ pub(crate) fn execute_turn(
             .map_err(|err| format!("failed to load tura llm settings: {err}"))?;
         let runtime_provider_config =
             runtime_provider_config_from_tura(&agent.provider, settings.as_ref(), false)?;
+        let context_limit_tokens =
+            dynamic_context_limit_tokens(settings.as_ref(), &runtime_provider_config);
         let persona_names = agent
             .agent_persona
             .iter()
@@ -87,6 +90,7 @@ pub(crate) fn execute_turn(
                 &persona_names,
                 &runtime_provider_config.model_name,
                 &runtime_provider_config.llm_provider_name,
+                context_limit_tokens,
                 &language,
             ))
             .render();
@@ -95,7 +99,25 @@ pub(crate) fn execute_turn(
             "content": identity,
         })];
         runtime_messages.extend(load_agent_system_prompt_messages(agent)?);
+        let fixed_prefix_tokens = approximate_message_tokens(&runtime_messages);
+        let turn = messages_for_turn_with_context_limit(
+            current_messages,
+            session,
+            original_user_task,
+            context_limit_tokens,
+            fixed_prefix_tokens,
+        );
+        session.context_tokens = turn.context_tokens;
+        let mut turn_messages = turn.messages;
+        if let Some(prompt) = extra_tail_system_prompt {
+            crate::prompt_style::tail_injection::append_tail_prompt(
+                &mut turn_messages,
+                crate::prompt_style::tail_injection::TailPrompt::system(prompt),
+            );
+        }
         runtime_messages.extend(turn_messages);
+        session.context_tokens.input = approximate_message_tokens(&runtime_messages);
+        session.context_tokens.limit = context_limit_tokens;
         let (runtime, queue_item) = create_runtime(CreateRuntimeInput {
             session_id: session.session_id.clone(),
             agent_id: agent.agent_id.clone(),
@@ -169,6 +191,38 @@ fn session_user_name() -> String {
         .unwrap_or_else(|| "user".to_string())
 }
 
+fn dynamic_context_limit_tokens(
+    settings: &tura_llm_rust::Settings,
+    runtime_provider_config: &crate::state_machine::runtime_management::RuntimeProviderConfig,
+) -> u64 {
+    let Some(model_context) = catalog_model_context_tokens(
+        settings,
+        &runtime_provider_config.llm_provider_name,
+        &runtime_provider_config.model_name,
+    ) else {
+        return DEFAULT_CONTEXT_TOKEN_LIMIT;
+    };
+    DEFAULT_CONTEXT_TOKEN_LIMIT.min(model_context.saturating_mul(60) / 100)
+}
+
+fn catalog_model_context_tokens(
+    settings: &tura_llm_rust::Settings,
+    provider_id: &str,
+    model_id: &str,
+) -> Option<u64> {
+    let provider = settings.model_catalog.providers.get(provider_id)?;
+    provider
+        .models
+        .values()
+        .flatten()
+        .find(|entry| {
+            tura_llm_rust::Settings::normalize_model_name(provider_id, entry.id()) == model_id
+                || entry.id() == model_id
+        })?
+        .detail()
+        .map(|detail| u64::from(detail.limit.context))
+}
+
 fn debug_runtime_enabled() -> bool {
     std::env::var("TURA_DEBUG_RUNTIME")
         .ok()
@@ -200,6 +254,9 @@ fn move_command_run_to_end(tools: Vec<serde_json::Value>) -> Vec<serde_json::Val
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
+    use crate::state_machine::runtime_management::RuntimeProviderConfig;
+    use std::collections::HashMap;
 
     #[test]
     fn non_final_turn_uses_auto_tool_choice() {
@@ -214,5 +271,81 @@ mod tests {
     #[test]
     fn force_no_tools_keeps_auto_tool_choice_without_removing_schema() {
         assert_eq!(tool_choice_for_turn(true), Some(serde_json::json!("auto")));
+    }
+
+    #[test]
+    fn dynamic_context_limit_uses_sixty_percent_of_model_context_when_smaller_than_cap() {
+        let settings = settings_with_model_context("openai", "gpt-small", 128_000);
+        let provider = runtime_provider("openai", "gpt-small");
+
+        assert_eq!(dynamic_context_limit_tokens(&settings, &provider), 76_800);
+    }
+
+    #[test]
+    fn dynamic_context_limit_caps_at_default_limit_for_large_models() {
+        let settings = settings_with_model_context("openai", "gpt-large", 1_000_000);
+        let provider = runtime_provider("openai", "gpt-large");
+
+        assert_eq!(
+            dynamic_context_limit_tokens(&settings, &provider),
+            DEFAULT_CONTEXT_TOKEN_LIMIT
+        );
+    }
+
+    fn runtime_provider(provider_id: &str, model_id: &str) -> RuntimeProviderConfig {
+        RuntimeProviderConfig {
+            base: ProviderConfig {
+                tura_llm_name: "fast".to_string(),
+                stream: true,
+                temperature: 0.0,
+                max_tokens: 1024,
+                tool_choice: ToolChoice::Auto,
+                time_out_ms: 30_000,
+            },
+            thinking: false,
+            provider_name: "fast".to_string(),
+            model_name: model_id.to_string(),
+            provider_url_name: provider_id.to_string(),
+            llm_provider_name: provider_id.to_string(),
+        }
+    }
+
+    fn settings_with_model_context(
+        provider_id: &str,
+        model_id: &str,
+        context: u32,
+    ) -> tura_llm_rust::Settings {
+        let mut providers = HashMap::new();
+        let mut models = HashMap::new();
+        models.insert(
+            provider_id.to_string(),
+            vec![tura_llm_rust::CatalogModelConfig::Detailed(
+                tura_llm_rust::CatalogModelDetail {
+                    id: model_id.to_string(),
+                    limit: tura_llm_rust::CatalogModelLimit {
+                        context,
+                        input: context,
+                        output: 16_384,
+                    },
+                    ..tura_llm_rust::CatalogModelDetail::default()
+                },
+            )],
+        );
+        providers.insert(
+            provider_id.to_string(),
+            tura_llm_rust::ProviderCatalogConfig {
+                models,
+                ..tura_llm_rust::ProviderCatalogConfig::default()
+            },
+        );
+        tura_llm_rust::Settings {
+            provider_base_url: HashMap::new(),
+            routes: HashMap::new(),
+            model_catalog: tura_llm_rust::ModelCatalog {
+                tiers: Vec::new(),
+                providers,
+            },
+            provider_enums: tura_llm_rust::ProviderEnumCatalog::default(),
+        }
     }
 }

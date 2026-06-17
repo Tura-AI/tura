@@ -4,7 +4,7 @@ pub(crate) use gateway::api::provider::{
     provider_auth_validate, set_auth, OAuthCallbackParams, OAuthCallbackPayload,
     OAuthRedirectCallbackParams, ProviderAuthActionDetail,
 };
-pub(crate) use gateway::api::types::ProviderAuth;
+pub(crate) use gateway::contracts::ProviderAuth;
 pub(crate) use gateway::mock::global_store;
 pub(crate) use serde_json::json;
 pub(crate) use std::collections::HashMap;

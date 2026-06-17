@@ -23,7 +23,7 @@
       { "name": "project", "summary": "inspect or create gateway workspaces" },
       { "name": "file", "summary": "list, read, open, or reveal workspace files" },
       { "name": "command", "summary": "list or execute gateway commands" },
-      { "name": "inspect", "summary": "show gateway service, path, and session-log state" },
+      { "name": "inspect", "summary": "show gateway service, paths, and sessions" },
       { "name": "gateway", "summary": "call any gateway HTTP endpoint directly" },
       { "name": "completion", "summary": "generate shell completion for bash, zsh, or fish" }
     ],
@@ -199,9 +199,8 @@
     "usage": [
       "tura [OPTIONS] inspect status [--json]",
       "tura [OPTIONS] inspect paths [--json]",
-      "tura [OPTIONS] inspect logs workspaces [--json]",
-      "tura [OPTIONS] inspect logs sessions [--json]",
-      "tura [OPTIONS] inspect logs records SESSION_ID"
+      "tura [OPTIONS] inspect sessions [--json]",
+      "tura [OPTIONS] inspect messages SESSION_ID [--json]"
     ]
   },
   "gateway": {

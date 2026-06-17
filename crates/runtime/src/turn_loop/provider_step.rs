@@ -13,6 +13,12 @@ pub(crate) fn accumulate_session_from_runtime(
 ) -> Result<(), String> {
     let now = Utc::now();
 
+    session.runtime_usage = runtime
+        .usage
+        .as_ref()
+        .map(|usage| serde_json::to_value(usage).unwrap_or(serde_json::Value::Null))
+        .unwrap_or(serde_json::Value::Null);
+
     if let Some(usage) = &runtime.usage {
         session.push_log(
             serde_json::json!({
@@ -69,7 +75,9 @@ pub(crate) fn accumulate_session_from_runtime(
 mod tests {
     use super::accumulate_session_from_runtime;
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
-    use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
+    use crate::state_machine::runtime_management::{
+        RuntimeManagement, RuntimeProviderConfig, UsageReport,
+    };
     use crate::state_machine::session_management::{SessionInput, SessionManagement};
     use chrono::{Duration, Utc};
     use std::path::PathBuf;
@@ -125,6 +133,62 @@ mod tests {
         assert_eq!(value["created_at"], first_token_at.timestamp_millis());
         assert_eq!(value["updated_at"], finished_at.timestamp_millis());
         assert_eq!(value["timestamp"], finished_at.to_rfc3339());
+    }
+
+    #[test]
+    fn runtime_usage_updates_session_snapshot_usage() {
+        let session_created_at = Utc::now();
+        let mut session = SessionManagement::new(
+            "session-runtime-usage".to_string(),
+            "runtime usage".to_string(),
+            PathBuf::from("C:/workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "hello".to_string(),
+                file_input: Vec::new(),
+                agent: Some("fast".to_string()),
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "hello".to_string(),
+            session_created_at,
+        );
+        let mut runtime = RuntimeManagement::new(
+            "runtime-provider-usage".to_string(),
+            session.session_id.clone(),
+            "agent-provider-step".to_string(),
+            provider_config(),
+            session_created_at + Duration::milliseconds(5),
+        );
+        runtime
+            .finish_success(
+                runtime.created_at,
+                Some(UsageReport {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                    total_tokens: 15,
+                    cached_input_tokens: 0,
+                    cache_write_tokens: 0,
+                    reasoning_tokens: 0,
+                    attachment_input_tokens: 0,
+                    input_cost: 0.01,
+                    output_cost: 0.02,
+                    total_cost: 0.03,
+                    currency: "USD".to_string(),
+                    pricing_source: "test".to_string(),
+                    latency_ms: 100,
+                    time_to_first_token_ms: 25,
+                    token_per_second: 50.0,
+                }),
+            )
+            .expect("finish");
+
+        accumulate_session_from_runtime(&mut session, &runtime, true).expect("accumulate");
+
+        assert_eq!(session.runtime_usage["total_tokens"], 15);
+        assert_eq!(session.runtime_usage["total_cost"], 0.03);
+        assert_eq!(session.runtime_usage["currency"], "USD");
     }
 
     fn provider_config() -> RuntimeProviderConfig {

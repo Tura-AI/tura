@@ -1,6 +1,6 @@
 use axum::extract::{Json, Path};
 use gateway::api::provider::{provider_auth_logout, set_auth};
-use gateway::api::types::ProviderAuth;
+use gateway::contracts::ProviderAuth;
 use serde_json::json;
 use std::collections::HashMap;
 use std::ffi::OsString;

@@ -33,7 +33,7 @@ test("render places composer at the bottom and reports its terminal cursor", () 
   assertLineWidths(rendered.frame, 80);
   const lines = rendered.frame.split("\n");
   const composerIndex = lines.findIndex((line) => stripAnsi(line).includes("> hello"));
-  const metaIndex = lines.findIndex((line) => stripAnsi(line).includes("tokens"));
+  const metaIndex = lines.findIndex((line) => stripAnsi(line).trim() === "tura");
   assert.ok(metaIndex >= 0);
   assert.ok(composerIndex > metaIndex, "composer should be below the meta/status line");
   assert.equal(composerIndex, lines.length - 2, "composer body should sit at the bottom edge");

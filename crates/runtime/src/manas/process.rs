@@ -3,7 +3,7 @@ use crate::gateway_events::{
     publish_runtime_usage_record,
 };
 use crate::manas::prompt_messages::{
-    messages_for_turn, push_no_tool_task_status_retry_message, push_task_status_nudge,
+    push_no_tool_task_status_retry_message, push_task_status_nudge,
 };
 use crate::manas::runtime_turn::execute_turn;
 use crate::manas::tool_catalog::{command_run_commands_for_agent, planning_child_depth};
@@ -130,7 +130,9 @@ pub fn process_manas_internal(
         let runtime_result = match execute_turn(
             agents,
             session,
-            &messages_for_turn(&current_messages, session, &original_user_task),
+            &current_messages,
+            &original_user_task,
+            None,
             redis_url,
             turn == 1,
             false,
@@ -520,15 +522,12 @@ fn run_terminal_final_response_turn(
     redis_url: &str,
     original_user_task: &str,
 ) -> Result<bool, String> {
-    let mut final_messages = messages_for_turn(current_messages, session, original_user_task);
-    tail_injection::append_tail_prompt(
-        &mut final_messages,
-        tail_injection::TailPrompt::system(terminal_final_response::TERMINAL_FINAL_RESPONSE),
-    );
     let (runtime, _tool_calls) = execute_turn(
         agents,
         session,
-        &final_messages,
+        current_messages,
+        original_user_task,
+        Some(terminal_final_response::TERMINAL_FINAL_RESPONSE),
         redis_url,
         false,
         true,

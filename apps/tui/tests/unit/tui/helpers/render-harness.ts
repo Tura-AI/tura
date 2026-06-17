@@ -56,7 +56,7 @@ export function assertOpencodePalette(output: string): void {
     output,
     /\x1b\[38;2;(?!64;224;208m|70;199;190m|75;174;172m|81;149;154m|86;124;136m|244;247;235m|217;222;205m|151;160;153m|103;116;111m|54;63;61m|61;70;68m)/u,
   );
-  assert.doesNotMatch(output, /\x1b\[48;2;(?!16;19;20m|24;27;28m)/u);
+  assert.doesNotMatch(output, /\x1b\[48;2;(?!16;19;20m|20;23;24m|24;27;28m)/u);
 }
 
 export function assertWideMenuGap(

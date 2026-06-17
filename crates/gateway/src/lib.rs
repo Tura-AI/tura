@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod channel;
+pub mod contracts;
 pub mod handler;
 pub mod media;
 pub mod mock;
@@ -12,6 +13,7 @@ pub mod router_process;
 pub mod runtime;
 pub mod session;
 pub mod session_db_client;
+pub mod session_log_writer;
 pub mod simple_runtime;
 pub mod types;
 pub mod web;

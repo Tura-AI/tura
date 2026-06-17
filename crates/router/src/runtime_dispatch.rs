@@ -1,11 +1,11 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::app::AppState;
 use crate::process_info::current_process_start_time;
 use crate::services::managed_process::repo_root;
 use crate::services::manager::ServiceManager;
 use crate::services::models::{CallContext, WorkerSpec};
+use crate::{app::AppState, ipc};
 use tura_router::registry::resolve_binary_target;
 
 /// Maximum recursion depth for child sub-sessions (fork-bomb guard, T5.4).
@@ -49,7 +49,12 @@ pub(crate) struct RunAgentRequest {
 /// worker subprocess (CLI/NDJSON), forward the call, and stream the result
 /// back. Gateway and child runtime dispatch use the `run-agent` CLI
 /// subcommand, never router HTTP.
-pub(crate) async fn dispatch_run_agent(state: &AppState, req: RunAgentRequest) -> (u16, Value) {
+pub(crate) async fn dispatch_run_agent(
+    state: &AppState,
+    req: RunAgentRequest,
+    ipc_request_id: String,
+    notifications: Option<ipc::IpcNotificationSender>,
+) -> (u16, Value) {
     let session_id = req
         .session_id
         .clone()
@@ -147,6 +152,10 @@ pub(crate) async fn dispatch_run_agent(state: &AppState, req: RunAgentRequest) -
             "envelope".to_string(),
         ),
         ("TURA_RUNTIME_ONESHOT".to_string(), "1".to_string()),
+        (
+            "TURA_GATEWAY_CALLBACK_TRANSPORT".to_string(),
+            "ipc".to_string(),
+        ),
         ("TURA_ROUTER_PARENT_PID".to_string(), router_pid.to_string()),
     ];
     if let Some(start_time) = current_process_start_time(router_pid) {
@@ -223,18 +232,26 @@ pub(crate) async fn dispatch_run_agent(state: &AppState, req: RunAgentRequest) -
         "runtime_context": req.runtime_context,
         "planning_mode_override": req.planning_mode_override,
     });
-    let ctx = CallContext::new(
-        "POST".to_string(),
-        format!("/runtime_worker/{session_id}"),
-        call_input,
-    );
+    let ctx = CallContext {
+        request_id: if ipc_request_id.trim().is_empty() {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            ipc_request_id
+        },
+        method: "POST".to_string(),
+        path: format!("/runtime_worker/{session_id}"),
+        input: call_input,
+    };
 
     let worker_id = worker.worker_id.clone();
     let worker_cleanup = RuntimeWorkerCleanupGuard::new(state.manager.clone(), worker_id.clone());
     if router_debug_enabled() {
         eprintln!("router debug: dispatch_run_agent calling worker session_id={session_id} worker_id={worker_id}");
     }
-    let call_result = state.manager.call_worker(&worker_id, ctx).await;
+    let call_result = state
+        .manager
+        .call_worker_with_notifications(&worker_id, ctx, notifications)
+        .await;
     worker_cleanup.stop_now().await;
     if router_debug_enabled() {
         eprintln!(
@@ -375,7 +392,8 @@ mod tests {
                 "session_id": "over-limit-session",
                 "prompt": "this request should be rejected before another runtime worker starts"
             }))?;
-            let (status, body) = dispatch_run_agent(&state, request).await;
+            let (status, body) =
+                dispatch_run_agent(&state, request, "test-request".to_string(), None).await;
 
             assert_eq!(status, 429);
             assert_eq!(body["ok"], false);

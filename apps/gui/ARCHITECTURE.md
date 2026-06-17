@@ -43,12 +43,6 @@ apps/gui/
   package.json
   bun.lock
   turbo.json
-  e2e/
-    business/
-      run_all_release.mjs
-      gui_single_request_release.mjs
-      gui_snake_release.mjs
-      gui_password_zip_release.mjs
   app/
     package.json
     vite.config.ts
@@ -58,6 +52,12 @@ apps/gui/
     gateway/
       package.json
       src/
+  tests/
+    unit/
+    e2e/
+      business/
+      live/
+        business/
   ARCHITECTURE.md
 ```
 
@@ -1155,7 +1155,7 @@ Live smoke tests can later start `crates/gateway` and exercise a minimal
 session plus issue/task flow.
 
 Release-entry acceptance tests that validate the registered release
-command surface belong in `apps/gui/e2e/business/` for the GUI surface. Root
+command surface belong in `apps/gui/tests/e2e/live/business/` for the GUI surface. Root
 `tests/release/release_entry_*.mjs` owns CLI release-entry scripts;
 `tests/benchmark/` owns comparison and scoring benchmarks.
 

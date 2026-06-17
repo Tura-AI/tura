@@ -975,6 +975,8 @@ function fixtureGatewaySessions(now: number, directory: string): Session[] {
 }
 
 function commandRunPart(
+  sessionID: string,
+  messageID: string,
   id: string,
   now: number,
   status: "completed" | "running" | "failed",
@@ -995,6 +997,8 @@ function commandRunPart(
   };
   return {
     id,
+    sessionID,
+    messageID,
     type: "tool",
     tool: "command_run",
     callID: `${id}-call`,
@@ -1053,13 +1057,16 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
           const createdAt = now - 240_000 + turnIndex * 18_000;
           const user: Message = {
             id: `${session.id}-long-user-${turnIndex}`,
-            session_id: session.id,
+            sessionID: session.id,
             role: "user",
             created_at: createdAt,
             updated_at: createdAt,
+            time: { created: createdAt, updated: createdAt },
             parts: [
               {
                 id: `${session.id}-long-user-${turnIndex}-part`,
+                sessionID: session.id,
+                messageID: `${session.id}-long-user-${turnIndex}`,
                 type: "text",
                 text: `第 ${turnIndex + 1} 轮用户反馈：请继续检查全屏侧边栏滚动条是否贴在屏幕最右侧，同时保留这段很长的测试文本用于撑开历史记录区域。这里还有额外说明，确保消息高度足够长，能测试会话窗口、文件浏览器侧边栏和移动端全屏菜单的滚动表现。`,
               },
@@ -1067,16 +1074,19 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
           };
           const assistant: Message = {
             id: `${session.id}-long-agent-${turnIndex}`,
-            session_id: session.id,
+            sessionID: session.id,
             role: "assistant",
             providerID: "openai",
             modelID: turnIndex % 2 === 0 ? "gpt-5.5" : "gpt-5.5-mini",
             cost: 0.001 + turnIndex * 0.0003,
             created_at: createdAt + 6_000,
             updated_at: createdAt + 8_000,
+            time: { created: createdAt + 6_000, updated: createdAt + 8_000 },
             parts: [
               {
                 id: `${session.id}-long-agent-${turnIndex}-part`,
+                sessionID: session.id,
+                messageID: `${session.id}-long-agent-${turnIndex}`,
                 type: "text",
                 text: `第 ${turnIndex + 1} 轮助手回复：已记录滚动条测试状态。当前这条回复故意写得比较长，用来模拟真实会话里多轮来回沟通后的内容密度。测试时可以打开左侧全屏侧栏、切换文件浏览器页面、滚动会话历史，并确认滚动条始终贴近画面边缘而不是贴近中间内容列。`,
               },
@@ -1087,13 +1097,19 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       }
       const user: Message = {
         id: `${session.id}-message-user`,
-        session_id: session.id,
+        sessionID: session.id,
         role: "user",
         created_at: now - 20_000 - index * 1_000,
         updated_at: now - 20_000 - index * 1_000,
+        time: {
+          created: now - 20_000 - index * 1_000,
+          updated: now - 20_000 - index * 1_000,
+        },
         parts: [
           {
             id: `${session.id}-message-user-part`,
+            sessionID: session.id,
+            messageID: `${session.id}-message-user`,
             type: "text",
             text: `用户创建工单：${title}`,
           },
@@ -1104,6 +1120,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
         session.id === "session-todo-001" || session.id === "session-done-004";
       const commandPart = isRunningCommand
         ? commandRunPart(
+            session.id,
+            `${session.id}-message-agent`,
             `${session.id}-command-run-running`,
             now,
             "running",
@@ -1113,6 +1131,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
           )
         : isCompletedCommand
           ? commandRunPart(
+              session.id,
+              `${session.id}-message-agent`,
               `${session.id}-command-run-completed`,
               now,
               "completed",
@@ -1129,6 +1149,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       const assistantParts: MessagePart[] = [
         {
           id: `${session.id}-message-agent-part`,
+          sessionID: session.id,
+          messageID: `${session.id}-message-agent`,
           type: "text",
           text: isRunningCommand
             ? `正在为 ${title} 执行命令并持续接收 command run 输出。`
@@ -1141,13 +1163,15 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       if (!isRunningCommand && commandPart) {
         assistantParts.push({
           id: `${session.id}-message-agent-summary`,
+          sessionID: session.id,
+          messageID: `${session.id}-message-agent`,
           type: "text",
           text: "命令已经完成，模型、provider 和费用统计已写入这条回复。",
         });
       }
       const assistant: Message = {
         id: `${session.id}-message-agent`,
-        session_id: session.id,
+        sessionID: session.id,
         role: "assistant",
         providerID: "openai",
         modelID: session.id === "session-todo-001" ? "gpt-5.5-mini" : "gpt-5.5",
@@ -1161,6 +1185,10 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
                 : undefined,
         created_at: now - 16_000 - index * 1_000,
         updated_at: isRunningCommand ? now - 250 : now - 8_000 - index * 1_000,
+        time: {
+          created: now - 16_000 - index * 1_000,
+          updated: isRunningCommand ? now - 250 : now - 8_000 - index * 1_000,
+        },
         parts: assistantParts,
       };
       return [user, assistant];
@@ -1218,15 +1246,18 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       const createdAt = now - 3_600_000 + index * 1_000;
       return {
         id: `fixture-long-transcript-${index}`,
-        session_id: session.id,
+        sessionID: session.id,
         role,
         providerID: role === "assistant" ? "openai" : undefined,
         modelID: role === "assistant" ? "gpt-5.5" : undefined,
         created_at: createdAt,
         updated_at: createdAt,
+        time: { created: createdAt, updated: createdAt },
         parts: [
           {
             id: `fixture-long-transcript-${index}-part`,
+            sessionID: session.id,
+            messageID: `fixture-long-transcript-${index}`,
             type: "text",
             text:
               role === "user"
@@ -1284,13 +1315,16 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
   };
   const user: Message = {
     id: "fixture-user",
-    session_id: session.id,
+    sessionID: session.id,
     role: "user",
     created_at: now - 16_000,
     updated_at: now - 16_000,
+    time: { created: now - 16_000, updated: now - 16_000 },
     parts: [
       {
         id: "fixture-user-part",
+        sessionID: session.id,
+        messageID: "fixture-user",
         type: "text",
         text: protocolFixture
           ? "解析 communication_style.md，并展示所有消息协议。"
@@ -1302,16 +1336,19 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
   };
   const assistant: Message = {
     id: "fixture-assistant",
-    session_id: session.id,
+    sessionID: session.id,
     role: "assistant",
     providerID: "openai",
     modelID: "gpt-5.5",
     cost: 0.0004,
     created_at: now - 15_000,
     updated_at: fixture === "snake-pending" ? now - 2_000 : now - 400,
+    time: { created: now - 15_000, updated: fixture === "snake-pending" ? now - 2_000 : now - 400 },
     parts: [
       {
         id: "fixture-process-text",
+        sessionID: session.id,
+        messageID: "fixture-assistant",
         type: "text",
         content: protocolFixture
           ? "正在解析消息协议、工具记录和媒体排版。"
@@ -1319,6 +1356,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       },
       {
         id: "fixture-tool-shell",
+        sessionID: session.id,
+        messageID: "fixture-assistant",
         type: "tool",
         tool: "shell_command",
         callID: "call-shell",
@@ -1333,6 +1372,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       },
       {
         id: "fixture-tool-patch",
+        sessionID: session.id,
+        messageID: "fixture-assistant",
         type: "tool",
         tool: "apply_patch",
         callID: "call-patch",
@@ -1354,6 +1395,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       },
       {
         id: "fixture-process-check",
+        sessionID: session.id,
+        messageID: "fixture-assistant",
         type: "text",
         content: protocolFixture
           ? "正在校验格式、图片和命令展开范围。"
@@ -1361,6 +1404,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       },
       {
         id: "fixture-tool-test",
+        sessionID: session.id,
+        messageID: "fixture-assistant",
         type: "tool",
         tool: "browser",
         callID: "call-browser",
@@ -1375,6 +1420,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       },
       {
         id: "fixture-tool-format",
+        sessionID: session.id,
+        messageID: "fixture-assistant",
         type: "tool",
         tool: "format_check",
         callID: "call-format",
@@ -1389,6 +1436,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       },
       {
         id: "fixture-tool-stream",
+        sessionID: session.id,
+        messageID: "fixture-assistant",
         type: "tool",
         tool: "command_run",
         callID: "call-stream",
@@ -1403,6 +1452,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       },
       {
         id: "fixture-summary",
+        sessionID: session.id,
+        messageID: "fixture-assistant",
         type: "text",
         text:
           fixture === "snake-pending"
@@ -1425,6 +1476,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
     parts: [
       {
         id: "fixture-reaction-part",
+        sessionID: session.id,
+        messageID: "fixture-reaction",
         type: "text",
         text: "[EMOJI:react:👍:EMOJI]",
       },

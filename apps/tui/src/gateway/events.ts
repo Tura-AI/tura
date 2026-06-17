@@ -1,4 +1,8 @@
-import type { GatewayEventEnvelope, NormalizedEvent } from "../types/event.js";
+import type {
+  GatewayEventEnvelope,
+  MessagePartDeltaEventProperties,
+  NormalizedEvent,
+} from "../types/event.js";
 import { eventSessionID } from "../types/event.js";
 import type { PermissionRequest, QuestionRequest } from "../types/permission.js";
 import type { Message, MessagePart } from "../types/session.js";
@@ -60,8 +64,7 @@ export function parseSseBlock(block: string): GatewayEventEnvelope | undefined {
 export function normalizeEvent(raw: GatewayEventEnvelope): NormalizedEvent {
   const payload = raw.payload;
   const type = payload?.type ?? "unknown";
-  const sessionID =
-    eventSessionID(payload) ?? readString(raw, "sessionID") ?? readString(raw, "session_id");
+  const sessionID = eventSessionID(payload);
   let messageID: string | undefined;
   let partID: string | undefined;
   let text: string | undefined;
@@ -84,10 +87,10 @@ export function normalizeEvent(raw: GatewayEventEnvelope): NormalizedEvent {
     status = partStatus(part);
   }
   if (payload?.type === "message.part.delta") {
-    const properties = payload.properties as Record<string, unknown> | undefined;
-    partID = readString(properties, "part_id") ?? readString(properties, "partID");
-    messageID = readString(properties, "message_id") ?? readString(properties, "messageID");
-    text = readString(properties, "delta");
+    const properties = payload.properties as MessagePartDeltaEventProperties | undefined;
+    partID = properties?.partID;
+    messageID = properties?.messageID;
+    text = properties?.delta;
   }
   if (payload?.type === "session.status") {
     const statusValue = (payload.properties as { status?: unknown } | undefined)?.status;
@@ -128,14 +131,6 @@ function partStatus(part: MessagePart | undefined): string | undefined {
   if (!state || typeof state !== "object") return undefined;
   const status = (state as Record<string, unknown>).status;
   return typeof status === "string" ? status : undefined;
-}
-
-function readString(
-  properties: Record<string, unknown> | undefined,
-  key: string,
-): string | undefined {
-  const value = properties?.[key];
-  return typeof value === "string" ? value : undefined;
 }
 
 function readRequest<T extends { id: string }>(

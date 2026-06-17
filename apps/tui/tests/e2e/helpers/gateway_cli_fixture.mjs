@@ -18,21 +18,33 @@ export const forbiddenGatewayPaths = [
 const richFixtureTextOne =
   "# Rich fixture phase 1\n" +
   "<b>Bold</b> <i>Italic</i> <u>Under</u> <s>Gone</s> and inline <code>code_snippet</code>\n" +
+  "Paragraph before intentional blank line.\n" +
+  "\n" +
+  "Paragraph after intentional blank line.\n" +
   "- checklist item one\n" +
   "- checklist item two with `src/App.tsx:12`\n" +
   "<blockquote>Cited text or summary</blockquote>\n" +
   "```bash\n" +
   "node tools/snake_playwright.mjs\n" +
+  "pnpm test --filter @tura/tui -- --rich-fixture\n" +
   "```\n" +
   "Command fixture complete.";
 const richFixtureTextTwo =
   "# Rich fixture phase 2\n" +
   "<a href='https://example.com'>Search Link</a> and [README](https://example.com/readme)\n" +
   "Local path C:/repo/apps/tui and media [MEDIA:C:/tmp/conversation-avatar.png:MEDIA]\n" +
+  "Paragraph before intentional blank line.\n" +
+  "\n" +
+  "Paragraph after intentional blank line.\n" +
+  "<blockquote>Cited text or summary</blockquote>\n" +
+  "```bash\n" +
+  "pnpm test --filter @tura/tui -- --rich-fixture\n" +
+  "```\n" +
   "| Item | Target |\n" +
   "| --- | --- |\n" +
   "| Directory | C:/repo/apps/tui |\n" +
   "| Docs | [README](https://example.com/readme) |\n" +
+  "| Status | Table rendering stays compact and readable |\n" +
   "[EMOJI:sticker:😂:EMOJI] [EMOJI:react:👍:EMOJI]\n" +
   "Protocol fixture complete.";
 
@@ -227,6 +239,7 @@ export async function startGateway(runRoot) {
     agent: config.active_agent,
     model_variant: config.model_variant,
     model_acceleration_enabled: config.model_acceleration_enabled,
+    context_tokens: { input: 0, limit: 200_000 },
     created_at: Date.now(),
     updated_at: Date.now(),
     message_count: 2,
@@ -346,6 +359,7 @@ export async function startGateway(runRoot) {
         model_variant: payload.model_variant ?? config.model_variant,
         model_acceleration_enabled:
           payload.model_acceleration_enabled ?? config.model_acceleration_enabled,
+        context_tokens: { input: 0, limit: 200_000 },
         updated_at: Date.now(),
       };
       sessions.unshift(session);
@@ -353,6 +367,14 @@ export async function startGateway(runRoot) {
       return sendJson(res, session);
     }
     const sessionMatch = url.pathname.match(/^\/session\/([^/]+)$/);
+    if (sessionMatch && req.method === "GET") {
+      const id = decodeURIComponent(sessionMatch[1]);
+      return sendJson(
+        res,
+        sessions.find((item) => item.id === id) ?? { error: "not found" },
+        sessions.some((item) => item.id === id) ? 200 : 404,
+      );
+    }
     if (sessionMatch && req.method === "PATCH") {
       const patch = await readJson(req);
       records.sessionUpdates.push(patch);
@@ -404,7 +426,8 @@ export async function startGateway(runRoot) {
       records.aborts.push(decodeURIComponent(abortMatch[1]));
       return sendJson(res, { ok: true });
     }
-    if (req.method === "GET" && url.pathname === "/event") {
+    const sessionEventsMatch = url.pathname.match(/^\/session\/([^/]+)\/events$/);
+    if (req.method === "GET" && (url.pathname === "/event" || sessionEventsMatch)) {
       res.writeHead(200, {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
@@ -414,6 +437,22 @@ export async function startGateway(runRoot) {
       res.write(
         `data: ${JSON.stringify({ directory: "global", payload: { type: "server.connected", properties: {} } })}\n\n`,
       );
+      setTimeout(() => {
+        session = { ...session, context_tokens: { input: 90_000, limit: 200_000 } };
+        const index = sessions.findIndex((item) => item.id === session.id);
+        if (index >= 0) sessions[index] = session;
+        emit({
+          directory: runRoot,
+          payload: {
+            type: "session.status",
+            properties: {
+              sessionID: session.id,
+              status: { type: session.status },
+              context_tokens: session.context_tokens,
+            },
+          },
+        });
+      }, 100);
       req.on("close", () => clients.delete(res));
       return;
     }
@@ -542,6 +581,7 @@ export async function startGateway(runRoot) {
         session_display_name: "Rich Fixture",
         status: "idle",
         message_count: 2,
+        context_tokens: { input: 0, limit: 200_000 },
         updated_at: Date.now(),
       };
       sessions.unshift(session);

@@ -173,10 +173,6 @@ pub fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>)
     }
 
     let target_session_id = gateway_callback_session_id(update.session_id);
-    let endpoint = format!(
-        "{}/session/{target_session_id}/message/agent",
-        gateway_callback_base_url()
-    );
     let input = serde_json::json!({ "commands": update.commands });
     let output = serde_json::json!({
         "streamed_command_run_result": {
@@ -250,9 +246,9 @@ pub fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>)
     });
 
     crate::gateway_events::post_gateway_callback_detached(
-        endpoint,
+        "session.agent_message",
         payload,
-        update.session_id.to_string(),
+        target_session_id,
         update.runtime_id.to_string(),
         "streamed_command_run_update",
     );
@@ -260,19 +256,6 @@ pub fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>)
 
 fn gateway_callbacks_disabled() -> bool {
     crate::manas::constants::gateway_callbacks_disabled()
-}
-
-fn gateway_callback_base_url() -> String {
-    std::env::var("TURA_GATEWAY_URL")
-        .or_else(|_| std::env::var("GATEWAY_BASE_URL"))
-        .unwrap_or_else(|_| {
-            let port = std::env::var("TURA_GATEWAY_PORT")
-                .or_else(|_| std::env::var("PORT"))
-                .unwrap_or_else(|_| "4156".to_string());
-            format!("http://127.0.0.1:{port}")
-        })
-        .trim_end_matches('/')
-        .to_string()
 }
 
 fn gateway_callback_session_id(session_id: &str) -> String {

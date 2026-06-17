@@ -10,6 +10,7 @@ pub struct CallContext {
 }
 
 impl CallContext {
+    #[allow(dead_code)]
     pub fn new(method: String, path: String, input: Value) -> Self {
         Self {
             request_id: uuid::Uuid::new_v4().to_string(),

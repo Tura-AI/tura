@@ -421,11 +421,43 @@ fn update_session_status_updates_stored_status() {
         false,
     );
 
+    let mut info = store
+        .get_session_info(&session.id)
+        .expect("session info should exist");
+    info.management.context_tokens =
+        runtime::state_machine::session_management::ContextTokenStats {
+            input: 12_345,
+            limit: 76_800,
+        };
+    info.management.runtime_usage = serde_json::json!({
+        "total_tokens": 99,
+        "total_cost": 0.034,
+        "currency": "USD",
+    });
+    store.replace_management(&session.id, info.management);
+    let mut cursor = store.event_cursor();
+
     store.update_session_status(&session.id, SessionStatusMano::Busy);
     let updated = store
         .get_session(&session.id)
         .expect("session should exist");
     assert_eq!(updated.status, ApiSessionStatus::Busy);
+    let event = store
+        .next_event(&mut cursor)
+        .expect("status event should exist");
+    match event {
+        GlobalEvent::SessionStatus { properties } => {
+            assert_eq!(properties.session_id, session.id);
+            assert_eq!(properties.context_tokens.input, 12_345);
+            assert_eq!(properties.context_tokens.limit, 76_800);
+            assert_eq!(properties.usage.context_tokens.input, 12_345);
+            assert_eq!(properties.usage.context_tokens.limit, 76_800);
+            assert_eq!(properties.usage.tokens["total_tokens"], 99);
+            assert_eq!(properties.usage.cost, Some(0.034));
+            assert_eq!(properties.usage.currency.as_deref(), Some("USD"));
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
 
     store.update_session_status(&session.id, SessionStatusMano::Idle);
     let updated = store
@@ -1476,6 +1508,71 @@ fn user_messages_are_recorded_in_session_management_log() {
 }
 
 #[test]
+fn reopened_session_hydrates_frontend_user_message() {
+    let _service = SessionDbTestService::start();
+    let root = std::env::temp_dir().join(format!("tura-reopen-user-{}", Uuid::new_v4()));
+    let directory = root.to_string_lossy().to_string();
+    let store = SessionStore::new();
+    let session = store.create_session(
+        Some(directory.clone()),
+        None,
+        None,
+        Some("coding".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    store
+        .add_message_with_ids(
+            &session.id,
+            MessageRole::User,
+            "关闭再打开后应该还能看到这条用户消息".to_string(),
+            Some("msg_tui_reopen_user".to_string()),
+            Some("part_tui_reopen_user".to_string()),
+            None,
+        )
+        .expect("user message should be stored");
+    store
+        .add_message_with_ids(
+            &session.id,
+            MessageRole::Assistant,
+            "收到".to_string(),
+            Some("runtime-reopen.message".to_string()),
+            Some("runtime-reopen.message".to_string()),
+            None,
+        )
+        .expect("assistant message should be stored");
+    upsert_runtime_owned_session_for_test(&store, &session.id, None);
+
+    let reopened = SessionStore::new();
+    reopened.hydrate_directory(Some(directory));
+    let messages = reopened.get_frontend_messages(&session.id);
+    let user = messages
+        .iter()
+        .find(|message| message.role == MessageRole::User)
+        .expect("hydrated messages should include the user prompt");
+    assert_eq!(user.id, "msg_tui_reopen_user");
+    assert_eq!(
+        user.parts.first().map(|part| part.id.as_str()),
+        Some("part_tui_reopen_user")
+    );
+    assert_eq!(
+        user.parts.first().and_then(|part| part.text.as_deref()),
+        Some("关闭再打开后应该还能看到这条用户消息")
+    );
+    assert!(messages.iter().any(|message| {
+        message.role == MessageRole::Assistant
+            && message.parts.first().and_then(|part| part.text.as_deref()) == Some("收到")
+    }));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn copy_session_context_reuses_conversation_without_sharing_message_ids() {
     let store = SessionStore::new();
     let source = store.create_session(
@@ -1928,4 +2025,35 @@ fn scheduler_claim_persists_next_polling_start() {
     );
 
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn api_session_exposes_runtime_context_token_stats() {
+    let now = chrono::Utc::now();
+    let mut management = runtime::state_machine::session_management::SessionManagement::new(
+        "context-token-session".to_string(),
+        "context token session".to_string(),
+        PathBuf::from("C:/workspace/context-token-session"),
+        false,
+        "coding".to_string(),
+        runtime::state_machine::session_management::SessionInput {
+            user_input: "track context".to_string(),
+            file_input: Vec::new(),
+            agent: Some("fast".to_string()),
+            runtime_context: None,
+            planning_mode_override: None,
+        },
+        "track context".to_string(),
+        now,
+    );
+    management.context_tokens = runtime::state_machine::session_management::ContextTokenStats {
+        input: 12_345,
+        limit: 76_800,
+    };
+    let info = SessionInfo::from_management(&management);
+
+    let session = api_session_from_info(&info, None);
+
+    assert_eq!(session.context_tokens.input, 12_345);
+    assert_eq!(session.context_tokens.limit, 76_800);
 }

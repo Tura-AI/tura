@@ -61,7 +61,6 @@ const historicalRuntimeID = "runtime-refresh-history";
 const commandMessage = {
   id: `${historicalRuntimeID}.message`,
   sessionID,
-  session_id: sessionID,
   role: "assistant",
   created_at: base + 101,
   updated_at: base + 101,
@@ -69,9 +68,7 @@ const commandMessage = {
     {
       id: `${historicalRuntimeID}.message`,
       sessionID,
-      session_id: sessionID,
       messageID: `${historicalRuntimeID}.message`,
-      message_id: `${historicalRuntimeID}.message`,
       type: "text",
       text: "HISTORICAL_RUNTIME_TEXT_MARKER",
       content: "HISTORICAL_RUNTIME_TEXT_MARKER",
@@ -79,13 +76,10 @@ const commandMessage = {
     {
       id: `${historicalRuntimeID}.tool.command_run`,
       sessionID,
-      session_id: sessionID,
       messageID: `${historicalRuntimeID}.message`,
-      message_id: `${historicalRuntimeID}.message`,
       type: "tool",
       tool: "command_run",
       callID: `${historicalRuntimeID}.tool.command_run`,
-      call_id: `${historicalRuntimeID}.tool.command_run`,
       state: {
         status: "completed",
         input: {
@@ -109,11 +103,10 @@ function message(id, role, text, createdAt) {
   return {
     id,
     sessionID,
-    session_id: sessionID,
     role,
     created_at: createdAt,
     updated_at: createdAt,
-    parts: [{ id: `${id}:text`, sessionID, session_id: sessionID, type: "text", text }],
+    parts: [{ id: `${id}:text`, sessionID, type: "text", text }],
   };
 }
 

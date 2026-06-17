@@ -67,13 +67,13 @@ test("normalizeEvent extracts part updates", () => {
   assert.equal(part.status, "completed");
 });
 
-test("normalizeEvent accepts camel and snake fields for streaming deltas", () => {
+test("normalizeEvent reads canonical streaming delta fields", () => {
   const delta = normalizeEvent({
     directory: "C:/repo",
     payload: {
       type: "message.part.delta",
       properties: {
-        session_id: "sess-1",
+        sessionID: "sess-1",
         messageID: "msg-1",
         partID: "part-1",
         field: "text",
@@ -88,15 +88,15 @@ test("normalizeEvent accepts camel and snake fields for streaming deltas", () =>
   assert.equal(delta.text, "hel");
 });
 
-test("normalizeEvent uses envelope session fields when delta properties omit them", () => {
+test("normalizeEvent reads delta sessionID from properties", () => {
   const delta = normalizeEvent({
     directory: "C:/repo",
-    sessionID: "sess-envelope",
     payload: {
       type: "message.part.delta",
       properties: {
-        message_id: "msg-1",
-        part_id: "part-1",
+        sessionID: "sess-envelope",
+        messageID: "msg-1",
+        partID: "part-1",
         field: "text",
         delta: "hel",
       },
@@ -114,7 +114,7 @@ test("normalizeEvent extracts permission and question requests", () => {
     payload: {
       type: "permission.asked",
       properties: {
-        permission: { id: "perm-1", session_id: "sess-1", permission: "shell" },
+        permission: { id: "perm-1", sessionID: "sess-1", permission: "shell" },
       },
     },
   });

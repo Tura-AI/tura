@@ -33,9 +33,9 @@ test("reducer preserves busy streamed assistant text across polling hydrate", ()
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "runtime-1.message",
-          part_id: "runtime-1.message",
+          sessionID: "sess-1",
+          messageID: "runtime-1.message",
+          partID: "runtime-1.message",
           field: "text",
           delta: "streaming reply",
         },
@@ -88,9 +88,9 @@ test("reducer preserves live stream when polling hydrate includes unrelated assi
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "runtime-new-turn.message",
-          part_id: "runtime-new-turn.message",
+          sessionID: "sess-1",
+          messageID: "runtime-new-turn.message",
+          partID: "runtime-new-turn.message",
           field: "text",
           delta: "new streamed answer",
         },
@@ -136,9 +136,9 @@ test("reducer preserves live stream when an unrelated durable assistant event ar
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "runtime-side-event.message",
-          part_id: "runtime-side-event.message",
+          sessionID: "sess-1",
+          messageID: "runtime-side-event.message",
+          partID: "runtime-side-event.message",
           field: "text",
           delta: "stream still visible",
         },
@@ -153,7 +153,7 @@ test("reducer preserves live stream when an unrelated durable assistant event ar
       payload: {
         type: "message.updated",
         properties: {
-          session_id: "sess-1",
+          sessionID: "sess-1",
           info: {
             id: "msg-unrelated-assistant",
             sessionID: "sess-1",
@@ -198,9 +198,9 @@ test("reducer keeps streamed assistant text when final hydrate only has task_sta
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "runtime-1.message",
-          part_id: "runtime-1.message",
+          sessionID: "sess-1",
+          messageID: "runtime-1.message",
+          partID: "runtime-1.message",
           field: "text",
           delta: "Try a bowl of noodles.",
         },
@@ -255,9 +255,9 @@ test("reducer keeps streamed runtime response when final hydrate omits the visib
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "runtime-greeting.message",
-          part_id: "runtime-greeting.message",
+          sessionID: "sess-1",
+          messageID: "runtime-greeting.message",
+          partID: "runtime-greeting.message",
           field: "text",
           delta: "Hello, I am here.",
         },
@@ -305,9 +305,9 @@ test("reducer keeps current visible agent text even when the message id is alrea
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "msg-agent-official-id",
-          part_id: "part-agent-official-id",
+          sessionID: "sess-1",
+          messageID: "msg-agent-official-id",
+          partID: "part-agent-official-id",
           field: "text",
           delta: "Hello, I saw your message.",
         },
@@ -354,9 +354,9 @@ test("reducer commits streamed text when final hydrate includes durable assistan
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "runtime-durable.message",
-          part_id: "runtime-durable.message",
+          sessionID: "sess-1",
+          messageID: "runtime-durable.message",
+          partID: "runtime-durable.message",
           field: "text",
           delta: "stream copy",
         },
@@ -412,9 +412,9 @@ test("reducer commits active live stream when session becomes idle", () => {
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "runtime-idle-commit.message",
-          part_id: "runtime-idle-commit.message",
+          sessionID: "sess-1",
+          messageID: "runtime-idle-commit.message",
+          partID: "runtime-idle-commit.message",
           field: "text",
           delta: "idle commit response",
         },
@@ -484,9 +484,9 @@ test("reducer does not duplicate temporary streamed text across repeated polling
       payload: {
         type: "message.part.delta",
         properties: {
-          session_id: "sess-1",
-          message_id: "msg-durable-refresh",
-          part_id: "part-temp-refresh",
+          sessionID: "sess-1",
+          messageID: "msg-durable-refresh",
+          partID: "part-temp-refresh",
           field: "text",
           delta: "TEMP_REFRESH_STREAM",
         },
@@ -550,7 +550,7 @@ test("reducer keeps repeated runtime message and command callbacks in one messag
         payload: {
           type: "message.updated",
           properties: {
-            session_id: "sess-1",
+            sessionID: "sess-1",
             info: {
               ...runtimeMessage,
               updated_at: status === "completed" ? 12 : 11,

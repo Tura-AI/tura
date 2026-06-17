@@ -110,8 +110,8 @@ export class MockGatewayClient {
         auto_session_name: source.auto_session_name,
       },
     );
-    const copyContext = payload.copy_context ?? payload.copyContext ?? true;
-    const copiedMessages = copyContext
+    const shouldCopyContext = payload.copy_context ?? true;
+    const copiedMessages = shouldCopyContext
       ? cloneMessagesForSession(session.id, this.messagesBySession.get(source.id) ?? [])
       : [];
     this.sessions = [
@@ -143,11 +143,11 @@ export class MockGatewayClient {
     messages.push({
       id: payload.messageID,
       sessionID,
-      session_id: sessionID,
       role: "user",
       created_at: now,
       updated_at: now,
-      parts: payload.parts.map((part) => ({ ...part, sessionID, session_id: sessionID })),
+      time: { created: now, updated: now },
+      parts: payload.parts.map((part) => ({ ...part, sessionID, messageID: payload.messageID })),
     });
     messages.push(
       this.message(
@@ -379,40 +379,45 @@ export class MockGatewayClient {
     const base = Date.now() - 10_000;
     let index = 0;
     const nextTime = () => base + index++ * 100;
-    const user = (id: string, text: string): Message => ({
-      id,
-      sessionID,
-      session_id: sessionID,
-      role: "user",
-      created_at: nextTime(),
-      updated_at: base,
-      parts: [{ id: `${id}:text`, sessionID, session_id: sessionID, type: "text", text }],
-    });
+    const user = (id: string, text: string): Message => {
+      const created = nextTime();
+      return {
+        id,
+        sessionID,
+        role: "user",
+        created_at: created,
+        updated_at: created,
+        time: { created, updated: created },
+        parts: [{ id: `${id}:text`, sessionID, messageID: id, type: "text", text }],
+      };
+    };
     const assistant = (
       id: string,
       text: string,
       command: string,
       status = "completed",
-    ): Message => ({
-      id,
-      sessionID,
-      session_id: sessionID,
-      role: "assistant",
-      created_at: nextTime(),
-      updated_at: base,
-      parts: [
-        { id: `${id}:text`, sessionID, session_id: sessionID, type: "text", text },
-        {
-          id: `${id}:command`,
-          sessionID,
-          session_id: sessionID,
-          messageID: id,
-          type: "tool",
-          tool: "command_run",
-          state: { status, input: { command_line: command } },
-        },
-      ],
-    });
+    ): Message => {
+      const created = nextTime();
+      return {
+        id,
+        sessionID,
+        role: "assistant",
+        created_at: created,
+        updated_at: created,
+        time: { created, updated: created },
+        parts: [
+          { id: `${id}:text`, sessionID, messageID: id, type: "text", text },
+          {
+            id: `${id}:command`,
+            sessionID,
+            messageID: id,
+            type: "tool",
+            tool: "command_run",
+            state: { status, input: { command_line: command } },
+          },
+        ],
+      };
+    };
     return [
       user("mock-order-user-1", "User turn 1 asks for a zip-password CLI refactor."),
       assistant(
@@ -468,15 +473,15 @@ export class MockGatewayClient {
       {
         id: "mock-render-regression-user",
         sessionID,
-        session_id: sessionID,
         role: "user",
         created_at: now + 1,
         updated_at: now + 1,
+        time: { created: now + 1, updated: now + 1 },
         parts: [
           {
             id: "mock-render-regression-user:text",
             sessionID,
-            session_id: sessionID,
+            messageID: "mock-render-regression-user",
             type: "text",
             text: userText,
           },
@@ -485,15 +490,15 @@ export class MockGatewayClient {
       {
         id: "mock-render-regression-assistant",
         sessionID,
-        session_id: sessionID,
         role: "assistant",
         created_at: now + 2,
         updated_at: now + 2,
+        time: { created: now + 2, updated: now + 2 },
         parts: [
           {
             id: "mock-render-regression-assistant:text",
             sessionID,
-            session_id: sessionID,
+            messageID: "mock-render-regression-assistant",
             type: "text",
             text:
               "REGRESSION_AGENT_RICH_VISIBLE **agent rich text** with `REGRESSION_RICH_HIGHLIGHT_VISIBLE` and wrapped CJK " +
@@ -502,9 +507,7 @@ export class MockGatewayClient {
           {
             id: "mock-render-regression-assistant:command",
             sessionID,
-            session_id: sessionID,
             messageID: "mock-render-regression-assistant",
-            message_id: "mock-render-regression-assistant",
             type: "tool",
             tool: "command_run",
             state: { status: "completed", input: { command_line: command } },
@@ -524,12 +527,20 @@ export class MockGatewayClient {
       status: "idle",
       created_at: now,
       updated_at: now,
-      model: payload.model ?? this.sessionConfig.model,
-      agent: payload.agent ?? this.sessionConfig.active_agent,
+      model: payload.model ?? this.sessionConfig.model ?? null,
+      agent: payload.agent ?? this.sessionConfig.active_agent ?? null,
+      session_type: payload.session_type ?? this.sessionConfig.session_type ?? "coding",
+      auto_session_name: payload.auto_session_name ?? true,
+      kill_processes_on_start: payload.kill_processes_on_start ?? false,
+      validator_enabled: payload.validator_enabled ?? false,
+      force_planning: payload.force_planning ?? false,
       model_variant: payload.model_variant ?? this.sessionConfig.model_variant,
       model_acceleration_enabled:
-        payload.model_acceleration_enabled ?? this.sessionConfig.model_acceleration_enabled,
+        payload.model_acceleration_enabled ?? this.sessionConfig.model_acceleration_enabled ?? false,
+      disable_permission_restrictions: false,
       message_count: 0,
+      task_management: {},
+      plan_summary: null,
     };
   }
 
@@ -539,11 +550,11 @@ export class MockGatewayClient {
     return {
       id,
       sessionID,
-      session_id: sessionID,
       role,
       created_at: now,
       updated_at: now,
-      parts: [{ id: `${id}:text`, sessionID, session_id: sessionID, type: "text", text }],
+      time: { created: now, updated: now },
+      parts: [{ id: `${id}:text`, sessionID, messageID: id, type: "text", text }],
     };
   }
 }
@@ -574,17 +585,13 @@ function cloneMessagesForSession(sessionID: string, messages: Message[]): Messag
       ...message,
       id,
       sessionID,
-      session_id: sessionID,
       parentID: message.parentID ? (idMap.get(message.parentID) ?? null) : null,
-      parent_id: message.parent_id ? (idMap.get(message.parent_id) ?? null) : null,
       parts: (message.parts ?? []).map(
         (part, partIndex): MessagePart => ({
           ...part,
           id: `mock-copy-${now}-${index}-${partIndex}`,
           sessionID,
-          session_id: sessionID,
           messageID: part.messageID ? id : part.messageID,
-          message_id: part.message_id ? id : part.message_id,
         }),
       ),
     };

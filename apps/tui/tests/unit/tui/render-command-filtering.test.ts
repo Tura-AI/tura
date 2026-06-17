@@ -157,7 +157,7 @@ test("render keeps L1 L2 L3 readable without overflow across terminal sizes", ()
       }
       if (capabilities.level === "rich") {
         assert.match(output, /\x1b\[38;2;64;224;208m/);
-        assert.match(output, /\x1b\[48;2;16;19;20m/);
+        assert.match(output, /\x1b\[48;2;20;23;24m/);
         assert.doesNotMatch(stripAnsi(output), /─{8,}/u);
         assert.doesNotMatch(output, /\x1b\[38;2;157;124;216m/);
         assert.doesNotMatch(output, /\x1b\[38;2;127;216;143m/);
@@ -229,7 +229,7 @@ test("render uses opencode-style turn spacing and configured command disclosure 
 
   const ansi = render(state, ansiCapabilities());
   assert.doesNotMatch(ansi, /◇.*user|◆.*assistant/u);
-  assert.match(ansi, /^\x1b\[48;2;16;19;20m\x1b\[38;2;103;116;111m▏\x1b\[0m.*Feedback first/m);
+  assert.match(ansi, /^\x1b\[48;2;20;23;24m\x1b\[38;2;103;116;111m▏\x1b\[0m.*Feedback first/m);
   assert.match(ansi, /◇ Commands/u);
   const ansiLines = ansi.split("\n");
   const ansiCommandIndex = ansiLines.findIndex((line) => stripAnsi(line).includes("Commands"));
@@ -238,17 +238,17 @@ test("render uses opencode-style turn spacing and configured command disclosure 
   assert.equal(stripAnsi(ansiLines[ansiCommandIndex - 1] ?? ""), "");
   assert.match(stripAnsi(ansiLines[ansiCommandIndex + 1] ?? ""), /\$ npm run test:e2e/);
   assert.notEqual(stripAnsi(ansiLines[ansiCommandIndex - 2] ?? ""), "");
-  assert.doesNotMatch(ansiLines[ansiCommandIndex], /\x1b\[48;2;16;19;20m/);
+  assert.doesNotMatch(ansiLines[ansiCommandIndex], /\x1b\[48;2;20;23;24m/);
   assert.match(ansi, /└─ ✓ #1 shell_command completed\s+\$ npm run test:e2e/u);
   assertOpencodePalette(ansi);
 
   const rich = render(state, richCapabilities());
-  assert.match(rich, /^\x1b\[48;2;16;19;20m\x1b\[38;2;244;247;235m▏\x1b\[0m.*Summarize/m);
+  assert.match(rich, /^\x1b\[48;2;20;23;24m\x1b\[38;2;244;247;235m▏\x1b\[0m.*Summarize/m);
   assert.doesNotMatch(rich, /^\x1b\[38;2;(?:103;116;111|244;247;235)m▏\x1b\[0m +\x1b\[0m$/m);
-  assert.match(rich, /^\x1b\[48;2;16;19;20m\x1b\[38;2;103;116;111m▏\x1b\[0m.*Feedback first/m);
+  assert.match(rich, /^\x1b\[48;2;20;23;24m\x1b\[38;2;103;116;111m▏\x1b\[0m.*Feedback first/m);
   assert.doesNotMatch(rich, /(?:user|assistant)/);
   assert.doesNotMatch(rich, /[┌├└].*(?:user|assistant)/u);
-  assert.match(rich, /\x1b\[48;2;16;19;20m/);
+  assert.match(rich, /\x1b\[48;2;20;23;24m/);
   assert.doesNotMatch(rich, /\x1b\[38;2;157;124;216m/);
   assert.doesNotMatch(rich, /\x1b\[38;2;127;216;143m/);
   assert.match(rich, /◇ Commands/u);
@@ -259,7 +259,7 @@ test("render uses opencode-style turn spacing and configured command disclosure 
   assert.equal(stripAnsi(richLines[richCommandIndex - 1] ?? ""), "");
   assert.match(stripAnsi(richLines[richCommandIndex + 1] ?? ""), /\$ npm run test:e2e/);
   assert.notEqual(stripAnsi(richLines[richCommandIndex - 2] ?? ""), "");
-  assert.doesNotMatch(richLines[richCommandIndex], /\x1b\[48;2;16;19;20m/);
+  assert.doesNotMatch(richLines[richCommandIndex], /\x1b\[48;2;20;23;24m/);
   assert.match(rich, /└─ ✓ #1 shell_command completed\s+\$ npm run test:e2e/u);
   assertOpencodePalette(rich);
 });
@@ -598,8 +598,8 @@ test("render keeps composer and bottom meta visible after large command blocks",
   const output = withTerminalSize(106, 18, () => render(state, richCapabilities()));
   const plain = stripAnsi(output);
   const lines = plain.split("\n");
-  assert.ok(lines.some((line) => line.includes("Enter to send")));
-  assert.ok(lines.some((line) => line.includes("tokens")));
+  assert.ok(lines.some((line) => line.includes("Enter: send")));
+  assert.ok(lines.some((line) => line === "tura"));
   assert.ok(lines.some((line) => line.includes("This new reply must render")));
   assertLineWidths(output, 106);
 });

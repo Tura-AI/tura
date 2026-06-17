@@ -3,7 +3,9 @@
 //! This module provides session storage functionality using the SessionInfo
 //! structure that wraps SessionManagement from mano.
 
-use crate::api::types::{GlobalEvent, Session as ApiSession, SessionStatus as ApiSessionStatus};
+use crate::contracts::{
+    GlobalEvent, Session as ApiSession, SessionContextTokens, SessionStatus as ApiSessionStatus,
+};
 use crate::session::config::{load_config, merge_config, TuraSessionConfig};
 use crate::session::manager::{
     agent_for_session_type, default_use_last_tool_call_response_for_session,
@@ -17,7 +19,7 @@ use runtime::state_machine::runtime_management::RuntimeSessionSyncStatus;
 use runtime::state_machine::session_management::{
     PlanStatus, PollInterval, SessionState, StartCondition, TaskStep,
 };
-use session_log::{SessionRecord, SessionSnapshot};
+use session_log::{SessionRecord, SessionSnapshot, UpsertSessionRequest};
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(test)]
 use std::path::PathBuf;
@@ -433,6 +435,10 @@ impl SessionStore {
         ids
     }
 
+    pub fn user_command_root_session_id(&self, session_id: &str) -> String {
+        self.root_session_id(session_id)
+    }
+
     pub fn append_user_command(&self, session_id: &str, command: impl Into<String>) -> Vec<String> {
         let command = command.into();
         let command = command.trim();
@@ -692,6 +698,10 @@ impl SessionStore {
     pub fn delete_session(&self, session_id: &str) -> bool {
         if self.sessions.write().remove(session_id).is_some() {
             self.messages.write().remove(session_id);
+            self.session_db_messages.write().remove(session_id);
+            self.session_db_loaded.write().remove(session_id);
+            self.session_db_refresh_needed.write().remove(session_id);
+            self.live_messages.write().remove(session_id);
             self.todos.write().remove(session_id);
             self.children.write().remove(session_id);
             self.cancelled.write().remove(session_id);
@@ -708,6 +718,52 @@ impl SessionStore {
         } else {
             false
         }
+    }
+
+    pub fn attach_child_session(
+        &self,
+        parent_session_id: &str,
+        child_session_id: &str,
+    ) -> Option<ApiSession> {
+        if !self.sessions.read().contains_key(parent_session_id)
+            || !self.sessions.read().contains_key(child_session_id)
+        {
+            return None;
+        }
+        {
+            let mut children = self.children.write();
+            let entry = children.entry(parent_session_id.to_string()).or_default();
+            if !entry.iter().any(|id| id == child_session_id) {
+                entry.push(child_session_id.to_string());
+            }
+        }
+        self.get_session(child_session_id)
+    }
+
+    pub fn session_log_upsert_request(
+        &self,
+        session_id: &str,
+    ) -> Result<UpsertSessionRequest, String> {
+        let info = self
+            .sessions
+            .read()
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| format!("session {session_id} not found"))?;
+        let session = serde_json::to_value(&info)
+            .map_err(|error| format!("failed to serialize session {session_id}: {error}"))?;
+        let messages = self
+            .get_messages(session_id)
+            .into_iter()
+            .map(serde_json::to_value)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to serialize messages for {session_id}: {error}"))?;
+        Ok(UpsertSessionRequest {
+            session,
+            parent_id: self.parent_for_child(session_id),
+            messages,
+            todos: self.get_todos(session_id),
+        })
     }
 
     pub fn get_current_session(&self) -> Option<ApiSession> {
@@ -752,20 +808,65 @@ impl SessionStore {
             info.status = SessionStatusMano::from_state(info.management.state);
             info.updated_at = now.timestamp_millis();
         }
+        let (status, context_tokens, usage) = self
+            .sessions
+            .read()
+            .get(session_id)
+            .map(|info| {
+                let context_tokens = session_context_tokens(info);
+                (
+                    info.status,
+                    context_tokens,
+                    session_usage_from_info(info, context_tokens),
+                )
+            })
+            .unwrap_or_else(|| {
+                let context_tokens = crate::contracts::SessionContextTokens::default();
+                (
+                    status,
+                    context_tokens,
+                    crate::contracts::SessionUsage::new(context_tokens, serde_json::Value::Null),
+                )
+            });
         self.push_event(GlobalEvent::SessionStatus {
-            properties: crate::api::types::SessionStatusProperties {
+            properties: crate::contracts::SessionStatusProperties {
                 session_id: session_id.to_string(),
-                status: match self
-                    .sessions
-                    .read()
-                    .get(session_id)
-                    .map(|info| info.status)
-                    .unwrap_or(status)
-                {
+                status: match status {
                     SessionStatusMano::Idle => serde_json::json!({ "type": "idle" }),
                     SessionStatusMano::Busy => serde_json::json!({ "type": "busy" }),
                     SessionStatusMano::Error => serde_json::json!({ "type": "error" }),
                 },
+                context_tokens,
+                usage,
+            },
+        });
+    }
+
+    pub fn update_session_runtime_usage(&self, session_id: &str, usage: serde_json::Value) -> bool {
+        let mut sessions = self.sessions.write();
+        let Some(info) = sessions.get_mut(session_id) else {
+            return false;
+        };
+        info.management.runtime_usage = usage;
+        info.updated_at = Utc::now().timestamp_millis();
+        true
+    }
+
+    pub fn push_current_session_status_event(&self, session_id: &str) {
+        let Some(info) = self.sessions.read().get(session_id).cloned() else {
+            return;
+        };
+        let context_tokens = session_context_tokens(&info);
+        self.push_event(GlobalEvent::SessionStatus {
+            properties: crate::contracts::SessionStatusProperties {
+                session_id: session_id.to_string(),
+                status: match info.status {
+                    SessionStatusMano::Idle => serde_json::json!({ "type": "idle" }),
+                    SessionStatusMano::Busy => serde_json::json!({ "type": "busy" }),
+                    SessionStatusMano::Error => serde_json::json!({ "type": "error" }),
+                },
+                context_tokens,
+                usage: session_usage_from_info(&info, context_tokens),
             },
         });
     }
@@ -820,18 +921,29 @@ impl SessionStore {
         }
 
         for session_id in claimed_ids {
-            if let Some(session) = self.get_session(&session_id) {
+            let (context_tokens, usage) = if let Some(session) = self.get_session(&session_id) {
+                let context_tokens = session.context_tokens;
+                let usage = session.usage.clone();
                 self.push_event(GlobalEvent::SessionUpdated {
-                    properties: crate::api::types::SessionUpdatedProperties {
+                    properties: crate::contracts::SessionUpdatedProperties {
                         session_id: session_id.clone(),
                         info: session,
                     },
                 });
-            }
+                (context_tokens, usage)
+            } else {
+                let context_tokens = crate::contracts::SessionContextTokens::default();
+                (
+                    context_tokens,
+                    crate::contracts::SessionUsage::new(context_tokens, serde_json::Value::Null),
+                )
+            };
             self.push_event(GlobalEvent::SessionStatus {
-                properties: crate::api::types::SessionStatusProperties {
+                properties: crate::contracts::SessionStatusProperties {
                     session_id,
                     status: serde_json::json!({ "type": "busy" }),
+                    context_tokens,
+                    usage,
                 },
             });
         }
@@ -980,9 +1092,25 @@ fn api_session_from_info(info: &SessionInfo, parent_id: Option<String>) -> ApiSe
         },
         message_count: info.message_count,
         task_management: info.management.task_management_json(),
+        context_tokens: session_context_tokens(info),
+        usage: session_usage_from_info(info, session_context_tokens(info)),
         plan_summary,
         session_display_name,
     }
+}
+
+fn session_context_tokens(info: &SessionInfo) -> SessionContextTokens {
+    SessionContextTokens {
+        input: info.management.context_tokens.input,
+        limit: info.management.context_tokens.limit,
+    }
+}
+
+fn session_usage_from_info(
+    info: &SessionInfo,
+    context_tokens: SessionContextTokens,
+) -> crate::contracts::SessionUsage {
+    crate::contracts::SessionUsage::new(context_tokens, info.management.runtime_usage.clone())
 }
 
 fn preserve_busy_doing_tasks(current: &SessionInfo, patched: &mut SessionInfo) {

@@ -156,7 +156,7 @@ pub(crate) fn reject_busy_session(session_id: &str, json_output: bool) -> Result
             "thread_id": session_id,
             "status": session.status,
             "state": session.state,
-            "message": "session is already running; append the prompt through the gateway user-commands endpoint"
+            "message": "session is already running; append the prompt through the gateway prompt_async endpoint"
         }))?;
         io::stdout()
             .flush()
@@ -180,11 +180,11 @@ fn busy_session_message(session_id: &str) -> String {
     format!(
         "session `{session_id}` is already running.\n\
          `tura exec --session-id {session_id}` will not start a second runtime for the same session.\n\
-         To add guidance to the running session, send it through the gateway user-command queue:\n\
+         To add guidance to the running session, send it through the gateway prompt_async endpoint:\n\
          PowerShell:\n\
-           Invoke-RestMethod -Method Post -Uri '{gateway}/session/{escaped}/user-commands' -ContentType 'application/json' -Body '{{\"command\":\"your additional instruction\"}}'\n\
+           Invoke-RestMethod -Method Post -Uri '{gateway}/session/{escaped}/prompt_async' -ContentType 'application/json' -Body '{{\"parts\":[{{\"type\":\"text\",\"text\":\"your additional instruction\"}}]}}'\n\
          curl:\n\
-           curl -X POST '{gateway}/session/{escaped}/user-commands' -H 'Content-Type: application/json' -d '{{\"command\":\"your additional instruction\"}}'"
+           curl -X POST '{gateway}/session/{escaped}/prompt_async' -H 'Content-Type: application/json' -d '{{\"parts\":[{{\"type\":\"text\",\"text\":\"your additional instruction\"}}]}}'"
     )
 }
 
@@ -225,7 +225,7 @@ mod tests {
         let message = busy_session_message("session-123");
 
         assert!(message.contains("session `session-123` is already running"));
-        assert!(message.contains("/session/session-123/user-commands"));
+        assert!(message.contains("/session/session-123/prompt_async"));
         assert!(message.contains("Invoke-RestMethod"));
         assert!(message.contains("curl -X POST"));
     }

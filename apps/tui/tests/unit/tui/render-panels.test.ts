@@ -71,13 +71,13 @@ test("render includes core TUI panels without throwing", () => {
   assert.match(transcript, /Work/);
   assert.match(
     transcript,
-    /\x1b\[48;2;16;19;20m\x1b\[38;2;103;116;111m▏\x1b\[0m\x1b\[48;2;16;19;20m/,
+    /\x1b\[48;2;20;23;24m\x1b\[38;2;103;116;111m▏\x1b\[0m\x1b\[48;2;20;23;24m/,
   );
   assert.doesNotMatch(transcript, /(?:assistant|user|system)/);
   assert.doesNotMatch(transcript, /\[runtime:/);
   assert.match(transcript, /permission/);
   assert.match(transcript, /question/);
-  assert.match(stripAnsi(transcript), /> Enter to send/);
+  assert.match(stripAnsi(transcript), /> Enter: send/);
   assert.doesNotMatch(transcript, /\x1b\[48;2;24;27;28m/);
 
   state = reducer(state, { type: "toggle-models" });
@@ -86,6 +86,8 @@ test("render includes core TUI panels without throwing", () => {
   state = reducer(state, { type: "toggle-models" });
   state = reducer(state, { type: "toggle-sessions" });
   const sessions = render(state, richCapabilities());
+  const sessionLines = stripAnsi(sessions).split("\n");
+  assert.equal(sessionLines[0], "C:/repo");
   assert.match(sessions, /Work/);
   assert.match(sessions, /New session/);
   assert.match(sessions, /> New session/);
@@ -93,10 +95,11 @@ test("render includes core TUI panels without throwing", () => {
   assert.match(sessions, /Shift\+Enter copy context/);
   assert.match(sessions, /Delete remove/);
   assert.match(sessions, /─── .*Sessions.* ─────────/);
+  assert.match(stripAnsi(sessions), /session select page 1\/1/);
   assert.doesNotMatch(sessions, /> Work/);
   assert.doesNotMatch(sessions, /\/resume <id>/);
-  assert.match(sessions, /\x1b\[48;2;16;19;20m/);
-  assert.doesNotMatch(sessions, /Enter to send/);
+  assert.match(sessions, /\x1b\[48;2;20;23;24m/);
+  assert.doesNotMatch(sessions, /Enter: send/);
   const sessionLine = sessions.split("\n").find((line) => stripAnsi(line).includes("System ready"));
   assert.ok(sessionLine);
   assertWideMenuGap(sessionLine, "Work", "System ready", 2);
@@ -157,7 +160,7 @@ test("sessions panel shows names, previews, and status diamonds", () => {
   assert.match(plain, /Running Chat ◇\s+Still working/);
   assert.match(plain, /Finished Chat ◆\s+Finished result with extra text that should not wrap/);
   assert.doesNotMatch(plain, /sess-active|sess-busy|sess-unread/);
-  assert.doesNotMatch(plain, /Enter to send/);
+  assert.doesNotMatch(plain, /Enter: send/);
 });
 
 test("sessions panel uses remaining terminal width for previews", () => {

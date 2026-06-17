@@ -33,15 +33,9 @@ pub fn build_router() -> Router {
     let router = Router::new()
         // Global
         .route("/global/health", get(api::global::health))
-        .route("/global/event", get(api::global::global_event))
         .route("/event", get(api::global::global_event))
-        .route("/global/sync-event", get(api::global::sync_event))
-        .route("/global/config", get(api::global::get_config))
-        .route("/global/config", patch(api::global::patch_config))
         .route("/model_config", get(api::global::get_tura_config))
         .route("/model_config", put(api::global::put_tura_config))
-        .route("/gui_config", get(api::global::get_gui_config))
-        .route("/gui_config", put(api::global::put_gui_config))
         // Multica-compatible product surface
         .route("/api/config", get(api::product::public_config))
         .route("/api/me", get(api::product::current_user))
@@ -119,25 +113,12 @@ pub fn build_router() -> Router {
             get(api::session::list_messages),
         )
         .route(
-            "/session/{sessionID}/message/agent",
-            post(api::session::send_agent_message),
-        )
-        .route(
-            "/session/{sessionID}/message/agent/stream",
-            post(api::session::stream_agent_message),
-        )
-        .route(
             "/session/{sessionID}/events",
             get(api::global::session_event),
         )
         .route(
             "/session/{sessionID}/prompt_async",
             post(api::session::prompt_async),
-        )
-        .route(
-            "/session/{sessionID}/user-commands",
-            get(api::session::session_user_commands)
-                .post(api::session::append_session_user_command),
         )
         .route("/file", get(api::file::list_files))
         .route("/file/content", get(api::file::get_file_content))
@@ -200,9 +181,7 @@ pub fn build_router() -> Router {
         .route("/tool/{toolID}/config", patch(api::tool::patch_tool_config))
         .route("/service/status", get(api::service::get_service_status))
         // Path
-        .route("/path", get(api::path::get_paths))
-        // Experimental
-        .route("/experimental/session", get(api::session::list_sessions));
+        .route("/path", get(api::path::get_paths));
 
     // Serve the packaged web GUI (Vite SPA build) as a fallback for any path
     // the API routes above don't claim. The API uses explicit, non-root paths,

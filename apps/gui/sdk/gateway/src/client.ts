@@ -13,7 +13,6 @@ import type {
   FileInfo,
   Message,
   MessageListInput,
-  MessageListItem,
   PathResponse,
   ProviderAuthActionResponse,
   ProviderAuthInput,
@@ -241,7 +240,7 @@ export class GatewayClient {
   }
 
   async messages(sessionId: string, input: MessageListInput = {}): Promise<Message[]> {
-    const items = await this.get<MessageListItem[]>(
+    const response = await this.get<unknown>(
       `/session/${encodeURIComponent(sessionId)}/message`,
       {
         limit: input.limit,
@@ -249,9 +248,7 @@ export class GatewayClient {
         after: input.after,
       },
     );
-    return items
-      .map(normalizeMessageListItem)
-      .filter((message): message is Message => !!message?.id);
+    return normalizeMessagesResponse(response);
   }
 
   async promptAsync(sessionId: string, payload: PromptAsyncRequest): Promise<void> {
@@ -520,6 +517,21 @@ function sessionFromLogSnapshot(snapshot: SessionLogSnapshot): Session {
   };
 }
 
+function normalizeMessagesResponse(value: unknown): Message[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    const info = record.info;
+    if (info && typeof info === "object" && typeof (info as Record<string, unknown>).id === "string") {
+      const message = { ...(info as Record<string, unknown>) } as Message;
+      if (Array.isArray(record.parts)) message.parts = record.parts as Message["parts"];
+      return [message];
+    }
+    return typeof record.id === "string" ? [record as Message] : [];
+  });
+}
+
 function normalizeSessionStatus(status?: string | null): Session["status"] {
   return status === "busy" || status === "error" ? status : "idle";
 }
@@ -676,16 +688,6 @@ async function readResponseBody(response: Response): Promise<unknown> {
   } catch {
     return text;
   }
-}
-
-function normalizeMessageListItem(item: MessageListItem): Message | undefined {
-  if ("info" in item) {
-    return {
-      ...item.info,
-      parts: item.parts ?? item.info.parts ?? [],
-    };
-  }
-  return item;
 }
 
 function timeoutSignal(

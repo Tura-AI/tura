@@ -2,6 +2,8 @@ use super::*;
 use crate::session::store::{frontend_safe_part_state, frontend_safe_part_value};
 
 pub(crate) fn api_message_from_store(message: crate::session::store::Message) -> Message {
+    let session_id = message.session_id.clone();
+    let message_id = message.id.clone();
     Message {
         id: message.id,
         session_id: message.session_id,
@@ -15,9 +17,11 @@ pub(crate) fn api_message_from_store(message: crate::session::store::Message) ->
             .into_iter()
             .map(|part| MessagePart {
                 id: part.id.clone(),
+                session_id: session_id.clone(),
+                message_id: message_id.clone(),
                 part_type: part.part_type.clone(),
                 content: part.content.clone(),
-                text: part.text.clone(),
+                text: part.text.clone().or(part.content.clone()),
                 metadata: frontend_safe_part_value(&part, part.metadata.clone()),
                 call_id: part.call_id.clone(),
                 tool: part.tool.clone(),
@@ -30,44 +34,27 @@ pub(crate) fn api_message_from_store(message: crate::session::store::Message) ->
     }
 }
 
-pub(super) fn message_with_parts_from_store(
-    message: crate::session::store::Message,
-) -> serde_json::Value {
-    let session_id = message.session_id.clone();
-    let message_id = message.id.clone();
-    let parts: Vec<_> = message
-        .parts
-        .iter()
-        .cloned()
-        .map(|part| part_json(&session_id, &message_id, part))
-        .collect();
-    let mut info = serde_json::to_value(api_message_from_store(message))
-        .unwrap_or_else(|_| serde_json::json!({}));
-    if let Some(object) = info.as_object_mut() {
-        object.insert("parts".to_string(), serde_json::Value::Array(parts.clone()));
-    }
-    serde_json::json!({
-        "info": info,
-        "parts": parts,
-    })
+pub(super) fn message_with_parts_from_store(message: crate::session::store::Message) -> Message {
+    api_message_from_store(message)
 }
 
 pub(super) fn part_json(
     session_id: &str,
     message_id: &str,
     part: crate::session::store::MessagePart,
-) -> serde_json::Value {
-    serde_json::json!({
-        "id": &part.id,
-        "sessionID": session_id,
-        "messageID": message_id,
-        "type": &part.part_type,
-        "text": part.text.clone().or(part.content.clone()).unwrap_or_default(),
-        "metadata": frontend_safe_part_value(&part, part.metadata.clone()),
-        "callID": &part.call_id,
-        "tool": &part.tool,
-        "state": frontend_safe_part_state(&part, part.state.clone()),
-    })
+) -> MessagePart {
+    MessagePart {
+        id: part.id.clone(),
+        session_id: session_id.to_string(),
+        message_id: message_id.to_string(),
+        part_type: part.part_type.clone(),
+        content: part.content.clone(),
+        text: part.text.clone().or(part.content.clone()),
+        metadata: frontend_safe_part_value(&part, part.metadata.clone()),
+        call_id: part.call_id.clone(),
+        tool: part.tool.clone(),
+        state: frontend_safe_part_state(&part, part.state.clone()),
+    }
 }
 
 #[cfg(test)]
@@ -125,7 +112,8 @@ mod tests {
             })),
         );
 
-        let value = part_json("session-1", "message-1", part);
+        let value =
+            serde_json::to_value(part_json("session-1", "message-1", part)).expect("part json");
 
         assert_eq!(value["text"], "content fallback");
         assert_eq!(value["metadata"]["runtime_id"], "runtime-1");
@@ -154,7 +142,8 @@ mod tests {
             })),
         );
 
-        let value = part_json("session-1", "message-1", part);
+        let value =
+            serde_json::to_value(part_json("session-1", "message-1", part)).expect("part json");
 
         assert_eq!(value["sessionID"], "session-1");
         assert_eq!(value["messageID"], "message-1");
@@ -197,7 +186,8 @@ mod tests {
             })),
         );
 
-        let value = part_json("session-1", "message-1", part);
+        let value =
+            serde_json::to_value(part_json("session-1", "message-1", part)).expect("part json");
 
         assert_eq!(
             value["state"]["commands"],
@@ -262,12 +252,12 @@ mod tests {
             updated_at: 12,
         };
 
-        let value = message_with_parts_from_store(message);
+        let value =
+            serde_json::to_value(message_with_parts_from_store(message)).expect("message json");
 
-        assert_eq!(value["info"]["id"], "message-2");
-        assert_eq!(value["info"]["sessionID"], "session-2");
+        assert_eq!(value["id"], "message-2");
+        assert_eq!(value["sessionID"], "session-2");
         assert_eq!(value["parts"].as_array().expect("parts").len(), 2);
-        assert_eq!(value["info"]["parts"], value["parts"]);
         assert_eq!(value["parts"][0]["text"], "first");
         assert_eq!(value["parts"][1]["text"], "second content");
     }
@@ -374,14 +364,14 @@ mod tests {
                 updated_at: runtime_end,
             };
 
-            let value = message_with_parts_from_store(message);
+            let value =
+                serde_json::to_value(message_with_parts_from_store(message)).expect("message json");
             let state = &value["parts"][0]["state"];
 
             assert_eq!(state["status"], final_status);
             assert_eq!(state["time"]["start"], runtime_start);
             assert_eq!(state["time"]["end"], runtime_end);
             assert_eq!(state["commands"][0]["status"], command_status);
-            assert_eq!(value["info"]["parts"], value["parts"]);
         }
     }
 

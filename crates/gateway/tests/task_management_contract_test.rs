@@ -1,5 +1,5 @@
 use chrono::Utc;
-use gateway::{api::types::SessionStatus, SessionStore};
+use gateway::{contracts::SessionStatus, SessionStore};
 
 #[test]
 fn explicit_start_condition_round_trips_and_idle_scheduler_claims_it() {

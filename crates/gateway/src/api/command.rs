@@ -1,4 +1,4 @@
-use crate::api::types::Command;
+use crate::contracts::{Command, ExecuteCommandRequest, ExecuteCommandResponse};
 use crate::mock::global_store;
 use axum::Json;
 use tura_router::registry::command::{
@@ -30,17 +30,6 @@ pub async fn execute_command(
     Json(ExecuteCommandResponse {
         output: response.output,
     })
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ExecuteCommandRequest {
-    pub command: String,
-    pub args: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct ExecuteCommandResponse {
-    pub output: String,
 }
 
 fn command_from_router(command: CommandSpec) -> Command {

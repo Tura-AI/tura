@@ -1,7 +1,7 @@
 //! Session API handlers
 
 use crate::api::product::current_user_snapshot;
-use crate::api::types::*;
+use crate::contracts::*;
 use crate::mock::global_store;
 use crate::router_client::RouterClient;
 use crate::session::config::{load_config, merge_config, TuraSessionConfig};
@@ -14,12 +14,12 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 use std::time::Duration;
 
+use ::session_log::{DeleteSessionRequest, SessionLogCommand};
 use runtime::state_machine::session_management::StartCondition;
 
 // ============================================================================
@@ -55,18 +55,6 @@ pub async fn list_sessions(
     }
 
     Json(sessions)
-}
-
-#[derive(Debug, Clone, Default, serde::Deserialize)]
-pub struct SessionListParams {
-    pub directory: Option<String>,
-    pub workspace: Option<String>,
-    pub roots: Option<bool>,
-    #[serde(default, alias = "includeChildren")]
-    pub include_children: bool,
-    pub start: Option<i64>,
-    pub search: Option<String>,
-    pub limit: Option<usize>,
 }
 
 fn filter_list_sessions(
@@ -161,6 +149,8 @@ pub async fn get_session(Path(session_id): Path<String>) -> Json<Session> {
                 status: SessionStatus::Idle,
                 message_count: 0,
                 task_management: serde_json::json!({}),
+                context_tokens: SessionContextTokens::default(),
+                usage: Default::default(),
                 plan_summary: None,
                 session_display_name: None,
             })
@@ -256,28 +246,6 @@ pub async fn create_session(
     Json(session)
 }
 
-#[derive(Debug, Clone, Default, serde::Deserialize)]
-pub struct CreateSessionRequest {
-    pub directory: Option<String>,
-    pub model: Option<String>,
-    pub agent: Option<String>,
-    pub session_type: Option<String>,
-    pub kill_processes_on_start: Option<bool>,
-    pub validator_enabled: Option<bool>,
-    pub force_planning: Option<bool>,
-    pub model_variant: Option<String>,
-    pub model_acceleration_enabled: Option<bool>,
-    pub disable_permission_restrictions: Option<bool>,
-    #[serde(alias = "autoSessionName")]
-    pub auto_session_name: Option<bool>,
-    pub task_management: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct SessionDirectoryParams {
-    pub directory: Option<String>,
-}
-
 pub async fn get_session_config(
     headers: HeaderMap,
     Query(params): Query<SessionDirectoryParams>,
@@ -348,15 +316,49 @@ fn hex(value: u8) -> Option<u8> {
 
 pub async fn delete_session(Path(session_id): Path<String>) -> Json<bool> {
     let info = session_store().get_session(&session_id);
+    if session_has_busy_cancellation_scope(&session_id) {
+        let abort = abort_session_scope(&session_id);
+        tracing::info!(
+            session_id,
+            aborted_sessions = ?abort.sessions,
+            "aborted running session before delete"
+        );
+    }
+    let write_result =
+        write_session_log_command(SessionLogCommand::DeleteSession(DeleteSessionRequest {
+            session_id: session_id.clone(),
+        }))
+        .await;
+    if let Err(error) = &write_result {
+        tracing::warn!(
+            session_id,
+            error,
+            "failed to delete session from session_log"
+        );
+    }
     let deleted = session_store().delete_session(&session_id);
-    if deleted {
+    if deleted || write_result.is_ok() {
         if let Some(info) = info {
             session_store().push_event(GlobalEvent::SessionDeleted {
-                properties: SessionDeletedProperties { session_id, info },
+                properties: SessionDeletedProperties {
+                    session_id: session_id.clone(),
+                    info,
+                },
             });
         }
     }
-    Json(deleted)
+    Json(deleted || write_result.is_ok())
+}
+
+fn session_has_busy_cancellation_scope(session_id: &str) -> bool {
+    session_store()
+        .cancellation_scope_session_ids(session_id)
+        .into_iter()
+        .any(|id| {
+            session_store()
+                .get_session(&id)
+                .is_some_and(|session| matches!(session.status, SessionStatus::Busy))
+        })
 }
 
 pub async fn update_session(
@@ -399,6 +401,8 @@ pub async fn update_session(
             status: SessionStatus::Idle,
             message_count: 0,
             task_management: serde_json::json!({}),
+            context_tokens: SessionContextTokens::default(),
+            usage: Default::default(),
             plan_summary: None,
             session_display_name: None,
         });
@@ -450,6 +454,8 @@ pub async fn update_session_task_management(
             status: SessionStatus::Idle,
             message_count: 0,
             task_management: serde_json::json!({}),
+            context_tokens: SessionContextTokens::default(),
+            usage: Default::default(),
             plan_summary: None,
             session_display_name: None,
         });
@@ -462,28 +468,11 @@ pub async fn update_session_task_management(
     Json(session)
 }
 
-#[derive(Debug, Deserialize)]
-pub struct UpdateSessionTaskManagementRequest {
-    pub task_management: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Default, serde::Deserialize)]
-pub struct UpdateSessionRequest {
-    pub title: Option<String>,
-    pub name: Option<String>,
-    pub model: Option<String>,
-    pub agent: Option<String>,
-    pub session_type: Option<String>,
-    pub kill_processes_on_start: Option<bool>,
-    pub validator_enabled: Option<bool>,
-    pub force_planning: Option<bool>,
-    pub disable_permission_restrictions: Option<bool>,
-    #[serde(alias = "autoSessionName")]
-    pub auto_session_name: Option<bool>,
-    pub task_management: Option<serde_json::Value>,
-}
-
 pub async fn abort_session(Path(session_id): Path<String>) -> Json<AbortResponse> {
+    Json(abort_session_scope(&session_id))
+}
+
+fn abort_session_scope(session_id: &str) -> AbortResponse {
     let aborted_sessions = session_store().cancellation_scope_session_ids(&session_id);
     let mut cleanups = Vec::new();
     let router = RouterClient::global();
@@ -517,28 +506,12 @@ pub async fn abort_session(Path(session_id): Path<String>) -> Json<AbortResponse
         session_store().update_session_status(id, SessionStatusMano::Idle);
     }
 
-    Json(AbortResponse {
+    AbortResponse {
         aborted: true,
         sessions: aborted_sessions,
         cleanup: cleanups.first().cloned(),
         cleanups,
-    })
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct AbortResponse {
-    pub aborted: bool,
-    pub sessions: Vec<String>,
-    pub cleanup: Option<AbortCleanup>,
-    pub cleanups: Vec<AbortCleanup>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct AbortCleanup {
-    pub session_id: String,
-    pub status: String,
-    pub stopped_worker: bool,
-    pub error: Option<String>,
+    }
 }
 
 pub async fn fork_session(
@@ -581,12 +554,37 @@ pub async fn fork_session(
             .map(|session| session.disable_permission_restrictions)
             .unwrap_or(false),
     );
+    let new_session = session_store()
+        .attach_child_session(&session_id, &new_session.id)
+        .unwrap_or(new_session);
     if payload.copy_context.unwrap_or(true) {
         let _ = session_store().copy_session_context(&session_id, &new_session.id);
     }
     let new_session = session_store()
         .get_session(&new_session.id)
         .unwrap_or(new_session);
+    match session_store().session_log_upsert_request(&new_session.id) {
+        Ok(request) => {
+            if let Err(error) =
+                write_session_log_command(SessionLogCommand::UpsertSession(request)).await
+            {
+                tracing::warn!(
+                    session_id = %new_session.id,
+                    parent_session_id = %session_id,
+                    error,
+                    "failed to persist forked session to session_log"
+                );
+            }
+        }
+        Err(error) => {
+            tracing::warn!(
+                session_id = %new_session.id,
+                parent_session_id = %session_id,
+                error,
+                "failed to build forked session_log snapshot"
+            );
+        }
+    }
     session_store().push_event(GlobalEvent::SessionCreated {
         properties: SessionCreatedProperties {
             session_id: new_session.id.clone(),
@@ -596,13 +594,11 @@ pub async fn fork_session(
     Json(new_session)
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ForkSessionRequest {
-    pub directory: Option<String>,
-    pub model: Option<String>,
-    pub agent: Option<String>,
-    #[serde(default, alias = "copyContext")]
-    pub copy_context: Option<bool>,
+async fn write_session_log_command(command: SessionLogCommand) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || crate::session_log_writer::write_session_log(command))
+        .await
+        .map_err(|error| format!("session_log writer task failed: {error}"))?
+        .map_err(|error| error.to_string())
 }
 
 pub async fn session_status() -> Json<std::collections::HashMap<String, serde_json::Value>> {
@@ -615,6 +611,8 @@ pub async fn session_status() -> Json<std::collections::HashMap<String, serde_js
                 serde_json::json!({
                     "status": session_status_value(&s.status),
                     "task_management": s.task_management,
+                    "context_tokens": s.context_tokens,
+                    "usage": s.usage,
                     "plan_summary": s.plan_summary,
                     "session_display_name": s.session_display_name,
                 }),
@@ -622,15 +620,6 @@ pub async fn session_status() -> Json<std::collections::HashMap<String, serde_js
         })
         .collect();
     Json(statuses)
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct SessionStatusResponse {
-    pub session_id: String,
-    pub status: SessionStatus,
-    pub task_management: serde_json::Value,
-    pub plan_summary: Option<String>,
-    pub session_display_name: Option<String>,
 }
 
 pub(crate) fn session_status_value(status: &SessionStatus) -> serde_json::Value {
@@ -645,11 +634,6 @@ pub async fn share_session(Path(session_id): Path<String>) -> Json<ShareResponse
     Json(ShareResponse {
         url: format!("https://share.example.com/session/{session_id}"),
     })
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ShareResponse {
-    pub url: String,
 }
 
 // ============================================================================
@@ -667,21 +651,32 @@ pub async fn session_user_commands(Path(session_id): Path<String>) -> Json<serde
     }))
 }
 
+pub(crate) fn append_user_command_for_runtime(session_id: &str, command: String) -> Vec<String> {
+    let root_session_id = session_store().user_command_root_session_id(session_id);
+    let commands = session_store().append_user_command(session_id, command.clone());
+    if let Err(error) =
+        RouterClient::global().append_user_command(session_id, &root_session_id, &command)
+    {
+        tracing::warn!(
+            session_id,
+            root_session_id,
+            error = %error,
+            "failed to forward user command to router queue"
+        );
+    }
+    commands
+}
+
 pub async fn append_session_user_command(
     Path(session_id): Path<String>,
     Json(payload): Json<AppendUserCommandRequest>,
 ) -> Json<serde_json::Value> {
-    let commands = session_store().append_user_command(&session_id, payload.command);
+    let commands = append_user_command_for_runtime(&session_id, payload.command);
     Json(serde_json::json!({
         "ok": true,
         "session_id": session_id,
         "commands": commands,
     }))
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct AppendUserCommandRequest {
-    pub command: String,
 }
 
 pub async fn register_child_session(
@@ -767,6 +762,14 @@ pub async fn update_session_status_for_runtime(
                     .as_ref()
                     .map(|session| session.task_management.clone())
                     .unwrap_or_else(|| serde_json::json!({})),
+                context_tokens: session
+                    .as_ref()
+                    .map(|session| session.context_tokens)
+                    .unwrap_or_default(),
+                usage: session
+                    .as_ref()
+                    .map(|session| session.usage.clone())
+                    .unwrap_or_default(),
                 plan_summary: session
                     .as_ref()
                     .and_then(|session| session.plan_summary.clone()),
@@ -783,31 +786,22 @@ pub async fn update_session_status_for_runtime(
         .into_response()
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct RuntimeSessionStatusRequest {
-    pub status: String,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct RegisterChildSessionRequest {
-    pub child_session_id: String,
-    pub directory: String,
-    pub name: String,
-    pub task_instruction: String,
-}
-
 // ============================================================================
 // Message Operations
 // ============================================================================
 
 #[path = "session_messages.rs"]
 mod session_messages;
+pub use crate::contracts::{
+    MessageListParams, SendAgentMedia, SendAgentMessageRequest, SendAgentMessageResponse,
+    SendAgentToolCall, SessionCommandRequest, SessionCommandResponse, StreamAgentTextRequest,
+};
 #[cfg(test)]
 use session_messages::{agent_message_content, agent_message_metadata, planning_todos};
 pub use session_messages::{
-    get_message, get_message_part, get_todos, list_messages, send_agent_message, send_message,
-    session_command, stream_agent_message, update_todos, MessageListParams, SendAgentMedia,
-    SendAgentMessageRequest, SendAgentMessageResponse, SendAgentToolCall, StreamAgentTextRequest,
+    get_message, get_message_part, get_todos, list_messages, send_agent_message,
+    send_agent_message_payload, send_message, session_command, stream_agent_message,
+    stream_agent_message_payload, update_todos,
 };
 pub async fn revert_session(Path(session_id): Path<String>) -> Json<bool> {
     Json(
@@ -974,7 +968,8 @@ fn session_change_tracker_path(directory: &str, session_id: &str) -> PathBuf {
 
 #[path = "session_summary.rs"]
 mod session_summary;
-pub use session_summary::{summarize_session, SummaryResponse};
+pub use crate::contracts::SummaryResponse;
+pub use session_summary::summarize_session;
 
 // ============================================================================
 // Session Shell
@@ -982,8 +977,9 @@ pub use session_summary::{summarize_session, SummaryResponse};
 
 #[path = "session_shell.rs"]
 mod session_shell;
+pub use crate::contracts::{ShellRequest, ShellResponse};
+pub use session_shell::session_shell;
 use session_shell::{run_session_shell_command, truncate_summary_text};
-pub use session_shell::{session_shell, ShellRequest, ShellResponse};
 
 // ============================================================================
 // Async Prompt

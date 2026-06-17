@@ -6,14 +6,14 @@ import {
   inverse,
   italic,
   pad,
+  padVisible,
   reset,
   richBlockBg,
   richInlineBg,
   strike,
   stripAnsi,
   textAgentRich,
-  textSecondary,
-  truncate,
+  textAuxiliary,
   underline,
   visibleTextWidth,
 } from "./render-terminal.js";
@@ -57,8 +57,9 @@ export function displayMessageText(role: string, value: string): string {
   const lines = text
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
-    .filter((line) => line.trim())
     .slice(0, MAX_ASSISTANT_LINES);
+  while (lines.length && !lines[0]?.trim()) lines.shift();
+  while (lines.length && !lines.at(-1)?.trim()) lines.pop();
   return lines.join("\n");
 }
 
@@ -96,10 +97,10 @@ function plainRichText(source: string): string {
       stripUnsupportedHtml(
         source
           .replace(
-            /<a\s+href=['"]((?:https?:\/\/|file:\/\/)[^'"]+)['"][^>]*>([\s\S]*?)<\/a>/giu,
-            (_match, href, body) => `${stripHtml(String(body))} (${href})`,
+            /<a\s+href=['"]([^'"]+)['"][^>]*>([\s\S]*?)<\/a>/giu,
+            (_match, _href, body) => stripHtml(String(body)),
           )
-          .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/gu, "$1 ($2)")
+          .replace(markdownLinkPattern, "$1")
           .replace(/\[MEDIA:([\s\S]*?):MEDIA\]/gu, "[MEDIA:$1:MEDIA]")
           .replace(/\[EMOJI:(sticker|react):([\s\S]*?):EMOJI\]/gu, (_match, _mode, emoji) =>
             String(emoji).trim(),
@@ -124,14 +125,14 @@ function renderHtmlSubset(source: string): string {
   let output = source;
   output = output.replace(
     /<pre(?:\s[^>]*)?>\s*<code(?:\s+class=['"]language-([^'"]+)['"])?>([\s\S]*?)<\/code>\s*<\/pre>/giu,
-    (_match, language, body) => {
-      return renderCodeFence(decodeHtml(body), language ? decodeHtml(language) : undefined);
+    (_match, _language, body) => {
+      return renderCodeFence(decodeHtml(body));
     },
   );
   output = output.replace(/<blockquote>([\s\S]*?)<\/blockquote>/giu, (_match, body) =>
     decodeHtml(stripHtml(body))
       .split(/\r?\n/)
-      .map((line) => quoteRegion(`${activeCapabilities.unicode ? "│" : ">"} ${line}`))
+      .map((line) => quoteRegion(line))
       .join("\n"),
   );
   const replacements: Array<[RegExp, (body: string, attr?: string) => string]> = [
@@ -157,7 +158,11 @@ function renderHtmlSubset(source: string): string {
       (body) => `${inverse}${decodeHtml(stripHtml(body))}${reset}`,
     ],
     [
-      /<a\s+href=['"]((?:https?:\/\/|file:\/\/)[^'"]+)['"][^>]*>([\s\S]*?)<\/a>/giu,
+      /<mark>([\s\S]*?)<\/mark>/giu,
+      (body) => `${inverse}${decodeHtml(stripHtml(body))}${reset}`,
+    ],
+    [
+      /<a\s+href=['"]([^'"]+)['"][^>]*>([\s\S]*?)<\/a>/giu,
       (body, href) => renderLinkTarget(href ?? "", renderHtmlSubset(body)),
     ],
   ];
@@ -175,13 +180,16 @@ function renderHtmlSubset(source: string): string {
   return decodeHtml(stripUnsupportedHtml(output));
 }
 
-function renderCodeFence(value: string, language?: string): string {
-  const fence = `\`\`\`${language ?? ""}`;
-  return [fence, ...codeBlockLines(value), "```"].map(blockRegion).join("\n");
+function renderCodeFence(value: string): string {
+  return codeBlockRegionLines(codeBlockLines(value)).join("\n");
 }
 
 function codeBlockLines(value: string): string[] {
   return value.replace(/\r\n/g, "\n").replace(/\n$/u, "").split("\n");
+}
+
+function codeBlockRegionLines(lines: string[]): string[] {
+  return [blockRegion(""), ...lines.map(blockRegion), blockRegion("")];
 }
 
 function renderMarkdownRegions(source: string): string {
@@ -191,13 +199,15 @@ function renderMarkdownRegions(source: string): string {
   for (let index = 0; index < lines.length; index += 1) {
     const fence = lines[index].match(/^\s*```([A-Za-z0-9_-]+)?\s*$/u);
     if (fence) {
-      output.push(blockRegion(lines[index]));
+      pushBlankBeforeBlock(output);
       index += 1;
+      const codeLines: string[] = [];
       while (index < lines.length && !/^\s*```\s*$/u.test(lines[index])) {
-        output.push(blockRegion(lines[index]));
+        codeLines.push(lines[index]);
         index += 1;
       }
-      if (index < lines.length) output.push(blockRegion(lines[index]));
+      output.push(...codeBlockRegionLines(codeLines));
+      pushBlankAfterBlock(output, lines, index + 1);
       continue;
     }
     const heading = lines[index].match(/^\s{0,3}(#{1,6})\s+(.+)$/u);
@@ -209,7 +219,7 @@ function renderMarkdownRegions(source: string): string {
     }
     const quote = lines[index].match(/^\s{0,3}>\s?(.*)$/u);
     if (quote) {
-      output.push(quoteRegion(`${activeCapabilities.unicode ? "│" : ">"} ${quote[1] ?? ""}`));
+      output.push(quoteRegion(quote[1] ?? ""));
       continue;
     }
     output.push(lines[index]);
@@ -239,6 +249,7 @@ function renderMarkdownTables(source: string): string {
   const output: string[] = [];
   for (let index = 0; index < lines.length; ) {
     if (isMarkdownTableStart(lines, index)) {
+      pushBlankBeforeBlock(output);
       const table: string[][] = [tableCells(lines[index])];
       index += 2;
       while (index < lines.length && /^\s*\|.*\|\s*$/u.test(lines[index])) {
@@ -246,12 +257,21 @@ function renderMarkdownTables(source: string): string {
         index += 1;
       }
       output.push(...formatMarkdownTable(table));
+      pushBlankAfterBlock(output, lines, index);
       continue;
     }
     output.push(lines[index]);
     index += 1;
   }
   return output.join("\n");
+}
+
+function pushBlankBeforeBlock(output: string[]): void {
+  if (output.length > 0 && output.at(-1)?.trim()) output.push("");
+}
+
+function pushBlankAfterBlock(output: string[], lines: string[], nextIndex: number): void {
+  if (nextIndex >= lines.length || lines[nextIndex]?.trim()) output.push("");
 }
 
 function isMarkdownTableStart(lines: string[], index: number): boolean {
@@ -282,38 +302,41 @@ function formatMarkdownTable(rows: string[][]): string[] {
   const widths = Array.from({ length: width }, (_item, column) =>
     Math.min(48, Math.max(3, ...normalized.map((row) => visibleTextWidth(row[column])))),
   );
-  if (activeCapabilities.level === "rich") {
-    return compactMarkdownTable(normalized);
-  }
+  const separator =
+    activeCapabilities.level === "rich" && activeCapabilities.unicode
+      ? ` ${textAuxiliary}│${textAgentRich} `
+      : activeCapabilities.unicode
+        ? " │ "
+        : "  ";
   return normalized.map((row, index) => {
-    const cells = row.map((cell, column) => pad(truncate(cell, widths[column]), widths[column]));
-    const text = ` ${cells.join("  ")} `;
+    const cells = row.map((cell, column) => padVisible(cell, widths[column]));
+    const text = ` ${cells.join(separator)} `;
+    if (activeCapabilities.level === "rich")
+      return index === 0 ? `${textAgentRich}${bold}${text}${reset}` : `${textAgentRich}${text}${reset}`;
     return index === 0 ? `${bold}${text}${reset}` : text;
   });
 }
 
-function compactMarkdownTable(rows: string[][]): string[] {
-  const headers = rows[0] ?? [];
-  return rows.slice(1).map((row) => {
-    const cells = row
-      .map((cell, index) => {
-        const header = stripAnsi(headers[index] ?? "").trim();
-        const value = cell.trim();
-        if (!value) return "";
-        return header ? `${header}: ${value}` : value;
-      })
-      .filter(Boolean);
-    return `${textSecondary}◇${reset} ${textAgentRich}${cells.join("  ")}${reset}`;
-  });
-}
+const markdownLinkPattern = /\[([^\]\n]+)\]\(([^)\n]+)\)/gu;
 
 function renderInlineMarkdown(source: string): string {
-  const linked = source.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/gu, (_match, label, href) =>
-    renderLinkTarget(String(href), String(label)),
+  const linked = source.replace(markdownLinkPattern, (_match, label, href) =>
+    renderLinkTarget(markdownLinkTarget(String(href)), String(label)),
   );
   const localLinked = linkLocalPathsPreservingOsc(linked);
   const preserved = preserveAnsiSequences(localLinked);
   return restoreAnsiSequences(renderInlineDecorations(preserved.text), preserved.tokens);
+}
+
+function markdownLinkTarget(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("<")) {
+    const close = trimmed.indexOf(">");
+    if (close > 0) return decodeHtml(trimmed.slice(1, close).trim());
+  }
+  const withoutTitle = trimmed.match(/^(\S+)(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/u);
+  return decodeHtml((withoutTitle?.[1] ?? trimmed).trim());
 }
 
 function preserveAnsiSequences(source: string): { text: string; tokens: string[] } {
@@ -335,7 +358,26 @@ function renderInlineDecorations(source: string): string {
       /(?<!\\)\*\*([^*\n]+)\*\*/gu,
       (_match, body) => `${textAgentRich}${bold}${body}${reset}`,
     )
-    .replace(/(?<!\\)__([^_\n]+)__/gu, (_match, body) => `${textAgentRich}${bold}${body}${reset}`)
+    .replace(
+      /(?<![A-Za-z0-9_\\])__(?![_\s])([^_\n]+?)(?<![\s_])__(?![A-Za-z0-9_])/gu,
+      (_match, body) => `${textAgentRich}${bold}${body}${reset}`,
+    )
+    .replace(
+      /(?<!\\)~~([^~\n]+)~~/gu,
+      (_match, body) => `${textAgentRich}${strike}${body}${reset}`,
+    )
+    .replace(
+      /(?<!\\)==([^=\n]+)==/gu,
+      (_match, body) => `${inverse}${decodeHtml(String(body))}${reset}`,
+    )
+    .replace(
+      /(?<![\*\\])\*(?!\*)([^*\n]+?)(?<!\*)\*(?!\*)/gu,
+      (_match, body) => `${textAgentRich}${italic}${body}${reset}`,
+    )
+    .replace(
+      /(?<![A-Za-z0-9_\\])_(?![_\s])([^_\n]+?)(?<![\s_])_(?![A-Za-z0-9_])/gu,
+      (_match, body) => `${textAgentRich}${italic}${body}${reset}`,
+    )
     .replace(/(?<!\\)`([^`\n]+)`/gu, (_match, body) => inlineRegion(String(body)));
 }
 
@@ -347,8 +389,9 @@ function renderMediaToken(path: string): string {
 }
 
 function renderLinkTarget(target: string, label: string): string {
-  if (!isLinkTarget(target)) return `${label} (${target})`;
-  const visible = `${stripAnsi(label)} ${textAgentRich}(${target})${reset}`;
+  const visibleLabel = stripAnsi(label).trim() || stripAnsi(target).trim();
+  if (!isLinkTarget(target)) return visibleLabel;
+  const visible = `${textAgentRich}${visibleLabel}${reset}`;
   return terminalLink(linkTargetUrl(target), visible);
 }
 

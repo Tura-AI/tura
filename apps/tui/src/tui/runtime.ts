@@ -15,7 +15,7 @@ export type TuiDispatch = (action: AppAction) => void;
 export type TuiGetState = () => AppState;
 
 export async function pickInitialSession(client: TuiGatewayClient, cwd: string): Promise<Session> {
-  const sessions = await client.listSessions({ limit: 20 });
+  const sessions = await client.listSessions({ includeChildren: true, limit: 20 });
   sessions.sort((left, right) => sessionUpdatedAt(right) - sessionUpdatedAt(left));
   if (sessions[0]) return sessions[0];
   return client.createSession().catch(() => createDraftSession(cwd));

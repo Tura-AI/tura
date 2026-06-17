@@ -33,6 +33,7 @@
     "test:business:multi-session": "npm run build && node ./tests/e2e/business/tui_multi_session_playwright.mjs",
     "test:business:refresh-replay": "npm run build && node ./tests/e2e/business/tui_refresh_replay_playwright.mjs",
     "test:business:real-session-db": "npm run build && node ./tests/e2e/business/tui_real_session_db_replay_playwright.mjs",
+    "test:performance:history": "npm run build && node ./tests/performance/heavy-history-session-perf.mjs",
     "stress:memory": "npm run build && node --expose-gc ../../tests/benchmark/tui/tui_streaming_memory_stress.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src tests",

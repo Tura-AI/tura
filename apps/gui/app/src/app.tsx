@@ -586,7 +586,6 @@ export function App() {
       const optimisticMessage: Message = {
         id: optimisticId,
         sessionID: sessionId,
-        session_id: sessionId,
         role: "user",
         created_at: now,
         updated_at: now,
@@ -594,6 +593,8 @@ export function App() {
         parts: [
           {
             id: `${optimisticId}:text`,
+            sessionID: sessionId,
+            messageID: optimisticId,
             type: "text",
             text: content,
             metadata: { planRunPending: true },

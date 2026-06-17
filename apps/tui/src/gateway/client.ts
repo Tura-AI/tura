@@ -11,8 +11,6 @@ import type {
   GatewayPathResponse,
   Project,
   ServiceStatusResponse,
-  SessionLogSession,
-  SessionLogWorkspace,
   PersonaUpsertRequest,
   StoredPersona,
   TuraConfigResponse,
@@ -29,11 +27,9 @@ import type {
   CreateSessionRequest,
   ForkSessionRequest,
   Message,
-  MessageEnvelope,
   PromptPayload,
   Session,
 } from "../types/session.js";
-import { normalizeMessage } from "../types/session.js";
 import { directoryHeader } from "./directory.js";
 import { GatewayHttpError } from "./errors.js";
 import { parseSse } from "./events.js";
@@ -152,10 +148,7 @@ export class GatewayClient {
   }
 
   async getSession(sessionID: string): Promise<Session> {
-    const sessions = await this.listSessions({ all: true, includeChildren: true });
-    const session = sessions.find((item) => item.id === sessionID);
-    if (!session) throw new Error(`session not found: ${sessionID}`);
-    return session;
+    return this.get(`/session/${encodeURIComponent(sessionID)}`);
   }
 
   async listMessages(sessionID: string, options: ListMessagesOptions = {}): Promise<Message[]> {
@@ -163,23 +156,10 @@ export class GatewayClient {
     if (options.limit) query.limit = options.limit;
     if (options.before) query.before = options.before;
     if (options.after) query.after = options.after;
-    const response = await this.get<Array<Message | MessageEnvelope>>(
+    return this.get<Message[]>(
       `/session/${encodeURIComponent(sessionID)}/message`,
       query,
     );
-    return response.map(normalizeMessage);
-  }
-
-  async listSessionLogWorkspaces(): Promise<SessionLogWorkspace[]> {
-    return this.get("/session-log/workspaces");
-  }
-
-  async listSessionLogSessions(): Promise<SessionLogSession[]> {
-    return this.get("/session-log/sessions", { directory: this.directory });
-  }
-
-  async listSessionLogRecords(sessionID: string): Promise<unknown[]> {
-    return this.get(`/session-log/${encodeURIComponent(sessionID)}/records`);
   }
 
   async sendPromptAsync(sessionID: string, payload: PromptPayload): Promise<void> {

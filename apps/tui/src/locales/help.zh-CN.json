@@ -23,7 +23,7 @@
       { "name": "project", "summary": "查看或创建网关工作区" },
       { "name": "file", "summary": "列出、读取、打开或定位工作区文件" },
       { "name": "command", "summary": "列出或执行网关命令" },
-      { "name": "inspect", "summary": "显示网关服务、路径和会话日志状态" },
+      { "name": "inspect", "summary": "显示网关服务、路径和会话" },
       { "name": "gateway", "summary": "直接调用任意网关 HTTP 端点" },
       { "name": "completion", "summary": "为 bash、zsh 或 fish 生成 shell 补全" }
     ],
@@ -190,9 +190,8 @@
     "usage": [
       "tura [OPTIONS] inspect status [--json]",
       "tura [OPTIONS] inspect paths [--json]",
-      "tura [OPTIONS] inspect logs workspaces [--json]",
-      "tura [OPTIONS] inspect logs sessions [--json]",
-      "tura [OPTIONS] inspect logs records SESSION_ID"
+      "tura [OPTIONS] inspect sessions [--json]",
+      "tura [OPTIONS] inspect messages SESSION_ID [--json]"
     ]
   },
   "gateway": {

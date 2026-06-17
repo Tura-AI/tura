@@ -1,7 +1,7 @@
 //! Mock data store for API testing
 //! This module provides in-memory mock data that simulates the OpenCode backend
 
-use crate::api::types::*;
+use crate::contracts::*;
 use crate::session::config::DEFAULT_SESSION_REASONING_EFFORT;
 use crate::session::manager::{coding_agent_provider, CODING_AGENT_NAME};
 use crate::types::OutboundAction;
@@ -76,6 +76,8 @@ impl Store {
             status: SessionStatus::Idle,
             message_count: 0,
             task_management: serde_json::json!({}),
+            context_tokens: SessionContextTokens::default(),
+            usage: Default::default(),
             plan_summary: None,
             session_display_name: None,
         };
@@ -84,12 +86,14 @@ impl Store {
         // Create a welcome message
         let message_id = new_message_id(now);
         let message = Message {
-            id: message_id,
+            id: message_id.clone(),
             session_id: session_id.clone(),
             role: MessageRole::Assistant,
             parent_id: None,
             parts: vec![MessagePart {
                 id: Uuid::new_v4().to_string(),
+                session_id: session_id.clone(),
+                message_id: message_id.clone(),
                 part_type: "text".to_string(),
                 content: Some(
                     "Hello! I'm ready to help you. How can I assist you today?".to_string(),
@@ -188,6 +192,8 @@ impl Store {
             status: SessionStatus::Idle,
             message_count: 0,
             task_management: serde_json::json!({}),
+            context_tokens: SessionContextTokens::default(),
+            usage: Default::default(),
             plan_summary: None,
             session_display_name: None,
         };
@@ -236,12 +242,14 @@ impl Store {
         };
 
         let message = Message {
-            id: message_id,
+            id: message_id.clone(),
             session_id: session_id.to_string(),
             role,
             parent_id,
             parts: vec![MessagePart {
                 id: part_id,
+                session_id: session_id.to_string(),
+                message_id: message_id.clone(),
                 part_type: "text".to_string(),
                 content: Some(content.clone()),
                 text: Some(content),
@@ -497,7 +505,7 @@ pub fn global_store() -> &'static Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::types::{ConfigPatch, MessageRole, ProviderAuth, SessionStatus};
+    use crate::contracts::{ConfigPatch, MessageRole, ProviderAuth, SessionStatus};
 
     fn auth(auth_type: &str) -> ProviderAuth {
         ProviderAuth {

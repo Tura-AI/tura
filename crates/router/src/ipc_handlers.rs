@@ -12,6 +12,14 @@ pub(crate) async fn handle_ipc_request(
     state: &AppState,
     request: ipc::IpcRequest,
 ) -> ipc::IpcResponse {
+    handle_ipc_request_with_notifications(state, request, None).await
+}
+
+pub(crate) async fn handle_ipc_request_with_notifications(
+    state: &AppState,
+    request: ipc::IpcRequest,
+    notifications: Option<ipc::IpcNotificationSender>,
+) -> ipc::IpcResponse {
     let result = match request.method.as_str() {
         "" | "health_check"
             if request.kind == "health_check" || request.method == "health_check" =>
@@ -39,10 +47,22 @@ pub(crate) async fn handle_ipc_request(
         "session_db.lifecycle.restart" => state.session_db.restart(),
         "lifecycle.front_heartbeat" => state.lifecycle.heartbeat(&request.payload),
         "lifecycle.status" => Ok(state.lifecycle.snapshot()),
-        "execution.enqueue_turn" => state.execution.enqueue_turn(state, request.payload).await,
+        "execution.enqueue_turn" => {
+            state
+                .execution
+                .enqueue_turn_with_notifications(
+                    state,
+                    request.payload,
+                    &request.request_id,
+                    notifications,
+                )
+                .await
+        }
         "execution.command_run" => state.command_run.execute(request.payload).await,
         "execution.cancel_turn" => Ok(state.execution.cancel_turn(state, request.payload).await),
         "execution.get_status" => Ok(json!({ "status": "ok" })),
+        "session.append_user_command" => Ok(state.user_commands.append(&request.payload)),
+        "session.take_user_commands" => Ok(state.user_commands.take(&request.payload)),
         "execution.kill_session_workers" => {
             let session_id = request
                 .payload

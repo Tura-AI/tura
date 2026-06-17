@@ -4,7 +4,7 @@ pub(crate) use axum::response::IntoResponse;
 pub(crate) use gateway::api::session::{
     prompt_async, send_agent_message, SendAgentMessageRequest, SendAgentToolCall,
 };
-pub(crate) use gateway::api::types::SessionStatus;
+pub(crate) use gateway::contracts::SessionStatus;
 pub(crate) use gateway::session::config::{save_config, TuraSessionConfig};
 pub(crate) use gateway::session::MessageRole;
 pub(crate) use gateway::session_store;

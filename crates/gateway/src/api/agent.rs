@@ -1,4 +1,5 @@
-use crate::api::{registry, types::*};
+use crate::api::registry;
+use crate::contracts::*;
 use axum::{extract::Path, http::StatusCode, Json};
 use std::collections::HashMap;
 
@@ -18,16 +19,6 @@ pub async fn get_agent(
                 format!("agent `{agent_id}` not found"),
             )
         })
-}
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct UpsertAgentRequest {
-    #[serde(default)]
-    pub id: Option<String>,
-    #[serde(default)]
-    pub config: Option<tura_agents::store::AgentConfig>,
-    #[serde(default)]
-    pub prompt: Option<String>,
 }
 
 pub async fn create_agent(

@@ -2,6 +2,16 @@ import type { JsonObject } from "./common.js";
 
 export type SessionStatusValue = "idle" | "busy" | "error";
 
+export interface SessionUsage {
+  context_tokens?: {
+    input?: number;
+    limit?: number;
+  } | null;
+  tokens?: unknown;
+  cost?: number | null;
+  currency?: string | null;
+}
+
 export interface Session {
   id: string;
   draft?: boolean;
@@ -13,29 +23,34 @@ export interface Session {
   model?: string | null;
   agent?: string | null;
   session_type?: string | null;
-  lsp?: unknown;
   auto_session_name?: boolean;
   kill_processes_on_start?: boolean;
   validator_enabled?: boolean;
+  force_planning?: boolean;
   model_variant?: string | null;
   model_acceleration_enabled?: boolean;
+  disable_permission_restrictions?: boolean;
   status?: SessionStatusValue;
   message_count?: number;
+  task_management?: unknown;
+  context_tokens?: {
+    input?: number;
+    limit?: number;
+  } | null;
+  usage?: SessionUsage | null;
+  plan_summary?: string | null;
   session_display_name?: string | null;
 }
 
 export interface MessagePart {
   id: string;
   sessionID?: string;
-  session_id?: string;
   messageID?: string;
-  message_id?: string;
   type: string;
   text?: string | null;
   content?: string | null;
   metadata?: unknown;
   callID?: string | null;
-  call_id?: string | null;
   tool?: string | null;
   state?: unknown;
 }
@@ -43,24 +58,16 @@ export interface MessagePart {
 export interface Message {
   id: string;
   sessionID?: string;
-  session_id?: string;
   parentID?: string | null;
-  parent_id?: string | null;
   role: "user" | "assistant" | "system";
   parts: MessagePart[];
   created_at?: number;
   updated_at?: number;
-  time?: { created?: number; updated?: number };
+  time?: { created: number; updated: number };
   cost?: number;
   providerID?: string;
   modelID?: string;
   tokens?: unknown;
-}
-
-export interface MessageEnvelope {
-  info?: Message;
-  parts?: MessagePart[];
-  [key: string]: unknown;
 }
 
 export interface CreateSessionRequest {
@@ -72,6 +79,7 @@ export interface CreateSessionRequest {
   model_acceleration_enabled?: boolean;
   kill_processes_on_start?: boolean;
   validator_enabled?: boolean;
+  force_planning?: boolean;
   auto_session_name?: boolean;
 }
 
@@ -80,7 +88,6 @@ export interface ForkSessionRequest {
   model?: string;
   agent?: string;
   copy_context?: boolean;
-  copyContext?: boolean;
 }
 
 export interface PromptPayload {
@@ -111,7 +118,7 @@ export function isDraftSession(session: Session | undefined): boolean {
 }
 
 export function sessionUpdatedAt(session: Session): number {
-  return session.updated_at ?? 0;
+  return session.updated_at ?? session.created_at ?? 0;
 }
 
 export function sessionStatusText(status: unknown): SessionStatusValue {
@@ -133,23 +140,16 @@ export function sessionDirectory(session: Session): string {
   return session.directory ?? "";
 }
 
-export function normalizeMessage(value: Message | MessageEnvelope): Message {
-  if ("info" in value && value.info) {
-    return { ...value.info, parts: value.parts ?? value.info.parts ?? [] };
-  }
-  return value as Message;
-}
-
 export function messageSessionID(message: Message): string {
-  return message.sessionID ?? message.session_id ?? "";
+  return message.sessionID ?? "";
 }
 
 export function partMessageID(part: MessagePart): string {
-  return part.messageID ?? part.message_id ?? "";
+  return part.messageID ?? "";
 }
 
 export function partSessionID(part: MessagePart): string {
-  return part.sessionID ?? part.session_id ?? "";
+  return part.sessionID ?? "";
 }
 
 export function messageText(message: Message): string {
@@ -162,9 +162,7 @@ export function messageText(message: Message): string {
 }
 
 export function messageSortValue(message: Message): number {
-  return (
-    message.created_at ?? message.time?.created ?? message.updated_at ?? message.time?.updated ?? 0
-  );
+  return message.created_at ?? message.time?.created ?? 0;
 }
 
 export function lastAssistantText(messages: Message[]): string {

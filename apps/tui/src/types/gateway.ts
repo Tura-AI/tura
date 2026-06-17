@@ -153,18 +153,3 @@ export interface TuraConfigUpdate {
   provider: string;
   model: string;
 }
-
-export interface SessionLogWorkspace {
-  directory?: string;
-  session_count?: number;
-  updated_at?: number;
-  [key: string]: unknown;
-}
-
-export interface SessionLogSession {
-  id?: string;
-  session_id?: string;
-  directory?: string;
-  updated_at?: number;
-  [key: string]: unknown;
-}

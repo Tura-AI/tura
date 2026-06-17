@@ -10,7 +10,7 @@ use gateway::api::session::{
     create_session, list_messages, list_sessions, send_agent_message, CreateSessionRequest,
     MessageListParams, SendAgentMessageRequest, SessionDirectoryParams, SessionListParams,
 };
-use gateway::api::types::{SendMessageRequest, SessionStatus};
+use gateway::contracts::{SendMessageRequest, SessionStatus};
 use gateway::session::MessageRole;
 use gateway::session_store;
 use runtime::state_machine::runtime_management::{
@@ -209,7 +209,7 @@ async fn run_concurrent_session_turns(
                 )
                 .await;
                 assert_eq!(reply.session_id, session_id);
-                assert_eq!(reply.role, gateway::api::types::MessageRole::Assistant);
+                assert_eq!(reply.role, gateway::contracts::MessageRole::Assistant);
 
                 let expected_messages = (turn + 1) * 2;
                 wait_until_async(Duration::from_secs(5), || {

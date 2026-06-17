@@ -37,26 +37,14 @@ export function settingsEntries(state: AppState): SettingEntry[] {
     {
       detail: "persona",
       label: t("settingPersona"),
-      value: activePersonaID(state) ?? t("unknown"),
+      value: activePersonaID(state),
     },
-    { detail: "language", label: t("settingLanguage"), value: config.language ?? "zh-CN" },
-    { detail: "session", label: t("settingSession"), value: config.session_type ?? "coding" },
+    { detail: "language", label: t("settingLanguage"), value: config.language ?? "en" },
     { detail: "variant", label: t("settingReasoning"), value: config.model_variant ?? "high" },
     {
       detail: "priority",
       label: t("settingPriority"),
       value: config.model_acceleration_enabled ?? true,
-    },
-    {
-      detail: "commands",
-      label: t("settingCommandExpansion"),
-      value: config.show_command_instructions !== false,
-    },
-    { detail: "validator", label: t("settingValidator"), value: config.validator_enabled ?? false },
-    {
-      detail: "stallGuard",
-      label: t("settingStallGuard"),
-      value: config.command_run_stall_guard_profile ?? "balanced_20s",
     },
   ];
 }
@@ -81,7 +69,11 @@ export function settingsLines(state: AppState, cols: number, maxLines: number): 
     settingsEntries(state).map((entry) => [entry.label, entry.value]),
   );
   const settingWidth = menuLabelWidth(cols);
-  for (const [index, [label, value]] of entries.entries()) {
+  const visibleEntries = Math.max(1, maxLines - lines.length - 2);
+  const start = pageStartForIndex(state.selectedSettingsIndex, visibleEntries, entries.length);
+  for (const [offset, [label, value]] of entries.slice(start).entries()) {
+    if (offset >= visibleEntries) break;
+    const index = start + offset;
     const rendered = menuEntryLines(
       label,
       value,
@@ -89,11 +81,49 @@ export function settingsLines(state: AppState, cols: number, maxLines: number): 
       cols,
       index === state.selectedSettingsIndex,
     );
-    if (lines.length + rendered.length >= maxLines - 2) break;
+    if (lines.length + rendered.length > maxLines - 2) break;
     lines.push(...rendered);
   }
   lines.push(sectionBlankLine(cols));
   return lines.slice(0, maxLines);
+}
+
+export function settingsPageInfo(
+  state: AppState,
+  maxLines: number,
+): { label: string; current: number; total: number } {
+  if (!state.sessionConfig) return { label: t("sessionSettingsPage"), current: 1, total: 1 };
+  const headerLines = sectionLines(settingTitle(state), 80).length;
+  const promptLines = 1 + (state.settingInput ? 1 : 0);
+  if (state.settingDetail) {
+    const pageSize = Math.max(1, maxLines - headerLines - promptLines - 1);
+    return {
+      label: settingPageLabel(state),
+      ...pageInfoForIndex(
+        state.selectedSettingOptionIndex,
+        pageSize,
+        settingOptions(state).length,
+      ),
+    };
+  }
+  const entries = settingValueEntries(
+    settingsEntries(state).map((entry) => [entry.label, entry.value]),
+  );
+  const pageSize = Math.max(1, maxLines - headerLines - promptLines - 2);
+  return {
+    label: t("sessionSettingsPage"),
+    ...pageInfoForIndex(state.selectedSettingsIndex, pageSize, entries.length),
+  };
+}
+
+function settingPageLabel(state: AppState): string {
+  const detail = state.settingDetail;
+  if (!detail) return t("sessionSettingsPage");
+  if (detail === "providerAuth" && state.selectedProviderID) {
+    return t("settingDetailPage", { name: state.selectedProviderID });
+  }
+  const entry = settingStaticEntries().find((item) => item.detail === detail);
+  return t("settingDetailPage", { name: entry?.label ?? t("settings") });
 }
 
 function settingTitle(state: AppState): string {
@@ -235,8 +265,8 @@ export function settingOptions(state: AppState): Array<[string, string, unknown]
   }
   if (state.settingDetail === "language")
     return [
-      ["zh-CN", t("languageZhCN"), "zh-CN"],
       ["en", t("languageEn"), "en"],
+      ["zh-CN", t("languageZhCN"), "zh-CN"],
     ];
   if (state.settingDetail === "session")
     return ["coding", "business", "research", "planning"].map((value) => [value, "", value]);
@@ -281,7 +311,11 @@ function settingDetailLines(state: AppState, cols: number, maxLines: number): st
   );
   const lines: string[] = [];
   const active = activeSettingValue(state);
-  for (const [index, [label, description, value]] of options.entries()) {
+  const visibleEntries = Math.max(1, maxLines);
+  const start = pageStartForIndex(state.selectedSettingOptionIndex, visibleEntries, options.length);
+  for (const [offset, [label, description, value]] of options.slice(start).entries()) {
+    if (offset >= visibleEntries) break;
+    const index = start + offset;
     const decoratedLabel = value === active ? `${label} ${activeMarker()}` : label;
     const rendered = menuEntryLines(
       decoratedLabel,
@@ -290,10 +324,32 @@ function settingDetailLines(state: AppState, cols: number, maxLines: number): st
       cols,
       index === state.selectedSettingOptionIndex,
     );
-    if (lines.length + rendered.length >= maxLines) break;
+    if (lines.length + rendered.length > maxLines) break;
     lines.push(...rendered);
   }
   return lines;
+}
+
+function pageStartForIndex(index: number, pageSize: number, total: number): number {
+  if (total <= 0) return 0;
+  const safePageSize = Math.max(1, pageSize);
+  const safeIndex = Math.max(0, Math.min(index, total - 1));
+  return Math.floor(safeIndex / safePageSize) * safePageSize;
+}
+
+function pageInfoForIndex(
+  index: number,
+  pageSize: number,
+  total: number,
+): { current: number; total: number } {
+  if (total <= 0) return { current: 1, total: 1 };
+  const safePageSize = Math.max(1, pageSize);
+  const totalPages = Math.max(1, Math.ceil(total / safePageSize));
+  const safeIndex = Math.max(0, Math.min(index, total - 1));
+  return {
+    current: Math.min(totalPages, Math.floor(safeIndex / safePageSize) + 1),
+    total: totalPages,
+  };
 }
 
 function activeSettingValue(state: AppState): unknown {
@@ -303,7 +359,7 @@ function activeSettingValue(state: AppState): unknown {
   if (state.settingDetail === "providerAuth") return undefined;
   if (state.settingDetail === "agent") return state.session?.agent ?? config?.active_agent;
   if (state.settingDetail === "persona") return activePersonaID(state);
-  if (state.settingDetail === "language") return config?.language ?? "zh-CN";
+  if (state.settingDetail === "language") return config?.language ?? "en";
   if (state.settingDetail === "session") return config?.session_type ?? "coding";
   if (state.settingDetail === "variant") return config?.model_variant ?? "high";
   if (state.settingDetail === "priority") return config?.model_acceleration_enabled ?? true;
@@ -434,7 +490,7 @@ function activePersonaID(state: AppState): string | undefined {
     state.session as Record<string, unknown> | undefined,
     "persona",
   );
-  return sessionPersona ?? stringField(state.sessionConfig, "active_persona");
+  return sessionPersona ?? stringField(state.sessionConfig, "active_persona") ?? "tura";
 }
 
 function storedAgentID(agent: AppState["agents"][number]): string | undefined {

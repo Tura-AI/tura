@@ -4,6 +4,9 @@ use crate::context::{
 };
 use crate::state_machine::session_management::SessionManagement;
 
+const FRONTEND_MESSAGE_ID_ENV: &str = "TURA_FRONTEND_MESSAGE_ID";
+const FRONTEND_PART_ID_ENV: &str = "TURA_FRONTEND_PART_ID";
+
 pub(crate) fn initial_messages_for_session(
     session: &mut SessionManagement,
 ) -> Result<Vec<serde_json::Value>, String> {
@@ -41,7 +44,11 @@ pub(crate) fn initial_messages_for_session(
                 .get("content")
                 .cloned()
                 .unwrap_or_else(|| serde_json::Value::String(String::new()));
-            accumulate_message(session, role, content)?;
+            if role == "user" {
+                accumulate_initial_user_message(session)?;
+            } else {
+                accumulate_message(session, role, content)?;
+            }
         }
 
         return Ok(initial_messages);
@@ -58,11 +65,7 @@ pub(crate) fn initial_messages_for_session(
     }
 
     if !session_has_initial_user_message(session) {
-        accumulate_message(
-            session,
-            "user",
-            user_input_content_value(&session.input.user_input),
-        )?;
+        accumulate_initial_user_message(session)?;
     }
 
     let mut messages = vec![permissions_message];
@@ -136,6 +139,38 @@ fn runtime_context_message(session: &SessionManagement) -> Option<serde_json::Va
     }))
 }
 
+fn accumulate_initial_user_message(session: &mut SessionManagement) -> Result<(), String> {
+    let message = initial_user_log_message(session);
+    session.push_log(
+        serde_json::to_string(&message).unwrap_or_else(|_| "message: user".to_string()),
+        chrono::Utc::now(),
+    );
+    Ok(())
+}
+
+fn initial_user_log_message(session: &SessionManagement) -> serde_json::Value {
+    let mut message = serde_json::json!({
+        "role": "user",
+        "content": user_input_content_value(&session.input.user_input),
+    });
+    if let Some(object) = message.as_object_mut() {
+        if let Some(message_id) = frontend_env(FRONTEND_MESSAGE_ID_ENV) {
+            object.insert("id".to_string(), serde_json::Value::String(message_id));
+        }
+        if let Some(part_id) = frontend_env(FRONTEND_PART_ID_ENV) {
+            object.insert("part_id".to_string(), serde_json::Value::String(part_id));
+        }
+    }
+    message
+}
+
+fn frontend_env(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn session_has_initial_user_message(session: &SessionManagement) -> bool {
     let raw_input = &session.input.user_input;
     session.session_log.iter().any(|entry| {
@@ -148,6 +183,94 @@ fn session_has_initial_user_message(session: &SessionManagement) -> bool {
                         .is_some_and(|content| user_input_content_matches(content, raw_input))
             })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state_machine::session_management::SessionInput;
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvRestore {
+        keys: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    impl EnvRestore {
+        fn capture(keys: &[&'static str]) -> Self {
+            Self {
+                keys: keys
+                    .iter()
+                    .map(|key| (*key, std::env::var_os(key)))
+                    .collect(),
+            }
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            for (key, value) in &self.keys {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn initial_user_log_preserves_frontend_ids_from_worker_env() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let _restore = EnvRestore::capture(&[FRONTEND_MESSAGE_ID_ENV, FRONTEND_PART_ID_ENV]);
+        std::env::set_var(FRONTEND_MESSAGE_ID_ENV, "msg_tui_reopen");
+        std::env::set_var(FRONTEND_PART_ID_ENV, "part_tui_reopen");
+
+        let now = chrono::Utc::now();
+        let mut session = SessionManagement::new(
+            "session-reopen".to_string(),
+            "reopen".to_string(),
+            PathBuf::from("C:/workspace/reopen"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "用户重开后仍然可见".to_string(),
+                file_input: Vec::new(),
+                agent: Some("coding".to_string()),
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "用户重开后仍然可见".to_string(),
+            now,
+        );
+
+        let provider_messages =
+            initial_messages_for_session(&mut session).expect("initial messages should build");
+        assert!(provider_messages.iter().any(|message| {
+            message.get("role").and_then(serde_json::Value::as_str) == Some("user")
+                && message.get("id").is_none()
+                && message.get("part_id").is_none()
+        }));
+
+        let user_log = session
+            .session_log
+            .iter()
+            .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+            .find(|value| value.get("role").and_then(serde_json::Value::as_str) == Some("user"))
+            .expect("user log record should exist");
+        assert_eq!(
+            user_log.get("id").and_then(serde_json::Value::as_str),
+            Some("msg_tui_reopen")
+        );
+        assert_eq!(
+            user_log.get("part_id").and_then(serde_json::Value::as_str),
+            Some("part_tui_reopen")
+        );
+        assert!(user_log.get("content").is_some_and(|content| {
+            user_input_content_matches(content, "用户重开后仍然可见")
+        }));
+    }
 }
 
 fn session_has_runtime_context_message(

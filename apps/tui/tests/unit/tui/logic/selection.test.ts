@@ -7,7 +7,7 @@ import {
   settingPatch,
 } from "../../../../src/tui/logic/selection.js";
 
-test("prompt runtime selection uses saved config before stale session runtime fields", () => {
+test("prompt runtime selection uses the active session model before saved config", () => {
   const state = reducer(
     reducer(initialState("C:/repo"), {
       type: "hydrate",
@@ -15,7 +15,7 @@ test("prompt runtime selection uses saved config before stale session runtime fi
         id: "sess-runtime",
         directory: "C:/repo",
         status: "idle",
-        model: "openai/old-model",
+        model: "codex/gpt-5.3-codex-spark",
         agent: "fast",
         model_variant: "low",
         model_acceleration_enabled: false,
@@ -37,7 +37,7 @@ test("prompt runtime selection uses saved config before stale session runtime fi
   );
 
   assert.deepEqual(promptRuntimeSelection(state), {
-    model: "codex/gpt-5.5",
+    model: "codex/gpt-5.3-codex-spark",
     agent: "thinking",
     modelVariant: "high",
     modelAccelerationEnabled: true,
@@ -93,7 +93,7 @@ test("settings selection follows the rendered settings order", () => {
     },
   });
 
-  const details = Array.from({ length: 11 }, (_item, index) =>
+  const details = Array.from({ length: 7 }, (_item, index) =>
     selectedSettingDetail({ ...state, selectedSettingsIndex: index }),
   );
 
@@ -103,12 +103,8 @@ test("settings selection follows the rendered settings order", () => {
     "agent",
     "persona",
     "language",
-    "session",
     "variant",
     "priority",
-    "commands",
-    "validator",
-    "stallGuard",
   ]);
 });
 

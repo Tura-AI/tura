@@ -4,6 +4,7 @@ import {
   messageSortValue,
   messageText,
   partMessageID,
+  partSessionID,
 } from "../../types/session.js";
 import type { AppState, LiveStream, RefreshSessionState } from "../reducer.js";
 
@@ -15,7 +16,7 @@ export function displayMessages(state: AppState): Message[] {
   );
   if (!streams.length) return state.messages;
   let messages = state.messages;
-  for (const stream of streams.sort((left, right) => left.updatedAt - right.updatedAt)) {
+  for (const stream of streams.sort((left, right) => left.createdAt - right.createdAt)) {
     messages = applyLiveStream(messages, stream);
   }
   return messages;
@@ -192,25 +193,20 @@ function sortMessages(messages: Message[]): Message[] {
   return [...messages].sort((left, right) => messageSortValue(left) - messageSortValue(right));
 }
 
-export function normalizeMessagesForDisplay(messages: Message[]): Message[] {
+export function prepareMessagesForDisplay(messages: Message[]): Message[] {
   return messages.map((message) => mergeMessageForDisplay(undefined, message));
 }
 
 function mergeMessageForDisplay(existing: Message | undefined, incoming: Message): Message {
-  const existingCreated = existing?.created_at ?? existing?.time?.created;
-  const incomingCreated = incoming.created_at ?? incoming.time?.created;
-  const time =
-    existing?.time || incoming.time ? { ...existing?.time, ...incoming.time } : undefined;
-  if (time && time.created === undefined && existing?.time?.created !== undefined) {
-    time.created = existing.time.created;
-  }
-  const incomingParts = incoming.parts ?? existing?.parts ?? [];
+  const created = incoming.created_at || existing?.created_at || Date.now();
+  const updated = incoming.updated_at || existing?.updated_at || created;
   return {
     ...existing,
     ...incoming,
-    created_at: incomingCreated ?? existingCreated,
-    time,
-    parts: orderMessagePartsForDisplay(incomingParts),
+    created_at: created,
+    updated_at: updated,
+    time: incoming.time || existing?.time || { created, updated },
+    parts: orderMessagePartsForDisplay(incoming.parts),
   };
 }
 
@@ -219,7 +215,9 @@ export function upsertPart(
   part: MessagePart,
   sessionID: string | undefined,
 ): Message[] {
-  const messageID = partMessageID(part) || messages.at(-1)?.id || `message:${part.id}`;
+  const messageID = partMessageID(part);
+  const partSessionIDValue = partSessionID(part);
+  const now = Date.now();
   let found = false;
   const next = messages.map((message) => {
     if (message.id !== messageID) return message;
@@ -238,11 +236,12 @@ export function upsertPart(
   if (!found) {
     next.push({
       id: messageID,
-      sessionID,
+      sessionID: partSessionIDValue,
       role: "assistant",
       parts: orderMessagePartsForDisplay([part]),
-      created_at: Date.now(),
-      updated_at: Date.now(),
+      created_at: now,
+      updated_at: now,
+      time: { created: now, updated: now },
     });
   }
   next.sort((left, right) => messageSortValue(left) - messageSortValue(right));
@@ -269,6 +268,7 @@ export function applyPartDelta(
 ): Record<string, LiveStream> {
   if (!messageID || !partID || delta === undefined || !["text", "content"].includes(field ?? ""))
     return streams;
+  if (!sessionID) return streams;
   const textDelta = sanitizeStreamDelta(delta);
   if (!textDelta) return streams;
   const key = liveStreamKey(sessionID, messageID, partID);
@@ -281,7 +281,7 @@ export function applyPartDelta(
       partID,
       field: field as "text" | "content",
       text: `${existing?.text ?? ""}${textDelta}`,
-      createdAt: existing?.createdAt ?? streamedMessageCreatedAt(messages),
+      createdAt: existing?.createdAt ?? streamedMessageCreatedAt(messages, streams, sessionID),
       updatedAt: Date.now(),
     },
   };
@@ -327,6 +327,7 @@ function applyLiveStream(messages: Message[], stream: LiveStream): Message[] {
       parts: [liveStreamPart(stream)],
       created_at: stream.createdAt,
       updated_at: stream.updatedAt,
+      time: { created: stream.createdAt, updated: stream.updatedAt },
     });
   }
   next.sort((left, right) => messageSortValue(left) - messageSortValue(right));
@@ -508,9 +509,20 @@ function partDisplayRank(part: MessagePart): number {
   return 1;
 }
 
-function streamedMessageCreatedAt(messages: Message[]): number {
+function streamedMessageCreatedAt(
+  messages: Message[],
+  streams: Record<string, LiveStream>,
+  sessionID: string | undefined,
+): number {
   const runningAssistant = latestRunningAssistantSort(messages);
-  if (Number.isFinite(runningAssistant)) return runningAssistant + 0.5;
+  const anchor = Number.isFinite(runningAssistant)
+    ? runningAssistant + 0.5
+    : streamedMessageAnchorCreatedAt(messages);
+  const latestLive = latestLiveStreamCreatedAt(streams, sessionID);
+  return Number.isFinite(latestLive) ? Math.max(anchor, latestLive + 0.001) : anchor;
+}
+
+function streamedMessageAnchorCreatedAt(messages: Message[]): number {
   let lastUser = Number.NEGATIVE_INFINITY;
   let latestAfterUser = Number.NEGATIVE_INFINITY;
   let visibleAssistantAfterUser = false;
@@ -530,6 +542,18 @@ function streamedMessageCreatedAt(messages: Message[]): number {
     return latestAfterUser + 0.5;
   }
   return Number.isFinite(lastUser) ? lastUser + 0.5 : Date.now();
+}
+
+function latestLiveStreamCreatedAt(
+  streams: Record<string, LiveStream>,
+  sessionID: string | undefined,
+): number {
+  let latest = Number.NEGATIVE_INFINITY;
+  for (const stream of Object.values(streams)) {
+    if (sessionID && stream.sessionID && stream.sessionID !== sessionID) continue;
+    latest = Math.max(latest, stream.createdAt);
+  }
+  return latest;
 }
 
 function latestRunningAssistantSort(messages: Message[]): number {
