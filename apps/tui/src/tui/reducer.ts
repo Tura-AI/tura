@@ -2,7 +2,7 @@ import type { Message, MessagePart, Session } from "../types/session.js";
 import { normalizeEvent } from "../gateway/events.js";
 import { sameDirectory } from "../gateway/directory.js";
 import { partMessageID, partSessionID, sessionStatusText } from "../types/session.js";
-import type { AppAction, AppState, LiveHandoffBarrier, LiveStream } from "./reducer/state.js";
+import type { AppAction, AppState, LiveStream } from "./reducer/state.js";
 import {
   boundedSessionIndex,
   modelCount,
@@ -24,6 +24,7 @@ import {
   invalidateRefreshState,
   lastMessagePreview,
   appendNewStableMessagesIgnoringLive,
+  commitLiveStreams,
   messageHasRunningPart,
   mergeStableMessagesIgnoringLive,
   messagePreview,
@@ -70,8 +71,6 @@ export function reducer(state: AppState, action: AppAction): AppState {
       sessions: nextSessions,
       messages: merged.messages,
       liveStreams: merged.liveStreams,
-      pendingLiveEvents: sessionChanged ? [] : state.pendingLiveEvents,
-      liveHandoffBarrier: sessionChanged ? undefined : state.liveHandoffBarrier,
       refreshState: refreshStateAfterMessages(
         state.refreshState,
         sessionID,
@@ -105,7 +104,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
         action.sessionConfig ?? state.sessionConfig,
       ),
     };
-    return releasePendingLiveEventsIfConfirmed(nextState);
+    return nextState;
   }
   if (action.type === "event") {
     const normalized = normalizeEvent(action.event);
@@ -118,9 +117,6 @@ export function reducer(state: AppState, action: AppAction): AppState {
       const message = (action.event.payload.properties as { info?: Message } | undefined)?.info;
       if (!message) return state;
       const sessionID = normalized.sessionID || message.sessionID || message.session_id;
-      if (shouldBufferLiveEvent(state.liveHandoffBarrier, sessionID, message.id)) {
-        return { ...state, pendingLiveEvents: [...state.pendingLiveEvents, action.event] };
-      }
       if (state.session && sessionID && sessionID !== state.session.id) {
         const preview = messagePreview(message) ?? state.sessionPreviews[sessionID] ?? "";
         return {
@@ -141,48 +137,35 @@ export function reducer(state: AppState, action: AppAction): AppState {
           ),
         };
       }
-      if (messageConfirmsLiveHandoff(state.liveHandoffBarrier, state.liveStreams, sessionID, message)) {
-        const incoming = normalizeMessagesForDisplay([message]);
-        const confirmed = appendNewStableMessagesIgnoringLive(
-          state.messages,
-          incoming,
-          state.liveStreams,
-          sessionID,
-        );
-        return releasePendingLiveEventsIfConfirmed({
-          ...state,
-          messages: confirmed.messages,
-          liveStreams: confirmed.liveStreams,
-          refreshState: refreshStateAfterMessages(
-            state.refreshState,
-            sessionID,
-            confirmed.messages,
-            state.session,
-          ),
-        });
-      }
       const updated = upsertMessageIgnoringLive(
         state.messages,
         state.liveStreams,
         sessionID,
         message,
       );
-      const barrier = liveHandoffBarrierAfterFinalMessage(
-        state.liveHandoffBarrier,
-        updated.messages,
-        state.liveStreams,
+      const matchingLiveMessageIDs = liveStreamMessageIDsMatchingMessage(
+        updated.liveStreams,
         sessionID,
         message,
       );
+      const currentMessage = updated.messages.find((item) => item.id === message.id);
+      const messageFinished =
+        !messageHasRunningPart(message) &&
+        !(currentMessage && messageHasRunningPart(currentMessage));
+      const committed =
+        messageFinished && matchingLiveMessageIDs.length
+          ? commitLiveStreams(updated.messages, updated.liveStreams, sessionID, (stream) =>
+              matchingLiveMessageIDs.includes(stream.messageID),
+            )
+          : updated;
       return {
         ...state,
-        messages: updated.messages,
-        liveStreams: updated.liveStreams,
-        liveHandoffBarrier: barrier,
+        messages: committed.messages,
+        liveStreams: committed.liveStreams,
         refreshState: refreshStateAfterMessages(
           state.refreshState,
           sessionID,
-          updated.messages,
+          committed.messages,
           state.session,
         ),
       };
@@ -192,9 +175,6 @@ export function reducer(state: AppState, action: AppAction): AppState {
       if (!part) return state;
       const sessionID = normalized.sessionID ?? partSessionID(part);
       if (state.session && sessionID !== state.session.id) return state;
-      if (shouldBufferLiveEvent(state.liveHandoffBarrier, sessionID, partMessageID(part))) {
-        return { ...state, pendingLiveEvents: [...state.pendingLiveEvents, action.event] };
-      }
       const updated = upsertPartIgnoringLive(state.messages, state.liveStreams, sessionID, part);
       return {
         ...state,
@@ -219,7 +199,6 @@ export function reducer(state: AppState, action: AppAction): AppState {
       const partID = readString(properties, "part_id") ?? readString(properties, "partID");
       const field = readString(properties, "field");
       const delta = readString(properties, "delta");
-      const blockLiveRender = shouldBufferLiveEvent(state.liveHandoffBarrier, sessionID, messageID);
       return {
         ...state,
         status: activeSession ? "busy" : state.status,
@@ -230,20 +209,15 @@ export function reducer(state: AppState, action: AppAction): AppState {
               session.id === sessionID ? { ...session, status: "busy" } : session,
             )
           : state.sessions,
-        liveStreams: blockLiveRender
-          ? state.liveStreams
-          : applyPartDelta(
-              state.liveStreams,
-              state.messages,
-              messageID,
-              partID,
-              field,
-              delta,
-              sessionID,
-            ),
-        pendingLiveEvents: blockLiveRender
-          ? [...state.pendingLiveEvents, action.event]
-          : state.pendingLiveEvents,
+        liveStreams: applyPartDelta(
+          state.liveStreams,
+          state.messages,
+          messageID,
+          partID,
+          field,
+          delta,
+          sessionID,
+        ),
       };
     }
     if (action.event.payload?.type === "message.removed") {
@@ -258,16 +232,6 @@ export function reducer(state: AppState, action: AppAction): AppState {
           normalized.sessionID,
           properties?.message_id,
         ),
-        pendingLiveEvents: state.pendingLiveEvents.filter(
-          (event) =>
-            eventMessageID(event) !== properties?.message_id ||
-            !sessionsMatch(normalizeEvent(event).sessionID, normalized.sessionID),
-        ),
-        liveHandoffBarrier: liveHandoffBarrierAfterMessageRemoval(
-          state.liveHandoffBarrier,
-          normalized.sessionID,
-          properties?.message_id,
-        ),
         refreshState: invalidateRefreshState(state.refreshState, normalized.sessionID),
       };
     }
@@ -278,8 +242,14 @@ export function reducer(state: AppState, action: AppAction): AppState {
       const activeSession = Boolean(
         state.session && (!sessionID || state.session.id === sessionID),
       );
+      const committed =
+        activeSession && status === "idle"
+          ? commitLiveStreams(state.messages, state.liveStreams, state.session?.id)
+          : { messages: state.messages, liveStreams: state.liveStreams };
       return {
         ...state,
+        messages: committed.messages,
+        liveStreams: committed.liveStreams,
         status: state.session?.id === sessionID || !sessionID ? status : state.status,
         sessions: sessionID
           ? state.sessions.map((session) =>
@@ -287,6 +257,14 @@ export function reducer(state: AppState, action: AppAction): AppState {
             )
           : state.sessions,
         session: activeSession && state.session ? { ...state.session, status } : state.session,
+        refreshState: activeSession
+          ? refreshStateAfterMessages(
+              state.refreshState,
+              state.session?.id,
+              committed.messages,
+              state.session,
+            )
+          : state.refreshState,
       };
     }
     if (action.event.payload?.type === "session.updated") {
@@ -371,7 +349,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
         action.session ?? state.session,
       ),
     };
-    return releasePendingLiveEventsIfConfirmed(nextState);
+    return nextState;
   }
   if (action.type === "composer") return { ...state, composer: action.value };
   if (action.type === "notice") return { ...state, notice: action.value };
@@ -619,82 +597,6 @@ function closedPanelsState(): Pick<
   };
 }
 
-function liveHandoffBarrierAfterFinalMessage(
-  barrier: LiveHandoffBarrier | undefined,
-  messages: Message[],
-  streams: Record<string, LiveStream>,
-  sessionID: string | undefined,
-  message: Message,
-): LiveHandoffBarrier | undefined {
-  if (messageHasRunningPart(message)) return barrier;
-  const currentMessage = messages.find((item) => item.id === message.id);
-  if (currentMessage && messageHasRunningPart(currentMessage)) return barrier;
-  const messageIDs = liveStreamMessageIDsMatchingMessage(streams, sessionID, message);
-  if (!messageIDs.length) return barrier;
-  if (barrier && sessionsMatch(barrier.sessionID, sessionID)) {
-    return { ...barrier, messageIDs: unique([...barrier.messageIDs, ...messageIDs]) };
-  }
-  return { sessionID, messageIDs };
-}
-
-function shouldBufferLiveEvent(
-  barrier: LiveHandoffBarrier | undefined,
-  sessionID: string | undefined,
-  messageID: string | undefined,
-): boolean {
-  if (!barrier || !messageID) return false;
-  if (!sessionsMatch(barrier.sessionID, sessionID)) return false;
-  return !barrier.messageIDs.includes(messageID);
-}
-
-function messageConfirmsLiveHandoff(
-  barrier: LiveHandoffBarrier | undefined,
-  streams: Record<string, LiveStream>,
-  sessionID: string | undefined,
-  message: Message,
-): boolean {
-  if (!barrier || !sessionsMatch(barrier.sessionID, sessionID)) return false;
-  return liveStreamMessageIDsMatchingMessage(streams, sessionID, message).some((messageID) =>
-    barrier.messageIDs.includes(messageID),
-  );
-}
-
-function releasePendingLiveEventsIfConfirmed(state: AppState): AppState {
-  const barrier = state.liveHandoffBarrier;
-  if (!barrier) return state;
-  const waiting = Object.values(state.liveStreams).some(
-    (stream) =>
-      liveStreamMatchesSession(stream, barrier.sessionID) &&
-      barrier.messageIDs.includes(stream.messageID),
-  );
-  if (waiting) return state;
-  const releasing = state.pendingLiveEvents.filter((event) =>
-    sessionsMatch(normalizeEvent(event).sessionID, barrier.sessionID),
-  );
-  const retaining = state.pendingLiveEvents.filter(
-    (event) => !sessionsMatch(normalizeEvent(event).sessionID, barrier.sessionID),
-  );
-  let nextState: AppState = {
-    ...state,
-    pendingLiveEvents: retaining,
-    liveHandoffBarrier: undefined,
-  };
-  for (const event of releasing) {
-    nextState = reducer(nextState, { type: "event", event });
-  }
-  return nextState;
-}
-
-function liveHandoffBarrierAfterMessageRemoval(
-  barrier: LiveHandoffBarrier | undefined,
-  sessionID: string | undefined,
-  messageID: string | undefined,
-): LiveHandoffBarrier | undefined {
-  if (!barrier || !messageID || !sessionsMatch(barrier.sessionID, sessionID)) return barrier;
-  const messageIDs = barrier.messageIDs.filter((item) => item !== messageID);
-  return messageIDs.length ? { ...barrier, messageIDs } : undefined;
-}
-
 function liveStreamMessageIDsMatchingMessage(
   streams: Record<string, LiveStream>,
   sessionID: string | undefined,
@@ -721,23 +623,6 @@ function liveStreamMatchesSession(stream: LiveStream, sessionID: string | undefi
   return !sessionID || !stream.sessionID || stream.sessionID === sessionID;
 }
 
-function sessionsMatch(left: string | undefined, right: string | undefined): boolean {
-  return !left || !right || left === right;
-}
-
 function unique(values: string[]): string[] {
   return [...new Set(values)];
-}
-
-function eventMessageID(event: Parameters<typeof normalizeEvent>[0]): string | undefined {
-  const properties = event.payload?.properties as Record<string, unknown> | undefined;
-  const info = properties?.info as Message | undefined;
-  const part = properties?.part as MessagePart | undefined;
-  const partID = part ? partMessageID(part) : undefined;
-  return (
-    info?.id ??
-    partID ??
-    readString(properties, "message_id") ??
-    readString(properties, "messageID")
-  );
 }

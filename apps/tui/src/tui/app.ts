@@ -79,6 +79,13 @@ function stringField(record: Record<string, unknown> | undefined, key: string): 
   return typeof value === "string" ? value : undefined;
 }
 
+function hasActiveLiveStreams(state: AppState): boolean {
+  const sessionID = state.session?.id;
+  return Object.values(state.liveStreams).some(
+    (stream) => !sessionID || !stream.sessionID || stream.sessionID === sessionID,
+  );
+}
+
 export async function runTui(context: CliContext, initialPrompt?: string): Promise<void> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new CliUsageError(t("tuiRequiresTty"));
@@ -165,12 +172,17 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
     );
   };
   const dispatch = (action: Parameters<typeof reducer>[1]) => {
+    const hadActiveLiveStreams = hasActiveLiveStreams(state);
     state = reducer(state, action);
     if (action.type === "event" && action.event.payload?.type === "message.part.delta") {
       scheduleDraw();
       return;
     }
     if (isActiveSessionIdleEvent(action, state)) {
+      if (hadActiveLiveStreams) {
+        flushDraw();
+        return;
+      }
       lastFrame = drawChatChromeOverlay(state, capabilities, lastFrame);
       return;
     }

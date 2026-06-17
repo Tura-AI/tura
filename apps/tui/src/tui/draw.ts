@@ -97,6 +97,7 @@ export function drawChatChromeOverlay(
     lastChatReservationLineCount,
   );
   let output = "\x1b[?25l";
+  output += clearChatVisibleRowsFrom(chromeLayout.startRow);
   output += terminalWriteOverlayFrame(chromeLayout.frame, chromeLayout.startRow);
   output += cursorOutputFromAbsoluteCursor(chromeLayout.cursor);
   if (output) process.stdout.write(output);
@@ -398,6 +399,10 @@ function terminalWriteLogicalLines(
       return `${absoluteCursor(row, 1)}\x1b[2K${line}`;
     })
     .join("");
+}
+
+function clearChatVisibleRowsFrom(startRow: number): string {
+  return `${absoluteCursor(startRow, 1)}\x1b[J`;
 }
 
 function visibleFirstLogicalLineForTotal(totalLineCount: number): number {

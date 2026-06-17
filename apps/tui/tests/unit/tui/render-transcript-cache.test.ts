@@ -313,9 +313,9 @@ test("runtime message stays live while its command is still running", () => {
 
   cacheRows = stripAnsi(transcriptLines(state, 100).join("\n"));
   liveRows = stripAnsi(transcriptLiveLines(state, 100).join("\n"));
-  assert.doesNotMatch(cacheRows, /I will run the checks/);
-  assert.match(liveRows, /I will run the checks/);
-  assert.match(liveRows, /npm test/);
+  assert.match(cacheRows, /I will run the checks/);
+  assert.match(cacheRows, /npm test/);
+  assert.doesNotMatch(liveRows, /I will run the checks|npm test/);
 
   state = reducer(state, {
     type: "messages-incremental",

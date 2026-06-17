@@ -27,8 +27,6 @@ export interface AppState {
   sessions: Session[];
   messages: Message[];
   liveStreams: Record<string, LiveStream>;
-  pendingLiveEvents: GatewayEventEnvelope[];
-  liveHandoffBarrier?: LiveHandoffBarrier;
   refreshState: Record<string, RefreshSessionState>;
   sessionPreviews: Record<string, string>;
   seenSessionMessageCounts: Record<string, number>;
@@ -68,11 +66,6 @@ export interface LiveStream {
   text: string;
   createdAt: number;
   updatedAt: number;
-}
-
-export interface LiveHandoffBarrier {
-  sessionID?: string;
-  messageIDs: string[];
 }
 
 export interface RefreshSessionState {
@@ -138,8 +131,6 @@ export function initialState(cwd: string): AppState {
     sessions: [],
     messages: [],
     liveStreams: {},
-    pendingLiveEvents: [],
-    liveHandoffBarrier: undefined,
     refreshState: {},
     sessionPreviews: {},
     seenSessionMessageCounts: {},

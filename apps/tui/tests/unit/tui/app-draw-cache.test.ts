@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { draw } from "../../../src/tui/app.js";
+import { drawChatChromeOverlay } from "../../../src/tui/draw.js";
 import { renderChatFrameParts } from "../../../src/tui/render.js";
 import { initialState, reducer } from "../../../src/tui/reducer.js";
 import { richCapabilities } from "../../../src/tui/capabilities.js";
@@ -691,4 +692,82 @@ test("draw appends reservation rows so live and chrome remain visible after full
   assert.match(output, /\r\n/, "live/chrome reservation must extend scrollback");
   assert.match(output, /FULL_CACHE_LIVE_MARKER/);
   assert.match(output, /Active[\s\S]*Enter to send/);
+});
+
+test("idle chrome overlay clears stale busy chrome after command insertion", () => {
+  const busySession = { ...activeSession, status: "busy" as const };
+  const idleSession = { ...activeSession, status: "idle" as const };
+  const cacheMessages = Array.from({ length: 30 }, (_item, index) => ({
+    id: `msg-idle-overlay-cache-${index}`,
+    sessionID: "sess-1",
+    role: "assistant" as const,
+    parts: [
+      {
+        id: `part-idle-overlay-cache-${index}`,
+        type: "text" as const,
+        text: `IDLE_OVERLAY_CACHE_${index}`,
+      },
+    ],
+  }));
+  const commandMessage = {
+    id: "msg-idle-overlay-command",
+    sessionID: "sess-1",
+    role: "assistant" as const,
+    parts: [
+      {
+        id: "part-idle-overlay-command",
+        type: "tool" as const,
+        tool: "command_run",
+        state: {
+          status: "completed",
+          input: {
+            commands: [
+              {
+                step: 1,
+                command_type: "shell_command",
+                command_line: "IDLE_OVERLAY_COMMAND",
+              },
+            ],
+          },
+        },
+      },
+    ],
+  };
+  const busyState = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: busySession,
+    messages: cacheMessages,
+    permissions: [],
+    sessions: [busySession],
+  });
+  const commandState = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: busySession,
+    messages: [...cacheMessages, commandMessage],
+    permissions: [],
+    sessions: [busySession],
+  });
+  const idleState = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: idleSession,
+    messages: [...cacheMessages, commandMessage],
+    permissions: [],
+    sessions: [idleSession],
+  });
+
+  const writes = captureDrawWrites((writes) => {
+    let previous = draw(busyState, richCapabilities(), "");
+    writes.length = 0;
+    previous = draw(commandState, richCapabilities(), previous);
+    assert.match(writes.join(""), /IDLE_OVERLAY_COMMAND/);
+    writes.length = 0;
+    drawChatChromeOverlay(idleState, richCapabilities(), previous);
+  });
+  const output = writes.join("");
+  const clearIndex = output.indexOf("\x1b[J");
+  const titleIndex = output.indexOf("Active");
+
+  assert.ok(clearIndex >= 0, "idle chrome overlay must clear stale busy chrome first");
+  assert.ok(titleIndex > clearIndex, "idle chrome must be written after the clear");
+  assert.doesNotMatch(output, /thinking/);
 });

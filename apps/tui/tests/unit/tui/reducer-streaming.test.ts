@@ -389,6 +389,55 @@ test("reducer commits streamed text when final hydrate includes durable assistan
   assert.equal(Object.values(state.liveStreams).length, 0);
 });
 
+test("reducer commits active live stream when session becomes idle", () => {
+  const userMessage = {
+    id: "msg-user-idle-commit",
+    sessionID: "sess-1",
+    role: "user" as const,
+    parts: [{ id: "part-user-idle-commit", type: "text", text: "finish this" }],
+    created_at: 40,
+    updated_at: 40,
+  };
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: { ...session, status: "busy" },
+    messages: [userMessage],
+    permissions: [],
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.part.delta",
+        properties: {
+          session_id: "sess-1",
+          message_id: "runtime-idle-commit.message",
+          part_id: "runtime-idle-commit.message",
+          field: "text",
+          delta: "idle commit response",
+        },
+      },
+    },
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "session.status",
+        properties: { sessionID: "sess-1", status: "idle" },
+      },
+    },
+  });
+
+  const assistant = state.messages.find((message) => message.id === "runtime-idle-commit.message");
+  assert.equal(Object.values(state.liveStreams).length, 0);
+  assert.equal(assistant?.parts[0]?.text, "idle commit response");
+});
+
 test("reducer does not duplicate temporary streamed text across repeated polling hydrates", () => {
   const userMessage = {
     id: "msg-user-refresh",
