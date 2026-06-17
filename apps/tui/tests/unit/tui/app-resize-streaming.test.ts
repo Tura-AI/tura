@@ -494,7 +494,7 @@ test("draw keeps a running command row mutable when a following live row starts"
   assert.equal(regexCount(output, /FOLLOWING_ASSISTANT_CONTENT/gu), 1);
 });
 
-test("draw renders completed command calls even when a background command still runs", () => {
+test("draw keeps unchanged completed command rows terminal-owned during handoff", () => {
   const busySession = { ...activeSession, status: "busy" as const };
   const runningState = reducer(initialState("C:/repo"), {
     type: "hydrate",
@@ -575,17 +575,15 @@ test("draw renders completed command calls even when a background command still 
 
   const writes = captureDrawWrites((writes) => {
     const previous = draw(runningState, richCapabilities(), "");
+    assert.match(writes.join(""), /shell_command running[\s\S]*npm run dev/);
     writes.length = 0;
     draw(completedState, richCapabilities(), previous);
   });
   const output = writes.join("");
-  const commandIndex = output.indexOf("npm run dev");
-  const chromeIndex = output.indexOf("Active", commandIndex);
 
   assert.equal(output.includes(terminalClear), false);
-  assert.ok(commandIndex >= 0, "completed command call must be rendered");
-  assert.ok(chromeIndex > commandIndex, "chrome must render after the command block");
-  assert.match(output, /shell_command running[\s\S]*npm run dev/);
+  assert.doesNotMatch(output, /npm run dev/);
+  assert.match(output, /Active[\s\S]*Enter: send/);
 });
 
 test("draw promotes finalized live as new cache without repainting fixed cache", () => {
@@ -657,16 +655,18 @@ test("draw promotes finalized live as new cache without repainting fixed cache",
     });
     draw(finalizedState, richCapabilities(), previous);
     assert.ok(previousLiveRegion);
-    assertMutableRegionRepaintedWithoutClearBefore(writes.join(""), "LIVE_STREAM_MARKER");
+    const output = writes.join("");
+    assert.doesNotMatch(
+      output,
+      /LIVE_STREAM_MARKER/,
+      "finalized live text is already visible and must not be rewritten during handoff",
+    );
   });
   const output = writes.join("");
-  const finalizedIndex = output.indexOf("LIVE_STREAM_MARKER");
-  const chromeIndex = output.indexOf("Active", finalizedIndex);
 
   assert.equal(output.includes(terminalClear), false);
   assert.doesNotMatch(output, /FIXED_CACHE_MARKER/);
   assert.doesNotMatch(output, /LIVE_USER_MARKER/);
-  assert.ok(finalizedIndex >= 0, "finalized live text must be written as new cache");
-  assert.ok(chromeIndex > finalizedIndex, "chrome must render after finalized cache text");
+  assert.doesNotMatch(output, /LIVE_STREAM_MARKER/);
   assert.match(output, /Active[\s\S]*Enter: send/);
 });

@@ -1,7 +1,8 @@
 use axum::extract::{Json, Path, Query};
 use axum::http::HeaderMap;
 use gateway::api::session::{session_shell, ShellRequest};
-use gateway::api::{path::get_paths, types::PathParams};
+use gateway::api::path::get_paths;
+use gateway::contracts::PathParams;
 use gateway::session_store;
 use serde_json::json;
 

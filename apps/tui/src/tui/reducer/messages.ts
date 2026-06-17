@@ -213,7 +213,7 @@ function mergeMessageForDisplay(existing: Message | undefined, incoming: Message
 export function upsertPart(
   messages: Message[],
   part: MessagePart,
-  sessionID: string | undefined,
+  _sessionID: string | undefined,
 ): Message[] {
   const messageID = partMessageID(part);
   const partSessionIDValue = partSessionID(part);

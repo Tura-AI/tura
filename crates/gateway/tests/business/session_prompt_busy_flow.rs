@@ -2,9 +2,11 @@ use axum::extract::{Json, Path};
 use axum::response::IntoResponse;
 use gateway::api::session::{
     append_session_user_command, prompt_async, session_user_commands,
-    update_session_status_for_runtime, AppendUserCommandRequest, RuntimeSessionStatusRequest,
+    update_session_status_for_runtime,
 };
-use gateway::contracts::SessionStatus as ApiSessionStatus;
+use gateway::contracts::{
+    AppendUserCommandRequest, RuntimeSessionStatusRequest, SessionStatus as ApiSessionStatus,
+};
 use gateway::{session_store, SessionStatus};
 use serde_json::json;
 

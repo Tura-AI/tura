@@ -161,9 +161,19 @@ mod tests {
             provider_config(),
             session_created_at + Duration::milliseconds(5),
         );
+        let called_at = runtime.created_at + Duration::milliseconds(10);
+        let first_token_at = called_at + Duration::milliseconds(20);
+        let finished_at = first_token_at + Duration::milliseconds(30);
+        runtime.mark_called(called_at).expect("mark called");
+        runtime
+            .mark_waiting_first_token()
+            .expect("mark waiting first token");
+        runtime
+            .mark_first_token(first_token_at)
+            .expect("mark first token");
         runtime
             .finish_success(
-                runtime.created_at,
+                finished_at,
                 Some(UsageReport {
                     input_tokens: 10,
                     output_tokens: 5,

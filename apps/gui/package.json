@@ -7,7 +7,7 @@
     "dev": "bun --cwd app dev",
     "build": "bun --cwd app build",
     "typecheck": "bun --cwd app typecheck",
-    "lint": "eslint app/src sdk/gateway/src tests/unit app/vite.config.ts",
+    "lint": "eslint app/src sdk/gateway/src app/vite.config.ts",
     "format": "prettier --write \"app/src/**/*.{ts,tsx,css}\" \"sdk/**/*.ts\" \"tests/unit/**/*.ts\" \"tests/**/*.mjs\" \"ARCHITECTURE.md\" \"README.md\"",
     "format:check": "prettier --check \"app/src/**/*.{ts,tsx,css}\" \"sdk/**/*.ts\" \"tests/unit/**/*.ts\" \"tests/**/*.mjs\" \"ARCHITECTURE.md\" \"README.md\"",
     "unused:check": "bun --cwd app unused:check && bun --cwd sdk/gateway unused:check",

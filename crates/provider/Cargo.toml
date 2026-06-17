@@ -54,13 +54,13 @@ live-tests = []
 
 [[test]]
 name = "openai_compatible_local_flow"
-path = "tests/business/openai_compatible_local_flow.rs"
-required-features = ["business-tests"]
+path = "tests/live/openai_compatible_local_flow.rs"
+required-features = ["live-tests"]
 
 [[test]]
 name = "google_local_flow"
-path = "tests/business/google_local_flow.rs"
-required-features = ["business-tests"]
+path = "tests/live/google_local_flow.rs"
+required-features = ["live-tests"]
 
 [dependencies]
 tokio.workspace = true

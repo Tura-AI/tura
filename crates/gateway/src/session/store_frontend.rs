@@ -272,12 +272,8 @@ fn command_result_snapshot_item(
     spec: Option<&serde_json::Value>,
     fallback_status: Option<&str>,
 ) -> Option<serde_json::Value> {
-    let Some(command) = command_line_from_result_or_spec(result, spec) else {
-        return None;
-    };
-    let Some(name) = command_name_from_result_or_spec(result, spec) else {
-        return None;
-    };
+    let command = command_line_from_result_or_spec(result, spec)?;
+    let name = command_name_from_result_or_spec(result, spec)?;
     let step = command_step_from_result_or_spec(result, spec).unwrap_or(index + 1);
     let status = command_status_from_result_or_spec(result, spec, fallback_status)
         .unwrap_or_else(|| "pending".to_string());

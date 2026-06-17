@@ -5,6 +5,7 @@ pub(crate) use std::net::TcpListener;
 pub(crate) use std::sync::{Arc, Mutex};
 pub(crate) use std::thread;
 pub(crate) use std::time::{Duration, Instant};
+pub(crate) use tokio::sync::Mutex as AsyncMutex;
 pub(crate) use tura_llm_rust::{
     extract_response_text, extract_tool_calls, normalize_command_run_tool_input,
     openai_compatible_usage_stream_supported, prompt_cache_key_supported,
@@ -13,6 +14,8 @@ pub(crate) use tura_llm_rust::{
     ProviderConfig, ProviderLatencyTimeouts, ProviderMediaFallback, ProviderStreamEvent,
     RouteConfig, Settings, TuraConfig, TuraError,
 };
+
+pub(crate) static ENV_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 
 #[derive(Debug)]
 pub(crate) struct CapturedHttpRequest {

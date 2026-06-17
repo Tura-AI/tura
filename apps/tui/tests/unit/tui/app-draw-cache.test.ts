@@ -539,7 +539,7 @@ test("draw spills overflowing live rows into scrollback and keeps the tail mutab
   }
 });
 
-test("draw promotes spilled live through cache handoff without duplicating the prefix", () => {
+test("draw promotes spilled live through cache handoff without rewriting visible live rows", () => {
   const busySession = { ...activeSession, status: "busy" as const };
   const idleSession = { ...activeSession, status: "idle" as const };
   const rows = Object.getOwnPropertyDescriptor(process.stdout, "rows");
@@ -597,10 +597,10 @@ test("draw promotes spilled live through cache handoff without duplicating the p
       /HANDOFF_OVERFLOW_0(?!\d)/,
       "cache handoff must not rewrite the already spilled prefix",
     );
-    assert.match(
+    assert.doesNotMatch(
       output,
       /HANDOFF_OVERFLOW_29/,
-      "cache handoff must append the remaining live tail",
+      "cache handoff must not rewrite the already visible live tail",
     );
     assert.match(output, /Active[\s\S]*Enter: send/);
   } finally {

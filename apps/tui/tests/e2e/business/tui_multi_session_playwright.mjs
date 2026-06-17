@@ -201,6 +201,14 @@ function createGatewayServer() {
       await readJson(req);
       return sendJson(res, makeSession());
     }
+    const sessionMatch = url.pathname.match(/^\/session\/([^/]+)$/);
+    if (sessionMatch && req.method === "GET") {
+      const sessionID = decodeURIComponent(sessionMatch[1]);
+      const session = sessions.find((item) => item.id === sessionID);
+      return session
+        ? sendJson(res, session)
+        : sendJson(res, { error: "missing session", sessionID }, 404);
+    }
     const messageMatch = url.pathname.match(/^\/session\/([^/]+)\/message$/);
     if (messageMatch && req.method === "GET") {
       const sessionID = decodeURIComponent(messageMatch[1]);

@@ -6,7 +6,8 @@ export const SETTING_DETAILS = [
   "language",
   "variant",
   "priority",
+  "commands",
 ] as const;
 
-export type HiddenSettingDetail = "session" | "commands" | "validator" | "stallGuard";
+export type HiddenSettingDetail = "session" | "validator" | "stallGuard";
 export type SettingDetail = (typeof SETTING_DETAILS)[number] | HiddenSettingDetail | "providerAuth";

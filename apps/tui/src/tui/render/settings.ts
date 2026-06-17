@@ -46,6 +46,11 @@ export function settingsEntries(state: AppState): SettingEntry[] {
       label: t("settingPriority"),
       value: config.model_acceleration_enabled ?? true,
     },
+    {
+      detail: "commands",
+      label: t("settingCommandExpansion"),
+      value: config.show_command_instructions !== false,
+    },
   ];
 }
 

@@ -4,9 +4,9 @@ use axum::extract::{Path, Query};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use gateway::api::session_log::{
-    session_log_records, session_log_sessions, session_log_workspaces, SessionLogListParams,
-    SessionLogRecordsParams,
+    session_log_records, session_log_sessions, session_log_workspaces,
 };
+use gateway::contracts::{SessionLogListParams, SessionLogRecordsParams};
 use serde_json::{json, Value};
 use session_log::{SessionLogCommand, SessionLogStore};
 use std::path::Path as FsPath;

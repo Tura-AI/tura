@@ -126,9 +126,12 @@ export function regexCount(text, pattern) {
   return Array.from(text.matchAll(pattern)).length;
 }
 
+export const composerHintPattern = /Enter(?::| to)? send/u;
+export const composerHintGlobalPattern = /Enter(?::| to)? send/gu;
+
 export function assertNoDuplicatedFrameText(text, label, markers = []) {
   assert.ok(
-    regexCount(text, /Enter to send/gu) <= 1,
+    regexCount(text, composerHintGlobalPattern) <= 1,
     `${label} should not retain a duplicated composer/input box`,
   );
   assert.ok(
@@ -145,9 +148,13 @@ export function assertNoDuplicatedFrameText(text, label, markers = []) {
 }
 
 export async function waitForComposer(page, timeoutMs = 5000) {
-  await page.waitForFunction(() => /Enter to send/.test(document.body.innerText), null, {
-    timeout: timeoutMs,
-  });
+  await page.waitForFunction(
+    () => /Enter(?::| to)? send/.test(document.body.innerText),
+    null,
+    {
+      timeout: timeoutMs,
+    },
+  );
 }
 
 export async function submitTypedPrompt(page, text) {
@@ -182,7 +189,7 @@ export function assertSessionPickerCleared(text, label, staleMarker) {
   );
   assert.doesNotMatch(
     text,
-    /Enter to send/u,
+    composerHintPattern,
     `${label} should not carry the chat composer into the session picker`,
   );
   assert.equal(

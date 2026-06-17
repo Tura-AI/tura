@@ -54,13 +54,14 @@ tempfile.workspace = true
 
 [features]
 business-tests = []
+live-tests = []
 performance-tests = []
 os-tests = []
 
 [[test]]
 name = "provider_oauth_local_flow"
-path = "tests/business/provider_oauth_local_flow.rs"
-required-features = ["business-tests"]
+path = "tests/live/provider_oauth_local_flow.rs"
+required-features = ["live-tests"]
 
 [[test]]
 name = "session_db_local_flow"

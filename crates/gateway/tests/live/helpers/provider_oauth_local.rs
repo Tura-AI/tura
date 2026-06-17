@@ -1,10 +1,12 @@
 pub(crate) use axum::extract::{Json, Path, Query};
 pub(crate) use gateway::api::provider::{
     oauth_callback, oauth_callback_info, provider_auth_logout, provider_auth_refresh,
-    provider_auth_validate, set_auth, OAuthCallbackParams, OAuthCallbackPayload,
-    OAuthRedirectCallbackParams, ProviderAuthActionDetail,
+    provider_auth_validate, set_auth,
 };
-pub(crate) use gateway::contracts::ProviderAuth;
+pub(crate) use gateway::contracts::{
+    OAuthCallbackParams, OAuthCallbackPayload, OAuthRedirectCallbackParams, ProviderAuth,
+    ProviderAuthActionDetail,
+};
 pub(crate) use gateway::mock::global_store;
 pub(crate) use serde_json::json;
 pub(crate) use std::collections::HashMap;
@@ -14,6 +16,8 @@ pub(crate) use std::net::{TcpListener, TcpStream};
 pub(crate) use std::path::{Path as FsPath, PathBuf};
 pub(crate) use std::process::Command;
 pub(crate) use std::thread;
+
+pub(crate) static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 pub(crate) async fn write_api_auth(provider_id: &str, key: &str) -> bool {
     let token_env = format!("{}_API_KEY", provider_id.to_ascii_uppercase());

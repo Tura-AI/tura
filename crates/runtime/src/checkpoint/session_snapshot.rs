@@ -236,12 +236,12 @@ fn persisted_message(
     let fallback_time = base_time.saturating_add(index as i64);
     let created_at = object
         .get("created_at")
-        .and_then(Value::as_i64)
+        .and_then(valid_timestamp_millis)
         .or_else(|| object.get("timestamp").and_then(timestamp_millis))
         .unwrap_or(fallback_time);
     let updated_at = object
         .get("updated_at")
-        .and_then(Value::as_i64)
+        .and_then(valid_timestamp_millis)
         .or_else(|| object.get("timestamp").and_then(timestamp_millis))
         .unwrap_or(created_at);
 
@@ -265,9 +265,11 @@ fn persisted_message(
         .or_insert_with(|| Value::String(role));
     object
         .entry("created_at".to_string())
+        .and_modify(|value| set_timestamp_if_invalid(value, created_at))
         .or_insert_with(|| Value::Number(created_at.into()));
     object
         .entry("updated_at".to_string())
+        .and_modify(|value| set_timestamp_if_invalid(value, updated_at))
         .or_insert_with(|| Value::Number(updated_at.into()));
     object
         .entry("session_id".to_string())
@@ -299,12 +301,12 @@ fn runtime_tool_part_from_log_entry(
     let fallback_time = base_time.saturating_add(index as i64);
     let created_at = object
         .get("created_at")
-        .and_then(Value::as_i64)
+        .and_then(valid_timestamp_millis)
         .or_else(|| object.get("timestamp").and_then(timestamp_millis))
         .unwrap_or(fallback_time);
     let updated_at = object
         .get("updated_at")
-        .and_then(Value::as_i64)
+        .and_then(valid_timestamp_millis)
         .or_else(|| object.get("timestamp").and_then(timestamp_millis))
         .unwrap_or(created_at);
     Some((
@@ -395,8 +397,8 @@ fn merge_runtime_tool_part(
 }
 
 fn merge_runtime_message(existing: &mut Value, incoming: Value) {
-    let incoming_created_at = incoming.get("created_at").and_then(Value::as_i64);
-    let incoming_updated_at = incoming.get("updated_at").and_then(Value::as_i64);
+    let incoming_created_at = incoming.get("created_at").and_then(valid_timestamp_millis);
+    let incoming_updated_at = incoming.get("updated_at").and_then(valid_timestamp_millis);
     if let Some(parts) = incoming.get("parts").and_then(Value::as_array) {
         for part in parts {
             merge_part_into_message(existing, part.clone());
@@ -447,7 +449,7 @@ fn merge_message_times(message: &mut Value, created_at: i64, updated_at: i64) {
 fn merge_message_created_at(message: &mut Value, created_at: i64) {
     let existing = message
         .get("created_at")
-        .and_then(Value::as_i64)
+        .and_then(valid_timestamp_millis)
         .unwrap_or(created_at);
     if let Some(object) = message.as_object_mut() {
         object.insert(
@@ -460,7 +462,7 @@ fn merge_message_created_at(message: &mut Value, created_at: i64) {
 fn merge_message_updated_at(message: &mut Value, updated_at: i64) {
     let existing = message
         .get("updated_at")
-        .and_then(Value::as_i64)
+        .and_then(valid_timestamp_millis)
         .unwrap_or(updated_at);
     if let Some(object) = message.as_object_mut() {
         object.insert(
@@ -506,9 +508,11 @@ fn conversation_message_record(
                 .or_insert_with(|| Value::String(session.session_id.clone()));
             message_object
                 .entry("created_at".to_string())
+                .and_modify(|value| set_timestamp_if_invalid(value, created_at))
                 .or_insert_with(|| Value::Number(created_at.into()));
             message_object
                 .entry("updated_at".to_string())
+                .and_modify(|value| set_timestamp_if_invalid(value, updated_at))
                 .or_insert_with(|| Value::Number(updated_at.into()));
         }
         return Some(message);
@@ -594,9 +598,11 @@ fn normalize_user_context_record(
     object.insert("role".to_string(), Value::String("log".to_string()));
     object
         .entry("created_at".to_string())
+        .and_modify(|value| set_timestamp_if_invalid(value, created_at))
         .or_insert_with(|| Value::Number(created_at.into()));
     object
         .entry("updated_at".to_string())
+        .and_modify(|value| set_timestamp_if_invalid(value, updated_at))
         .or_insert_with(|| Value::Number(updated_at.into()));
     object
         .entry("session_id".to_string())
@@ -638,6 +644,17 @@ fn timestamp_millis(value: &Value) -> Option<i64> {
     DateTime::parse_from_rfc3339(text)
         .ok()
         .map(|timestamp| timestamp.with_timezone(&Utc).timestamp_millis())
+        .filter(|timestamp| *timestamp > 0)
+}
+
+fn valid_timestamp_millis(value: &Value) -> Option<i64> {
+    value.as_i64().filter(|timestamp| *timestamp > 0)
+}
+
+fn set_timestamp_if_invalid(value: &mut Value, fallback: i64) {
+    if valid_timestamp_millis(value).is_none() {
+        *value = Value::Number(fallback.into());
+    }
 }
 
 fn record_role(object: &serde_json::Map<String, Value>) -> String {
@@ -880,6 +897,35 @@ mod tests {
         assert_eq!(value["role"], "user");
         assert_eq!(value["parts"][0]["id"], "part_tui_frontend-1");
         assert_eq!(value["parts"][0]["text"], "hello world");
+    }
+
+    #[test]
+    fn persisted_message_replaces_zero_frontend_user_timestamps_before_session_log_write() {
+        let session = session();
+        let value = persisted_message(
+            &session,
+            4,
+            &serde_json::json!({
+                "id": "msg_tui_frontend-zero-time",
+                "role": "user",
+                "created_at": 0,
+                "updated_at": 0,
+                "parts": [{
+                    "id": "part_tui_frontend-zero-time",
+                    "type": "text",
+                    "text": "user prompt after replay",
+                    "content": "user prompt after replay"
+                }]
+            })
+            .to_string(),
+            1_000,
+        );
+
+        assert_eq!(value["id"], "msg_tui_frontend-zero-time");
+        assert_eq!(value["role"], "user");
+        assert_eq!(value["created_at"], 1_004);
+        assert_eq!(value["updated_at"], 1_004);
+        assert_eq!(value["parts"][0]["text"], "user prompt after replay");
     }
 
     #[test]

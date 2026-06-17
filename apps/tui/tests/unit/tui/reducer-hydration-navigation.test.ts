@@ -24,13 +24,13 @@ test("reducer hydrates durable gateway state", () => {
 
 test("reducer wraps settings selection at panel edges", () => {
   let state = reducer(initialState("C:/repo"), { type: "select-settings", delta: -1 });
-  assert.equal(state.selectedSettingsIndex, 6);
+  assert.equal(state.selectedSettingsIndex, 7);
 
   state = reducer(state, { type: "select-settings", delta: 1 });
   assert.equal(state.selectedSettingsIndex, 0);
 
-  state = reducer(state, { type: "select-settings", delta: 6 });
-  assert.equal(state.selectedSettingsIndex, 6);
+  state = reducer(state, { type: "select-settings", delta: 7 });
+  assert.equal(state.selectedSettingsIndex, 7);
 
   state = reducer(state, { type: "select-settings", delta: 1 });
   assert.equal(state.selectedSettingsIndex, 0);

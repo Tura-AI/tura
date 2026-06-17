@@ -5,7 +5,6 @@ import {
   dim,
   inverse,
   italic,
-  pad,
   padVisible,
   reset,
   richBlockBg,
@@ -43,6 +42,10 @@ const ansiSequencePattern = /\x1b\[[0-9;]*m|\x1b\]8;;[^\x1b]*\x1b\\/g;
 // prevents a pathological multi-thousand-line dump from being materialized.
 const MAX_ASSISTANT_LINES = 200;
 
+type RenderRichTextOptions = {
+  tableWidth?: number;
+};
+
 export function displayMessageText(role: string, value: string): string {
   const text = cleanMessageText(value);
   if (!text) return "";
@@ -74,11 +77,11 @@ function cleanMessageText(value: string): string {
   return compactInlinePayloads(text).trim();
 }
 
-export function renderRichText(source: string): string {
+export function renderRichText(source: string, options: RenderRichTextOptions = {}): string {
   if (!source) return "";
   source = compactInlinePayloads(source);
-  if (activeCapabilities.richText === "none") return plainRichText(source);
-  if (activeCapabilities.richText === "basicMarkdown") return basicRichText(source);
+  if (activeCapabilities.richText === "none") return plainRichText(source, options);
+  if (activeCapabilities.richText === "basicMarkdown") return basicRichText(source, options);
   const tokenized = source.replace(
     /\[(MEDIA):([\s\S]*?):MEDIA\]|\[EMOJI:(sticker|react):([\s\S]*?):EMOJI\]/gu,
     (_match, media, path, mode, emoji) => {
@@ -87,18 +90,17 @@ export function renderRichText(source: string): string {
     },
   );
   return renderInlineMarkdown(
-    renderMarkdownRegions(renderMarkdownTables(renderHtmlSubset(tokenized))),
+    renderMarkdownRegions(renderMarkdownTables(renderHtmlSubset(tokenized), options.tableWidth)),
   );
 }
 
-function plainRichText(source: string): string {
+function plainRichText(source: string, options: RenderRichTextOptions): string {
   return renderMarkdownTables(
     decodeHtml(
       stripUnsupportedHtml(
         source
-          .replace(
-            /<a\s+href=['"]([^'"]+)['"][^>]*>([\s\S]*?)<\/a>/giu,
-            (_match, _href, body) => stripHtml(String(body)),
+          .replace(/<a\s+href=['"]([^'"]+)['"][^>]*>([\s\S]*?)<\/a>/giu, (_match, _href, body) =>
+            stripHtml(String(body)),
           )
           .replace(markdownLinkPattern, "$1")
           .replace(/\[MEDIA:([\s\S]*?):MEDIA\]/gu, "[MEDIA:$1:MEDIA]")
@@ -107,10 +109,11 @@ function plainRichText(source: string): string {
           ),
       ),
     ),
+    options.tableWidth,
   );
 }
 
-function basicRichText(source: string): string {
+function basicRichText(source: string, options: RenderRichTextOptions): string {
   const tokenized = source.replace(
     /\[(MEDIA):([\s\S]*?):MEDIA\]|\[EMOJI:(sticker|react):([\s\S]*?):EMOJI\]/gu,
     (_match, media, path, _mode, emoji) => {
@@ -118,7 +121,9 @@ function basicRichText(source: string): string {
       return String(emoji).trim();
     },
   );
-  return renderInlineMarkdown(renderMarkdownTables(renderHtmlSubset(tokenized)));
+  return renderInlineMarkdown(
+    renderMarkdownTables(renderHtmlSubset(tokenized), options.tableWidth),
+  );
 }
 
 function renderHtmlSubset(source: string): string {
@@ -157,10 +162,7 @@ function renderHtmlSubset(source: string): string {
       /<span\s+class=['"]tg-spoiler['"]>([\s\S]*?)<\/span>/giu,
       (body) => `${inverse}${decodeHtml(stripHtml(body))}${reset}`,
     ],
-    [
-      /<mark>([\s\S]*?)<\/mark>/giu,
-      (body) => `${inverse}${decodeHtml(stripHtml(body))}${reset}`,
-    ],
+    [/<mark>([\s\S]*?)<\/mark>/giu, (body) => `${inverse}${decodeHtml(stripHtml(body))}${reset}`],
     [
       /<a\s+href=['"]([^'"]+)['"][^>]*>([\s\S]*?)<\/a>/giu,
       (body, href) => renderLinkTarget(href ?? "", renderHtmlSubset(body)),
@@ -244,7 +246,7 @@ function inlineRegion(value: string): string {
   return `${richInlineBg}${textAgentRich} ${normalized.replaceAll(reset, `${reset}${richInlineBg}${textAgentRich}`)} ${reset}`;
 }
 
-function renderMarkdownTables(source: string): string {
+function renderMarkdownTables(source: string, tableWidth?: number): string {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
   const output: string[] = [];
   for (let index = 0; index < lines.length; ) {
@@ -256,7 +258,7 @@ function renderMarkdownTables(source: string): string {
         table.push(tableCells(lines[index]));
         index += 1;
       }
-      output.push(...formatMarkdownTable(table));
+      output.push(...formatMarkdownTable(table, tableWidth));
       pushBlankAfterBlock(output, lines, index);
       continue;
     }
@@ -291,7 +293,7 @@ function tableCells(line: string): string[] {
     .map((cell) => cell.trim());
 }
 
-function formatMarkdownTable(rows: string[][]): string[] {
+function formatMarkdownTable(rows: string[][], tableWidth?: number): string[] {
   const width = Math.max(...rows.map((row) => row.length));
   let normalized = rows.map((row) =>
     Array.from({ length: width }, (_item, index) => row[index] ?? ""),
@@ -299,22 +301,108 @@ function formatMarkdownTable(rows: string[][]): string[] {
   if (activeCapabilities.level === "rich") {
     normalized = normalized.map((row) => row.map((cell) => renderInlineMarkdown(cell)));
   }
-  const widths = Array.from({ length: width }, (_item, column) =>
-    Math.min(48, Math.max(3, ...normalized.map((row) => visibleTextWidth(row[column])))),
-  );
   const separator =
     activeCapabilities.level === "rich" && activeCapabilities.unicode
       ? ` ${textAuxiliary}│${textAgentRich} `
       : activeCapabilities.unicode
         ? " │ "
         : "  ";
+  const widths = tableColumnWidths(normalized, separator, tableWidth);
   return normalized.map((row, index) => {
-    const cells = row.map((cell, column) => padVisible(cell, widths[column]));
+    const cells = row.map((cell, column) => tableCell(cell, widths[column]));
     const text = ` ${cells.join(separator)} `;
     if (activeCapabilities.level === "rich")
-      return index === 0 ? `${textAgentRich}${bold}${text}${reset}` : `${textAgentRich}${text}${reset}`;
+      return index === 0
+        ? `${textAgentRich}${bold}${text}${reset}`
+        : `${textAgentRich}${text}${reset}`;
     return index === 0 ? `${bold}${text}${reset}` : text;
   });
+}
+
+function tableColumnWidths(rows: string[][], separator: string, tableWidth?: number): number[] {
+  const width = Math.max(...rows.map((row) => row.length), 0);
+  const desired = Array.from({ length: width }, (_item, column) =>
+    Math.min(48, Math.max(3, ...rows.map((row) => visibleTextWidth(row[column])))),
+  );
+  if (!tableWidth || width <= 0) return desired;
+  const separatorWidth = visibleTextWidth(separator);
+  const available = Math.max(1, tableWidth - 2 - separatorWidth * Math.max(0, width - 1));
+  const widths = [...desired];
+  const minimum = widths.map(() => 1);
+  let total = widths.reduce((sum, item) => sum + item, 0);
+  while (total > available) {
+    let target = -1;
+    for (const [index, value] of widths.entries()) {
+      if (value <= minimum[index]) continue;
+      if (target < 0 || value > widths[target]) target = index;
+    }
+    if (target < 0) break;
+    widths[target] -= 1;
+    total -= 1;
+  }
+  return widths;
+}
+
+function tableCell(value: string, width: number): string {
+  const truncated = truncateAnsiForTable(value, width);
+  return padVisible(truncated, width);
+}
+
+function truncateAnsiForTable(value: string, width: number): string {
+  if (width <= 0) return "";
+  if (visibleTextWidth(value) <= width) return value;
+  const ellipsis = tableEllipsis(width);
+  const limit = Math.max(0, width - visibleTextWidth(ellipsis));
+  let visible = 0;
+  let output = "";
+  for (const token of ansiTokensForTable(value)) {
+    if (token.control) {
+      output += token.value;
+      continue;
+    }
+    const segmentWidth = visibleTextWidth(token.value);
+    if (visible + segmentWidth > limit) {
+      return `${output}${ellipsis}${value.includes("\x1b]8;;") ? "\x1b]8;;\x1b\\" : ""}${reset}`;
+    }
+    output += token.value;
+    visible += segmentWidth;
+  }
+  return output;
+}
+
+function tableEllipsis(width: number): string {
+  if (width >= 3) return "...";
+  return ".".repeat(width);
+}
+
+function* ansiTokensForTable(value: string): Generator<{ value: string; control: boolean }> {
+  let plain = "";
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === "\x1b") {
+      const match = value.slice(index).match(/^(?:\x1b\[[0-9;]*[Km]|\x1b\]8;;[^\x1b]*\x1b\\)/u);
+      if (match) {
+        if (plain) {
+          for (const segment of graphemesForTable(plain)) yield { value: segment, control: false };
+          plain = "";
+        }
+        yield { value: match[0], control: true };
+        index += match[0].length - 1;
+        continue;
+      }
+    }
+    plain += value[index];
+  }
+  if (plain) {
+    for (const segment of graphemesForTable(plain)) yield { value: segment, control: false };
+  }
+}
+
+function graphemesForTable(value: string): string[] {
+  const segmenter =
+    typeof Intl !== "undefined" && "Segmenter" in Intl
+      ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+      : undefined;
+  return segmenter ? [...segmenter.segment(value)].map((item) => item.segment) : Array.from(value);
 }
 
 const markdownLinkPattern = /\[([^\]\n]+)\]\(([^)\n]+)\)/gu;
@@ -362,16 +450,13 @@ function renderInlineDecorations(source: string): string {
       /(?<![A-Za-z0-9_\\])__(?![_\s])([^_\n]+?)(?<![\s_])__(?![A-Za-z0-9_])/gu,
       (_match, body) => `${textAgentRich}${bold}${body}${reset}`,
     )
-    .replace(
-      /(?<!\\)~~([^~\n]+)~~/gu,
-      (_match, body) => `${textAgentRich}${strike}${body}${reset}`,
-    )
+    .replace(/(?<!\\)~~([^~\n]+)~~/gu, (_match, body) => `${textAgentRich}${strike}${body}${reset}`)
     .replace(
       /(?<!\\)==([^=\n]+)==/gu,
       (_match, body) => `${inverse}${decodeHtml(String(body))}${reset}`,
     )
     .replace(
-      /(?<![\*\\])\*(?!\*)([^*\n]+?)(?<!\*)\*(?!\*)/gu,
+      /(?<![*\\])\*(?!\*)([^*\n]+?)(?<!\*)\*(?!\*)/gu,
       (_match, body) => `${textAgentRich}${italic}${body}${reset}`,
     )
     .replace(

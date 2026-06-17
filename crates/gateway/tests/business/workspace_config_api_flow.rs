@@ -3,14 +3,16 @@
 use anyhow::{Context, Result};
 use axum::{
     extract::Query,
-    http::{HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue},
     Json,
 };
 use gateway::api::{
     global::{get_config, health, patch_config},
     path::get_paths,
     project::{create_named_workspace, get_current_project, list_projects, use_default_workspace},
-    types::{ConfigPatch, PathParams, ProjectDirectoryParams, WorkspaceCreateRequest},
+};
+use gateway::contracts::{
+    ConfigPatch, PathParams, ProjectDirectoryParams, WorkspaceCreateRequest,
 };
 use std::{
     env,

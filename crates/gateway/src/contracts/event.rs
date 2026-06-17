@@ -130,5 +130,5 @@ pub enum SyncEvent {
     #[serde(rename = "sync.project.updated")]
     ProjectUpdated { properties: Project },
     #[serde(rename = "sync.session.updated")]
-    SessionUpdated { properties: Session },
+    SessionUpdated { properties: Box<Session> },
 }

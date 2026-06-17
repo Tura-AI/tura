@@ -46,6 +46,12 @@ interface OrderedCommandsBlock {
 type OrderedMessageBlock = OrderedTextBlock | OrderedDetailBlock | OrderedCommandsBlock;
 
 export type TranscriptLineKind = "message" | "command" | "gap";
+type CommandDisplayMode = "cache" | "live";
+
+type CommandDisplayPolicy = {
+  includeCommands: boolean;
+  showCommandDetails: boolean;
+};
 
 export type TranscriptRenderLine = {
   text: string;
@@ -63,7 +69,27 @@ export function transcriptRenderLines(
 ): TranscriptRenderLine[] {
   if (maxLines !== undefined && maxLines <= 0) return [];
   const messages = splitTranscriptMessages(state).cache;
-  return renderTranscriptMessages(state, cols, messages, maxLines);
+  return renderTranscriptMessages(state, cols, messages, {
+    commandMode: "cache",
+    maxLines,
+  });
+}
+
+export function transcriptMessageGroups(state: AppState): { cache: Message[]; live: Message[] } {
+  return splitTranscriptMessages(state);
+}
+
+export function transcriptRenderLinesForMessages(
+  state: AppState,
+  cols: number,
+  messages: Message[],
+  options: { commandMode?: CommandDisplayMode; maxLines?: number } = {},
+): TranscriptRenderLine[] {
+  if (options.maxLines !== undefined && options.maxLines <= 0) return [];
+  return renderTranscriptMessages(state, cols, messages, {
+    commandMode: options.commandMode ?? "cache",
+    maxLines: options.maxLines,
+  });
 }
 
 export function transcriptLiveLines(state: AppState, cols: number): string[] {
@@ -71,7 +97,9 @@ export function transcriptLiveLines(state: AppState, cols: number): string[] {
 }
 
 export function transcriptLiveRenderLines(state: AppState, cols: number): TranscriptRenderLine[] {
-  return renderTranscriptMessages(state, cols, splitTranscriptMessages(state).live);
+  return renderTranscriptMessages(state, cols, splitTranscriptMessages(state).live, {
+    commandMode: "live",
+  });
 }
 
 export function transcriptThinkingLines(state: AppState, cols: number): string[] {
@@ -82,20 +110,34 @@ function renderTranscriptMessages(
   state: AppState,
   cols: number,
   messages: Message[],
-  maxLines?: number,
+  options: { commandMode: CommandDisplayMode; maxLines?: number },
 ): TranscriptRenderLine[] {
-  const showCommands = state.sessionConfig?.show_command_instructions !== false;
+  const commandPolicy = commandDisplayPolicy(state, options.commandMode);
   const lines: TranscriptRenderLine[] = [];
   const renderedMessages =
-    maxLines === undefined
-      ? messages.map((message) => renderTranscriptMessage(message, state, cols, showCommands))
-      : tailRenderedMessages(messages, state, cols, showCommands, maxLines);
+    options.maxLines === undefined
+      ? messages.map((message) => renderTranscriptMessage(message, state, cols, commandPolicy))
+      : tailRenderedMessages(messages, state, cols, commandPolicy, options.maxLines);
   for (const rendered of renderedMessages) {
     addTranscriptGap(lines);
     lines.push(...rendered);
   }
-  if (maxLines === undefined) return lines;
-  return transcriptOutputLines(lines, maxLines);
+  if (options.maxLines === undefined) return lines;
+  return transcriptOutputLines(lines, options.maxLines);
+}
+
+function commandDisplayPolicy(
+  state: AppState,
+  commandMode: CommandDisplayMode,
+): CommandDisplayPolicy {
+  if (commandMode === "live") {
+    return { includeCommands: true, showCommandDetails: true };
+  }
+  const showCommands = state.sessionConfig?.show_command_instructions !== false;
+  return {
+    includeCommands: showCommands,
+    showCommandDetails: showCommands,
+  };
 }
 
 function splitTranscriptMessages(state: AppState): { cache: Message[]; live: Message[] } {
@@ -131,7 +173,7 @@ function tailRenderedMessages(
   messages: Message[],
   state: AppState,
   cols: number,
-  showCommands: boolean,
+  commandPolicy: CommandDisplayPolicy,
   maxLines: number,
 ): TranscriptRenderLine[][] {
   const renderedMessages: TranscriptRenderLine[][] = [];
@@ -139,7 +181,7 @@ function tailRenderedMessages(
   let renderedLineCount = 0;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
-    const rendered = renderTranscriptMessage(message, state, cols, showCommands);
+    const rendered = renderTranscriptMessage(message, state, cols, commandPolicy);
     if (!rendered.length) continue;
     renderedMessages.unshift(rendered);
     renderedLineCount += rendered.length + 1;
@@ -160,18 +202,18 @@ function renderTranscriptMessage(
   message: Message,
   state: AppState,
   cols: number,
-  showCommands: boolean,
+  commandPolicy: CommandDisplayPolicy,
 ): TranscriptRenderLine[] {
   return activeCapabilities.level === "plain"
-    ? renderSimpleMessage(message, state, cols, showCommands)
-    : renderRichMessage(message, state, cols, showCommands);
+    ? renderSimpleMessage(message, state, cols, commandPolicy)
+    : renderRichMessage(message, state, cols, commandPolicy);
 }
 
 function renderSimpleMessage(
   message: Message,
   state: AppState,
   cols: number,
-  showCommands: boolean,
+  commandPolicy: CommandDisplayPolicy,
 ): TranscriptRenderLine[] {
   const lines: TranscriptRenderLine[] = [];
   const prefixWidth = activeCapabilities.unicode ? 4 : 3;
@@ -179,17 +221,17 @@ function renderSimpleMessage(
 
   if (message.role === "user") {
     const text = displayMessageText("user", messageText(message));
-    const rendered = secondaryText(stripAnsi(renderRichText(text)));
+    const rendered = secondaryText(stripAnsi(renderRichText(text, richTextOptions(contentWidth))));
     for (const line of wrapAnsi(rendered, contentWidth)) {
       lines.push(messageLine(simpleBodyLine(line, "user", cols)));
     }
     return lines;
   }
 
-  for (const block of orderedMessageBlocks(message)) {
+  for (const block of orderedMessageBlocks(message, commandPolicy.includeCommands)) {
     if (lines.length) lines.push(gapLine());
     if (block.kind === "text") {
-      const richText = renderRichText(block.text);
+      const richText = renderRichText(block.text, richTextOptions(contentWidth));
       const displayText =
         message.role === "assistant" ? agentText(richText) : secondaryText(stripAnsi(richText));
       for (const line of wrapAnsi(displayText, contentWidth)) {
@@ -203,7 +245,7 @@ function renderSimpleMessage(
       }
       continue;
     }
-    lines.push(...commandRenderLines(block.commands, state, cols, cols, showCommands));
+    lines.push(...commandRenderLines(block.commands, state, cols, cols, commandPolicy));
   }
   return lines;
 }
@@ -217,14 +259,14 @@ function renderRichMessage(
   message: Message,
   state: AppState,
   cols: number,
-  showCommands: boolean,
+  commandPolicy: CommandDisplayPolicy,
 ): TranscriptRenderLine[] {
   const lines: TranscriptRenderLine[] = [];
   const contentWidth = richMessageContentWidth(cols);
 
   if (message.role === "user") {
     const userText = displayMessageText("user", messageText(message));
-    const body = secondaryText(stripAnsi(renderRichText(userText)));
+    const body = secondaryText(stripAnsi(renderRichText(userText, richTextOptions(contentWidth))));
     const wrapped = body ? wrapAnsi(body, contentWidth) : [];
     if (wrapped.length) {
       lines.push(gapLine(richBlankRailLine("user", cols)));
@@ -234,7 +276,7 @@ function renderRichMessage(
     return lines;
   }
 
-  const blocks = orderedMessageBlocks(message);
+  const blocks = orderedMessageBlocks(message, commandPolicy.includeCommands);
   if (!blocks.length && message.role !== "assistant") {
     lines.push(
       messageLine(richContentLine(`${textAuxiliary}${message.role}${reset}`, cols, message.role)),
@@ -243,7 +285,7 @@ function renderRichMessage(
   for (const block of blocks) {
     if (lines.length) lines.push(gapLine());
     if (block.kind === "text") {
-      const richText = renderRichText(block.text);
+      const richText = renderRichText(block.text, richTextOptions(contentWidth));
       const displayText =
         message.role === "assistant" ? agentText(richText) : secondaryText(stripAnsi(richText));
       const wrapped = wrapAnsi(displayText, contentWidth);
@@ -262,13 +304,17 @@ function renderRichMessage(
       lines.push(gapLine(richBlankRailLine(message.role, cols)));
       continue;
     }
-    lines.push(...commandRenderLines(block.commands, state, cols - 6, cols, showCommands));
+    lines.push(...commandRenderLines(block.commands, state, cols - 6, cols, commandPolicy));
   }
   return lines;
 }
 
 function richMessageContentWidth(cols: number): number {
   return Math.max(20, cols - 1);
+}
+
+function richTextOptions(contentWidth: number): { tableWidth: number } {
+  return { tableWidth: Math.max(20, contentWidth - 2) };
 }
 
 function agentText(value: string): string {
@@ -284,7 +330,7 @@ function colorEachLine(value: string, color: string): string {
     .join("\n");
 }
 
-function orderedMessageBlocks(message: Message): OrderedMessageBlock[] {
+function orderedMessageBlocks(message: Message, includeCommands: boolean): OrderedMessageBlock[] {
   if (message.role !== "assistant") {
     const text = displayMessageText(message.role, messageText(message));
     return text ? [{ kind: "text", text }] : [];
@@ -297,6 +343,7 @@ function orderedMessageBlocks(message: Message): OrderedMessageBlock[] {
       if (display) blocks.push({ kind: "text", text: display });
       continue;
     }
+    if (!includeCommands) continue;
     const commands = commandsForPart(part);
     if (commands.length) {
       blocks.push({
@@ -357,14 +404,18 @@ function commandRenderLines(
   state: AppState,
   summaryCols: number,
   detailCols: number,
-  showCommands: boolean,
+  commandPolicy: CommandDisplayPolicy,
 ): TranscriptRenderLine[] {
-  return commandSectionLines(commands, state, summaryCols, detailCols, showCommands).map(
-    (text) => ({
-      text,
-      kind: "command",
-    }),
-  );
+  return commandSectionLines(
+    commands,
+    state,
+    summaryCols,
+    detailCols,
+    commandPolicy.showCommandDetails,
+  ).map((text) => ({
+    text,
+    kind: "command",
+  }));
 }
 
 function addTranscriptGap(lines: TranscriptRenderLine[]): void {

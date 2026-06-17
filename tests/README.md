@@ -197,12 +197,18 @@ suites explicitly from their app package scripts.
 `tests/live/` is the workspace peer for tests that require public network
 access, third-party systems, provider tokens, API keys, paid providers, or other
 external state. Crate-owned live tests use the same peer layout under
-`<backend-package>/tests/live/`.
+`<backend-package>/tests/live/`. Provider/auth/config compatibility tests also
+belong here when they use local mock servers, because they mutate provider
+runtime state such as env vars, auth stores, or configured catalogs.
 
 Live tests are opt-in and must not be nested under `business`, `performance`, or
 `benchmark`. When a live runner is needed, it should scan by the `live` test
 type and directory instead of naming individual scripts, unless the case is a
 special external harness that cannot be discovered generically.
+
+Crate-owned live Rust tests keep the runnable `[[test]]` entrypoint directly
+under `tests/live/`; target-owned helper modules may live in sibling
+subdirectories such as `tests/live/helpers/`.
 
 Backend live tests are selected by direct Rust scans and backend-owned root
 live scripts. App-owned TUI/GUI live scripts are not part of backend live

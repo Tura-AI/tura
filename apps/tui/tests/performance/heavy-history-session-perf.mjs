@@ -122,6 +122,8 @@ function measureComposer(baseState, capabilities) {
   return withCapturedStdout(() => {
     resetDrawState();
     let state = baseState;
+    let renderedParts = renderChatFrameParts(state, capabilities);
+    let renderedCache = renderedParts.cache;
     let previousFrame = draw(state, capabilities, "", { forceReset: true });
     const chars = inputPayload(config.inputChars);
     const renderSamples = [];
@@ -136,7 +138,8 @@ function measureComposer(baseState, capabilities) {
       reducerSamples.push(performance.now() - started);
 
       started = performance.now();
-      renderChatFrameParts(state, capabilities);
+      renderedParts = renderChatFrameParts(state, capabilities, { cache: renderedCache });
+      renderedCache = renderedParts.cache;
       renderSamples.push(performance.now() - started);
 
       const beforeWrites = capturedWrites.length;

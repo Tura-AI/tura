@@ -24,7 +24,6 @@ import {
   appendNewStableMessagesIgnoringLive,
   commitLiveStreams,
   messageHasRunningPart,
-  mergeStableMessagesIgnoringLive,
   messagePreview,
   prepareMessagesForDisplay,
   refreshStateAfterBackgroundMessage,

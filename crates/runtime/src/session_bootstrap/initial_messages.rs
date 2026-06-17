@@ -185,6 +185,21 @@ fn session_has_initial_user_message(session: &SessionManagement) -> bool {
     })
 }
 
+fn session_has_runtime_context_message(
+    session: &SessionManagement,
+    content: &serde_json::Value,
+) -> bool {
+    session.session_log.iter().any(|entry| {
+        serde_json::from_str::<serde_json::Value>(entry)
+            .ok()
+            .is_some_and(|value| {
+                value.get("role").and_then(serde_json::Value::as_str)
+                    == Some(USER_AGENT_CONTEXT_ROLE)
+                    && value.get("content") == Some(content)
+            })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,19 +286,4 @@ mod tests {
             user_input_content_matches(content, "用户重开后仍然可见")
         }));
     }
-}
-
-fn session_has_runtime_context_message(
-    session: &SessionManagement,
-    content: &serde_json::Value,
-) -> bool {
-    session.session_log.iter().any(|entry| {
-        serde_json::from_str::<serde_json::Value>(entry)
-            .ok()
-            .is_some_and(|value| {
-                value.get("role").and_then(serde_json::Value::as_str)
-                    == Some(USER_AGENT_CONTEXT_ROLE)
-                    && value.get("content") == Some(content)
-            })
-    })
 }

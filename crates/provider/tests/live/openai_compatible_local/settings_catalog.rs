@@ -2,6 +2,7 @@ use super::helpers::*;
 
 #[tokio::test]
 async fn openai_compatible_route_business_flow_loads_named_route_from_provider_config() {
+    let _env_guard = ENV_LOCK.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind configured provider");
     let addr = listener.local_addr().expect("configured provider addr");
     let server = thread::spawn(move || {
@@ -135,6 +136,7 @@ async fn openai_compatible_route_business_flow_loads_named_route_from_provider_c
 
 #[tokio::test]
 async fn openai_compatible_settings_business_flow_loads_explicit_config_catalog_and_latency() {
+    let _env_guard = ENV_LOCK.lock().await;
     let temp = tempfile::tempdir().expect("settings config tempdir");
     let preferred_config = temp.path().join("preferred_provider_config.json");
     std::fs::write(
@@ -369,6 +371,7 @@ async fn openai_compatible_settings_business_flow_loads_explicit_config_catalog_
 
 #[tokio::test]
 async fn openai_compatible_settings_business_flow_rejects_route_provider_missing_base_url() {
+    let _env_guard = ENV_LOCK.lock().await;
     let temp = tempfile::tempdir().expect("bad settings config tempdir");
     let config_path = temp.path().join("bad_provider_config.json");
     std::fs::write(

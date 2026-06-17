@@ -38,12 +38,12 @@ crates/provider/
   config/
     provider_config.json
   tests/
-    business/
-      openai_compatible_local_flow.rs
     live/
       claude_code_live_smoke.rs
       codex_priority_tps_live.rs
+      google_local_flow.rs
       live_model_smoke.rs
+      openai_compatible_local_flow.rs
       provider_tool_call_live_smoke.rs
       responses_tier_live_smoke.rs
 

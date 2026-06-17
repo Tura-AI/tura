@@ -12,6 +12,7 @@ import {
   providerEnums,
   withTerminalSize,
   assertFitsTerminal,
+  assertLineWidths,
   assertWideMenuGap,
 } from "./helpers/render-harness.js";
 import type {
@@ -236,6 +237,56 @@ test("render supports markdown tables, markdown links, and local path access by 
   assert.doesNotMatch(narrowRich, /\x1b\[4m/u);
 });
 
+test("render truncates wide markdown tables to single rows including the last column", () => {
+  const session = sessionFixture("sess-wide-table", "Wide Table");
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      textMessage(
+        "msg-wide-table",
+        session.id,
+        [
+          "BEFORE_TABLE_MARKER",
+          "| 项目名称 | 负责人 | 当前进展 | 主要风险 | 下一步行动 |",
+          "| --- | --- | --- | --- | --- |",
+          "| 智能客服系统升级项目 | 李晶 | 已完成意图识别模块重构，正在灰度发布新的多轮对话能力并持续观测线上指标 | 历史会话数据格式不统一，可能导致部分老用户上下文恢复异常 | 继续观察灰度指标，收集异常日志，并准备回滚脚本和补偿数据校验流程 |",
+          "| 跨境订单履约优化项目 | 王芳 | 仓储路由策略已经接入测试环境，目前正在验证不同国家地区的拆单策略 | 第三方物流接口响应时间波动较大，高峰期可能影响履约时效 | 增加接口超时监控，完善重试机制，并与物流供应商确认扩容窗口 |",
+          "| 数据看板性能治理项目 | 张伟 | 核心报表查询从分钟级优化到秒级，但部分自定义筛选仍然存在慢查询 | 复杂筛选组合会触发全表扫描，如果用户频繁刷新会造成数据库压力 | 为高频筛选字段补充索引，限制过重查询，并设计异步导出兜底 |",
+          "AFTER_TABLE_MARKER",
+        ].join("\n"),
+      ),
+    ],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+  });
+
+  const output = withTerminalSize(88, 28, () => render(state, richCapabilities()));
+  const plainLines = stripAnsi(output).split("\n");
+  const headerIndex = plainLines.findIndex((line) => /项目名称\s+│\s+负责人/u.test(line));
+  const afterIndex = plainLines.findIndex((line) => line.includes("AFTER_TABLE_MARKER"));
+  assert.ok(headerIndex >= 0);
+  assert.ok(afterIndex > headerIndex);
+  const tableRegion = plainLines.slice(headerIndex, afterIndex);
+  const tableRows = tableRegion.filter((line) => line.includes("│"));
+
+  assert.equal(tableRows.length, 4, tableRegion.join("\n"));
+  assert.equal(
+    tableRegion.filter((line) => line.trim() && !line.includes("│") && !/^▏\s*$/u.test(line))
+      .length,
+    0,
+    tableRegion.join("\n"),
+  );
+  assert.ok(
+    tableRows.slice(1).every((line) => line.includes("...")),
+    `wide table rows should visibly truncate with ...:\n${tableRows.join("\n")}`,
+  );
+  assert.match(tableRows[1] ?? "", /下一步|继续|回滚|脚本|\.\.\./u);
+  assert.doesNotMatch(tableRegion.join("\n"), /补偿数据校验流程|确认扩容窗口|异步导出兜底/u);
+  assertLineWidths(output, 88);
+});
+
 test("render preserves rich text blank paragraphs and full-width code block backgrounds", () => {
   const session = sessionFixture("sess-rich-blocks", "Rich Blocks");
   const state = reducer(initialState("C:/repo"), {
@@ -284,7 +335,9 @@ test("render preserves rich text blank paragraphs and full-width code block back
     visibleTextWidth(codeLine) >= 94,
     `code block background should fill the rich message text area: ${visibleTextWidth(codeLine)}`,
   );
-  const rawCodeLineIndex = rawCodeLines.findIndex((line) => stripAnsi(line).includes("const width"));
+  const rawCodeLineIndex = rawCodeLines.findIndex((line) =>
+    stripAnsi(line).includes("const width"),
+  );
   const codeTopBlank = rawCodeLines[rawCodeLineIndex - 1] ?? "";
   const codeBottomBlank = rawCodeLines[rawCodeLineIndex + 1] ?? "";
   assert.match(stripAnsi(codeTopBlank), /^▏\s*$/u);

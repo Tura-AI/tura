@@ -28,9 +28,10 @@ Usage:
 Scans root tests/live/*.rs, backend package tests/live/*.rs, and backend-owned
 root tests/live/*.mjs files and runs opt-in live tests.
 Backend package roots are crates/, commands/, agents/, and personas/.
-Typed test directories are flat: encode the scenario in the filename instead of
-creating tests/live subdirectories.
-Live tests may require provider credentials, public network access, or third-party services.
+Runnable live Rust entrypoints stay directly under tests/live; target-owned
+helper modules may live in sibling subdirectories.
+Live tests may require provider credentials, public network access, third-party
+services, or provider runtime state such as auth/config/env.
 EOF
       exit 0
       ;;

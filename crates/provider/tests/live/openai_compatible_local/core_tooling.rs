@@ -2,6 +2,7 @@ use super::helpers::*;
 
 #[tokio::test]
 async fn openai_compatible_business_flow_streams_local_tool_response_and_metrics() {
+    let _env_guard = ENV_LOCK.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind local provider");
     let addr = listener.local_addr().expect("local provider addr");
     let server = thread::spawn(move || {
@@ -151,6 +152,7 @@ async fn openai_compatible_business_flow_streams_local_tool_response_and_metrics
 
 #[tokio::test]
 async fn openai_compatible_business_flow_reports_missing_local_key_without_network() {
+    let _env_guard = ENV_LOCK.lock().await;
     let previous_key = std::env::var_os("LOCALTEST_MISSING_API_KEY");
     std::env::remove_var("LOCALTEST_MISSING_API_KEY");
     let config = ProviderConfig {
@@ -184,6 +186,7 @@ async fn openai_compatible_business_flow_reports_missing_local_key_without_netwo
 
 #[tokio::test]
 async fn openai_compatible_business_flow_embeds_local_vectors_and_rejects_bad_payloads() {
+    let _env_guard = ENV_LOCK.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind local embedding provider");
     let addr = listener
         .local_addr()
@@ -299,6 +302,7 @@ async fn openai_compatible_business_flow_embeds_local_vectors_and_rejects_bad_pa
 
 #[tokio::test]
 async fn openai_compatible_business_flow_preserves_native_tool_conversation_shape() {
+    let _env_guard = ENV_LOCK.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind local provider");
     let addr = listener.local_addr().expect("local provider addr");
     let server = thread::spawn(move || {
@@ -407,6 +411,7 @@ async fn openai_compatible_business_flow_preserves_native_tool_conversation_shap
 #[tokio::test]
 async fn openai_compatible_business_flow_non_stream_tool_calls_extract_structured_arguments_and_metrics(
 ) {
+    let _env_guard = ENV_LOCK.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind local provider");
     let addr = listener.local_addr().expect("local provider addr");
     let server = thread::spawn(move || {
@@ -525,6 +530,7 @@ async fn openai_compatible_business_flow_non_stream_tool_calls_extract_structure
 
 #[tokio::test]
 async fn openai_compatible_business_flow_forwards_documented_request_options_and_metrics() {
+    let _env_guard = ENV_LOCK.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind local provider");
     let addr = listener.local_addr().expect("local provider addr");
     let server = thread::spawn(move || {
@@ -681,6 +687,7 @@ async fn openai_compatible_business_flow_forwards_documented_request_options_and
 
 #[tokio::test]
 async fn openai_compatible_business_flow_writes_success_and_error_logs_to_configured_root() {
+    let _env_guard = ENV_LOCK.lock().await;
     let success_listener = TcpListener::bind("127.0.0.1:0").expect("bind success log provider");
     let success_addr = success_listener.local_addr().expect("success log addr");
     let success_server = thread::spawn(move || {

@@ -501,7 +501,7 @@ fn event_directory(event: &GlobalEvent) -> String {
 
 pub async fn sync_event() -> Json<SyncEvent> {
     Json(SyncEvent::SessionUpdated {
-        properties: global_store().get_or_create_session(),
+        properties: Box::new(global_store().get_or_create_session()),
     })
 }
 

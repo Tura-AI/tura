@@ -38,15 +38,15 @@ test("setting detail rendering pages when selection moves past visible rows", ()
   assert.match(rendered, /> high/u);
 });
 
-test("settings root hides removed validator command stall guard and session type entries", () => {
+test("settings root shows command default while hiding removed validator stall guard and session type entries", () => {
   setActiveCapabilities(richCapabilities());
   const rendered = stripAnsi(settingsLines(baseState(), 96, 20).join("\n"));
 
   assert.match(rendered, /Acceleration mode/u);
+  assert.match(rendered, /Show commands by default\s+true/u);
   assert.match(rendered, /Persona\s+tura/u);
   assert.match(rendered, /Language\s+en/u);
   assert.doesNotMatch(rendered, /Session type/u);
-  assert.doesNotMatch(rendered, /Expand executed commands/u);
   assert.doesNotMatch(rendered, /Validator/u);
   assert.doesNotMatch(rendered, /Command stall guard/u);
 });

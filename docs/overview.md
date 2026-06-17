@@ -109,16 +109,19 @@ tura/tests/benchmark/       opt-in scoring, comparison, and long-running benchma
 
 The typed directories are peers; do not nest `os_testing`, `live`,
 `performance`, or `benchmark` under `business`. Create typed directories only
-when that type has files. Business and OS testing may use `helpers/` plus
-target-owned module directories beside the top-level entrypoint; other typed
-crate directories stay flat. Runners should discover cases by type and
-directory scan instead of hardcoding individual script paths. Do not use fixed
-response wording as product logic or test oracles; assert structured command
-results, protocol fields, parser contracts, files, or stored records.
+when that type has files. Business, OS testing, and crate-owned live tests may
+use `helpers/` plus target-owned module directories beside the top-level
+entrypoint. Runners should discover cases by type and directory scan instead of
+hardcoding individual script paths. Do not use fixed response wording as
+product logic or test oracles; assert structured command results, protocol
+fields, parser contracts, files, or stored records.
 
 Business tests may use local processes, local sockets, controlled fixtures, and
 workspace files. They must not require third-party services, provider tokens,
-API keys, paid providers, or public live systems. Run local business suites
+API keys, paid providers, or public live systems. Tests that exercise provider
+auth, configured provider catalogs, provider environment variables, or provider
+request/response compatibility belong in live even when they use local mock
+servers, because they share provider runtime state. Run local business suites
 with:
 
 ```powershell
@@ -133,7 +136,8 @@ belong in OS testing and run serially:
 ```
 
 Live tests may require provider credentials, public network access, model
-quota, or third-party systems. Run crate-owned live suites explicitly with:
+quota, third-party systems, or provider runtime state such as auth/config/env.
+Run crate-owned live suites explicitly with:
 
 ```powershell
 .\scripts\run-backend-live-tests.ps1 -Crate provider -TimeoutSeconds 300

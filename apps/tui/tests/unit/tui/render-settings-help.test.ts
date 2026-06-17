@@ -60,7 +60,7 @@ test("settings renders with help-style section rails and no command hint copy", 
   );
   assert.match(ansi, /Enter opens; Esc returns to chat/);
   assert.match(ansi, /^\x1b\[48;2;20;23;24m\x1b\[38;2;103;116;111m▏\x1b\[0m.*> Model/m);
-  assert.doesNotMatch(ansi, /Expand executed commands/);
+  assert.match(stripAnsi(ansi), /Show commands by default\s+false/);
   const ansiText = stripAnsi(ansi);
   assert.match(ansiText, /Language\s+en/);
   assert.doesNotMatch(ansiText, /Session type\s+coding/);
@@ -88,7 +88,7 @@ test("settings renders with help-style section rails and no command hint copy", 
     /^\x1b\[48;2;20;23;24m\x1b\[38;2;103;116;111m▏\x1b\[0m\x1b\[48;2;20;23;24m .*Session Settings/m,
   );
   assert.match(rich, /\x1b\[38;2;64;224;208m> Model\s+\x1b\[0m.*gpt-5\.5/);
-  assert.doesNotMatch(rich, /Expand executed commands/);
+  assert.match(stripAnsi(rich), /Show commands by default\s+false/);
   const richLanguageLine = richLines.find((line) => stripAnsi(line).includes("Language"));
   assert.ok(richLanguageLine);
   assert.match(stripAnsi(richLanguageLine), /Language\s+en/);
@@ -456,6 +456,6 @@ test("render keeps a full assistant list visible alongside command details", () 
     }),
     richCapabilities(),
   );
-  assert.match(collapsed, /◇ Commands/);
+  assert.doesNotMatch(collapsed, /◇ Commands/);
   assert.doesNotMatch(collapsed, /\$ npm test/);
 });

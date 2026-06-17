@@ -276,8 +276,10 @@ async fn create_session_accepts_task_management_and_serializes_session_fields() 
     assert_eq!(value["auto_session_name"], true);
     assert_eq!(value["context_tokens"]["input"], 0);
     assert!(value["context_tokens"]["limit"].as_u64().is_some());
+    assert_eq!(value["usage"]["context_tokens"]["input"], 0);
+    assert!(value["usage"]["context_tokens"]["limit"].as_u64().is_some());
     let object = value.as_object().expect("session JSON should be an object");
-    assert_eq!(object.len(), 22);
+    assert_eq!(object.len(), 23);
 
     let Json(listed) = super::list_sessions(
         HeaderMap::new(),
@@ -349,8 +351,10 @@ async fn task_management_route_patches_session_and_returns_session_fields() {
     assert_eq!(value["auto_session_name"], true);
     assert_eq!(value["context_tokens"]["input"], 0);
     assert!(value["context_tokens"]["limit"].as_u64().is_some());
+    assert_eq!(value["usage"]["context_tokens"]["input"], 0);
+    assert!(value["usage"]["context_tokens"]["limit"].as_u64().is_some());
     let object = value.as_object().expect("session JSON should be an object");
-    assert_eq!(object.len(), 22);
+    assert_eq!(object.len(), 23);
 
     let Json(fetched) = super::get_session(Path(session.id)).await;
     assert_eq!(fetched.task_management["status"], "question");

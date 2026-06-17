@@ -93,7 +93,7 @@ test("settings selection follows the rendered settings order", () => {
     },
   });
 
-  const details = Array.from({ length: 7 }, (_item, index) =>
+  const details = Array.from({ length: 8 }, (_item, index) =>
     selectedSettingDetail({ ...state, selectedSettingsIndex: index }),
   );
 
@@ -105,11 +105,13 @@ test("settings selection follows the rendered settings order", () => {
     "language",
     "variant",
     "priority",
+    "commands",
   ]);
 });
 
 test("settings patches cover language, session type, validator, and stall guard", () => {
   assert.deepEqual(settingPatch("language", "zh-CN"), { language: "zh-CN" });
+  assert.deepEqual(settingPatch("commands", false), { show_command_instructions: false });
   assert.deepEqual(settingPatch("session", "business"), { session_type: "business" });
   assert.deepEqual(settingPatch("validator", true), { validator_enabled: true });
   assert.deepEqual(settingPatch("stallGuard", "long_io_60s"), {

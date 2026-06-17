@@ -2,6 +2,7 @@ use super::helpers::*;
 
 #[test]
 fn openai_compatible_provider_boundary_business_flow_normalizes_runtime_visible_contracts() {
+    let _env_guard = ENV_LOCK.blocking_lock();
     let mut messages = vec![
         json!({
             "role": "user",
@@ -216,6 +217,7 @@ fn openai_compatible_provider_boundary_business_flow_normalizes_runtime_visible_
 
 #[tokio::test]
 async fn openai_compatible_business_flow_normalizes_content_parts_tools_costs_and_usage_variants() {
+    let _env_guard = ENV_LOCK.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind local provider");
     let addr = listener.local_addr().expect("local provider addr");
     let server = thread::spawn(move || {

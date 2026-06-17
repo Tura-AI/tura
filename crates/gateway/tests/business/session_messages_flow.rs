@@ -4,7 +4,7 @@ use gateway::api::session::{
     stream_agent_message, update_todos, MessageListParams, SendAgentMedia, SendAgentMessageRequest,
     SendAgentToolCall, StreamAgentTextRequest,
 };
-use gateway::contracts::GlobalEvent;
+use gateway::contracts::{GlobalEvent, Message, MessagePart};
 use gateway::session_store;
 use runtime::state_machine::runtime_management::{
     RuntimeCallResultStatus, RuntimeSessionSyncStatus, RuntimeState,
@@ -93,25 +93,26 @@ async fn gateway_session_messages_business_flow_streams_then_persists_agent_repl
     let Json(messages) = list_messages(Path(session_id.clone()), message_list_query()).await;
     assert_eq!(messages.len(), 1);
     let message = &messages[0];
-    assert_eq!(message["info"]["id"], response_message_id);
-    assert_eq!(message["info"]["sessionID"], session_id);
-    assert_eq!(message["info"]["role"], "assistant");
-    let response_part_id = message["parts"][0]["id"]
-        .as_str()
-        .expect("stored assistant text part should have an id")
-        .to_string();
-    assert_eq!(message["parts"][0]["type"], "text");
-    assert_text_contains(&message["parts"][0], "Final agent reply");
-    assert_text_contains(&message["parts"][0], "[MEDIA:artifacts/result.png:MEDIA]");
+    assert_eq!(message.id, response_message_id);
+    assert_eq!(message.session_id, session_id);
+    assert_eq!(message_value(message)["role"], "assistant");
+    let response_part = message
+        .parts
+        .first()
+        .expect("stored assistant text part should be present");
+    let response_part_id = response_part.id.clone();
+    assert_eq!(response_part.part_type, "text");
+    assert_text_contains(response_part, "Final agent reply");
+    assert_text_contains(response_part, "[MEDIA:artifacts/result.png:MEDIA]");
     assert_eq!(
-        message["parts"][0]["metadata"]["step_summary"],
+        response_part.metadata.as_ref().expect("metadata")["step_summary"],
         "Stored reply summary"
     );
 
     let Json(fetched_message) =
         get_message(Path((session_id.clone(), response_message_id.clone()))).await;
-    assert_eq!(fetched_message["info"]["id"], response_message_id);
-    assert_eq!(fetched_message["parts"][0]["id"], response_part_id);
+    assert_eq!(fetched_message.id, response_message_id);
+    assert_eq!(fetched_message.parts[0].id, response_part_id);
 
     let Json(fetched_part) = get_message_part(Path((
         session_id.clone(),
@@ -119,7 +120,7 @@ async fn gateway_session_messages_business_flow_streams_then_persists_agent_repl
         response_part_id.clone(),
     )))
     .await;
-    assert_eq!(fetched_part["id"], response_part_id);
+    assert_eq!(fetched_part.id, response_part_id);
     assert_text_contains(&fetched_part, "Final agent reply");
 
     let Json(missing_part) = get_message_part(Path((
@@ -128,8 +129,8 @@ async fn gateway_session_messages_business_flow_streams_then_persists_agent_repl
         "missing-part".to_string(),
     )))
     .await;
-    assert_eq!(missing_part["id"], "missing-part");
-    assert_eq!(missing_part["text"], "");
+    assert_eq!(missing_part.id, "missing-part");
+    assert_eq!(missing_part.text.as_deref(), Some(""));
 
     Ok(())
 }
@@ -217,12 +218,13 @@ async fn gateway_session_messages_business_flow_updates_planning_tool_message_an
         1,
         "same planning call_id/tool_name should update the existing tool message"
     );
-    assert_eq!(messages[0]["parts"][0]["type"], "tool");
-    assert_eq!(messages[0]["parts"][0]["tool"], "planning");
-    assert_eq!(messages[0]["parts"][0]["callID"], "planning-call-business");
-    assert_eq!(messages[0]["parts"][0]["state"]["status"], "completed");
+    let part = messages[0].parts.first().expect("planning part");
+    assert_eq!(part.part_type, "tool");
+    assert_eq!(part.tool.as_deref(), Some("planning"));
+    assert_eq!(part.call_id.as_deref(), Some("planning-call-business"));
+    assert_eq!(part.state.as_ref().expect("state")["status"], "completed");
     assert_eq!(
-        messages[0]["parts"][0]["metadata"]["output"]["steps"][2]["task_summary"],
+        part.metadata.as_ref().expect("metadata")["output"]["steps"][2]["task_summary"],
         "Final gateway session message summary"
     );
 
@@ -367,7 +369,7 @@ async fn gateway_session_messages_business_flow_reads_projection_history_without
 
     let Json(db_only) = list_messages(Path(session_id.clone()), message_list_query()).await;
     assert_eq!(db_only.len(), 1);
-    assert_eq!(db_only[0]["info"]["id"], "db-user-message");
+    assert_eq!(db_only[0].id, "db-user-message");
 
     let Json(live_text_response) = send_agent_message(
         Path(session_id.clone()),
@@ -456,7 +458,7 @@ async fn gateway_session_messages_business_flow_reads_projection_history_without
         1,
         "session messages must stay a static projection and never include active runtime live overlays"
     );
-    assert_eq!(with_active_live[0]["info"]["id"], "db-user-message");
+    assert_eq!(with_active_live[0].id, "db-user-message");
 
     upsert_canonical_session(
         &session_id,
@@ -522,29 +524,25 @@ async fn gateway_session_messages_business_flow_reads_projection_history_without
     assert_eq!(
         after_refresh
             .iter()
-            .filter(|message| message["info"]["id"] == runtime_message_id)
+            .filter(|message| message.id == runtime_message_id)
             .count(),
         1,
         "finished runtime projection must replace the live copy instead of duplicating it"
     );
     let final_assistant = message_by_id(&after_refresh, &runtime_message_id);
     assert_eq!(
-        final_assistant["parts"][0]["text"],
-        "DB canonical final assistant"
+        final_assistant.parts[0].text.as_deref(),
+        Some("DB canonical final assistant")
     );
-    assert_eq!(
-        final_assistant["info"]["time"]["created"],
-        assistant_created_at
-    );
-    assert_eq!(
-        final_assistant["info"]["time"]["updated"],
-        assistant_final_updated_at
-    );
+    assert_eq!(final_assistant.created_at, assistant_created_at);
+    assert_eq!(final_assistant.updated_at, assistant_final_updated_at);
     let final_command = part_by_id(final_assistant, &command_part_id);
-    assert_eq!(final_command["metadata"]["source"], "db-canonical");
-    assert_eq!(final_command["state"]["status"], "completed");
-    assert_eq!(final_command["state"]["time"]["start"], command_started_at);
-    assert_eq!(final_command["state"]["time"]["end"], command_finished_at);
+    let final_command_metadata = final_command.metadata.as_ref().expect("metadata");
+    let final_command_state = final_command.state.as_ref().expect("state");
+    assert_eq!(final_command_metadata["source"], "db-canonical");
+    assert_eq!(final_command_state["status"], "completed");
+    assert_eq!(final_command_state["time"]["start"], command_started_at);
+    assert_eq!(final_command_state["time"]["end"], command_finished_at);
 
     Ok(())
 }
@@ -609,18 +607,19 @@ async fn gateway_session_messages_business_flow_concurrent_agent_writes_stay_ses
         let Json(messages) = list_messages(Path(session_id.clone()), message_list_query()).await;
         assert_eq!(messages.len(), 1);
         let message = &messages[0];
-        assert_eq!(message["info"]["id"], response_message_id);
-        assert_eq!(message["info"]["sessionID"], session_id);
+        assert_eq!(message.id, response_message_id);
+        assert_eq!(message.session_id, session_id);
+        let part = message.parts.first().expect("assistant text part");
         assert_text_contains(
-            &message["parts"][0],
+            part,
             &format!("Concurrent reply for session {index}"),
         );
         assert_text_contains(
-            &message["parts"][0],
+            part,
             &format!("[MEDIA:artifacts/session-{index}.txt:MEDIA]"),
         );
         assert_eq!(
-            message["parts"][0]["metadata"]["step_summary"],
+            part.metadata.as_ref().expect("metadata")["step_summary"],
             format!("summary-{index}")
         );
 
@@ -898,19 +897,22 @@ fn command_run_tool_call(
     }
 }
 
-fn message_by_id<'a>(messages: &'a [Value], message_id: &str) -> &'a Value {
+fn message_value(message: &Message) -> Value {
+    serde_json::to_value(message).expect("message should serialize")
+}
+
+fn message_by_id<'a>(messages: &'a [Message], message_id: &str) -> &'a Message {
     messages
         .iter()
-        .find(|message| message["info"]["id"] == message_id)
+        .find(|message| message.id == message_id)
         .unwrap_or_else(|| panic!("message {message_id} should be present: {messages:#?}"))
 }
 
-fn part_by_id<'a>(message: &'a Value, part_id: &str) -> &'a Value {
-    message["parts"]
-        .as_array()
-        .unwrap_or_else(|| panic!("message parts should be an array: {message:#?}"))
+fn part_by_id<'a>(message: &'a Message, part_id: &str) -> &'a MessagePart {
+    message
+        .parts
         .iter()
-        .find(|part| part["id"] == part_id)
+        .find(|part| part.id == part_id)
         .unwrap_or_else(|| panic!("part {part_id} should be present: {message:#?}"))
 }
 
@@ -1020,12 +1022,8 @@ fn message_list_query() -> Query<MessageListParams> {
     Query(MessageListParams::default())
 }
 
-fn assert_text_contains(value: &Value, expected: &str) {
-    let text = value
-        .get("text")
-        .and_then(Value::as_str)
-        .or_else(|| value.get("content").and_then(Value::as_str))
-        .unwrap_or_default();
+fn assert_text_contains(value: &MessagePart, expected: &str) {
+    let text = value.text.as_deref().or(value.content.as_deref()).unwrap_or_default();
     assert!(
         text.contains(expected),
         "expected text to contain {expected:?}, got {text:?}"

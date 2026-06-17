@@ -2,6 +2,7 @@ use super::helpers::*;
 
 #[tokio::test]
 async fn openai_compatible_business_flow_concurrent_calls_keep_request_and_response_isolated() {
+    let _env_guard = ENV_LOCK.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind concurrent local provider");
     let addr = listener.local_addr().expect("concurrent provider addr");
     let server = thread::spawn(move || {
@@ -135,6 +136,7 @@ async fn openai_compatible_business_flow_concurrent_calls_keep_request_and_respo
 
 #[tokio::test]
 async fn openai_compatible_route_business_flow_falls_back_after_provider_error() {
+    let _env_guard = ENV_LOCK.lock().await;
     let failing_listener = TcpListener::bind("127.0.0.1:0").expect("bind failing provider");
     let failing_addr = failing_listener.local_addr().expect("failing addr");
     let failing_server = thread::spawn(move || {
@@ -279,6 +281,7 @@ async fn openai_compatible_route_business_flow_falls_back_after_provider_error()
 #[tokio::test]
 async fn openai_compatible_route_business_flow_uses_first_healthy_provider_without_touching_fallback(
 ) {
+    let _env_guard = ENV_LOCK.lock().await;
     let primary_listener = TcpListener::bind("127.0.0.1:0").expect("bind primary provider");
     let primary_addr = primary_listener.local_addr().expect("primary addr");
     let primary_server = thread::spawn(move || {
@@ -398,6 +401,7 @@ async fn openai_compatible_route_business_flow_uses_first_healthy_provider_witho
 #[tokio::test]
 async fn openai_compatible_route_business_flow_reports_all_provider_failures_with_attempt_context()
 {
+    let _env_guard = ENV_LOCK.lock().await;
     let http_error_listener = TcpListener::bind("127.0.0.1:0").expect("bind http-error provider");
     let http_error_addr = http_error_listener.local_addr().expect("http-error addr");
     let http_error_server = thread::spawn(move || {

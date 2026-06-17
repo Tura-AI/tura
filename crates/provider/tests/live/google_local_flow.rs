@@ -2,6 +2,7 @@ use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
+use tokio::sync::Mutex;
 use tura_llm_rust::{
     extract_response_text, extract_tool_calls, CallOptions, ProviderConfig, TuraConfig, TuraError,
 };
@@ -15,8 +16,11 @@ struct CapturedHttpRequest {
     body: Value,
 }
 
+static ENV_LOCK: Mutex<()> = Mutex::const_new(());
+
 #[tokio::test]
 async fn google_business_flow_generates_content_with_tools_system_usage_and_request_shape() {
+    let _env_guard = ENV_LOCK.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind local google provider");
     let addr = listener.local_addr().expect("local google provider addr");
     let server = thread::spawn(move || {
@@ -220,6 +224,7 @@ async fn google_business_flow_generates_content_with_tools_system_usage_and_requ
 
 #[tokio::test]
 async fn google_business_flow_replays_function_call_output_and_media_sidecar() {
+    let _env_guard = ENV_LOCK.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind local google provider");
     let addr = listener.local_addr().expect("local google provider addr");
     let server = thread::spawn(move || {
@@ -331,6 +336,7 @@ async fn google_business_flow_replays_function_call_output_and_media_sidecar() {
 
 #[tokio::test]
 async fn google_business_flow_embeds_local_vectors_and_rejects_missing_values() {
+    let _env_guard = ENV_LOCK.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind local google embed provider");
     let addr = listener.local_addr().expect("local google embed addr");
     let server = thread::spawn(move || {
@@ -436,6 +442,7 @@ async fn google_business_flow_embeds_local_vectors_and_rejects_missing_values() 
 
 #[tokio::test]
 async fn google_business_flow_reports_http_status_body_and_invalid_json() {
+    let _env_guard = ENV_LOCK.lock().await;
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind local google provider");
     let addr = listener.local_addr().expect("local google provider addr");
     let server = thread::spawn(move || {

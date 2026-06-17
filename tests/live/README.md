@@ -53,5 +53,10 @@ sh scripts/run-backend-live-tests.sh --list
 sh scripts/run-backend-live-tests.sh --crate provider --timeout-seconds 300
 ```
 
+Crate-owned live Rust tests keep their runnable entrypoints directly under
+`<crate>/tests/live/`. Those entrypoints may use target-owned helper modules in
+sibling subdirectories, for example `<crate>/tests/live/helpers/`, because Cargo
+runs the top-level test target.
+
 Backend release-binary tests live in `tests/release`; TUI/GUI release live tests
 use the app package commands above and keep their scripts under this directory.

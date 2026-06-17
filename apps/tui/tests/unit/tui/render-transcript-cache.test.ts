@@ -66,6 +66,164 @@ test("transcript cache keeps durable gateway text while live excludes chrome and
   assert.match(chromeRows, /thinking/i);
 });
 
+test("hidden command setting drops completed cache commands while keeping live commands visible", () => {
+  const session = {
+    id: "sess-hidden-cache-command",
+    title: "Hidden Commands",
+    status: "idle" as const,
+  };
+  const completed = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-hidden-command",
+        sessionID: session.id,
+        role: "assistant",
+        created_at: 1_000,
+        parts: [
+          {
+            id: "part-hidden-text",
+            type: "text",
+            text: "Only this answer should remain in cache.",
+          },
+          {
+            id: "part-hidden-command",
+            type: "tool",
+            tool: "command_run",
+            state: {
+              status: "completed",
+              input: {
+                commands: [{ command_type: "shell_command", command_line: "npm run hidden" }],
+              },
+            },
+          },
+        ],
+      },
+    ],
+    permissions: [],
+    sessions: [session],
+    sessionConfig: { show_command_instructions: false },
+  });
+
+  const cacheRows = stripAnsi(transcriptLines(completed, 100).join("\n"));
+  assert.match(cacheRows, /Only this answer should remain in cache/);
+  assert.doesNotMatch(cacheRows, /Commands|npm run hidden/);
+
+  const runningSession = { ...session, status: "busy" as const };
+  const running = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: runningSession,
+    messages: [
+      {
+        id: "msg-live-command",
+        sessionID: runningSession.id,
+        role: "assistant",
+        created_at: 1_000,
+        parts: [
+          {
+            id: "part-live-command",
+            type: "tool",
+            tool: "command_run",
+            state: {
+              status: "running",
+              input: {
+                commands: [{ command_type: "shell_command", command_line: "npm run live" }],
+              },
+            },
+          },
+        ],
+      },
+    ],
+    permissions: [],
+    sessions: [runningSession],
+    sessionConfig: { show_command_instructions: false },
+  });
+
+  const liveRows = stripAnsi(transcriptLiveLines(running, 100).join("\n"));
+  assert.match(liveRows, /Commands/);
+  assert.match(liveRows, /npm run live/);
+});
+
+test("toggling command display rebuilds cache without hiding live command rows", () => {
+  const session = {
+    id: "sess-toggle-cache-command",
+    title: "Toggle Commands",
+    status: "busy" as const,
+  };
+  const base = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-toggle-cache-command",
+        sessionID: session.id,
+        role: "assistant",
+        created_at: 1_000,
+        parts: [
+          {
+            id: "part-toggle-cache-text",
+            type: "text",
+            text: "Completed answer remains cached.",
+          },
+          {
+            id: "part-toggle-cache-command",
+            type: "tool",
+            tool: "command_run",
+            state: {
+              status: "completed",
+              input: {
+                commands: [{ command_type: "shell_command", command_line: "npm run cached" }],
+              },
+            },
+          },
+        ],
+      },
+      {
+        id: "msg-toggle-live-command",
+        sessionID: session.id,
+        role: "assistant",
+        created_at: 2_000,
+        parts: [
+          {
+            id: "part-toggle-live-command",
+            type: "tool",
+            tool: "command_run",
+            state: {
+              status: "running",
+              input: {
+                commands: [{ command_type: "shell_command", command_line: "npm run live" }],
+              },
+            },
+          },
+        ],
+      },
+    ],
+    permissions: [],
+    sessions: [session],
+    sessionConfig: { show_command_instructions: true },
+  });
+
+  const first = renderChatFrameParts(base, richCapabilities());
+  assert.match(stripAnsi(first.cacheFrame), /Completed answer remains cached/);
+  assert.match(stripAnsi(first.cacheFrame), /npm run cached/);
+  assert.match(stripAnsi(first.liveFrame), /npm run live/);
+
+  const toggled = reducer(base, {
+    type: "session-config",
+    value: { show_command_instructions: false },
+  });
+  const next = renderChatFrameParts(toggled, richCapabilities(), { cache: first.cache });
+  const cache = stripAnsi(next.cacheFrame);
+  const live = stripAnsi(next.liveFrame);
+
+  assert.notEqual(next.cache, first.cache);
+  assert.match(cache, /Completed answer remains cached/);
+  assert.doesNotMatch(cache, /Commands|npm run cached/);
+  assert.match(live, /Commands/);
+  assert.match(live, /npm run live/);
+});
+
 test("completed user and assistant turn moves from live into transcript cache", () => {
   const session = {
     id: "sess-completed-turn-cache",

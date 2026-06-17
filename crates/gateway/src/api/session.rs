@@ -473,7 +473,7 @@ pub async fn abort_session(Path(session_id): Path<String>) -> Json<AbortResponse
 }
 
 fn abort_session_scope(session_id: &str) -> AbortResponse {
-    let aborted_sessions = session_store().cancellation_scope_session_ids(&session_id);
+    let aborted_sessions = session_store().cancellation_scope_session_ids(session_id);
     let mut cleanups = Vec::new();
     let router = RouterClient::global();
     for id in &aborted_sessions {

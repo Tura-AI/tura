@@ -35,6 +35,7 @@ fn set_pending_with_verifier(
 
 #[tokio::test]
 async fn oauth_business_retry_flow_keeps_pending_login_after_user_correctable_errors() {
+    let _guard = ENV_LOCK.lock().await;
     let provider_id = "gateway-business-oauth-retry";
 
     set_pending(provider_id, "token", "token-state", Some("confirm-code"));
@@ -109,6 +110,7 @@ async fn oauth_business_retry_flow_keeps_pending_login_after_user_correctable_er
 
 #[tokio::test]
 async fn oauth_business_pkce_flow_exchanges_local_token_and_persists_auth() {
+    let _guard = ENV_LOCK.lock().await;
     let provider_id = "codex";
     let root = tempfile::tempdir().expect("temp oauth root");
     let env_path = root.path().join(".env.gateway-oauth-business");
@@ -231,6 +233,7 @@ async fn oauth_business_pkce_flow_exchanges_local_token_and_persists_auth() {
 
 #[tokio::test]
 async fn oauth_business_refresh_flow_uses_local_token_endpoint_and_updates_auth() {
+    let _guard = ENV_LOCK.lock().await;
     let provider_id = "codex";
     let root = tempfile::tempdir().expect("temp oauth refresh root");
     let env_path = root.path().join(".env.gateway-oauth-refresh-business");
@@ -334,6 +337,7 @@ async fn oauth_business_refresh_flow_uses_local_token_endpoint_and_updates_auth(
 
 #[tokio::test]
 async fn oauth_business_validate_flow_reports_local_success_and_missing_key_details() {
+    let _guard = ENV_LOCK.lock().await;
     let root = tempfile::tempdir().expect("temp auth validation root");
     let env_path = root.path().join(".env.gateway-auth-validation-business");
     let provider_config = root.path().join("provider_config.json");
@@ -409,6 +413,7 @@ async fn oauth_business_validate_flow_reports_local_success_and_missing_key_deta
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn oauth_business_concurrent_auth_writes_keep_env_and_config_complete() {
+    let _guard = ENV_LOCK.lock().await;
     if let Ok(provider_id) = std::env::var(AUTH_CHILD_PROVIDER_ENV) {
         match std::env::var(AUTH_CHILD_ACTION_ENV)
             .unwrap_or_else(|_| "write".to_string())
@@ -568,6 +573,7 @@ async fn oauth_business_concurrent_auth_writes_keep_env_and_config_complete() {
 
 #[tokio::test]
 async fn oauth_business_redirect_flow_rejects_non_pkce_pending_without_network_exchange() {
+    let _guard = ENV_LOCK.lock().await;
     let provider_id = "gateway-business-oauth-redirect";
     clear_provider(provider_id);
 

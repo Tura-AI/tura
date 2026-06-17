@@ -27,8 +27,10 @@ import {
   type RenderedFrame,
 } from "./render/frame.js";
 import {
+  transcriptMessageGroups,
   transcriptLiveRenderLines,
   transcriptRenderLines,
+  transcriptRenderLinesForMessages,
   transcriptThinkingLines,
   type TranscriptRenderLine,
 } from "./render/transcript.js";
@@ -53,13 +55,28 @@ export { settingOptions, settingsCommandEntries, settingsEntries } from "./rende
 export type RenderedChatFrame = RenderedFrame & {
   renderCols: number;
   cacheFrame: string;
+  cacheLines: string[];
   liveFrame: string;
   liveRows: TranscriptRenderLine[];
+  tailCacheMessageCount: number;
+  activeLiveMessageCount: number;
   liveStreamKey: string;
   chromeFrame: string;
   chromeCursor?: RenderedFrame["cursor"];
   liveRegionFrame: string;
   liveRegionCursor?: RenderedFrame["cursor"];
+  cache: RenderedChatCache;
+};
+
+export type RenderedChatCache = {
+  sessionID: string;
+  renderCols: number;
+  capabilitiesKey: string;
+  settingsKey: string;
+  cacheMessageCount: number;
+  cacheRows: TranscriptRenderLine[];
+  cacheLines: string[];
+  cacheFrame: string;
 };
 
 export function render(
@@ -144,16 +161,37 @@ export function renderFrame(
 export function renderChatFrameParts(
   state: AppState,
   capabilities: TerminalCapabilities = detectTerminalCapabilities(),
+  options: { cache?: RenderedChatCache } = {},
 ): RenderedChatFrame {
   setActiveCapabilities(capabilities);
   const cols = process.stdout.columns || 100;
   const renderCols = terminalRenderCols(cols);
-  const cacheRows = transcriptRenderLines(state, renderCols);
-  const liveRows = liveLinesWithCacheBoundary(
-    cacheRows,
-    transcriptLiveRenderLines(state, renderCols),
+  const groups = transcriptMessageGroups(state);
+  const reusableCache = reusableRenderedChatCache(
+    options.cache,
+    state.session?.id ?? "",
+    renderCols,
+    capabilities,
+    state,
+    groups.cache.length,
   );
-  const cacheLines = cacheRows.map((line) => line.text);
+  const renderedCache =
+    reusableCache ?? renderChatCache(state, capabilities, renderCols, groups.cache);
+  const tailCacheMessages = groups.cache.slice(renderedCache.cacheMessageCount);
+  const tailCacheRows = transcriptRenderLinesForMessages(state, renderCols, tailCacheMessages, {
+    commandMode: "cache",
+  });
+  const activeLiveRows = transcriptRenderLinesForMessages(state, renderCols, groups.live, {
+    commandMode: "live",
+  });
+  const liveRowsForFrame =
+    tailCacheRows.length && activeLiveRows.length
+      ? [...tailCacheRows, { text: "", kind: "gap" as const }, ...activeLiveRows]
+      : tailCacheRows.length
+        ? tailCacheRows
+        : activeLiveRows;
+  const liveRows = liveLinesWithCacheBoundary(renderedCache.cacheRows, liveRowsForFrame);
+  const cacheLines = renderedCache.cacheLines;
   const liveLines = liveRows.map((line) => line.text);
   const chromeLines = [
     ...transcriptThinkingLines(state, renderCols),
@@ -167,23 +205,82 @@ export function renderChatFrameParts(
       state.settingInput ? t("settingInputComposerHint") : undefined,
     ),
   ];
-  const cache = finalizeFrame(cacheLines, 0, renderCols);
   const live = finalizeFrame(liveLines, 0, renderCols);
   const chrome = finalizeFrame(chromeLines, 0, renderCols);
   const liveRegion = finalizeFrame([...liveLines, ...chromeLines], 0, renderCols);
-  const rendered = finalizeFrame([...cacheLines, ...liveLines, ...chromeLines], 0, renderCols);
+  const rendered = reusableCache
+    ? liveRegion
+    : finalizeFrame([...cacheLines, ...liveLines, ...chromeLines], 0, renderCols);
   return {
     ...rendered,
     renderCols,
-    cacheFrame: cache.frame,
+    cacheFrame: renderedCache.cacheFrame,
+    cacheLines,
     liveFrame: live.frame,
     liveRows,
+    tailCacheMessageCount: tailCacheMessages.length,
+    activeLiveMessageCount: groups.live.length,
     liveStreamKey: activeLiveStreamKey(state),
     chromeFrame: chrome.frame,
     chromeCursor: chrome.cursor,
     liveRegionFrame: liveRegion.frame,
     liveRegionCursor: liveRegion.cursor,
+    cache: renderedCache,
   };
+}
+
+function renderChatCache(
+  state: AppState,
+  capabilities: TerminalCapabilities,
+  renderCols: number,
+  cacheMessages: Message[],
+): RenderedChatCache {
+  const cacheRows = transcriptRenderLinesForMessages(state, renderCols, cacheMessages);
+  const cacheLines = cacheRows.map((line) => line.text);
+  const cache = finalizeFrame(cacheLines, 0, renderCols);
+  return {
+    sessionID: state.session?.id ?? "",
+    renderCols,
+    capabilitiesKey: renderedChatCapabilitiesKey(capabilities),
+    settingsKey: renderedChatSettingsKey(state),
+    cacheMessageCount: cacheMessages.length,
+    cacheRows,
+    cacheLines,
+    cacheFrame: cache.frame,
+  };
+}
+
+function reusableRenderedChatCache(
+  cache: RenderedChatCache | undefined,
+  sessionID: string,
+  renderCols: number,
+  capabilities: TerminalCapabilities,
+  state: AppState,
+  cacheMessageCount: number,
+): RenderedChatCache | undefined {
+  if (!cache) return undefined;
+  if (cache.sessionID !== sessionID) return undefined;
+  if (cache.renderCols !== renderCols) return undefined;
+  if (cache.capabilitiesKey !== renderedChatCapabilitiesKey(capabilities)) return undefined;
+  if (cache.settingsKey !== renderedChatSettingsKey(state)) return undefined;
+  if (cache.cacheMessageCount > cacheMessageCount) return undefined;
+  return cache;
+}
+
+function renderedChatCapabilitiesKey(capabilities: TerminalCapabilities): string {
+  return [
+    capabilities.level,
+    capabilities.color,
+    capabilities.unicode ? "unicode" : "ascii",
+    capabilities.osc8 ? "osc8" : "no-osc8",
+    capabilities.richText,
+  ].join("\0");
+}
+
+function renderedChatSettingsKey(state: AppState): string {
+  return state.sessionConfig?.show_command_instructions === false
+    ? "commands:hidden"
+    : "commands:shown";
 }
 
 function activeLiveStreamKey(state: AppState): string {

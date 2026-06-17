@@ -16,6 +16,7 @@ use super::tool_catalog::{
     planning_tool_disabled, tool_schema_name,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn execute_turn(
     agents: &[AgentManagement],
     session: &mut SessionManagement,
