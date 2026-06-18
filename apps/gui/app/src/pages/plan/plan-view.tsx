@@ -42,11 +42,13 @@ import {
   sessionTaskState,
   sessionTasks,
   shortSessionId,
+  sortedSessionTasks,
   taskDisplayText,
   taskNonceId,
   taskPollInterval,
   taskStartAt,
   taskStartCondition,
+  taskSummaryText,
   timedTaskPatch,
   utcIsoToLocalDateTime,
 } from "../../features/plan/tasks";
@@ -621,6 +623,9 @@ export function PlanBoard(props: {
       },
     });
   }
+  function boardCardTitle(session: Session): string {
+    return sortedSessionTasks(session).map(taskSummaryText).find(Boolean) ?? sessionTitle(session);
+  }
   return (
     <section class="board-shell">
       <PlanDragGhost state={dragState()} />
@@ -678,11 +683,11 @@ export function PlanBoard(props: {
                           event.currentTarget.classList.remove("plan-source-dragging")
                         }
                         onClick={() => props.onOpenSession(session)}
-                        title={sessionTitle(session)}
+                        title={boardCardTitle(session)}
                       >
                         <small>{shortSessionId(session.id)}</small>
                         <span class="board-card-title">
-                          <strong>{sessionTitle(session)}</strong>
+                          <strong>{boardCardTitle(session)}</strong>
                           <Show
                             when={shouldShowSessionAttention(
                               session,

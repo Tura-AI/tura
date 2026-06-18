@@ -403,6 +403,7 @@ function bottomMetaPieces(state: AppState): string[] {
     bottomMetaAgent(state),
     bottomMetaPersona(state),
     contextTokenSummary(state),
+    usageSummary(state),
   ].filter((item): item is string => Boolean(item));
   return pieces.length ? pieces : [statusIndicator(state)];
 }
@@ -489,6 +490,24 @@ function contextTokenSummary(state: AppState): string | undefined {
   if (limit <= 0) return undefined;
   const input = Math.max(0, numberField(context ?? {}, "input"));
   return `context ${compactTokenCount(input)}/${compactTokenCount(limit)} ${contextBar(input, limit)}`;
+}
+
+function usageSummary(state: AppState): string | undefined {
+  const usage = state.session?.usage;
+  if (!usage) return undefined;
+  const tokens = usage.tokens && typeof usage.tokens === "object" ? usage.tokens : {};
+  const totalTokens = numberField(tokens as Record<string, unknown>, "total_tokens");
+  const cost = typeof usage.cost === "number" && Number.isFinite(usage.cost) ? usage.cost : 0;
+  if (totalTokens <= 0 && cost <= 0) return undefined;
+  const pieces: string[] = [];
+  if (totalTokens > 0) pieces.push(`tokens ${compactTokenCount(totalTokens)}`);
+  if (cost > 0) pieces.push(formatUsageCost(cost, usage.currency));
+  return pieces.join(" / ");
+}
+
+function formatUsageCost(cost: number, currency: string | null | undefined): string {
+  const amount = cost < 0.01 ? cost.toFixed(4) : cost.toFixed(2);
+  return currency === "USD" || !currency ? `$${amount}` : `${amount} ${currency}`;
 }
 
 function compactTokenCount(value: number): string {

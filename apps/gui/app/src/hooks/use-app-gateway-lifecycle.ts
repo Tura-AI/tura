@@ -34,11 +34,20 @@ export function useAppGatewayLifecycle(options: {
   gatewayUrl: Accessor<string>;
   rootClient: Accessor<GatewayClient>;
   forceNewSession: boolean;
+  disableGatewayAutostart?: boolean;
   e2eFixture?: string;
   openSession: (sessionId: string) => Promise<void>;
 }) {
-  const { state, setState, gatewayUrl, rootClient, forceNewSession, e2eFixture, openSession } =
-    options;
+  const {
+    state,
+    setState,
+    gatewayUrl,
+    rootClient,
+    forceNewSession,
+    disableGatewayAutostart,
+    e2eFixture,
+    openSession,
+  } = options;
   const connection = createMemo(() => state().connection);
 
   createEffect(() => {
@@ -98,7 +107,7 @@ export function useAppGatewayLifecycle(options: {
       error: undefined,
       gatewayStartupNotice: previous.gatewayStartupNotice,
     }));
-    if (startAttempt === 0) {
+    if (startAttempt === 0 && !disableGatewayAutostart) {
       const started = await tryStartGateway(gatewayUrl(), setState);
       if (started) {
         await waitForGatewayHealth(gatewayUrl(), 5_000, setState);
@@ -256,7 +265,7 @@ export function useAppGatewayLifecycle(options: {
         await openSession(selectedSessionId);
       }
     } catch (error) {
-      if (isGatewayTimeoutError(error) && startAttempt < 1) {
+      if (isGatewayTimeoutError(error) && startAttempt < 1 && !disableGatewayAutostart) {
         const started = await tryStartGateway(gatewayUrl(), setState);
         if (started) {
           await waitForGatewayHealth(gatewayUrl(), 5_000, setState);

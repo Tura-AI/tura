@@ -48,6 +48,10 @@ pub enum GlobalEvent {
     MessagePartUpdated {
         properties: MessagePartUpdatedProperties,
     },
+    #[serde(rename = "command.updated")]
+    CommandUpdated {
+        properties: CommandUpdatedProperties,
+    },
     #[serde(rename = "todo.updated")]
     TodoUpdated { properties: serde_json::Value },
 }
@@ -121,6 +125,35 @@ pub struct MessagePartUpdatedProperties {
     #[serde(rename = "sessionID")]
     pub session_id: String,
     pub part: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandUpdatedProperties {
+    #[serde(rename = "sessionID")]
+    pub session_id: String,
+    #[serde(rename = "messageID")]
+    pub message_id: String,
+    #[serde(rename = "partID")]
+    pub part_id: String,
+    #[serde(rename = "runtimeID")]
+    pub runtime_id: String,
+    #[serde(rename = "commandRunID")]
+    pub command_run_id: String,
+    #[serde(rename = "commandID")]
+    pub command_id: String,
+    #[serde(rename = "providerToolCallID", default)]
+    pub provider_tool_call_id: Option<String>,
+    #[serde(rename = "commandIndex", default)]
+    pub command_index: Option<u64>,
+    #[serde(rename = "eventSeq", default)]
+    pub event_seq: Option<i64>,
+    pub status: String,
+    #[serde(default)]
+    pub command: serde_json::Value,
+    #[serde(default)]
+    pub result: serde_json::Value,
+    #[serde(rename = "updatedAt", default)]
+    pub updated_at: Option<i64>,
 }
 
 // Sync events (lighter weight)

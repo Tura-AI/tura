@@ -182,7 +182,7 @@ fn gateway_session_db_business_flow_preserves_mixed_message_shapes() -> Result<(
                         "type": "tool",
                         "content": null,
                         "text": null,
-                        "metadata": {"kind": "mano_runtime_usage", "usage": {"total_tokens": 9}},
+                        "metadata": {"usage": {"total_tokens": 9}},
                         "call_id": "runtime-mixed",
                         "tool": "runtime",
                         "state": {"status": "completed"}
@@ -218,8 +218,8 @@ fn gateway_session_db_business_flow_preserves_mixed_message_shapes() -> Result<(
         .ok_or_else(|| anyhow!("missing mixed final message record"))?;
     assert_eq!(visible.record["parts"][0]["text"], "final visible text");
     assert_eq!(
-        visible.record["parts"][1]["metadata"]["kind"],
-        "mano_runtime_usage"
+        visible.record["parts"][1]["metadata"]["usage"]["total_tokens"],
+        9
     );
     assert!(
         records

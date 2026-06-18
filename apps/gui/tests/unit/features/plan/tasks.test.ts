@@ -219,6 +219,30 @@ describe("plan task contract", () => {
     ]);
   });
 
+  test("calendar treats gateway timed tasks without status as todo", () => {
+    const tasks = timedSessionTasks(
+      session("idle", {
+        tasks: [
+          {
+            task_id: "scheduled",
+            task_summary: "Scheduled",
+            start_condition: "scheduled_task",
+            start_at: "2026-06-08T10:00:00Z",
+          },
+          {
+            task_id: "polling",
+            task_summary: "Polling",
+            start_condition: "polling_task",
+            start_at: "2026-06-08T11:00:00Z",
+            poll_interval: { h: 1 },
+          },
+        ],
+      }),
+    );
+
+    expect(tasks.map((task) => task.task_id)).toEqual(["scheduled", "polling"]);
+  });
+
   test("polling task display date advances from start_at by interval", () => {
     const date = timedTaskDisplayDate(
       {

@@ -69,12 +69,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
     let tool_call = first_tool_call(&first).ok_or_else(|| {
-        io::Error::other(
-            format!(
-                "first response did not contain echo_answer tool call: {}",
-                first.raw
-            ),
-        )
+        io::Error::other(format!(
+            "first response did not contain echo_answer tool call: {}",
+            first.raw
+        ))
     })?;
 
     let mut final_messages = first_messages;
@@ -122,15 +120,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .await?;
         assert_no_final_tool_call(&final_response, &final_tool_choice);
-        let final_metrics = final_response.metrics.as_ref().ok_or_else(|| {
-            io::Error::other("final response did not include metrics")
-        })?;
+        let final_metrics = final_response
+            .metrics
+            .as_ref()
+            .ok_or_else(|| io::Error::other("final response did not include metrics"))?;
         let cached = final_metrics.usage.cached_input_tokens.unwrap_or(0);
         let input = final_metrics.usage.input_tokens.unwrap_or(0);
         let ratio = cache_ratio(cached, input).ok_or_else(|| {
-            io::Error::other(
-                format!("final response did not report positive input_tokens: {final_metrics:#?}"),
-            )
+            io::Error::other(format!(
+                "final response did not report positive input_tokens: {final_metrics:#?}"
+            ))
         })?;
         if cached > 0 && ratio >= min_ratio {
             println!(
@@ -151,15 +150,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::thread::sleep(std::time::Duration::from_millis(750));
     }
     let final_response = last_response.expect("at least one probe attempt should run");
-    let final_metrics = final_response.metrics.as_ref().ok_or_else(|| {
-        io::Error::other("final response did not include metrics")
-    })?;
+    let final_metrics = final_response
+        .metrics
+        .as_ref()
+        .ok_or_else(|| io::Error::other("final response did not include metrics"))?;
     let cached = final_metrics.usage.cached_input_tokens.unwrap_or(0);
     let input = final_metrics.usage.input_tokens.unwrap_or(0);
     let ratio = cache_ratio(cached, input).ok_or_else(|| {
-        io::Error::other(
-            format!("final response did not report positive input_tokens: {final_metrics:#?}"),
-        )
+        io::Error::other(format!(
+            "final response did not report positive input_tokens: {final_metrics:#?}"
+        ))
     })?;
     assert!(
         cached > 0,

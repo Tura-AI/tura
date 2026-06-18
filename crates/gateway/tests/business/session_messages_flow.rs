@@ -31,6 +31,8 @@ async fn gateway_session_messages_business_flow_streams_then_persists_agent_repl
         Json(StreamAgentTextRequest {
             delta: "partial token".to_string(),
             runtime_id: "runtime-business-1".to_string(),
+            context_tokens: None,
+            usage: None,
         }),
     )
     .await;
@@ -55,6 +57,8 @@ async fn gateway_session_messages_business_flow_streams_then_persists_agent_repl
         Json(StreamAgentTextRequest {
             delta: String::new(),
             runtime_id: "runtime-business-1".to_string(),
+            context_tokens: None,
+            usage: None,
         }),
     )
     .await;
@@ -74,6 +78,9 @@ async fn gateway_session_messages_business_flow_streams_then_persists_agent_repl
             runtime_id: None,
             tool_call: None,
             runtime_status: None,
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
             created_at: None,
             updated_at: None,
         }),
@@ -168,6 +175,9 @@ async fn gateway_session_messages_business_flow_updates_planning_tool_message_an
             runtime_id: Some("runtime-business-2".to_string()),
             tool_call: Some(running_tool),
             runtime_status: None,
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
             created_at: None,
             updated_at: None,
         }),
@@ -204,6 +214,9 @@ async fn gateway_session_messages_business_flow_updates_planning_tool_message_an
             runtime_id: Some("runtime-business-2".to_string()),
             tool_call: Some(completed_tool),
             runtime_status: None,
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
             created_at: None,
             updated_at: None,
         }),
@@ -281,6 +294,9 @@ async fn gateway_session_messages_business_flow_publishes_session_name_updates(
                 metadata: None,
             }),
             runtime_status: None,
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
             created_at: None,
             updated_at: None,
         }),
@@ -381,6 +397,9 @@ async fn gateway_session_messages_business_flow_reads_projection_history_without
             runtime_id: Some(runtime_id.clone()),
             tool_call: None,
             runtime_status: Some(runtime_sync_status(&runtime_id, true)),
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
             created_at: Some(assistant_created_at),
             updated_at: Some(assistant_created_at),
         }),
@@ -404,6 +423,9 @@ async fn gateway_session_messages_business_flow_reads_projection_history_without
                 command_finished_at,
             )),
             runtime_status: Some(runtime_sync_status(&runtime_id, true)),
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
             created_at: Some(command_started_at),
             updated_at: Some(command_finished_at),
         }),
@@ -421,6 +443,9 @@ async fn gateway_session_messages_business_flow_reads_projection_history_without
             runtime_id: Some(runtime_id.clone()),
             tool_call: None,
             runtime_status: Some(runtime_sync_status(&runtime_id, true)),
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
             created_at: Some(assistant_created_at + 1),
             updated_at: Some(assistant_created_at + 1),
         }),
@@ -444,6 +469,9 @@ async fn gateway_session_messages_business_flow_reads_projection_history_without
                 command_finished_at,
             )),
             runtime_status: Some(runtime_sync_status(&runtime_id, true)),
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
             created_at: Some(command_started_at + 1),
             updated_at: Some(command_finished_at + 1),
         }),
@@ -502,12 +530,14 @@ async fn gateway_session_messages_business_flow_reads_projection_history_without
                 tool_name: "runtime".to_string(),
                 call_id: runtime_id.clone(),
                 state: json!({
-                    "status": "completed",
-                    "metadata": { "kind": "mano_runtime_usage" }
+                    "status": "completed"
                 }),
-                metadata: Some(json!({ "kind": "mano_runtime_usage" })),
+                metadata: None,
             }),
             runtime_status: Some(runtime_sync_status(&runtime_id, false)),
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
             created_at: Some(assistant_created_at),
             updated_at: Some(assistant_final_updated_at),
         }),
@@ -582,6 +612,9 @@ async fn gateway_session_messages_business_flow_concurrent_agent_writes_stay_ses
                     runtime_id: None,
                     tool_call: None,
                     runtime_status: None,
+                    context_tokens: None,
+                    usage: None,
+                    command_updates: Vec::new(),
                     created_at: None,
                     updated_at: None,
                 }),
@@ -610,10 +643,7 @@ async fn gateway_session_messages_business_flow_concurrent_agent_writes_stay_ses
         assert_eq!(message.id, response_message_id);
         assert_eq!(message.session_id, session_id);
         let part = message.parts.first().expect("assistant text part");
-        assert_text_contains(
-            part,
-            &format!("Concurrent reply for session {index}"),
-        );
+        assert_text_contains(part, &format!("Concurrent reply for session {index}"));
         assert_text_contains(
             part,
             &format!("[MEDIA:artifacts/session-{index}.txt:MEDIA]"),
@@ -1023,7 +1053,11 @@ fn message_list_query() -> Query<MessageListParams> {
 }
 
 fn assert_text_contains(value: &MessagePart, expected: &str) {
-    let text = value.text.as_deref().or(value.content.as_deref()).unwrap_or_default();
+    let text = value
+        .text
+        .as_deref()
+        .or(value.content.as_deref())
+        .unwrap_or_default();
     assert!(
         text.contains(expected),
         "expected text to contain {expected:?}, got {text:?}"

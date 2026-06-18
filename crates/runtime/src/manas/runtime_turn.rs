@@ -127,6 +127,7 @@ pub(crate) fn execute_turn(
             provider_config: agent.provider.clone(),
             tura_settings: std::sync::Arc::clone(&settings),
             thinking: false,
+            context_tokens: session.context_tokens,
         })
         .await?;
 
@@ -196,6 +197,9 @@ fn dynamic_context_limit_tokens(
     settings: &tura_llm_rust::Settings,
     runtime_provider_config: &crate::state_machine::runtime_management::RuntimeProviderConfig,
 ) -> u64 {
+    if let Some(limit) = fixed_context_limit_tokens_from_env() {
+        return limit;
+    }
     let Some(model_context) = catalog_model_context_tokens(
         settings,
         &runtime_provider_config.llm_provider_name,
@@ -204,6 +208,20 @@ fn dynamic_context_limit_tokens(
         return DEFAULT_CONTEXT_TOKEN_LIMIT;
     };
     DEFAULT_CONTEXT_TOKEN_LIMIT.min(model_context.saturating_mul(60) / 100)
+}
+
+fn fixed_context_limit_tokens_from_env() -> Option<u64> {
+    [
+        "COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS",
+        "TURA_CONTEXT_LIMIT_TOKENS",
+    ]
+    .iter()
+    .find_map(|key| {
+        std::env::var(key)
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .filter(|value| *value > 0)
+    })
 }
 
 fn catalog_model_context_tokens(
@@ -258,6 +276,10 @@ mod tests {
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::RuntimeProviderConfig;
     use std::collections::HashMap;
+    use std::ffi::OsString;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn non_final_turn_uses_auto_tool_choice() {
@@ -291,6 +313,30 @@ mod tests {
             dynamic_context_limit_tokens(&settings, &provider),
             DEFAULT_CONTEXT_TOKEN_LIMIT
         );
+    }
+
+    #[test]
+    fn dynamic_context_limit_honors_fixed_context_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let previous_fixed = std::env::var_os("COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS");
+        let previous_tura = std::env::var_os("TURA_CONTEXT_LIMIT_TOKENS");
+        std::env::set_var("COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS", "4096");
+        std::env::remove_var("TURA_CONTEXT_LIMIT_TOKENS");
+        let settings = settings_with_model_context("openai", "gpt-large", 1_000_000);
+        let provider = runtime_provider("openai", "gpt-large");
+
+        assert_eq!(dynamic_context_limit_tokens(&settings, &provider), 4096);
+
+        restore_env("COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS", previous_fixed);
+        restore_env("TURA_CONTEXT_LIMIT_TOKENS", previous_tura);
+    }
+
+    fn restore_env(key: &str, value: Option<OsString>) {
+        if let Some(value) = value {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
     }
 
     fn runtime_provider(provider_id: &str, model_id: &str) -> RuntimeProviderConfig {

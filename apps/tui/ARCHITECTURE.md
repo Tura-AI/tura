@@ -675,14 +675,14 @@ App-local TUI tests live under `apps/tui/tests`: `unit/` for Node test suites,
 `e2e/business/` for local business harnesses, `e2e/live/` for provider-backed
 flows, and `live/` for app-owned live checks. App-local test outputs must go
 under `apps/tui/test-results/<suite>/<run-id>/`. TUI release-entry scripts live
-under root `tests/live/tui_release_*.mjs`, but their logs, summaries,
+under root `tests/release/tui_release_*.mjs`, but their logs, summaries,
 screenshots, and workspaces default to
 `apps/tui/test-results/release/<profile>/tui/<case>/<run-id>/`. TUI benchmarks
 should also archive outputs under `apps/tui/test-results/benchmark/...`; only
 the compiled debug/release binaries are read from `target/<profile>`.
 
 Release-entry acceptance tests that validate the registered release
-command surface belong in root `tests/live/tui_release_*.mjs` for the TUI
+command surface belong in root `tests/release/tui_release_*.mjs` for the TUI
 surface. Root `tests/release/release_entry_*.mjs` owns CLI release-entry scripts;
 `tests/benchmark/` owns comparison and scoring benchmarks.
 

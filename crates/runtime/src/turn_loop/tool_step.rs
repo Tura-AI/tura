@@ -6,7 +6,8 @@ use crate::tool_router::execute_tool::ToolExecutionResult;
 pub(crate) fn apply_compact_context_results(
     session: &mut SessionManagement,
     tool_results: &mut [ToolExecutionResult],
-) -> Result<(), String> {
+) -> Result<bool, String> {
+    let mut compact_applied = false;
     for tool_result in tool_results.iter_mut() {
         if tool_result.tool_name != COMMAND_RUN_TOOL {
             continue;
@@ -15,11 +16,12 @@ pub(crate) fn apply_compact_context_results(
             continue;
         };
         compact_session_context(session, &summary)?;
+        compact_applied = true;
         strip_compact_context_from_command_run(&mut tool_result.arguments, &mut tool_result.result);
         tool_result.success = command_run_result_success_value(&tool_result.result);
         tool_result.error = command_run_result_error_value(&tool_result.result);
     }
-    Ok(())
+    Ok(compact_applied)
 }
 
 fn compact_context_summary_from_command_run(result: &serde_json::Value) -> Option<String> {
@@ -118,4 +120,86 @@ fn command_run_result_error_value(result: &serde_json::Value) -> Option<String> 
                 }
             })
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_compact_context_results;
+    use crate::manas::COMMAND_RUN_TOOL;
+    use crate::state_machine::session_management::{SessionInput, SessionManagement};
+    use crate::tool_router::execute_tool::ToolExecutionResult;
+    use chrono::Utc;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    #[test]
+    fn apply_compact_context_results_reports_compaction_and_preserves_other_results() {
+        let mut session = SessionManagement::new(
+            "session-compact-tool-step".to_string(),
+            "compact tool step".to_string(),
+            PathBuf::from("C:/workspace/compact-tool-step"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "compact".to_string(),
+                file_input: Vec::new(),
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "compact".to_string(),
+            Utc::now(),
+        );
+        let mut tool_results = vec![ToolExecutionResult {
+            tool_name: COMMAND_RUN_TOOL.to_string(),
+            arguments: json!({
+                "commands": [
+                    {"command_type": "shell_command", "command_line": "echo ok"},
+                    {"command_type": "compact_context", "compact_context": "handoff"}
+                ]
+            }),
+            result: json!({
+                "results": [
+                    {
+                        "command_type": "shell_command",
+                        "success": true,
+                        "output": {"stdout": "ok"}
+                    },
+                    {
+                        "command_type": "compact_context",
+                        "success": true,
+                        "output": {"compact_context": "handoff summary"}
+                    }
+                ]
+            }),
+            success: true,
+            error: None,
+        }];
+
+        let compact_applied =
+            apply_compact_context_results(&mut session, &mut tool_results).expect("apply compact");
+
+        assert!(compact_applied);
+        assert_eq!(tool_results[0].success, true);
+        assert_eq!(tool_results[0].error, None);
+        assert_eq!(
+            tool_results[0].arguments["commands"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            tool_results[0].result["results"].as_array().unwrap().len(),
+            1
+        );
+        assert!(session.session_log.iter().any(|entry| {
+            let value = serde_json::from_str::<serde_json::Value>(entry).ok();
+            value
+                .as_ref()
+                .and_then(|value| value.get("type"))
+                .and_then(serde_json::Value::as_str)
+                == Some("context_compaction")
+        }));
+    }
 }

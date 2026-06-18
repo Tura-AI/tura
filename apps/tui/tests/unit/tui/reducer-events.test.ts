@@ -259,6 +259,70 @@ test("reducer ignores message deltas without a session for an active session", (
   assert.deepEqual(displayMessages(state), []);
 });
 
+test("reducer merges command updates by command id and ignores stale event seq", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: { ...session, status: "busy" },
+    messages: [],
+    permissions: [],
+  });
+
+  const event = (status: string, eventSeq: number, result: unknown = null) => ({
+      directory: "C:/repo",
+      payload: {
+        type: "command.updated" as const,
+        properties: {
+          sessionID: "sess-1",
+          messageID: "runtime-command-id.message",
+          partID: "runtime-command-id.tool.command_run",
+          runtimeID: "runtime-command-id",
+          commandRunID: "runtime-command-id.tool.command_run",
+          commandID: "runtime-command-id.tool.command_run:call_1:0",
+          providerToolCallID: "call_1",
+          commandIndex: 0,
+          eventSeq,
+          status,
+          command: {
+            command_id: "runtime-command-id.tool.command_run:call_1:0",
+            command_type: "shell_command",
+            command_line: "npm test",
+          },
+          result,
+          updatedAt: eventSeq,
+        },
+      },
+    });
+
+  state = reducer(state, { type: "event", event: event("running", 30) });
+  state = reducer(state, {
+    type: "event",
+    event: event("completed", 40, {
+      command_id: "runtime-command-id.tool.command_run:call_1:0",
+      command_type: "shell_command",
+      command_line: "npm test",
+      success: true,
+    }),
+  });
+  state = reducer(state, { type: "event", event: event("running", 30) });
+
+  const assistant = displayMessages(state).find(
+    (message) => message.id === "runtime-command-id.message",
+  );
+  const commandPart = assistant?.parts.find((part) => part.tool === "command_run");
+  const commandState = commandPart?.state as
+    | {
+        status?: string;
+        input?: { commands?: Array<{ command_id?: string }> };
+        streamed_command_run_result?: { results?: Array<{ status?: string; success?: boolean }> };
+      }
+    | undefined;
+
+  assert.equal(commandState?.status, "completed");
+  assert.equal(commandState?.input?.commands?.length, 1);
+  assert.equal(commandState?.streamed_command_run_result?.results?.length, 1);
+  assert.equal(commandState?.streamed_command_run_result?.results?.[0]?.success, true);
+});
+
 test("reducer ignores part updates without a session for an active session", () => {
   let state = reducer(initialState("C:/repo"), {
     type: "hydrate",

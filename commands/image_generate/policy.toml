@@ -1,5 +1,0 @@
-read_only = false
-network = true
-
-[configurable]
-provider_order = { default = "replicate_z_image_turbo,chatgpt_image_2,gemini_3_1_flash,grok3", enum = ["replicate_z_image_turbo,chatgpt_image_2,gemini_3_1_flash,grok3", "chatgpt_image_2,replicate_z_image_turbo,gemini_3_1_flash,grok3", "gemini_3_1_flash,chatgpt_image_2,replicate_z_image_turbo,grok3", "grok3,chatgpt_image_2,replicate_z_image_turbo,gemini_3_1_flash"] }

@@ -84,7 +84,7 @@ pub fn config_for_manifest(manifest: &ToolManifest) -> ToolConfigResponse {
 
 fn default_aliases(id: &str) -> Vec<String> {
     match id {
-        "image_generate" => vec![
+        "generate_media" => vec![
             "image_gen".to_string(),
             "generate_image".to_string(),
             "text_to_image".to_string(),

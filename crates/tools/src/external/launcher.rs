@@ -40,7 +40,7 @@ pub async fn invoke_with_timeout(
         command
     } else {
         let package = match command_id {
-            "image_generate" => "image_generate",
+            "generate_media" => "generate_media",
             "read_media" => "read_media",
             "web_discover" => "web_discover",
             _ => unreachable!("metadata_for filtered unsupported command"),

@@ -41,6 +41,22 @@ export interface MessagePartUpdatedEventProperties {
   part: MessagePart;
 }
 
+export interface CommandUpdatedEventProperties {
+  sessionID: string;
+  messageID: string;
+  partID: string;
+  runtimeID: string;
+  commandRunID: string;
+  commandID: string;
+  providerToolCallID?: string | null;
+  commandIndex?: number | null;
+  eventSeq?: number | null;
+  status: string;
+  command?: unknown;
+  result?: unknown;
+  updatedAt?: number | null;
+}
+
 export type GatewayEventPayload =
   | { type: "server.connected"; properties: Record<string, unknown> }
   | { type: "session.created"; properties: SessionEventProperties }
@@ -51,6 +67,7 @@ export type GatewayEventPayload =
   | { type: "message.removed"; properties: MessageRemovedEventProperties }
   | { type: "message.part.delta"; properties: MessagePartDeltaEventProperties }
   | { type: "message.part.updated"; properties: MessagePartUpdatedEventProperties }
+  | { type: "command.updated"; properties: CommandUpdatedEventProperties }
   | { type: "permission.asked"; properties: Record<string, unknown> }
   | { type: "permission.replied"; properties: Record<string, unknown> }
   | { type: "question.asked"; properties: Record<string, unknown> }
@@ -67,6 +84,7 @@ export interface NormalizedEvent {
   status?: string;
   text?: string;
   tool?: string;
+  commandID?: string;
   permission?: PermissionRequest;
   question?: QuestionRequest;
   raw: GatewayEventEnvelope;

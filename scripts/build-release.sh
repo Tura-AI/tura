@@ -108,7 +108,7 @@ fi
 (cd "$REPO_ROOT" && cargo build --release -p router --bin tura_router)
 (cd "$REPO_ROOT" && cargo build --release -p session_log --bin tura_session_db)
 (cd "$REPO_ROOT" && cargo build --release -p runtime --bin tura_runtime)
-(cd "$REPO_ROOT" && cargo build --release -p image_generate -p read_media -p web_discover)
+(cd "$REPO_ROOT" && cargo build --release -p generate_media -p read_media -p web_discover)
 
 if [ "$SKIP_TUI" -eq 0 ]; then
   mkdir -p "$TARGET_DIR"

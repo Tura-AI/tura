@@ -1464,6 +1464,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "generate_media"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "dotenvy",
+ "image",
+ "provider",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2084,20 +2098,6 @@ checksum = "525e9ff3e1a4be2fbea1fdf0e98686a6d98b4d8f937e1bf7402245af1909e8c3"
 dependencies = [
  "byteorder-lite",
  "quick-error",
-]
-
-[[package]]
-name = "image_generate"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "dotenvy",
- "image",
- "provider",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tempfile",
 ]
 
 [[package]]

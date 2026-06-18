@@ -304,9 +304,10 @@ fn pass_read_media_directory_reads_newest_limited_files() {
     let serialized = serde_json::to_string(media_results).expect("serialize");
     assert!(serialized.contains("newest.txt"));
     assert!(serialized.contains("newer.txt"));
+    assert!(serialized.contains("newest file"));
+    assert!(serialized.contains("newer file"));
+    assert!(!serialized.contains("old.txt"));
     assert!(!serialized.contains("old file"));
-    assert!(!serialized.contains("newest file"));
-    assert!(!serialized.contains("newer file"));
 }
 
 #[test]

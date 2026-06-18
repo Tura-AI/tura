@@ -103,6 +103,7 @@ pub(crate) struct SpawnStreamedCommandRunTask {
 #[derive(Clone)]
 struct QueuedStreamCommand {
     tool_call_id: String,
+    command_id: String,
     command_index: usize,
     command: Value,
     step: u64,
@@ -346,6 +347,14 @@ fn prepare_stream_command(
         }
     };
     let step = step_normalizer.normalize(&mut command);
+    let command_id = streamed_command_id(&input.call_id, &tool_call_id, command_index);
+    attach_command_identity(
+        &mut command,
+        &input.call_id,
+        &command_id,
+        &tool_call_id,
+        command_index,
+    );
     if !*command_run_started {
         if let Err(error) = checkpointing::command_run_started(
             &input.session_id,
@@ -388,7 +397,7 @@ fn prepare_stream_command(
         &input.session_id,
         &input.runtime_id,
         &input.call_id,
-        &tool_call_id,
+        &command_id,
         command_index,
         &command,
         ready_at,
@@ -414,6 +423,7 @@ fn prepare_stream_command(
     });
     Some(QueuedStreamCommand {
         tool_call_id,
+        command_id,
         command_index,
         command,
         step,
@@ -515,7 +525,7 @@ fn start_stream_command(
         &input.session_id,
         &input.runtime_id,
         &input.call_id,
-        &queued.tool_call_id,
+        &queued.command_id,
         queued.command_index,
         &queued.command,
         command_started_at,
@@ -528,6 +538,7 @@ fn start_stream_command(
         );
     }
     let live_command = queued.command.clone();
+    let completion_command = live_command.clone();
     let command = queued.command;
     let session_directory = input.session_directory.clone();
     let allowed_commands = input.allowed_command_run_commands.clone();
@@ -555,9 +566,17 @@ fn start_stream_command(
                 halted: false,
             },
         };
+        let completed = result
+            .results
+            .into_iter()
+            .map(|mut item| {
+                attach_result_identity(&mut item, &completion_command);
+                item
+            })
+            .collect();
         let _ = completion_tx.send(StreamCommandCompletion {
             order,
-            completed: result.results,
+            completed,
             halted: result.halted,
         });
     });
@@ -588,6 +607,62 @@ fn append_ordered_results(
             offset,
             result,
         });
+    }
+}
+
+fn streamed_command_id(
+    command_run_id: &str,
+    provider_tool_call_id: &str,
+    command_index: usize,
+) -> String {
+    format!("{command_run_id}:{provider_tool_call_id}:{command_index}")
+}
+
+fn attach_command_identity(
+    command: &mut Value,
+    command_run_id: &str,
+    command_id: &str,
+    provider_tool_call_id: &str,
+    command_index: usize,
+) {
+    if let Value::Object(object) = command {
+        object.insert(
+            "command_run_id".to_string(),
+            Value::String(command_run_id.to_string()),
+        );
+        object.insert(
+            "command_id".to_string(),
+            Value::String(command_id.to_string()),
+        );
+        object.insert(
+            "provider_tool_call_id".to_string(),
+            Value::String(provider_tool_call_id.to_string()),
+        );
+        object.insert(
+            "command_index".to_string(),
+            serde_json::json!(command_index),
+        );
+    }
+}
+
+fn attach_result_identity(result: &mut Value, command: &Value) {
+    let Some(result_object) = result.as_object_mut() else {
+        return;
+    };
+    for key in [
+        "command_run_id",
+        "command_id",
+        "provider_tool_call_id",
+        "command_index",
+    ] {
+        if !result_object.contains_key(key) {
+            if let Some(value) = command.get(key).cloned() {
+                result_object.insert(key.to_string(), value);
+            }
+        }
+    }
+    if !result_object.contains_key("command") {
+        result_object.insert("command".to_string(), command.clone());
     }
 }
 

@@ -311,6 +311,7 @@ fn default_capabilities() -> Vec<serde_json::Value> {
         "apply_patch",
         "shell_command",
         "zsh",
+        "generate_media",
         "read_media",
         "web_discover",
         "compact_context",

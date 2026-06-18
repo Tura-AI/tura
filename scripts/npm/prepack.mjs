@@ -13,8 +13,8 @@ const requiredFiles = [
   "scripts/install.sh",
   "commands/read_media/install.ps1",
   "commands/read_media/install.sh",
-  "commands/image_generate/install.ps1",
-  "commands/image_generate/install.sh",
+  "commands/generate_media/install.ps1",
+  "commands/generate_media/install.sh",
   "commands/web_discover/install.ps1",
   "commands/web_discover/install.sh",
   "npm/tura.mjs"

@@ -19,6 +19,7 @@ import {
   toolSummary,
 } from "../render-payload.js";
 import { renderRichText } from "../render-rich-text.js";
+import { iconAnimationFrame } from "./busy-animation.js";
 
 export type CommandInfo = {
   command: string;
@@ -318,12 +319,13 @@ export function commandSectionLines(
 function commandSummaryLine(commands: CommandInfo[], state: AppState, cols: number): string {
   const running = commands.some((command) => commandIsRunning(command.status));
   const runningIcons = activeCapabilities.unicode ? ["◆", "◇", "◈"] : ["#", "*", "+"];
+  const frame = iconAnimationFrame(state.thinkingFrame);
   const icon = activeCapabilities.unicode
     ? running
-      ? (runningIcons[state.thinkingFrame % runningIcons.length] ?? "◆")
+      ? (runningIcons[frame % runningIcons.length] ?? "◆")
       : "◇"
     : running
-      ? (runningIcons[state.thinkingFrame % runningIcons.length] ?? "#")
+      ? (runningIcons[frame % runningIcons.length] ?? "#")
       : "*";
   const label = `${icon} ${t("commands")}`;
   return auxiliaryText(truncateAnsi(label, Math.max(12, cols - 2)));
@@ -349,7 +351,8 @@ function statusSymbol(status: string | undefined, frame: number): string {
   if (/fail|error|reject|denied/.test(normalized)) return `${richHighlight}x${reset}`;
   if (commandIsRunning(status)) {
     const frames = activeCapabilities.unicode ? ["■", "□", "◧"] : ["#", "*", "+"];
-    return `${richHighlight}${frames[frame % frames.length] ?? frames[0]}${reset}`;
+    const iconFrame = iconAnimationFrame(frame);
+    return `${richHighlight}${frames[iconFrame % frames.length] ?? frames[0]}${reset}`;
   }
   if (/done|complete|success|ok/.test(normalized))
     return `${richHighlight}${activeCapabilities.unicode ? "✓" : "+"}${reset}`;

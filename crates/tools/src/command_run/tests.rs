@@ -154,11 +154,11 @@ fn normalize_external_commands_default_to_15_second_timeout() {
 }
 
 #[test]
-fn normalize_image_generate_defaults_to_100_second_timeout() {
+fn normalize_generate_media_defaults_to_100_second_timeout() {
     let args = parse_args(&json!({
         "commands": [
             {
-                "command_type": "image_generate",
+                "command_type": "generate_media",
                 "command_line": "--prompt logo",
                 "step": 1
             }
@@ -166,8 +166,8 @@ fn normalize_image_generate_defaults_to_100_second_timeout() {
     }))
     .expect("parse command_run args");
 
-    let arguments = normalize_json_or_cli_command_arguments(&args.commands[0], "image_generate")
-        .expect("normalize image_generate arguments");
+    let arguments = normalize_json_or_cli_command_arguments(&args.commands[0], "generate_media")
+        .expect("normalize generate_media arguments");
 
     assert_eq!(arguments["cli"], json!("--prompt logo"));
     assert_eq!(arguments["timeout_ms"], json!(100_000));

@@ -1,5 +1,6 @@
 import type {
   GatewayEventEnvelope,
+  CommandUpdate,
   Message,
   MessagePart,
   Session,
@@ -72,7 +73,9 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
       return {
         ...next,
         sessions: next.sessions.map((session) =>
-          session.id === sessionId ? { ...session, status } : session,
+          session.id === sessionId
+            ? sessionWithStatusMetrics(session, status, properties.context_tokens, properties.usage)
+            : session,
         ),
       };
     }
@@ -176,6 +179,24 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
                   time: { created: Date.now(), updated: Date.now() },
                 },
               ],
+        },
+      };
+    }
+    case "command.updated": {
+      const update = properties as unknown as CommandUpdate;
+      const sessionId = readId(properties, "sessionID", "session_id");
+      if (!sessionId || !update.messageID || !update.partID || !update.commandID) {
+        return next;
+      }
+      return {
+        ...next,
+        messagesBySession: {
+          ...next.messagesBySession,
+          [sessionId]: applyCommandUpdate(
+            next.messagesBySession[sessionId] ?? [],
+            sessionId,
+            update,
+          ),
         },
       };
     }
@@ -393,6 +414,156 @@ function applyPartDelta(
   });
 }
 
+function applyCommandUpdate(
+  messages: Message[],
+  sessionId: string,
+  update: CommandUpdate,
+): Message[] {
+  const now = update.updatedAt ?? Date.now();
+  const part = commandPartFromUpdate(update);
+  let foundMessage = false;
+  const next = messages.map((message) => {
+    if (message.id !== update.messageID) {
+      return message;
+    }
+    foundMessage = true;
+    let foundPart = false;
+    const parts = message.parts.map((existing) => {
+      if (existing.id !== update.partID) {
+        return existing;
+      }
+      foundPart = true;
+      return mergeCommandPart(existing, update);
+    });
+    return {
+      ...message,
+      updated_at: now,
+      time: { ...message.time, updated: now },
+      parts: foundPart ? parts : [...parts, part],
+    };
+  });
+  if (!foundMessage) {
+    next.push({
+      id: update.messageID,
+      sessionID: sessionId,
+      role: "assistant",
+      created_at: now,
+      updated_at: now,
+      time: { created: now, updated: now },
+      parts: [part],
+    });
+  }
+  return next.sort((left, right) => {
+    const leftTime = left.time?.created ?? left.created_at ?? 0;
+    const rightTime = right.time?.created ?? right.created_at ?? 0;
+    return leftTime - rightTime;
+  });
+}
+
+function commandPartFromUpdate(update: CommandUpdate): MessagePart {
+  return mergeCommandPart(
+    {
+      id: update.partID,
+      sessionID: update.sessionID,
+      messageID: update.messageID,
+      type: "tool",
+      tool: "command_run",
+      callID: update.commandRunID,
+      state: {
+        status: "running",
+        input: { commands: [] },
+        streamed_command_run_result: { results: [] },
+      },
+    },
+    update,
+  );
+}
+
+function mergeCommandPart(part: MessagePart, update: CommandUpdate): MessagePart {
+  const state = recordValue(part.state);
+  const input = recordValue(state.input);
+  const stream = recordValue(state.streamed_command_run_result);
+  const commands = upsertCommandRecord(arrayValue(input.commands), update.command, update);
+  const results = update.result
+    ? upsertCommandRecord(arrayValue(stream.results), update.result, update)
+    : arrayValue(stream.results);
+  return {
+    ...part,
+    id: update.partID,
+    sessionID: update.sessionID,
+    messageID: update.messageID,
+    type: "tool",
+    tool: "command_run",
+    callID: part.callID ?? update.commandRunID,
+    state: {
+      ...state,
+      status: commandRunStatus(commands, results, update.status),
+      eventSeq: Math.max(numberValue(state.eventSeq) ?? 0, update.eventSeq ?? 0),
+      input: { ...input, commands },
+      streamed_command_run_result: { ...stream, results },
+    },
+  };
+}
+
+function upsertCommandRecord(current: unknown[], incoming: unknown, update: CommandUpdate): unknown[] {
+  if (!incoming || (typeof incoming === "object" && Object.keys(incoming).length === 0)) {
+    return current;
+  }
+  const incomingRecord = {
+    ...recordValue(incoming),
+    command_id: update.commandID,
+    command_run_id: update.commandRunID,
+    provider_tool_call_id: update.providerToolCallID ?? undefined,
+    command_index: update.commandIndex ?? undefined,
+    event_seq: update.eventSeq ?? undefined,
+    status: update.status,
+  };
+  const existingIndex = current.findIndex((item) => commandRecordID(item) === update.commandID);
+  if (existingIndex < 0) {
+    return sortCommandRecords([...current, incomingRecord]);
+  }
+  const existing = recordValue(current[existingIndex]);
+  if ((numberValue(existing.event_seq) ?? -1) > (update.eventSeq ?? -1)) {
+    return current;
+  }
+  const next = [...current];
+  next[existingIndex] = { ...existing, ...incomingRecord };
+  return sortCommandRecords(next);
+}
+
+function commandRunStatus(commands: unknown[], results: unknown[], fallback: string): string {
+  const resultRecords = results.map(recordValue);
+  if (resultRecords.some((result) => result.success === false || result.status === "failed")) {
+    return "failed";
+  }
+  if (
+    commands.length > 0 &&
+    resultRecords.length >= commands.length &&
+    resultRecords.every((result) => result.success === true || result.status === "completed")
+  ) {
+    return "completed";
+  }
+  return fallback === "ready" ? "running" : fallback;
+}
+
+function commandRecordID(value: unknown): string | undefined {
+  const record = recordValue(value);
+  return stringValue(record.command_id) ?? stringValue(record.commandID);
+}
+
+function sortCommandRecords(values: unknown[]): unknown[] {
+  return [...values].sort((left, right) => {
+    const leftRecord = recordValue(left);
+    const rightRecord = recordValue(right);
+    return (
+      (numberValue(leftRecord.command_index) ?? Number.MAX_SAFE_INTEGER) -
+        (numberValue(rightRecord.command_index) ?? Number.MAX_SAFE_INTEGER) ||
+      (numberValue(leftRecord.step) ?? Number.MAX_SAFE_INTEGER) -
+        (numberValue(rightRecord.step) ?? Number.MAX_SAFE_INTEGER)
+    );
+  });
+}
+
 function readSession(properties: Record<string, unknown>): Session | undefined {
   const info = properties.info;
   return isObject(info) && typeof info.id === "string" ? (info as Session) : undefined;
@@ -430,6 +601,67 @@ function normalizeStatus(value: unknown): "idle" | "busy" | "error" | undefined 
     }
   }
   return undefined;
+}
+
+function sessionWithStatusMetrics(
+  session: Session,
+  status: "idle" | "busy" | "error",
+  contextTokensValue: unknown,
+  usageValue: unknown,
+): Session {
+  const usage = readSessionUsage(usageValue);
+  const contextTokens = readContextTokens(
+    recordValue(usageValue).context_tokens ?? contextTokensValue,
+  );
+  return {
+    ...session,
+    status,
+    ...(contextTokens ? { context_tokens: contextTokens } : {}),
+    ...(usage ? { usage } : {}),
+  };
+}
+
+function readSessionUsage(value: unknown): Session["usage"] | undefined {
+  const record = recordValue(value);
+  if (!Object.keys(record).length) {
+    return undefined;
+  }
+  const contextTokens = readContextTokens(record.context_tokens);
+  return {
+    context_tokens: contextTokens ?? { input: 0, limit: 0 },
+    tokens: record.tokens ?? null,
+    cost: typeof record.cost === "number" && Number.isFinite(record.cost) ? record.cost : null,
+    currency: typeof record.currency === "string" ? record.currency : null,
+  };
+}
+
+function readContextTokens(value: unknown): Session["context_tokens"] | undefined {
+  const record = recordValue(value);
+  const input = numberValue(record.input);
+  const limit = numberValue(record.limit);
+  if (input === undefined && limit === undefined) {
+    return undefined;
+  }
+  return {
+    input: input ?? 0,
+    limit: limit ?? 0,
+  };
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return isObject(value) && !Array.isArray(value) ? value : {};
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

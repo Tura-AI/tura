@@ -29,7 +29,7 @@ fn router_loads_core_and_external_command_manifests() {
         "task_status",
         "compact_context",
         "planning",
-        "image_generate",
+        "generate_media",
         "read_media",
         "web_discover",
     ] {
@@ -47,15 +47,15 @@ fn router_loads_core_and_external_command_manifests() {
         Some("tura-command-read-media")
     );
 
-    let image_generate = tools
+    let generate_media = tools
         .iter()
-        .find(|tool| tool.id == "image_generate")
-        .expect("image_generate manifest");
-    assert!(!image_generate.core);
-    assert!(image_generate.mutating);
+        .find(|tool| tool.id == "generate_media")
+        .expect("generate_media manifest");
+    assert!(!generate_media.core);
+    assert!(generate_media.mutating);
     assert_eq!(
-        image_generate.binary.as_deref(),
-        Some("tura-command-image-generate")
+        generate_media.binary.as_deref(),
+        Some("tura-command-generate-media")
     );
 
     let shell = tools
@@ -129,7 +129,7 @@ fn aliases_resolve_to_canonical_tool_ids() {
     );
     assert_eq!(
         registry().get("text_to_image").expect("alias").id,
-        "image_generate"
+        "generate_media"
     );
     assert_eq!(
         registry().get("web_search").expect("alias").id,

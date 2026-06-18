@@ -117,7 +117,7 @@ Invoke-Checked "cargo" @("build", "--release", "-p", "gateway", "--bin", "tura_e
 Invoke-Checked "cargo" @("build", "--release", "-p", "router", "--bin", "tura_router")
 Invoke-Checked "cargo" @("build", "--release", "-p", "session_log", "--bin", "tura_session_db")
 Invoke-Checked "cargo" @("build", "--release", "-p", "runtime", "--bin", "tura_runtime")
-Invoke-Checked "cargo" @("build", "--release", "-p", "image_generate", "-p", "read_media", "-p", "web_discover")
+Invoke-Checked "cargo" @("build", "--release", "-p", "generate_media", "-p", "read_media", "-p", "web_discover")
 
 if ($BuildTui) {
   Invoke-Checked "bun" @("run", "build") (Join-Path $RepoRoot "apps\gui")

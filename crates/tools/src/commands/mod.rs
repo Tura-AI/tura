@@ -33,8 +33,8 @@ pub fn execute(
         "apply_patch" => apply_patch::execute(command_line, session_dir),
         "bash" => bash::execute(command_line, session_dir, timeout_secs),
         "compact_context" => compact_context::execute(command_line, session_dir),
-        "image_generate" => {
-            execute_external("image_generate", command_line, session_dir, timeout_secs)
+        "generate_media" => {
+            execute_external("generate_media", command_line, session_dir, timeout_secs)
         }
         "planning" if planning_command_enabled() => planning::execute(command_line, session_dir),
         "read_media" => execute_external("read_media", command_line, session_dir, timeout_secs),
@@ -56,7 +56,7 @@ pub fn access(command: &str, command_line: &str, session_dir: &Path) -> Access {
     match canonical_command(command).as_str() {
         "apply_patch" => apply_patch::access(command_line, session_dir),
         "compact_context" => Access::default(),
-        "image_generate" => access_external("image_generate", command_line, session_dir),
+        "generate_media" => access_external("generate_media", command_line, session_dir),
         "planning" if planning_command_enabled() => Access::default(),
         "read_media" => access_external("read_media", command_line, session_dir),
         "web_discover" => access_external("web_discover", command_line, session_dir),
@@ -89,8 +89,8 @@ pub fn display_command(
     if canonical_command(command) == "read_media" {
         return "read_media".to_string();
     }
-    if canonical_command(command) == "image_generate" {
-        return "image_generate".to_string();
+    if canonical_command(command) == "generate_media" {
+        return "generate_media".to_string();
     }
     if canonical_command(command) == "web_discover" {
         return "web_discover".to_string();
@@ -117,8 +117,8 @@ pub fn canonical_command(name: &str) -> String {
         "web_discover" | "web_search" | "web_fetch" | "discover_web" | "search_web" => {
             "web_discover".to_string()
         }
-        "image_generate" | "image_gen" | "generate_image" | "text_to_image" | "t2i" => {
-            "image_generate".to_string()
+        "generate_media" | "image_gen" | "generate_image" | "text_to_image" | "t2i" => {
+            "generate_media".to_string()
         }
         "task_status" => "task_status".to_string(),
         other => other.to_string(),

@@ -847,7 +847,33 @@ impl SessionStore {
         let Some(info) = sessions.get_mut(session_id) else {
             return false;
         };
+        if info.management.runtime_usage == usage {
+            return false;
+        }
         info.management.runtime_usage = usage;
+        info.updated_at = Utc::now().timestamp_millis();
+        true
+    }
+
+    pub fn update_session_context_tokens(
+        &self,
+        session_id: &str,
+        context_tokens: crate::contracts::SessionContextTokens,
+    ) -> bool {
+        let mut sessions = self.sessions.write();
+        let Some(info) = sessions.get_mut(session_id) else {
+            return false;
+        };
+        if info.management.context_tokens.input == context_tokens.input
+            && info.management.context_tokens.limit == context_tokens.limit
+        {
+            return false;
+        }
+        info.management.context_tokens =
+            runtime::state_machine::session_management::ContextTokenStats {
+                input: context_tokens.input,
+                limit: context_tokens.limit,
+            };
         info.updated_at = Utc::now().timestamp_millis();
         true
     }

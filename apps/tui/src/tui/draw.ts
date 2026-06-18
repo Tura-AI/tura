@@ -167,21 +167,40 @@ function drawChatFrame(
   } else {
     const newBodyLines = target.bodyLines.slice(previousBodyLineCount);
     output += "\x1b[?25l";
-    if (finalizingLiveToCache && linesEqual(newBodyLines, previousPendingLiveLines())) {
-      // The finalized live rows are already present in the reservation tail from
-      // the previous frame. Promote them to body/scrollback ownership without an
-      // absolute rewrite, which avoids a one-frame blink on stream completion.
-      const residualReservationLineCount = Math.max(
+    const promotedLiveLineCount = finalizingLiveToCache
+      ? commonPrefixLineCount(newBodyLines, previousPendingLiveLines())
+      : 0;
+    if (promotedLiveLineCount > 0) {
+      // The matching live rows are already present in the reservation tail from
+      // the previous frame. Treat them like pending history insertion: cache now
+      // owns those terminal cells, and only changed suffix rows are rewritten.
+      const remainingBodyLines = newBodyLines.slice(promotedLiveLineCount);
+      const availableReservationLineCount = Math.max(
         0,
-        lastChatReservationLineCount - newBodyLines.length,
+        lastChatReservationLineCount - promotedLiveLineCount,
       );
-      const appendBlankLineCount = Math.max(
-        0,
-        target.mutableLines.length - residualReservationLineCount,
+      const replacedReservationLineCount = Math.min(
+        remainingBodyLines.length,
+        availableReservationLineCount,
       );
-      effectiveReservationLineCount = residualReservationLineCount + appendBlankLineCount;
+      const replacementBodyLines = remainingBodyLines.slice(0, replacedReservationLineCount);
+      const appendedBodyLines = remainingBodyLines.slice(replacedReservationLineCount);
+      const residualReservationLineCount =
+        availableReservationLineCount - replacedReservationLineCount;
+      const appendBlankLineCount = appendedBodyLines.length
+        ? target.mutableLines.length
+        : Math.max(0, target.mutableLines.length - residualReservationLineCount);
+      effectiveReservationLineCount = appendedBodyLines.length
+        ? target.mutableLines.length
+        : residualReservationLineCount + appendBlankLineCount;
+
+      output += terminalWriteLogicalLines(
+        replacementBodyLines,
+        previousBodyLineCount + promotedLiveLineCount + 1,
+        previousTotalLineCount,
+      );
       output += terminalAppendScrollbackLines(
-        blankLines(appendBlankLineCount),
+        [...appendedBodyLines, ...blankLines(appendBlankLineCount)],
         previousTotalLineCount,
       );
     } else {
@@ -379,9 +398,11 @@ function previousPendingLiveLines(): string[] {
   return frameLines(lastChatLiveFrame).slice(lastChatSpilledLiveLineCount);
 }
 
-function linesEqual(left: string[], right: string[]): boolean {
-  if (left.length !== right.length) return false;
-  return left.every((line, index) => line === right[index]);
+function commonPrefixLineCount(left: string[], right: string[]): number {
+  const limit = Math.min(left.length, right.length);
+  let count = 0;
+  while (count < limit && left[count] === right[count]) count += 1;
+  return count;
 }
 
 function terminalMutableLayout(

@@ -1,4 +1,5 @@
 import type {
+  CommandUpdatedEventProperties,
   GatewayEventEnvelope,
   MessagePartDeltaEventProperties,
   NormalizedEvent,
@@ -70,6 +71,7 @@ export function normalizeEvent(raw: GatewayEventEnvelope): NormalizedEvent {
   let text: string | undefined;
   let status: string | undefined;
   let tool: string | undefined;
+  let commandID: string | undefined;
   let permission: PermissionRequest | undefined;
   let question: QuestionRequest | undefined;
 
@@ -91,6 +93,14 @@ export function normalizeEvent(raw: GatewayEventEnvelope): NormalizedEvent {
     partID = properties?.partID;
     messageID = properties?.messageID;
     text = properties?.delta;
+  }
+  if (payload?.type === "command.updated") {
+    const properties = payload.properties as CommandUpdatedEventProperties | undefined;
+    messageID = properties?.messageID;
+    partID = properties?.partID;
+    status = properties?.status;
+    tool = "command_run";
+    commandID = properties?.commandID;
   }
   if (payload?.type === "session.status") {
     const statusValue = (payload.properties as { status?: unknown } | undefined)?.status;
@@ -120,6 +130,7 @@ export function normalizeEvent(raw: GatewayEventEnvelope): NormalizedEvent {
     status,
     text,
     tool,
+    commandID,
     permission,
     question,
     raw,

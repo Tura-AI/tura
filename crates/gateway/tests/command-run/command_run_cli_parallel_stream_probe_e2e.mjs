@@ -279,7 +279,7 @@ function analyzeTuraStdout(stdout) {
   const events = parseJsonl(stdout)
   const runtimeUsage = events
     .map((event) => event.item?.metadata || event.metadata || event)
-    .find((metadata) => metadata?.kind === "mano_runtime_usage" && metadata?.usage)
+    .find((metadata) => metadata?.usage)
   return {
     event_count: events.length,
     runtime_usage: runtimeUsage?.usage || null,

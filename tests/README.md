@@ -230,7 +230,9 @@ sh xtask/scripts/run-backend-live-tests.sh --crate provider --timeout-seconds 30
 These are separated from business and live scans so ordinary test runs do not
 start or clean up release daemons.
 
-Release tests are selected by direct `tests/release/*.mjs` scans:
+Backend release tests are selected by direct `tests/release/*.mjs` scans. The
+backend runner skips `tui_*` and `gui_*` release entrypoints; run those directly
+from `tests/release` or through the app package aliases:
 
 ```powershell
 .\xtask\scripts\run-backend-release-tests.ps1 -List
@@ -240,6 +242,11 @@ Release tests are selected by direct `tests/release/*.mjs` scans:
 ```bash
 sh xtask/scripts/run-backend-release-tests.sh --list
 sh xtask/scripts/run-backend-release-tests.sh --timeout-seconds 600
+```
+
+```powershell
+npm --prefix apps\tui run test:live:release
+bun run --cwd apps\gui e2e:live:release
 ```
 
 Release-entry scripts validate the built command surfaces with real model

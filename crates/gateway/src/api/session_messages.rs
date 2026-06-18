@@ -247,19 +247,16 @@ fn runtime_managed_message_response(
     content: &str,
 ) -> Option<SendAgentMessageResponse> {
     let status = payload.runtime_status.as_ref()?;
+    sync_runtime_session_metrics(session_id, payload.context_tokens, payload.usage.clone());
     let runtime_message_id = runtime_message_id(&status.runtime_id);
     if status.should_refresh_session_db() {
-        if let Some(usage) = runtime_usage_from_payload(payload) {
-            if session_store().update_session_runtime_usage(session_id, usage) {
-                session_store().push_current_session_status_event(session_id);
-            }
-        }
         let final_message = runtime_final_message(session_id, payload, content, status);
         let messages = session_store().finalize_runtime_live_messages(
             session_id,
             &status.runtime_id,
             final_message,
         );
+        emit_command_updates(session_id, payload);
         let event = messages
             .last()
             .cloned()
@@ -306,6 +303,7 @@ fn runtime_managed_message_response(
     let message_id = message.id.clone();
     let event =
         session_store().upsert_live_message(session_id, Some(status.runtime_id.clone()), message);
+    emit_command_updates(session_id, payload);
     Some(SendAgentMessageResponse {
         ok: true,
         session_id: session_id.to_string(),
@@ -386,6 +384,7 @@ fn runtime_live_tool_message_response(
     );
     let event =
         session_store().upsert_live_message(session_id, Some(status.runtime_id.clone()), message);
+    emit_command_updates(session_id, payload);
     Some(SendAgentMessageResponse {
         ok: true,
         session_id: session_id.to_string(),
@@ -393,6 +392,38 @@ fn runtime_live_tool_message_response(
         event: Some(event),
         error: None,
     })
+}
+
+fn emit_command_updates(session_id: &str, payload: &SendAgentMessageRequest) {
+    if payload.command_updates.is_empty() {
+        return;
+    }
+    if !payload
+        .tool_call
+        .as_ref()
+        .is_some_and(tool_call_visible_to_frontend)
+    {
+        return;
+    }
+    for update in &payload.command_updates {
+        session_store().push_event(GlobalEvent::CommandUpdated {
+            properties: crate::contracts::CommandUpdatedProperties {
+                session_id: session_id.to_string(),
+                message_id: update.message_id.clone(),
+                part_id: update.part_id.clone(),
+                runtime_id: update.runtime_id.clone(),
+                command_run_id: update.command_run_id.clone(),
+                command_id: update.command_id.clone(),
+                provider_tool_call_id: update.provider_tool_call_id.clone(),
+                command_index: update.command_index,
+                event_seq: update.event_seq,
+                status: update.status.clone(),
+                command: update.command.clone(),
+                result: update.result.clone(),
+                updated_at: update.updated_at,
+            },
+        });
+    }
 }
 
 fn runtime_message_times(payload: &SendAgentMessageRequest) -> (i64, i64) {
@@ -445,6 +476,7 @@ pub fn stream_agent_message_payload(
     session_id: String,
     payload: StreamAgentTextRequest,
 ) -> serde_json::Value {
+    sync_runtime_session_metrics(&session_id, payload.context_tokens, payload.usage.clone());
     if payload.delta.is_empty() {
         return serde_json::json!({ "ok": true });
     }
@@ -463,6 +495,24 @@ pub fn stream_agent_message_payload(
         },
     });
     serde_json::json!({ "ok": true, "session_id": session_id })
+}
+
+fn sync_runtime_session_metrics(
+    session_id: &str,
+    context_tokens: Option<crate::contracts::SessionContextTokens>,
+    usage: Option<serde_json::Value>,
+) -> bool {
+    let mut updated = false;
+    if let Some(context_tokens) = context_tokens {
+        updated |= session_store().update_session_context_tokens(session_id, context_tokens);
+    }
+    if let Some(usage) = usage {
+        updated |= session_store().update_session_runtime_usage(session_id, usage);
+    }
+    if updated {
+        session_store().push_current_session_status_event(session_id);
+    }
+    updated
 }
 
 fn sync_auto_session_name_from_agent_tool_call(
@@ -626,37 +676,14 @@ fn runtime_output_text_from_tool_call(tool_call: Option<&SendAgentToolCall>) -> 
 }
 
 fn is_runtime_output_tool_call(tool_call: &SendAgentToolCall) -> bool {
-    if tool_call.tool_name == "runtime" {
-        return true;
-    }
-    [
-        tool_call.metadata.as_ref(),
-        tool_call.state.get("metadata"),
-        tool_call
-            .state
-            .get("metadata")
-            .and_then(|metadata| metadata.get("metadata")),
-    ]
-    .into_iter()
-    .flatten()
-    .any(|value| {
-        value.get("kind").and_then(serde_json::Value::as_str) == Some("mano_runtime_usage")
-    })
+    tool_call.tool_name == "runtime"
 }
 
 fn runtime_output_candidate_values(tool_call: &SendAgentToolCall) -> Vec<serde_json::Value> {
     let mut values = Vec::new();
-    for root in [
-        tool_call.metadata.as_ref(),
-        Some(&tool_call.state),
-        tool_call.state.get("metadata"),
-        tool_call
-            .state
-            .get("metadata")
-            .and_then(|metadata| metadata.get("metadata")),
-    ]
-    .into_iter()
-    .flatten()
+    for root in [tool_call.metadata.as_ref(), Some(&tool_call.state)]
+        .into_iter()
+        .flatten()
     {
         for key in ["output", "response", "result", "final", "message"] {
             if let Some(value) = root.get(key) {
@@ -695,30 +722,6 @@ fn visible_text_from_runtime_value(value: serde_json::Value) -> Option<String> {
 fn visible_text_from_runtime_string(text: &str) -> Option<String> {
     let text = frontend_safe_reply_message(&tura_llm_rust::strip_thought_blocks(text));
     (!text.trim().is_empty()).then_some(text)
-}
-
-fn runtime_usage_from_payload(payload: &SendAgentMessageRequest) -> Option<serde_json::Value> {
-    let tool_call = payload.tool_call.as_ref()?;
-    if !is_runtime_output_tool_call(tool_call) {
-        return None;
-    }
-    for root in [
-        tool_call.metadata.as_ref(),
-        Some(&tool_call.state),
-        tool_call.state.get("metadata"),
-        tool_call
-            .state
-            .get("metadata")
-            .and_then(|metadata| metadata.get("metadata")),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        if root.get("kind").and_then(serde_json::Value::as_str) == Some("mano_runtime_usage") {
-            return root.get("usage").cloned().or(Some(serde_json::Value::Null));
-        }
-    }
-    None
 }
 
 pub(super) fn agent_message_metadata(
@@ -946,6 +949,9 @@ mod tests {
             runtime_id: None,
             tool_call: None,
             runtime_status: None,
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
             created_at: None,
             updated_at: None,
         }
@@ -971,6 +977,16 @@ mod tests {
             state,
             metadata: None,
         }
+    }
+
+    fn next_session_event(cursor: &mut u64, session_id: &str) -> Option<GlobalEvent> {
+        std::iter::from_fn(|| session_store().next_event(cursor)).find(|event| match event {
+            GlobalEvent::SessionStatus { properties } => properties.session_id == session_id,
+            GlobalEvent::MessageUpdated { properties } => properties.session_id == session_id,
+            GlobalEvent::MessagePartDelta { properties } => properties.session_id == session_id,
+            GlobalEvent::CommandUpdated { properties } => properties.session_id == session_id,
+            _ => false,
+        })
     }
 
     #[test]
@@ -1075,18 +1091,8 @@ mod tests {
                 tool_call: Some(SendAgentToolCall {
                     tool_name: "runtime".to_string(),
                     call_id: "runtime-usage-event".to_string(),
-                    state: json!({
-                        "metadata": {
-                            "kind": "mano_runtime_usage",
-                            "usage": usage,
-                            "output": {"reply_message": "done"}
-                        }
-                    }),
-                    metadata: Some(json!({
-                        "kind": "mano_runtime_usage",
-                        "usage": usage,
-                        "output": {"reply_message": "done"}
-                    })),
+                    state: json!({ "output": {"reply_message": "done"} }),
+                    metadata: None,
                 }),
                 runtime_status: Some(
                     runtime::state_machine::runtime_management::RuntimeSessionSyncStatus {
@@ -1097,14 +1103,16 @@ mod tests {
                         session_db_refresh_required: true,
                     },
                 ),
+                context_tokens: None,
+                usage: Some(usage),
+                command_updates: Vec::new(),
                 created_at: Some(1),
                 updated_at: Some(2),
             },
         );
 
         assert!(response.ok);
-        let event = session_store()
-            .next_event(&mut cursor)
+        let event = next_session_event(&mut cursor, &session.id)
             .expect("usage status event should be published");
         match event {
             GlobalEvent::SessionStatus { properties } => {
@@ -1122,6 +1130,124 @@ mod tests {
             .expect("session should exist");
         assert_eq!(updated.usage.tokens["total_tokens"], 120);
         assert_eq!(updated.usage.cost, Some(0.012));
+    }
+
+    #[test]
+    fn live_runtime_callback_updates_session_metrics_before_message_event() {
+        let session = session_store().create_session(
+            Some("C:/workspace-live-metrics".to_string()),
+            None,
+            None,
+            Some("coding".to_string()),
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        let mut cursor = session_store().event_cursor();
+        let usage = json!({
+            "input_tokens": 200,
+            "output_tokens": 30,
+            "total_tokens": 230,
+            "total_cost": 0.023,
+            "currency": "USD"
+        });
+
+        let response = send_agent_message_payload(
+            session.id.clone(),
+            SendAgentMessageRequest {
+                reply_message: "live text".to_string(),
+                new_learning: String::new(),
+                step_summary: None,
+                media: Vec::new(),
+                runtime_id: Some("runtime-live-metrics".to_string()),
+                tool_call: None,
+                runtime_status: Some(
+                    runtime::state_machine::runtime_management::RuntimeSessionSyncStatus {
+                        runtime_id: "runtime-live-metrics".to_string(),
+                        state: runtime::state_machine::runtime_management::RuntimeState::Streaming,
+                        call_result_status: runtime::state_machine::runtime_management::RuntimeCallResultStatus::Streaming,
+                        live: true,
+                        session_db_refresh_required: false,
+                    },
+                ),
+                context_tokens: Some(crate::contracts::SessionContextTokens {
+                    input: 64_000,
+                    limit: 128_000,
+                }),
+                usage: Some(usage),
+                command_updates: Vec::new(),
+                created_at: Some(1),
+                updated_at: Some(1),
+            },
+        );
+
+        assert!(response.ok);
+        let first = next_session_event(&mut cursor, &session.id)
+            .expect("metrics status event should be published first");
+        match first {
+            GlobalEvent::SessionStatus { properties } => {
+                assert_eq!(properties.context_tokens.input, 64_000);
+                assert_eq!(properties.usage.tokens["total_tokens"], 230);
+            }
+            other => panic!("unexpected first event: {other:?}"),
+        }
+        assert!(matches!(
+            next_session_event(&mut cursor, &session.id),
+            Some(GlobalEvent::MessageUpdated { .. })
+        ));
+        let updated = session_store()
+            .get_session(&session.id)
+            .expect("session should exist");
+        assert_eq!(updated.context_tokens.input, 64_000);
+        assert_eq!(updated.usage.tokens["total_tokens"], 230);
+    }
+
+    #[test]
+    fn streamed_runtime_delta_updates_session_context_metrics() {
+        let session = session_store().create_session(
+            Some("C:/workspace-stream-metrics".to_string()),
+            None,
+            None,
+            Some("coding".to_string()),
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        let mut cursor = session_store().event_cursor();
+
+        let response = stream_agent_message_payload(
+            session.id.clone(),
+            StreamAgentTextRequest {
+                delta: "token".to_string(),
+                runtime_id: "runtime-stream-metrics".to_string(),
+                context_tokens: Some(crate::contracts::SessionContextTokens {
+                    input: 32_000,
+                    limit: 96_000,
+                }),
+                usage: None,
+            },
+        );
+
+        assert_eq!(response["ok"], true);
+        let first = next_session_event(&mut cursor, &session.id)
+            .expect("stream metric status event should be published first");
+        match first {
+            GlobalEvent::SessionStatus { properties } => {
+                assert_eq!(properties.context_tokens.input, 32_000);
+                assert_eq!(properties.context_tokens.limit, 96_000);
+            }
+            other => panic!("unexpected first event: {other:?}"),
+        }
+        assert!(matches!(
+            next_session_event(&mut cursor, &session.id),
+            Some(GlobalEvent::MessagePartDelta { .. })
+        ));
     }
 
     #[test]
@@ -1180,6 +1306,94 @@ mod tests {
         assert!(is_transient_tool_call(&tool_call));
         assert!(!tool_call_persistent_to_store(&tool_call));
         assert!(tool_call_visible_to_frontend(&tool_call));
+    }
+
+    #[test]
+    fn command_updates_emit_incremental_gateway_events() {
+        let session = session_store().create_session(
+            Some("C:/workspace-command-updates".to_string()),
+            None,
+            None,
+            Some("coding".to_string()),
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        let mut cursor = session_store().event_cursor();
+
+        let response = send_agent_message_payload(
+            session.id.clone(),
+            SendAgentMessageRequest {
+                reply_message: String::new(),
+                new_learning: String::new(),
+                step_summary: None,
+                media: Vec::new(),
+                runtime_id: Some("runtime-command-update".to_string()),
+                tool_call: Some(SendAgentToolCall {
+                    tool_name: "command_run".to_string(),
+                    call_id: "runtime-command-update.tool.command_run".to_string(),
+                    state: json!({
+                        "status": "running",
+                        "input": {
+                            "commands": [{
+                                "command_id": "runtime-command-update.tool.command_run:call_1:0",
+                                "command_type": "shell_command",
+                                "command_line": "echo ok"
+                            }]
+                        }
+                    }),
+                    metadata: None,
+                }),
+                runtime_status: Some(
+                    runtime::state_machine::runtime_management::RuntimeSessionSyncStatus {
+                        runtime_id: "runtime-command-update".to_string(),
+                        state: runtime::state_machine::runtime_management::RuntimeState::Streaming,
+                        call_result_status: runtime::state_machine::runtime_management::RuntimeCallResultStatus::Streaming,
+                        live: true,
+                        session_db_refresh_required: false,
+                    },
+                ),
+                context_tokens: None,
+                usage: None,
+                command_updates: vec![CommandUpdatePayload {
+                    message_id: "runtime-command-update.message".to_string(),
+                    part_id: "runtime-command-update.tool.command_run".to_string(),
+                    runtime_id: "runtime-command-update".to_string(),
+                    command_run_id: "runtime-command-update.tool.command_run".to_string(),
+                    command_id: "runtime-command-update.tool.command_run:call_1:0".to_string(),
+                    provider_tool_call_id: Some("call_1".to_string()),
+                    command_index: Some(0),
+                    event_seq: Some(30),
+                    status: "running".to_string(),
+                    command: json!({
+                        "command_id": "runtime-command-update.tool.command_run:call_1:0",
+                        "command_type": "shell_command",
+                        "command_line": "echo ok"
+                    }),
+                    result: serde_json::Value::Null,
+                    updated_at: Some(10),
+                }],
+                created_at: Some(1),
+                updated_at: Some(10),
+            },
+        );
+
+        assert!(response.ok);
+        let events =
+            std::iter::from_fn(|| session_store().next_event(&mut cursor)).collect::<Vec<_>>();
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                GlobalEvent::CommandUpdated { properties }
+                    if properties.command_id == "runtime-command-update.tool.command_run:call_1:0"
+                        && properties.command_run_id == "runtime-command-update.tool.command_run"
+                        && properties.status == "running"
+            )),
+            "events: {events:#?}"
+        );
     }
 
     #[test]

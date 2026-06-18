@@ -158,7 +158,7 @@ fn default_command_run_commands() -> BTreeSet<String> {
     [
         "apply_patch",
         active_shell_command_name(),
-        "image_generate",
+        "generate_media",
         "read_media",
         "web_discover",
         "compact_context",
@@ -363,11 +363,11 @@ fn command_run_description_for_active_shell(
             compact_schema(&command_schema("read_media")),
         ));
     }
-    if allowed_commands.contains("image_generate") {
+    if allowed_commands.contains("generate_media") {
         command_lines.push(format!(
-            "- image_generate: {} Schema: {}",
-            compact_prompt(&command_prompt("image_generate")),
-            compact_schema(&command_schema("image_generate")),
+            "- generate_media: {} Schema: {}",
+            compact_prompt(&command_prompt("generate_media")),
+            compact_schema(&command_schema("generate_media")),
         ));
     }
     if allowed_commands.contains("web_discover") {
@@ -433,7 +433,7 @@ fn command_list_for_description(commands: &BTreeSet<String>, active_shell: &str)
     let order = [
         "apply_patch",
         active_shell,
-        "image_generate",
+        "generate_media",
         "read_media",
         "web_discover",
         "compact_context",
@@ -464,9 +464,9 @@ fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
     ];
     if allowed_commands.contains("read_media")
         || allowed_commands.contains("web_discover")
-        || allowed_commands.contains("image_generate")
+        || allowed_commands.contains("generate_media")
     {
-        patterns.push("- Example media batch: step 1 use `web_discover` or `image_generate` to collect the needed media, docs, or repo artifacts, step 2 use `read_media` or focused reads to verify the resulting media or repo content.");
+        patterns.push("- Example media batch: step 1 use `web_discover` or `generate_media` to collect the needed media, docs, or repo artifacts, step 2 use `read_media` or focused reads to verify the resulting media or repo content.");
     }
     patterns.join("\n")
 }

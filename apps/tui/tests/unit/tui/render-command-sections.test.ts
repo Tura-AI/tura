@@ -221,10 +221,10 @@ test("render shows assistant command summaries, command details setting, and thi
     stripAnsi(render({ ...state, thinkingFrame: 0 }, richCapabilities())),
   );
   const hollow = withNow(1_012_300, () =>
-    stripAnsi(render({ ...state, thinkingFrame: 1 }, richCapabilities())),
+    stripAnsi(render({ ...state, thinkingFrame: 10 }, richCapabilities())),
   );
   const starburst = withNow(1_012_300, () =>
-    stripAnsi(render({ ...state, thinkingFrame: 2 }, richCapabilities())),
+    stripAnsi(render({ ...state, thinkingFrame: 20 }, richCapabilities())),
   );
   assert.match(solid, /^◆ Commands$/mu);
   assert.match(hollow, /^◇ Commands$/mu);
@@ -311,7 +311,7 @@ test("render shows streamed command_run results before the whole command batch f
     stripAnsi(render({ ...state, thinkingFrame: 0 }, richCapabilities())),
   );
   const hollow = withTerminalSize(100, 30, () =>
-    stripAnsi(render({ ...state, thinkingFrame: 1 }, richCapabilities())),
+    stripAnsi(render({ ...state, thinkingFrame: 10 }, richCapabilities())),
   );
 
   assert.match(solid, /^◆ Commands$/mu);
@@ -500,7 +500,7 @@ test("render blinks only the running command block icon", () => {
   });
 
   const solid = stripAnsi(render({ ...state, thinkingFrame: 0 }, richCapabilities()));
-  const hollow = stripAnsi(render({ ...state, thinkingFrame: 1 }, richCapabilities()));
+  const hollow = stripAnsi(render({ ...state, thinkingFrame: 10 }, richCapabilities()));
 
   assert.match(solid, /^◇ Commands$/mu);
   assert.match(solid, /^◆ Commands$/mu);

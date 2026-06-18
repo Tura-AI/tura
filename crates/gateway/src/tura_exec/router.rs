@@ -44,8 +44,9 @@ pub(crate) fn run_via_router(
     if !worker_env.is_empty() {
         payload["worker_env"] = Value::Object(worker_env);
     }
+    let request_id = format!("exec-{}", uuid::Uuid::new_v4());
     let request = json!({
-        "request_id": format!("exec-{}", uuid::Uuid::new_v4()),
+        "request_id": request_id,
         "kind": "call",
         "method": "execution.enqueue_turn",
         "payload": { "turn_id": format!("turn-{}", uuid::Uuid::new_v4()), "session_id": session_id, "payload": payload },
@@ -59,12 +60,7 @@ pub(crate) fn run_via_router(
         .and_then(|_| writer.flush())
         .map_err(|err| format!("failed to send turn to router: {err}"))?;
 
-    let mut line = String::new();
-    BufReader::new(stream)
-        .read_line(&mut line)
-        .map_err(|err| format!("failed to read router response: {err}"))?;
-    let response: Value = serde_json::from_str(line.trim())
-        .map_err(|err| format!("invalid router response: {err}"))?;
+    let response = read_router_response(stream, &request_id)?;
     if !response.get("ok").and_then(Value::as_bool).unwrap_or(false) {
         return Err(response
             .get("error")
@@ -88,6 +84,31 @@ pub(crate) fn run_via_router(
         println!("{text}");
     }
     Ok(0)
+}
+
+fn read_router_response(stream: TcpStream, request_id: &str) -> Result<Value, String> {
+    let mut reader = BufReader::new(stream);
+    loop {
+        let mut line = String::new();
+        let bytes = reader
+            .read_line(&mut line)
+            .map_err(|err| format!("failed to read router response: {err}"))?;
+        if bytes == 0 {
+            return Err("router closed before final response".to_string());
+        }
+        let value: Value = serde_json::from_str(line.trim())
+            .map_err(|err| format!("invalid router response: {err}"))?;
+        let matches_request = value
+            .get("request_id")
+            .and_then(Value::as_str)
+            .is_some_and(|candidate| candidate == request_id);
+        if !matches_request {
+            continue;
+        }
+        if value.get("ok").and_then(Value::as_bool).is_some() {
+            return Ok(value);
+        }
+    }
 }
 
 /// Probe the per-home router daemon; start it detached if none is reachable.
@@ -289,7 +310,7 @@ fn resolve_router_binary() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        router_final_text, router_health_ok, router_stderr_log_path,
+        read_router_response, router_final_text, router_health_ok, router_stderr_log_path,
         worker_env_from_current_process,
     };
     use serde_json::json;
@@ -415,6 +436,35 @@ mod tests {
         server
             .join()
             .map_err(|_| anyhow::anyhow!("health probe server panicked"))??;
+        Ok(())
+    }
+
+    #[test]
+    fn read_router_response_skips_matching_notifications_until_final_response() -> anyhow::Result<()>
+    {
+        let listener = TcpListener::bind(("127.0.0.1", 0))?;
+        let addr = listener.local_addr()?;
+        let server = thread::spawn(move || -> anyhow::Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            stream.write_all(
+                br#"{"request_id":"request-1","kind":"gateway.callback","method":"session.agent_stream","payload":{"type":"turn.started"}}"#,
+            )?;
+            stream.write_all(b"\n")?;
+            stream.write_all(
+                br#"{"request_id":"request-1","ok":true,"payload":{"status":"finished"}}"#,
+            )?;
+            stream.write_all(b"\n")?;
+            stream.flush()?;
+            Ok(())
+        });
+
+        let stream = std::net::TcpStream::connect(addr)?;
+        let response = read_router_response(stream, "request-1").map_err(anyhow::Error::msg)?;
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["payload"]["status"], "finished");
+        server
+            .join()
+            .map_err(|_| anyhow::anyhow!("response server panicked"))??;
         Ok(())
     }
 }

@@ -1,0 +1,144 @@
+{
+  "name": "generate_media",
+  "description": "Generate images or speech audio. Provider selection and fallback are internal and controlled by configuration.",
+  "input_schema": {
+    "oneOf": [
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "media_type": {
+            "type": "string",
+            "enum": ["image"],
+            "description": "Generate an image."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Positive image prompt."
+          },
+          "positive_prompt": {
+            "type": "string",
+            "x-tura-optional": true,
+            "description": "Alias for prompt."
+          },
+          "negative_prompt": {
+            "type": "string",
+            "x-tura-optional": true,
+            "description": "Negative prompt or things to avoid."
+          },
+          "references": {
+            "type": "array",
+            "items": { "type": "string" },
+            "x-tura-optional": true,
+            "description": "Local paths, data URLs, or public URLs used as image references."
+          },
+          "reference": {
+            "type": "string",
+            "x-tura-optional": true,
+            "description": "Single reference image path or URL."
+          },
+          "output_dir": {
+            "type": "string",
+            "x-tura-optional": true,
+            "description": "Workspace-relative or absolute output directory. Defaults to media/image."
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 64,
+            "maximum": 3840,
+            "x-tura-optional": true
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 64,
+            "maximum": 3840,
+            "x-tura-optional": true
+          },
+          "size": {
+            "type": "string",
+            "x-tura-optional": true,
+            "description": "WIDTHxHEIGHT or auto. Width/height override this when both are supplied."
+          },
+          "aspect_ratio": {
+            "type": "string",
+            "x-tura-optional": true,
+            "description": "Common aspect ratio such as 1:1, 16:9, or 9:16."
+          },
+          "quality": {
+            "type": "string",
+            "enum": ["auto", "low", "medium", "standard", "high", "hd"],
+            "x-tura-optional": true
+          },
+          "n": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "x-tura-optional": true
+          },
+          "seed": {
+            "type": "integer",
+            "minimum": 0,
+            "x-tura-optional": true
+          },
+          "output_format": {
+            "type": "string",
+            "enum": ["png", "jpeg", "jpg", "webp"],
+            "x-tura-optional": true
+          },
+          "dry_run": {
+            "type": "boolean",
+            "x-tura-optional": true
+          }
+        },
+        "required": ["media_type", "prompt"]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "media_type": {
+            "type": "string",
+            "enum": ["speech", "audio"],
+            "description": "Generate speech audio."
+          },
+          "text": {
+            "type": "string",
+            "description": "Text to synthesize."
+          },
+          "text_language": {
+            "type": "string",
+            "enum": ["zh_cn", "en_us", "ja_jp", "ko_kr", "es_es", "fr_fr"]
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "female_gentle",
+              "female_bright",
+              "female_confident",
+              "female_young",
+              "male_calm",
+              "male_warm",
+              "male_deep",
+              "male_energetic"
+            ]
+          },
+          "tone": {
+            "type": "string",
+            "enum": ["neutral", "calm", "cheerful", "serious", "sad", "whisper"]
+          },
+          "custom_tone_description": {
+            "type": "string",
+            "x-tura-optional": true,
+            "description": "Optional custom tone instruction."
+          },
+          "custom_voice_description": {
+            "type": "string",
+            "x-tura-optional": true,
+            "description": "Optional custom timbre or character voice instruction."
+          }
+        },
+        "required": ["media_type", "text", "text_language", "role", "tone"]
+      }
+    ]
+  }
+}

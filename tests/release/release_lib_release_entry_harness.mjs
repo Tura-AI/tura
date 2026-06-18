@@ -179,7 +179,7 @@ export async function runGuiReleaseCase(caseName) {
     };
     result = await runLoggedProcess(
       pythonCommand(),
-      [path.join(repoRoot, "apps", "gui", "e2e", "release_web_gui_smoke.py")],
+      [path.join(repoRoot, "tests", "release", "release_web_gui_smoke.py")],
       ctx,
       {
         timeoutMs: timeoutMs + 60_000,

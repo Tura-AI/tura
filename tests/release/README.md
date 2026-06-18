@@ -4,8 +4,9 @@ This directory contains release-binary tests for built `target/release`
 artifacts. These tests are separated from `tests/business` and `tests/live` so
 ordinary business/live runs do not start, reuse, or shut down release daemons.
 
-The release runner discovers tests only by scanning files directly under
-`tests/release`:
+The backend release runner scans files directly under `tests/release`, while
+skipping `tui_*` and `gui_*` entrypoints so UI/provider release flows remain
+explicit:
 
 ```powershell
 .\xtask\scripts\run-backend-release-tests.ps1 -List
@@ -19,17 +20,29 @@ The release runner discovers tests only by scanning files directly under
 
 Release-entry scripts run after `scripts/build-release.*` and
 `scripts/register-cli.*`. The CLI surface uses the registered `tura exec`
-command. TUI/GUI release live scripts live under
-`tests/live/{tui,gui}_release_*.mjs` and are run through their app package
-commands. These flows are live because they drive real model/provider execution.
+command. TUI/GUI release scripts also live here, rather than under
+`tests/live` or app-local business/live directories, because they all start or
+depend on `target/release` artifacts.
 
 The kept entry points cover each release surface:
 
 | Profile | Surface | Entry point |
 | --- | --- | --- |
 | `target/release` | CLI | `.\xtask\scripts\run-backend-release-tests.ps1` / `./xtask/scripts/run-backend-release-tests.sh` |
-| `target/release` | TUI | `npm --prefix apps/tui run test:live:release` |
-| `target/release` | GUI | `bun run --cwd apps/gui e2e:live:release` |
+| `target/release` | TUI | `node .\tests\release\tui_release_run_all.mjs` / `node ./tests/release/tui_release_run_all.mjs` |
+| `target/release` | GUI | `node .\tests\release\gui_release_run_all.mjs` / `node ./tests/release/gui_release_run_all.mjs` |
+
+The app package aliases point at the same root scripts:
+
+```powershell
+npm --prefix apps\tui run test:live:release
+bun run --cwd apps\gui e2e:live:release
+```
+
+```bash
+npm --prefix apps/tui run test:live:release
+bun run --cwd apps/gui e2e:live:release
+```
 
 Release-entry outputs default to:
 

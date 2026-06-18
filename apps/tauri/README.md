@@ -10,6 +10,15 @@ bun install
 bun run dev
 ```
 
+Tests:
+
+```sh
+bun run test:unit
+```
+
+The unit tests cover gateway startup helpers, endpoint parsing, health probing,
+and runtime-root detection for the desktop shell.
+
 
 Release builds are driven from the repository-level `scripts/build-debug.*`
 scripts so the generated executable is copied into the shared `bin` layout. The

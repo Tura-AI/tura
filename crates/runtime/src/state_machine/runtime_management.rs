@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::agent_management::{AgentId, ProviderConfig};
-use super::session_management::SessionId;
+use super::session_management::{ContextTokenStats, SessionId};
 
 /// UTC timestamp with millisecond precision.
 pub type UtcDateTimeMs = DateTime<Utc>;
@@ -202,6 +202,9 @@ pub struct RuntimeManagement {
     pub text: OutputText,
     /// Tool call reports.
     pub tool_call: Vec<ToolCallRecord>,
+    /// Latest model-visible input context token estimate for this runtime.
+    #[serde(default)]
+    pub context_tokens: ContextTokenStats,
     /// Usage and billing report.
     pub usage: Option<UsageReport>,
     /// Current runtime state.
@@ -235,6 +238,7 @@ impl RuntimeManagement {
             output: None,
             text: String::new(),
             tool_call: Vec::new(),
+            context_tokens: ContextTokenStats::default(),
             usage: None,
             state: RuntimeState::Created,
         }

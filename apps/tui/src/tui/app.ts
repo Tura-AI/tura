@@ -8,7 +8,7 @@ import { isDraftSession } from "../types/session.js";
 import { sessionConfigPatchFromAssignments } from "../commands/config-values.js";
 import { initialState, reducer, type AppAction, type AppState } from "./reducer.js";
 import { detectTerminalCapabilities, type TerminalCapabilities } from "./capabilities.js";
-import { TUI_ANIMATION_INTERVAL_MS, TUI_DRAW_INTERVAL_MS } from "./frame-rate.js";
+import { TUI_DRAW_INTERVAL_MS } from "./frame-rate.js";
 import { parseLanguage, setLanguage, t } from "../i18n.js";
 import { keySequence, printableSequence } from "./interactions/keyboard.js";
 import { selectedModel, selectedPersonaID, selectedSettingDetail } from "./logic/selection.js";
@@ -205,12 +205,9 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
   }
   const heartbeatTimer = setInterval(() => {
     if (!isBusyState(state) && !state.questions.length && !state.permissions.length) return;
-    scheduleDraw();
-  }, TUI_DRAW_INTERVAL_MS);
-  const animationTimer = setInterval(() => {
-    if (!isBusyState(state) && !state.questions.length && !state.permissions.length) return;
     if (hasActiveAnimation(state)) dispatch({ type: "tick" });
-  }, TUI_ANIMATION_INTERVAL_MS);
+    else scheduleDraw();
+  }, TUI_DRAW_INTERVAL_MS);
   const sessionPickerRefreshTimer = setInterval(() => {
     if (!state.sessionsOpen) return;
     void refreshOpenSessionPicker(client, () => state, dispatch);
@@ -254,7 +251,6 @@ export async function runTui(context: CliContext, initialPrompt?: string): Promi
   // Normal exit path: kill gateway immediately so it doesn't outlive the TUI.
   killOwnedGateway();
   clearInterval(heartbeatTimer);
-  clearInterval(animationTimer);
   clearInterval(sessionPickerRefreshTimer);
   controller.abort();
   resizeDrawGate.dispose();

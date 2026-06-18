@@ -1,4 +1,4 @@
-Use `read_media` to inspect local images, PDFs, videos, audio, documents, and generated media artifacts.
+Use `read_media` to inspect local images, PDFs, MDs, videos, audio, documents, and generated media artifacts.
 
 Input is CLI-style. Positional values are files or directories; options apply globally:
 

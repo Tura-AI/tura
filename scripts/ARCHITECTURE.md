@@ -67,9 +67,10 @@ Xtask test collection scripts:
   `live-tests` feature gate when the package declares it. These backend
   runners do not execute app-owned TUI/GUI scripts; run those from the app
   package commands.
-- `xtask/scripts/run-backend-release-tests.*`: run opt-in release-binary tests
-  discovered only from root `tests/release/*.mjs`, separated from business/live
-  runners so ordinary test runs do not touch release daemons.
+- `xtask/scripts/run-backend-release-tests.*`: run opt-in backend release-binary
+  tests discovered from root `tests/release/*.mjs`. TUI/GUI release entrypoints
+  also live in `tests/release`, but the backend runner skips `tui_*` and
+  `gui_*`; run those directly or through the app package aliases.
 - `xtask/scripts/run-backend-performance-tests.*`: runner for crate-owned Rust
   performance tests from `crates/*/tests/performance`; each target is killed if
   it exceeds the configured timeout.

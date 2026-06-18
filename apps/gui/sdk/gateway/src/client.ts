@@ -163,9 +163,22 @@ export class GatewayClient {
         page: 0,
         page_size: input.limit ?? 100,
       })
-        .then((response) => response.sessions.map(sessionFromLogSnapshot))
+        .then((response) => {
+          const sessions = response.sessions.map(sessionFromLogSnapshot);
+          if (sessions.length > 0) {
+            return sessions;
+          }
+          return this.get<Session[]>(
+            "/session",
+            {
+              limit: input.limit,
+              includeChildren: true,
+            },
+            true,
+          );
+        })
         .catch(() =>
-          this.get(
+          this.get<Session[]>(
             "/session",
             {
               limit: input.limit,

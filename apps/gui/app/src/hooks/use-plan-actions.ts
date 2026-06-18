@@ -474,9 +474,13 @@ export function usePlanActions(options: PlanActionsOptions) {
       const updated = await directoryClient().updateSessionTaskManagement(session.id, { tasks });
       setState((previous) => ({
         ...previous,
-        sessions: previous.sessions.map((item) =>
-          item.id === session.id ? { ...item, ...updated } : item,
-        ),
+        sessions: previous.sessions.map((item) => {
+          if (item.id !== session.id) {
+            return item;
+          }
+          const merged = reorderTasksInSession(item, tasks);
+          return { ...item, ...updated, task_management: merged.task_management };
+        }),
       }));
     } catch (error) {
       setState((previous) => ({ ...previous, error: errorMessage(error) }));

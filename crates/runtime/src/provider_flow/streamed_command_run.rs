@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use crate::gateway_events::runtime_tool_part_id;
+use crate::gateway_events::{runtime_message_id, runtime_tool_part_id};
 use crate::state_machine::runtime_management::RuntimeSessionSyncStatus;
 
 const COMMAND_RUN_TOOL_NAME: &str = "command_run";
@@ -82,6 +82,8 @@ pub fn streamed_command_event_record(
     serde_json::json!({
         "status": status,
         "runtime_id": runtime_id,
+        "command_id": command.get("command_id").cloned().unwrap_or(Value::Null),
+        "command_run_id": command.get("command_run_id").cloned().unwrap_or(Value::Null),
         "provider_tool_call_id": tool_call_id,
         "command_index": command_index,
         "step": command.get("step").cloned().unwrap_or(Value::Null),
@@ -103,6 +105,10 @@ pub fn streamed_command_result_record(
     serde_json::json!({
         "status": status,
         "runtime_id": runtime_id,
+        "command_id": result.get("command_id").cloned().unwrap_or(Value::Null),
+        "command_run_id": result.get("command_run_id").cloned().unwrap_or(Value::Null),
+        "provider_tool_call_id": result.get("provider_tool_call_id").cloned().unwrap_or(Value::Null),
+        "command_index": result.get("command_index").cloned().unwrap_or(Value::Null),
         "result_index": result_index,
         "step": result.get("step").cloned().unwrap_or(Value::Null),
         "command_type": result
@@ -141,11 +147,16 @@ pub fn command_run_live_delta_result(command: &Value, stdout: &str, stderr: &str
         output_text.push_str(stderr);
     }
     serde_json::json!({
+        "command_id": command.get("command_id").cloned().unwrap_or(Value::Null),
+        "command_run_id": command.get("command_run_id").cloned().unwrap_or(Value::Null),
+        "provider_tool_call_id": command.get("provider_tool_call_id").cloned().unwrap_or(Value::Null),
+        "command_index": command.get("command_index").cloned().unwrap_or(Value::Null),
         "step": step,
         "command_type": command_type,
         "command_line": command_line,
         "status": "running",
         "success": null,
+        "command": command,
         "output": {
             "stdout": stdout,
             "stderr": stderr,
@@ -173,6 +184,18 @@ pub fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>)
     }
 
     let target_session_id = gateway_callback_session_id(update.session_id);
+    let updated_at = update
+        .ended_at
+        .unwrap_or(update.started_at)
+        .timestamp_millis();
+    let command_updates = command_update_payloads(
+        update.runtime_id,
+        update.call_id,
+        update.commands,
+        update.results,
+        update.status,
+        updated_at,
+    );
     let input = serde_json::json!({ "commands": update.commands });
     let output = serde_json::json!({
         "streamed_command_run_result": {
@@ -236,7 +259,8 @@ pub fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>)
         "runtime_id": update.runtime_id,
         "runtime_status": &update.runtime_status,
         "created_at": update.started_at.timestamp_millis(),
-        "updated_at": update.ended_at.unwrap_or(update.started_at).timestamp_millis(),
+        "updated_at": updated_at,
+        "command_updates": command_updates,
         "tool_call": {
             "tool_name": COMMAND_RUN_TOOL_NAME,
             "call_id": update.call_id,
@@ -252,6 +276,116 @@ pub fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>)
         update.runtime_id.to_string(),
         "streamed_command_run_update",
     );
+}
+
+fn command_update_payloads(
+    runtime_id: &str,
+    command_run_id: &str,
+    commands: &[Value],
+    results: &[Value],
+    status: &str,
+    updated_at: i64,
+) -> Vec<Value> {
+    let mut updates = Vec::new();
+    for command in commands {
+        let command_id = command_identity(command, command_run_id);
+        updates.push(serde_json::json!({
+            "messageID": runtime_message_id(runtime_id),
+            "partID": runtime_tool_part_id(runtime_id, COMMAND_RUN_TOOL_NAME),
+            "runtimeID": runtime_id,
+            "commandRunID": command_run_id,
+            "commandID": command_id,
+            "providerToolCallID": command.get("provider_tool_call_id").cloned().unwrap_or(Value::Null),
+            "commandIndex": command.get("command_index").cloned().unwrap_or(Value::Null),
+            "eventSeq": command_event_seq(command, 20),
+            "status": if status == "completed" || status == "error" { status } else { "ready" },
+            "command": command,
+            "result": Value::Null,
+            "updatedAt": updated_at,
+        }));
+    }
+    for result in results {
+        let command = result.get("command").unwrap_or(&Value::Null);
+        let command_id = command_identity(result, command_run_id)
+            .or_else(|| command_identity(command, command_run_id))
+            .unwrap_or_else(|| command_run_id.to_string());
+        let result_status = command_result_status(result, status);
+        updates.push(serde_json::json!({
+            "messageID": runtime_message_id(runtime_id),
+            "partID": runtime_tool_part_id(runtime_id, COMMAND_RUN_TOOL_NAME),
+            "runtimeID": runtime_id,
+            "commandRunID": command_run_id,
+            "commandID": command_id,
+            "providerToolCallID": result
+                .get("provider_tool_call_id")
+                .or_else(|| command.get("provider_tool_call_id"))
+                .cloned()
+                .unwrap_or(Value::Null),
+            "commandIndex": result
+                .get("command_index")
+                .or_else(|| command.get("command_index"))
+                .cloned()
+                .unwrap_or(Value::Null),
+            "eventSeq": command_event_seq(result, status_event_rank(&result_status)),
+            "status": result_status,
+            "command": if command.is_null() { Value::Null } else { command.clone() },
+            "result": result,
+            "updatedAt": updated_at,
+        }));
+    }
+    updates
+}
+
+fn command_identity(value: &Value, fallback_run_id: &str) -> Option<String> {
+    value
+        .get("command_id")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .or_else(|| {
+            let provider = value.get("provider_tool_call_id").and_then(Value::as_str)?;
+            let index = value.get("command_index").and_then(Value::as_u64)?;
+            Some(format!("{fallback_run_id}:{provider}:{index}"))
+        })
+}
+
+fn command_event_seq(value: &Value, rank: i64) -> i64 {
+    value
+        .get("command_index")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .saturating_mul(100)
+        .saturating_add(rank)
+}
+
+fn command_result_status(result: &Value, fallback: &str) -> String {
+    if result.get("success").and_then(Value::as_bool) == Some(false) {
+        return "failed".to_string();
+    }
+    if let Some(status) = result.get("status").and_then(Value::as_str) {
+        return if status == "in_progress" {
+            "running".to_string()
+        } else {
+            status.to_string()
+        };
+    }
+    if result.get("success").and_then(Value::as_bool) == Some(true) {
+        return "completed".to_string();
+    }
+    if fallback == "completed" {
+        "completed".to_string()
+    } else {
+        "running".to_string()
+    }
+}
+
+fn status_event_rank(status: &str) -> i64 {
+    match status {
+        "failed" | "error" => 50,
+        "completed" => 40,
+        "running" => 30,
+        "ready" => 20,
+        _ => 10,
+    }
 }
 
 fn gateway_callbacks_disabled() -> bool {

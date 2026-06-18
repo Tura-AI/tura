@@ -219,6 +219,12 @@ pub struct SendAgentMessageRequest {
     pub runtime_id: Option<String>,
     pub tool_call: Option<SendAgentToolCall>,
     pub runtime_status: Option<RuntimeSessionSyncStatus>,
+    #[serde(default)]
+    pub context_tokens: Option<SessionContextTokens>,
+    #[serde(default)]
+    pub usage: Option<serde_json::Value>,
+    #[serde(default)]
+    pub command_updates: Vec<CommandUpdatePayload>,
     pub created_at: Option<i64>,
     pub updated_at: Option<i64>,
 }
@@ -227,6 +233,10 @@ pub struct SendAgentMessageRequest {
 pub struct StreamAgentTextRequest {
     pub delta: String,
     pub runtime_id: String,
+    #[serde(default)]
+    pub context_tokens: Option<SessionContextTokens>,
+    #[serde(default)]
+    pub usage: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -235,6 +245,37 @@ pub struct SendAgentToolCall {
     pub call_id: String,
     pub state: serde_json::Value,
     pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CommandUpdatePayload {
+    #[serde(rename = "messageID", alias = "message_id")]
+    pub message_id: String,
+    #[serde(rename = "partID", alias = "part_id")]
+    pub part_id: String,
+    #[serde(rename = "runtimeID", alias = "runtime_id")]
+    pub runtime_id: String,
+    #[serde(rename = "commandRunID", alias = "command_run_id")]
+    pub command_run_id: String,
+    #[serde(rename = "commandID", alias = "command_id")]
+    pub command_id: String,
+    #[serde(
+        rename = "providerToolCallID",
+        alias = "provider_tool_call_id",
+        default
+    )]
+    pub provider_tool_call_id: Option<String>,
+    #[serde(rename = "commandIndex", alias = "command_index", default)]
+    pub command_index: Option<u64>,
+    #[serde(rename = "eventSeq", alias = "event_seq", default)]
+    pub event_seq: Option<i64>,
+    pub status: String,
+    #[serde(default)]
+    pub command: serde_json::Value,
+    #[serde(default)]
+    pub result: serde_json::Value,
+    #[serde(rename = "updatedAt", alias = "updated_at", default)]
+    pub updated_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

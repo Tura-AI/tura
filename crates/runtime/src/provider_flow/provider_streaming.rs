@@ -41,7 +41,7 @@ pub(crate) async fn call_runtime_streaming(
     // thread so the streaming HTTP POSTs never block the provider stream loop.
     let (text_delta_tx, text_delta_rx) = mpsc::channel::<String>();
     let text_delta_session_id = runtime.session_id.clone();
-    let text_delta_runtime_id = runtime.runtime_id.clone();
+    let text_delta_runtime = runtime.clone();
     let _text_delta_thread = std::thread::spawn(move || {
         let Ok(async_runtime) = tokio::runtime::Runtime::new() else {
             return;
@@ -49,7 +49,7 @@ pub(crate) async fn call_runtime_streaming(
         while let Ok(delta) = text_delta_rx.recv() {
             async_runtime.block_on(publish_streamed_agent_text(
                 &text_delta_session_id,
-                &text_delta_runtime_id,
+                &text_delta_runtime,
                 &delta,
             ));
         }

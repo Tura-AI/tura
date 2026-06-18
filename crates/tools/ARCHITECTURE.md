@@ -61,7 +61,7 @@ crates/tools/
         schema.json
         prompt.md
         policy.toml
-      image_generate/
+      generate_media/
         mod.rs
         src/
           args.rs
@@ -225,14 +225,14 @@ Examples:
 - `bash` -> router command id -> tools handler
 - `zsh` -> router command id -> tools handler
 - `apply_patch` -> router command id -> tools handler
-- `image_generate` -> router command id -> external command package
+- `generate_media` -> router command id -> external command package
 - `read_media` -> router command id -> tools handler
 - `web_discover` -> router command id -> tools handler
 - `compact_context` -> command-run lifecycle handler
 - `task_status` -> internal command-run status command
 - `planning` -> optional planning/multiple-task state handler
 
-Only `shell_command`, `bash`, `zsh`, `apply_patch`, mutating `image_generate`,
+Only `shell_command`, `bash`, `zsh`, `apply_patch`, mutating `generate_media`,
 read-only `read_media`, `web_discover`, `compact_context`, and internal `task_status` are enabled for
 normal command-run coding-agent sessions in this version. `planning` is
 injected only by the explicit multiple-task runtime mode.
@@ -326,10 +326,10 @@ artifacts into declared workspace paths. Its fallback route order is controlled
 by `web_discover/policy.toml` `[configurable]` entries using the same
 `default` + `enum` policy shape as `read_media`.
 
-## Image Generate Command
+## Generate Media Command
 
-`image_generate` is a mutating, network-capable external command package under
-`commands/image_generate`. It writes generated images into declared workspace
+`generate_media` is a mutating, network-capable external command package under
+`commands/generate_media`. It writes generated images into declared workspace
 output directories and supports provider fallback across OpenAI GPT Image,
 Replicate Z-Image Turbo, Gemini image models, and xAI/Grok image endpoints.
 Provider keys are read through Tura config/environment instead of command-local
@@ -447,7 +447,7 @@ The current always-present command directories are:
 apply_patch
 bash
 compact_context
-image_generate
+generate_media
 planning
 read_media
 shell_command

@@ -63,7 +63,9 @@ const MESSAGE_PAGE_SIZE = 200;
 
 export function App() {
   const e2eFixture = readSearchParam("e2eFixture");
+  const requestedGatewayUrl = readSearchParam("gatewayUrl") ?? defaultGatewayUrl();
   const requestedTab = readSearchParam("tab");
+  const disableGatewayAutostart = readSearchParam("e2eNoGatewayStart") === "1";
   const initialTab = readMainTabSearchParam();
   const forceNewSession = readBooleanSearchParam("newSession") || requestedTab === "new";
   const disablePermissionRestrictions = readBooleanSearchParam("disablePermissionRestrictions");
@@ -73,8 +75,8 @@ export function App() {
   const [state, setState] = createSignal<AppState>(
     withInitialOverrides(
       e2eFixture
-        ? fixtureAppState(defaultGatewayUrl(), e2eFixture)
-        : initialAppState(defaultGatewayUrl()),
+        ? fixtureAppState(requestedGatewayUrl, e2eFixture)
+        : initialAppState(requestedGatewayUrl),
       {
         activeTab: initialTab,
         selectedSessionId: initialSessionId,
@@ -528,6 +530,7 @@ export function App() {
     gatewayUrl,
     rootClient,
     forceNewSession,
+    disableGatewayAutostart,
     e2eFixture,
     openSession,
   });

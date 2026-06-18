@@ -460,6 +460,7 @@ fn event_session_id(event: &GlobalEvent) -> Option<&str> {
         GlobalEvent::MessageRemoved { properties } => Some(properties.session_id.as_str()),
         GlobalEvent::MessagePartDelta { properties } => Some(properties.session_id.as_str()),
         GlobalEvent::MessagePartUpdated { properties } => Some(properties.session_id.as_str()),
+        GlobalEvent::CommandUpdated { properties } => Some(properties.session_id.as_str()),
         GlobalEvent::TodoUpdated { properties } => {
             properties.get("sessionID").and_then(|value| value.as_str())
         }
@@ -485,6 +486,7 @@ fn event_directory(event: &GlobalEvent) -> String {
         GlobalEvent::MessageRemoved { properties } => Some(properties.session_id.as_str()),
         GlobalEvent::MessagePartDelta { properties } => Some(properties.session_id.as_str()),
         GlobalEvent::MessagePartUpdated { properties } => Some(properties.session_id.as_str()),
+        GlobalEvent::CommandUpdated { properties } => Some(properties.session_id.as_str()),
         GlobalEvent::TodoUpdated { properties } => {
             properties.get("sessionID").and_then(|value| value.as_str())
         }

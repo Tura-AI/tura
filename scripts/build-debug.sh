@@ -58,7 +58,7 @@ copy_gui_dist() {
 (cd "$REPO_ROOT" && cargo build -p router --bin tura_router)
 (cd "$REPO_ROOT" && cargo build -p session_log --bin tura_session_db)
 (cd "$REPO_ROOT" && cargo build -p runtime --bin tura_runtime)
-(cd "$REPO_ROOT" && cargo build -p image_generate -p read_media -p web_discover)
+(cd "$REPO_ROOT" && cargo build -p generate_media -p read_media -p web_discover)
 
 if [ "$SKIP_TUI" -eq 0 ]; then
   mkdir -p "$TARGET_DIR"

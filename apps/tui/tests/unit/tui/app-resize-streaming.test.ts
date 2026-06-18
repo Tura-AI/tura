@@ -670,3 +670,123 @@ test("draw promotes finalized live as new cache without repainting fixed cache",
   assert.doesNotMatch(output, /LIVE_STREAM_MARKER/);
   assert.match(output, /Active[\s\S]*Enter: send/);
 });
+
+test("draw promotes mixed live text and command cache without blinking unchanged rows", () => {
+  const busySession = { ...activeSession, status: "busy" as const };
+  const idleSession = { ...activeSession, status: "idle" as const };
+  const now = Date.now();
+  const commandMessage = (status: "running" | "completed") => ({
+    id: "msg-live-command-handoff",
+    sessionID: "sess-1",
+    role: "assistant" as const,
+    created_at: now + 100_000,
+    updated_at: now + 100_000,
+    parts: [
+      {
+        id: "part-live-command-handoff",
+        type: "tool" as const,
+        tool: "command_run",
+        state: {
+          status,
+          input: {
+            commands: [
+              {
+                step: 1,
+                command_type: "shell_command",
+                command_line: "LIVE_HANDOFF_COMMAND_MARKER",
+              },
+            ],
+          },
+          output:
+            status === "running"
+              ? undefined
+              : {
+                  streamed_command_run_result: {
+                    results: [
+                      {
+                        step: 1,
+                        status: "completed",
+                        command_type: "shell_command",
+                        command_line: "LIVE_HANDOFF_COMMAND_MARKER",
+                      },
+                    ],
+                  },
+                },
+        },
+      },
+    ],
+  });
+  let liveState = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: busySession,
+    messages: [
+      {
+        id: "msg-live-text-handoff",
+        sessionID: "sess-1",
+        role: "assistant",
+        created_at: now,
+        updated_at: now,
+        parts: [],
+      },
+      commandMessage("running"),
+    ],
+    permissions: [],
+    sessions: [busySession],
+  });
+  liveState = reducer(liveState, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "sess-1",
+          messageID: "msg-live-text-handoff",
+          partID: "part-live-text-handoff",
+          field: "text",
+          delta: "LIVE_HANDOFF_TEXT_MARKER",
+        },
+      },
+    },
+  });
+
+  const finalizedState = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: idleSession,
+    messages: [
+      {
+        id: "msg-live-text-handoff",
+        sessionID: "sess-1",
+        role: "assistant",
+        created_at: now,
+        updated_at: now,
+        parts: [{ id: "part-live-text-handoff", type: "text", text: "LIVE_HANDOFF_TEXT_MARKER" }],
+      },
+      commandMessage("completed"),
+    ],
+    permissions: [],
+    sessions: [idleSession],
+  });
+
+  const writes = captureDrawWrites((writes) => {
+    const previous = draw(liveState, richCapabilities(), "");
+    assert.match(writes.join(""), /LIVE_HANDOFF_TEXT_MARKER/);
+    assert.match(writes.join(""), /LIVE_HANDOFF_COMMAND_MARKER/);
+    writes.length = 0;
+    draw(finalizedState, richCapabilities(), previous);
+  });
+  const output = writes.join("");
+
+  assert.equal(output.includes(terminalClear), false);
+  assert.doesNotMatch(output, /\x1b\[\d+;1H\x1b\[J/u);
+  assert.doesNotMatch(
+    output,
+    /LIVE_HANDOFF_TEXT_MARKER/,
+    "already visible streamed text must be adopted into cache without repaint",
+  );
+  assert.ok(
+    regexCount(output, /LIVE_HANDOFF_COMMAND_MARKER/gu) <= 1,
+    "command row may update status once, but must not duplicate during handoff",
+  );
+  assert.match(output, /Active[\s\S]*Enter: send/);
+});

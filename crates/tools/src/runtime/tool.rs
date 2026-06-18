@@ -272,7 +272,7 @@ pub struct ToolRouter {
     apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
     compact_context: crate::commands::compact_context::CompactContextHandler,
     planning: crate::commands::planning::PlanningHandler,
-    image_generate: ExternalCommandHandler,
+    generate_media: ExternalCommandHandler,
     read_media: ExternalCommandHandler,
     web_discover: ExternalCommandHandler,
 }
@@ -286,7 +286,7 @@ impl ToolRouter {
             apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
             compact_context: crate::commands::compact_context::CompactContextHandler,
             planning: crate::commands::planning::PlanningHandler,
-            image_generate: ExternalCommandHandler::new("image_generate", true, false),
+            generate_media: ExternalCommandHandler::new("generate_media", true, false),
             read_media: ExternalCommandHandler::new("read_media", false, true),
             web_discover: ExternalCommandHandler::new("web_discover", false, true),
         }
@@ -300,7 +300,7 @@ impl ToolRouter {
             "apply_patch" => Some("apply_patch"),
             "compact_context" => Some("compact_context"),
             "planning" if planning_command_enabled() => Some("planning"),
-            "image_generate" => Some("image_generate"),
+            "generate_media" => Some("generate_media"),
             "read_media" => Some("read_media"),
             "web_discover" => Some("web_discover"),
             _ => None,
@@ -315,7 +315,7 @@ impl ToolRouter {
             "apply_patch" => Some(&self.apply_patch),
             "compact_context" => Some(&self.compact_context),
             "planning" if planning_command_enabled() => Some(&self.planning),
-            "image_generate" => Some(&self.image_generate),
+            "generate_media" => Some(&self.generate_media),
             "read_media" => Some(&self.read_media),
             "web_discover" => Some(&self.web_discover),
             _ => None,
@@ -403,7 +403,7 @@ impl ExternalCommandHandler {
 }
 
 const DEFAULT_EXTERNAL_COMMAND_TIMEOUT_MS: u64 = 15_000;
-const IMAGE_GENERATE_EXTERNAL_COMMAND_TIMEOUT_MS: u64 = 100_000;
+const GENERATE_MEDIA_EXTERNAL_COMMAND_TIMEOUT_MS: u64 = 100_000;
 
 fn take_external_command_timeout(command_id: &str, arguments: &mut Value) -> Duration {
     let Some(object) = arguments.as_object_mut() else {
@@ -421,7 +421,7 @@ fn take_external_command_timeout(command_id: &str, arguments: &mut Value) -> Dur
 
 fn default_external_command_timeout_ms(command_id: &str) -> u64 {
     match crate::commands::canonical_command(command_id).as_str() {
-        "image_generate" => IMAGE_GENERATE_EXTERNAL_COMMAND_TIMEOUT_MS,
+        "generate_media" => GENERATE_MEDIA_EXTERNAL_COMMAND_TIMEOUT_MS,
         _ => DEFAULT_EXTERNAL_COMMAND_TIMEOUT_MS,
     }
 }
@@ -649,11 +649,11 @@ mod tests {
     }
 
     #[test]
-    fn image_generate_external_command_timeout_defaults_to_100_seconds() {
+    fn generate_media_external_command_timeout_defaults_to_100_seconds() {
         let mut missing = json!({"prompt": "logo"});
 
         assert_eq!(
-            take_external_command_timeout("image_generate", &mut missing),
+            take_external_command_timeout("generate_media", &mut missing),
             std::time::Duration::from_millis(100_000)
         );
         assert_eq!(missing, json!({"prompt": "logo"}));
@@ -683,8 +683,8 @@ mod tests {
             Some("compact_context")
         );
         assert_eq!(
-            router.resolve_command_tool_name("image_generate"),
-            Some("image_generate")
+            router.resolve_command_tool_name("generate_media"),
+            Some("generate_media")
         );
         assert_eq!(
             router.resolve_command_tool_name("read_media"),

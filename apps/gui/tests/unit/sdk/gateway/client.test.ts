@@ -67,6 +67,28 @@ describe("GatewayClient", () => {
     });
   });
 
+  test("falls back to live session list when session log is empty", async () => {
+    const observed: string[] = [];
+    const client = new GatewayClient({
+      baseUrl: "http://gateway.test",
+      directory: "C:\\repo",
+      fetch: async (input) => {
+        const url = String(input);
+        observed.push(url);
+        if (url.includes("/session-log/sessions")) {
+          return jsonResponse({ page: 0, page_size: 100, total: 0, sessions: [] });
+        }
+        return jsonResponse([{ id: "s-live", status: "idle", name: "live session" }]);
+      },
+    });
+
+    const sessions = await client.sessions();
+
+    expect(sessions[0]?.id).toBe("s-live");
+    expect(observed.some((url) => url.includes("/session-log/sessions"))).toBe(true);
+    expect(observed.some((url) => url.includes("/session?"))).toBe(true);
+  });
+
   test("retries transient network changed failures", async () => {
     let calls = 0;
     const client = new GatewayClient({

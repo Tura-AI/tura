@@ -184,7 +184,7 @@ sessions, models, settings, and mobile views. Artifacts are written under
 Run these after the repository release build and CLI registration. They drive
 the release `tura` entry and validate a single real request, Snake, and
 password-zip CLI refactor task through the TUI command surface. The release
-scripts themselves live under root `tests/live/tui_release_*.mjs`.
+scripts themselves live under root `tests/release/tui_release_*.mjs`.
 Their summaries, logs, screenshots, and workspaces are written under
 `apps/tui/test-results/release/<profile>/tui/<case>/<run-id>/`.
 

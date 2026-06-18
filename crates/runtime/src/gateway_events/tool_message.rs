@@ -7,8 +7,10 @@ use crate::manas::tool_catalog::env_flag;
 use crate::profile_timings;
 use crate::prompt_style::{runtime_fallback, tool_progress};
 use crate::runtime::types::ToolCallData;
-use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeSessionSyncStatus};
-use crate::state_machine::session_management::SessionManagement;
+use crate::state_machine::runtime_management::{
+    RuntimeManagement, RuntimeSessionSyncStatus, UsageReport,
+};
+use crate::state_machine::session_management::{ContextTokenStats, SessionManagement};
 
 use super::agent_message::{gateway_callback_session_id, publish_gateway_agent_message};
 
@@ -162,7 +164,6 @@ pub(crate) fn publish_runtime_usage_record(
 ) {
     let target_session_id = gateway_callback_session_id(&session.session_id);
     let metadata = serde_json::json!({
-        "kind": "mano_runtime_usage",
         "runtime_id": runtime.runtime_id,
         "session_id": session.session_id,
         "target_session_id": target_session_id,
@@ -195,6 +196,8 @@ pub(crate) fn publish_runtime_usage_record(
         state,
         metadata,
         runtime_status: Some(runtime.session_sync_status()),
+        context_tokens: Some(session.context_tokens),
+        usage: runtime.usage.clone(),
         created_at: Some(created_at),
         updated_at: Some(updated_at),
     }) {
@@ -337,6 +340,8 @@ pub(crate) fn publish_tool_call_record(
         state,
         metadata,
         runtime_status: None,
+        context_tokens: Some(runtime.context_tokens),
+        usage: runtime.usage.clone(),
         created_at: None,
         updated_at: None,
     });
@@ -409,6 +414,8 @@ pub(crate) fn publish_tool_call_started(
         state,
         metadata,
         runtime_status: None,
+        context_tokens: Some(runtime.context_tokens),
+        usage: runtime.usage.clone(),
         created_at: None,
         updated_at: None,
     }) {
@@ -481,6 +488,8 @@ struct GatewayToolMessage<'a> {
     state: serde_json::Value,
     metadata: serde_json::Value,
     runtime_status: Option<RuntimeSessionSyncStatus>,
+    context_tokens: Option<ContextTokenStats>,
+    usage: Option<UsageReport>,
     created_at: Option<i64>,
     updated_at: Option<i64>,
 }
@@ -500,6 +509,8 @@ fn publish_gateway_tool_message(message: GatewayToolMessage<'_>) -> Result<(), S
         "media": [],
         "runtime_id": message.runtime_id,
         "runtime_status": message.runtime_status,
+        "context_tokens": message.context_tokens,
+        "usage": message.usage,
         "created_at": message.created_at,
         "updated_at": message.updated_at,
         "tool_call": {

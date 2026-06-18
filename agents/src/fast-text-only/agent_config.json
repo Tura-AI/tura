@@ -52,6 +52,10 @@
     },
     {
       "capability_directory": "crates/tools/src",
+      "capability_name": "generate_media"
+    },
+    {
+      "capability_directory": "crates/tools/src",
       "capability_name": "web_discover"
     },
     {

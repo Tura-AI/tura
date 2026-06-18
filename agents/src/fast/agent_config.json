@@ -51,7 +51,7 @@
     },
     {
       "capability_directory": "crates/tools/src",
-      "capability_name": "image_generate"
+      "capability_name": "generate_media"
     },
     {
       "capability_directory": "crates/tools/src",

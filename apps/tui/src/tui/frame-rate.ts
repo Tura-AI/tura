@@ -1,10 +1,9 @@
-// Spinner/blink animation advances at 6fps.
-export const TUI_ANIMATION_FPS = 6;
-export const TUI_ANIMATION_INTERVAL_MS = fpsToIntervalMs(TUI_ANIMATION_FPS);
-
 // Shared redraw cadence for event-driven draws and the busy heartbeat.
 export const TUI_DRAW_FPS = 60;
 export const TUI_DRAW_INTERVAL_MS = fpsToIntervalMs(TUI_DRAW_FPS);
+
+// Icon glyphs advance from the same global draw frame, but only every 10 frames.
+export const TUI_ICON_FRAME_STEP = 10;
 
 // Terminal resize is treated as a short frozen window: paint the entry snapshot
 // once, suppress stream/tick redraws while the terminal is still resizing, then

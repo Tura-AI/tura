@@ -158,12 +158,7 @@ async fn run_cache_case(
             )
         })?;
         if cache_ratio(metrics).is_some_and(|ratio| ratio >= min_ratio) {
-            return report_from_response(
-                case,
-                warm_cache_key,
-                probe_cache_key,
-                response,
-            );
+            return report_from_response(case, warm_cache_key, probe_cache_key, response);
         }
         last_response = Some(response);
         std::thread::sleep(std::time::Duration::from_millis(750));

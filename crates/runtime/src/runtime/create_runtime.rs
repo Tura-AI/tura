@@ -2,7 +2,7 @@ use crate::state_machine::agent_management::{AgentId, ProviderConfig};
 use crate::state_machine::runtime_management::{
     RuntimeId, RuntimeManagement, RuntimeProviderConfig,
 };
-use crate::state_machine::session_management::SessionId;
+use crate::state_machine::session_management::{ContextTokenStats, SessionId};
 use chrono::Utc;
 
 use super::call_runtime::route_by_name;
@@ -16,6 +16,7 @@ pub struct CreateRuntimeInput {
     pub provider_config: ProviderConfig,
     pub tura_settings: std::sync::Arc<tura_llm_rust::Settings>,
     pub thinking: bool,
+    pub context_tokens: ContextTokenStats,
 }
 
 pub async fn create_runtime(
@@ -30,13 +31,14 @@ pub async fn create_runtime(
         input.thinking,
     )?;
 
-    let runtime = RuntimeManagement::new(
+    let mut runtime = RuntimeManagement::new(
         runtime_id.clone(),
         input.session_id.clone(),
         input.agent_id.clone(),
         runtime_provider_config.clone(),
         now,
     );
+    runtime.context_tokens = input.context_tokens;
 
     let queue_item = RuntimeQueueItem {
         runtime_id,

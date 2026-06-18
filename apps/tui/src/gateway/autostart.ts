@@ -4,7 +4,8 @@ import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { TerminalCapabilities } from "../tui/capabilities.js";
-import { TUI_ANIMATION_INTERVAL_MS } from "../tui/frame-rate.js";
+import { TUI_DRAW_INTERVAL_MS } from "../tui/frame-rate.js";
+import { iconAnimationFrame } from "../tui/render/busy-animation.js";
 import { t } from "../i18n.js";
 
 // Tracks the gateway spawned by this TUI instance. Undefined when reusing an
@@ -244,7 +245,7 @@ async function waitForGateway(
         }
         if (await healthOk(gatewayUrl)) return;
         tick();
-        await delay(TUI_ANIMATION_INTERVAL_MS);
+        await delay(TUI_DRAW_INTERVAL_MS);
       }
       throw new Error(t("gatewayStartTimeout"));
     },
@@ -292,13 +293,14 @@ async function runWithSpinner(options: {
     : ["|", "/", "-", "\\", "-", "/"];
   const draw = () => {
     if (!process.stdout.isTTY) return;
-    const prefix = frames[frame % frames.length];
+    const iconFrame = iconAnimationFrame(frame);
+    const prefix = frames[iconFrame % frames.length];
     frame += 1;
     const line = `${prefix} ${options.text}`;
     process.stdout.write(options.capabilities.cursorControl ? `\r\x1b[2K${line}` : `${line}\n`);
   };
   draw();
-  const timer = setInterval(draw, TUI_ANIMATION_INTERVAL_MS);
+  const timer = setInterval(draw, TUI_DRAW_INTERVAL_MS);
   try {
     await options.run(draw);
     if (process.stdout.isTTY) {

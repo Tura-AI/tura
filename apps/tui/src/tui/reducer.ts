@@ -1,3 +1,4 @@
+import type { CommandUpdatedEventProperties } from "../types/event.js";
 import type { Message, MessagePart, Session } from "../types/session.js";
 import { normalizeEvent } from "../gateway/events.js";
 import { sameDirectory } from "../gateway/directory.js";
@@ -18,6 +19,7 @@ import {
 } from "./reducer/navigation.js";
 import {
   applyPartDelta,
+  applyCommandUpdate,
   clearLiveStreamsForMessageID,
   invalidateRefreshState,
   lastMessagePreview,
@@ -217,6 +219,32 @@ export function reducer(state: AppState, action: AppAction): AppState {
           properties?.field,
           properties?.delta,
           sessionID,
+        ),
+      };
+    }
+    if (action.event.payload?.type === "command.updated") {
+      const properties = action.event.payload.properties as
+        | CommandUpdatedEventProperties
+        | undefined;
+      const sessionID = normalized.sessionID;
+      if (!properties) return state;
+      if (state.session && sessionID !== state.session.id) return state;
+      const messages = applyCommandUpdate(state.messages, sessionID, properties);
+      return {
+        ...state,
+        status: "busy",
+        session: state.session ? { ...state.session, status: "busy" } : state.session,
+        sessions: sessionID
+          ? state.sessions.map((session) =>
+              session.id === sessionID ? { ...session, status: "busy" } : session,
+            )
+          : state.sessions,
+        messages,
+        refreshState: refreshStateAfterMessages(
+          state.refreshState,
+          sessionID,
+          messages,
+          state.session,
         ),
       };
     }

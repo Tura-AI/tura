@@ -7,6 +7,7 @@ import path from "node:path";
 import process from "node:process";
 import {
   assertNoDuplicatedFrameText,
+  assertNoMarkerBlink,
   assertSessionPickerCleared,
   delay,
   listen,
@@ -16,7 +17,9 @@ import {
   regexCount,
   scrollTerminalTo,
   seedTerminalScrollback,
+  startFramePresenceMonitor,
   startWebTerminal,
+  stopFramePresenceMonitor,
   submitTypedPrompt,
   terminalBufferText,
   terminalText,
@@ -702,6 +705,60 @@ async function main() {
       assert.ok(
         markerCount(round2Buffer, marker) <= 1,
         `${marker} should not duplicate in the terminal buffer after second-turn scrolling`,
+      );
+    }
+
+    // Phase 6: a focused frame-by-frame handoff check. Keep a live text message
+    // and a running command visible, then finalize both into cache while a
+    // requestAnimationFrame monitor samples every browser paint.
+    await scrollTerminalTo(page, "bottom");
+    gatewayEvent("session.status", { sessionID, status: "busy" });
+    const handoffMessageID = "msg-frame-handoff-text";
+    const handoffPartID = "part-frame-handoff-text";
+    const handoffText = "FRAME_HANDOFF_TEXT_MARKER stays visible during live-to-cache.\n";
+    const handoffCommand = {
+      id: "msg-frame-handoff-command",
+      cmd: "FRAME_HANDOFF_COMMAND_MARKER",
+      at: Date.now() + 2,
+    };
+    await streamShortChunks(handoffText, handoffMessageID, handoffPartID, "properties");
+    upsertCommand(handoffCommand, "running");
+    await page.waitForFunction(
+      () => {
+        const rows = [...document.querySelectorAll(".xterm-rows > div")]
+          .map((node) => node.textContent ?? "")
+          .join("\n");
+        return (
+          rows.includes("FRAME_HANDOFF_TEXT_MARKER") &&
+          rows.includes("FRAME_HANDOFF_COMMAND_MARKER")
+        );
+      },
+      null,
+      { timeout: 5_000 },
+    );
+    const handoffMarkers = ["FRAME_HANDOFF_TEXT_MARKER", "FRAME_HANDOFF_COMMAND_MARKER"];
+    await startFramePresenceMonitor(page, handoffMarkers);
+    upsertCommand(handoffCommand, "completed");
+    upsertMessage({
+      id: handoffMessageID,
+      sessionID,
+      role: "assistant",
+      parts: [{ id: handoffPartID, type: "text", text: handoffText.trimEnd() }],
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    });
+    session = { ...session, status: "idle", updated_at: Date.now() };
+    gatewayEvent("session.status", { sessionID, status: "idle" });
+    await waitForComposer(page);
+    await delay(250);
+    const handoffSamples = await stopFramePresenceMonitor(page);
+    assertNoMarkerBlink(handoffSamples, handoffMarkers, "frame handoff");
+    captures.push(await capture(page, "13-frame-handoff-final"));
+    const handoffBuffer = await terminalBufferText(page);
+    for (const marker of handoffMarkers) {
+      assert.ok(
+        markerCount(handoffBuffer, marker) <= 1,
+        `${marker} should not duplicate after frame-by-frame handoff`,
       );
     }
 

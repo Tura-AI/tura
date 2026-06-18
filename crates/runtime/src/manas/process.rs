@@ -1,6 +1,6 @@
 use crate::gateway_events::{
     publish_gateway_agent_message_from_runtime, publish_runtime_failure_message,
-    publish_runtime_usage_record,
+    publish_runtime_usage_record, runtime_message_id, runtime_text_part_id,
 };
 use crate::manas::prompt_messages::{
     push_no_tool_task_status_retry_message, push_task_status_nudge,
@@ -295,7 +295,8 @@ pub fn process_manas_internal(
             no_tool_retries = 0;
             let mut tool_results =
                 execute_tool_calls(&tool_calls, agents.first(), session, &runtime, redis_url)?;
-            apply_compact_context_results(session, &mut tool_results)?;
+            let compact_context_applied =
+                apply_compact_context_results(session, &mut tool_results)?;
             let terminal_task_status = tool_results
                 .iter()
                 .find_map(|result| command_run_result_terminal_task_status(&result.result));
@@ -331,7 +332,20 @@ pub fn process_manas_internal(
                         .and_then(|tool_call| tool_call.provider_metadata.clone()),
                 )?;
             }
+            if compact_context_applied {
+                append_compact_checkpoint_assistant_message(session, &runtime);
+            }
             persist_session_checkpoint(session, "tool_results");
+
+            if compact_context_applied {
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    runtime_id = %runtime.runtime_id,
+                    "compact_context applied; ending current turn after persisting tool results"
+                );
+                break;
+            }
 
             let context_output = build_context(ContextInput {
                 session: session.clone(),
@@ -571,6 +585,27 @@ fn visible_runtime_reply(runtime: &RuntimeManagement) -> Option<String> {
         })
         .map(|text| text.trim().to_string())
         .filter(|text| !text.is_empty())
+}
+
+fn append_compact_checkpoint_assistant_message(
+    session: &mut SessionManagement,
+    runtime: &RuntimeManagement,
+) {
+    let now = Utc::now();
+    session.push_log(
+        serde_json::json!({
+            "id": runtime_message_id(&runtime.runtime_id),
+            "role": "assistant",
+            "content": "Context checkpoint created; I can continue from the compacted handoff on the next turn.",
+            "part_id": runtime_text_part_id(&runtime.runtime_id),
+            "runtime_id": runtime.runtime_id,
+            "created_at": now.timestamp_millis(),
+            "updated_at": now.timestamp_millis(),
+            "timestamp": now.to_rfc3339(),
+        })
+        .to_string(),
+        now,
+    );
 }
 
 fn terminal_status_needs_final_response_turn(

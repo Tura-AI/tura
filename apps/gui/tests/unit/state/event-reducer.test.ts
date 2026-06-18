@@ -149,11 +149,22 @@ describe("applyGatewayEvent", () => {
         properties: {
           sessionID: "s1",
           status: { type: "busy" },
+          context_tokens: { input: 10_000, limit: 200_000 },
+          usage: {
+            context_tokens: { input: 12_000, limit: 200_000 },
+            tokens: { total_tokens: 123 },
+            cost: 0.045,
+            currency: "USD",
+          },
         },
       },
     });
 
     expect(state.sessions[0]?.status).toBe("busy");
+    expect(state.sessions[0]?.context_tokens?.input).toBe(12_000);
+    expect(state.sessions[0]?.usage?.tokens).toEqual({ total_tokens: 123 });
+    expect(state.sessions[0]?.usage?.cost).toBe(0.045);
+    expect(state.sessions[0]?.usage?.currency).toBe("USD");
   });
 
   test("keeps local fallback name when gateway event has no session name", () => {
@@ -317,5 +328,61 @@ describe("applyGatewayEvent", () => {
     expect(state.messagesBySession.s1).toHaveLength(1);
     expect(state.messagesBySession.s1[0]?.parts.map((part) => part.id)).toEqual(["tool", "final"]);
     expect(state.messagesBySession.s1[0]?.parts[1]?.text).toBe("done");
+  });
+
+  test("merges command updates by command id and ignores stale event seq", () => {
+    let state: AppState = initialAppState("http://127.0.0.1:4126");
+
+    const commandEvent = (status: string, eventSeq: number, result: unknown = null) =>
+      ({
+        payload: {
+          type: "command.updated",
+          properties: {
+            sessionID: "s1",
+            messageID: "runtime-command-id.message",
+            partID: "runtime-command-id.tool.command_run",
+            runtimeID: "runtime-command-id",
+            commandRunID: "runtime-command-id.tool.command_run",
+            commandID: "runtime-command-id.tool.command_run:call_1:0",
+            providerToolCallID: "call_1",
+            commandIndex: 0,
+            eventSeq,
+            status,
+            command: {
+              command_id: "runtime-command-id.tool.command_run:call_1:0",
+              command_type: "shell_command",
+              command_line: "npm test",
+            },
+            result,
+            updatedAt: eventSeq,
+          },
+        },
+      }) as const;
+
+    state = applyGatewayEvent(state, commandEvent("running", 30));
+    state = applyGatewayEvent(
+      state,
+      commandEvent("completed", 40, {
+        command_id: "runtime-command-id.tool.command_run:call_1:0",
+        command_type: "shell_command",
+        command_line: "npm test",
+        success: true,
+      }),
+    );
+    state = applyGatewayEvent(state, commandEvent("running", 30));
+
+    const part = state.messagesBySession.s1?.[0]?.parts.find((item) => item.tool === "command_run");
+    const commandState = part?.state as
+      | {
+          status?: string;
+          input?: { commands?: Array<{ command_id?: string }> };
+          streamed_command_run_result?: { results?: Array<{ success?: boolean }> };
+        }
+      | undefined;
+
+    expect(commandState?.status).toBe("completed");
+    expect(commandState?.input?.commands).toHaveLength(1);
+    expect(commandState?.streamed_command_run_result?.results).toHaveLength(1);
+    expect(commandState?.streamed_command_run_result?.results?.[0]?.success).toBe(true);
   });
 });

@@ -6,7 +6,10 @@ use tracing::warn;
 use crate::manas::constants::gateway_callbacks_disabled;
 use crate::manas::final_response::summarize_tool_results_for_user;
 use crate::manas::tool_catalog::env_flag;
-use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeSessionSyncStatus};
+use crate::state_machine::runtime_management::{
+    RuntimeManagement, RuntimeSessionSyncStatus, UsageReport,
+};
+use crate::state_machine::session_management::ContextTokenStats;
 
 pub(crate) fn publish_runtime_failure_message(
     session: &SessionManagement,
@@ -70,19 +73,25 @@ pub(crate) fn runtime_tool_part_id(runtime_id: &str, tool_name: &str) -> String 
 
 /// Publish one incremental assistant text delta to the gateway, which re-emits it
 /// as a `message.part.delta` so the frontend renders tokens as they arrive.
-pub(crate) async fn publish_streamed_agent_text(session_id: &str, runtime_id: &str, delta: &str) {
+pub(crate) async fn publish_streamed_agent_text(
+    session_id: &str,
+    runtime: &RuntimeManagement,
+    delta: &str,
+) {
     if gateway_callbacks_disabled() || delta.is_empty() {
         return;
     }
     let target_session_id = gateway_callback_session_id(session_id);
     let payload = serde_json::json!({
         "delta": delta,
-        "runtime_id": runtime_id,
+        "runtime_id": &runtime.runtime_id,
+        "context_tokens": runtime.context_tokens,
+        "usage": runtime.usage.clone(),
     });
     if !publish_gateway_callback_ipc("session.agent_stream", &target_session_id, payload) {
         warn!(
             session_id = %session_id,
-            runtime_id = %runtime_id,
+            runtime_id = %runtime.runtime_id,
             "dropping streamed agent text delta because gateway callback IPC is not enabled"
         );
     }
@@ -102,6 +111,8 @@ pub(crate) fn publish_gateway_agent_message(
         None,
         None,
         None,
+        None,
+        None,
     )
 }
 
@@ -118,6 +129,8 @@ pub(crate) fn publish_gateway_agent_message_from_runtime(
         reply_message,
         new_learning,
         Some(runtime.session_sync_status()),
+        Some(runtime.context_tokens),
+        runtime.usage.clone(),
         Some(created_at),
         Some(updated_at),
     )
@@ -129,6 +142,8 @@ fn publish_gateway_agent_message_with_sync(
     reply_message: String,
     new_learning: String,
     runtime_status: Option<RuntimeSessionSyncStatus>,
+    context_tokens: Option<ContextTokenStats>,
+    usage: Option<UsageReport>,
     created_at: Option<i64>,
     updated_at: Option<i64>,
 ) -> Result<(), String> {
@@ -143,6 +158,8 @@ fn publish_gateway_agent_message_with_sync(
         "media": [],
         "runtime_id": runtime_id,
         "runtime_status": runtime_status,
+        "context_tokens": context_tokens,
+        "usage": usage,
         "created_at": created_at,
         "updated_at": updated_at,
     });

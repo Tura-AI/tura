@@ -1,14 +1,24 @@
 import os
+import socket
 import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 from urllib.request import urlopen
 
 
 ROOT = Path(__file__).resolve().parents[5]
 GUI = ROOT / "apps" / "gui"
-GUI_URL = "http://127.0.0.1:5181"
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+GUI_URL = f"http://127.0.0.1:{free_port()}"
 
 LOCAL_E2E = [
     "workbench_smoke_e2e.py",
@@ -17,16 +27,16 @@ LOCAL_E2E = [
     "settings_full_flow_e2e.py",
     "plan_session_backend_e2e.py",
     "plan_panel_constraints_playwright_e2e.py",
-    "transcript_virtualization_playwright_e2e.py",
     "session_task_workspace_e2e.py",
-    "session_plan_e2e.py",
+    "plan_board_smoke_e2e.py",
+    "plan_navigation_smoke_e2e.py",
     "sub_session_tree_mock_e2e.py",
     "snake_playwright_frontend_interaction_e2e.py",
-    "frontend_playwright_gui_e2e.py",
 ]
 
 SHARED_GUI_E2E = {
-    "session_plan_e2e.py",
+    "plan_board_smoke_e2e.py",
+    "plan_navigation_smoke_e2e.py",
     "sub_session_tree_mock_e2e.py",
     "snake_playwright_frontend_interaction_e2e.py",
 }
@@ -36,7 +46,7 @@ def ready(url: str) -> bool:
     try:
         with urlopen(url, timeout=1) as response:
             body = response.read(2048).decode("utf-8", errors="ignore")
-            return 200 <= response.status < 500 and "<title>Tura</title>" in body
+            return 200 <= response.status < 500 and "<title>Tura</title>" in body and "/src/entry.tsx" in body
     except Exception:
         return False
 
@@ -49,6 +59,7 @@ def start_gui_server() -> subprocess.Popen | None:
     out = (out_dir / "gui-dev.log").open("w", encoding="utf-8")
     err = (out_dir / "gui-dev.err.log").open("w", encoding="utf-8")
     node = "node.exe" if sys.platform.startswith("win") else "node"
+    parsed = urlparse(GUI_URL)
     return subprocess.Popen(
         [
             node,
@@ -56,7 +67,7 @@ def start_gui_server() -> subprocess.Popen | None:
             "--host",
             "127.0.0.1",
             "--port",
-            "5181",
+            str(parsed.port or free_port()),
             "--strictPort",
         ],
         cwd=GUI / "app",
@@ -95,7 +106,7 @@ def stop_process_tree(process: subprocess.Popen | None) -> None:
 def main() -> int:
     failures: list[tuple[str, int]] = []
     for script in LOCAL_E2E:
-        path = GUI / "tests" / "e2e" / script
+        path = GUI / "tests" / "e2e" / "business" / script
         print(f"[gui:e2e] {script}", flush=True)
         env = os.environ.copy()
         gui_process: subprocess.Popen | None = None

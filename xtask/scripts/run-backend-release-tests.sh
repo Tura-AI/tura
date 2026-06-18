@@ -19,9 +19,9 @@ while [ "$#" -gt 0 ]; do
 Usage:
   xtask/scripts/run-backend-release-tests.sh [--list] [--timeout-seconds N]
 
-Scans backend-owned tests/release/*.mjs release binary tests only. App-owned
-TUI/GUI release scripts live under their app e2e directories and are run by
-the app package commands.
+Scans backend-owned tests/release/*.mjs release binary tests only. TUI/GUI
+release scripts also live in tests/release, but this backend runner skips
+tui_* and gui_* entrypoints; run those directly or through the app aliases.
 EOF
       exit 0
       ;;

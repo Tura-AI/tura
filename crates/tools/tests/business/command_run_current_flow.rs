@@ -6,8 +6,8 @@ mod helpers;
 mod apply_patch_streaming_locks;
 #[path = "command_run_current/command_shapes.rs"]
 mod command_shapes;
-#[path = "command_run_current/image_generate.rs"]
-mod image_generate;
+#[path = "command_run_current/generate_media.rs"]
+mod generate_media;
 #[path = "command_run_current/read_media.rs"]
 mod read_media;
 #[path = "command_run_current/task_status_planning.rs"]

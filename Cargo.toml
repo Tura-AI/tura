@@ -10,7 +10,7 @@ publish = false
 resolver = "2"
 default-members = [
   ".",
-  "commands/image_generate",
+  "commands/generate_media",
   "agents",
   "commands/read_media",
   "commands/web_discover",
@@ -27,7 +27,7 @@ members = [
   ".",
   "agents",
   "apps/tauri/src-tauri",
-  "commands/image_generate",
+  "commands/generate_media",
   "commands/read_media",
   "commands/web_discover",
   "crates/gateway",

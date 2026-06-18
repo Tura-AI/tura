@@ -1,3 +1,4 @@
+import type { CommandUpdatedEventProperties } from "../../types/event.js";
 import type { Message, MessagePart, Session } from "../../types/session.js";
 import {
   isInternalTaskStatusPart,
@@ -258,6 +259,173 @@ export function upsertPartIgnoringLive(
   part: MessagePart,
 ): { messages: Message[]; liveStreams: Record<string, LiveStream> } {
   return { messages: upsertPart(messages, part, sessionID), liveStreams: streams };
+}
+
+export function applyCommandUpdate(
+  messages: Message[],
+  sessionID: string | undefined,
+  update: CommandUpdatedEventProperties,
+): Message[] {
+  const now = update.updatedAt ?? Date.now();
+  const commandPart = commandPartFromUpdate(update);
+  let foundMessage = false;
+  const next = messages.map((message) => {
+    if (message.id !== update.messageID) return message;
+    foundMessage = true;
+    let foundPart = false;
+    const parts = message.parts.map((part) => {
+      if (part.id !== update.partID) return part;
+      foundPart = true;
+      return mergeCommandPart(part, update);
+    });
+    return {
+      ...message,
+      parts: orderMessagePartsForDisplay(foundPart ? parts : [...parts, commandPart]),
+      updated_at: Math.max(message.updated_at ?? now, now),
+      time: { created: message.time?.created ?? message.created_at ?? now, updated: now },
+    };
+  });
+  if (!foundMessage) {
+    next.push({
+      id: update.messageID,
+      sessionID,
+      role: "assistant",
+      parts: orderMessagePartsForDisplay([commandPart]),
+      created_at: now,
+      updated_at: now,
+      time: { created: now, updated: now },
+    });
+  }
+  return sortMessages(next);
+}
+
+function commandPartFromUpdate(update: CommandUpdatedEventProperties): MessagePart {
+  return mergeCommandPart(
+    {
+      id: update.partID,
+      sessionID: update.sessionID,
+      messageID: update.messageID,
+      type: "tool",
+      tool: "command_run",
+      callID: update.commandRunID,
+      state: {
+        status: "running",
+        input: { commands: [] },
+        streamed_command_run_result: { results: [] },
+      },
+    },
+    update,
+  );
+}
+
+function mergeCommandPart(part: MessagePart, update: CommandUpdatedEventProperties): MessagePart {
+  const state = recordValue(part.state);
+  const input = recordValue(state.input);
+  const stream = recordValue(state.streamed_command_run_result);
+  const commands = upsertCommandRecord(arrayValue(input.commands), update.command, update);
+  const results = update.result
+    ? upsertCommandRecord(arrayValue(stream.results), update.result, update)
+    : arrayValue(stream.results);
+  const nextState = {
+    ...state,
+    status: commandRunStatus(commands, results, update.status),
+    eventSeq: Math.max(numberValue(state.eventSeq) ?? 0, update.eventSeq ?? 0),
+    input: {
+      ...input,
+      commands,
+    },
+    streamed_command_run_result: {
+      ...stream,
+      results,
+    },
+  };
+  return {
+    ...part,
+    id: update.partID,
+    sessionID: update.sessionID,
+    messageID: update.messageID,
+    type: "tool",
+    tool: "command_run",
+    callID: part.callID ?? update.commandRunID,
+    state: nextState,
+  };
+}
+
+function upsertCommandRecord(
+  current: unknown[],
+  incoming: unknown,
+  update: CommandUpdatedEventProperties,
+): unknown[] {
+  if (!incoming || (typeof incoming === "object" && Object.keys(incoming).length === 0)) {
+    return current;
+  }
+  const incomingRecord = {
+    ...recordValue(incoming),
+    command_id: update.commandID,
+    command_run_id: update.commandRunID,
+    provider_tool_call_id: update.providerToolCallID ?? undefined,
+    command_index: update.commandIndex ?? undefined,
+    event_seq: update.eventSeq ?? undefined,
+    status: update.status,
+  };
+  const existingIndex = current.findIndex((item) => commandRecordID(item) === update.commandID);
+  if (existingIndex < 0) return sortCommandRecords([...current, incomingRecord]);
+  const existing = recordValue(current[existingIndex]);
+  if ((numberValue(existing.event_seq) ?? -1) > (update.eventSeq ?? -1)) return current;
+  const next = [...current];
+  next[existingIndex] = { ...existing, ...incomingRecord };
+  return sortCommandRecords(next);
+}
+
+function commandRunStatus(commands: unknown[], results: unknown[], fallback: string): string {
+  const resultRecords = results.map(recordValue);
+  if (resultRecords.some((result) => result.success === false || result.status === "failed")) {
+    return "failed";
+  }
+  if (
+    commands.length > 0 &&
+    resultRecords.length >= commands.length &&
+    resultRecords.every((result) => result.success === true || result.status === "completed")
+  ) {
+    return "completed";
+  }
+  return fallback === "ready" ? "running" : fallback;
+}
+
+function commandRecordID(value: unknown): string | undefined {
+  const record = recordValue(value);
+  return stringValue(record.command_id) ?? stringValue(record.commandID);
+}
+
+function sortCommandRecords(values: unknown[]): unknown[] {
+  return [...values].sort((left, right) => {
+    const leftRecord = recordValue(left);
+    const rightRecord = recordValue(right);
+    return (
+      (numberValue(leftRecord.command_index) ?? Number.MAX_SAFE_INTEGER) -
+        (numberValue(rightRecord.command_index) ?? Number.MAX_SAFE_INTEGER) ||
+      (numberValue(leftRecord.step) ?? Number.MAX_SAFE_INTEGER) -
+        (numberValue(rightRecord.step) ?? Number.MAX_SAFE_INTEGER)
+    );
+  });
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 export function applyPartDelta(

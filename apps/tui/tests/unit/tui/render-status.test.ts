@@ -274,6 +274,7 @@ test("session status event updates bottom meta context without rehydrating", () 
   });
 
   assert.match(stripAnsi(render(updated, richCapabilities())), /context 90k\/200k ██▓░░░/u);
+  assert.match(stripAnsi(render(updated, richCapabilities())), /tokens 123 \/ \$0\.04/u);
   assert.equal(updated.session?.context_tokens?.input, 90_000);
   assert.equal(updated.sessions[0]?.context_tokens?.input, 90_000);
   assert.equal(updated.session?.usage?.cost, 0.045);
