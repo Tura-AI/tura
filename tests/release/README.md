@@ -8,13 +8,13 @@ The release runner discovers tests only by scanning files directly under
 `tests/release`:
 
 ```powershell
-.\scripts\run-backend-release-tests.ps1 -List
-.\scripts\run-backend-release-tests.ps1 -TimeoutSeconds 600
+.\xtask\scripts\run-backend-release-tests.ps1 -List
+.\xtask\scripts\run-backend-release-tests.ps1 -TimeoutSeconds 600
 ```
 
 ```bash
-./scripts/run-backend-release-tests.sh --list
-./scripts/run-backend-release-tests.sh --timeout-seconds 600
+./xtask/scripts/run-backend-release-tests.sh --list
+./xtask/scripts/run-backend-release-tests.sh --timeout-seconds 600
 ```
 
 Release-entry scripts run after `scripts/build-release.*` and
@@ -27,7 +27,7 @@ The kept entry points cover each release surface:
 
 | Profile | Surface | Entry point |
 | --- | --- | --- |
-| `target/release` | CLI | `.\scripts\run-backend-release-tests.ps1` / `./scripts/run-backend-release-tests.sh` |
+| `target/release` | CLI | `.\xtask\scripts\run-backend-release-tests.ps1` / `./xtask/scripts/run-backend-release-tests.sh` |
 | `target/release` | TUI | `npm --prefix apps/tui run test:live:release` |
 | `target/release` | GUI | `bun run --cwd apps/gui e2e:live:release` |
 

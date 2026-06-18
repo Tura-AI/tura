@@ -117,7 +117,7 @@ fn contact_sheet_previews(items: &[SheetItem]) -> Result<Vec<Value>, String> {
     let mut sheets = Vec::new();
     for chunk in items.chunks(12) {
         let sheet = render_contact_sheet(chunk)?;
-        let encoded = encode_preview_jpeg(sheet, 1024, 76)?;
+        let encoded = encode_preview_jpeg(sheet, scaled_side(1024, 3, 2), 76)?;
         sheets.push(json!({
             "type": "image_url",
             "label": "contact_sheet",
@@ -135,8 +135,8 @@ fn contact_sheet_previews(items: &[SheetItem]) -> Result<Vec<Value>, String> {
 
 fn render_contact_sheet(items: &[SheetItem]) -> Result<DynamicImage, String> {
     let cols = if items.len() <= 4 { 2 } else { 4 };
-    let tile_w = 240u32;
-    let tile_h = 190u32;
+    let tile_w = scaled_side(240, 3, 2);
+    let tile_h = scaled_side(190, 3, 2);
     let rows = items.len().div_ceil(cols);
     let mut sheet = RgbImage::from_pixel(
         tile_w * cols as u32,
@@ -145,24 +145,28 @@ fn render_contact_sheet(items: &[SheetItem]) -> Result<DynamicImage, String> {
     );
     for (index, item) in items.iter().enumerate() {
         let image = image_from_data_url(&item.data_url)?;
-        let thumb = resize_dynamic_image(image, 150);
+        let thumb = resize_dynamic_image(image, scaled_side(150, 3, 2));
         let x = (index % cols) as u32 * tile_w;
         let y = (index / cols) as u32 * tile_h;
         paste_rgb(
             &mut sheet,
             &thumb.to_rgb8(),
             x + (tile_w - thumb.width()) / 2,
-            y + 8,
+            y + scaled_side(8, 3, 2),
         );
         draw_text(
             &mut sheet,
-            x + 8,
-            y + 164,
+            x + scaled_side(8, 3, 2),
+            y + scaled_side(164, 3, 2),
             &item.label.to_ascii_uppercase(),
             Rgb([0, 0, 0]),
         );
     }
     Ok(DynamicImage::ImageRgb8(sheet))
+}
+
+fn scaled_side(value: u32, numerator: u32, denominator: u32) -> u32 {
+    value.saturating_mul(numerator).div_ceil(denominator)
 }
 
 fn preview_data_url(value: &Value) -> Option<&str> {
@@ -399,10 +403,16 @@ mod tests {
         assert_eq!(output["visual_preview_count"], 1);
         assert_eq!(output["visual_previews"][0]["contact_sheet"], true);
         assert_eq!(output["visual_previews"][0]["item_count"], 2);
-        assert!(output["visual_previews"][0]["image_url"]["url"]
+        let sheet_url = output["visual_previews"][0]["image_url"]["url"]
             .as_str()
-            .unwrap_or_default()
-            .starts_with("data:image/jpeg;base64,"));
+            .unwrap_or_default();
+        assert!(sheet_url.starts_with("data:image/jpeg;base64,"));
+        let (_, encoded) = sheet_url.split_once(',').expect("data URL separator");
+        let bytes = general_purpose::STANDARD
+            .decode(encoded)
+            .expect("decode sheet jpeg");
+        let sheet = image::load_from_memory(&bytes).expect("decode sheet image");
+        assert_eq!(sheet.dimensions(), (720, 285));
         assert_eq!(
             output["media_results"][0]["visual_previews_compacted_into"],
             "top_level_contact_sheet"

@@ -2,7 +2,7 @@
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 CRATE=""
 LIST=0
 TIMEOUT_SECONDS=240
@@ -23,7 +23,7 @@ while [ "$#" -gt 0 ]; do
     -h|--help)
       cat <<'EOF'
 Usage:
-  scripts/run-backend-os-tests.sh [--crate PACKAGE] [--list] [--timeout-seconds N]
+  xtask/scripts/run-backend-os-tests.sh [--crate PACKAGE] [--list] [--timeout-seconds N]
 
 Scans root tests/os_testing/*.rs and backend package tests/os_testing/*.rs.
 OS, daemon, process, service-owner, and lifecycle tests run serially.

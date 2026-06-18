@@ -35,13 +35,13 @@ outputs, command exit/result shape, protocol fields, files, or explicit parser
 contracts.
 
 ```powershell
-.\scripts\run-backend-business-tests.ps1 -List
-.\scripts\run-backend-business-tests.ps1 -Crate tools
+.\xtask\scripts\run-backend-business-tests.ps1 -List
+.\xtask\scripts\run-backend-business-tests.ps1 -Crate tools
 ```
 
 ```bash
-sh scripts/run-backend-business-tests.sh --list
-sh scripts/run-backend-business-tests.sh --crate tools
+sh xtask/scripts/run-backend-business-tests.sh --list
+sh xtask/scripts/run-backend-business-tests.sh --crate tools
 ```
 
 Manual backend business script outputs default to:

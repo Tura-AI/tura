@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 # CI smell gate only: layout, formatting, dependency policy, spelling, and TUI
-# formatting. Rust crate clippy/tests run in scripts/run-ci-crate-tests.*.
+# formatting. Rust crate clippy/tests run in xtask/scripts/run-ci-crate-tests.*.
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir ".."))

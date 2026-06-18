@@ -1,6 +1,8 @@
 Use `web_discover` to find public website text or public image/video/audio artifacts.
-Use `website`, to find reliable source website that hosts media url and use `image`, `video`, or `audio` to download the media， and use `read_media` to review.
-NEVER put two search gol in one command line always use multiple command_lines in a batch.
+Use `website`, to find reliable source website, read the media file, that hosts media url and use `image`, `video`, or `audio` to download the media， and use `read_media` to review.
+Use `image` search only when you can't find a reliable source. 
+You should read all the downloaded files.
+NEVER put multiple search goals in one command_line always use multiple command lines in a batch.
 
 Input is CLI text:
 
@@ -9,7 +11,7 @@ website "OpenAPI docs" --max-results 3
 website "https://example.com/page" --download-dir docs
 image "https://example.com/a.jpg https://example.com/b.webp" --download-dir media/images
 website "official API docs" --max-results 3 --download-dir docs
-image "portrait official" --max-results 3 --download-dir media/image --min-size 10000
+image "portrait official" --max-results 10 --download-dir media/image --min-size 10000
 video "performance clip" --max-results 1 --download-dir media/video --format "best[height<=540][ext=mp4]/best[height<=540]/best"
 audio "public domain bell sound" --max-results 1 --download-dir media/audio --format "bestaudio/best"
 ```

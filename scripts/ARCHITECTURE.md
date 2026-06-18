@@ -28,16 +28,19 @@ Important scripts:
 - `check-backend-quality.*`: CI smell gate. It runs backend Rust test-layout
   policy, Rust formatting, TUI formatting, Rust dependency policy, and spelling.
   It intentionally does not run `cargo test --workspace`; crate tests are owned
-  by `run-ci-crate-tests.*`.
-- `run-ci-crate-tests.*`: GitHub-style crate matrix runner. It discovers
-  default backend workspace packages, excludes `src-tauri`, and runs clippy plus
-  `cargo test -p <crate>` for each crate. Local runs can batch crates in
-  parallel.
+  by `xtask/scripts/run-ci-crate-tests.*`.
 - `run-ci.*`: local CI orchestrator. It runs `check-backend-quality.*` first,
   then monitors crate tests, backend business tests, and TUI business tests in
   parallel.
 - `run-release-dry-run.*`: release dry-run orchestrator. It runs install, the CI
   flow, and release artifact build without publishing.
+
+Xtask test collection scripts:
+
+- `xtask/scripts/run-ci-crate-tests.*`: GitHub-style crate matrix runner. It
+  discovers default backend workspace packages, excludes `src-tauri`, and runs
+  clippy plus `cargo test -p <crate>` for each crate. Local runs can batch
+  crates in parallel.
 - Typed Rust test directories are peers: `tests/business`, `tests/os_testing`,
   `tests/performance`, `tests/live`, `tests/release`, and `tests/benchmark`.
   Business and OS testing may use `helpers/` plus target-owned module
@@ -48,28 +51,28 @@ Important scripts:
 - Typed test runners discover cases by scanning the matching directory type.
   Do not add one-off hardcoded script paths when a directory scan can find the
   case.
-- `run-backend-business-tests.*`: run root Rust business tests plus
+- `xtask/scripts/run-backend-business-tests.*`: run root Rust business tests plus
   crate-owned Rust tests from `crates/*/tests/business`, `commands/*/tests/business`,
   `agents/*/tests/business`, and `personas/*/tests/business` using one-level
   typed-directory scans. Business targets run in parallel batches; process,
   daemon, service-owner, lifecycle, and OS policy coverage belongs to
-  `run-backend-os-tests.*`. These backend runners do not execute `.mjs` app,
-  TUI, or GUI scripts; run app suites from `apps/tui` or `apps/gui`.
-- `run-backend-os-tests.*`: run root and crate-owned Rust tests from
+  `xtask/scripts/run-backend-os-tests.*`. These backend runners do not execute
+  `.mjs` app, TUI, or GUI scripts; run app suites from `apps/tui` or `apps/gui`.
+- `xtask/scripts/run-backend-os-tests.*`: run root and crate-owned Rust tests from
   `tests/os_testing` with the `os-tests` feature gate. Every target runs
   serially with `--test-threads=1` to avoid process-global env, local socket,
   owner-lock, daemon, and child-process cleanup conflicts.
-- `run-backend-live-tests.*`: run opt-in root/backend Rust live tests and
+- `xtask/scripts/run-backend-live-tests.*`: run opt-in root/backend Rust live tests and
   backend-owned root live scripts using one-level typed-directory scans and the
   `live-tests` feature gate when the package declares it. These backend
   runners do not execute app-owned TUI/GUI scripts; run those from the app
   package commands.
-- `run-backend-release-tests.*`: run opt-in release-binary tests discovered only
-  from root `tests/release/*.mjs`, separated from business/live runners so
-  ordinary test runs do not touch release daemons.
-- `run-backend-performance-tests.*`: runner for crate-owned Rust performance
-  tests from `crates/*/tests/performance`; each target is killed if it exceeds
-  the configured timeout.
+- `xtask/scripts/run-backend-release-tests.*`: run opt-in release-binary tests
+  discovered only from root `tests/release/*.mjs`, separated from business/live
+  runners so ordinary test runs do not touch release daemons.
+- `xtask/scripts/run-backend-performance-tests.*`: runner for crate-owned Rust
+  performance tests from `crates/*/tests/performance`; each target is killed if
+  it exceeds the configured timeout.
 
 Script tests:
 

@@ -163,8 +163,8 @@ scoring and comparison suites.
 Backend business, OS, and performance runners discover tests by package and
 directory type; do not add empty type directories, and do not hard-code
 individual test script paths when a one-level directory scan can select the
-suite. Run backend business coverage through `scripts/run-backend-business-tests`
-for parallel business batches, then run `scripts/run-backend-os-tests` for
+suite. Run backend business coverage through `xtask/scripts/run-backend-business-tests`
+for parallel business batches, then run `xtask/scripts/run-backend-os-tests` for
 serial process/OS coverage. The GitHub CI workflow does not use a single
 workspace cargo test as its main check; it runs per-crate clippy/tests through
 the crate matrix plus typed business runners.
@@ -173,14 +173,14 @@ Run the release binary suite after `build-release` and registration:
 
 ```powershell
 .\scripts\build-release.ps1; .\scripts\register-cli.ps1
-.\scripts\run-backend-release-tests.ps1
+.\xtask\scripts\run-backend-release-tests.ps1
 npm --prefix apps\tui run test:live:release
 bun run --cwd apps\gui e2e:live:release
 ```
 
 ```bash
 ./scripts/build-release.sh; scripts/register-cli.sh
-sh scripts/run-backend-release-tests.sh
+sh xtask/scripts/run-backend-release-tests.sh
 npm --prefix apps/tui run test:live:release
 bun run --cwd apps/gui e2e:live:release
 ```

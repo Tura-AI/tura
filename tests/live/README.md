@@ -44,13 +44,13 @@ bun run --cwd apps/gui e2e:live:release
 Backend crate live tests are selected by directory scan:
 
 ```powershell
-.\scripts\run-backend-live-tests.ps1 -List
-.\scripts\run-backend-live-tests.ps1 -Crate provider -TimeoutSeconds 300
+.\xtask\scripts\run-backend-live-tests.ps1 -List
+.\xtask\scripts\run-backend-live-tests.ps1 -Crate provider -TimeoutSeconds 300
 ```
 
 ```bash
-sh scripts/run-backend-live-tests.sh --list
-sh scripts/run-backend-live-tests.sh --crate provider --timeout-seconds 300
+sh xtask/scripts/run-backend-live-tests.sh --list
+sh xtask/scripts/run-backend-live-tests.sh --crate provider --timeout-seconds 300
 ```
 
 Crate-owned live Rust tests keep their runnable entrypoints directly under

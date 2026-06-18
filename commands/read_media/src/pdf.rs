@@ -41,13 +41,13 @@ pub(super) fn process_pdf(
             let rendered = page
                 .render_with_config(
                     &PdfRenderConfig::new()
-                        .set_target_width(args.max_side as i32)
+                        .set_target_width(scaled_side(args.max_side, 2, 1) as i32)
                         .render_form_data(true),
                 )
                 .map_err(|err| format!("failed to render pdf page: {err}"))?;
             let bitmap = rendered.as_image();
             let image = DynamicImage::ImageRgb8(bitmap.to_rgb8());
-            let encoded = encode_preview_jpeg(image, args.max_side, 80)?;
+            let encoded = encode_preview_jpeg(image, scaled_side(args.max_side, 2, 1), 80)?;
             previews.push(json!({
                 "type": "image_url",
                 "label": format!("P{}", page_index + 1),
@@ -61,6 +61,10 @@ pub(super) fn process_pdf(
         }
     }
     Ok((truncate_chars(&text, args.max_text_chars), previews))
+}
+
+fn scaled_side(value: u32, numerator: u32, denominator: u32) -> u32 {
+    value.saturating_mul(numerator).div_ceil(denominator)
 }
 
 fn fallback_pdf_text(path: &Path, args: &ReadMediaArgs) -> Result<String, String> {

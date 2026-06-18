@@ -126,4 +126,44 @@ mod tests {
 
         assert_eq!(paths, vec!["first.txt", "second.txt", "third.txt"]);
     }
+
+    #[test]
+    fn run_read_media_reads_directory_text_documents_in_compact_mode() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let docs = dir.path().join("docs");
+        std::fs::create_dir_all(&docs).expect("create docs");
+        std::fs::write(
+            docs.join("long.md"),
+            format!("long-start\n{}\nlong-end", "A".repeat(1_500)),
+        )
+        .expect("write long markdown");
+        std::fs::write(docs.join("short.md"), "short document body").expect("write short markdown");
+
+        let output = run_read_media(
+            parse_args_text("docs --max-files 2 --max-text-chars 1000"),
+            dir.path(),
+        )
+        .expect("read_media should read directory documents");
+        let results = output["media_results"].as_array().expect("media results");
+
+        assert_eq!(results.len(), 2);
+        let long = results
+            .iter()
+            .find(|item| item["path"] == "docs\\long.md" || item["path"] == "docs/long.md")
+            .expect("long markdown result");
+        let short = results
+            .iter()
+            .find(|item| item["path"] == "docs\\short.md" || item["path"] == "docs/short.md")
+            .expect("short markdown result");
+
+        assert_eq!(long["media_type"], "document");
+        assert!(long["extracted_text"]
+            .as_str()
+            .is_some_and(|text| text.contains("long-start")
+                && text.contains("long-end")
+                && text.contains("[read_media text truncated]")));
+        assert_eq!(short["extracted_text"], "short document body");
+        assert_eq!(long["file_attachment_count"], 0);
+        assert_eq!(short["file_attachment_count"], 0);
+    }
 }

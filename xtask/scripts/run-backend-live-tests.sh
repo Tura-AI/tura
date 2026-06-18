@@ -2,7 +2,7 @@
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 CRATE=""
 LIST=0
 TIMEOUT_SECONDS=300
@@ -23,7 +23,7 @@ while [ "$#" -gt 0 ]; do
     -h|--help)
       cat <<'EOF'
 Usage:
-  scripts/run-backend-live-tests.sh [--crate PACKAGE] [--list] [--timeout-seconds N]
+  xtask/scripts/run-backend-live-tests.sh [--crate PACKAGE] [--list] [--timeout-seconds N]
 
 Scans root tests/live/*.rs, backend package tests/live/*.rs, and backend-owned
 root tests/live/*.mjs files and runs opt-in live tests.

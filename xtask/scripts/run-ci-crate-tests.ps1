@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir ".."))
+$RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "..\.."))
 $LogRoot = Join-Path $RepoRoot "target\test-logs\ci-crates"
 
 $ClippyLints = @(

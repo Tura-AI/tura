@@ -88,6 +88,8 @@ inside session-log records except as normalized runtime/session events.
 
   target/
   tests/
+  xtask/
+    scripts/
 ```
 
 ## Crate Names And Runnable Packages

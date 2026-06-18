@@ -84,8 +84,8 @@ fi
 failures=$(mktemp)
 trap 'rm -f "$failures"' EXIT INT TERM
 
-run_job crates "$((CRATE_TIMEOUT_SECONDS * 2))" sh scripts/run-ci-crate-tests.sh --jobs "$JOBS" --timeout-seconds "$CRATE_TIMEOUT_SECONDS" &
-run_job backend-business "$((BUSINESS_TIMEOUT_SECONDS * 2))" sh scripts/run-backend-business-tests.sh --jobs "$JOBS" --timeout-seconds "$BUSINESS_TIMEOUT_SECONDS" &
+run_job crates "$((CRATE_TIMEOUT_SECONDS * 2))" sh xtask/scripts/run-ci-crate-tests.sh --jobs "$JOBS" --timeout-seconds "$CRATE_TIMEOUT_SECONDS" &
+run_job backend-business "$((BUSINESS_TIMEOUT_SECONDS * 2))" sh xtask/scripts/run-backend-business-tests.sh --jobs "$JOBS" --timeout-seconds "$BUSINESS_TIMEOUT_SECONDS" &
 run_job tui-local "$TUI_TIMEOUT_SECONDS" npm --prefix apps/tui run test:ci &
 wait
 

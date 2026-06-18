@@ -2,7 +2,7 @@
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 CRATE=""
 LIST=0
 TIMEOUT_SECONDS=180
@@ -29,7 +29,7 @@ while [ "$#" -gt 0 ]; do
     -h|--help)
       cat <<'EOF'
 Usage:
-  scripts/run-backend-business-tests.sh [--crate PACKAGE] [--list] [--timeout-seconds N] [--jobs N]
+  xtask/scripts/run-backend-business-tests.sh [--crate PACKAGE] [--list] [--timeout-seconds N] [--jobs N]
 
 Scans root tests/business/*.rs and backend package tests/business/*.rs.
 Business tests run in parallel batches. Process, daemon, lifecycle, and OS

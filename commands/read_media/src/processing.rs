@@ -67,7 +67,14 @@ fn process_media_thumbnail(path: &Path, args: &ReadMediaArgs) -> Result<MediaCon
         "video" => {
             process_video_thumbnail(path, args).unwrap_or_else(|_| file_tile_preview(path, args))
         }
-        _ => file_tile_preview(path, args),
+        _ => {
+            let mut content = process_document(path, args)?;
+            content.file_attachments.clear();
+            if content.visual_previews.is_empty() {
+                content.visual_previews = file_tile_preview(path, args);
+            }
+            return Ok(content);
+        }
     };
     Ok(MediaContent {
         text: String::new(),
@@ -91,17 +98,21 @@ fn process_pdf_thumbnail(path: &Path, args: &ReadMediaArgs) -> Result<Vec<Value>
     let rendered = page
         .render_with_config(
             &PdfRenderConfig::new()
-                .set_target_width(args.max_side as i32)
+                .set_target_width(scaled_side(args.max_side, 2, 1) as i32)
                 .render_form_data(true),
         )
         .map_err(|err| format!("failed to render pdf page: {err}"))?;
     let image = DynamicImage::ImageRgb8(rendered.as_image().to_rgb8());
-    let encoded = encode_preview_jpeg(image, args.max_side, 80)?;
+    let encoded = encode_preview_jpeg(image, scaled_side(args.max_side, 2, 1), 80)?;
     Ok(vec![json!({
         "type": "image_url",
         "label": "P1",
         "image_url": { "url": format!("data:image/jpeg;base64,{}", encoded) }
     })])
+}
+
+fn scaled_side(value: u32, numerator: u32, denominator: u32) -> u32 {
+    value.saturating_mul(numerator).div_ceil(denominator)
 }
 
 fn process_video_thumbnail(path: &Path, args: &ReadMediaArgs) -> Result<Vec<Value>, String> {

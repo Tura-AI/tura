@@ -376,7 +376,7 @@ test("reducer commits final live stream on the ending message event", () => {
   assert.equal(displayMessages(state)[0].parts[0].id, "part-sessionless-stream");
 });
 
-test("reducer commits the last live command shape instead of the cache confirmation shape", () => {
+test("reducer replaces live command snapshots instead of appending command parts", () => {
   let state = reducer(initialState("C:/repo"), {
     type: "hydrate",
     session: { ...session, status: "busy" },
@@ -430,6 +430,18 @@ test("reducer commits the last live command shape instead of the cache confirmat
     });
   }
 
+  let assistant = displayMessages(state).find(
+    (message) => message.id === "runtime-live-order.message",
+  );
+  let commands = (assistant?.parts ?? [])
+    .filter((part) => part.tool === "command_run")
+    .map((part) =>
+      (part.state as { input?: { commands?: Array<{ command_line?: string }> } }).input?.commands?.[0]
+        ?.command_line,
+    );
+
+  assert.deepEqual(commands, ["second-live-command"]);
+
   state = reducer(state, {
     type: "messages-incremental",
     sessionID: "sess-1",
@@ -479,8 +491,8 @@ test("reducer commits the last live command shape instead of the cache confirmat
     ],
   });
 
-  const assistant = displayMessages(state)[0];
-  const commands = assistant.parts
+  assistant = displayMessages(state)[0];
+  commands = assistant.parts
     .filter((part) => part.tool === "command_run")
     .map((part) =>
       (part.state as { input?: { commands?: Array<{ command_line?: string }> } }).input?.commands?.[0]
@@ -488,7 +500,7 @@ test("reducer commits the last live command shape instead of the cache confirmat
     );
 
   assert.equal(Object.values(state.liveStreams).length, 0);
-  assert.deepEqual(commands, ["first-live-command", "second-live-command"]);
+  assert.deepEqual(commands, ["second-live-command"]);
 });
 
 test("reducer commits a finished live stream and renders the next runtime event immediately", () => {

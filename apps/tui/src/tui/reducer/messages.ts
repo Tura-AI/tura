@@ -223,12 +223,15 @@ export function upsertPart(
     if (message.id !== messageID) return message;
     found = true;
     const hasPart = message.parts.some((item) => item.id === part.id);
+    const baseParts = commandRunSnapshotPart(part)
+      ? message.parts.filter((item) => !commandRunSnapshotPart(item) || item.id === part.id)
+      : message.parts;
     return {
       ...message,
       parts: orderMessagePartsForDisplay(
         hasPart
-          ? message.parts.map((item) => (item.id === part.id ? part : item))
-          : [...message.parts, part],
+          ? baseParts.map((item) => (item.id === part.id ? part : item))
+          : [...baseParts, part],
       ),
       updated_at: Date.now(),
     };
@@ -457,6 +460,10 @@ function partMatchesLiveStreamText(
 
 function partIsText(part: MessagePart): boolean {
   return part.type === "text" || part.type === "message" || !part.type;
+}
+
+function commandRunSnapshotPart(part: MessagePart): boolean {
+  return part.tool === "command_run";
 }
 
 function messageMatchesLiveStream(

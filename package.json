@@ -85,7 +85,7 @@
     "install:deps": "node ./scripts/npm/run-install.mjs",
     "build:release": "node ./scripts/npm/run-build-release.mjs",
     "ci": "sh ./scripts/run-ci.sh",
-    "ci:crates": "sh ./scripts/run-ci-crate-tests.sh",
+    "ci:crates": "sh ./xtask/scripts/run-ci-crate-tests.sh",
     "release:dry-run": "sh ./scripts/run-release-dry-run.sh",
     "pack:check": "node ./scripts/npm/prepack.mjs && npm pack --dry-run",
     "prepack": "node ./scripts/npm/prepack.mjs",

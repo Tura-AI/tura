@@ -127,12 +127,12 @@ $jobs = @()
 $jobs += Start-CiJob `
   -Name "crates" `
   -FilePath "powershell" `
-  -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\run-ci-crate-tests.ps1", "-Parallelism", "$Parallelism", "-TimeoutSeconds", "$CrateTimeoutSeconds") `
+  -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "xtask\scripts\run-ci-crate-tests.ps1", "-Parallelism", "$Parallelism", "-TimeoutSeconds", "$CrateTimeoutSeconds") `
   -TimeoutSeconds ([Math]::Max($CrateTimeoutSeconds * 2, $CrateTimeoutSeconds + 300))
 $jobs += Start-CiJob `
   -Name "backend-business" `
   -FilePath "powershell" `
-  -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\run-backend-business-tests.ps1", "-TimeoutSeconds", "$BusinessTimeoutSeconds", "-Parallelism", "$Parallelism") `
+  -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "xtask\scripts\run-backend-business-tests.ps1", "-TimeoutSeconds", "$BusinessTimeoutSeconds", "-Parallelism", "$Parallelism") `
   -TimeoutSeconds ([Math]::Max($BusinessTimeoutSeconds * 2, $BusinessTimeoutSeconds + 300))
 $jobs += Start-CiJob `
   -Name "tui-local" `

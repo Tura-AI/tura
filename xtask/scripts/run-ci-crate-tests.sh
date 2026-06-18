@@ -2,7 +2,7 @@
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 JOBS=${TURA_CI_CRATE_JOBS:-4}
 TIMEOUT_SECONDS=600
 LIST=0
@@ -29,7 +29,7 @@ while [ "$#" -gt 0 ]; do
     -h|--help)
       cat <<'EOF'
 Usage:
-  scripts/run-ci-crate-tests.sh [--crate PACKAGE ...] [--jobs N] [--timeout-seconds N] [--list]
+  xtask/scripts/run-ci-crate-tests.sh [--crate PACKAGE ...] [--jobs N] [--timeout-seconds N] [--list]
 
 Runs the CI crate matrix locally: clippy + cargo test for each backend default
 workspace package, excluding src-tauri. Crates run in parallel; each crate test

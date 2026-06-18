@@ -2,7 +2,7 @@
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 CRATE=""
 LIST=0
 TIMEOUT_SECONDS=240
@@ -29,7 +29,7 @@ while [ "$#" -gt 0 ]; do
     -h|--help)
       cat <<'EOF'
 Usage:
-  scripts/run-backend-performance-tests.sh [--crate PACKAGE] [--list] [--timeout-seconds N] [--jobs N]
+  xtask/scripts/run-backend-performance-tests.sh [--crate PACKAGE] [--list] [--timeout-seconds N] [--jobs N]
 
 Runs backend tests/performance/*.rs in parallel batches. Process, lifecycle,
 router, and session_db stress tests belong in tests/os_testing.

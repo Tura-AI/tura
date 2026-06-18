@@ -125,14 +125,14 @@ servers, because they share provider runtime state. Run local business suites
 with:
 
 ```powershell
-.\scripts\run-backend-business-tests.ps1 -Crate tools -TimeoutSeconds 240
+.\xtask\scripts\run-backend-business-tests.ps1 -Crate tools -TimeoutSeconds 240
 ```
 
 Process, daemon, owner, IPC, service lifecycle, and cross-OS policy checks
 belong in OS testing and run serially:
 
 ```powershell
-.\scripts\run-backend-os-tests.ps1
+.\xtask\scripts\run-backend-os-tests.ps1
 ```
 
 Live tests may require provider credentials, public network access, model
@@ -140,7 +140,7 @@ quota, third-party systems, or provider runtime state such as auth/config/env.
 Run crate-owned live suites explicitly with:
 
 ```powershell
-.\scripts\run-backend-live-tests.ps1 -Crate provider -TimeoutSeconds 300
+.\xtask\scripts\run-backend-live-tests.ps1 -Crate provider -TimeoutSeconds 300
 ```
 
 Release-entry live scripts validate the built command surfaces and write

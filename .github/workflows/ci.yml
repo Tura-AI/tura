@@ -83,7 +83,7 @@ jobs:
           key: crate-${{ matrix.crate }}
           cache-on-failure: true
       - name: Run crate clippy and tests
-        run: sh scripts/run-ci-crate-tests.sh --crate "${{ matrix.crate }}" --jobs 1 --timeout-seconds 600
+        run: sh xtask/scripts/run-ci-crate-tests.sh --crate "${{ matrix.crate }}" --jobs 1 --timeout-seconds 600
 
   backend-business:
     name: Backend Business
@@ -99,7 +99,7 @@ jobs:
           key: backend-business
           cache-on-failure: true
       - name: Run backend business tests
-        run: sh scripts/run-backend-business-tests.sh --jobs 4 --timeout-seconds 300
+        run: sh xtask/scripts/run-backend-business-tests.sh --jobs 4 --timeout-seconds 300
 
   tui-local:
     name: TUI Unit And E2E

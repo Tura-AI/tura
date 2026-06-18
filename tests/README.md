@@ -150,13 +150,13 @@ a structured fixture, command result, protocol field, file artifact, or
 parser-owned output contract instead of matching user or model prose.
 
 ```powershell
-.\scripts\run-backend-business-tests.ps1 -List
-.\scripts\run-backend-business-tests.ps1 -Crate tools
+.\xtask\scripts\run-backend-business-tests.ps1 -List
+.\xtask\scripts\run-backend-business-tests.ps1 -Crate tools
 ```
 
 ```bash
-sh scripts/run-backend-business-tests.sh --list
-sh scripts/run-backend-business-tests.sh --crate tools
+sh xtask/scripts/run-backend-business-tests.sh --list
+sh xtask/scripts/run-backend-business-tests.sh --crate tools
 ```
 
 Business-test outputs default to
@@ -178,13 +178,13 @@ runs.
 Run OS testing after business coverage:
 
 ```powershell
-.\scripts\run-backend-os-tests.ps1 -List
-.\scripts\run-backend-os-tests.ps1
+.\xtask\scripts\run-backend-os-tests.ps1 -List
+.\xtask\scripts\run-backend-os-tests.ps1
 ```
 
 ```bash
-sh scripts/run-backend-os-tests.sh --list
-sh scripts/run-backend-os-tests.sh
+sh xtask/scripts/run-backend-os-tests.sh --list
+sh xtask/scripts/run-backend-os-tests.sh
 ```
 
 The backend business runners deliberately ignore root `.mjs` files and never
@@ -215,13 +215,13 @@ live scripts. App-owned TUI/GUI live scripts are not part of backend live
 runners; run them through the app package commands.
 
 ```powershell
-.\scripts\run-backend-live-tests.ps1 -List
-.\scripts\run-backend-live-tests.ps1 -Crate provider -TimeoutSeconds 300
+.\xtask\scripts\run-backend-live-tests.ps1 -List
+.\xtask\scripts\run-backend-live-tests.ps1 -Crate provider -TimeoutSeconds 300
 ```
 
 ```bash
-sh scripts/run-backend-live-tests.sh --list
-sh scripts/run-backend-live-tests.sh --crate provider --timeout-seconds 300
+sh xtask/scripts/run-backend-live-tests.sh --list
+sh xtask/scripts/run-backend-live-tests.sh --crate provider --timeout-seconds 300
 ```
 
 ## Release Tests
@@ -233,13 +233,13 @@ start or clean up release daemons.
 Release tests are selected by direct `tests/release/*.mjs` scans:
 
 ```powershell
-.\scripts\run-backend-release-tests.ps1 -List
-.\scripts\run-backend-release-tests.ps1 -TimeoutSeconds 600
+.\xtask\scripts\run-backend-release-tests.ps1 -List
+.\xtask\scripts\run-backend-release-tests.ps1 -TimeoutSeconds 600
 ```
 
 ```bash
-sh scripts/run-backend-release-tests.sh --list
-sh scripts/run-backend-release-tests.sh --timeout-seconds 600
+sh xtask/scripts/run-backend-release-tests.sh --list
+sh xtask/scripts/run-backend-release-tests.sh --timeout-seconds 600
 ```
 
 Release-entry scripts validate the built command surfaces with real model
@@ -260,15 +260,15 @@ runs serially. The performance runner scans `crates/`, `commands/`, `agents/`,
 and `personas/`; these tests are excluded from default `cargo test`.
 
 ```powershell
-.\scripts\run-backend-performance-tests.ps1 -List
-.\scripts\run-backend-performance-tests.ps1 -Crate session_log
-.\scripts\run-backend-performance-tests.ps1 -Crate gateway -TimeoutSeconds 240
+.\xtask\scripts\run-backend-performance-tests.ps1 -List
+.\xtask\scripts\run-backend-performance-tests.ps1 -Crate session_log
+.\xtask\scripts\run-backend-performance-tests.ps1 -Crate gateway -TimeoutSeconds 240
 ```
 
 ```bash
-sh scripts/run-backend-performance-tests.sh --list
-sh scripts/run-backend-performance-tests.sh --crate session_log
-sh scripts/run-backend-performance-tests.sh --crate gateway --timeout-seconds 240
+sh xtask/scripts/run-backend-performance-tests.sh --list
+sh xtask/scripts/run-backend-performance-tests.sh --crate session_log
+sh xtask/scripts/run-backend-performance-tests.sh --crate gateway --timeout-seconds 240
 ```
 
 ## Benchmarks

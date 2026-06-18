@@ -11,11 +11,11 @@ local sockets also belong here so they run serially. Keep ordinary business
 behavior in `tests/business/`.
 
 ```powershell
-.\scripts\run-backend-os-tests.ps1 -List
-.\scripts\run-backend-os-tests.ps1
+.\xtask\scripts\run-backend-os-tests.ps1 -List
+.\xtask\scripts\run-backend-os-tests.ps1
 ```
 
 ```bash
-sh scripts/run-backend-os-tests.sh --list
-sh scripts/run-backend-os-tests.sh
+sh xtask/scripts/run-backend-os-tests.sh --list
+sh xtask/scripts/run-backend-os-tests.sh
 ```
