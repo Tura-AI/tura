@@ -530,7 +530,12 @@ function stripHtml(value: string): string {
 function stripUnsupportedHtml(value: string): string {
   return value
     .replace(/<br\s*\/?>/giu, "\n")
-    .replace(/<\/?(?:p|div)>/giu, "\n")
+    .replace(/<li(?:\s[^>]*)?>/giu, "\n")
+    .replace(/<\/li>/giu, "\n")
+    .replace(
+      /<\/?(?:address|article|aside|blockquote|details|div|figcaption|figure|footer|h[1-6]|header|hr|main|nav|ol|p|pre|section|summary|table|tbody|td|tfoot|th|thead|tr|ul)(?:\s[^>]*)?>/giu,
+      "\n",
+    )
     .replace(/<\/?[^>]+>/gu, "");
 }
 

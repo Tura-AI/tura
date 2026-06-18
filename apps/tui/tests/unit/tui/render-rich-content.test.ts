@@ -182,6 +182,48 @@ test("render gracefully downgrades rich text across display levels", () => {
   assert.doesNotMatch(rich, /<b>|<\/code>/);
 });
 
+test("load session rich text degradation preserves html block newlines", () => {
+  const session = sessionFixture("sess-load-rich-html", "Loaded Rich HTML");
+  const loadedHtml =
+    "<p>BEFORE_BLOCK</p><ul><li>FIRST_ITEM</li><li>SECOND_ITEM</li></ul>" +
+    "<pre><code class='language-ts'>const a = 1;\nconst b = 2;</code></pre>" +
+    "<p>AFTER_BLOCK</p>";
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [textMessage("msg-load-rich-html", session.id, loadedHtml)],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+  });
+
+  const transcript = withTerminalSize(100, 28, () => render(state, richCapabilities()));
+  const plainTranscript = stripAnsi(transcript);
+  assert.match(
+    plainTranscript,
+    /BEFORE_BLOCK[\s\S]*FIRST_ITEM[\s\S]*SECOND_ITEM[\s\S]*const a = 1;[\s\S]*const b = 2;[\s\S]*AFTER_BLOCK/u,
+  );
+  assert.doesNotMatch(
+    plainTranscript,
+    /<p>|<\/p>|<ul>|<\/ul>|<li>|<\/li>|<\/code>|<\/pre>/u,
+  );
+
+  const transcriptLines = plainTranscript
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const beforeLine = transcriptLines.find((line) => line.includes("BEFORE_BLOCK")) ?? "";
+  const firstLine = transcriptLines.find((line) => line.includes("FIRST_ITEM")) ?? "";
+  const secondLine = transcriptLines.find((line) => line.includes("SECOND_ITEM")) ?? "";
+
+  assert.ok(beforeLine, plainTranscript);
+  assert.ok(firstLine, plainTranscript);
+  assert.ok(secondLine, plainTranscript);
+  assert.doesNotMatch(beforeLine, /FIRST_ITEM/u);
+  assert.doesNotMatch(firstLine, /SECOND_ITEM/u);
+  assert.doesNotMatch(secondLine, /const a = 1;/u);
+});
+
 test("render supports markdown tables, markdown links, and local path access by level", () => {
   const session = sessionFixture("sess-md", "Markdown");
   const state = reducer(initialState("C:/repo"), {
