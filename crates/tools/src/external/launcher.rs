@@ -40,8 +40,9 @@ pub async fn invoke_with_timeout(
         command
     } else {
         let package = match command_id {
-            "read_media" => "tura-command-read-media",
-            "web_discover" => "tura-command-web-discover",
+            "image_generate" => "image_generate",
+            "read_media" => "read_media",
+            "web_discover" => "web_discover",
             _ => unreachable!("metadata_for filtered unsupported command"),
         };
         let mut command = Command::new("cargo");

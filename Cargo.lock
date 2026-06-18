@@ -2087,6 +2087,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "image_generate"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "dotenvy",
+ "image",
+ "provider",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "imgref"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3624,6 +3638,7 @@ dependencies = [
  "js-sys",
  "log",
  "mime",
+ "mime_guess",
  "native-tls",
  "percent-encoding",
  "pin-project-lite",

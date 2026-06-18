@@ -13,6 +13,7 @@ use handler_parse::{
 };
 
 const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 15_000;
+const IMAGE_GENERATE_COMMAND_TIMEOUT_MS: u64 = 100_000;
 const APPLY_PATCH_FAILURE_CANCEL_REASON: &str =
     "apply_patch failed; command_run stopped before later commands";
 
@@ -631,6 +632,9 @@ fn build_tool_call(command_name: &str, command: &CommandItem) -> Result<ToolCall
         "compact_context" => ToolPayload::Function {
             arguments: normalize_compact_context_arguments(command)?,
         },
+        "image_generate" => ToolPayload::Function {
+            arguments: normalize_json_or_cli_command_arguments(command, "image_generate")?,
+        },
         "planning" => ToolPayload::Function {
             arguments: normalize_planning_arguments(command)?,
         },
@@ -735,6 +739,7 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
                 | "bash"
                 | "zsh"
                 | "apply_patch"
+                | "image_generate"
                 | "planning"
                 | "read_media"
                 | "web_discover"
@@ -910,7 +915,9 @@ impl CommandItem {
     }
 
     fn effective_timeout_ms(&self) -> u64 {
-        self.timeout_ms.unwrap_or(DEFAULT_COMMAND_TIMEOUT_MS).max(1)
+        self.timeout_ms
+            .unwrap_or_else(|| default_timeout_ms_for_command(&self.command))
+            .max(1)
     }
 
     async fn is_macro_command_safe(&self, router: &ToolRouter, ctx: &ToolContext) -> bool {
@@ -930,6 +937,13 @@ impl CommandItem {
             return false;
         };
         !handler.is_mutating(&call, ctx).await
+    }
+}
+
+fn default_timeout_ms_for_command(command: &str) -> u64 {
+    match crate::commands::canonical_command(command).as_str() {
+        "image_generate" => IMAGE_GENERATE_COMMAND_TIMEOUT_MS,
+        _ => DEFAULT_COMMAND_TIMEOUT_MS,
     }
 }
 

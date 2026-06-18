@@ -158,6 +158,7 @@ fn default_command_run_commands() -> BTreeSet<String> {
     [
         "apply_patch",
         active_shell_command_name(),
+        "image_generate",
         "read_media",
         "web_discover",
         "compact_context",
@@ -362,6 +363,13 @@ fn command_run_description_for_active_shell(
             compact_schema(&command_schema("read_media")),
         ));
     }
+    if allowed_commands.contains("image_generate") {
+        command_lines.push(format!(
+            "- image_generate: {} Schema: {}",
+            compact_prompt(&command_prompt("image_generate")),
+            compact_schema(&command_schema("image_generate")),
+        ));
+    }
     if allowed_commands.contains("web_discover") {
         command_lines.push(format!(
             "- web_discover: {} Schema: {}",
@@ -425,6 +433,7 @@ fn command_list_for_description(commands: &BTreeSet<String>, active_shell: &str)
     let order = [
         "apply_patch",
         active_shell,
+        "image_generate",
         "read_media",
         "web_discover",
         "compact_context",
@@ -453,8 +462,11 @@ fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
         "- Example repair batch: step 1 `apply_patch` across related files, step 2 run the known build command, step 3 run multiple known test commands in the same step.",
         "- Example frontend batch: step 1 write or reuse the focused frontend test script, step 2 run that script and inspect generated textual outputs.",
     ];
-    if allowed_commands.contains("read_media") || allowed_commands.contains("web_discover") {
-        patterns.push("- Example media batch: step 1 use `web_discover` or generation to collect the needed media, docs, or repo artifacts, step 2 use `read_media` or focused reads to verify the resulting media or repo content.");
+    if allowed_commands.contains("read_media")
+        || allowed_commands.contains("web_discover")
+        || allowed_commands.contains("image_generate")
+    {
+        patterns.push("- Example media batch: step 1 use `web_discover` or `image_generate` to collect the needed media, docs, or repo artifacts, step 2 use `read_media` or focused reads to verify the resulting media or repo content.");
     }
     patterns.join("\n")
 }

@@ -116,6 +116,8 @@ Push-Location $RepoRoot
 try {
   & .\commands\read_media\install.ps1 -CheckOnly
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  & .\commands\image_generate\install.ps1 -CheckOnly
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   & .\commands\web_discover\install.ps1 -CheckOnly
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } finally {

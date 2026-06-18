@@ -86,6 +86,7 @@ sh "$REPO_ROOT/scripts/install.sh" $install_args
 
 step "Verifying command-owned Python environments"
 sh "$REPO_ROOT/commands/read_media/install.sh" --check-only
+sh "$REPO_ROOT/commands/image_generate/install.sh" --check-only
 sh "$REPO_ROOT/commands/web_discover/install.sh" --check-only
 
 read_media_python=$(command_python read_media)

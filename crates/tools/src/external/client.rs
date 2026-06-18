@@ -9,6 +9,7 @@ pub struct ExternalCommandMetadata {
 
 pub fn metadata_for(command_id: &str) -> Option<ExternalCommandMetadata> {
     let binary_name = match command_id {
+        "image_generate" => "tura-command-image-generate",
         "read_media" => "tura-command-read-media",
         "web_discover" => "tura-command-web-discover",
         _ => return None,
@@ -92,6 +93,10 @@ mod tests {
         let read_media = metadata_for("read_media").expect("read_media metadata");
         assert_eq!(read_media.command_id, "read_media");
         assert_eq!(read_media.binary_name, "tura-command-read-media");
+
+        let image_generate = metadata_for("image_generate").expect("image_generate metadata");
+        assert_eq!(image_generate.command_id, "image_generate");
+        assert_eq!(image_generate.binary_name, "tura-command-image-generate");
 
         let web_discover = metadata_for("web_discover").expect("web_discover metadata");
         assert_eq!(web_discover.command_id, "web_discover");

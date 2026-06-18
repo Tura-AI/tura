@@ -272,6 +272,7 @@ pub struct ToolRouter {
     apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
     compact_context: crate::commands::compact_context::CompactContextHandler,
     planning: crate::commands::planning::PlanningHandler,
+    image_generate: ExternalCommandHandler,
     read_media: ExternalCommandHandler,
     web_discover: ExternalCommandHandler,
 }
@@ -285,6 +286,7 @@ impl ToolRouter {
             apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
             compact_context: crate::commands::compact_context::CompactContextHandler,
             planning: crate::commands::planning::PlanningHandler,
+            image_generate: ExternalCommandHandler::new("image_generate", true, false),
             read_media: ExternalCommandHandler::new("read_media", false, true),
             web_discover: ExternalCommandHandler::new("web_discover", false, true),
         }
@@ -298,6 +300,7 @@ impl ToolRouter {
             "apply_patch" => Some("apply_patch"),
             "compact_context" => Some("compact_context"),
             "planning" if planning_command_enabled() => Some("planning"),
+            "image_generate" => Some("image_generate"),
             "read_media" => Some("read_media"),
             "web_discover" => Some("web_discover"),
             _ => None,
@@ -312,6 +315,7 @@ impl ToolRouter {
             "apply_patch" => Some(&self.apply_patch),
             "compact_context" => Some(&self.compact_context),
             "planning" if planning_command_enabled() => Some(&self.planning),
+            "image_generate" => Some(&self.image_generate),
             "read_media" => Some(&self.read_media),
             "web_discover" => Some(&self.web_discover),
             _ => None,
@@ -399,19 +403,27 @@ impl ExternalCommandHandler {
 }
 
 const DEFAULT_EXTERNAL_COMMAND_TIMEOUT_MS: u64 = 15_000;
+const IMAGE_GENERATE_EXTERNAL_COMMAND_TIMEOUT_MS: u64 = 100_000;
 
-fn take_external_command_timeout(arguments: &mut Value) -> Duration {
+fn take_external_command_timeout(command_id: &str, arguments: &mut Value) -> Duration {
     let Some(object) = arguments.as_object_mut() else {
-        return Duration::from_millis(DEFAULT_EXTERNAL_COMMAND_TIMEOUT_MS);
+        return Duration::from_millis(default_external_command_timeout_ms(command_id));
     };
     let timeout_ms = take_u64_field(object, &["timeout_ms", "timeoutMs"])
         .or_else(|| {
             take_u64_field(object, &["timeout_secs", "timeoutSecs"])
                 .map(|seconds| seconds.saturating_mul(1000))
         })
-        .unwrap_or(DEFAULT_EXTERNAL_COMMAND_TIMEOUT_MS)
+        .unwrap_or_else(|| default_external_command_timeout_ms(command_id))
         .max(1);
     Duration::from_millis(timeout_ms)
+}
+
+fn default_external_command_timeout_ms(command_id: &str) -> u64 {
+    match crate::commands::canonical_command(command_id).as_str() {
+        "image_generate" => IMAGE_GENERATE_EXTERNAL_COMMAND_TIMEOUT_MS,
+        _ => DEFAULT_EXTERNAL_COMMAND_TIMEOUT_MS,
+    }
 }
 
 fn take_u64_field(object: &mut serde_json::Map<String, Value>, keys: &[&str]) -> Option<u64> {
@@ -441,7 +453,7 @@ impl ToolHandler for ExternalCommandHandler {
 
     async fn access(&self, call: &ToolCall, ctx: &ToolContext) -> file_locks::Access {
         let mut arguments = call.payload.code_mode_input();
-        let timeout = take_external_command_timeout(&mut arguments);
+        let timeout = take_external_command_timeout(self.command_id, &mut arguments);
         let response = crate::external::launcher::invoke_with_timeout(
             self.command_id,
             "access",
@@ -465,7 +477,7 @@ impl ToolHandler for ExternalCommandHandler {
         ctx: ToolContext,
     ) -> Result<FunctionToolOutput, ToolError> {
         let mut arguments = call.payload.code_mode_input();
-        let timeout = take_external_command_timeout(&mut arguments);
+        let timeout = take_external_command_timeout(self.command_id, &mut arguments);
         let output = crate::external::launcher::execute_with_timeout(
             self.command_id,
             arguments,
@@ -614,7 +626,7 @@ mod tests {
             "timeout_ms": 2500
         });
 
-        let timeout = take_external_command_timeout(&mut arguments);
+        let timeout = take_external_command_timeout("read_media", &mut arguments);
 
         assert_eq!(timeout, std::time::Duration::from_millis(2500));
         assert_eq!(arguments, json!({"path": "image.png"}));
@@ -624,16 +636,27 @@ mod tests {
     fn external_command_timeout_defaults_and_rounds_up_to_one_millisecond() {
         let mut missing = json!({"path": "image.png"});
         assert_eq!(
-            take_external_command_timeout(&mut missing),
+            take_external_command_timeout("read_media", &mut missing),
             std::time::Duration::from_millis(15_000)
         );
 
         let mut zero = json!({"timeout_secs": 0});
         assert_eq!(
-            take_external_command_timeout(&mut zero),
+            take_external_command_timeout("read_media", &mut zero),
             std::time::Duration::from_millis(1)
         );
         assert_eq!(zero, json!({}));
+    }
+
+    #[test]
+    fn image_generate_external_command_timeout_defaults_to_100_seconds() {
+        let mut missing = json!({"prompt": "logo"});
+
+        assert_eq!(
+            take_external_command_timeout("image_generate", &mut missing),
+            std::time::Duration::from_millis(100_000)
+        );
+        assert_eq!(missing, json!({"prompt": "logo"}));
     }
 
     #[test]
@@ -658,6 +681,10 @@ mod tests {
         assert_eq!(
             router.resolve_command_tool_name("compact_context"),
             Some("compact_context")
+        );
+        assert_eq!(
+            router.resolve_command_tool_name("image_generate"),
+            Some("image_generate")
         );
         assert_eq!(
             router.resolve_command_tool_name("read_media"),

@@ -1,6 +1,7 @@
 Use `web_discover` to find public website text or public image/video/audio artifacts.
-Use `website`, to find media url and use `image`, `video`, or `audio` to download the media， and use `read_media` to review.
-Use `playwright`, to take screenshot of the website as visual references if needed.
+Use `website`, to find reliable source website that hosts media url and use `image`, `video`, or `audio` to download the media， and use `read_media` to review.
+NEVER put two search gol in one command line always use multiple command_lines in a batch.
+
 Input is CLI text:
 
 ```text
