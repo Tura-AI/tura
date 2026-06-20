@@ -107,6 +107,18 @@ export interface RunResult {
   finalText: string;
   messages: Message[];
   usage: unknown | null;
+  metadata: RunResultMetadata;
+}
+
+export interface RunResultMetadata {
+  input_token_usage: number;
+  input_token_cache: number;
+  provider_time_ms: number;
+  total_time_ms: number;
+  commands: number;
+  failed_commands: number;
+  tps: number;
+  turns: number;
 }
 
 export function sessionTitle(session: Session): string {
@@ -162,7 +174,7 @@ export function messageText(message: Message): string {
 }
 
 export function messageSortValue(message: Message): number {
-  return message.created_at ?? message.time?.created ?? 0;
+  return message.created_at as number;
 }
 
 export function lastAssistantText(messages: Message[]): string {

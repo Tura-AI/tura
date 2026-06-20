@@ -2,6 +2,7 @@ use crate::context::{
     accumulate_message, build_messages_from_session, user_input_content_matches,
     user_input_content_value, ContextualUserFragment, WorkspaceSnapshot, USER_AGENT_CONTEXT_ROLE,
 };
+use crate::prompt_style::context_blocks;
 use crate::state_machine::session_management::SessionManagement;
 
 const FRONTEND_MESSAGE_ID_ENV: &str = "TURA_FRONTEND_MESSAGE_ID";
@@ -12,7 +13,7 @@ pub(crate) fn initial_messages_for_session(
 ) -> Result<Vec<serde_json::Value>, String> {
     let permissions_message = serde_json::json!({
         "role": "developer",
-        "content": permissions_instructions(),
+        "content": context_blocks::PERMISSIONS_INSTRUCTIONS,
     });
     if session.session_current_turn == 0 && !session_has_initial_user_message(session) {
         let snapshot_message = serde_json::json!({
@@ -73,19 +74,15 @@ pub(crate) fn initial_messages_for_session(
     Ok(messages)
 }
 
-fn permissions_instructions() -> &'static str {
-    "<permissions instructions>\nFilesystem sandboxing defines which files can be read or written. `sandbox_mode` is `danger-full-access`: No filesystem sandboxing - all commands are permitted. Network access is enabled.\nApproval policy is currently never. Do not provide the `sandbox_permissions` for any reason, commands will be rejected.\n</permissions instructions>"
-}
-
 fn environment_context_message(cwd: &std::path::Path) -> String {
-    format!(
-        "<environment_context>\n  <cwd>{}</cwd>\n  <workspace_roots>\n    <root>{}</root>\n  </workspace_roots>\n  <shell>{}</shell>\n  <current_date>{}</current_date>\n  <timezone>{}</timezone>\n  <system_language>{}</system_language>\n</environment_context>",
-        cwd.display(),
-        cwd.display(),
+    let timezone = std::env::var("TZ").unwrap_or_else(|_| "Europe/Paris".to_string());
+    let system_language = session_language();
+    context_blocks::environment_context(
+        cwd,
         context_shell_name(),
         chrono::Local::now().format("%Y-%m-%d"),
-        std::env::var("TZ").unwrap_or_else(|_| "Europe/Paris".to_string()),
-        session_language()
+        &timezone,
+        &system_language,
     )
 }
 
@@ -140,18 +137,25 @@ fn runtime_context_message(session: &SessionManagement) -> Option<serde_json::Va
 }
 
 fn accumulate_initial_user_message(session: &mut SessionManagement) -> Result<(), String> {
-    let message = initial_user_log_message(session);
+    let now = chrono::Utc::now();
+    let message = initial_user_log_message(session, now);
     session.push_log(
         serde_json::to_string(&message).unwrap_or_else(|_| "message: user".to_string()),
-        chrono::Utc::now(),
+        now,
     );
     Ok(())
 }
 
-fn initial_user_log_message(session: &SessionManagement) -> serde_json::Value {
+fn initial_user_log_message(
+    session: &SessionManagement,
+    now: chrono::DateTime<chrono::Utc>,
+) -> serde_json::Value {
     let mut message = serde_json::json!({
         "role": "user",
         "content": user_input_content_value(&session.input.user_input),
+        "created_at": now.timestamp_millis(),
+        "updated_at": now.timestamp_millis(),
+        "timestamp": now.to_rfc3339(),
     });
     if let Some(object) = message.as_object_mut() {
         if let Some(message_id) = frontend_env(FRONTEND_MESSAGE_ID_ENV) {
@@ -282,6 +286,21 @@ mod tests {
             user_log.get("part_id").and_then(serde_json::Value::as_str),
             Some("part_tui_reopen")
         );
+        let created_at = user_log
+            .get("created_at")
+            .and_then(serde_json::Value::as_i64)
+            .expect("user log should persist created_at");
+        let updated_at = user_log
+            .get("updated_at")
+            .and_then(serde_json::Value::as_i64)
+            .expect("user log should persist updated_at");
+        let timestamp = user_log
+            .get("timestamp")
+            .and_then(serde_json::Value::as_str)
+            .expect("user log should persist timestamp");
+        assert!(created_at >= now.timestamp_millis());
+        assert!(updated_at >= created_at);
+        assert!(!timestamp.trim().is_empty());
         assert!(user_log.get("content").is_some_and(|content| {
             user_input_content_matches(content, "用户重开后仍然可见")
         }));

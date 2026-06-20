@@ -170,11 +170,21 @@ export function reducer(state: AppState, action: AppAction): AppState {
       };
     }
     if (action.event.payload?.type === "message.part.updated") {
-      const part = (action.event.payload.properties as { part?: MessagePart } | undefined)?.part;
+      const properties = action.event.payload.properties as
+        | { part?: MessagePart; createdAt?: number; updatedAt?: number }
+        | undefined;
+      const part = properties?.part;
       if (!part) return state;
       const sessionID = normalized.sessionID ?? part.sessionID;
       if (state.session && sessionID !== state.session.id) return state;
-      const updated = upsertPartIgnoringLive(state.messages, state.liveStreams, sessionID, part);
+      const updated = upsertPartIgnoringLive(
+        state.messages,
+        state.liveStreams,
+        sessionID,
+        part,
+        properties?.createdAt,
+        properties?.updatedAt,
+      );
       return {
         ...state,
         messages: updated.messages,
@@ -192,6 +202,8 @@ export function reducer(state: AppState, action: AppAction): AppState {
         | {
             messageID?: string;
             partID?: string;
+            createdAt?: number;
+            updatedAt?: number;
             field?: string;
             delta?: string;
           }
@@ -213,12 +225,13 @@ export function reducer(state: AppState, action: AppAction): AppState {
           : state.sessions,
         liveStreams: applyPartDelta(
           state.liveStreams,
-          state.messages,
           properties?.messageID,
           properties?.partID,
           properties?.field,
           properties?.delta,
           sessionID,
+          properties?.createdAt,
+          properties?.updatedAt,
         ),
       };
     }
@@ -267,11 +280,13 @@ export function reducer(state: AppState, action: AppAction): AppState {
       const properties = action.event.payload.properties as
         | {
             sessionID?: string;
+            updatedAt?: number;
             status?: unknown;
             context_tokens?: Session["context_tokens"];
             usage?: Session["usage"];
           }
         | undefined;
+      if (properties?.updatedAt === undefined) return state;
       const status = sessionStatusText(properties?.status);
       const sessionID = properties?.sessionID;
       const activeSession = Boolean(
@@ -290,7 +305,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
           ? state.sessions.map((session) =>
               session.id === sessionID
                 ? sessionWithUsage(
-                    { ...session, status },
+                    { ...session, status, updated_at: properties.updatedAt },
                     properties?.usage,
                     properties?.context_tokens,
                   )
@@ -300,7 +315,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
         session:
           activeSession && state.session
             ? sessionWithUsage(
-                { ...state.session, status },
+                { ...state.session, status, updated_at: properties.updatedAt },
                 properties?.usage,
                 properties?.context_tokens,
               )

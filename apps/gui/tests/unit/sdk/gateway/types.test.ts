@@ -104,12 +104,16 @@ describe("gateway SDK contract types", () => {
       },
     } satisfies GatewayEventEnvelope;
 
-    const health = { healthy: true, version: "test", root: "C:/workspace" } satisfies HealthResponse;
+    const health = {
+      healthy: true,
+      version: "test",
+      root: "C:/workspace",
+    } satisfies HealthResponse;
     const agent = {
       agent_name: "coding_agent",
       persona_directory: "agents/coding_agent",
       prompt_directory: "agents/coding_agent/prompt",
-      avatar: { pixel_size: 32, threshold: 0.25, scale: 2, display_mode: "dynamic" },
+      avatar: { pixel_size: 32, threshold: 160, display_mode: "dynamic" },
     } satisfies AgentConfig;
 
     expect(event.payload.properties?.issue_id).toBe("issue-1");

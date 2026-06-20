@@ -39,7 +39,7 @@ function Add-RustFlag {
 
 function Copy-GuiDist {
   $Source = Join-Path $RepoRoot "apps\gui\app\dist"
-  $Destination = Join-Path $TargetDir "gui"
+  $Destination = Join-Path $TargetDir "tura_gui"
   if (-not (Test-Path (Join-Path $Source "index.html"))) {
     throw "GUI dist not found at $Source. Run the GUI build before copying debug artifacts."
   }
@@ -85,7 +85,7 @@ if ($BuildTui) {
 
 Write-Host "Debug artifacts ready in $TargetDir"
 if ($BuildTui) {
-  Write-Host "Entries: tura.exe, tura_exec.exe, tura_gateway.exe, tura_router.exe, tura_session_db.exe, tura_runtime.exe, gui/"
+  Write-Host "Entries: tura.exe, tura_exec.exe, tura_gateway.exe, tura_router.exe, tura_session_db.exe, tura_runtime.exe, tura_gui/"
 } else {
   Write-Host "Entries: tura_exec.exe, tura_gateway.exe, tura_router.exe, tura_session_db.exe, tura_runtime.exe"
 }

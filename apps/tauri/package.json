@@ -1,5 +1,5 @@
 {
-  "name": "@tura/gui-tauri",
+  "name": "@tura/tura_gui",
   "private": true,
   "type": "module",
   "scripts": {

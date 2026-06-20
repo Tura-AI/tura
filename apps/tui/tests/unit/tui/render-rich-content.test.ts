@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { initialState, reducer } from "../../../src/tui/reducer.js";
 import { render } from "../../../src/tui/render.js";
@@ -77,6 +81,10 @@ function textMessage(id: string, sessionID: string, text: string): Message {
   };
 }
 
+function osc8Urls(value: string): string[] {
+  return [...value.matchAll(/\x1b\]8;;([^\x1b]*)\x1b\\/gu)].map((match) => match[1] ?? "");
+}
+
 test("render applies communication style rich text without leaking protocol markup", () => {
   const session = sessionFixture("sess-rich", "Rich");
   const state = reducer(initialState("C:/repo"), {
@@ -109,7 +117,7 @@ test("render applies communication style rich text without leaking protocol mark
   assert.doesNotMatch(stripAnsi(transcript), /Example \(https:\/\/example\.com\)/);
   assert.match(transcript, /\x1b\]8;;https:\/\/example\.com\x1b\\/);
   assert.doesNotMatch(transcript, /\[MEDIA:C:\/tmp\/shot\.png:MEDIA\]/);
-  assert.match(transcript, /\x1b\[38;2;217;222;205mC:\/tmp\/shot\.png\x1b\[0m/);
+  assert.match(transcript, /\x1b\]8;;file:\/\/\/C:\/tmp\/shot\.png\x1b\\/);
   assert.match(transcript, /https:\/\/example\.com\/shot\.png/);
   assert.match(transcript, /\x1b\]8;;https:\/\/example\.com\/shot\.png\x1b\\/);
   assert.match(transcript, /👍/u);
@@ -203,10 +211,7 @@ test("load session rich text degradation preserves html block newlines", () => {
     plainTranscript,
     /BEFORE_BLOCK[\s\S]*FIRST_ITEM[\s\S]*SECOND_ITEM[\s\S]*const a = 1;[\s\S]*const b = 2;[\s\S]*AFTER_BLOCK/u,
   );
-  assert.doesNotMatch(
-    plainTranscript,
-    /<p>|<\/p>|<ul>|<\/ul>|<li>|<\/li>|<\/code>|<\/pre>/u,
-  );
+  assert.doesNotMatch(plainTranscript, /<p>|<\/p>|<ul>|<\/ul>|<li>|<\/li>|<\/code>|<\/pre>/u);
 
   const transcriptLines = plainTranscript
     .split("\n")
@@ -276,7 +281,125 @@ test("render supports markdown tables, markdown links, and local path access by 
   assert.match(stripAnsi(narrowRich), /Source\s+│\s+C:\/repo\/apps\/tui/);
   assert.doesNotMatch(narrowRich, /[┬┼┴]/u);
   assert.match(narrowRich, /\x1b\]8/u);
-  assert.doesNotMatch(narrowRich, /\x1b\[4m/u);
+  assert.match(narrowRich, /\x1b\[4m/u);
+});
+
+test("render resolves relative paths with spaces and links missing local media", () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), "tura tui paths "));
+  try {
+    mkdirSync(path.join(workspace, "shots"), { recursive: true });
+    writeFileSync(path.join(workspace, "shots", "final image.png"), "not really an image");
+    const session = sessionFixture("sess-local-media", "Local Media", "idle", {
+      directory: workspace,
+    });
+    const state = reducer(initialState(workspace), {
+      type: "hydrate",
+      session,
+      messages: [
+        textMessage(
+          "msg-local-media",
+          session.id,
+          [
+            "[Local Shot](shots/final image.png)",
+            "[MEDIA:shots/final image.png:MEDIA]",
+            "[MEDIA:shots/missing image.png:MEDIA]",
+          ].join("\n"),
+        ),
+      ],
+      permissions: [],
+      providers: { all: [], default: {}, connected: [], enums: providerEnums },
+      sessions: [session],
+    });
+
+    const transcript = render(state, richCapabilities());
+    assert.match(transcript, /\x1b\]8;;file:\/\/.*shots\/final%20image\.png\x1b\\/u);
+    assert.match(transcript, /Local Shot/);
+    assert.match(transcript, /shots\/final image\.png/);
+    assert.match(transcript, /shots\/missing image\.png/);
+    assert.match(transcript, /\x1b\]8;;file:\/\/[^\x1b]*missing%20image\.png\x1b\\/u);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("render keeps spaces inside local media and directory links without swallowing adjacent text", () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), "tura tui local links "));
+  try {
+    const reviewDir = path.join(workspace, "Project Files", "Docs (review)");
+    const mediaDir = path.join(workspace, "Project Files", "Agent Media");
+    const rawDir = path.join(workspace, "Project Files", "Raw Directory");
+    mkdirSync(reviewDir, { recursive: true });
+    mkdirSync(mediaDir, { recursive: true });
+    mkdirSync(rawDir, { recursive: true });
+    writeFileSync(path.join(mediaDir, "shot final.png"), "not really an image");
+    writeFileSync(path.join(reviewDir, "notes final.md"), "# notes");
+
+    const absoluteRawDir = rawDir.replace(/\\/g, "/");
+    const fileUrl = pathToFileURL(reviewDir).href;
+    const session = sessionFixture("sess-local-link-boundaries", "Local Link Boundaries", "idle", {
+      directory: workspace,
+    });
+    const state = reducer(initialState(workspace), {
+      type: "hydrate",
+      session,
+      messages: [
+        textMessage(
+          "msg-local-link-boundaries",
+          session.id,
+          [
+            "Agent local links:",
+            `raw directory ${absoluteRawDir} and then plain words`,
+            "relative directory Project Files/Docs (review), then a comma clause",
+            "wrapped directory (Project Files/Docs (review)) after wrapper",
+            "markdown directory [Review Folder](Project Files/Docs (review))",
+            `file url ${fileUrl}.`,
+            "[MEDIA:Project Files/Agent Media/shot final.png:MEDIA]",
+            "[MEDIA:Project Files/Agent Media/missing final.png:MEDIA]",
+          ].join("\n"),
+        ),
+      ],
+      permissions: [],
+      providers: { all: [], default: {}, connected: [], enums: providerEnums },
+      sessions: [session],
+    });
+
+    const transcript = withTerminalSize(140, 32, () => render(state, richCapabilities()));
+    const text = stripAnsi(transcript);
+    const urls = osc8Urls(transcript);
+
+    assert.match(text, /Project Files\/Docs \(review\)/u);
+    assert.match(text, /Project Files\/Agent Media\/shot final\.png/u);
+    assert.match(text, /Project Files\/Agent Media\/missing final\.png/u);
+    assert.match(text, /Raw Directory and then plain words/u);
+    assert.doesNotMatch(text, /Review Folder\)/u);
+    assert.match(
+      transcript,
+      /\x1b\]8;;file:\/\/[^\x1b]*Project%20Files\/Docs%20\(review\)\x1b\\\x1b\[38;2;217;222;205m\x1b\[4mReview Folder\x1b/u,
+    );
+    assert.ok(
+      urls.some((url) => /Project%20Files\/Docs%20\(review\)$/u.test(url)),
+      urls.join("\n"),
+    );
+    assert.ok(
+      urls.some((url) => /Project%20Files\/Raw%20Directory$/u.test(url)),
+      urls.join("\n"),
+    );
+    assert.ok(
+      urls.some((url) => /Project%20Files\/Agent%20Media\/shot%20final\.png$/u.test(url)),
+      urls.join("\n"),
+    );
+    assert.ok(
+      urls.some((url) => /Project%20Files\/Agent%20Media\/missing%20final\.png$/u.test(url)),
+      urls.join("\n"),
+    );
+    assert.ok(
+      urls.every((url) => !/plain%20words|comma%20clause|after%20wrapper/u.test(url)),
+      urls.join("\n"),
+    );
+    assert.doesNotMatch(transcript, /\[MEDIA:/u);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
 });
 
 test("render truncates wide markdown tables to single rows including the last column", () => {
@@ -412,7 +535,6 @@ test("render shows agent persona summary and persona panel", () => {
         },
         config: {
           agent_name: "fast",
-          agent_persona: [{ persona_name: "tura", persona_directory: "personas/src/tura" }],
         },
         prompt: "Fast prompt",
       },

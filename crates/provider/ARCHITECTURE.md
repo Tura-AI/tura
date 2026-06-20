@@ -258,14 +258,14 @@ service_tier = "auto"
 reasoning_effort = "low"
 stream = true
 
-[[provider.routes.flagship_thinking.providers]]
+[[provider.routes.thinking.providers]]
 provider = "openai"
 base_url = "https://api.openai.com/v1"
 model = "gpt-5.1-codex"
 temperature = 0.2
 priority = 100
 
-[[provider.routes.flagship_thinking.providers]]
+[[provider.routes.thinking.providers]]
 provider = "google"
 base_url = "https://generativelanguage.googleapis.com"
 model = "gemini-..."
@@ -301,8 +301,8 @@ To add a model on an existing provider:
 2. Add the model id, display metadata, cost/context values, and capability
    flags expected by the gateway/model picker.
 3. Add the model as a candidate in one or more `routes` entries.
-4. Keep route names stable so existing agent configs continue to use names such
-   as `flagship_thinking`, `thinking`, `fast`, or `instant`.
+4. Keep route names stable so existing agent configs continue to use canonical
+   names such as `thinking`, `fast`, `embedding_high`, or `embedding_low`.
 5. Add or update live smoke tests only when the provider/model can be tested in
    the current environment.
 
@@ -464,7 +464,7 @@ call-level state vocabulary and normalization.
 
 ### `routing/routes/`
 
-Resolves a named route such as `flagship_thinking` to ordered provider candidates.
+Resolves a named route such as `thinking` to ordered provider candidates.
 
 Route behavior:
 

@@ -84,11 +84,6 @@ path = "tests/os_testing/session_prompt_router_flow.rs"
 required-features = ["os-tests"]
 
 [[test]]
-name = "agent_persona_settings_flow"
-path = "tests/business/agent_persona_settings_flow.rs"
-required-features = ["business-tests"]
-
-[[test]]
 name = "session_shell_path_flow"
 path = "tests/business/session_shell_path_flow.rs"
 required-features = ["business-tests"]

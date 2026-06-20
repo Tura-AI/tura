@@ -327,9 +327,7 @@ async def choose_first_alternate_model(page, tier_name: str) -> dict | None:
         row = rows.nth(index)
         text = await row.inner_text()
         title = text.splitlines()[0].strip()
-        if (title == "推理" and tier_name == "thinking") or (
-            title == "旗舰推理" and tier_name == "flagship_thinking"
-        ):
+        if title == "推理" and tier_name == "thinking":
             target_row = row
             break
     if target_row is None:
@@ -454,7 +452,7 @@ async def main() -> None:
                 await page.screenshot(path=OUT / "01-conversation-toolbar.png", full_page=True)
 
                 await page.locator(".agent-trigger-button").click()
-                await expect(page.get_by_role("button", name="模型配置")).to_be_visible()
+                await expect(page.get_by_role("button", name="默认模型配置")).to_be_visible()
                 await expect(page.get_by_role("button", name="智能体配置")).to_be_visible()
                 agent_options = page.locator(".agent-trigger-option")
                 option_count = await agent_options.count()
@@ -501,12 +499,12 @@ async def main() -> None:
             )
 
             await page.locator('[data-section="models"]').click()
-            await expect(page.get_by_role("heading", name="模型配置")).to_be_visible()
+            await expect(page.get_by_role("heading", name="默认模型配置")).to_be_visible()
             rows = page.locator(".model-config-panel .field-row")
-            await expect(rows).to_have_count(4)
+            await expect(rows).to_have_count(2)
             model_text = await page.locator(".model-config-panel").inner_text()
+            assert "推理" in model_text
             assert "快速" in model_text
-            assert "即时" in model_text
             assert "embedding" not in model_text.lower()
             labels = page.locator(".model-tier-label small")
             for index in range(await labels.count()):
@@ -530,7 +528,7 @@ async def main() -> None:
             ).locator(".appearance-select-button").click()
             await page.locator(".appearance-select-menu").wait_for(state="visible")
             await page.locator(".appearance-select-menu").get_by_role(
-                "button", name="旗舰推理"
+                "button", name="推理"
             ).click()
             await expect(page.get_by_text("思考强度")).to_be_visible()
             await expect(page.get_by_text("Priority")).to_be_visible()
@@ -555,7 +553,7 @@ async def main() -> None:
             updated_agent = await wait_for_agent_provider(
                 AGENT_UNDER_TEST,
                 {
-                    "tura_llm_name": "flagship_thinking",
+                    "tura_llm_name": "thinking",
                     "model_reasoning_effort": "high",
                     "model_acceleration_enabled": True,
                     "service_tier": "priority",
@@ -566,7 +564,7 @@ async def main() -> None:
             checks.append(
                 {
                     "name": "agent-settings-persists-tier",
-                    "ok": agent_tier == "flagship_thinking",
+                    "ok": agent_tier == "thinking",
                 }
             )
             checks.append(
@@ -591,7 +589,6 @@ async def main() -> None:
             await expect(page.locator(".agent-avatar-loading")).to_have_count(1)
             await page.locator("#agent-avatar-pixel").fill("12")
             await page.locator("#agent-avatar-threshold").fill("160")
-            await page.locator("#agent-avatar-scale").fill("115")
             await page.get_by_role("button", name="保存").click()
             saved_avatar_config = await wait_for_config_key("agent_avatar")
             raw_avatar = saved_avatar_config.get("agent_avatar")
@@ -602,7 +599,7 @@ async def main() -> None:
                     "name": "personalization-persists-avatar",
                     "ok": avatar["pixel_size"] == 12
                     and avatar["threshold"] == 160
-                    and avatar["scale"] == 115
+                    and "scale" not in avatar
                     and bool(avatar["role"]),
                 }
             )

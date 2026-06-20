@@ -13,7 +13,7 @@ use tura_router::registry::{AgentRegistry, CommandRegistry, PersonaRegistry, Reg
 static ENV_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
 
 #[test]
-fn router_registry_business_flow_persists_discovers_resolves_and_deletes_dynamic_agent_persona(
+fn router_registry_business_flow_persists_discovers_resolves_and_deletes_dynamic_agent_and_persona(
 ) -> Result<()> {
     let _guard = env_lock();
     let project = ProjectEnv::new()?;
@@ -99,7 +99,7 @@ fn router_registry_business_flow_persists_discovers_resolves_and_deletes_dynamic
         .resolve_by_name("router-coding")
         .context("dynamic agent should resolve by canonical id")?;
     assert_eq!(resolved.agent_name, "router-coding");
-    assert_eq!(resolved.provider, "flagship_thinking");
+    assert_eq!(resolved.provider, "thinking");
     assert!(resolved.config.is_some());
     assert!(resolved
         .capabilities
@@ -135,7 +135,7 @@ fn router_registry_business_flow_persists_discovers_resolves_and_deletes_dynamic
 }
 
 #[test]
-fn router_registry_business_flow_rejects_invalid_agent_persona_ids_and_protected_deletes(
+fn router_registry_business_flow_rejects_invalid_agent_and_persona_ids_and_protected_deletes(
 ) -> Result<()> {
     let _guard = env_lock();
     let _project = ProjectEnv::new()?;

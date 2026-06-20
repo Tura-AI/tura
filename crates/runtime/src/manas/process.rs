@@ -6,6 +6,7 @@ use crate::manas::prompt_messages::{
     push_no_tool_task_status_retry_message, push_task_status_nudge,
 };
 use crate::manas::runtime_turn::execute_turn;
+use crate::manas::constants::PLANNING_TOOL;
 use crate::manas::tool_catalog::{command_run_commands_for_agent, planning_child_depth};
 use crate::manas::{user_visible_runtime_output_text, user_visible_runtime_text};
 use crate::manas::{COMMAND_RUN_TOOL, TASK_STATUS_COMMAND};
@@ -90,10 +91,13 @@ pub fn process_manas_internal(
     let mut no_tool_retries = 0_u8;
     let mut final_session_state = SessionState::Completed;
     let mut final_error: Option<String> = None;
-    let supports_task_status = agents
-        .first()
-        .map(command_run_commands_for_agent)
+    let agent_commands = agents.first().map(command_run_commands_for_agent);
+    let supports_task_status = agent_commands
+        .as_ref()
         .is_some_and(|commands| commands.contains(TASK_STATUS_COMMAND));
+    let supports_planning = agent_commands
+        .as_ref()
+        .is_some_and(|commands| commands.contains(PLANNING_TOOL));
     // Count consecutive command_run turns that neither wrote (apply_patch) nor
     // settled task state (task_status). After the threshold, inject the
     // task_status nudge so a model stuck re-running read-only/verification
@@ -393,12 +397,10 @@ pub fn process_manas_internal(
                 if let Some(next_task) = active_doing_task_user_message(session) {
                     record_task_focus_message_for_terminal_done(session, &next_task, false);
                     persist_session_checkpoint(session, "task_focus");
-                    current_messages.push(next_task);
                 }
             } else if let Some(next_task) = active_task_user_message(session) {
                 record_task_focus_message_for_terminal_done(session, &next_task, false);
                 persist_session_checkpoint(session, "task_focus");
-                current_messages.push(next_task);
             }
 
             // The model keeps running command_run without writing or settling
@@ -444,13 +446,23 @@ pub fn process_manas_internal(
                 break;
             }
 
+            if !(supports_planning && supports_task_status) {
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    supports_planning = supports_planning,
+                    supports_task_status = supports_task_status,
+                    "turn completed without command_run while task_status is still active; non-planning agent ends without retry"
+                );
+                break;
+            }
+
             if no_tool_retries < no_tool_retry_limit() {
                 no_tool_retries = no_tool_retries.saturating_add(1);
                 push_no_tool_task_status_retry_message(&mut current_messages, session);
                 if let Some(next_task) = active_doing_task_user_message(session) {
                     record_task_focus_message(session, &next_task);
                     persist_session_checkpoint(session, "task_focus");
-                    current_messages.push(next_task);
                 }
                 warn!(
                     session_id = %session.session_id,

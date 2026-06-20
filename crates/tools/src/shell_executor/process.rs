@@ -3,6 +3,7 @@
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellProcessScopeStrategy {
@@ -32,6 +33,34 @@ pub(super) fn configure_tokio_process_scope(command: &mut tokio::process::Comman
 
 pub(super) fn attach_shell_process_scope(pid: u32) -> Option<ShellProcessScope> {
     ShellProcessScope::attach(pid)
+}
+
+pub(super) fn retain_shell_process_scope(scope: ShellProcessScope) {
+    if !scope.has_live_members() {
+        return;
+    }
+    retained_shell_process_scopes()
+        .lock()
+        .expect("retained shell process scope registry poisoned")
+        .push(scope);
+}
+
+pub fn terminate_retained_shell_process_scopes() -> usize {
+    let scopes = retained_shell_process_scopes()
+        .lock()
+        .expect("retained shell process scope registry poisoned")
+        .drain(..)
+        .collect::<Vec<_>>();
+    let count = scopes.len();
+    for scope in &scopes {
+        scope.terminate();
+    }
+    count
+}
+
+fn retained_shell_process_scopes() -> &'static Mutex<Vec<ShellProcessScope>> {
+    static SCOPES: OnceLock<Mutex<Vec<ShellProcessScope>>> = OnceLock::new();
+    SCOPES.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 #[cfg(windows)]
@@ -100,12 +129,30 @@ impl ShellProcessScope {
             windows_sys::Win32::System::JobObjects::TerminateJobObject(self.job, 1);
         }
     }
+
+    fn has_live_members(&self) -> bool {
+        use windows_sys::Win32::System::JobObjects::{
+            JobObjectBasicAccountingInformation, QueryInformationJobObject,
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        };
+
+        unsafe {
+            let mut info = std::mem::zeroed::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>();
+            let queried = QueryInformationJobObject(
+                self.job,
+                JobObjectBasicAccountingInformation,
+                &mut info as *mut _ as *mut _,
+                std::mem::size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                std::ptr::null_mut(),
+            );
+            queried != 0 && info.ActiveProcesses > 0
+        }
+    }
 }
 
 #[cfg(windows)]
 impl Drop for ShellProcessScope {
     fn drop(&mut self) {
-        self.terminate();
         unsafe {
             windows_sys::Win32::Foundation::CloseHandle(self.job);
         }
@@ -130,12 +177,9 @@ impl ShellProcessScope {
             let _ = kill(-self.pgid, SIGKILL);
         }
     }
-}
 
-#[cfg(unix)]
-impl Drop for ShellProcessScope {
-    fn drop(&mut self) {
-        self.terminate();
+    fn has_live_members(&self) -> bool {
+        unsafe { kill(-self.pgid, 0) == 0 }
     }
 }
 
@@ -150,6 +194,10 @@ impl ShellProcessScope {
     }
 
     pub(super) fn terminate(&self) {}
+
+    fn has_live_members(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(windows)]

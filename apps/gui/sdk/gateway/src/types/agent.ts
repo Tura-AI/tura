@@ -37,7 +37,6 @@ export type AgentConfig = {
   report_to_user?: boolean;
   default_config?: boolean;
   provider?: unknown;
-  agent_persona?: unknown[];
   agent_prompt?: unknown[];
   agent_capabilities?: unknown[];
   validator?: unknown;
@@ -50,7 +49,6 @@ export type AgentAvatarConfig = {
   display_mode?: "hidden" | "static" | "dynamic";
   pixel_size: number;
   threshold: number;
-  scale: number;
 };
 
 export type StoredAgent = {
@@ -64,4 +62,3 @@ export type AgentUpsertRequest = {
   config?: AgentConfig;
   prompt?: string;
 };
-

@@ -18,7 +18,7 @@
       { "name": "session", "summary": "list or show sessions" },
       { "name": "config", "summary": "read or update workspace session config" },
       { "name": "provider", "summary": "list providers and inspect auth state" },
-      { "name": "agent", "summary": "list, read, create, update, or tier agents" },
+      { "name": "agent", "summary": "list, read, create, update, or set agent models" },
       { "name": "persona", "summary": "list, read, create, update, or delete personas" },
       { "name": "project", "summary": "inspect or create gateway workspaces" },
       { "name": "file", "summary": "list, read, open, or reveal workspace files" },
@@ -124,7 +124,7 @@
       {
         "title": "Notes",
         "lines": [
-          "Session config uses /session/config; model tiers use the shared GUI /model_config provider_config.json."
+          "Session config uses /session/config; default model tier config uses the shared GUI /model_config provider_config.json."
         ]
       }
     ]
@@ -148,7 +148,7 @@
       "tura [OPTIONS] agent create AGENT_ID [--config JSON_OR_PATH] [--prompt TEXT|--prompt-file PATH]",
       "tura [OPTIONS] agent update AGENT_ID [--config JSON_OR_PATH] [--prompt TEXT|--prompt-file PATH]",
       "tura [OPTIONS] agent delete AGENT_ID [--json]",
-      "tura [OPTIONS] agent tier AGENT_ID [TIER] [--reasoning LEVEL] [--priority|--no-priority]"
+      "tura [OPTIONS] agent model AGENT_ID [PROVIDER/MODEL] [--reasoning LEVEL] [--priority|--no-priority]"
     ],
     "sections": [
       { "title": "Example", "lines": ["tura run -a AGENT_ID -m PROVIDER/MODEL -p \"prompt\""] }

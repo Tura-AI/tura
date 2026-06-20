@@ -1,6 +1,7 @@
 import type { SdkProvider } from "@tura/gateway-sdk";
 import { describe, expect, test } from "bun:test";
 import { providerDomains } from "../../../../app/src/pages/settings/provider-domain";
+import { configDraftToPatch } from "../../../../app/src/utils/settings";
 
 function provider(overrides: Partial<SdkProvider>): SdkProvider {
   return {
@@ -60,5 +61,23 @@ describe("providerDomains", () => {
         }),
       ),
     ).toEqual(["other"]);
+  });
+});
+
+describe("settings config patches", () => {
+  test("keeps runtime settings out of global config patches", () => {
+    expect(
+      configDraftToPatch(
+        { language: "en", model: "openai/gpt-5.5", agent: "thinking", theme: "dark" },
+        "dark",
+      ),
+    ).toEqual({
+      theme: "dark",
+      main_font: null,
+      code_font: null,
+      main_font_size: null,
+      code_font_size: null,
+      skill_folders: [],
+    });
   });
 });

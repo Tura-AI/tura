@@ -63,40 +63,41 @@ export async function agentCommand(context: CliContext, args: string[]): Promise
     else new HumanOutput(context.color).out(deleted ? t("deleted") : t("notDeleted"));
     return;
   }
-  if (subcommand === "tier") {
+  if (subcommand === "tier" || subcommand === "model") {
     const id = args.shift();
     if (!id) throw new CliUsageError(t("agentTierRequiresId"));
-    const tier = args.shift();
+    const modelArg = args.shift();
     const stored = await client.getAgent(id);
-    if (!tier) {
+    if (!modelArg) {
       const provider = providerObject(stored.config.provider);
       const response = {
         agent: id,
-        tier: stringValue(provider.tura_llm_name) ?? "thinking",
-        reasoning_effort: stringValue(provider.model_reasoning_effort) ?? "medium",
-        priority:
-          provider.service_tier === "priority" || provider.model_acceleration_enabled === true,
+        default_model_tier: defaultModelTier(provider),
+        current_model: stringValue(provider.current_model) ?? "",
+        reasoning_effort: stringValue(provider.model_reasoning_effort) ?? "high",
+        priority: priorityEnabled(provider),
       };
       if (json) printJson(response);
       else
         new HumanOutput(context.color).out(
-          `${response.agent}\t${response.tier}\t${response.reasoning_effort}\t${response.priority ? t("priority") : t("defaultModel")}`,
+          `${response.agent}\t${response.current_model || response.default_model_tier}\t${response.reasoning_effort}\t${response.priority ? t("priority") : t("defaultModel")}`,
         );
       return;
     }
+    const currentModel = parseProviderModel(modelArg, args);
     const reasoning = takeOption(args, "--reasoning") ?? takeOption(args, "--reasoning-effort");
     const priority = takeFlag(args, "--priority");
     const noPriority = takeFlag(args, "--no-priority");
     if (args.length > 0)
       throw new CliUsageError(t("unknownAgentTierArguments", { args: args.join(" ") }));
-    const config = agentConfigWithProviderTier(stored.config, {
-      tier,
+    const config = agentConfigWithCurrentModel(stored.config, {
+      currentModel,
       reasoningEffort: reasoning,
       priority: priority ? true : noPriority ? false : undefined,
     });
     const updated = await client.updateAgent(id, { config, prompt: stored.prompt ?? undefined });
     if (json) printJson(updated);
-    else new HumanOutput(context.color).out(`${id} -> ${tier}`);
+    else new HumanOutput(context.color).out(`${id} -> ${currentModel}`);
     return;
   }
   throw new CliUsageError(t("unknownAgentCommand", { command: subcommand }));
@@ -117,16 +118,19 @@ function parseAgentUpsertArgs(id: string, args: string[]): AgentUpsertRequest {
   };
 }
 
-function agentConfigWithProviderTier(
+function agentConfigWithCurrentModel(
   config: AgentConfig,
-  settings: { tier: string; reasoningEffort?: string; priority?: boolean },
+  settings: { currentModel: string; reasoningEffort?: string; priority?: boolean },
 ): AgentConfig {
   const provider = providerObject(config.provider);
+  const defaultTier = defaultModelTier(provider);
   return {
     ...config,
     provider: {
       ...provider,
-      tura_llm_name: settings.tier,
+      default_model_tier: defaultTier,
+      tura_llm_name: defaultTier,
+      current_model: settings.currentModel,
       ...(settings.reasoningEffort ? { model_reasoning_effort: settings.reasoningEffort } : {}),
       ...(settings.priority !== undefined
         ? {
@@ -136,6 +140,34 @@ function agentConfigWithProviderTier(
         : {}),
     },
   };
+}
+
+function defaultModelTier(provider: AgentProviderConfig): string {
+  const explicit = stringValue(provider.default_model_tier);
+  if (explicit) return explicit;
+  const legacy = stringValue(provider.tura_llm_name);
+  return legacy && !legacy.includes("/") ? legacy : "thinking";
+}
+
+function priorityEnabled(provider: AgentProviderConfig): boolean {
+  if (provider.model_acceleration_enabled !== undefined) {
+    return provider.model_acceleration_enabled;
+  }
+  if (provider.service_tier !== undefined) {
+    return provider.service_tier === "priority";
+  }
+  return true;
+}
+
+function parseProviderModel(first: string, args: string[]): string {
+  if (first.includes("/")) {
+    const [provider, ...modelParts] = first.split("/");
+    const model = modelParts.join("/");
+    if (provider && model) return `${provider}/${model}`;
+  }
+  const model = args.shift();
+  if (first && model) return `${first}/${model}`;
+  throw new CliUsageError(t("modelTierRequiresProviderModelPair"));
 }
 
 function providerObject(value: unknown): AgentProviderConfig {

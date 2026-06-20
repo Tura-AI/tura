@@ -36,7 +36,7 @@ OUT = Path(
     )
 )
 AGENT_ID = os.environ.get("TURA_LIVE_AGENT", "thinking-planning")
-MODEL_TIER = os.environ.get("TURA_LIVE_MODEL_TIER", "flagship_thinking")
+MODEL_TIER = os.environ.get("TURA_LIVE_MODEL_TIER", "thinking")
 MODEL_PROVIDER = os.environ.get("TURA_LIVE_MODEL_PROVIDER", "codex")
 MODEL_NAME = os.environ.get("TURA_LIVE_MODEL_NAME", "gpt-5.5")
 REASONING_EFFORT = os.environ.get("TURA_LIVE_REASONING", "low")
@@ -374,7 +374,7 @@ async def exercise_settings(page, round_dir: Path):
     await expect(page.locator(".settings-stack .loading-bar")).to_have_count(0, timeout=45000)
     await screenshot(page, round_dir, "01-settings-open")
     await page.locator('[data-section="models"]').click()
-    await expect(page.get_by_role("heading", name="模型配置")).to_be_visible(timeout=10000)
+    await expect(page.get_by_role("heading", name="默认模型配置")).to_be_visible(timeout=10000)
     await expect(page.locator(".model-config-panel .field-row").first).to_be_visible(timeout=45000)
     model_rows = await page.locator(".model-config-panel .field-row").count()
     assert model_rows >= 2, model_rows

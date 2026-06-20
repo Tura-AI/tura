@@ -2,6 +2,9 @@ param(
   [switch]$SkipInstall,
   [switch]$SkipCi,
   [switch]$SkipTui,
+  [switch]$SkipGui,
+  [switch]$SkipTauri,
+  [switch]$BackendOnly,
   [switch]$Clean,
   [int]$Parallelism = 4
 )
@@ -46,6 +49,15 @@ Write-Host "==> Release dry-run build"
 $buildArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\build-release.ps1")
 if ($SkipTui) {
   $buildArgs += "-SkipTui"
+}
+if ($SkipGui) {
+  $buildArgs += "-SkipGui"
+}
+if ($SkipTauri) {
+  $buildArgs += "-SkipTauri"
+}
+if ($BackendOnly) {
+  $buildArgs += "-BackendOnly"
 }
 if ($Clean) {
   $buildArgs += "-Clean"

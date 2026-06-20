@@ -35,7 +35,7 @@ test("normalizeEvent extracts message and session status fields", () => {
   const status = normalizeEvent({
     payload: {
       type: "session.status",
-      properties: { sessionID: "sess-1", status: { type: "busy" } },
+      properties: { sessionID: "sess-1", updatedAt: 123, status: { type: "busy" } },
     },
   });
 
@@ -76,6 +76,8 @@ test("normalizeEvent reads canonical streaming delta fields", () => {
         sessionID: "sess-1",
         messageID: "msg-1",
         partID: "part-1",
+        createdAt: 1,
+        updatedAt: 2,
         field: "text",
         delta: "hel",
       },
@@ -97,6 +99,8 @@ test("normalizeEvent reads delta sessionID from properties", () => {
         sessionID: "sess-envelope",
         messageID: "msg-1",
         partID: "part-1",
+        createdAt: 1,
+        updatedAt: 2,
         field: "text",
         delta: "hel",
       },

@@ -48,6 +48,7 @@ export interface StoredPersona {
   config?: PersonaConfig;
   persona?: string | null;
   communication_style?: string | null;
+  cli_communication_style?: string | null;
   management?: unknown;
   [key: string]: unknown;
 }

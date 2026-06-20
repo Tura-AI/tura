@@ -13,6 +13,7 @@ export interface SessionEventProperties {
 
 export interface SessionStatusEventProperties {
   sessionID: string;
+  updatedAt: number;
   status: unknown;
   context_tokens: Session["context_tokens"];
   usage?: Session["usage"];
@@ -32,12 +33,16 @@ export interface MessagePartDeltaEventProperties {
   sessionID: string;
   messageID: string;
   partID: string;
+  createdAt: number;
+  updatedAt: number;
   field: string;
   delta: string;
 }
 
 export interface MessagePartUpdatedEventProperties {
   sessionID: string;
+  createdAt: number;
+  updatedAt: number;
   part: MessagePart;
 }
 
@@ -54,7 +59,8 @@ export interface CommandUpdatedEventProperties {
   status: string;
   command?: unknown;
   result?: unknown;
-  updatedAt?: number | null;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export type GatewayEventPayload =

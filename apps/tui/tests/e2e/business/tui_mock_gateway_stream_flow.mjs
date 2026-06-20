@@ -62,6 +62,7 @@ let session = {
   message_count: 1,
 };
 let promptCounter = 0;
+const eventMessageCreatedAt = new Map();
 const config = {
   model: "mock/gpt-test",
   active_model: "mock/gpt-test",
@@ -110,7 +111,28 @@ function emit(event) {
 }
 
 function gatewayEvent(type, properties) {
-  emit({ directory: workspace, payload: { type, properties } });
+  emit({
+    directory: workspace,
+    payload: { type, properties: timestampedEventProperties(type, properties) },
+  });
+}
+
+function timestampedEventProperties(type, properties) {
+  if (type === "session.status") {
+    return { ...properties, updatedAt: properties.updatedAt ?? Date.now() };
+  }
+  if (type === "message.part.delta") {
+    const now = Date.now();
+    const key = `${properties.sessionID ?? ""}\u0000${properties.messageID ?? ""}`;
+    const createdAt = eventMessageCreatedAt.get(key) ?? properties.createdAt ?? now;
+    eventMessageCreatedAt.set(key, createdAt);
+    return {
+      ...properties,
+      createdAt,
+      updatedAt: properties.updatedAt ?? now,
+    };
+  }
+  return properties;
 }
 
 function streamDeltaFor(messageID, partID, delta, sessionPlacement = "properties") {
@@ -127,7 +149,10 @@ function streamDeltaFor(messageID, partID, delta, sessionPlacement = "properties
   }
   emit({
     directory: workspace,
-    payload: { type: "message.part.delta", properties },
+    payload: {
+      type: "message.part.delta",
+      properties: timestampedEventProperties("message.part.delta", properties),
+    },
   });
 }
 
@@ -207,7 +232,7 @@ function createGatewayServer() {
       capabilities: ["chat"],
       hidden: false,
     },
-    config: { agent_name: "fast", agent_persona: [] },
+    config: { agent_name: "fast" },
     prompt: "Mock stream prompt",
   };
   const server = http.createServer(async (req, res) => {

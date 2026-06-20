@@ -225,14 +225,16 @@ pub struct SendAgentMessageRequest {
     pub usage: Option<serde_json::Value>,
     #[serde(default)]
     pub command_updates: Vec<CommandUpdatePayload>,
-    pub created_at: Option<i64>,
-    pub updated_at: Option<i64>,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct StreamAgentTextRequest {
     pub delta: String,
     pub runtime_id: String,
+    pub created_at: i64,
+    pub updated_at: i64,
     #[serde(default)]
     pub context_tokens: Option<SessionContextTokens>,
     #[serde(default)]
@@ -274,8 +276,10 @@ pub struct CommandUpdatePayload {
     pub command: serde_json::Value,
     #[serde(default)]
     pub result: serde_json::Value,
-    #[serde(rename = "updatedAt", alias = "updated_at", default)]
-    pub updated_at: Option<i64>,
+    #[serde(rename = "createdAt", alias = "created_at")]
+    pub created_at: i64,
+    #[serde(rename = "updatedAt", alias = "updated_at")]
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

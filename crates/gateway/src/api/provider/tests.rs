@@ -668,8 +668,8 @@ async fn provider_list_hides_claude_models_from_picker_catalog() {
         .await
         .expect("load settings");
     let route = settings
-        .route_by_name("flagship_thinking")
-        .expect("flagship_thinking route should be configured");
+        .route_by_name("thinking")
+        .expect("thinking route should be configured");
     let response = provider_list_for_route(settings.as_ref(), route);
 
     for (provider_id, model_id) in &response.default {

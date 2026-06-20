@@ -39,6 +39,8 @@ fn business_runtime(session: &SessionManagement) -> RuntimeManagement {
         RuntimeProviderConfig {
             base: ProviderConfig {
                 tura_llm_name: provider_name.clone(),
+                default_model_tier: None,
+                current_model: None,
                 stream: true,
                 temperature: 0.0,
                 max_tokens: 4096,

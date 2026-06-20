@@ -23,20 +23,16 @@ export async function applySelectedSetting(
   if (!selected) return;
   const value = selected[2];
   if (detail === "model") {
-    if (typeof value !== "string" || !state.session?.id) return;
-    await updateActiveSession(client, getState, dispatch, { model: value });
+    if (typeof value !== "string") return;
+    const config = await client.patchSessionConfig(settingPatch(detail, value) ?? { model: value });
+    dispatch({ type: "session-config", value: config });
     dispatch({ type: "notice", value: undefined });
     return;
   }
   if (detail === "agent") {
-    if (typeof value !== "string" || !state.session?.id) return;
-    await updateActiveSession(client, getState, dispatch, { agent: value });
-    dispatch({ type: "notice", value: undefined });
-    return;
-  }
-  if (detail === "persona" && typeof value === "string") {
-    await applyPersonaToActiveAgent(client, getState, dispatch, value);
-    dispatch({ type: "close-setting-detail" });
+    if (typeof value !== "string") return;
+    const config = await client.patchSessionConfig({ active_agent: value });
+    dispatch({ type: "session-config", value: config });
     dispatch({ type: "notice", value: undefined });
     return;
   }
@@ -207,51 +203,4 @@ export async function submitSettingInput(
   dispatch({ type: "composer", value: "" });
   dispatch({ type: "open-setting-detail", detail: "providerAuth", providerID: input.providerID });
   dispatch({ type: "notice", value: undefined });
-}
-
-function personaID(persona: AppState["personas"][number] | undefined): string | undefined {
-  const configName = persona?.config?.persona_name;
-  return persona?.summary?.id ?? (typeof configName === "string" ? configName : undefined);
-}
-
-export async function applyPersonaToActiveAgent(
-  client: TuiGatewayClient,
-  getState: TuiGetState,
-  dispatch: TuiDispatch,
-  targetPersonaID: string,
-): Promise<void> {
-  const state = getState();
-  const agentID = state.session?.agent ?? state.sessionConfig?.active_agent;
-  if (!agentID) throw new Error("No active agent selected.");
-  const persona =
-    state.personas.find((item) => personaID(item) === targetPersonaID) ??
-    (await client.getPersona(targetPersonaID));
-  const stored = await client.getAgent(agentID);
-  const config = {
-    ...stored.config,
-    agent_persona: [
-      {
-        persona_name: targetPersonaID,
-        persona_directory:
-          persona.config?.persona_directory ??
-          persona.summary?.path ??
-          `personas/src/${targetPersonaID}`,
-      },
-    ],
-  };
-  const updated = await client.updateAgent(agentID, { config, prompt: stored.prompt ?? undefined });
-  const agents = state.agents.map((agent) => (storedAgentID(agent) === agentID ? updated : agent));
-  dispatch({
-    type: "agents",
-    value: agents.length === state.agents.length ? agents : [updated, ...state.agents],
-  });
-  dispatch({
-    type: "personas",
-    value: await client.listPersonas().catch(() => state.personas),
-    open: state.personasOpen,
-  });
-}
-
-function storedAgentID(agent: AppState["agents"][number]): string | undefined {
-  return agent.summary?.id ?? (agent as unknown as { name?: string }).name;
 }

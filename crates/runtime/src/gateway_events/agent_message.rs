@@ -82,9 +82,12 @@ pub(crate) async fn publish_streamed_agent_text(
         return;
     }
     let target_session_id = gateway_callback_session_id(session_id);
+    let (created_at, _) = runtime.assistant_message_timestamps();
     let payload = serde_json::json!({
         "delta": delta,
         "runtime_id": &runtime.runtime_id,
+        "created_at": created_at,
+        "updated_at": chrono::Utc::now().timestamp_millis(),
         "context_tokens": runtime.context_tokens,
         "usage": runtime.usage.clone(),
     });
@@ -103,17 +106,18 @@ pub(crate) fn publish_gateway_agent_message(
     reply_message: String,
     new_learning: String,
 ) -> Result<(), String> {
-    publish_gateway_agent_message_with_sync(
+    let now = chrono::Utc::now().timestamp_millis();
+    publish_gateway_agent_message_with_sync(GatewayAgentMessageSync {
         session_id,
         runtime_id,
         reply_message,
         new_learning,
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
+        runtime_status: None,
+        context_tokens: None,
+        usage: None,
+        created_at: now,
+        updated_at: now,
+    })
 }
 
 pub(crate) fn publish_gateway_agent_message_from_runtime(
@@ -123,47 +127,51 @@ pub(crate) fn publish_gateway_agent_message_from_runtime(
     new_learning: String,
 ) -> Result<(), String> {
     let (created_at, updated_at) = runtime.assistant_message_timestamps();
-    publish_gateway_agent_message_with_sync(
+    publish_gateway_agent_message_with_sync(GatewayAgentMessageSync {
         session_id,
-        &runtime.runtime_id,
+        runtime_id: &runtime.runtime_id,
         reply_message,
         new_learning,
-        Some(runtime.session_sync_status()),
-        Some(runtime.context_tokens),
-        runtime.usage.clone(),
-        Some(created_at),
-        Some(updated_at),
-    )
+        runtime_status: Some(runtime.session_sync_status()),
+        context_tokens: Some(runtime.context_tokens),
+        usage: runtime.usage.clone(),
+        created_at,
+        updated_at,
+    })
 }
 
-fn publish_gateway_agent_message_with_sync(
-    session_id: &str,
-    runtime_id: &str,
+struct GatewayAgentMessageSync<'a> {
+    session_id: &'a str,
+    runtime_id: &'a str,
     reply_message: String,
     new_learning: String,
     runtime_status: Option<RuntimeSessionSyncStatus>,
     context_tokens: Option<ContextTokenStats>,
     usage: Option<UsageReport>,
-    created_at: Option<i64>,
-    updated_at: Option<i64>,
+    created_at: i64,
+    updated_at: i64,
+}
+
+fn publish_gateway_agent_message_with_sync(
+    message: GatewayAgentMessageSync<'_>,
 ) -> Result<(), String> {
     if gateway_callbacks_disabled() {
         return Ok(());
     }
 
-    let target_session_id = gateway_callback_session_id(session_id);
+    let target_session_id = gateway_callback_session_id(message.session_id);
     let payload = serde_json::json!({
-        "reply_message": reply_message,
-        "new_learning": new_learning,
+        "reply_message": message.reply_message,
+        "new_learning": message.new_learning,
         "media": [],
-        "runtime_id": runtime_id,
-        "runtime_status": runtime_status,
-        "context_tokens": context_tokens,
-        "usage": usage,
-        "created_at": created_at,
-        "updated_at": updated_at,
+        "runtime_id": message.runtime_id,
+        "runtime_status": message.runtime_status,
+        "context_tokens": message.context_tokens,
+        "usage": message.usage,
+        "created_at": message.created_at,
+        "updated_at": message.updated_at,
     });
-    if publish_gateway_callback_ipc("session.agent_message", &target_session_id, payload.clone()) {
+    if publish_gateway_callback_ipc("session.agent_message", &target_session_id, payload) {
         return Ok(());
     }
     Err("gateway callback IPC transport is not enabled".to_string())

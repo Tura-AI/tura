@@ -188,6 +188,8 @@ mod tests {
             RuntimeProviderConfig {
                 base: ProviderConfig {
                     tura_llm_name: "flagship".to_string(),
+                    default_model_tier: None,
+                    current_model: None,
                     stream: true,
                     temperature: 0.2,
                     max_tokens: 4096,

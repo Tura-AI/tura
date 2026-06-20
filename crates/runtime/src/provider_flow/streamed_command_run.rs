@@ -188,12 +188,14 @@ pub fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>)
         .ended_at
         .unwrap_or(update.started_at)
         .timestamp_millis();
+    let created_at = update.started_at.timestamp_millis();
     let command_updates = command_update_payloads(
         update.runtime_id,
         update.call_id,
         update.commands,
         update.results,
         update.status,
+        created_at,
         updated_at,
     );
     let input = serde_json::json!({ "commands": update.commands });
@@ -258,7 +260,7 @@ pub fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>)
         "media": [],
         "runtime_id": update.runtime_id,
         "runtime_status": &update.runtime_status,
-        "created_at": update.started_at.timestamp_millis(),
+        "created_at": created_at,
         "updated_at": updated_at,
         "command_updates": command_updates,
         "tool_call": {
@@ -284,6 +286,7 @@ fn command_update_payloads(
     commands: &[Value],
     results: &[Value],
     status: &str,
+    created_at: i64,
     updated_at: i64,
 ) -> Vec<Value> {
     let mut updates = Vec::new();
@@ -301,6 +304,7 @@ fn command_update_payloads(
             "status": if status == "completed" || status == "error" { status } else { "ready" },
             "command": command,
             "result": Value::Null,
+            "createdAt": created_at,
             "updatedAt": updated_at,
         }));
     }
@@ -330,6 +334,7 @@ fn command_update_payloads(
             "status": result_status,
             "command": if command.is_null() { Value::Null } else { command.clone() },
             "result": result,
+            "createdAt": created_at,
             "updatedAt": updated_at,
         }));
     }

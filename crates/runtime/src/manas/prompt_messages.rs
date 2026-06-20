@@ -6,7 +6,7 @@ use std::{
 
 use crate::profile_timings;
 use crate::prompt_style::{
-    compact_context, tail_injection, task_status, user_new_command, PromptBuilder,
+    compact_context, context_blocks, tail_injection, task_status, user_new_command, PromptBuilder,
 };
 use crate::state_machine::session_management::{
     ContextTokenStats, PlanStatus, SessionManagement, StartCondition, TaskStep,
@@ -361,17 +361,14 @@ pub(crate) fn push_no_tool_task_status_retry_message(
 pub(crate) fn planning_objective_block(session: &SessionManagement) -> String {
     let overall = session.current_objective.trim();
     let Some((_index, task)) = current_planning_task(session) else {
-        return format!("[current objective]:\n{overall}");
+        return context_blocks::current_objective_block(overall, None);
     };
-    format!(
-        "[current objective]:\n{}\n\n{}",
-        overall,
-        planning_current_task_text(task)
-    )
+    let current_task = planning_current_task_text(task);
+    context_blocks::current_objective_block(overall, Some(current_task))
 }
 
-pub(crate) fn planning_current_task_text(task: &TaskStep) -> String {
-    task.task_summary.trim().to_string()
+pub(crate) fn planning_current_task_text(task: &TaskStep) -> &str {
+    context_blocks::current_task_text(&task.task_summary)
 }
 
 fn current_planning_task(session: &SessionManagement) -> Option<(usize, &TaskStep)> {
@@ -459,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn no_tool_retry_injects_objective_context_without_original_user_task() {
+    fn no_tool_retry_reminds_that_last_user_message_is_objective() {
         let now = Utc::now();
         let mut session = SessionManagement::new(
             "sess-no-tool-retry".to_string(),
@@ -486,7 +483,8 @@ mod tests {
             .expect("prompt message content should be a string");
 
         assert!(content.contains("Continue working toward the active thread goal."));
-        assert!(content.contains("[current objective]:\nSTATE MACHINE OBJECTIVE"));
+        assert!(content.contains("The last user message in the conversation is the current objective"));
+        assert!(!content.contains("[current objective]:\nSTATE MACHINE OBJECTIVE"));
         assert!(content.contains("task_status status question"));
         assert!(content.contains("task_status status done"));
         assert!(content.contains("task_status status doing"));
@@ -496,7 +494,7 @@ mod tests {
     }
 
     #[test]
-    fn no_tool_retry_injects_current_task_when_present() {
+    fn no_tool_retry_does_not_inject_current_task_when_present() {
         let now = Utc::now();
         let mut session = SessionManagement::new(
             "sess-no-tool-task".to_string(),
@@ -530,7 +528,9 @@ mod tests {
             .as_str()
             .expect("prompt message content should be a string");
 
-        assert!(content.contains("[current objective]:\nfix the task\n\nPatch parser"));
+        assert!(content.contains("The last user message in the conversation is the current objective"));
+        assert!(!content.contains("[current objective]:\nfix the task\n\nPatch parser"));
+        assert!(!content.contains("Patch parser"));
         assert!(!content.contains("original_user_task:"));
     }
 

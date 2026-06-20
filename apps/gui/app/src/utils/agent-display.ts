@@ -1,26 +1,7 @@
 import type { Agent, StoredAgent } from "@tura/gateway-sdk";
 
-export const CONFIGURABLE_AGENT_IDS = [
-  "thinking",
-  "thinking-planning",
-  "fast",
-  "fast-text-only",
-] as const;
-const CONFIGURABLE_AGENT_ID_SET = new Set<string>(CONFIGURABLE_AGENT_IDS);
-const CONFIGURABLE_AGENT_ORDER = new Map<string, number>(
-  CONFIGURABLE_AGENT_IDS.map((id, index) => [id, index]),
-);
-
 export function visibleConfigurableAgents(agents: Agent[]): Agent[] {
-  const visibleAgents = agents.filter((agent) => !agent.hidden);
-  const defaultAgents = visibleAgents.filter((agent) => CONFIGURABLE_AGENT_ID_SET.has(agent.name));
-  return defaultAgents.length > 0
-    ? [...defaultAgents].sort(
-        (left, right) =>
-          (CONFIGURABLE_AGENT_ORDER.get(left.name) ?? Number.MAX_SAFE_INTEGER) -
-          (CONFIGURABLE_AGENT_ORDER.get(right.name) ?? Number.MAX_SAFE_INTEGER),
-      )
-    : visibleAgents;
+  return agents.filter((agent) => !agent.hidden);
 }
 
 export function agentDisplayName(agent?: Agent, stored?: StoredAgent): string {

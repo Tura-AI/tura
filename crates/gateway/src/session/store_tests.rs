@@ -448,6 +448,7 @@ fn update_session_status_updates_stored_status() {
     match event {
         GlobalEvent::SessionStatus { properties } => {
             assert_eq!(properties.session_id, session.id);
+            assert_eq!(properties.updated_at, updated.updated_at);
             assert_eq!(properties.context_tokens.input, 12_345);
             assert_eq!(properties.context_tokens.limit, 76_800);
             assert_eq!(properties.usage.context_tokens.input, 12_345);

@@ -33,7 +33,7 @@ function Get-CiCrates {
     $members[$id] = $true
   }
   $metadata.packages |
-    Where-Object { $members.ContainsKey($_.id) -and $_.name -ne "src-tauri" } |
+    Where-Object { $members.ContainsKey($_.id) -and $_.name -ne "tura_gui" } |
     ForEach-Object { $_.name }
 }
 

@@ -7,7 +7,7 @@ import {
   settingPatch,
 } from "../../../../src/tui/logic/selection.js";
 
-test("prompt runtime selection uses the active session model before saved config", () => {
+test("prompt runtime selection uses saved config before the active session model", () => {
   const state = reducer(
     reducer(initialState("C:/repo"), {
       type: "hydrate",
@@ -37,7 +37,7 @@ test("prompt runtime selection uses the active session model before saved config
   );
 
   assert.deepEqual(promptRuntimeSelection(state), {
-    model: "codex/gpt-5.3-codex-spark",
+    model: "codex/gpt-5.5",
     agent: "thinking",
     modelVariant: "high",
     modelAccelerationEnabled: true,

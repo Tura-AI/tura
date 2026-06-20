@@ -17,6 +17,7 @@ Workspace benchmark scripts keep their historical second-level categories:
 tests/benchmark/bug-fix/
 tests/benchmark/frontend-playwright/
 tests/benchmark/lib/
+tests/benchmark/media-presentation/
 tests/benchmark/project-rebuild-refactor/
 tests/benchmark/tui/
 ```

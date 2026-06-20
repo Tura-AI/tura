@@ -21,7 +21,14 @@ Important scripts:
   paths before checking bash/zsh. macOS asserts zsh and bash and reports
   optional PowerShell (`pwsh`) coverage.
 - `build-debug.*`: build Rust debug binaries and the TUI entry into `target/debug`.
-- `build-release.*`: build Rust release binaries and the TUI entry into `target/release`. Release builds preserve local session DB/cache state by default; pass `-Clean` on PowerShell or `-clean`/`--clean` on POSIX shells when a build must intentionally remove repository-local session DB/cache files first.
+- `build-release.*`: build Rust release binaries, the web GUI dist, the TUI entry,
+  and the Tauri desktop bundle. CLI/TUI artifacts and copied web assets land in
+  `target/release`; Tauri bundle artifacts are produced by the Tauri CLI under
+  the release target bundle directory. Release builds preserve local session
+  DB/cache state by default; pass `-Clean` on PowerShell or `-clean`/`--clean` on
+  POSIX shells when a build must intentionally remove repository-local session
+  DB/cache files first. Pass `-BackendOnly` or `--backend-only` when a CI job only
+  needs Rust release artifacts.
 - `register-cli.*`: add `target/release` to the user PATH. No wrapper directory is created; the registered CLI command is `tura exec`. The POSIX script updates `.profile`, `.bash_profile`, `.bashrc`, `.zprofile`, and `.zshrc` when present, and creates `.zprofile`/`.zshrc` on macOS so new Terminal sessions work.
 - `unregister-cli.*`: remove `target/release` from PATH and delete a stale `cli-bin` directory if present.
 - `start.*`: convenience runner for `target/debug` by default, or `target/release` with `--release`. The runner repeats the same shell coverage checks before launching; set `TURA_STRICT_SHELL_TOOL_COVERAGE=1` when optional zsh/PowerShell gaps should fail the run.
@@ -38,7 +45,7 @@ Important scripts:
 Xtask test collection scripts:
 
 - `xtask/scripts/run-ci-crate-tests.*`: GitHub-style crate matrix runner. It
-  discovers default backend workspace packages, excludes `src-tauri`, and runs
+  discovers default backend workspace packages, excludes `tura_gui`, and runs
   clippy plus `cargo test -p <crate>` for each crate. Local runs can batch
   crates in parallel.
 - Typed Rust test directories are peers: `tests/business`, `tests/os_testing`,
@@ -81,8 +88,8 @@ Script tests:
   root dependency installer, and verifies command-owned Python environments.
 - `tests/scripts/test-build-release.*`: validates a dry-run release probe such as
   `release-v0.0.0-ci`, runs `build-release.*`, checks expected artifacts, and
-  verifies command protocol health. Pass `-SkipTui` or `--skip-tui` when a CI job
-  only needs Rust release artifacts.
+  verifies command protocol health. Pass `-BackendOnly` or `--backend-only` when
+  a CI job only needs Rust release artifacts.
 
 GitHub Actions:
 

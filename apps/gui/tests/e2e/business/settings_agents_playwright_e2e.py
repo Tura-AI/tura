@@ -132,7 +132,7 @@ async def main() -> None:
             )
             await expect(page.locator(".agent-trigger-button")).to_be_visible(timeout=15000)
             await page.locator(".agent-trigger-button").click()
-            await expect(page.get_by_role("button", name="模型配置")).to_be_visible(timeout=15000)
+            await expect(page.get_by_role("button", name="默认模型配置")).to_be_visible(timeout=15000)
             await expect(page.get_by_role("button", name="智能体配置")).to_be_visible(timeout=15000)
             agent_options = page.locator(".agent-trigger-option")
             await expect(agent_options).to_have_count(4)
@@ -154,11 +154,11 @@ async def main() -> None:
                 ".settings-view",
             )
             await page.locator('[data-section="models"]').click()
-            await expect(page.get_by_role("heading", name="模型配置")).to_be_visible()
-            await expect(page.locator(".model-config-panel .field-row")).to_have_count(4)
+            await expect(page.get_by_role("heading", name="默认模型配置")).to_be_visible()
+            await expect(page.locator(".model-config-panel .field-row")).to_have_count(2)
             model_text = await page.locator(".model-config-panel").inner_text()
+            assert "推理" in model_text
             assert "快速" in model_text
-            assert "即时" in model_text
             assert "embedding" not in model_text.lower()
             labels = page.locator(".model-tier-label small")
             for index in range(await labels.count()):
@@ -172,25 +172,25 @@ async def main() -> None:
             await expect(page.get_by_role("button", name="新智能体")).to_have_count(0)
             await expect(page.get_by_role("button", name="删除")).to_have_count(0)
             await expect(
-                page.get_by_role("button", name="Thinking 旗舰推理", exact=True)
+                page.get_by_role("button", name="Thinking 推理", exact=True)
             ).to_be_visible()
             await expect(
-                page.get_by_role("button", name="Thinking Planning 旗舰推理", exact=True)
+                page.get_by_role("button", name="Thinking Planning 推理", exact=True)
             ).to_be_visible()
             await expect(
-                page.get_by_role("button", name="Fast 推理", exact=True)
+                page.get_by_role("button", name="Fast 快速", exact=True)
             ).to_be_visible()
             await expect(
-                page.get_by_role("button", name="Fast Text Only 推理", exact=True)
+                page.get_by_role("button", name="Fast Text Only 快速", exact=True)
             ).to_be_visible()
             await page.get_by_role(
-                "button", name="Fast Text Only 推理", exact=True
+                "button", name="Fast Text Only 快速", exact=True
             ).click()
             await page.locator(".agent-editor .field-row").filter(
                 has_text="模型"
             ).locator(".appearance-select-button").click()
             await page.locator(".appearance-select-menu").get_by_role(
-                "button", name="旗舰推理"
+                "button", name="推理"
             ).click()
             await expect(page.get_by_text("思考强度")).to_be_visible()
             await expect(page.get_by_text("Priority")).to_be_visible()
@@ -214,9 +214,8 @@ async def main() -> None:
             await expect(page.locator(".agent-avatar-loading")).to_have_count(1)
             await page.locator("#agent-avatar-pixel").fill("12")
             await page.locator("#agent-avatar-threshold").fill("160")
-            await page.locator("#agent-avatar-scale").fill("115")
             await page.get_by_role("button", name="保存").click()
-            await expect(page.locator("#agent-avatar-scale")).to_have_value("115")
+            await expect(page.locator("#agent-avatar-scale")).to_have_count(0)
             await page.screenshot(path=OUT / "04-personalization.png", full_page=True)
             checks.append({"name": "personalization-avatar-controls", "ok": True})
 

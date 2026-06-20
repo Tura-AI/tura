@@ -183,6 +183,18 @@ fn openai_compatible_provider_boundary_business_flow_normalizes_runtime_visible_
         "localtest",
         "https://api.openai.com/v1"
     ));
+    assert!(prompt_cache_key_supported(
+        "codex",
+        "https://chatgpt.com/backend-api/codex"
+    ));
+    assert!(prompt_cache_key_supported(
+        "chatgpt",
+        "https://chatgpt.com/backend-api"
+    ));
+    assert!(prompt_cache_key_supported(
+        "openai-api",
+        "https://example.invalid/v1"
+    ));
     assert!(!prompt_cache_key_supported(
         "localtest",
         "https://example.invalid/v1"

@@ -10,6 +10,7 @@ pub const PERSONA_CONFIG_FILE: &str = "persona_config.json";
 pub const PERSONA_PROMPT_DIR: &str = "prompt";
 pub const COMMUNICATION_STYLE_DIR: &str = "communication_style";
 pub const COMMUNICATION_STYLE_FILE: &str = "communication_style.md";
+pub const CLI_COMMUNICATION_STYLE_FILE: &str = "cli_communication_style.md";
 pub const EXPRESSION_MANIFEST_FILE: &str = "personas/src/expression_manifest.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -115,6 +116,8 @@ pub struct StoredPersona {
     pub persona: Option<String>,
     #[serde(default)]
     pub communication_style: Option<String>,
+    #[serde(default)]
+    pub cli_communication_style: Option<String>,
     pub management: PersonaManagement,
 }
 
@@ -274,6 +277,7 @@ fn load_persona_at(
     let prompt_dir = project_root.join(&config.prompt_directory);
     let persona = fs::read_to_string(prompt_dir.join("persona.md")).ok();
     let communication_style = read_communication_style(project_root, &prompt_dir);
+    let cli_communication_style = read_cli_communication_style(project_root, &prompt_dir);
     let id = normalize_id(&config.persona_name);
     let management = PersonaManagement {
         persona_id: id.clone(),
@@ -307,6 +311,7 @@ fn load_persona_at(
         config,
         persona,
         communication_style,
+        cli_communication_style,
         management,
     })
 }
@@ -403,6 +408,18 @@ fn read_communication_style(project_root: &Path, prompt_dir: &Path) -> Option<St
             .join(COMMUNICATION_STYLE_FILE),
         prompt_dir.join(COMMUNICATION_STYLE_FILE),
         prompt_dir.join("communication_stlye.md"),
+    ]
+    .into_iter()
+    .find_map(|path| fs::read_to_string(path).ok())
+}
+
+fn read_cli_communication_style(project_root: &Path, prompt_dir: &Path) -> Option<String> {
+    [
+        project_root
+            .join(STATIC_PERSONAS_DIR)
+            .join(COMMUNICATION_STYLE_DIR)
+            .join(CLI_COMMUNICATION_STYLE_FILE),
+        prompt_dir.join(CLI_COMMUNICATION_STYLE_FILE),
     ]
     .into_iter()
     .find_map(|path| fs::read_to_string(path).ok())
@@ -556,6 +573,43 @@ mod tests {
         assert_eq!(
             saved.communication_style.as_deref(),
             Some("Shared communication style")
+        );
+    }
+
+    #[test]
+    fn shared_cli_communication_style_is_loaded_separately() {
+        let temp = project();
+        let shared_dir = temp
+            .path()
+            .join(STATIC_PERSONAS_DIR)
+            .join(COMMUNICATION_STYLE_DIR);
+        fs::create_dir_all(&shared_dir).expect("shared communication style dir");
+        fs::write(
+            shared_dir.join(COMMUNICATION_STYLE_FILE),
+            "Messaging app communication style",
+        )
+        .expect("shared communication style");
+        fs::write(
+            shared_dir.join(CLI_COMMUNICATION_STYLE_FILE),
+            "CLI communication style",
+        )
+        .expect("cli communication style");
+
+        let saved = save_dynamic_persona(
+            temp.path(),
+            &test_config(temp.path(), "Helpful Persona"),
+            Some("Persona prompt"),
+            Some("Local communication style"),
+        )
+        .expect("save persona");
+
+        assert_eq!(
+            saved.communication_style.as_deref(),
+            Some("Messaging app communication style")
+        );
+        assert_eq!(
+            saved.cli_communication_style.as_deref(),
+            Some("CLI communication style")
         );
     }
 

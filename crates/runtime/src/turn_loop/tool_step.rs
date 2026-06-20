@@ -180,17 +180,20 @@ mod tests {
             apply_compact_context_results(&mut session, &mut tool_results).expect("apply compact");
 
         assert!(compact_applied);
-        assert_eq!(tool_results[0].success, true);
+        assert!(tool_results[0].success);
         assert_eq!(tool_results[0].error, None);
         assert_eq!(
             tool_results[0].arguments["commands"]
                 .as_array()
-                .unwrap()
+                .expect("command_run arguments should keep remaining commands")
                 .len(),
             1
         );
         assert_eq!(
-            tool_results[0].result["results"].as_array().unwrap().len(),
+            tool_results[0].result["results"]
+                .as_array()
+                .expect("command_run result should keep remaining results")
+                .len(),
             1
         );
         assert!(session.session_log.iter().any(|entry| {

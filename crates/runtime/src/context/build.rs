@@ -357,6 +357,9 @@ pub fn accumulate_message(
     let message_json = serde_json::json!({
         "role": role,
         "content": content,
+        "created_at": now.timestamp_millis(),
+        "updated_at": now.timestamp_millis(),
+        "timestamp": now.to_rfc3339(),
     });
 
     session.push_log(
@@ -502,7 +505,11 @@ fn immutable_context_messages_from_log_entry(value: serde_json::Value) -> Vec<se
         .get("context_messages")
         .and_then(|messages| messages.as_array())
     {
-        return messages.clone();
+        return messages
+            .iter()
+            .cloned()
+            .map(strip_context_reporting_fields)
+            .collect();
     }
 
     immutable_tool_result_context_messages(&value)
@@ -510,7 +517,8 @@ fn immutable_context_messages_from_log_entry(value: serde_json::Value) -> Vec<se
 
 use super::tool_results::{
     immutable_tool_result_context_message, immutable_tool_result_context_messages,
-    last_tool_call_response_from_session, strip_tool_reporting_fields, tool_result_context_cache,
+    last_tool_call_response_from_session, strip_context_reporting_fields,
+    strip_tool_reporting_fields, tool_result_context_cache,
 };
 
 #[cfg(test)]
@@ -563,6 +571,8 @@ mod tests {
             RuntimeProviderConfig {
                 base: ProviderConfig {
                     tura_llm_name: provider_name.clone(),
+                    default_model_tier: None,
+                    current_model: None,
                     stream: false,
                     temperature: 0.0,
                     max_tokens: 0,

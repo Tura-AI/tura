@@ -27,7 +27,6 @@ import {
   AgentAvatarCanvas,
   AVATAR_WORKSPACE_CONFIG_KEY,
   AVATAR_SETTING_LIMITS,
-  DEFAULT_AVATAR_SETTINGS,
   agentAvatarMedia,
   avatarSettingsFromConfigValue,
   normalizeAvatarSettings,
@@ -53,7 +52,7 @@ import { settingsRoutes, settingsRouteTitle } from "./settings-router";
 import {
   DEFAULT_PROVIDER_DOMAIN,
   LANGUAGE_OPTIONS,
-  MODEL_SETTINGS_TIERS,
+  DEFAULT_MODEL_TIER_CONFIG_TIERS,
   THEME_OPTIONS,
   codeFontOptions,
   compareProviderDomains,
@@ -160,7 +159,7 @@ export function SettingsView(props: {
   onGetAgent: (agentId: string) => Promise<StoredAgent | undefined>;
   onSaveAgent: (agentId: string | undefined, payload: AgentUpsertRequest) => Promise<void>;
   onDeleteAgent: (agentId: string) => Promise<void>;
-  onSavePersonalization: (avatar: AvatarRenderSettings) => void;
+  onSavePersonalization: (avatar: AvatarRenderSettings, personaId: string) => void;
   onLanguage: (language: string) => void;
 }) {
   const providers = createMemo(() => props.state.providers?.all ?? []);
@@ -220,13 +219,13 @@ export function SettingsView(props: {
               <section class="settings-panel">
                 <header>
                   <span>{t("applicationSettings")}</span>
-                  <small>{languageLabel(props.state.configDraft.language)}</small>
+                  <small>{languageLabel(workspaceLanguage(props.state))}</small>
                 </header>
                 <div class="settings-fields">
                   <div class="field-row">
                     <span>{t("language")}</span>
                     <AppearanceSelect
-                      value={props.state.configDraft.language || "zh-CN"}
+                      value={workspaceLanguage(props.state)}
                       options={LANGUAGE_OPTIONS.map((option) => ({
                         id: option.id,
                         label: option.label,
@@ -259,15 +258,6 @@ export function SettingsView(props: {
                             )}
                             onClick={() => props.onTheme(option.id)}
                           >
-                            <span
-                              class="theme-choice-swatch"
-                              style={{
-                                "--theme-paper": option.preview.paper,
-                                "--theme-wash": option.preview.wash,
-                                "--theme-accent": option.preview.accent,
-                              }}
-                              aria-hidden="true"
-                            />
                             <span class="theme-choice-label">
                               {option.label}
                               <Show when={option.id === systemThemeMode()}> ({t("default")})</Show>
@@ -309,7 +299,7 @@ export function SettingsView(props: {
                     <span>{t("codeFontSize")}</span>
                     <AppearanceSelect
                       value={String(props.state.codeFontSize)}
-                      options={sizeOptions(9, 15, 11)}
+                      options={sizeOptions(10, 15, 12)}
                       onSelect={(option) => props.onCodeFontSize(Number(option.value))}
                     />
                   </div>
@@ -373,7 +363,7 @@ export function SettingsView(props: {
             <Match when={props.section === "models"}>
               <section class="settings-panel model-config-panel">
                 <header>
-                  <span>{t("modelRuntime")}</span>
+                  <span>{t("defaultModelTierConfig")}</span>
                   <small>{props.state.modelConfig?.path ?? "--"}</small>
                 </header>
                 <Show
@@ -383,7 +373,7 @@ export function SettingsView(props: {
                   <div class="settings-fields">
                     <For
                       each={(props.state.modelConfig?.tiers ?? []).filter((tier) =>
-                        MODEL_SETTINGS_TIERS.includes(tier.tier),
+                        DEFAULT_MODEL_TIER_CONFIG_TIERS.includes(tier.tier),
                       )}
                     >
                       {(tier) => (
@@ -445,6 +435,7 @@ export function SettingsView(props: {
             <Match when={props.section === "personalization"}>
               <PersonalizationSettingsPanel
                 personas={props.state.personas}
+                activePersonaId={activePersonaFromState(props.state)}
                 savedAvatar={personalizationAvatarFromState(props.state)}
                 saving={props.state.settingsSaving}
                 onSave={props.onSavePersonalization}
@@ -457,15 +448,28 @@ export function SettingsView(props: {
   );
 }
 
+function workspaceLanguage(state: AppState): string {
+  return (
+    stringConfigValue(state.workspaceConfigDraft.language) ??
+    stringConfigValue(state.workspaceConfig.language) ??
+    "en"
+  );
+}
+
+function stringConfigValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
 function PersonalizationSettingsPanel(props: {
   personas: StoredPersona[];
+  activePersonaId: string;
   savedAvatar: AvatarRenderSettings;
   saving: boolean;
-  onSave: (avatar: AvatarRenderSettings) => void;
+  onSave: (avatar: AvatarRenderSettings, personaId: string) => void;
 }) {
   const personas = createMemo(() => avatarPersonaOptions(props.personas));
   const [selectedPersonaId, setSelectedPersonaId] = createSignal(
-    props.savedAvatar.persona_id ?? props.savedAvatar.role,
+    props.activePersonaId ?? props.savedAvatar.persona_id ?? props.savedAvatar.role,
   );
   const [avatar, setAvatar] = createSignal<AvatarRenderSettings>(props.savedAvatar);
   const selectedMedia = createMemo(() =>
@@ -499,6 +503,7 @@ function PersonalizationSettingsPanel(props: {
         persona_id: selectedPersonaId(),
         role: selectedPersonaId(),
       }),
+      selectedPersonaId(),
     );
   }
 
@@ -569,6 +574,14 @@ function personalizationAvatarFromState(state: AppState): AvatarRenderSettings {
   );
 }
 
+function activePersonaFromState(state: AppState): string {
+  return (
+    stringConfigValue(state.workspaceConfigDraft.active_persona) ??
+    stringConfigValue(state.workspaceConfig.active_persona) ??
+    "tura"
+  );
+}
+
 function AgentAvatarSettings(props: {
   media: PersonaMediaConfig;
   value: AvatarRenderSettings;
@@ -618,14 +631,6 @@ function AgentAvatarSettings(props: {
           value={props.value.threshold}
           onInput={(threshold) => updateAvatar({ threshold })}
         />
-        <AvatarRange
-          id="agent-avatar-scale"
-          label="头像缩放"
-          min={AVATAR_SETTING_LIMITS.scale.min}
-          max={AVATAR_SETTING_LIMITS.scale.max}
-          value={props.value.scale}
-          onInput={(scale) => updateAvatar({ scale })}
-        />
       </div>
       <div class="agent-avatar-preview" aria-label="头像预览">
         <span>头像预览</span>
@@ -636,10 +641,7 @@ function AgentAvatarSettings(props: {
           >
             <AgentAvatarCanvas
               media={props.media}
-              settings={{
-                ...props.value,
-                scale: DEFAULT_AVATAR_SETTINGS.scale,
-              }}
+              settings={props.value}
               expressionId="vigilant"
               interactive={props.value.display_mode === "dynamic"}
               label="头像预览"

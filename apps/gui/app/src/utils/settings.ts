@@ -32,14 +32,11 @@ export function configToDraft(config: AppState["config"]): Record<string, string
     return {};
   }
   return {
-    language: config.language ?? "",
     theme: config.theme ?? "",
     main_font: config.main_font ?? "",
     code_font: config.code_font ?? "",
     main_font_size: config.main_font_size ? String(config.main_font_size) : "",
     code_font_size: config.code_font_size ? String(config.code_font_size) : "",
-    model: config.model ?? "",
-    agent: config.agent ?? "",
     skill_folders: (config.skill_folders ?? []).join(", "),
   };
 }
@@ -49,14 +46,11 @@ export function configDraftToPatch(
   themeMode: ThemeMode,
 ): Partial<NonNullable<AppState["config"]>> {
   return {
-    language: draft.language || null,
     theme: themeMode,
     main_font: draft.main_font || null,
     code_font: draft.code_font || null,
     main_font_size: draft.main_font_size ? Number(draft.main_font_size) : null,
     code_font_size: draft.code_font_size ? Number(draft.code_font_size) : null,
-    model: draft.model || null,
-    agent: draft.agent || null,
     skill_folders: draft.skill_folders
       ? draft.skill_folders
           .split(",")

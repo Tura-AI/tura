@@ -6,6 +6,9 @@ REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 SKIP_INSTALL=0
 SKIP_CI=0
 SKIP_TUI=0
+SKIP_GUI=0
+SKIP_TAURI=0
+BACKEND_ONLY=0
 CLEAN=0
 JOBS=${TURA_CI_JOBS:-4}
 
@@ -14,6 +17,9 @@ while [ "$#" -gt 0 ]; do
     --skip-install) SKIP_INSTALL=1 ;;
     --skip-ci) SKIP_CI=1 ;;
     --skip-tui) SKIP_TUI=1 ;;
+    --skip-gui) SKIP_GUI=1 ;;
+    --skip-tauri) SKIP_TAURI=1 ;;
+    --backend-only|--skip-apps) BACKEND_ONLY=1 ;;
     --clean) CLEAN=1 ;;
     --jobs|--parallelism)
       shift
@@ -23,7 +29,7 @@ while [ "$#" -gt 0 ]; do
     -h|--help)
       cat <<'EOF'
 Usage:
-  scripts/run-release-dry-run.sh [--skip-install] [--skip-ci] [--skip-tui] [--clean] [--jobs N]
+  scripts/run-release-dry-run.sh [--skip-install] [--skip-ci] [--backend-only] [--skip-tui] [--skip-gui] [--skip-tauri] [--clean] [--jobs N]
 
 Runs the release dry-run flow without publishing:
   install -> CI flow -> build release artifacts
@@ -50,6 +56,9 @@ fi
 printf '==> Release dry-run build\n'
 build_args=""
 if [ "$SKIP_TUI" -eq 1 ]; then build_args="$build_args --skip-tui"; fi
+if [ "$SKIP_GUI" -eq 1 ]; then build_args="$build_args --skip-gui"; fi
+if [ "$SKIP_TAURI" -eq 1 ]; then build_args="$build_args --skip-tauri"; fi
+if [ "$BACKEND_ONLY" -eq 1 ]; then build_args="$build_args --backend-only"; fi
 if [ "$CLEAN" -eq 1 ]; then build_args="$build_args --clean"; fi
 sh scripts/build-release.sh $build_args
 

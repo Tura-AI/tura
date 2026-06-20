@@ -100,6 +100,7 @@ export function ConversationPageOutlet(props: {
         agents={props.state().agents}
         modelConfig={props.state().modelConfig}
         selectedAgent={props.state().selectedAgent}
+        selectedModel={props.state().selectedModel}
         onAgent={setActiveAgent}
         onSettings={props.onOpenSettings}
       />

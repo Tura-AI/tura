@@ -172,7 +172,7 @@ impl ProductStore {
             ProductProject {
                 id: "project-core".to_string(),
                 workspace_id,
-                title: "Tura GUI".to_string(),
+                title: "tura_gui".to_string(),
                 description: "Minimal gateway-backed workbench".to_string(),
                 status: "active".to_string(),
                 priority: "high".to_string(),

@@ -44,7 +44,7 @@ rm -f "$TARGET_DIR/cli" "$TARGET_DIR/cli.exe"
 
 copy_gui_dist() {
   src="$REPO_ROOT/apps/gui/app/dist"
-  dst="$TARGET_DIR/gui"
+  dst="$TARGET_DIR/tura_gui"
   if [ ! -f "$src/index.html" ]; then
     echo "GUI dist not found at $src. Run the GUI build before copying debug artifacts." >&2
     exit 1

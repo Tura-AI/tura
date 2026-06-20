@@ -140,6 +140,7 @@ export function PlanView(props: {
       agents={props.state.agents}
       modelConfig={props.state.modelConfig}
       selectedAgent={props.state.selectedAgent}
+      selectedModel={props.state.selectedModel}
       onAgent={props.onAgent}
       onSettings={props.onOpenSettings}
     />

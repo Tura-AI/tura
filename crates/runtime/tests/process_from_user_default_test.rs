@@ -31,10 +31,7 @@ fn default_agent_registry_loads_general_agent() {
     assert!(agents[0].report_to_user);
     assert_eq!(agents[0].provider.tura_llm_name, "fast");
     assert!(agents[0].validator.need_validator);
-    assert!(agents[0]
-        .agent_capabilities
-        .iter()
-        .any(|capability| capability.capability_name == "command_run"));
+    assert!(agents[0].agent_capabilities.is_empty());
     assert!(!agents[0]
         .agent_capabilities
         .iter()
@@ -51,7 +48,7 @@ fn default_agent_registry_loads_general_agent() {
         .agent_capabilities
         .iter()
         .any(|capability| capability.capability_name == "send_message_to_user"));
-    assert_eq!(agents[0].agent_capabilities.len(), 1);
+    assert_eq!(agents[0].agent_capabilities.len(), 0);
 }
 
 #[test]
@@ -101,9 +98,8 @@ fn default_coding_agents_expose_expected_command_run_capabilities() {
         (
             "thinking-planning",
             vec![
-                "command_run",
                 "apply_patch",
-                "shell_command",
+                "shells",
                 "generate_media",
                 "read_media",
                 "web_discover",
@@ -117,9 +113,8 @@ fn default_coding_agents_expose_expected_command_run_capabilities() {
         (
             "fast",
             vec![
-                "command_run",
                 "apply_patch",
-                "shell_command",
+                "shells",
                 "generate_media",
                 "read_media",
                 "web_discover",
@@ -132,10 +127,8 @@ fn default_coding_agents_expose_expected_command_run_capabilities() {
         (
             "fast-text-only",
             vec![
-                "command_run",
                 "apply_patch",
-                "shell_command",
-                "generate_media",
+                "shells",
                 "web_discover",
                 "compact_context",
                 "task_status",

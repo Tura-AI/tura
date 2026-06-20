@@ -122,6 +122,7 @@ pub fn build_router() -> Router {
         )
         .route("/file", get(api::file::list_files))
         .route("/file/content", get(api::file::get_file_content))
+        .route("/file/media", get(api::file::get_file_media))
         .route("/file/open", post(api::file::open_file))
         .route("/file/open-location", post(api::file::open_file_location))
         // Provider
@@ -202,7 +203,7 @@ pub fn build_router() -> Router {
 
 /// Resolve the directory holding the built web GUI (`index.html` + `assets/`).
 ///
-/// Honors `TURA_GUI_DIST` first, then release-style `gui/` next to the gateway
+/// Honors `TURA_GUI_DIST` first, then release-style `tura_gui/` next to the gateway
 /// executable, then repository development build locations. Returns `None`
 /// when no built GUI is present so the gateway runs as a pure API server.
 fn gui_dist_dir() -> Option<PathBuf> {
@@ -231,14 +232,14 @@ fn gui_dist_candidates_for(
         candidates.push(dir);
     }
     if let Some(exe_dir) = exe_path.as_deref().and_then(Path::parent) {
-        candidates.push(exe_dir.join("gui"));
+        candidates.push(exe_dir.join("tura_gui"));
     }
     if let Some(root) = project_root {
         candidates.push(root.join("apps").join("gui").join("app").join("dist"));
-        candidates.push(root.join("gui"));
+        candidates.push(root.join("tura_gui"));
     }
     if let Some(cwd) = current_dir {
-        candidates.push(cwd.join("gui"));
+        candidates.push(cwd.join("tura_gui"));
     }
     candidates
 }
@@ -346,10 +347,10 @@ mod tests {
             candidates,
             vec![
                 PathBuf::from("explicit"),
-                PathBuf::from("target/release/gui"),
+                PathBuf::from("target/release/tura_gui"),
                 PathBuf::from("repo/apps/gui/app/dist"),
-                PathBuf::from("repo/gui"),
-                PathBuf::from("cwd/gui"),
+                PathBuf::from("repo/tura_gui"),
+                PathBuf::from("cwd/tura_gui"),
             ]
         );
     }

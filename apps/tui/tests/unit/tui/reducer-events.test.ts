@@ -31,6 +31,8 @@ test("reducer applies message and part replay events idempotently", () => {
             id: "msg-1",
             sessionID: "sess-1",
             role: "assistant",
+            created_at: 10,
+            updated_at: 10,
             parts: [{ id: "part-1", type: "text", text: "hello" }],
           },
         },
@@ -46,6 +48,8 @@ test("reducer applies message and part replay events idempotently", () => {
         type: "message.part.updated",
         properties: {
           sessionID: "sess-1",
+          createdAt: 10,
+          updatedAt: 11,
           part: {
             id: "tool-1",
             sessionID: "sess-1",
@@ -67,6 +71,8 @@ test("reducer applies message and part replay events idempotently", () => {
         type: "message.part.updated",
         properties: {
           sessionID: "sess-1",
+          createdAt: 10,
+          updatedAt: 12,
           part: {
             id: "tool-1",
             sessionID: "sess-1",
@@ -103,6 +109,8 @@ test("reducer keeps streaming deltas that arrive before full message hydration",
           sessionID: "sess-1",
           messageID: "runtime-stream.message",
           partID: "runtime-stream.message",
+          createdAt: 1,
+          updatedAt: 2,
           field: "text",
           delta: "hel",
         },
@@ -119,6 +127,8 @@ test("reducer keeps streaming deltas that arrive before full message hydration",
           sessionID: "sess-1",
           messageID: "runtime-stream.message",
           partID: "runtime-stream.message",
+          createdAt: 100,
+          updatedAt: 101,
           field: "text",
           delta: "lo",
         },
@@ -150,6 +160,8 @@ test("reducer keeps runtime text live while command parts update", () => {
           sessionID: "sess-1",
           messageID: "runtime-command.message",
           partID: "runtime-command.message",
+          createdAt: 100,
+          updatedAt: 100,
           field: "text",
           delta: "checking files",
         },
@@ -165,6 +177,8 @@ test("reducer keeps runtime text live while command parts update", () => {
         type: "message.part.updated",
         properties: {
           sessionID: "sess-1",
+          createdAt: 100,
+          updatedAt: 101,
           part: {
             id: "runtime-command.tool.command_run",
             sessionID: "sess-1",
@@ -248,6 +262,8 @@ test("reducer ignores message deltas without a session for an active session", (
         properties: {
           messageID: "msg-unknown-session",
           partID: "part-unknown-session",
+          createdAt: 1,
+          updatedAt: 2,
           field: "text",
           delta: "must not leak into the active chat",
         },
@@ -268,30 +284,31 @@ test("reducer merges command updates by command id and ignores stale event seq",
   });
 
   const event = (status: string, eventSeq: number, result: unknown = null) => ({
-      directory: "C:/repo",
-      payload: {
-        type: "command.updated" as const,
-        properties: {
-          sessionID: "sess-1",
-          messageID: "runtime-command-id.message",
-          partID: "runtime-command-id.tool.command_run",
-          runtimeID: "runtime-command-id",
-          commandRunID: "runtime-command-id.tool.command_run",
-          commandID: "runtime-command-id.tool.command_run:call_1:0",
-          providerToolCallID: "call_1",
-          commandIndex: 0,
-          eventSeq,
-          status,
-          command: {
-            command_id: "runtime-command-id.tool.command_run:call_1:0",
-            command_type: "shell_command",
-            command_line: "npm test",
-          },
-          result,
-          updatedAt: eventSeq,
+    directory: "C:/repo",
+    payload: {
+      type: "command.updated" as const,
+      properties: {
+        sessionID: "sess-1",
+        messageID: "runtime-command-id.message",
+        partID: "runtime-command-id.tool.command_run",
+        createdAt: 1,
+        updatedAt: eventSeq,
+        runtimeID: "runtime-command-id",
+        commandRunID: "runtime-command-id.tool.command_run",
+        commandID: "runtime-command-id.tool.command_run:call_1:0",
+        providerToolCallID: "call_1",
+        commandIndex: 0,
+        eventSeq,
+        status,
+        command: {
+          command_id: "runtime-command-id.tool.command_run:call_1:0",
+          command_type: "shell_command",
+          command_line: "npm test",
         },
+        result,
       },
-    });
+    },
+  });
 
   state = reducer(state, { type: "event", event: event("running", 30) });
   state = reducer(state, {
@@ -323,6 +340,94 @@ test("reducer merges command updates by command id and ignores stale event seq",
   assert.equal(commandState?.streamed_command_run_result?.results?.[0]?.success, true);
 });
 
+test("reducer keeps command updates when final runtime message has only text", () => {
+  let state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: { ...session, status: "busy" },
+    messages: [],
+    permissions: [],
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "command.updated",
+        properties: {
+          sessionID: "sess-1",
+          messageID: "runtime-final-text.message",
+          partID: "runtime-final-text.tool.command_run",
+          createdAt: 1,
+          updatedAt: 40,
+          runtimeID: "runtime-final-text",
+          commandRunID: "runtime-final-text.tool.command_run",
+          commandID: "runtime-final-text.tool.command_run:call_1:0",
+          providerToolCallID: "call_1",
+          commandIndex: 0,
+          eventSeq: 40,
+          status: "completed",
+          command: {
+            command_id: "runtime-final-text.tool.command_run:call_1:0",
+            command_type: "shell_command",
+            command_line: "npm test",
+          },
+          result: {
+            command_id: "runtime-final-text.tool.command_run:call_1:0",
+            command_type: "shell_command",
+            command_line: "npm test",
+            success: true,
+          },
+        },
+      },
+    },
+  });
+
+  state = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "message.updated",
+        properties: {
+          sessionID: "sess-1",
+          info: {
+            id: "runtime-final-text.message",
+            sessionID: "sess-1",
+            role: "assistant",
+            created_at: 1,
+            updated_at: 50,
+            parts: [
+              {
+                id: "runtime-final-text.message",
+                sessionID: "sess-1",
+                messageID: "runtime-final-text.message",
+                type: "text",
+                text: "Final answer",
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+
+  const assistant = displayMessages(state).find(
+    (message) => message.id === "runtime-final-text.message",
+  );
+  const commandPart = assistant?.parts.find((part) => part.tool === "command_run");
+  const commandState = commandPart?.state as
+    | {
+        input?: { commands?: Array<{ command_line?: string }> };
+        streamed_command_run_result?: { results?: Array<{ success?: boolean }> };
+      }
+    | undefined;
+
+  assert.equal(messageText(assistant!), "Final answer");
+  assert.equal(commandState?.input?.commands?.[0]?.command_line, "npm test");
+  assert.equal(commandState?.streamed_command_run_result?.results?.[0]?.success, true);
+});
+
 test("reducer ignores part updates without a session for an active session", () => {
   let state = reducer(initialState("C:/repo"), {
     type: "hydrate",
@@ -338,6 +443,8 @@ test("reducer ignores part updates without a session for an active session", () 
       payload: {
         type: "message.part.updated",
         properties: {
+          createdAt: 100,
+          updatedAt: 101,
           part: {
             id: "part-unknown-session",
             messageID: "msg-unknown-session",
@@ -370,6 +477,8 @@ test("reducer commits final live stream on the ending message event", () => {
           sessionID: "sess-1",
           messageID: "msg-sessionless-stream",
           partID: "part-sessionless-stream",
+          createdAt: 2,
+          updatedAt: 2,
           field: "text",
           delta: "duplicated live text",
         },
@@ -458,6 +567,8 @@ test("reducer replaces live command snapshots instead of appending command parts
           sessionID: "sess-1",
           messageID: "runtime-live-order.message",
           partID: "runtime-live-order.message",
+          createdAt: 100,
+          updatedAt: 100,
           field: "text",
           delta: "checking",
         },
@@ -465,10 +576,10 @@ test("reducer replaces live command snapshots instead of appending command parts
     },
   });
 
-  for (const [id, command_line] of [
-    ["runtime-live-order.tool.command_run.1", "first-live-command"],
-    ["runtime-live-order.tool.command_run.2", "second-live-command"],
-  ]) {
+  for (const [id, command_line, updatedAt] of [
+    ["runtime-live-order.tool.command_run.1", "first-live-command", 101],
+    ["runtime-live-order.tool.command_run.2", "second-live-command", 102],
+  ] as const) {
     state = reducer(state, {
       type: "event",
       event: {
@@ -477,6 +588,8 @@ test("reducer replaces live command snapshots instead of appending command parts
           type: "message.part.updated",
           properties: {
             sessionID: "sess-1",
+            createdAt: 100,
+            updatedAt,
             part: {
               id,
               sessionID: "sess-1",
@@ -499,9 +612,10 @@ test("reducer replaces live command snapshots instead of appending command parts
   );
   let commands = (assistant?.parts ?? [])
     .filter((part) => part.tool === "command_run")
-    .map((part) =>
-      (part.state as { input?: { commands?: Array<{ command_line?: string }> } }).input?.commands?.[0]
-        ?.command_line,
+    .map(
+      (part) =>
+        (part.state as { input?: { commands?: Array<{ command_line?: string }> } }).input
+          ?.commands?.[0]?.command_line,
     );
 
   assert.deepEqual(commands, ["second-live-command"]);
@@ -558,9 +672,10 @@ test("reducer replaces live command snapshots instead of appending command parts
   assistant = displayMessages(state)[0];
   commands = assistant.parts
     .filter((part) => part.tool === "command_run")
-    .map((part) =>
-      (part.state as { input?: { commands?: Array<{ command_line?: string }> } }).input?.commands?.[0]
-        ?.command_line,
+    .map(
+      (part) =>
+        (part.state as { input?: { commands?: Array<{ command_line?: string }> } }).input
+          ?.commands?.[0]?.command_line,
     );
 
   assert.equal(Object.values(state.liveStreams).length, 0);
@@ -585,6 +700,8 @@ test("reducer commits a finished live stream and renders the next runtime event 
           sessionID: "sess-1",
           messageID: "runtime-a-idle-commit.message",
           partID: "runtime-a-idle-commit.message",
+          createdAt: 1,
+          updatedAt: 2,
           field: "text",
           delta: "A live",
         },
@@ -631,6 +748,8 @@ test("reducer commits a finished live stream and renders the next runtime event 
           sessionID: "sess-1",
           messageID: "runtime-b-after-idle-commit.message",
           partID: "runtime-b-after-idle-commit.message",
+          createdAt: 4,
+          updatedAt: 4,
           field: "text",
           delta: "B should appear",
         },
@@ -652,7 +771,7 @@ test("reducer commits a finished live stream and renders the next runtime event 
       directory: "C:/repo",
       payload: {
         type: "session.status",
-        properties: { sessionID: "sess-1", status: "idle" },
+        properties: { sessionID: "sess-1", updatedAt: 5, status: "idle" },
       },
     },
   });
@@ -664,6 +783,34 @@ test("reducer commits a finished live stream and renders the next runtime event 
   );
   assert.equal(messageText(displayMessages(state)[0]), "A live");
   assert.equal(messageText(displayMessages(state)[1]), "B should appear");
+  assert.equal(state.session?.updated_at, 5);
+});
+
+test("reducer ignores session status events without gateway update time", () => {
+  const baseSession = { ...session, status: "idle" as const, updated_at: 100 };
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session: baseSession,
+    messages: [],
+    permissions: [],
+    sessions: [baseSession],
+  });
+
+  const updated = reducer(state, {
+    type: "event",
+    event: {
+      directory: "C:/repo",
+      payload: {
+        type: "session.status",
+        properties: { sessionID: "sess-1", status: "busy" },
+      },
+    },
+  });
+
+  assert.equal(updated.status, "idle");
+  assert.equal(updated.session?.status, "idle");
+  assert.equal(updated.session?.updated_at, 100);
+  assert.equal(updated.sessions[0]?.updated_at, 100);
 });
 
 test("reducer orders interleaved live streams by creation time instead of update time", () => {
@@ -694,6 +841,8 @@ test("reducer orders interleaved live streams by creation time instead of update
               sessionID: "sess-1",
               messageID: messageID,
               partID: messageID,
+              createdAt: now,
+              updatedAt: now,
               field: "text",
               delta,
             },
@@ -743,6 +892,8 @@ test("reducer overlays later deltas on durable part text without mutating histor
           sessionID: "sess-1",
           messageID: "msg-durable-part",
           partID: "part-durable",
+          createdAt: 1,
+          updatedAt: 2,
           field: "text",
           delta: "world",
         },
@@ -772,6 +923,8 @@ test("reducer normalizes streamed agent terminal controls into plain text", () =
           sessionID: "sess-1",
           messageID: "runtime-stream.message",
           partID: "runtime-stream.message",
+          createdAt: 1,
+          updatedAt: 2,
           field: "text",
           delta: "command complete\r\x1b[2Knew reply",
         },

@@ -221,6 +221,7 @@ async def page_metrics(page):
               reaction: document.querySelectorAll('.rich-react').length,
               messageReaction: document.querySelectorAll('.message-reaction').length,
               rawReactToken: document.body.innerText.includes('[EMOJI:react:'),
+              rawStickerToken: document.body.innerText.includes('[EMOJI:sticker:'),
             },
             inspector: {
               steps: document.querySelectorAll('.inspector-steps button').length,
@@ -460,7 +461,7 @@ async def run_display_matrix(browser, results, browser_errors):
             ("rich-code-block", metrics["rich"]["codeBlock"] >= 1),
             ("rich-gallery", metrics["rich"]["gallery"] >= 1),
             ("rich-gallery-images", metrics["rich"]["galleryImages"] >= 3),
-            ("rich-sticker", metrics["rich"]["sticker"] >= 1),
+            ("rich-sticker-moved-out-of-body", metrics["rich"]["sticker"] == 0),
             ("rich-table", metrics["rich"]["table"] >= 1),
             ("rich-table-rows", metrics["rich"]["tableRows"] >= 73),
             ("rich-table-cells", metrics["rich"]["tableCells"] >= 3500),
@@ -475,6 +476,7 @@ async def run_display_matrix(browser, results, browser_errors):
             ("rich-reaction-moved-out-of-body", metrics["rich"]["reaction"] == 0),
             ("message-reaction-rendered", metrics["rich"]["messageReaction"] >= 1),
             ("reaction-token-stripped", not metrics["rich"]["rawReactToken"]),
+            ("sticker-token-stripped", not metrics["rich"]["rawStickerToken"]),
             ("collapsed-tool-summary", bool(metrics["runSummaryText"].strip())),
             ("idle-process-text-collapsed", "正在解析消息协议" not in metrics["assistantText"]),
             ]

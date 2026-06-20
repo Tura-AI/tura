@@ -43,14 +43,13 @@ const FIXTURE_AGENTS: Agent[] = [
     options: {
       icon_emoji: "🧠",
       capabilities: ["command_run", "apply_patch", "shell_command"],
-      provider: { tura_llm_name: "flagship_thinking" },
+      provider: { default_model_tier: "thinking", tura_llm_name: "thinking" },
       avatar: {
         persona_id: "tura",
         role: "tura",
         display_mode: "static",
         pixel_size: 20,
-        threshold: 150,
-        scale: 100,
+        threshold: 160,
       },
     },
     permission: { allow: [], deny: [] },
@@ -65,14 +64,13 @@ const FIXTURE_AGENTS: Agent[] = [
     options: {
       icon_emoji: "🧭",
       capabilities: ["command_run", "apply_patch", "shell_command"],
-      provider: { tura_llm_name: "flagship_thinking" },
+      provider: { default_model_tier: "thinking", tura_llm_name: "thinking" },
       avatar: {
         persona_id: "tura",
         role: "tura",
         display_mode: "static",
         pixel_size: 20,
-        threshold: 150,
-        scale: 100,
+        threshold: 160,
       },
     },
     permission: { allow: [], deny: [] },
@@ -87,14 +85,13 @@ const FIXTURE_AGENTS: Agent[] = [
     options: {
       icon_emoji: "🚀",
       capabilities: ["command_run", "apply_patch", "shell_command"],
-      provider: { tura_llm_name: "thinking" },
+      provider: { default_model_tier: "fast", tura_llm_name: "fast" },
       avatar: {
         persona_id: "wonderful",
         role: "wonderful",
         display_mode: "static",
         pixel_size: 20,
-        threshold: 150,
-        scale: 100,
+        threshold: 160,
       },
     },
     permission: { allow: [], deny: [] },
@@ -109,14 +106,13 @@ const FIXTURE_AGENTS: Agent[] = [
     options: {
       icon_emoji: "⚡",
       capabilities: ["command_run", "shell_command"],
-      provider: { tura_llm_name: "thinking" },
+      provider: { default_model_tier: "fast", tura_llm_name: "fast" },
       avatar: {
         persona_id: "pidan",
         role: "pidan",
         display_mode: "static",
         pixel_size: 20,
-        threshold: 150,
-        scale: 100,
+        threshold: 160,
       },
     },
     permission: { allow: [], deny: [] },
@@ -456,7 +452,7 @@ const FIXTURE_PROVIDER_STATE: Pick<
     path: "mock/provider_config.json",
     tiers: [
       {
-        tier: "flagship_thinking",
+        tier: "thinking",
         current: { provider: "openai", model: "gpt-5.5-pro" },
         options: [
           {
@@ -471,12 +467,6 @@ const FIXTURE_PROVIDER_STATE: Pick<
             model: "copilot-gpt-5.5-pro",
             model_name: "Copilot GPT-5.5 Pro",
           },
-        ],
-      },
-      {
-        tier: "thinking",
-        current: { provider: "openai", model: "gpt-5.5" },
-        options: [
           {
             provider: "openai",
             provider_name: "OpenAI",
@@ -493,24 +483,6 @@ const FIXTURE_PROVIDER_STATE: Pick<
       },
       {
         tier: "fast",
-        current: { provider: "openai", model: "gpt-5.5-mini" },
-        options: [
-          {
-            provider: "openai",
-            provider_name: "OpenAI",
-            model: "gpt-5.5-mini",
-            model_name: "GPT-5.5 Mini",
-          },
-          {
-            provider: "github-copilot",
-            provider_name: "GitHub Copilot",
-            model: "copilot-gpt-5.5",
-            model_name: "Copilot GPT-5.5",
-          },
-        ],
-      },
-      {
-        tier: "instant",
         current: { provider: "openai", model: "gpt-5.5-mini" },
         options: [
           {
@@ -1278,6 +1250,114 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       sessions: [session],
       messagesBySession: {
         [session.id]: messages,
+      },
+      messagePagingBySession: {
+        [session.id]: { hasEarlier: false, loadingEarlier: false },
+      },
+      selectedModel: "openai/gpt-5.5",
+      agents: FIXTURE_AGENTS,
+      personas: FIXTURE_PERSONAS,
+      selectedProviderId: "openai",
+      modelVariant: "low",
+      accelerationEnabled: true,
+      ...FIXTURE_PROVIDER_STATE,
+      projects: [
+        {
+          id: "fixture-project",
+          name: "tura",
+          worktree: session.directory ?? "",
+        },
+      ],
+    };
+  }
+  if (fixture === "streaming-delta") {
+    const session: Session = {
+      id: "fixture-streaming-delta",
+      name: "Streaming delta stability",
+      directory: "C:\\Users\\liuliu\\Documents\\tura",
+      model: "openai/gpt-5.5",
+      agent: "coding_agent",
+      session_type: "coding",
+      status: "busy",
+      created_at: now - 600_000,
+      updated_at: now,
+      message_count: 82,
+      model_variant: "low",
+      model_acceleration_enabled: true,
+    };
+    const history: Message[] = Array.from({ length: 80 }, (_, index) => {
+      const role = index % 2 === 0 ? "user" : "assistant";
+      const createdAt = now - 600_000 + index * 1_000;
+      return {
+        id: `fixture-stream-history-${index}`,
+        sessionID: session.id,
+        role,
+        providerID: role === "assistant" ? "openai" : undefined,
+        modelID: role === "assistant" ? "gpt-5.5" : undefined,
+        created_at: createdAt,
+        updated_at: createdAt,
+        time: { created: createdAt, updated: createdAt },
+        parts: [
+          {
+            id: `fixture-stream-history-${index}-part`,
+            sessionID: session.id,
+            messageID: `fixture-stream-history-${index}`,
+            type: "text",
+            text:
+              role === "user"
+                ? `历史用户消息 ${index + 1}：用于撑开滚动区域并验证拖动滚动条时视口不被新 delta 拉回。`
+                : `历史助手消息 ${index + 1}：这段已经绘制的文本在后续更新中不应该被重挂或横向抖动。${" 稳定内容。".repeat(index % 4)}`,
+          },
+        ],
+      };
+    });
+    const user: Message = {
+      id: "fixture-stream-user",
+      sessionID: session.id,
+      role: "user",
+      created_at: now - 2_000,
+      updated_at: now - 2_000,
+      time: { created: now - 2_000, updated: now - 2_000 },
+      parts: [
+        {
+          id: "fixture-stream-user-part",
+          sessionID: session.id,
+          messageID: "fixture-stream-user",
+          type: "text",
+          text: "持续追加 delta，旧内容不要重绘。",
+        },
+      ],
+    };
+    const assistant: Message = {
+      id: "fixture-stream-assistant",
+      sessionID: session.id,
+      role: "assistant",
+      providerID: "openai",
+      modelID: "gpt-5.5",
+      created_at: now - 1_000,
+      updated_at: now,
+      time: { created: now - 1_000, updated: now },
+      parts: [
+        {
+          id: "fixture-stream-assistant-part",
+          sessionID: session.id,
+          messageID: "fixture-stream-assistant",
+          type: "text",
+          text: "stream-prefix: 已绘制前缀。",
+        },
+      ],
+    };
+    return {
+      ...base,
+      loading: false,
+      bootstrapped: true,
+      connection: "connected",
+      activeTab: "conversation",
+      directory: session.directory ?? undefined,
+      selectedSessionId: session.id,
+      sessions: [session],
+      messagesBySession: {
+        [session.id]: [...history, user, assistant],
       },
       messagePagingBySession: {
         [session.id]: { hasEarlier: false, loadingEarlier: false },

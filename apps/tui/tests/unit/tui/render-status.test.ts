@@ -260,6 +260,7 @@ test("session status event updates bottom meta context without rehydrating", () 
         type: "session.status",
         properties: {
           sessionID: session.id,
+          updatedAt: 1_234,
           status: { type: "busy" },
           context_tokens: { input: 1, limit: 1 },
           usage: {
@@ -280,6 +281,8 @@ test("session status event updates bottom meta context without rehydrating", () 
   assert.equal(updated.session?.usage?.cost, 0.045);
   assert.equal((updated.session?.usage?.tokens as { total_tokens?: number })?.total_tokens, 123);
   assert.equal(updated.sessions[0]?.usage?.currency, "USD");
+  assert.equal(updated.session?.updated_at, 1_234);
+  assert.equal(updated.sessions[0]?.updated_at, 1_234);
 });
 
 test("hydrate restores session usage for reselected sessions", () => {

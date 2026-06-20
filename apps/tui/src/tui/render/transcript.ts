@@ -221,7 +221,9 @@ function renderSimpleMessage(
 
   if (message.role === "user") {
     const text = displayMessageText("user", messageText(message));
-    const rendered = secondaryText(stripAnsi(renderRichText(text, richTextOptions(contentWidth))));
+    const rendered = secondaryText(
+      stripAnsi(renderRichText(text, richTextOptions(contentWidth, state))),
+    );
     for (const line of wrapAnsi(rendered, contentWidth)) {
       lines.push(messageLine(simpleBodyLine(line, "user", cols)));
     }
@@ -231,7 +233,7 @@ function renderSimpleMessage(
   for (const block of orderedMessageBlocks(message, commandPolicy.includeCommands)) {
     if (lines.length) lines.push(gapLine());
     if (block.kind === "text") {
-      const richText = renderRichText(block.text, richTextOptions(contentWidth));
+      const richText = renderRichText(block.text, richTextOptions(contentWidth, state));
       const displayText =
         message.role === "assistant" ? agentText(richText) : secondaryText(stripAnsi(richText));
       for (const line of wrapAnsi(displayText, contentWidth)) {
@@ -266,7 +268,9 @@ function renderRichMessage(
 
   if (message.role === "user") {
     const userText = displayMessageText("user", messageText(message));
-    const body = secondaryText(stripAnsi(renderRichText(userText, richTextOptions(contentWidth))));
+    const body = secondaryText(
+      stripAnsi(renderRichText(userText, richTextOptions(contentWidth, state))),
+    );
     const wrapped = body ? wrapAnsi(body, contentWidth) : [];
     if (wrapped.length) {
       lines.push(gapLine(richBlankRailLine("user", cols)));
@@ -285,7 +289,7 @@ function renderRichMessage(
   for (const block of blocks) {
     if (lines.length) lines.push(gapLine());
     if (block.kind === "text") {
-      const richText = renderRichText(block.text, richTextOptions(contentWidth));
+      const richText = renderRichText(block.text, richTextOptions(contentWidth, state));
       const displayText =
         message.role === "assistant" ? agentText(richText) : secondaryText(stripAnsi(richText));
       const wrapped = wrapAnsi(displayText, contentWidth);
@@ -313,8 +317,14 @@ function richMessageContentWidth(cols: number): number {
   return Math.max(20, cols - 1);
 }
 
-function richTextOptions(contentWidth: number): { tableWidth: number } {
-  return { tableWidth: Math.max(20, contentWidth - 2) };
+function richTextOptions(
+  contentWidth: number,
+  state: AppState,
+): { tableWidth: number; workspaceDirectory?: string } {
+  return {
+    tableWidth: Math.max(20, contentWidth - 2),
+    workspaceDirectory: state.session?.directory ?? state.cwd,
+  };
 }
 
 function agentText(value: string): string {

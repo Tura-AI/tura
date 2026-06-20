@@ -373,6 +373,8 @@ impl SessionStore {
             self.push_event(GlobalEvent::MessagePartUpdated {
                 properties: crate::contracts::MessagePartUpdatedProperties {
                     session_id: session_id.clone(),
+                    created_at: event_message.created_at,
+                    updated_at: event_message.updated_at,
                     part: serde_json::json!({
                         "id": part.id.clone(),
                         "sessionID": session_id,
@@ -409,6 +411,17 @@ impl SessionStore {
         metadata: Option<serde_json::Value>,
     ) -> Option<Message> {
         self.add_message_internal(session_id, role, content, metadata, message_id, part_id)
+    }
+
+    pub fn add_message_with_parts(
+        &self,
+        session_id: &str,
+        role: MessageRole,
+        parts: Vec<MessagePart>,
+        message_id: Option<String>,
+        metadata: Option<serde_json::Value>,
+    ) -> Option<Message> {
+        self.add_message_parts_internal(session_id, role, parts, metadata, message_id)
     }
 
     #[expect(
@@ -469,6 +482,27 @@ impl SessionStore {
         message_id: Option<String>,
         part_id: Option<String>,
     ) -> Option<Message> {
+        let part = MessagePart {
+            id: part_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+            part_type: "text".to_string(),
+            content: Some(content.clone()),
+            text: Some(content),
+            metadata: None,
+            call_id: None,
+            tool: None,
+            state: None,
+        };
+        self.add_message_parts_internal(session_id, role, vec![part], metadata, message_id)
+    }
+
+    fn add_message_parts_internal(
+        &self,
+        session_id: &str,
+        role: MessageRole,
+        parts: Vec<MessagePart>,
+        metadata: Option<serde_json::Value>,
+        message_id: Option<String>,
+    ) -> Option<Message> {
         let now = Utc::now().timestamp_millis();
 
         let parent_id = if role == MessageRole::Assistant {
@@ -477,21 +511,14 @@ impl SessionStore {
             None
         };
 
+        let parts = normalize_message_parts(parts, metadata);
+
         let message = Message {
             id: message_id.unwrap_or_else(|| new_message_id(now)),
             session_id: session_id.to_string(),
             role,
             parent_id,
-            parts: vec![MessagePart {
-                id: part_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
-                part_type: "text".to_string(),
-                content: Some(content.clone()),
-                text: Some(content),
-                metadata,
-                call_id: None,
-                tool: None,
-                state: None,
-            }],
+            parts,
             created_at: now,
             updated_at: now,
         };
@@ -504,7 +531,7 @@ impl SessionStore {
             info.message_count = session_messages.len();
             info.updated_at = now;
             if role == MessageRole::User {
-                if let Some(text) = message.parts.first().and_then(|part| part.text.clone()) {
+                if let Some(text) = message.parts.iter().find_map(|part| part.text.clone()) {
                     if info.management.input.user_input.trim().is_empty() {
                         info.management.input.user_input = text.clone();
                     }
@@ -555,6 +582,8 @@ impl SessionStore {
             self.push_event(GlobalEvent::MessagePartUpdated {
                 properties: crate::contracts::MessagePartUpdatedProperties {
                     session_id: session_id.to_string(),
+                    created_at: event_message.created_at,
+                    updated_at: event_message.updated_at,
                     part: serde_json::json!({
                         "id": part.id.clone(),
                         "sessionID": session_id,
@@ -632,6 +661,8 @@ impl SessionStore {
                     self.push_event(GlobalEvent::MessagePartUpdated {
                         properties: crate::contracts::MessagePartUpdatedProperties {
                             session_id: session_id.to_string(),
+                            created_at: message.created_at,
+                            updated_at: message.updated_at,
                             part: serde_json::json!({
                                 "id": &part.id,
                                 "sessionID": session_id,
@@ -706,6 +737,8 @@ impl SessionStore {
                 self.push_event(GlobalEvent::MessagePartUpdated {
                     properties: crate::contracts::MessagePartUpdatedProperties {
                         session_id: session_id.to_string(),
+                        created_at: message.created_at,
+                        updated_at: message.updated_at,
                         part: serde_json::json!({
                             "id": &part.id,
                             "sessionID": session_id,
@@ -771,6 +804,8 @@ impl SessionStore {
         self.push_event(GlobalEvent::MessagePartUpdated {
             properties: crate::contracts::MessagePartUpdatedProperties {
                 session_id: session_id.to_string(),
+                created_at: message.created_at,
+                updated_at: message.updated_at,
                 part: serde_json::json!({
                     "id": &part.id,
                     "sessionID": session_id,
@@ -894,4 +929,68 @@ fn same_message_part(left: &MessagePart, right: &MessagePart) -> bool {
             && left.tool == right.tool
             && left.call_id == right.call_id
             && left.call_id.is_some())
+}
+
+fn normalize_message_parts(
+    parts: Vec<MessagePart>,
+    metadata: Option<serde_json::Value>,
+) -> Vec<MessagePart> {
+    let normalized = parts
+        .into_iter()
+        .filter_map(|mut part| {
+            let part_type = part.part_type.trim();
+            if part_type.is_empty() {
+                part.part_type = "text".to_string();
+            } else if part_type != part.part_type {
+                part.part_type = part_type.to_string();
+            }
+            if part.id.trim().is_empty() {
+                part.id = Uuid::new_v4().to_string();
+            }
+            part.metadata = merge_part_metadata(part.metadata, metadata.clone());
+            if part.text.is_none() && part.part_type == "text" {
+                part.text = part.content.clone();
+            }
+            if part.content.is_none() && part.part_type == "text" {
+                part.content = part.text.clone();
+            }
+            let has_payload = part.text.as_deref().is_some_and(|text| !text.is_empty())
+                || part.content.as_deref().is_some_and(|text| !text.is_empty())
+                || part.metadata.is_some()
+                || part.state.is_some()
+                || part.call_id.is_some()
+                || part.tool.is_some();
+            has_payload.then_some(part)
+        })
+        .collect::<Vec<_>>();
+    if normalized.is_empty() {
+        return vec![MessagePart {
+            id: Uuid::new_v4().to_string(),
+            part_type: "text".to_string(),
+            content: Some("Prompt submitted".to_string()),
+            text: Some("Prompt submitted".to_string()),
+            metadata,
+            call_id: None,
+            tool: None,
+            state: None,
+        }];
+    }
+    normalized
+}
+
+fn merge_part_metadata(
+    part_metadata: Option<serde_json::Value>,
+    message_metadata: Option<serde_json::Value>,
+) -> Option<serde_json::Value> {
+    match (part_metadata, message_metadata) {
+        (None, metadata) => metadata,
+        (metadata, None) => metadata,
+        (Some(serde_json::Value::Object(mut part)), Some(serde_json::Value::Object(message))) => {
+            for (key, value) in message {
+                part.entry(key).or_insert(value);
+            }
+            Some(serde_json::Value::Object(part))
+        }
+        (part, _) => part,
+    }
 }

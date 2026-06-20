@@ -357,9 +357,12 @@ impl SessionStore {
             force_planning: Some(session.force_planning),
             model_variant: session.model_variant.clone(),
             model_acceleration_enabled: Some(session.model_acceleration_enabled),
+            active_persona: None,
             show_react_kaomoji: None,
             ..TuraSessionConfig::default()
         };
+        patch.active_provider = None;
+        patch.active_model = None;
         patch.fill_model_parts();
         if let Err(err) = merge_config(directory, patch) {
             tracing::warn!(directory, error = %err, "failed to persist active session config");
@@ -808,7 +811,7 @@ impl SessionStore {
             info.status = SessionStatusMano::from_state(info.management.state);
             info.updated_at = now.timestamp_millis();
         }
-        let (status, context_tokens, usage) = self
+        let (status, updated_at, context_tokens, usage) = self
             .sessions
             .read()
             .get(session_id)
@@ -816,6 +819,7 @@ impl SessionStore {
                 let context_tokens = session_context_tokens(info);
                 (
                     info.status,
+                    info.updated_at,
                     context_tokens,
                     session_usage_from_info(info, context_tokens),
                 )
@@ -824,6 +828,7 @@ impl SessionStore {
                 let context_tokens = crate::contracts::SessionContextTokens::default();
                 (
                     status,
+                    Utc::now().timestamp_millis(),
                     context_tokens,
                     crate::contracts::SessionUsage::new(context_tokens, serde_json::Value::Null),
                 )
@@ -831,6 +836,7 @@ impl SessionStore {
         self.push_event(GlobalEvent::SessionStatus {
             properties: crate::contracts::SessionStatusProperties {
                 session_id: session_id.to_string(),
+                updated_at,
                 status: match status {
                     SessionStatusMano::Idle => serde_json::json!({ "type": "idle" }),
                     SessionStatusMano::Busy => serde_json::json!({ "type": "busy" }),
@@ -886,6 +892,7 @@ impl SessionStore {
         self.push_event(GlobalEvent::SessionStatus {
             properties: crate::contracts::SessionStatusProperties {
                 session_id: session_id.to_string(),
+                updated_at: info.updated_at,
                 status: match info.status {
                     SessionStatusMano::Idle => serde_json::json!({ "type": "idle" }),
                     SessionStatusMano::Busy => serde_json::json!({ "type": "busy" }),
@@ -967,6 +974,7 @@ impl SessionStore {
             self.push_event(GlobalEvent::SessionStatus {
                 properties: crate::contracts::SessionStatusProperties {
                     session_id,
+                    updated_at: now.timestamp_millis(),
                     status: serde_json::json!({ "type": "busy" }),
                     context_tokens,
                     usage,

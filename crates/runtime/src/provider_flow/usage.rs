@@ -160,6 +160,8 @@ mod tests {
             RuntimeProviderConfig {
                 base: ProviderConfig {
                     tura_llm_name: "openai".to_string(),
+                    default_model_tier: None,
+                    current_model: None,
                     stream: true,
                     temperature: 0.0,
                     max_tokens: 0,

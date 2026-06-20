@@ -1,0 +1,33 @@
+[package]
+name = "read_media"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+name = "tura_command_read_media"
+path = "mod.rs"
+
+[[bin]]
+name = "tura-command-read-media"
+path = "src/main.rs"
+
+[features]
+business-tests = []
+
+[[test]]
+name = "read_media_local_flow"
+path = "tests/business/read_media_local_flow.rs"
+required-features = ["business-tests"]
+
+[dependencies]
+base64.workspace = true
+image.workspace = true
+pdfium-render.workspace = true
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+filetime.workspace = true
+tempfile.workspace = true

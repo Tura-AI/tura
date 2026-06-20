@@ -32,7 +32,7 @@ Usage:
   xtask/scripts/run-ci-crate-tests.sh [--crate PACKAGE ...] [--jobs N] [--timeout-seconds N] [--list]
 
 Runs the CI crate matrix locally: clippy + cargo test for each backend default
-workspace package, excluding src-tauri. Crates run in parallel; each crate test
+workspace package, excluding tura_gui. Crates run in parallel; each crate test
 target uses --test-threads=1.
 EOF
       exit 0
@@ -51,7 +51,7 @@ import json, sys
 metadata = json.load(sys.stdin)
 members = set(metadata["workspace_default_members"])
 for package in metadata["packages"]:
-    if package["id"] in members and package["name"] != "src-tauri":
+    if package["id"] in members and package["name"] != "tura_gui":
         print(package["name"])
 '
 }

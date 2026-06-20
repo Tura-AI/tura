@@ -158,7 +158,6 @@ fn default_command_run_commands() -> BTreeSet<String> {
     [
         "apply_patch",
         active_shell_command_name(),
-        "generate_media",
         "read_media",
         "web_discover",
         "compact_context",
@@ -559,7 +558,9 @@ mod tests {
             true,
             true,
             ProviderConfig {
-                tura_llm_name: "flagship_thinking".to_string(),
+                tura_llm_name: "thinking".to_string(),
+                default_model_tier: None,
+                current_model: None,
                 stream: true,
                 temperature: 0.2,
                 max_tokens: 0,
@@ -627,8 +628,10 @@ mod tests {
             description.contains("Reminder: task_status only updates internal task state")
                 && description.contains("Before changing task_status `status`")
                 && description.contains("then call task_status in the same assistant response")
+                && description.contains("update the task name first")
+                && description.contains("has been read and inspected with read_media")
                 && description
-                    .contains("Mark `done` only after the task is complete and verified.")
+                    .contains("only command allowed besides the task_status `done` update")
                 && description.contains("if the user says hello or asks a simple question"),
             "description missing task_status reminder"
         );
@@ -657,7 +660,9 @@ mod tests {
         assert!(description.contains("Reminder: task_status only updates internal task state"));
         assert!(description.contains("Before changing task_status `status`"));
         assert!(description.contains("then call task_status in the same assistant response"));
-        assert!(description.contains("Mark `done` only after the task is complete and verified."));
+        assert!(description.contains("update the task name first"));
+        assert!(description.contains("has been read and inspected with read_media"));
+        assert!(description.contains("only command allowed besides the task_status `done` update"));
         assert!(description.contains("if the user says hello or asks a simple question"));
         assert!(!description.contains("Continue working toward the active thread goal."));
         assert!(!description.contains("[current objective]:"));
@@ -714,7 +719,7 @@ mod tests {
         let agent = command_run_agent_with_capabilities(&[
             "command_run",
             "apply_patch",
-            "shell_command",
+            "shells",
             "task_status",
             "planning",
         ]);
@@ -723,6 +728,8 @@ mod tests {
 
         assert!(commands.contains("planning"));
         assert!(commands.contains("task_status"));
+        assert!(commands.contains(active_shell_command_name()));
+        assert!(!commands.contains("shells"));
     }
 
     #[test]
@@ -983,6 +990,8 @@ mod tests {
             false,
             ProviderConfig {
                 tura_llm_name: "test".to_string(),
+                default_model_tier: None,
+                current_model: None,
                 stream: false,
                 temperature: 0.0,
                 max_tokens: 0,

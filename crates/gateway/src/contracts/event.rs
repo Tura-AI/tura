@@ -86,6 +86,8 @@ pub struct SessionDeletedProperties {
 pub struct SessionStatusProperties {
     #[serde(rename = "sessionID")]
     pub session_id: String,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: i64,
     pub status: serde_json::Value,
     #[serde(default)]
     pub context_tokens: SessionContextTokens,
@@ -116,6 +118,10 @@ pub struct MessagePartDeltaProperties {
     pub message_id: String,
     #[serde(rename = "partID")]
     pub part_id: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: i64,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: i64,
     pub field: String,
     pub delta: String,
 }
@@ -124,6 +130,10 @@ pub struct MessagePartDeltaProperties {
 pub struct MessagePartUpdatedProperties {
     #[serde(rename = "sessionID")]
     pub session_id: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: i64,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: i64,
     pub part: serde_json::Value,
 }
 
@@ -152,8 +162,10 @@ pub struct CommandUpdatedProperties {
     pub command: serde_json::Value,
     #[serde(default)]
     pub result: serde_json::Value,
-    #[serde(rename = "updatedAt", default)]
-    pub updated_at: Option<i64>,
+    #[serde(rename = "createdAt")]
+    pub created_at: i64,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: i64,
 }
 
 // Sync events (lighter weight)

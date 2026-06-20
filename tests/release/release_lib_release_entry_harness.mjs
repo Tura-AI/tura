@@ -54,7 +54,7 @@ export function assertReleaseArtifacts() {
 }
 
 export function assertReleaseGuiArtifacts() {
-  const index = path.join(binaryDir(), "gui", "index.html");
+  const index = path.join(binaryDir(), "tura_gui", "index.html");
   if (!fs.existsSync(index)) {
     throw new Error(
       [
@@ -798,7 +798,7 @@ export async function startReleaseGateway(ctx) {
       PORT: String(port),
       TURA_GATEWAY_PORT: String(port),
       TURA_GATEWAY_URL: `http://127.0.0.1:${port}`,
-      TURA_GUI_DIST: path.join(binaryDir(), "gui"),
+      TURA_GUI_DIST: path.join(binaryDir(), "tura_gui"),
       TURA_ROUTER_STDERR_LOG: path.join(ctx.logs, "router.stderr.log"),
       TURA_RUNTIME_WORKER_STDERR_LOG: path.join(
         ctx.logs,

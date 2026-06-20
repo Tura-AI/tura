@@ -115,27 +115,12 @@ Minimal dynamic persona example:
 }
 ```
 
-## Binding A Persona To An Agent
+## Persona Independence
 
-Agents reference personas through `agent_persona` in
-`agents/src/<agent_id>/agent_config.json`:
-
-```json
-{
-  "agent_persona": [
-    {
-      "persona_name": "tura",
-      "persona_directory": "personas/src/tura"
-    }
-  ]
-}
-```
-
-`persona_directory` points at the persona root. Runtime prompt assembly reads
-persona identity from that directory and its `prompt` subdirectory, then uses
-the shared communication style under `personas/src/communication_style`. The persona config itself still lives at
-`personas/src/<persona_id>/persona_config.json` for built-ins or
-`personas/<persona_id>/persona_config.json` for dynamic personas.
+Personas are stored and discovered independently from agents. Agent
+configuration must not reference persona ids or persona directories. Persona
+config still lives at `personas/src/<persona_id>/persona_config.json` for
+built-ins or `personas/<persona_id>/persona_config.json` for dynamic personas.
 
 ## Expression Manifest
 

@@ -115,7 +115,7 @@
       {
         "title": "说明",
         "lines": [
-          "会话配置使用 /session/config；模型档位使用 GUI 共享的 /model_config provider_config.json。"
+          "会话配置使用 /session/config；默认模型 tier 配置使用 GUI 共享的 /model_config provider_config.json。"
         ]
       }
     ]
@@ -139,7 +139,7 @@
       "tura [OPTIONS] agent create AGENT_ID [--config JSON_OR_PATH] [--prompt TEXT|--prompt-file PATH]",
       "tura [OPTIONS] agent update AGENT_ID [--config JSON_OR_PATH] [--prompt TEXT|--prompt-file PATH]",
       "tura [OPTIONS] agent delete AGENT_ID [--json]",
-      "tura [OPTIONS] agent tier AGENT_ID [TIER] [--reasoning LEVEL] [--priority|--no-priority]"
+      "tura [OPTIONS] agent model AGENT_ID [PROVIDER/MODEL] [--reasoning LEVEL] [--priority|--no-priority]"
     ],
     "sections": [
       { "title": "示例", "lines": ["tura run -a AGENT_ID -m PROVIDER/MODEL -p \"prompt\""] }

@@ -287,7 +287,6 @@ export async function startGateway(runRoot) {
     },
     config: {
       agent_name: "fast",
-      agent_persona: [{ persona_name: "direct", persona_directory: "personas/src/direct" }],
     },
     prompt: "Fast prompt",
   };
@@ -447,6 +446,7 @@ export async function startGateway(runRoot) {
             type: "session.status",
             properties: {
               sessionID: session.id,
+              updatedAt: session.updated_at ?? Date.now(),
               status: { type: session.status },
               context_tokens: session.context_tokens,
             },

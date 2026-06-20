@@ -33,6 +33,7 @@ export type CommandUpdate = {
   status: string;
   command?: unknown;
   result?: unknown;
+  createdAt?: number | null;
   updatedAt?: number | null;
 };
 

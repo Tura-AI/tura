@@ -6,7 +6,10 @@ mod request;
 mod response;
 mod shell;
 
-pub use process::{current_shell_process_scope_strategy, ShellProcessScopeStrategy};
+pub use process::{
+    current_shell_process_scope_strategy, terminate_retained_shell_process_scopes,
+    ShellProcessScopeStrategy,
+};
 
 use crate::commands::{apply_patch, command_safety, CommandResponse};
 use crate::runtime::tool::ToolContext;

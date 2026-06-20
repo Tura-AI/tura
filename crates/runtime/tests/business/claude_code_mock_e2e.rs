@@ -26,14 +26,7 @@ use serde_json::{json, Value};
 #[path = "../support/session_db_support.rs"]
 mod session_db_support;
 
-const ROUTES: &[&str] = &[
-    "flagship_thinking",
-    "thinking",
-    "fast",
-    "instant",
-    "embedding_high",
-    "embedding_low",
-];
+const ROUTES: &[&str] = &["thinking", "fast", "embedding_high", "embedding_low"];
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 const MOCK_COMMAND_TIMEOUT_MS: u64 = 3_000;

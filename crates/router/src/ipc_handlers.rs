@@ -91,8 +91,12 @@ pub(crate) async fn handle_ipc_request_with_notifications(
                 .stop_workers_with_prefix("runtime_worker:")
                 .await;
             state.session_db.stop();
-            mark_router_shutting_down(state);
-            Ok(json!({ "status": "shutting_down", "runtime_workers_stopped": stopped }))
+            let background_process_scopes_terminated = mark_router_shutting_down(state);
+            Ok(json!({
+                "status": "shutting_down",
+                "runtime_workers_stopped": stopped,
+                "background_process_scopes_terminated": background_process_scopes_terminated
+            }))
         }
         other => Err(anyhow::anyhow!("unknown router method: {other}")),
     };
@@ -137,6 +141,7 @@ mod tests {
         assert!(state.shutdown.load(Ordering::SeqCst));
         assert_eq!(response.payload["status"], "shutting_down");
         assert_eq!(response.payload["runtime_workers_stopped"], 0);
+        assert_eq!(response.payload["background_process_scopes_terminated"], 0);
         Ok(())
     }
 

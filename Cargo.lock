@@ -3744,6 +3744,7 @@ dependencies = [
  "agents",
  "anyhow",
  "chrono",
+ "personas",
  "provider",
  "redis",
  "reqwest 0.12.28",
@@ -4345,17 +4346,6 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps",
-]
-
-[[package]]
-name = "src-tauri"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "url",
 ]
 
 [[package]]
@@ -5151,6 +5141,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "toml 0.8.2",
  "windows-sys 0.59.0",
 ]
 
@@ -5313,6 +5304,17 @@ dependencies = [
  "rand",
  "sha1",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "tura_gui"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "url",
 ]
 
 [[package]]

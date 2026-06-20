@@ -106,6 +106,73 @@ describe("applyGatewayEvent", () => {
     expect(state.messagesBySession.s1[0]?.parts[0]?.text).toBe("Thinking through the task");
   });
 
+  test("does not let full message hydration rewrite streamed text deltas", () => {
+    let state: AppState = initialAppState("http://127.0.0.1:4126");
+
+    state = applyGatewayEvent(state, {
+      payload: {
+        type: "message.part.delta",
+        properties: {
+          session_id: "s1",
+          message_id: "m1",
+          part_id: "p1",
+          field: "text",
+          delta: "already drawn",
+        },
+      },
+    });
+    state = applyGatewayEvent(state, {
+      payload: {
+        type: "message.updated",
+        properties: {
+          sessionID: "s1",
+          info: {
+            id: "m1",
+            sessionID: "s1",
+            role: "assistant",
+            parts: [{ id: "p1", type: "text", text: "stale hydration" }],
+          },
+        },
+      },
+    });
+
+    expect(state.messagesBySession.s1[0]?.parts[0]?.text).toBe("already drawn");
+  });
+
+  test("does not let part hydration rewrite streamed content deltas", () => {
+    let state: AppState = initialAppState("http://127.0.0.1:4126");
+
+    state = applyGatewayEvent(state, {
+      payload: {
+        type: "message.part.delta",
+        properties: {
+          session_id: "s1",
+          message_id: "m1",
+          part_id: "p1",
+          field: "content",
+          delta: "visible delta",
+        },
+      },
+    });
+    state = applyGatewayEvent(state, {
+      payload: {
+        type: "message.part.updated",
+        properties: {
+          sessionID: "s1",
+          part: {
+            id: "p1",
+            messageID: "m1",
+            sessionID: "s1",
+            type: "text",
+            content: "late replacement",
+          },
+        },
+      },
+    });
+
+    expect(state.messagesBySession.s1[0]?.parts[0]?.content).toBe("visible delta");
+  });
+
   test("adds delta parts to existing messages before part hydration", () => {
     let state: AppState = {
       ...initialAppState("http://127.0.0.1:4126"),
@@ -348,6 +415,7 @@ describe("applyGatewayEvent", () => {
             commandIndex: 0,
             eventSeq,
             status,
+            createdAt: 20,
             command: {
               command_id: "runtime-command-id.tool.command_run:call_1:0",
               command_type: "shell_command",
@@ -384,5 +452,47 @@ describe("applyGatewayEvent", () => {
     expect(commandState?.input?.commands).toHaveLength(1);
     expect(commandState?.streamed_command_run_result?.results).toHaveLength(1);
     expect(commandState?.streamed_command_run_result?.results?.[0]?.success).toBe(true);
+  });
+
+  test("orders command run runtime messages by createdAt", () => {
+    let state: AppState = initialAppState("http://127.0.0.1:4126");
+
+    const commandEvent = (runtimeID: string, createdAt: number) =>
+      ({
+        payload: {
+          type: "command.updated",
+          properties: {
+            sessionID: "s1",
+            messageID: `${runtimeID}.message`,
+            partID: `${runtimeID}.tool.command_run`,
+            runtimeID,
+            commandRunID: `${runtimeID}.tool.command_run`,
+            commandID: `${runtimeID}.tool.command_run:call_1:0`,
+            providerToolCallID: "call_1",
+            commandIndex: 0,
+            eventSeq: createdAt,
+            status: "running",
+            createdAt,
+            updatedAt: createdAt + 5,
+            command: {
+              command_id: `${runtimeID}.tool.command_run:call_1:0`,
+              command_type: "shell_command",
+              command_line: `echo ${runtimeID}`,
+            },
+          },
+        },
+      }) as const;
+
+    state = applyGatewayEvent(state, commandEvent("runtime-late", 200));
+    state = applyGatewayEvent(state, commandEvent("runtime-early", 100));
+
+    expect(state.messagesBySession.s1?.map((message) => message.id)).toEqual([
+      "runtime-early.message",
+      "runtime-late.message",
+    ]);
+    const earlyState = state.messagesBySession.s1?.[0]?.parts[0]?.state as
+      | { created_at?: number }
+      | undefined;
+    expect(earlyState?.created_at).toBe(100);
   });
 });

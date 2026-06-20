@@ -135,7 +135,17 @@ function emit(event) {
 }
 
 function gatewayEvent(type, properties) {
-  emit({ directory: workspace, sessionID, payload: { type, properties } });
+  emit({
+    directory: workspace,
+    sessionID,
+    payload: {
+      type,
+      properties:
+        type === "session.status"
+          ? { ...properties, updatedAt: properties.updatedAt ?? Date.now() }
+          : properties,
+    },
+  });
 }
 
 async function delay(ms) {

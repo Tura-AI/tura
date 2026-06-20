@@ -173,12 +173,33 @@ function html(profileId, profile, instance) {
     let term;
     let fit;
     window.__turaUnicode11Loaded = false;
+    window.__turaHoveredLink = "";
+    window.__turaActivatedLinks = [];
+    const linkHandler = {
+      allowNonHttpProtocols: true,
+      activate: (event, text) => {
+        event?.preventDefault?.();
+        window.__turaActivatedLinks.push(text);
+        try {
+          window.open(text, "_blank", "noopener,noreferrer");
+        } catch (error) {
+          console.warn("link open failed", error);
+        }
+      },
+      hover: (_event, text) => {
+        window.__turaHoveredLink = text;
+      },
+      leave: (_event, text) => {
+        if (window.__turaHoveredLink === text) window.__turaHoveredLink = "";
+      },
+    };
     const createTerminal = () => {
       const nextTerm = new Terminal({
         allowProposedApi: true,
         cursorBlink: true,
         fontFamily: "Cascadia Mono, Segoe UI Emoji, Apple Color Emoji, Noto Color Emoji, Consolas, monospace",
         fontSize: innerWidth <= 640 ? 13 : 15,
+        linkHandler,
         lineHeight: 1.22,
         scrollback: 20000,
         theme: { background: "#101010", foreground: "#eeeeee", cursor: "#40e0d0" },

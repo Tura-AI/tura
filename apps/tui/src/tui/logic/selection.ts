@@ -1,5 +1,6 @@
 import { sessionConfigPatchFromAssignments } from "../../commands/config-values.js";
 import { isDraftSession } from "../../types/session.js";
+import { runtimeModelFromConfig } from "../model-config.js";
 import type { AppState, SettingDetail } from "../reducer.js";
 import { settingOptions, settingsEntries } from "../render.js";
 
@@ -80,10 +81,10 @@ export function selectedSettingOption(state: AppState): [string, string, unknown
 export function promptRuntimeSelection(state: AppState): PromptRuntimeSelection {
   if (isDraftSession(state.session)) {
     return {
-      model: stringOrUndefined(state.session?.model) ?? configuredModel(state),
+      model: configuredModel(state) ?? stringOrUndefined(state.session?.model),
       agent:
-        stringOrUndefined(state.session?.agent) ??
-        stringOrUndefined(state.sessionConfig?.active_agent),
+        stringOrUndefined(state.sessionConfig?.active_agent) ??
+        stringOrUndefined(state.session?.agent),
       modelVariant:
         stringOrUndefined(state.session?.model_variant) ??
         stringOrUndefined(state.sessionConfig?.model_variant),
@@ -94,7 +95,7 @@ export function promptRuntimeSelection(state: AppState): PromptRuntimeSelection 
     };
   }
   return {
-    model: stringOrUndefined(state.session?.model) ?? configuredModel(state),
+    model: configuredModel(state) ?? stringOrUndefined(state.session?.model),
     agent:
       stringOrUndefined(state.sessionConfig?.active_agent) ??
       stringOrUndefined(state.session?.agent),
@@ -109,13 +110,7 @@ export function promptRuntimeSelection(state: AppState): PromptRuntimeSelection 
 }
 
 function configuredModel(state: AppState): string | undefined {
-  const config = state.sessionConfig;
-  const model = stringOrUndefined(config?.model);
-  if (model?.includes("/")) return model;
-  const provider = stringOrUndefined(config?.active_provider);
-  const activeModel = stringOrUndefined(config?.active_model);
-  if (provider && activeModel) return `${provider}/${activeModel}`;
-  return undefined;
+  return runtimeModelFromConfig(state.sessionConfig);
 }
 
 function stringOrUndefined(value: unknown): string | undefined {

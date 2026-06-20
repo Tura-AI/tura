@@ -1,5 +1,6 @@
 pub mod agent_identity;
 pub mod compact_context;
+pub mod context_blocks;
 pub mod provider_retry;
 pub mod runtime_fallback;
 pub mod tail_injection;

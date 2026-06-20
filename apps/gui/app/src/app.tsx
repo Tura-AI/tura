@@ -1,5 +1,6 @@
 import {
   GatewayClient,
+  type GatewayEventEnvelope,
   defaultGatewayUrl,
   errorMessage,
   type AgentUpsertRequest,
@@ -37,6 +38,7 @@ import { useMainTabNavigation } from "./hooks/use-main-tab-navigation";
 import { usePlanActions } from "./hooks/use-plan-actions";
 import { useProviderSettingsActions } from "./hooks/use-provider-settings-actions";
 import { t } from "./i18n";
+import { applyGatewayEvent } from "./state/event-reducer";
 import { fixtureAppState } from "./test/fixtures/app-fixtures";
 import {
   activeSession,
@@ -60,6 +62,15 @@ const PROMPT_RESPONSE_TIMEOUT_CODE = "GATEWAY_NO_RESPONSE_30S";
 const ASSISTANT_REPLY_POLL_TIMEOUT_MS = 120_000;
 const ASSISTANT_REPLY_POLL_INTERVAL_MS = 1_250;
 const MESSAGE_PAGE_SIZE = 200;
+
+declare global {
+  interface Window {
+    __turaGuiE2E?: {
+      applyGatewayEvent: (envelope: GatewayEventEnvelope) => void;
+      snapshot: () => AppState;
+    };
+  }
+}
 
 export function App() {
   const e2eFixture = readSearchParam("e2eFixture");
@@ -111,6 +122,13 @@ export function App() {
   const [workspaceTreeTouched, setWorkspaceTreeTouched] = createSignal(false);
   const e2eStoredAgents = new Map<string, StoredAgent>();
 
+  if (e2eFixture && typeof window !== "undefined") {
+    window.__turaGuiE2E = {
+      applyGatewayEvent: (event) => setState((previous) => applyGatewayEvent(previous, event)),
+      snapshot: () => state(),
+    };
+  }
+
   const {
     fileTree,
     setFileTree,
@@ -159,7 +177,7 @@ export function App() {
       ...previous,
       messagesBySession: {
         ...previous.messagesBySession,
-        [sessionId]: messages,
+        [sessionId]: mergeMessagePages(existingMessages, messages),
       },
       messagePagingBySession: {
         ...previous.messagePagingBySession,
@@ -729,7 +747,7 @@ export function App() {
         ...previous,
         messagesBySession: {
           ...previous.messagesBySession,
-          [sessionId]: messages,
+          [sessionId]: mergeMessagePages(previous.messagesBySession[sessionId] ?? [], messages),
         },
       }));
       if (hasVisibleAssistantReply(messages)) {
@@ -892,11 +910,21 @@ export function App() {
   }
 
   async function refreshSessions() {
-    const sessions = await safe(() => directoryClient().sessions({ limit: 100 }), state().sessions);
-    setState((previous) => ({
-      ...previous,
-      sessions: mergeSessions(sessions, previous.sessions),
-    }));
+    setState((previous) => ({ ...previous, sessionsLoading: true }));
+    try {
+      const sessions = await directoryClient().sessions({ limit: 100 });
+      setState((previous) => ({
+        ...previous,
+        sessions: mergeSessions(sessions, previous.sessions),
+        sessionsLoading: false,
+      }));
+    } catch (error) {
+      setState((previous) => ({
+        ...previous,
+        sessionsLoading: false,
+        error: errorMessage(error),
+      }));
+    }
   }
 
   async function switchWorkspace(project: Project, options: { selectSession?: boolean } = {}) {
@@ -917,6 +945,7 @@ export function App() {
         selectedFile: undefined,
         fileContent: undefined,
         loading: false,
+        sessionsLoading: false,
         error: undefined,
       }));
       setFileTree({});
@@ -936,6 +965,7 @@ export function App() {
       selectedFile: undefined,
       fileContent: undefined,
       loading: true,
+      sessionsLoading: true,
       error: undefined,
     }));
     try {
@@ -952,6 +982,7 @@ export function App() {
         files,
         selectedSessionId,
         loading: false,
+        sessionsLoading: false,
       }));
       setFileTree({ "": files });
       if (selectedSessionId) {
@@ -961,6 +992,7 @@ export function App() {
       setState((previous) => ({
         ...previous,
         loading: false,
+        sessionsLoading: false,
         error: errorMessage(error),
       }));
     }
@@ -1068,16 +1100,36 @@ function delay(ms: number): Promise<void> {
 }
 
 function mergeMessagePages(prefix: Message[], suffix: Message[]): Message[] {
-  const seen = new Set<string>();
-  const merged: Message[] = [];
-  for (const message of [...prefix, ...suffix]) {
-    if (seen.has(message.id)) {
+  const merged = [...prefix];
+  for (const incoming of suffix) {
+    if (merged.some((message) => message.id === incoming.id)) {
       continue;
     }
-    seen.add(message.id);
-    merged.push(message);
+    const optimisticIndex = merged.findIndex((message) => isOptimisticDuplicate(message, incoming));
+    if (optimisticIndex >= 0) {
+      merged[optimisticIndex] = incoming;
+      continue;
+    }
+    merged.push(incoming);
   }
-  return merged;
+  return merged.sort((left, right) => messageSortTime(left) - messageSortTime(right));
+}
+
+function isOptimisticDuplicate(existing: Message, incoming: Message): boolean {
+  return (
+    existing.role === "user" &&
+    incoming.role === "user" &&
+    existing.id.startsWith("prompt:") &&
+    messagePlainText(existing).trim() === messagePlainText(incoming).trim()
+  );
+}
+
+function messagePlainText(message: Message): string {
+  return message.parts.map((part) => part.text || part.content || "").join("\n");
+}
+
+function messageSortTime(message: Message): number {
+  return message.time?.created ?? message.created_at ?? 0;
 }
 
 function hasVisibleAssistantReply(messages: Message[]): boolean {

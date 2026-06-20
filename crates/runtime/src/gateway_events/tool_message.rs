@@ -198,8 +198,8 @@ pub(crate) fn publish_runtime_usage_record(
         runtime_status: Some(runtime.session_sync_status()),
         context_tokens: Some(session.context_tokens),
         usage: runtime.usage.clone(),
-        created_at: Some(created_at),
-        updated_at: Some(updated_at),
+        created_at,
+        updated_at,
     }) {
         warn!(
             session_id = %session.session_id,
@@ -238,6 +238,7 @@ pub(crate) fn publish_tool_call_record(
         0
     };
     let ended_at = Utc::now();
+    let (message_created_at, _) = runtime.assistant_message_timestamps();
     let call_id_start = Instant::now();
     let call_id = stable_tool_call_id(&runtime.runtime_id, &tool_call.tool_name, &input);
     profile_timings::log_elapsed(
@@ -342,8 +343,8 @@ pub(crate) fn publish_tool_call_record(
         runtime_status: None,
         context_tokens: Some(runtime.context_tokens),
         usage: runtime.usage.clone(),
-        created_at: None,
-        updated_at: None,
+        created_at: message_created_at,
+        updated_at: ended_at.timestamp_millis(),
     });
     profile_timings::log_elapsed(
         "publish_tool_call_record.publish_gateway_tool_message",
@@ -384,6 +385,7 @@ pub(crate) fn publish_tool_call_started(
     input: serde_json::Value,
     started_at: chrono::DateTime<Utc>,
 ) {
+    let (message_created_at, _) = runtime.assistant_message_timestamps();
     let call_id = stable_tool_call_id(&runtime.runtime_id, &tool_call.tool_name, &input);
     let metadata = serde_json::json!({
         "kind": "mano_tool_call",
@@ -416,8 +418,8 @@ pub(crate) fn publish_tool_call_started(
         runtime_status: None,
         context_tokens: Some(runtime.context_tokens),
         usage: runtime.usage.clone(),
-        created_at: None,
-        updated_at: None,
+        created_at: message_created_at,
+        updated_at: started_at.timestamp_millis(),
     }) {
         warn!(
             session_id = %session.session_id,
@@ -490,8 +492,8 @@ struct GatewayToolMessage<'a> {
     runtime_status: Option<RuntimeSessionSyncStatus>,
     context_tokens: Option<ContextTokenStats>,
     usage: Option<UsageReport>,
-    created_at: Option<i64>,
-    updated_at: Option<i64>,
+    created_at: i64,
+    updated_at: i64,
 }
 
 fn publish_gateway_tool_message(message: GatewayToolMessage<'_>) -> Result<(), String> {

@@ -3,6 +3,7 @@ import type {
   AgentConfig,
   AgentUpsertRequest,
   StoredAgent,
+  TuraConfigModelPair,
   TuraConfigResponse,
 } from "@tura/gateway-sdk";
 import Search from "lucide-solid/icons/search";
@@ -14,11 +15,12 @@ import { agentDisplayName, visibleConfigurableAgents } from "../../utils/agent-d
 import { AppearanceSelect } from "./appearance-select";
 import { ReadonlyRow } from "./readonly-row";
 import {
-  AGENT_MODEL_TIERS,
   AGENT_REASONING_EFFORTS,
+  canonicalDefaultModelTier,
   modelOptionValue,
   modelTierLabel,
 } from "./settings-options";
+import type { DEFAULT_MODEL_TIERS } from "./settings-options";
 
 export function AgentSettingsPanel(props: {
   agents: Agent[];
@@ -30,11 +32,11 @@ export function AgentSettingsPanel(props: {
 }) {
   const [selectedAgentId, setSelectedAgentId] = createSignal<string>();
   const [storedAgent, setStoredAgent] = createSignal<StoredAgent>();
-  const [selectedTier, setSelectedTier] =
-    createSignal<(typeof AGENT_MODEL_TIERS)[number]>("thinking");
+  const [selectedProvider, setSelectedProvider] = createSignal("");
+  const [selectedModel, setSelectedModel] = createSignal("");
   const [selectedReasoningEffort, setSelectedReasoningEffort] =
-    createSignal<(typeof AGENT_REASONING_EFFORTS)[number]>("medium");
-  const [priorityEnabled, setPriorityEnabled] = createSignal(false);
+    createSignal<(typeof AGENT_REASONING_EFFORTS)[number]>("high");
+  const [priorityEnabled, setPriorityEnabled] = createSignal(true);
   const [loadingAgent, setLoadingAgent] = createSignal(false);
   const [agentQuery, setAgentQuery] = createSignal("");
   const visibleAgents = createMemo(() => visibleConfigurableAgents(props.agents));
@@ -54,15 +56,29 @@ export function AgentSettingsPanel(props: {
   const selectedCapabilities = createMemo(() =>
     capabilitiesForAgent(selectedAgent(), storedAgent()),
   );
-  const modelTierOptions = createMemo(() =>
-    AGENT_MODEL_TIERS.map((tier) => ({
-      id: tier,
-      label: modelTierLabel(tier),
-      value: tier,
-      detail: modelForTier(props.modelConfig, tier),
-      preview: "inherit",
-    })),
+  const selectedDefaultModelTier = createMemo(() =>
+    normalizeDefaultModelTier(agentDefaultModelTier(selectedAgent(), storedAgent())),
   );
+  const providerOptions = createMemo(() =>
+    modelProviderOptions(
+      props.modelConfig,
+      currentAgentModelOption(selectedAgent(), storedAgent()),
+    ),
+  );
+  const modelOptions = createMemo(() =>
+    modelOptionsForProvider(
+      props.modelConfig,
+      selectedProvider(),
+      currentAgentModelOption(selectedAgent(), storedAgent()),
+    ),
+  );
+  const selectedModelValue = createMemo(() =>
+    selectedProvider() && selectedModel() ? `${selectedProvider()}/${selectedModel()}` : "",
+  );
+  const currentModelLabel = createMemo(() => {
+    const value = selectedModelValue();
+    return value || modelForTier(props.modelConfig, selectedDefaultModelTier()) || "--";
+  });
   const reasoningEffortOptions = createMemo(() =>
     AGENT_REASONING_EFFORTS.map((effort) => ({
       id: effort,
@@ -83,7 +99,9 @@ export function AgentSettingsPanel(props: {
     setLoadingAgent(true);
     const stored = await props.onGetAgent(agent.name);
     setStoredAgent(stored);
-    setSelectedTier(normalizeAgentModelTier(agentModelTier(agent, stored)));
+    const currentModel = agentCurrentModel(agent, stored);
+    setSelectedProvider(currentModel?.provider ?? "");
+    setSelectedModel(currentModel?.model ?? "");
     setSelectedReasoningEffort(normalizeReasoningEffort(agentReasoningEffort(agent, stored)));
     setPriorityEnabled(agentPriorityEnabled(agent, stored));
     setLoadingAgent(false);
@@ -97,7 +115,8 @@ export function AgentSettingsPanel(props: {
     }
     const payload: AgentUpsertRequest = {
       config: agentConfigWithProviderSettings(stored.config, {
-        tier: selectedTier(),
+        defaultModelTier: selectedDefaultModelTier(),
+        currentModel: selectedModelValue(),
         reasoningEffort: selectedReasoningEffort(),
         priority: priorityEnabled(),
       }),
@@ -145,9 +164,7 @@ export function AgentSettingsPanel(props: {
                     >
                       <AgentIcon agent={agent} />
                       <span>{agentDisplayName(agent)}</span>
-                      <small>
-                        {modelTierLabel(normalizeAgentModelTier(agentModelTier(agent)))}
-                      </small>
+                      <small>{agentModelDisplayText(agent, props.modelConfig)}</small>
                     </button>
                   )}
                 </For>
@@ -170,14 +187,46 @@ export function AgentSettingsPanel(props: {
             label={t("description")}
             value={storedAgent()?.summary.description ?? selectedAgent()?.description ?? ""}
           />
+          <ReadonlyRow
+            label={t("defaultModelTier")}
+            value={[
+              modelTierLabel(selectedDefaultModelTier()),
+              modelForTier(props.modelConfig, selectedDefaultModelTier()),
+            ]
+              .filter((value) => value && value !== "--")
+              .join(" · ")}
+          />
           <div class="field-row">
-            <label for="agent-settings-model">{t("model")}</label>
+            <label>{t("provider")}</label>
             <AppearanceSelect
-              value={selectedTier()}
-              options={modelTierOptions()}
-              onSelect={(option) => setSelectedTier(normalizeAgentModelTier(option.value))}
+              value={selectedProvider()}
+              options={providerOptions()}
+              placeholder={t("provider")}
+              onSelect={(option) => {
+                setSelectedProvider(option.value);
+                const firstModel = modelOptionsForProvider(
+                  props.modelConfig,
+                  option.value,
+                  currentAgentModelOption(selectedAgent(), storedAgent()),
+                )[0];
+                setSelectedModel(firstModel?.value.split("/").slice(1).join("/") ?? "");
+              }}
             />
           </div>
+          <Show when={selectedProvider()}>
+            <div class="field-row">
+              <label>{t("currentModel")}</label>
+              <AppearanceSelect
+                value={selectedModelValue()}
+                options={modelOptions()}
+                placeholder={currentModelLabel()}
+                onSelect={(option) => {
+                  const model = option.value.split("/").slice(1).join("/");
+                  setSelectedModel(model);
+                }}
+              />
+            </div>
+          </Show>
           <div class="field-row">
             <label for="agent-settings-reasoning">{t("modelReasoningEffort")}</label>
             <AppearanceSelect
@@ -240,19 +289,68 @@ export function AgentSettingsPanel(props: {
   );
 }
 
-function agentModelTier(agent?: Agent, stored?: StoredAgent): string {
+function agentDefaultModelTier(agent?: Agent, stored?: StoredAgent): string {
   return (
-    readProviderTier(stored?.config.provider) ??
-    readProviderTier(agent?.options?.provider) ??
-    readProviderTier(agent?.options) ??
+    readProviderString(stored?.config.provider, ["default_model_tier"]) ??
+    readLegacyDefaultTier(stored?.config.provider) ??
+    readProviderString(agent?.options?.provider, ["default_model_tier"]) ??
+    readLegacyDefaultTier(agent?.options?.provider) ??
+    readProviderString(agent?.options, ["default_model_tier"]) ??
+    readLegacyDefaultTier(agent?.options) ??
     "thinking"
   );
 }
 
-function normalizeAgentModelTier(value: string | undefined): (typeof AGENT_MODEL_TIERS)[number] {
-  return AGENT_MODEL_TIERS.includes(value as (typeof AGENT_MODEL_TIERS)[number])
-    ? (value as (typeof AGENT_MODEL_TIERS)[number])
-    : "thinking";
+function normalizeDefaultModelTier(
+  value: string | undefined,
+): (typeof DEFAULT_MODEL_TIERS)[number] {
+  return canonicalDefaultModelTier(value);
+}
+
+function readLegacyDefaultTier(value: unknown): string | undefined {
+  const legacy = readProviderString(value, ["tura_llm_name"]);
+  return legacy?.includes("/") ? undefined : legacy;
+}
+
+function agentCurrentModel(
+  agent?: Agent,
+  stored?: StoredAgent,
+): Pick<TuraConfigModelPair, "provider" | "model"> | undefined {
+  return (
+    providerModelPair(readProviderString(stored?.config.provider, ["current_model"])) ??
+    providerModelPair(readProviderString(agent?.options?.provider, ["current_model"])) ??
+    providerModelPair(readProviderString(agent?.options, ["current_model"])) ??
+    providerModelPair(readProviderString(stored?.config.provider, ["tura_llm_name"])) ??
+    providerModelPair(readProviderString(agent?.options?.provider, ["tura_llm_name"])) ??
+    (agent?.model?.providerID && agent.model.modelID
+      ? { provider: agent.model.providerID, model: agent.model.modelID }
+      : undefined)
+  );
+}
+
+function currentAgentModelOption(
+  agent?: Agent,
+  stored?: StoredAgent,
+): TuraConfigModelPair | undefined {
+  const current = agentCurrentModel(agent, stored);
+  return current
+    ? {
+        ...current,
+        provider_name: current.provider,
+        model_name: current.model,
+      }
+    : undefined;
+}
+
+function providerModelPair(
+  value: string | undefined,
+): Pick<TuraConfigModelPair, "provider" | "model"> | undefined {
+  if (!value?.includes("/")) {
+    return undefined;
+  }
+  const [provider, ...modelParts] = value.split("/");
+  const model = modelParts.join("/");
+  return provider && model ? { provider, model } : undefined;
 }
 
 function agentReasoningEffort(agent?: Agent, stored?: StoredAgent): string {
@@ -267,7 +365,7 @@ function agentReasoningEffort(agent?: Agent, stored?: StoredAgent): string {
       "reasoning_effort",
       "model_variant",
     ]) ??
-    "medium"
+    "high"
   );
 }
 
@@ -278,7 +376,7 @@ function normalizeReasoningEffort(
     ? value === "highest"
       ? "xhigh"
       : value
-    : "medium";
+    : "high";
 }
 
 function reasoningEffortLabel(value: string): string {
@@ -298,14 +396,10 @@ function agentPriorityEnabled(agent?: Agent, stored?: StoredAgent): boolean {
   if (configured !== undefined) {
     return configured;
   }
-  return (
+  const serviceTierPriority =
     readProviderString(stored?.config.provider, ["service_tier"]) === "priority" ||
-    readProviderString(agent?.options?.provider, ["service_tier"]) === "priority"
-  );
-}
-
-function readProviderTier(value: unknown): string | undefined {
-  return readProviderString(value, ["tura_llm_name"]);
+    readProviderString(agent?.options?.provider, ["service_tier"]) === "priority";
+  return serviceTierPriority || true;
 }
 
 function readProviderString(value: unknown, keys: string[]): string | undefined {
@@ -333,7 +427,8 @@ function readProviderBool(value: unknown, key: string): boolean | undefined {
 function agentConfigWithProviderSettings(
   config: AgentConfig,
   settings: {
-    tier: (typeof AGENT_MODEL_TIERS)[number];
+    defaultModelTier: (typeof DEFAULT_MODEL_TIERS)[number];
+    currentModel: string;
     reasoningEffort: (typeof AGENT_REASONING_EFFORTS)[number];
     priority: boolean;
   },
@@ -346,7 +441,9 @@ function agentConfigWithProviderSettings(
     ...config,
     provider: {
       ...provider,
-      tura_llm_name: settings.tier,
+      default_model_tier: settings.defaultModelTier,
+      tura_llm_name: settings.defaultModelTier,
+      ...(settings.currentModel ? { current_model: settings.currentModel } : {}),
       model_reasoning_effort: settings.reasoningEffort,
       model_acceleration_enabled: settings.priority,
       service_tier: settings.priority ? "priority" : "default",
@@ -370,6 +467,67 @@ function capabilitiesForAgent(agent?: Agent, stored?: StoredAgent): string[] {
 function modelForTier(modelConfig: TuraConfigResponse | undefined, tier: string): string {
   const current = modelConfig?.tiers.find((item) => item.tier === tier)?.current;
   return current ? modelOptionValue(current) : "--";
+}
+
+function modelProviderOptions(
+  modelConfig: TuraConfigResponse | undefined,
+  current?: TuraConfigModelPair,
+) {
+  const providers = new Map<string, string>();
+  for (const option of allModelOptions(modelConfig, current)) {
+    providers.set(option.provider, option.provider_name || option.provider);
+  }
+  return [...providers.entries()].map(([provider, label]) => ({
+    id: provider,
+    label,
+    value: provider,
+    preview: "inherit",
+  }));
+}
+
+function modelOptionsForProvider(
+  modelConfig: TuraConfigResponse | undefined,
+  provider: string,
+  current?: TuraConfigModelPair,
+) {
+  if (!provider) {
+    return [];
+  }
+  const seen = new Set<string>();
+  return allModelOptions(modelConfig, current)
+    .filter((option) => option.provider === provider)
+    .filter((option) => {
+      const value = modelOptionValue(option);
+      if (seen.has(value)) {
+        return false;
+      }
+      seen.add(value);
+      return true;
+    })
+    .map((option) => ({
+      id: modelOptionValue(option),
+      label: option.model_name || option.model,
+      value: modelOptionValue(option),
+      detail: option.provider_name || option.provider,
+      preview: "inherit",
+    }));
+}
+
+function allModelOptions(
+  modelConfig: TuraConfigResponse | undefined,
+  current?: TuraConfigModelPair,
+): TuraConfigModelPair[] {
+  const options = modelConfig?.tiers.flatMap((tier) => tier.options) ?? [];
+  return current ? [current, ...options] : options;
+}
+
+function agentModelDisplayText(agent: Agent, modelConfig: TuraConfigResponse | undefined): string {
+  const current = agentCurrentModel(agent);
+  if (current) {
+    return modelOptionValue(current);
+  }
+  const tier = normalizeDefaultModelTier(agentDefaultModelTier(agent));
+  return modelForTier(modelConfig, tier);
 }
 
 function readStringList(value: unknown): string[] {

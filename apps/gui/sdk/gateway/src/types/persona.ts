@@ -47,6 +47,7 @@ export type StoredPersona = {
   config: PersonaConfig;
   persona?: string | null;
   communication_style?: string | null;
+  cli_communication_style?: string | null;
   management: unknown;
 };
 
@@ -56,4 +57,3 @@ export type PersonaUpsertRequest = {
   persona?: string;
   communication_style?: string;
 };
-

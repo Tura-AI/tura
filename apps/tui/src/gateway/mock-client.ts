@@ -40,7 +40,9 @@ export class MockGatewayClient {
     let messages = [
       this.message(session.id, "assistant", "Mock TUI 已启动。当前不会连接真实 gateway。"),
     ];
-    if (process.env.TURA_TUI_MOCK_STREAM_ORDER === "1") {
+    if (process.env.TURA_TUI_MOCK_LOCAL_LINKS === "1") {
+      messages = [this.message(session.id, "assistant", this.localLinkFixtureText())];
+    } else if (process.env.TURA_TUI_MOCK_STREAM_ORDER === "1") {
       messages = this.streamingOrderMessages(session.id);
     } else if (process.env.TURA_TUI_MOCK_LONG_SESSION === "1") {
       const count = Number(process.env.TURA_TUI_MOCK_LONG_SESSION_COUNT || "1000");
@@ -74,7 +76,7 @@ export class MockGatewayClient {
   }
 
   async patchSessionConfig(payload: SessionConfig): Promise<SessionConfig> {
-    this.sessionConfig = { ...this.sessionConfig, ...payload };
+    this.sessionConfig = canonicalSessionConfig({ ...this.sessionConfig, ...payload });
     return this.getSessionConfig();
   }
 
@@ -285,7 +287,6 @@ export class MockGatewayClient {
         config: {
           agent_name: "thinking",
           description: "Mock Tura thinking agent",
-          agent_persona: [{ persona_name: "tura", persona_directory: "personas/src/tura" }],
         },
       },
       {
@@ -517,6 +518,22 @@ export class MockGatewayClient {
     ];
   }
 
+  private localLinkFixtureText(): string {
+    const workspace = this.directory.replace(/\\/g, "/");
+    const fileUrlPath = `${workspace}/Project Files/Docs (review)`;
+    const fileUrl = `file://${encodeURI(/^[A-Za-z]:\//u.test(fileUrlPath) ? `/${fileUrlPath}` : fileUrlPath)}`;
+    return [
+      "Local Link Visual",
+      `raw directory ${workspace}/Project Files/Raw Directory and then plain words`,
+      "relative directory Project Files/Docs (review), then a comma clause",
+      "wrapped directory (Project Files/Docs (review)) after wrapper",
+      "markdown directory [Review Folder](Project Files/Docs (review))",
+      `file url ${fileUrl}.`,
+      "[MEDIA:Project Files/Agent Media/shot final.png:MEDIA]",
+      "[MEDIA:Project Files/Agent Media/missing final.png:MEDIA]",
+    ].join("\n");
+  }
+
   private mockSession(id: string, name: string, payload: CreateSessionRequest = {}): Session {
     const now = Date.now();
     return {
@@ -536,7 +553,9 @@ export class MockGatewayClient {
       force_planning: payload.force_planning ?? false,
       model_variant: payload.model_variant ?? this.sessionConfig.model_variant,
       model_acceleration_enabled:
-        payload.model_acceleration_enabled ?? this.sessionConfig.model_acceleration_enabled ?? false,
+        payload.model_acceleration_enabled ??
+        this.sessionConfig.model_acceleration_enabled ??
+        false,
       disable_permission_restrictions: false,
       message_count: 0,
       task_management: {},
@@ -557,6 +576,36 @@ export class MockGatewayClient {
       parts: [{ id: `${id}:text`, sessionID, messageID: id, type: "text", text }],
     };
   }
+}
+
+function canonicalSessionConfig(config: SessionConfig): SessionConfig {
+  const model = typeof config.model === "string" ? config.model.trim() : "";
+  if (model.includes("/")) {
+    const [provider, ...modelParts] = model.split("/");
+    const modelID = modelParts.join("/");
+    if (provider && modelID) {
+      return {
+        ...config,
+        model: `${provider}/${modelID}`,
+        active_provider: provider,
+        active_model: modelID.startsWith(`${provider}/`)
+          ? modelID.slice(provider.length + 1)
+          : modelID,
+      };
+    }
+  }
+  const provider = typeof config.active_provider === "string" ? config.active_provider.trim() : "";
+  const activeModel = typeof config.active_model === "string" ? config.active_model.trim() : "";
+  if (!provider || !activeModel) return config;
+  const modelID = activeModel.startsWith(`${provider}/`)
+    ? activeModel.slice(provider.length + 1)
+    : activeModel;
+  return {
+    ...config,
+    model: `${provider}/${modelID}`,
+    active_provider: provider,
+    active_model: modelID,
+  };
 }
 
 function pageMessages(messages: Message[], options: ListMessagesOptions): Message[] {

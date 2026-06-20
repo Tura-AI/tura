@@ -1,5 +1,12 @@
 import ChevronLeft from "lucide-solid/icons/chevron-left";
 import ChevronRight from "lucide-solid/icons/chevron-right";
+import FileArchive from "lucide-solid/icons/file-archive";
+import FileAudio from "lucide-solid/icons/file-audio";
+import FileCode from "lucide-solid/icons/file-code";
+import FileIcon from "lucide-solid/icons/file";
+import FileImage from "lucide-solid/icons/file-image";
+import FileText from "lucide-solid/icons/file-text";
+import FileVideo from "lucide-solid/icons/file-video";
 import Crop from "lucide-solid/icons/crop";
 import Maximize2 from "lucide-solid/icons/maximize-2";
 import Minimize2 from "lucide-solid/icons/minimize-2";
@@ -7,8 +14,18 @@ import Pencil from "lucide-solid/icons/pencil";
 import RotateCw from "lucide-solid/icons/rotate-cw";
 import X from "lucide-solid/icons/x";
 import { For, Match, Show, Switch, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { Portal } from "solid-js/web";
 import { t } from "../i18n";
 import { classNames } from "../state/format";
+import { openExternalUrl } from "../utils/external-url";
+import { RICH_TOKEN_PATTERN } from "./message-rich-protocol";
+import {
+  gatewayBaseUrl,
+  isLocalLinkTarget,
+  localPathQueryValue,
+  mediaSource,
+  parseLocalTextReferences,
+} from "./message-rich-text-paths";
 
 type RichNode =
   | { kind: "text"; text: string }
@@ -20,8 +37,7 @@ type RichNode =
       children: RichNode[];
     }
   | { kind: "media"; path: string }
-  | { kind: "local-path"; path: string }
-  | { kind: "emoji"; mode: "sticker" | "react"; value: string }
+  | { kind: "local-path"; path: string; label?: RichNode[] }
   | { kind: "table"; caption: RichNode[]; rows: RichTableRow[] };
 
 type RichTableCell = {
@@ -48,9 +64,7 @@ type RichTag =
   | "blockquote"
   | "pre";
 
-const TOKEN_PATTERN = /\[(MEDIA):([\s\S]*?):MEDIA\]|\[EMOJI:(sticker|react):([\s\S]*?):EMOJI\]/gu;
-
-export function RichText(props: { text: string; active?: boolean }) {
+export function RichText(props: { text: string; active?: boolean; workspaceDirectory?: string }) {
   const nodes = createMemo(() => parseRichText(props.text));
   const groups = createMemo(() => groupMediaNodes(nodes()));
   const [viewerIndex, setViewerIndex] = createSignal<number>();
@@ -65,47 +79,69 @@ export function RichText(props: { text: string; active?: boolean }) {
         {(group) => (
           <Show
             when={group.kind === "gallery"}
-            fallback={<RichNodeView node={(group as Extract<RichGroup, { kind: "node" }>).node} />}
+            fallback={
+              <RichNodeView
+                node={(group as Extract<RichGroup, { kind: "node" }>).node}
+                workspaceDirectory={props.workspaceDirectory}
+              />
+            }
           >
             <MediaGallery
               paths={(group as Extract<RichGroup, { kind: "gallery" }>).paths}
+              workspaceDirectory={props.workspaceDirectory}
               onOpen={(path) => setViewerIndex(galleryPaths().indexOf(path))}
             />
           </Show>
         )}
       </For>
       <Show when={viewerIndex() !== undefined}>
-        <ImageLightbox
-          paths={galleryPaths()}
-          index={viewerIndex() ?? 0}
-          onIndex={setViewerIndex}
-          onClose={() => setViewerIndex(undefined)}
-        />
+        <Portal>
+          <ImageLightbox
+            paths={galleryPaths()}
+            index={viewerIndex() ?? 0}
+            workspaceDirectory={props.workspaceDirectory}
+            onIndex={setViewerIndex}
+            onClose={() => setViewerIndex(undefined)}
+          />
+        </Portal>
       </Show>
     </div>
   );
 }
 
-function RichNodeView(props: { node: RichNode }) {
+function RichNodeView(props: { node: RichNode; workspaceDirectory?: string }) {
   if (props.node.kind === "text") {
     return <>{props.node.text}</>;
   }
   if (props.node.kind === "media") {
-    return <MediaNode path={props.node.path} />;
+    return <MediaNode path={props.node.path} workspaceDirectory={props.workspaceDirectory} />;
   }
   if (props.node.kind === "local-path") {
-    return <LocalPathLink path={props.node.path} />;
-  }
-  if (props.node.kind === "emoji") {
-    return <span class={`rich-emoji rich-${props.node.mode}`}>{props.node.value}</span>;
+    return (
+      <LocalPathLink
+        path={props.node.path}
+        label={props.node.label}
+        workspaceDirectory={props.workspaceDirectory}
+      />
+    );
   }
   if (props.node.kind === "table") {
-    return <RichTableView caption={props.node.caption} rows={props.node.rows} />;
+    return (
+      <RichTableView
+        caption={props.node.caption}
+        rows={props.node.rows}
+        workspaceDirectory={props.workspaceDirectory}
+      />
+    );
   }
-  return <RichElement node={props.node} />;
+  return <RichElement node={props.node} workspaceDirectory={props.workspaceDirectory} />;
 }
 
-function RichTableView(props: { caption: RichNode[]; rows: RichTableRow[] }) {
+function RichTableView(props: {
+  caption: RichNode[];
+  rows: RichTableRow[];
+  workspaceDirectory?: string;
+}) {
   const caption = createMemo(() => plainText(props.caption).trim());
   const [scrollWidth, setScrollWidth] = createSignal(0);
   const [clientWidth, setClientWidth] = createSignal(0);
@@ -209,7 +245,14 @@ function RichTableView(props: { caption: RichNode[]; rows: RichTableRow[] }) {
                   <For each={row.cells}>
                     {(cell) => {
                       const content = () => (
-                        <For each={cell.children}>{(node) => <RichNodeView node={node} />}</For>
+                        <For each={cell.children}>
+                          {(node) => (
+                            <RichNodeView
+                              node={node}
+                              workspaceDirectory={props.workspaceDirectory}
+                            />
+                          )}
+                        </For>
                       );
                       return (
                         <Show
@@ -267,8 +310,9 @@ function RichTableView(props: { caption: RichNode[]; rows: RichTableRow[] }) {
   );
 }
 
-function LocalPathLink(props: { path: string }) {
+function LocalPathLink(props: { path: string; label?: RichNode[]; workspaceDirectory?: string }) {
   const [opening, setOpening] = createSignal(false);
+  const label = createMemo(() => (props.label ? plainText(props.label) : props.path));
   async function openLocation(event: MouseEvent) {
     event.preventDefault();
     if (opening()) {
@@ -276,7 +320,10 @@ function LocalPathLink(props: { path: string }) {
     }
     setOpening(true);
     try {
-      const query = new URLSearchParams({ path: props.path });
+      const query = new URLSearchParams({ path: localPathQueryValue(props.path) });
+      if (props.workspaceDirectory) {
+        query.set("directory", props.workspaceDirectory);
+      }
       const response = await fetch(`${gatewayBaseUrl()}/file/open-location?${query.toString()}`, {
         method: "POST",
       });
@@ -297,14 +344,32 @@ function LocalPathLink(props: { path: string }) {
       disabled={opening()}
       onClick={openLocation}
     >
-      {props.path}
+      {label()}
     </button>
   );
 }
 
-function RichElement(props: { node: Extract<RichNode, { kind: "element" }> }) {
+async function openLocalFile(path: string, workspaceDirectory?: string): Promise<void> {
+  const query = new URLSearchParams({ path: localPathQueryValue(path) });
+  if (workspaceDirectory) {
+    query.set("directory", workspaceDirectory);
+  }
+  const response = await fetch(`${gatewayBaseUrl()}/file/open?${query.toString()}`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+}
+
+function RichElement(props: {
+  node: Extract<RichNode, { kind: "element" }>;
+  workspaceDirectory?: string;
+}) {
   const children = () => (
-    <For each={props.node.children}>{(node) => <RichNodeView node={node} />}</For>
+    <For each={props.node.children}>
+      {(node) => <RichNodeView node={node} workspaceDirectory={props.workspaceDirectory} />}
+    </For>
   );
   return (
     <Switch fallback={<span>{children()}</span>}>
@@ -321,7 +386,17 @@ function RichElement(props: { node: Extract<RichNode, { kind: "element" }> }) {
         <s>{children()}</s>
       </Match>
       <Match when={props.node.tag === "link"}>
-        <a href={props.node.href} target="_blank" rel="noreferrer">
+        <a
+          href={props.node.href}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(event) => {
+            event.preventDefault();
+            if (props.node.href) {
+              void openExternalUrl(props.node.href);
+            }
+          }}
+        >
           {children()}
         </a>
       </Match>
@@ -343,41 +418,142 @@ function RichElement(props: { node: Extract<RichNode, { kind: "element" }> }) {
   );
 }
 
-function MediaNode(props: { path: string }) {
+function MediaNode(props: { path: string; workspaceDirectory?: string }) {
   const isImage = createMemo(() => isImagePath(props.path));
+  const [failed, setFailed] = createSignal(false);
   return (
     <figure class="rich-media">
-      <Show when={isImage()} fallback={<code>[MEDIA:{props.path}:MEDIA]</code>}>
-        <img src={mediaSource(props.path)} alt="" loading="lazy" />
+      <Show
+        when={isImage() && !failed()}
+        fallback={<FileMediaTile path={props.path} workspaceDirectory={props.workspaceDirectory} />}
+      >
+        <button
+          type="button"
+          class="rich-media-thumb"
+          title={props.path}
+          onClick={() => void openLocalFile(props.path, props.workspaceDirectory)}
+        >
+          <img
+            src={mediaSource(props.path, props.workspaceDirectory)}
+            alt=""
+            loading="lazy"
+            onError={() => setFailed(true)}
+          />
+        </button>
       </Show>
       <figcaption>{props.path}</figcaption>
     </figure>
   );
 }
 
-function MediaGallery(props: { paths: string[]; onOpen: (path: string) => void }) {
-  const imagePaths = createMemo(() => props.paths.filter(isImagePath));
+function MediaGallery(props: {
+  paths: string[];
+  workspaceDirectory?: string;
+  onOpen: (path: string) => void;
+}) {
   return (
     <div class="rich-gallery grid">
-      <For each={imagePaths()}>
+      <For each={props.paths}>
         {(path) => (
-          <button
-            type="button"
-            class="rich-gallery-item"
-            onClick={() => props.onOpen(path)}
-            title={path}
-          >
-            <img src={mediaSource(path)} alt="" loading="lazy" />
-          </button>
+          <GalleryMediaItem
+            path={path}
+            workspaceDirectory={props.workspaceDirectory}
+            onOpen={props.onOpen}
+          />
         )}
       </For>
     </div>
   );
 }
 
+function GalleryMediaItem(props: {
+  path: string;
+  workspaceDirectory?: string;
+  onOpen: (path: string) => void;
+}) {
+  const [failed, setFailed] = createSignal(false);
+  const isImage = createMemo(() => isImagePath(props.path));
+  return (
+    <Show
+      when={isImage() && !failed()}
+      fallback={<FileMediaTile path={props.path} workspaceDirectory={props.workspaceDirectory} />}
+    >
+      <button
+        type="button"
+        class="rich-gallery-item"
+        onClick={() => props.onOpen(props.path)}
+        title={props.path}
+      >
+        <img
+          src={mediaSource(props.path, props.workspaceDirectory)}
+          alt=""
+          loading="lazy"
+          onError={() => setFailed(true)}
+        />
+      </button>
+    </Show>
+  );
+}
+
+function FileMediaTile(props: { path: string; workspaceDirectory?: string }) {
+  const [opening, setOpening] = createSignal(false);
+  async function openFile() {
+    if (opening()) {
+      return;
+    }
+    setOpening(true);
+    try {
+      await openLocalFile(props.path, props.workspaceDirectory);
+    } catch (error) {
+      console.error("Failed to open media file", error);
+    } finally {
+      setOpening(false);
+    }
+  }
+  return (
+    <button
+      type="button"
+      class="rich-file-tile"
+      title={props.path}
+      disabled={opening()}
+      onClick={openFile}
+    >
+      <span class="rich-file-icon">{fileTypeIcon(props.path)}</span>
+      <span class="rich-file-name">{fileName(props.path)}</span>
+      <span class="rich-file-ext">{fileExtension(props.path) || t("open")}</span>
+    </button>
+  );
+}
+
+function fileTypeIcon(path: string) {
+  const extension = fileExtension(path);
+  if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"].includes(extension)) {
+    return <FileImage size={28} strokeWidth={1.6} />;
+  }
+  if (["mp4", "mov", "webm", "m4v", "avi", "mkv"].includes(extension)) {
+    return <FileVideo size={28} strokeWidth={1.6} />;
+  }
+  if (["mp3", "wav", "ogg", "flac", "m4a"].includes(extension)) {
+    return <FileAudio size={28} strokeWidth={1.6} />;
+  }
+  if (["zip", "rar", "7z", "tar", "gz"].includes(extension)) {
+    return <FileArchive size={28} strokeWidth={1.6} />;
+  }
+  if (
+    ["ts", "tsx", "js", "jsx", "json", "css", "scss", "html", "rs", "py", "go"].includes(extension)
+  ) {
+    return <FileCode size={28} strokeWidth={1.6} />;
+  }
+  if (["txt", "md", "markdown", "pdf", "doc", "docx"].includes(extension)) {
+    return <FileText size={28} strokeWidth={1.6} />;
+  }
+  return <FileIcon size={28} strokeWidth={1.6} />;
+}
+
 export function ImageLightbox(props: {
   paths: string[];
   index: number;
+  workspaceDirectory?: string;
   onIndex: (index: number) => void;
   onClose: () => void;
 }) {
@@ -436,7 +612,7 @@ export function ImageLightbox(props: {
       </button>
       <img
         class={classNames("media-lightbox-image", fill() && "fill")}
-        src={mediaSource(currentPath())}
+        src={mediaSource(currentPath(), props.workspaceDirectory)}
         alt=""
         style={{
           transform: `scale(${scale()}) rotate(${rotation()}deg)`,
@@ -467,15 +643,12 @@ export function parseRichText(source: string): RichNode[] {
   }
   const nodes: RichNode[] = [];
   let cursor = 0;
-  for (const match of source.matchAll(TOKEN_PATTERN)) {
+  for (const match of source.matchAll(RICH_TOKEN_PATTERN)) {
     if (match.index > cursor) {
       nodes.push(...parseHtmlFragment(source.slice(cursor, match.index)));
     }
     if (match[1] === "MEDIA") {
       nodes.push({ kind: "media", path: (match[2] ?? "").trim() });
-    } else {
-      const mode = match[3] === "sticker" ? "sticker" : "react";
-      nodes.push({ kind: "emoji", mode, value: (match[4] ?? "").trim() });
     }
     cursor = match.index + match[0].length;
   }
@@ -485,31 +658,13 @@ export function parseRichText(source: string): RichNode[] {
   return compactTextNodes(nodes);
 }
 
-export function reactionEmojiValues(source: string): string[] {
-  return Array.from(source.matchAll(TOKEN_PATTERN))
-    .filter((match) => match[3] === "react")
-    .map((match) => (match[4] ?? "").trim())
-    .filter(Boolean);
-}
-
-export function stickerEmojiValues(source: string): string[] {
-  return Array.from(source.matchAll(TOKEN_PATTERN))
-    .filter((match) => match[3] === "sticker")
-    .map((match) => (match[4] ?? "").trim())
-    .filter(Boolean);
-}
-
-export function stripReactionEmoji(source: string): string {
-  return source.replace(/\[EMOJI:react:[\s\S]*?:EMOJI\]/gu, "");
-}
-
 function parseHtmlFragment(source: string): RichNode[] {
   const markdownTableNodes = parseMarkdownTables(source);
   if (markdownTableNodes) {
     return markdownTableNodes;
   }
   if (typeof DOMParser === "undefined") {
-    return [{ kind: "text", text: source }];
+    return splitInlineTextReferences(source);
   }
   const document = new DOMParser().parseFromString(source, "text/html");
   return Array.from(document.body.childNodes).flatMap(readDomNode);
@@ -528,7 +683,7 @@ function parseMarkdownTables(source: string): RichNode[] | undefined {
     const text = textLines.join("\n");
     nodes.push(
       ...(typeof DOMParser === "undefined"
-        ? splitLocalPathText(text)
+        ? splitInlineTextReferences(text)
         : Array.from(new DOMParser().parseFromString(text, "text/html").body.childNodes).flatMap(
             readDomNode,
           )),
@@ -549,7 +704,7 @@ function parseMarkdownTables(source: string): RichNode[] | undefined {
         {
           cells: header.map((cell) => ({
             kind: "header",
-            children: splitLocalPathText(cell.trim()),
+            children: splitInlineTextReferences(cell.trim()),
           })),
         },
       ];
@@ -562,7 +717,7 @@ function parseMarkdownTables(source: string): RichNode[] | undefined {
         rows.push({
           cells: normalizeMarkdownCells(cells, header.length).map((cell) => ({
             kind: "data",
-            children: splitLocalPathText(cell.trim()),
+            children: splitInlineTextReferences(cell.trim()),
           })),
         });
         index += 1;
@@ -600,7 +755,7 @@ function isMarkdownTableSeparator(value: string): boolean {
 
 function readDomNode(node: Node): RichNode[] {
   if (node.nodeType === Node.TEXT_NODE) {
-    return splitLocalPathText(node.textContent ?? "");
+    return splitInlineTextReferences(node.textContent ?? "");
   }
   if (node.nodeType !== Node.ELEMENT_NODE) {
     return [];
@@ -624,16 +779,24 @@ function readDomNode(node: Node): RichNode[] {
       return [{ kind: "element", tag: "strike", children }];
     case "a": {
       const href = element.getAttribute("href") ?? "";
-      return isSafeUrl(href)
+      return isLocalLinkTarget(href)
         ? [
             {
-              kind: "element",
-              tag: "link",
-              href,
-              children: [{ kind: "text", text: element.textContent ?? "" }],
+              kind: "local-path",
+              path: localPathQueryValue(href),
+              label: [{ kind: "text", text: element.textContent ?? "" }],
             },
           ]
-        : children;
+        : isSafeUrl(href)
+          ? [
+              {
+                kind: "element",
+                tag: "link",
+                href,
+                children: [{ kind: "text", text: element.textContent ?? "" }],
+              },
+            ]
+          : children;
     }
     case "code":
       return [
@@ -712,38 +875,25 @@ function compactTextNodes(nodes: RichNode[]): RichNode[] {
   return compacted.filter((node) => node.kind !== "text" || node.text.length > 0);
 }
 
-const LOCAL_PATH_PATTERN =
-  /(?:[A-Za-z]:[\\/][^\s<>"'`]+|\\\\[^\\/\s<>"'`]+\\[^\\/\s<>"'`]+(?:\\[^\s<>"'`]+)*|\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+|\.{1,2}[\\/][^\s<>"'`]+)/gu;
-const TRAILING_PATH_PUNCTUATION = /[),.;:!?]+$/u;
-
-function splitLocalPathText(text: string): RichNode[] {
-  const nodes: RichNode[] = [];
-  let cursor = 0;
-  for (const match of text.matchAll(LOCAL_PATH_PATTERN)) {
-    const raw = match[0];
-    const index = match.index ?? 0;
-    const path = raw.replace(TRAILING_PATH_PUNCTUATION, "");
-    if (!path || !isLocalPath(path)) {
-      continue;
+function splitInlineTextReferences(text: string): RichNode[] {
+  return parseLocalTextReferences(text).map((node): RichNode => {
+    if (node.kind === "local-path") {
+      return {
+        kind: "local-path",
+        path: node.path,
+        label: node.label ? [{ kind: "text", text: node.label }] : undefined,
+      };
     }
-    if (index > cursor) {
-      nodes.push({ kind: "text", text: text.slice(cursor, index) });
+    if (node.kind === "web-link") {
+      return {
+        kind: "element",
+        tag: "link",
+        href: node.href,
+        children: [{ kind: "text", text: node.label }],
+      };
     }
-    nodes.push({ kind: "local-path", path });
-    const trailing = raw.slice(path.length);
-    if (trailing) {
-      nodes.push({ kind: "text", text: trailing });
-    }
-    cursor = index + raw.length;
-  }
-  if (cursor < text.length) {
-    nodes.push({ kind: "text", text: text.slice(cursor) });
-  }
-  return nodes.length > 0 ? nodes : [{ kind: "text", text }];
-}
-
-function isLocalPath(value: string): boolean {
-  return /^(?:[A-Za-z]:[\\/]|\\\\|\/|\.{1,2}[\\/])/u.test(value);
+    return { kind: "text", text: node.text };
+  });
 }
 
 function plainText(nodes: RichNode[]): string {
@@ -754,9 +904,6 @@ function plainText(nodes: RichNode[]): string {
       }
       if (node.kind === "element") {
         return plainText(node.children);
-      }
-      if (node.kind === "emoji") {
-        return node.value;
       }
       if (node.kind === "table") {
         return [
@@ -771,28 +918,19 @@ function plainText(nodes: RichNode[]): string {
     .join("");
 }
 
-function mediaSource(path: string): string {
-  if (/^(https?:|data:)/iu.test(path) || path.startsWith("/assets/")) {
-    return path;
-  }
-  const gatewayUrl = gatewayBaseUrl();
-  const query = new URLSearchParams({ path });
-  return `${gatewayUrl}/file/media?${query.toString()}`;
-}
-
 function isImagePath(path: string): boolean {
   return /^data:image\//iu.test(path) || /\.(png|jpe?g|gif|webp|svg)$/iu.test(path);
 }
 
-function gatewayBaseUrl(): string {
-  if (typeof window === "undefined") {
-    return "";
-  }
-  const configured = new URLSearchParams(window.location.search).get("gatewayUrl")?.trim();
-  if (configured) {
-    return configured.replace(/\/+$/u, "");
-  }
-  return window.location.origin.replace(/\/+$/u, "");
+function fileName(path: string): string {
+  const normalized = path.replace(/\\/gu, "/").replace(/[?#].*$/u, "");
+  return decodeURIComponent(normalized.split("/").filter(Boolean).at(-1) || path);
+}
+
+function fileExtension(path: string): string {
+  const name = fileName(path);
+  const match = name.match(/\.([A-Za-z0-9]+)$/u);
+  return match?.[1]?.toLowerCase() ?? "";
 }
 
 function groupMediaNodes(nodes: RichNode[]): RichGroup[] {
@@ -807,7 +945,7 @@ function groupMediaNodes(nodes: RichNode[]): RichGroup[] {
   }
 
   for (const node of nodes) {
-    if (node.kind === "media" && isImagePath(node.path)) {
+    if (node.kind === "media") {
       media.push(node.path);
       continue;
     }

@@ -73,7 +73,7 @@ const agent = {
     capabilities: ["chat"],
     hidden: false,
   },
-  config: { agent_name: "fast", agent_persona: [] },
+  config: { agent_name: "fast" },
   prompt: "Mock multi-session prompt",
 };
 

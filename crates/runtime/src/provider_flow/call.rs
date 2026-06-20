@@ -14,8 +14,9 @@ use crate::provider_flow::provider_response::apply_provider_response;
 use crate::provider_flow::provider_streaming::call_runtime_streaming;
 pub use crate::provider_flow::request_options::route_by_name;
 use crate::provider_flow::request_options::{
-    normalize_provider_messages, parallel_tool_calls_enabled, prompt_cache_key, session_max_tokens,
-    session_model_override_route, session_reasoning_effort, session_service_tier, stream_options,
+    normalize_provider_messages, parallel_tool_calls_enabled, prompt_cache_key,
+    route_for_provider_name, session_max_tokens, session_model_override_route,
+    session_reasoning_effort, session_service_tier, stream_options,
 };
 use crate::provider_flow::usage::{
     estimated_usage_report_for_interrupted_runtime, usage_report_from_metrics,
@@ -106,10 +107,14 @@ pub async fn call_runtime(
         }),
     );
 
-    let configured_route = route_by_name(tura_settings.as_ref(), &input.provider_name)
+    let direct_route = route_for_provider_name(tura_settings.as_ref(), &input.provider_name);
+    let configured_route = route_by_name(tura_settings.as_ref(), &input.provider_name);
+    let route_config_base = direct_route
+        .as_ref()
+        .or(configured_route)
         .ok_or_else(|| format!("unknown provider route: {}", input.provider_name))?;
-    let override_route = session_model_override_route(tura_settings.as_ref(), configured_route);
-    let route_config = override_route.as_ref().unwrap_or(configured_route);
+    let override_route = session_model_override_route(tura_settings.as_ref(), route_config_base);
+    let route_config = override_route.as_ref().unwrap_or(route_config_base);
     let context_window = active_model_context_window(tura_settings.as_ref(), route_config);
 
     let prompt_cache_key = prompt_cache_key(
@@ -357,6 +362,8 @@ mod tests {
             RuntimeProviderConfig {
                 base: ProviderConfig {
                     tura_llm_name: "fast".to_string(),
+                    default_model_tier: None,
+                    current_model: None,
                     stream: true,
                     temperature: 0.0,
                     max_tokens: 1024,

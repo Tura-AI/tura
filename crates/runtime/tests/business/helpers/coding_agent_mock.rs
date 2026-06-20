@@ -9,14 +9,7 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader};
 use tokio::net::TcpListener as TokioTcpListener;
 
-pub(crate) const ROUTES: &[&str] = &[
-    "flagship_thinking",
-    "thinking",
-    "fast",
-    "instant",
-    "embedding_high",
-    "embedding_low",
-];
+pub(crate) const ROUTES: &[&str] = &["thinking", "fast", "embedding_high", "embedding_low"];
 
 pub(crate) static ENV_LOCK: Mutex<()> = Mutex::new(());
 pub(crate) static MOCK_ROUTER_ADDR: OnceLock<String> = OnceLock::new();

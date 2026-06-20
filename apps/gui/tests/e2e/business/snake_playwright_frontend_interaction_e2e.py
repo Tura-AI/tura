@@ -219,18 +219,6 @@ class SnakeGatewayHandler(BaseHTTPRequestHandler):
                 {
                     "tiers": [
                         {
-                            "tier": "flagship_thinking",
-                            "current": {"provider": "codex", "model": "gpt-5.5"},
-                            "options": [
-                                {
-                                    "provider": "codex",
-                                    "provider_name": "Codex Subscription",
-                                    "model": "gpt-5.5",
-                                    "model_name": "gpt-5.5",
-                                }
-                            ],
-                        },
-                        {
                             "tier": "thinking",
                             "current": {"provider": "codex", "model": "gpt-5.5"},
                             "options": [
@@ -244,18 +232,6 @@ class SnakeGatewayHandler(BaseHTTPRequestHandler):
                         },
                         {
                             "tier": "fast",
-                            "current": {"provider": "codex", "model": "gpt-5.5-mini"},
-                            "options": [
-                                {
-                                    "provider": "codex",
-                                    "provider_name": "Codex Subscription",
-                                    "model": "gpt-5.5-mini",
-                                    "model_name": "gpt-5.5-mini",
-                                }
-                            ],
-                        },
-                        {
-                            "tier": "instant",
                             "current": {"provider": "codex", "model": "gpt-5.5-mini"},
                             "options": [
                                 {
@@ -322,7 +298,7 @@ class SnakeGatewayHandler(BaseHTTPRequestHandler):
                     },
                     "config": {
                         "provider": {
-                            "tura_llm_name": "flagship_thinking",
+                            "tura_llm_name": "thinking",
                             "model_reasoning_effort": "low",
                             "model_acceleration_enabled": True,
                             "service_tier": "priority",

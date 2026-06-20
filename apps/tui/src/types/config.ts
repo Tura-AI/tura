@@ -4,6 +4,7 @@ export interface SessionConfig {
   active_provider?: string | null;
   active_model?: string | null;
   active_agent?: string | null;
+  active_persona?: string | null;
   session_type?: string | null;
   model_variant?: string | null;
   model_acceleration_enabled?: boolean;

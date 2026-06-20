@@ -1,0 +1,22 @@
+{
+  "name": "apply_patch",
+  "description": "Internal command_run command for focused raw apply_patch patches.",
+  "input_schema": {
+    "type": "object",
+    "required": ["command_line"],
+    "properties": {
+      "command_line": {
+        "type": "string",
+        "maxLength": 10000,
+        "description": "Raw patch body beginning with *** Begin Patch. Keep each apply_patch command_line focused on one file or code block; batch multiple apply_patch commands for different files or separate code blocks."
+      },
+      "step": {
+        "type": "integer",
+        "minimum": 1
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object"
+  }
+}

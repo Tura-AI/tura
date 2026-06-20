@@ -929,6 +929,33 @@ mod tests {
     }
 
     #[test]
+    fn persisted_message_uses_explicit_frontend_user_timestamp_instead_of_log_index_fallback() {
+        let session = session();
+        let value = persisted_message(
+            &session,
+            4,
+            &serde_json::json!({
+                "id": "msg_tui_frontend-current-time",
+                "part_id": "part_tui_frontend-current-time",
+                "role": "user",
+                "created_at": 123_456,
+                "updated_at": 123_789,
+                "timestamp": "2026-06-19T12:34:56.789Z",
+                "content": [{"type": "input_text", "text": "fresh user prompt"}]
+            })
+            .to_string(),
+            1_000,
+        );
+
+        assert_eq!(value["id"], "msg_tui_frontend-current-time");
+        assert_eq!(value["role"], "user");
+        assert_eq!(value["created_at"], 123_456);
+        assert_eq!(value["updated_at"], 123_789);
+        assert_eq!(value["parts"][0]["id"], "part_tui_frontend-current-time");
+        assert_eq!(value["parts"][0]["text"], "fresh user prompt");
+    }
+
+    #[test]
     fn persisted_message_normalizes_system_content_but_keeps_runtime_usage_auxiliary() {
         let session = session();
         let system = persisted_message(

@@ -13,6 +13,8 @@ pub(crate) fn create_dummy_runtime(
     let runtime_provider_config = crate::state_machine::runtime_management::RuntimeProviderConfig {
         base: crate::state_machine::agent_management::ProviderConfig {
             tura_llm_name: provider_name.clone(),
+            default_model_tier: Some(provider_name.clone()),
+            current_model: None,
             stream: true,
             temperature: 0.5,
             max_tokens: 0,

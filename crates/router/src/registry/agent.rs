@@ -21,8 +21,6 @@ pub struct AgentSpec {
     pub validator_enabled: bool,
     #[serde(default)]
     pub default_config: bool,
-    #[serde(default)]
-    pub personas: Vec<tura_persona::store::StoredPersona>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config: Option<tura_agents::store::AgentConfig>,
 }
@@ -134,7 +132,6 @@ impl AgentRegistry {
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false),
                 default_config: agent.config.default_config,
-                personas: resolve_agent_personas(&agent.config),
                 config: Some(agent.config),
             };
             dynamic_specs.insert(agent.summary.id.to_ascii_lowercase(), spec.clone());
@@ -241,24 +238,8 @@ fn spec_from(def: &AgentDefinition) -> AgentSpec {
         session_types: def.session_types.iter().map(|s| s.to_string()).collect(),
         validator_enabled: def.validator_enabled,
         default_config: true,
-        personas: Vec::new(),
         config: None,
     }
-}
-
-fn resolve_agent_personas(
-    config: &tura_agents::store::AgentConfig,
-) -> Vec<tura_persona::store::StoredPersona> {
-    let project_root = project_root_from_env_or_cwd();
-    config
-        .agent_persona
-        .iter()
-        .filter_map(|item| {
-            item.get("persona_name")
-                .and_then(serde_json::Value::as_str)
-                .and_then(|name| tura_persona::store::load_persona(&project_root, name))
-        })
-        .collect()
 }
 
 fn catalog_item_from_stored_agent(agent: tura_agents::store::StoredAgent) -> AgentCatalogItem {
@@ -275,10 +256,6 @@ fn catalog_item_from_stored_agent(agent: tura_agents::store::StoredAgent) -> Age
     options.insert(
         "capabilities".to_string(),
         serde_json::json!(agent.summary.capabilities),
-    );
-    options.insert(
-        "personas".to_string(),
-        serde_json::json!(resolve_agent_personas(&agent.config)),
     );
     options.insert(
         "default_config".to_string(),

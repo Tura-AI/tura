@@ -206,6 +206,8 @@ fn runtime_input(
 fn provider_config(route: &str) -> ProviderConfig {
     ProviderConfig {
         tura_llm_name: route.to_string(),
+        default_model_tier: None,
+        current_model: None,
         stream: true,
         temperature: 0.0,
         max_tokens: 512,

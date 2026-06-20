@@ -36,6 +36,7 @@ import {
 } from "./render/transcript.js";
 import { secondaryText } from "./styles/text.js";
 import { isBusyState } from "./busy-state.js";
+import { runtimeModelFromConfig } from "./model-config.js";
 import {
   commandHelpEntries,
   menuEntryLines,
@@ -418,18 +419,11 @@ function panelPageInfo(state: AppState): PanelPageInfo | undefined {
 }
 
 function bottomMetaModel(state: AppState): string | undefined {
+  const configuredModel = runtimeModelFromConfig(state.sessionConfig);
+  if (configuredModel) return configuredModel;
   const sessionModel = stringOrUndefined(state.session?.model);
   if (sessionModel?.includes("/")) return sessionModel;
-
-  const configuredModel = stringOrUndefined(state.sessionConfig?.model);
-  if (configuredModel?.includes("/")) return configuredModel;
-
-  const provider = stringOrUndefined(state.sessionConfig?.active_provider);
-  const activeModel = stringOrUndefined(state.sessionConfig?.active_model);
-  if (provider && activeModel) return `${provider}/${activeModel}`;
-  if (provider && sessionModel) return `${provider}/${sessionModel}`;
-  if (provider && configuredModel) return `${provider}/${configuredModel}`;
-  return sessionModel ?? configuredModel ?? activeModel;
+  return sessionModel;
 }
 
 function bottomMetaVariant(state: AppState): string | undefined {
@@ -452,11 +446,7 @@ function bottomMetaAgent(state: AppState): string | undefined {
 }
 
 function bottomMetaPersona(state: AppState): string | undefined {
-  return (
-    stringField(state.sessionConfig, "active_persona") ??
-    stringField(state.session as Record<string, unknown> | undefined, "persona") ??
-    activePersonaID(state)
-  );
+  return stringOrUndefined(state.sessionConfig?.active_persona) ?? "tura";
 }
 
 function bottomMetaDivider(): string {
@@ -695,7 +685,7 @@ function personaLines(state: AppState, cols: number, maxLines: number): string[]
     lines.push(sectionBodyLine(t("noPersonas"), cols), sectionBlankLine(cols));
     return lines;
   }
-  const active = activePersonaID(state);
+  const active = bottomMetaPersona(state);
   const entries = state.personas.map((persona) => {
     const id = personaID(persona) ?? t("unknown");
     const marker = id === active ? t("active") : (persona.summary?.source ?? "");
@@ -828,26 +818,6 @@ function serviceState(value: unknown): string {
 function personaID(persona: AppState["personas"][number]): string | undefined {
   const configName = persona.config?.persona_name;
   return persona.summary?.id ?? (typeof configName === "string" ? configName : undefined);
-}
-
-function activePersonaID(state: AppState): string | undefined {
-  const agentID = state.session?.agent ?? state.sessionConfig?.active_agent;
-  const agent = state.agents.find((item) => storedAgentID(item) === agentID);
-  const first = Array.isArray(agent?.config?.agent_persona)
-    ? agent?.config?.agent_persona[0]
-    : undefined;
-  if (first && typeof first === "object" && !Array.isArray(first)) {
-    const name = (first as Record<string, unknown>).persona_name;
-    if (typeof name === "string" && name.trim()) return name.trim();
-  }
-  const runtimePersonas = (
-    agent as unknown as { options?: { personas?: AppState["personas"] } } | undefined
-  )?.options?.personas;
-  return runtimePersonas?.[0] ? personaID(runtimePersonas[0]) : "tura";
-}
-
-function storedAgentID(agent: AppState["agents"][number]): string | undefined {
-  return agent.summary?.id ?? (agent as unknown as { name?: string }).name;
 }
 
 function stringField(value: Record<string, unknown> | undefined, key: string): string | undefined {

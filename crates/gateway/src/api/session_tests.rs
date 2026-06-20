@@ -71,9 +71,9 @@ fn prompt_payload_treats_default_model_variant_as_unset() {
 }
 
 #[test]
-fn session_config_model_override_prefers_provider_model_pair_for_legacy_route_names() {
+fn session_config_model_override_prefers_provider_model_pair_for_tier_names() {
     let config = TuraSessionConfig {
-        model: Some("flagship_thinking".to_string()),
+        model: Some("thinking".to_string()),
         active_provider: Some("codex".to_string()),
         active_model: Some("gpt-5.5".to_string()),
         ..TuraSessionConfig::default()
@@ -394,8 +394,8 @@ async fn agent_tool_callback_updates_auto_session_name_from_last_task_detail() {
             context_tokens: None,
             usage: None,
             command_updates: Vec::new(),
-            created_at: None,
-            updated_at: None,
+            created_at: 1,
+            updated_at: 1,
             tool_call: Some(super::SendAgentToolCall {
                 tool_name: "command_run".to_string(),
                 call_id: "call-1".to_string(),
@@ -472,8 +472,8 @@ async fn agent_tool_callback_keeps_manual_session_name_when_auto_disabled() {
             context_tokens: None,
             usage: None,
             command_updates: Vec::new(),
-            created_at: None,
-            updated_at: None,
+            created_at: 1,
+            updated_at: 1,
             tool_call: Some(super::SendAgentToolCall {
                 tool_name: "command_run".to_string(),
                 call_id: "call-1".to_string(),
@@ -530,8 +530,8 @@ async fn transient_agent_tool_callback_without_runtime_status_is_ignored() {
             context_tokens: None,
             usage: None,
             command_updates: Vec::new(),
-            created_at: None,
-            updated_at: None,
+            created_at: 1,
+            updated_at: 1,
             tool_call: Some(SendAgentToolCall {
                 tool_name: "command_run".to_string(),
                 call_id: "runtime-1.tool.command_run".to_string(),
@@ -567,8 +567,8 @@ async fn transient_agent_tool_callback_without_runtime_status_is_ignored() {
             context_tokens: None,
             usage: None,
             command_updates: Vec::new(),
-            created_at: None,
-            updated_at: None,
+            created_at: 1,
+            updated_at: 1,
             tool_call: Some(SendAgentToolCall {
                 tool_name: "command_run".to_string(),
                 call_id: "runtime-1.tool.command_run".to_string(),
@@ -781,8 +781,8 @@ fn agent_message_metadata_keeps_step_summary_for_frontend() {
         context_tokens: None,
         usage: None,
         command_updates: Vec::new(),
-        created_at: None,
-        updated_at: None,
+        created_at: 1,
+        updated_at: 1,
         tool_call: None,
     })
     .expect("feedback metadata should be present");
@@ -808,8 +808,8 @@ fn agent_message_content_renders_media_as_rich_tokens() {
         context_tokens: None,
         usage: None,
         command_updates: Vec::new(),
-        created_at: None,
-        updated_at: None,
+        created_at: 1,
+        updated_at: 1,
         tool_call: None,
     });
 

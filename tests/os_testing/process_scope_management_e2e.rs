@@ -179,6 +179,46 @@ fn process_scope_management_command_run_timeout_kills_spawned_child_tree() -> Re
     Ok(())
 }
 
+#[test]
+fn process_scope_management_command_run_success_preserves_background_child_until_router_shutdown(
+) -> Result<()> {
+    let temp = tempfile::tempdir().context("temp command_run background workspace")?;
+    let pid_file = temp.path().join("command-run-background-child.pid");
+    let script = temp.path().join("command_run_background_child.py");
+    write_command_run_background_child_script(&script, &pid_file)?;
+    let command_line = command_run_child_tree_command(&script)?;
+
+    let output = command_run::execute(
+        &json!({
+            "commands": [{
+                "command": "shell_command",
+                "command_line": json!({
+                    "command": command_line,
+                    "timeout_ms": 5000
+                }).to_string()
+            }]
+        }),
+        temp.path(),
+    );
+
+    assert_eq!(output["results"][0]["success"], true, "{output}");
+    let child_pid = wait_for_pid_file(&pid_file, PID_DISCOVERY_TIMEOUT)?;
+    assert_process_alive(
+        child_pid,
+        "command_run background child after successful parent exit",
+    )?;
+    let terminated = code_tools::shell_executor::terminate_retained_shell_process_scopes();
+    assert!(
+        terminated > 0,
+        "router-level shutdown should terminate at least one retained command_run process scope"
+    );
+    wait_for_process_dead(child_pid, EXIT_TIMEOUT).with_context(|| {
+        format!("background child pid {child_pid} should exit after router shutdown cleanup")
+    })?;
+
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 struct StrategyContract {
     strategy: ProcessScopeStrategy,
@@ -237,6 +277,29 @@ finally:
     );
     std::fs::write(script, source)
         .with_context(|| format!("write command_run child script {}", script.display()))
+}
+
+fn write_command_run_background_child_script(script: &Path, child_pid_file: &Path) -> Result<()> {
+    let child_pid_file = serde_json::to_string(&child_pid_file.display().to_string())?;
+    let source = format!(
+        r#"
+import subprocess
+import sys
+import time
+
+child = subprocess.Popen(
+    [sys.executable, "-c", "import time; time.sleep(30)"],
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+)
+with open({child_pid_file}, "w", encoding="utf-8") as handle:
+    handle.write(str(child.pid))
+    handle.flush()
+"#
+    );
+    std::fs::write(script, source)
+        .with_context(|| format!("write command_run background script {}", script.display()))
 }
 
 fn write_child_script(path: &Path) -> Result<()> {

@@ -13,7 +13,7 @@ export function storedAgentFromRuntimeAgent(agent: Agent): StoredAgent {
       path: "",
       aliases: [],
       capabilities,
-      provider: agentProviderTierFromOptions(agent.options) ?? agent.model?.providerID ?? null,
+      provider: agentDefaultModelTierFromOptions(agent.options) ?? agent.model?.providerID ?? null,
       hidden: agent.hidden,
     },
     config: {
@@ -21,7 +21,8 @@ export function storedAgentFromRuntimeAgent(agent: Agent): StoredAgent {
       description: agent.description,
       aliases: [],
       provider: {
-        tura_llm_name: agentProviderTierFromOptions(agent.options) ?? "thinking",
+        default_model_tier: agentDefaultModelTierFromOptions(agent.options) ?? "thinking",
+        tura_llm_name: agentDefaultModelTierFromOptions(agent.options) ?? "thinking",
       },
       agent_capabilities: capabilities.map((capability) => ({
         capability_name: capability,
@@ -101,12 +102,13 @@ function readCapabilityArray(value: unknown): string[] {
     : [];
 }
 
-function agentProviderTierFromOptions(options: Record<string, unknown>): string | undefined {
+function agentDefaultModelTierFromOptions(options: Record<string, unknown>): string | undefined {
   const provider = options.provider;
   if (!provider || typeof provider !== "object" || Array.isArray(provider)) {
     return undefined;
   }
-  const tier = (provider as Record<string, unknown>).tura_llm_name;
+  const record = provider as Record<string, unknown>;
+  const tier = record.default_model_tier ?? record.tura_llm_name;
   return typeof tier === "string" ? tier : undefined;
 }
 

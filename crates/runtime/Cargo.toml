@@ -112,6 +112,7 @@ chrono.workspace = true
 redis.workspace = true
 provider = { workspace = true }
 agents = { workspace = true }
+personas = { workspace = true }
 router = { workspace = true }
 tura_path = { workspace = true }
 tools = { workspace = true }

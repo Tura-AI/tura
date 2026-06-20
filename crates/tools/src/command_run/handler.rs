@@ -1,4 +1,4 @@
-use crate::runtime::tool::{ToolCall, ToolContext, ToolPayload, ToolRouter};
+use crate::runtime::tool::{CommandRouter, ToolCall, ToolContext, ToolPayload};
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -13,7 +13,6 @@ use handler_parse::{
 };
 
 const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 15_000;
-const GENERATE_MEDIA_COMMAND_TIMEOUT_MS: u64 = 100_000;
 const APPLY_PATCH_FAILURE_CANCEL_REASON: &str =
     "apply_patch failed; command_run stopped before later commands";
 
@@ -164,7 +163,7 @@ pub fn normalize_command_value_for_execution(
 }
 
 pub struct StreamingCommandRunExecutor {
-    router: Arc<ToolRouter>,
+    router: Arc<CommandRouter>,
     ctx: ToolContext,
     allowed_commands: Option<BTreeSet<String>>,
     active_step: Option<u64>,
@@ -194,7 +193,7 @@ impl StreamingCommandRunExecutor {
         lock_scope: Option<String>,
     ) -> Self {
         Self {
-            router: Arc::new(ToolRouter::new()),
+            router: Arc::new(CommandRouter::new()),
             ctx: ToolContext::new_with_lock_scope(session_dir, lock_scope),
             allowed_commands,
             active_step: None,
@@ -354,9 +353,7 @@ fn command_type_for_execution(command: &CommandItem) -> Option<String> {
     if canonical == "task_status" || canonical == "planning" {
         return Some(canonical);
     }
-    ToolRouter::new()
-        .resolve_command_tool_name(&command.command)
-        .map(ToString::to_string)
+    CommandRouter::new().resolve_command_tool_name(&command.command)
 }
 
 async fn execute_async_args(args: CommandRunArgs, session_dir: std::path::PathBuf) -> Value {
@@ -388,7 +385,7 @@ async fn execute_async(args: CommandRunArgs, ctx: ToolContext) -> CommandRunOutp
             .push(command);
     }
 
-    let router = ToolRouter::new();
+    let router = CommandRouter::new();
     let mut results = Vec::new();
     let mut cancelled = false;
     let mut cancel_reason = None;
@@ -428,7 +425,7 @@ fn normalize_command_steps(commands: &mut [CommandItem]) {
 }
 
 async fn run_command_run_step(
-    router: &ToolRouter,
+    router: &CommandRouter,
     commands: Vec<CommandItem>,
     ctx: ToolContext,
     allowed_commands: Option<&BTreeSet<String>>,
@@ -480,7 +477,7 @@ fn is_failed_apply_patch_result(result: &CommandRunItemResult) -> bool {
 }
 
 async fn run_macro_command_batch(
-    router: &ToolRouter,
+    router: &CommandRouter,
     commands: Vec<CommandItem>,
     ctx: ToolContext,
     allowed_commands: Option<&BTreeSet<String>>,
@@ -508,7 +505,7 @@ async fn run_macro_command_batch(
 }
 
 async fn run_command_run_item(
-    router: &ToolRouter,
+    router: &CommandRouter,
     command: CommandItem,
     ctx: ToolContext,
     force_exclusive: bool,
@@ -624,6 +621,7 @@ fn command_run_model_output(command_name: &str, value: Value) -> Value {
 }
 
 fn build_tool_call(command_name: &str, command: &CommandItem) -> Result<ToolCall, String> {
+    let router = CommandRouter::new();
     let payload = match command_name {
         "apply_patch" => ToolPayload::Freeform {
             input: extract_apply_patch_body(&command.command_line)
@@ -644,6 +642,13 @@ fn build_tool_call(command_name: &str, command: &CommandItem) -> Result<ToolCall
         "web_discover" => ToolPayload::Function {
             arguments: normalize_json_or_cli_command_arguments(command, "web_discover")?,
         },
+        _ if router.handler(command_name).is_none()
+            && router.resolve_command_tool_name(command_name).as_deref() == Some(command_name) =>
+        {
+            ToolPayload::Function {
+                arguments: normalize_json_or_cli_command_arguments(command, command_name)?,
+            }
+        }
         _ => ToolPayload::Function {
             arguments: normalize_shell_command_arguments(command)?,
         },
@@ -739,13 +744,17 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
                 | "bash"
                 | "zsh"
                 | "apply_patch"
-                | "generate_media"
                 | "planning"
-                | "read_media"
-                | "web_discover"
                 | "task_status"
                 | "compact_context"
         ) {
+            if CommandRouter::new()
+                .resolve_command_tool_name(&canonical_command)
+                .is_some()
+            {
+                command.command = canonical_command;
+                continue;
+            }
             if looks_like_removed_structured_tool_call(&command.command, &command.command_line) {
                 continue;
             }
@@ -920,31 +929,27 @@ impl CommandItem {
             .max(1)
     }
 
-    async fn is_macro_command_safe(&self, router: &ToolRouter, ctx: &ToolContext) -> bool {
+    async fn is_macro_command_safe(&self, router: &CommandRouter, ctx: &ToolContext) -> bool {
         let Some(tool_name) = router.resolve_command_tool_name(&self.command) else {
             return false;
         };
         if tool_name == "apply_patch" {
             return false;
         }
-        let Ok(call) = build_tool_call(tool_name, self) else {
+        let Ok(call) = build_tool_call(&tool_name, self) else {
             return false;
         };
         if !router.tool_supports_macro_command(&call) {
             return false;
         }
-        let Some(handler) = router.handler(tool_name) else {
-            return false;
-        };
-        !handler.is_mutating(&call, ctx).await
+        !router.command_is_mutating(&call, ctx).await
     }
 }
 
 fn default_timeout_ms_for_command(command: &str) -> u64 {
-    match crate::commands::canonical_command(command).as_str() {
-        "generate_media" => GENERATE_MEDIA_COMMAND_TIMEOUT_MS,
-        _ => DEFAULT_COMMAND_TIMEOUT_MS,
-    }
+    CommandRouter::new()
+        .default_timeout_ms_for_command(command)
+        .unwrap_or(DEFAULT_COMMAND_TIMEOUT_MS)
 }
 
 impl CommandRunItemResult {

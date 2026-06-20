@@ -364,17 +364,15 @@ fn default_latency_levels() -> HashMap<String, ProviderLatencyTimeouts> {
 /// to a provider-latency level. Level selection is driven entirely by the tier,
 /// never by the thinking / reasoning_effort parameter.
 ///
-/// - flagship_thinking -> x-high
-/// - thinking          -> high
-/// - fast / instant    -> fast (lowest)
-/// - embedding_high    -> high
-/// - embedding_low     -> fast
+/// - thinking       -> high
+/// - fast           -> fast (lowest)
+/// - embedding_high -> high
+/// - embedding_low  -> fast
 pub fn latency_level_for_tier(tier: &str) -> &'static str {
     match tier.trim().to_ascii_lowercase().as_str() {
-        "flagship_thinking" => "x-high",
         "thinking" => "high",
         "embedding_high" => "high",
-        "fast" | "instant" | "embedding_low" => "fast",
+        "fast" | "embedding_low" => "fast",
         _ => "fast",
     }
 }
@@ -804,11 +802,9 @@ mod tests {
 
     #[test]
     fn latency_level_for_tier_is_canonical_and_case_insensitive() {
-        assert_eq!(latency_level_for_tier(" flagship_thinking "), "x-high");
         assert_eq!(latency_level_for_tier("THINKING"), "high");
         assert_eq!(latency_level_for_tier("embedding_high"), "high");
         assert_eq!(latency_level_for_tier("fast"), "fast");
-        assert_eq!(latency_level_for_tier("instant"), "fast");
         assert_eq!(latency_level_for_tier("embedding_low"), "fast");
         assert_eq!(latency_level_for_tier("unknown"), "fast");
     }
@@ -827,7 +823,7 @@ mod tests {
 
         assert_eq!(config.selected_timeouts(), fast);
         assert_eq!(config.timeouts_for_level("missing"), fast);
-        assert_eq!(config.timeouts_for_tier("flagship_thinking"), fast);
+        assert_eq!(config.timeouts_for_tier("unknown"), fast);
 
         let empty = ProviderLatencyConfig {
             active: "missing".to_string(),

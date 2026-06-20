@@ -177,6 +177,17 @@ button.section-title:focus-visible {
   margin: var(--space-1) 0 var(--space-3);
 }
 
+.rail-session-loading {
+  display: grid;
+  min-height: 36px;
+  padding-left: var(--space-3);
+  align-items: center;
+}
+
+.rail-session-loading .loading-bar {
+  height: 10px;
+}
+
 .child-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

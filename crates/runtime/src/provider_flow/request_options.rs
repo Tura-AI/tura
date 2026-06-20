@@ -301,6 +301,22 @@ pub fn route_by_name<'a>(
     settings.route_by_name(provider_name)
 }
 
+pub(crate) fn route_for_provider_name(
+    settings: &tura_llm_rust::Settings,
+    provider_name: &str,
+) -> Option<tura_llm_rust::RouteConfig> {
+    let (provider, model) = provider_model_pair(provider_name)?;
+    provider_base_url(settings, &provider).map(|base_url| tura_llm_rust::RouteConfig {
+        default_temperature: 0.2,
+        providers: vec![tura_llm_rust::ProviderConfig {
+            provider: provider.to_string(),
+            base_url,
+            model: tura_llm_rust::Settings::normalize_model_name(provider, model),
+            temperature: 0.2,
+        }],
+    })
+}
+
 pub(crate) fn session_model_override_route(
     settings: &tura_llm_rust::Settings,
     fallback: &tura_llm_rust::RouteConfig,
@@ -327,6 +343,16 @@ pub(crate) fn session_model_override_route(
             temperature,
         }],
     })
+}
+
+fn provider_model_pair(value: &str) -> Option<(&str, &str)> {
+    let (provider, model) = value.trim().split_once('/')?;
+    let provider = provider.trim();
+    let model = model.trim();
+    if provider.is_empty() || model.is_empty() {
+        return None;
+    }
+    Some((provider, model))
 }
 
 fn provider_base_url(settings: &tura_llm_rust::Settings, provider: &str) -> Option<String> {
@@ -413,17 +439,38 @@ mod tests {
 
         with_env(DISABLE_CACHE_ENV, None, || {
             assert_eq!(
-                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &tools_a),
-                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &tools_b)
+                prompt_cache_key(&route, "thinking", &"sess-a".to_string(), &tools_a),
+                prompt_cache_key(&route, "thinking", &"sess-a".to_string(), &tools_b)
             );
             assert!(
-                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &tools_a)
+                prompt_cache_key(&route, "thinking", &"sess-a".to_string(), &tools_a)
                     .expect("prompt cache key should be generated")
-                    .starts_with("turaosv2:flagship-thinking:sess-a:")
+                    .starts_with("turaosv2:thinking:sess-a:")
             );
             assert_ne!(
-                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &tools_a),
-                prompt_cache_key(&route, "flagship_thinking", &"sess-b".to_string(), &tools_a)
+                prompt_cache_key(&route, "thinking", &"sess-a".to_string(), &tools_a),
+                prompt_cache_key(&route, "thinking", &"sess-b".to_string(), &tools_a)
+            );
+        });
+    }
+
+    #[test]
+    fn prompt_cache_key_is_generated_for_codex_routes() {
+        let route = tura_llm_rust::RouteConfig {
+            default_temperature: 0.2,
+            providers: vec![tura_llm_rust::ProviderConfig {
+                provider: "codex".to_string(),
+                base_url: "https://chatgpt.com/backend-api/codex".to_string(),
+                model: "gpt-5.5".to_string(),
+                temperature: 0.2,
+            }],
+        };
+
+        with_env(DISABLE_CACHE_ENV, None, || {
+            assert!(
+                prompt_cache_key(&route, "thinking", &"sess-a".to_string(), &[])
+                    .expect("codex routes should use prompt cache keys")
+                    .starts_with("turaosv2:thinking:sess-a:")
             );
         });
     }
@@ -441,7 +488,7 @@ mod tests {
         };
         with_env(DISABLE_CACHE_ENV, None, || {
             assert_eq!(
-                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &[]),
+                prompt_cache_key(&route, "thinking", &"sess-a".to_string(), &[]),
                 None
             );
         });
@@ -452,7 +499,7 @@ mod tests {
         let route = openai_route();
         with_env(DISABLE_CACHE_ENV, Some("true"), || {
             assert_eq!(
-                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &[]),
+                prompt_cache_key(&route, "thinking", &"sess-a".to_string(), &[]),
                 None
             );
         });

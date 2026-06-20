@@ -5,9 +5,10 @@ import {
   type TuraConfigModelPair,
 } from "@tura/gateway-sdk";
 import type { Accessor, Setter } from "solid-js";
-import { t } from "../i18n";
+import { setLanguage, t } from "../i18n";
 import type { AppState } from "../state/global-store";
 import { safe } from "../utils/safe";
+import { openExternalUrl } from "../utils/external-url";
 import {
   configDraftToPatch,
   configToDraft,
@@ -15,6 +16,7 @@ import {
   providerIdFromAuthError,
   recordToDraft,
 } from "../utils/settings";
+import { workspaceModelPatch } from "../utils/runtime-model";
 
 type ProviderSettingsActionsOptions = {
   state: Accessor<AppState>;
@@ -84,7 +86,7 @@ export function useProviderSettingsActions(options: ProviderSettingsActionsOptio
     try {
       const payload: Record<string, unknown> = {
         ...draftToRecord(state().workspaceConfigDraft),
-        model: state().selectedModel,
+        ...workspaceModelPatch(state().selectedModel),
         active_agent: state().selectedAgent,
         model_variant: state().modelVariant,
         model_acceleration_enabled: state().accelerationEnabled,
@@ -94,6 +96,7 @@ export function useProviderSettingsActions(options: ProviderSettingsActionsOptio
         directoryClient().patchWorkspaceConfig(payload),
         rootClient().patchConfig(configPayload),
       ]);
+      setLanguage(stringField(workspaceConfig, "language"));
       setState((previous) => ({
         ...previous,
         config,
@@ -124,16 +127,22 @@ export function useProviderSettingsActions(options: ProviderSettingsActionsOptio
       error: undefined,
     }));
     try {
-      const modelConfig = await rootClient().putModelConfig({
-        tier,
-        provider: option.provider,
-        model: option.model,
-      });
+      const selectedModel = `${option.provider}/${option.model}`;
+      const [modelConfig, workspaceConfig] = await Promise.all([
+        rootClient().putModelConfig({
+          tier,
+          provider: option.provider,
+          model: option.model,
+        }),
+        directoryClient().patchWorkspaceConfig(workspaceModelPatch(selectedModel)),
+      ]);
       setState((previous) => ({
         ...previous,
         settingsSaving: false,
         modelConfig,
-        selectedModel: `${option.provider}/${option.model}`,
+        workspaceConfig,
+        workspaceConfigDraft: recordToDraft(workspaceConfig),
+        selectedModel,
         selectedProviderId: option.provider,
         settingsNotice: modelConfig.error ?? t("saved"),
       }));
@@ -223,7 +232,6 @@ export function useProviderSettingsActions(options: ProviderSettingsActionsOptio
   }
 
   async function startProviderLogin(providerId: string, methodIndex: number) {
-    const authWindow = window.open("", "_blank");
     setState((previous) => ({
       ...previous,
       settingsSaving: true,
@@ -235,13 +243,7 @@ export function useProviderSettingsActions(options: ProviderSettingsActionsOptio
         method: methodIndex,
       });
       if (result.url) {
-        if (authWindow) {
-          authWindow.location.href = result.url;
-        } else {
-          window.location.assign(result.url);
-        }
-      } else {
-        authWindow?.close();
+        await openExternalUrl(result.url);
       }
       await refreshProviderSurface(providerId);
       setState((previous) => ({
@@ -255,7 +257,6 @@ export function useProviderSettingsActions(options: ProviderSettingsActionsOptio
         void completeProviderLogin(providerId, "", methodIndex);
       }
     } catch (error) {
-      authWindow?.close();
       setState((previous) => ({
         ...previous,
         settingsSaving: false,
@@ -372,6 +373,11 @@ export function useProviderSettingsActions(options: ProviderSettingsActionsOptio
     completeProviderLogin,
     logoutProvider,
   };
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function sleep(ms: number): Promise<void> {

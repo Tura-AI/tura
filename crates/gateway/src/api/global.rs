@@ -473,13 +473,13 @@ fn event_session_id(event: &GlobalEvent) -> Option<&str> {
 fn event_directory(event: &GlobalEvent) -> String {
     let session_id = match event {
         GlobalEvent::SessionCreated { properties } => {
-            return properties.info.directory.clone().unwrap_or_default()
+            return properties.info.directory.clone().unwrap_or_default();
         }
         GlobalEvent::SessionUpdated { properties } => {
-            return properties.info.directory.clone().unwrap_or_default()
+            return properties.info.directory.clone().unwrap_or_default();
         }
         GlobalEvent::SessionDeleted { properties } => {
-            return properties.info.directory.clone().unwrap_or_default()
+            return properties.info.directory.clone().unwrap_or_default();
         }
         GlobalEvent::SessionStatus { properties } => Some(properties.session_id.as_str()),
         GlobalEvent::MessageUpdated { properties } => Some(properties.session_id.as_str()),
@@ -600,6 +600,7 @@ mod tests {
         let other = GlobalEvent::SessionStatus {
             properties: SessionStatusProperties {
                 session_id: "session-b".to_string(),
+                updated_at: 1,
                 status: serde_json::json!({"state": "busy"}),
                 context_tokens: Default::default(),
                 usage: Default::default(),

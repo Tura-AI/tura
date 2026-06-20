@@ -23,14 +23,7 @@ use runtime::mano;
 use runtime::state_machine::session_management::{SessionInput, SessionState};
 use serde_json::{json, Value};
 
-const ROUTES: &[&str] = &[
-    "flagship_thinking",
-    "thinking",
-    "fast",
-    "instant",
-    "embedding_high",
-    "embedding_low",
-];
+const ROUTES: &[&str] = &["thinking", "fast", "embedding_high", "embedding_low"];
 const BASE_URL: &str = "https://api.anthropic.com/v1";
 const MODEL: &str = "claude-opus-4-8";
 

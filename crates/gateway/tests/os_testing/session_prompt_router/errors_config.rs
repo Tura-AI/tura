@@ -169,12 +169,21 @@ async fn gateway_prompt_business_flow_inherits_agent_runtime_settings_for_router
     let mut agent_config =
         tura_agents::store::default_agent_config(&workspace, "business-runtime-agent")
             .map_err(anyhow::Error::msg)?;
+    agent_config.provider["current_model"] = json!("openai/gpt-5.5-pro");
     agent_config.provider["model_reasoning_effort"] = json!("high");
     agent_config.provider["model_acceleration_enabled"] = json!(true);
     tura_agents::store::save_dynamic_agent(
         &workspace,
         &agent_config,
         Some("Use the business runtime agent settings."),
+    )
+    .map_err(anyhow::Error::msg)?;
+    save_config(
+        &workspace,
+        &TuraSessionConfig {
+            active_agent: Some("workspace-config-agent".to_string()),
+            ..TuraSessionConfig::default()
+        },
     )
     .map_err(anyhow::Error::msg)?;
 
@@ -224,6 +233,10 @@ async fn gateway_prompt_business_flow_inherits_agent_runtime_settings_for_router
         request["payload"]["payload"]["agent"],
         "business-runtime-agent"
     );
+    assert!(
+        request["payload"]["payload"]["model"].is_null(),
+        "session model must not override the selected agent model config"
+    );
     assert_eq!(
         request["payload"]["payload"]["worker_env"]["TURA_SESSION_REASONING_EFFORT"],
         "high"
@@ -268,6 +281,7 @@ async fn gateway_prompt_business_flow_applies_workspace_runtime_config_to_router
         language: Some("zh-CN".to_string()),
         model: Some("openai/gpt-5.5".to_string()),
         active_agent: Some("workspace-config-agent".to_string()),
+        active_persona: Some("workspace-persona".to_string()),
         model_variant: Some("high".to_string()),
         model_acceleration_enabled: Some(false),
         command_run_stall_guard_check_secs: Some(17),
@@ -325,6 +339,10 @@ async fn gateway_prompt_business_flow_applies_workspace_runtime_config_to_router
     assert_eq!(
         request["payload"]["payload"]["worker_env"]["TURA_SESSION_LANGUAGE"],
         "zh-CN"
+    );
+    assert_eq!(
+        request["payload"]["payload"]["worker_env"]["TURA_SESSION_PERSONA"],
+        "workspace-persona"
     );
     assert_eq!(
         request["payload"]["payload"]["worker_env"]["TURA_SESSION_REASONING_EFFORT"],

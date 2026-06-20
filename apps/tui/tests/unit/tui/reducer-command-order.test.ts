@@ -144,6 +144,8 @@ test("reducer appends later streamed assistant replies after command results", (
           sessionID: "sess-1",
           messageID: "msg-final",
           partID: "part-final",
+          createdAt: 4,
+          updatedAt: 4,
           field: "text",
           delta: "Acceptance passed. Final marker is visible.",
         },

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default permissions for the Tura GUI shell.",
+  "description": "Default permissions for the tura_gui shell.",
   "windows": ["main"],
-  "permissions": ["core:default", "allow-start-gateway"]
+  "permissions": ["core:default", "allow-start-gateway", "allow-open-external-url"]
 }

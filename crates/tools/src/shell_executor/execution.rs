@@ -10,6 +10,7 @@ use tokio::io::AsyncReadExt;
 
 use super::process::{
     attach_shell_process_scope, configure_process_scope, configure_tokio_process_scope,
+    retain_shell_process_scope,
 };
 use super::response::failed_async_response;
 
@@ -25,7 +26,7 @@ pub(super) fn run_command_with_timeout(mut command: Command, timeout_secs: u64) 
     configure_process_scope(&mut command);
     match command.spawn() {
         Ok(mut child) => {
-            let scope = attach_shell_process_scope(child.id());
+            let mut scope = attach_shell_process_scope(child.id());
             let stdout_task = child
                 .stdout
                 .take()
@@ -37,8 +38,8 @@ pub(super) fn run_command_with_timeout(mut command: Command, timeout_secs: u64) 
             loop {
                 match child.try_wait() {
                     Ok(Some(status)) => {
-                        if let Some(scope) = &scope {
-                            scope.terminate();
+                        if let Some(scope) = scope.take() {
+                            retain_shell_process_scope(scope);
                         }
                         let (stdout, stderr) = drain_blocking_stream_tasks(
                             stdout_task,
@@ -190,7 +191,7 @@ pub(super) async fn run_tokio_command_with_timeout(
         Err(err) => return failed_async_response(&err.to_string(), 1),
     };
     let pid = child.id();
-    let scope = pid.and_then(attach_shell_process_scope);
+    let mut scope = pid.and_then(attach_shell_process_scope);
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let call_id = ctx.current_call_id().unwrap_or("command_run").to_string();
@@ -237,8 +238,10 @@ pub(super) async fn run_tokio_command_with_timeout(
             }
         }
     };
-    if let Some(scope) = &scope {
-        scope.terminate();
+    if status.is_some() {
+        if let Some(scope) = scope.take() {
+            retain_shell_process_scope(scope);
+        }
     }
     if status.is_none() {
         wait_task.abort();

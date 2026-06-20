@@ -101,10 +101,8 @@ class SettingsGateway(ThreadingHTTPServer):
 
     def model_config(self):
         tiers = [
-            ("flagship_thinking", "openai", "gpt-5.5-pro"),
-            ("thinking", "openai", "gpt-5.5"),
+            ("thinking", "openai", "gpt-5.5-pro"),
             ("fast", "openai", "gpt-5.5-mini"),
-            ("instant", "openai", "gpt-5.5-mini"),
         ]
         return {
             "tiers": [
@@ -492,7 +490,7 @@ async def open_section(page, label: str):
         "应用设置": "application",
         "外观": "appearance",
         "服务商": "providers",
-        "模型配置": "models",
+        "默认模型配置": "models",
         "智能体配置": "agents",
         "个性化设置": "personalization",
     }
@@ -643,7 +641,7 @@ async def run_flow():
             raise
         await wait_settings_ready(page)
 
-        for index, label in enumerate(["外观", "服务商", "模型配置"], 1):
+        for index, label in enumerate(["外观", "服务商", "默认模型配置"], 1):
             await open_section(page, label)
             data = await screenshot(page, f"{index:02d}-{label}", results)
             check(checks, f"{label}-visible", data["title"] == label and data["panelCount"] >= 1, data)
@@ -653,7 +651,7 @@ async def run_flow():
         providers = await screenshot(page, "10-provider-openai-selected", results)
         check(checks, "providers-openai-visible", "OpenAI" in providers["body"], providers)
 
-        await open_section(page, "模型配置")
+        await open_section(page, "默认模型配置")
         await page.locator(".appearance-select-button").first.click()
         await page.locator(".appearance-select-menu").get_by_role(
             "button", name="GitHub Copilot/Copilot GPT-5.5 Pro", exact=True
@@ -734,7 +732,7 @@ async def run_flow():
             raise
         await wait_settings_ready(page)
         for index, (section_id, label) in enumerate(
-            [("models", "模型配置"), ("providers", "服务商"), ("appearance", "外观")],
+            [("models", "默认模型配置"), ("providers", "服务商"), ("appearance", "外观")],
             20,
         ):
             await switch_section_by_id(page, section_id, label)

@@ -117,7 +117,7 @@ export function refreshStateAfterBackgroundMessage(
         existing?.lastFinalMessageID === message.id
           ? existing.lastFinalMessageCount
           : (existing?.lastFinalMessageCount ?? 0) + 1,
-      updatedAt: message.updated_at ?? message.created_at ?? Date.now(),
+      updatedAt: message.updated_at ?? message.created_at ?? existing?.updatedAt,
       preview: messagePreview(message) ?? existing?.preview,
     },
   };
@@ -137,7 +137,11 @@ export function refreshStateAfterMessages(
     [sessionID]: {
       lastFinalMessageID: last?.id,
       lastFinalMessageCount: messages.length,
-      updatedAt: session?.updated_at ?? last?.updated_at ?? last?.created_at ?? Date.now(),
+      updatedAt:
+        session?.updated_at ??
+        last?.updated_at ??
+        last?.created_at ??
+        current[sessionID]?.updatedAt,
       preview,
     },
   };
@@ -199,26 +203,38 @@ export function prepareMessagesForDisplay(messages: Message[]): Message[] {
 }
 
 function mergeMessageForDisplay(existing: Message | undefined, incoming: Message): Message {
-  const created = incoming.created_at || existing?.created_at || Date.now();
-  const updated = incoming.updated_at || existing?.updated_at || created;
+  const created = incoming.created_at ?? existing?.created_at;
+  const updated = incoming.updated_at ?? existing?.updated_at ?? created;
   return {
     ...existing,
     ...incoming,
-    created_at: created,
-    updated_at: updated,
-    time: incoming.time || existing?.time || { created, updated },
-    parts: orderMessagePartsForDisplay(incoming.parts),
+    ...(created !== undefined ? { created_at: created } : {}),
+    ...(updated !== undefined ? { updated_at: updated } : {}),
+    time: incoming.time || existing?.time,
+    parts: mergeMessagePartsForDisplay(existing?.parts ?? [], incoming.parts),
   };
+}
+
+function mergeMessagePartsForDisplay(
+  existingParts: MessagePart[],
+  incomingParts: MessagePart[],
+): MessagePart[] {
+  const incomingPartIDs = new Set(incomingParts.map((part) => part.id));
+  const preservedCommandParts = existingParts.filter(
+    (part) => commandRunSnapshotPart(part) && !incomingPartIDs.has(part.id),
+  );
+  return orderMessagePartsForDisplay([...incomingParts, ...preservedCommandParts]);
 }
 
 export function upsertPart(
   messages: Message[],
   part: MessagePart,
   _sessionID: string | undefined,
+  createdAt: number | undefined,
+  updatedAt: number | undefined,
 ): Message[] {
   const messageID = partMessageID(part);
   const partSessionIDValue = partSessionID(part);
-  const now = Date.now();
   let found = false;
   const next = messages.map((message) => {
     if (message.id !== messageID) return message;
@@ -234,18 +250,18 @@ export function upsertPart(
           ? baseParts.map((item) => (item.id === part.id ? part : item))
           : [...baseParts, part],
       ),
-      updated_at: Date.now(),
+      ...(updatedAt !== undefined ? { updated_at: updatedAt } : {}),
     };
   });
-  if (!found) {
+  if (!found && createdAt !== undefined) {
     next.push({
       id: messageID,
       sessionID: partSessionIDValue,
       role: "assistant",
       parts: orderMessagePartsForDisplay([part]),
-      created_at: now,
-      updated_at: now,
-      time: { created: now, updated: now },
+      created_at: createdAt,
+      updated_at: updatedAt ?? createdAt,
+      time: { created: createdAt, updated: updatedAt ?? createdAt },
     });
   }
   next.sort((left, right) => messageSortValue(left) - messageSortValue(right));
@@ -257,8 +273,13 @@ export function upsertPartIgnoringLive(
   streams: Record<string, LiveStream>,
   sessionID: string | undefined,
   part: MessagePart,
+  createdAt?: number,
+  updatedAt?: number,
 ): { messages: Message[]; liveStreams: Record<string, LiveStream> } {
-  return { messages: upsertPart(messages, part, sessionID), liveStreams: streams };
+  return {
+    messages: upsertPart(messages, part, sessionID, createdAt, updatedAt),
+    liveStreams: streams,
+  };
 }
 
 export function applyCommandUpdate(
@@ -266,7 +287,8 @@ export function applyCommandUpdate(
   sessionID: string | undefined,
   update: CommandUpdatedEventProperties,
 ): Message[] {
-  const now = update.updatedAt ?? Date.now();
+  const createdAt = update.createdAt;
+  const updatedAt = update.updatedAt;
   const commandPart = commandPartFromUpdate(update);
   let foundMessage = false;
   const next = messages.map((message) => {
@@ -281,8 +303,12 @@ export function applyCommandUpdate(
     return {
       ...message,
       parts: orderMessagePartsForDisplay(foundPart ? parts : [...parts, commandPart]),
-      updated_at: Math.max(message.updated_at ?? now, now),
-      time: { created: message.time?.created ?? message.created_at ?? now, updated: now },
+      updated_at: Math.max(message.updated_at ?? updatedAt, updatedAt),
+      ...(message.time
+        ? { time: { ...message.time, updated: updatedAt } }
+        : message.created_at !== undefined
+          ? { time: { created: message.created_at, updated: updatedAt } }
+          : {}),
     };
   });
   if (!foundMessage) {
@@ -291,9 +317,9 @@ export function applyCommandUpdate(
       sessionID,
       role: "assistant",
       parts: orderMessagePartsForDisplay([commandPart]),
-      created_at: now,
-      updated_at: now,
-      time: { created: now, updated: now },
+      created_at: createdAt,
+      updated_at: updatedAt,
+      time: { created: createdAt, updated: updatedAt },
     });
   }
   return sortMessages(next);
@@ -430,16 +456,18 @@ function numberValue(value: unknown): number | undefined {
 
 export function applyPartDelta(
   streams: Record<string, LiveStream>,
-  messages: Message[],
   messageID: string | undefined,
   partID: string | undefined,
   field: string | undefined,
   delta: string | undefined,
   sessionID: string | undefined,
+  createdAt: number | undefined,
+  updatedAt: number | undefined,
 ): Record<string, LiveStream> {
   if (!messageID || !partID || delta === undefined || !["text", "content"].includes(field ?? ""))
     return streams;
   if (!sessionID) return streams;
+  if (createdAt === undefined || updatedAt === undefined) return streams;
   const textDelta = sanitizeStreamDelta(delta);
   if (!textDelta) return streams;
   const key = liveStreamKey(sessionID, messageID, partID);
@@ -452,8 +480,8 @@ export function applyPartDelta(
       partID,
       field: field as "text" | "content",
       text: `${existing?.text ?? ""}${textDelta}`,
-      createdAt: existing?.createdAt ?? streamedMessageCreatedAt(messages, streams, sessionID),
-      updatedAt: Date.now(),
+      createdAt: existing?.createdAt ?? createdAt,
+      updatedAt,
     },
   };
 }
@@ -682,63 +710,6 @@ function partDisplayRank(part: MessagePart): number {
   if (part.type === "text" || part.type === "message" || !part.type) return 0;
   if (part.tool || part.type === "tool") return 2;
   return 1;
-}
-
-function streamedMessageCreatedAt(
-  messages: Message[],
-  streams: Record<string, LiveStream>,
-  sessionID: string | undefined,
-): number {
-  const runningAssistant = latestRunningAssistantSort(messages);
-  const anchor = Number.isFinite(runningAssistant)
-    ? runningAssistant + 0.5
-    : streamedMessageAnchorCreatedAt(messages);
-  const latestLive = latestLiveStreamCreatedAt(streams, sessionID);
-  return Number.isFinite(latestLive) ? Math.max(anchor, latestLive + 0.001) : anchor;
-}
-
-function streamedMessageAnchorCreatedAt(messages: Message[]): number {
-  let lastUser = Number.NEGATIVE_INFINITY;
-  let latestAfterUser = Number.NEGATIVE_INFINITY;
-  let visibleAssistantAfterUser = false;
-  for (const message of messages) {
-    const sort = messageSortValue(message);
-    if (message.role === "user") lastUser = Math.max(lastUser, sort);
-  }
-  for (const message of messages) {
-    const sort = messageSortValue(message);
-    if (sort <= lastUser) continue;
-    latestAfterUser = Math.max(latestAfterUser, sort);
-    if (message.role === "assistant" && messageText(message).trim()) {
-      visibleAssistantAfterUser = true;
-    }
-  }
-  if (visibleAssistantAfterUser && Number.isFinite(latestAfterUser)) {
-    return latestAfterUser + 0.5;
-  }
-  return Number.isFinite(lastUser) ? lastUser + 0.5 : Date.now();
-}
-
-function latestLiveStreamCreatedAt(
-  streams: Record<string, LiveStream>,
-  sessionID: string | undefined,
-): number {
-  let latest = Number.NEGATIVE_INFINITY;
-  for (const stream of Object.values(streams)) {
-    if (sessionID && stream.sessionID && stream.sessionID !== sessionID) continue;
-    latest = Math.max(latest, stream.createdAt);
-  }
-  return latest;
-}
-
-function latestRunningAssistantSort(messages: Message[]): number {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message?.role === "assistant" && messageHasRunningPart(message)) {
-      return messageSortValue(message);
-    }
-  }
-  return Number.NEGATIVE_INFINITY;
 }
 
 export function messageHasRunningPart(message: Message): boolean {

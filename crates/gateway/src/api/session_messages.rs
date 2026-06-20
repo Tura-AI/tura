@@ -420,6 +420,7 @@ fn emit_command_updates(session_id: &str, payload: &SendAgentMessageRequest) {
                 status: update.status.clone(),
                 command: update.command.clone(),
                 result: update.result.clone(),
+                created_at: update.created_at,
                 updated_at: update.updated_at,
             },
         });
@@ -427,10 +428,7 @@ fn emit_command_updates(session_id: &str, payload: &SendAgentMessageRequest) {
 }
 
 fn runtime_message_times(payload: &SendAgentMessageRequest) -> (i64, i64) {
-    let now = chrono::Utc::now().timestamp_millis();
-    let created_at = payload.created_at.unwrap_or(now);
-    let updated_at = payload.updated_at.unwrap_or(created_at);
-    (created_at, updated_at)
+    (payload.created_at, payload.updated_at)
 }
 
 fn runtime_message_id(runtime_id: &str) -> String {
@@ -490,6 +488,8 @@ pub fn stream_agent_message_payload(
             session_id: session_id.clone(),
             message_id,
             part_id,
+            created_at: payload.created_at,
+            updated_at: payload.updated_at,
             field: "text".to_string(),
             delta: payload.delta,
         },
@@ -952,8 +952,8 @@ mod tests {
             context_tokens: None,
             usage: None,
             command_updates: Vec::new(),
-            created_at: None,
-            updated_at: None,
+            created_at: 1,
+            updated_at: 1,
         }
     }
 
@@ -1106,8 +1106,8 @@ mod tests {
                 context_tokens: None,
                 usage: Some(usage),
                 command_updates: Vec::new(),
-                created_at: Some(1),
-                updated_at: Some(2),
+                created_at: 1,
+                updated_at: 2,
             },
         );
 
@@ -1117,6 +1117,7 @@ mod tests {
         match event {
             GlobalEvent::SessionStatus { properties } => {
                 assert_eq!(properties.session_id, session.id);
+                assert!(properties.updated_at > 0);
                 assert_eq!(properties.usage.context_tokens.input, 42_000);
                 assert_eq!(properties.usage.context_tokens.limit, 128_000);
                 assert_eq!(properties.usage.tokens["total_tokens"], 120);
@@ -1179,8 +1180,8 @@ mod tests {
                 }),
                 usage: Some(usage),
                 command_updates: Vec::new(),
-                created_at: Some(1),
-                updated_at: Some(1),
+                created_at: 1,
+                updated_at: 1,
             },
         );
 
@@ -1189,6 +1190,7 @@ mod tests {
             .expect("metrics status event should be published first");
         match first {
             GlobalEvent::SessionStatus { properties } => {
+                assert!(properties.updated_at > 0);
                 assert_eq!(properties.context_tokens.input, 64_000);
                 assert_eq!(properties.usage.tokens["total_tokens"], 230);
             }
@@ -1226,6 +1228,8 @@ mod tests {
             StreamAgentTextRequest {
                 delta: "token".to_string(),
                 runtime_id: "runtime-stream-metrics".to_string(),
+                created_at: 1,
+                updated_at: 2,
                 context_tokens: Some(crate::contracts::SessionContextTokens {
                     input: 32_000,
                     limit: 96_000,
@@ -1239,6 +1243,7 @@ mod tests {
             .expect("stream metric status event should be published first");
         match first {
             GlobalEvent::SessionStatus { properties } => {
+                assert!(properties.updated_at > 0);
                 assert_eq!(properties.context_tokens.input, 32_000);
                 assert_eq!(properties.context_tokens.limit, 96_000);
             }
@@ -1374,10 +1379,11 @@ mod tests {
                         "command_line": "echo ok"
                     }),
                     result: serde_json::Value::Null,
-                    updated_at: Some(10),
+                    created_at: 1,
+                    updated_at: 10,
                 }],
-                created_at: Some(1),
-                updated_at: Some(10),
+                created_at: 1,
+                updated_at: 10,
             },
         );
 

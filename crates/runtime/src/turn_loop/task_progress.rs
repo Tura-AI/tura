@@ -2,7 +2,7 @@
 
 use chrono::Utc;
 
-use crate::manas::prompt_messages::planning_current_task_text;
+use crate::prompt_style::context_blocks;
 use crate::state_machine::session_management::{SessionManagement, TaskStatus};
 
 const COMMAND_RUN_TOOL: &str = "command_run";
@@ -122,13 +122,12 @@ fn task_user_message_by(
         .iter()
         .enumerate()
         .find(|(_, task)| predicate(task))?;
-    let current_task = planning_current_task_text(task);
+    let current_task = context_blocks::current_task_text(&task.task_summary);
     Some(serde_json::json!({
         "role": "user",
-        "content": format!(
-            "[current objective]:\n{}\n\n{}",
-            session.current_objective.trim(),
-            current_task
+        "content": context_blocks::current_objective_block(
+            &session.current_objective,
+            Some(current_task),
         )
     }))
 }
@@ -154,7 +153,7 @@ pub(crate) fn record_task_focus_message_for_terminal_done(
     }) else {
         return;
     };
-    let task_id = task.task_id.clone();
+    let task_id = task.task_id.as_str();
     if session.session_log.iter().rev().any(|entry| {
         serde_json::from_str::<serde_json::Value>(entry)
             .ok()

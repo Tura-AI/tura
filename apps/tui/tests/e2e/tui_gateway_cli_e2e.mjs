@@ -361,14 +361,7 @@ async function runWebTerminalE2e(gateway) {
       await sendRichCommandInput("/persona direct\r");
       await page.waitForTimeout(1200);
       assert.equal(gateway.records.configPatches.length, configPatchCount);
-      const agentPatch = gateway.records.agentUpserts.slice(agentPatchCount).at(-1);
-      assert.equal(agentPatch?.id, "fast");
-      assert.deepEqual(agentPatch.payload.config.agent_persona, [
-        {
-          persona_name: "direct",
-          persona_directory: "personas/src/direct",
-        },
-      ]);
+      assert.equal(gateway.records.agentUpserts.length, agentPatchCount);
       await sendRichCommandInput("/chat\r");
       await page.waitForTimeout(150);
       const promptCountBeforeMedia = gateway.records.prompts.length;

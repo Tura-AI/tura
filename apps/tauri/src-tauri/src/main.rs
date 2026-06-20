@@ -22,9 +22,15 @@ static OWNED_GATEWAY: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![start_gateway])
+        .invoke_handler(tauri::generate_handler![start_gateway, open_external_url])
         .run(tauri::generate_context!())
-        .expect("failed to run Tura GUI");
+        .expect("failed to run tura_gui");
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let parsed = parse_external_url(&url)?;
+    open_url_in_default_browser(parsed.as_str())
 }
 
 #[tauri::command]
@@ -87,6 +93,49 @@ fn start_gateway(gateway_url: String) -> Result<StartGatewayResponse, String> {
         gateway_path: Some(gateway.display().to_string()),
         gateway_url: Some(endpoint.url()),
     })
+}
+
+fn open_url_in_default_browser(url: &str) -> Result<(), String> {
+    let mut command = default_browser_command(url);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| format!("failed to open url in default browser: {err}"))
+}
+
+fn parse_external_url(url: &str) -> Result<Url, String> {
+    let parsed = Url::parse(url.trim()).map_err(|err| format!("invalid url: {err}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("only http and https urls can be opened externally".to_string());
+    }
+    Ok(parsed)
+}
+
+fn default_browser_command(url: &str) -> Command {
+    #[cfg(windows)]
+    {
+        let mut command = Command::new("rundll32.exe");
+        command.args(["url.dll,FileProtocolHandler", url]);
+        command
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = Command::new("open");
+        command.arg(url);
+        command
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let mut command = Command::new("xdg-open");
+        command.arg(url);
+        command
+    }
 }
 
 fn owned_gateway() -> &'static Mutex<Option<Child>> {
@@ -340,6 +389,47 @@ mod tests {
     use super::*;
     use std::fs;
     use std::net::TcpListener;
+
+    #[test]
+    fn parse_external_url_accepts_http_and_https_urls() {
+        assert_eq!(
+            parse_external_url(" https://example.com/oauth?code=abc ")
+                .expect("https url")
+                .as_str(),
+            "https://example.com/oauth?code=abc"
+        );
+        assert_eq!(
+            parse_external_url("http://localhost:3000/callback")
+                .expect("http url")
+                .as_str(),
+            "http://localhost:3000/callback"
+        );
+    }
+
+    #[test]
+    fn parse_external_url_rejects_non_web_urls() {
+        assert!(parse_external_url("javascript:alert(1)").is_err());
+        assert!(parse_external_url("file:///C:/Users/liuliu/token.txt").is_err());
+        assert!(parse_external_url("not a url").is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn default_browser_command_on_windows_uses_system_url_handler() {
+        let command = default_browser_command("https://example.com/oauth?a=1&b=2");
+
+        assert_eq!(command.get_program(), "rundll32.exe");
+        assert_eq!(
+            command
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            vec![
+                "url.dll,FileProtocolHandler".to_string(),
+                "https://example.com/oauth?a=1&b=2".to_string(),
+            ]
+        );
+    }
 
     #[test]
     fn parses_gateway_endpoint_with_default_port() {

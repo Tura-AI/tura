@@ -134,7 +134,7 @@ fn normalize_shell_commands_default_to_15_second_timeout() {
 }
 
 #[test]
-fn normalize_external_commands_default_to_15_second_timeout() {
+fn normalize_external_commands_default_to_registry_timeout() {
     let args = parse_args(&json!({
         "commands": [
             {
@@ -150,7 +150,7 @@ fn normalize_external_commands_default_to_15_second_timeout() {
         .expect("normalize read_media arguments");
 
     assert_eq!(arguments["path"], json!("note.txt"));
-    assert_eq!(arguments["timeout_ms"], json!(15_000));
+    assert_eq!(arguments["timeout_ms"], json!(60_000));
 }
 
 #[test]

@@ -39,18 +39,12 @@ pub async fn invoke_with_timeout(
         command.arg("--protocol");
         command
     } else {
-        let package = match command_id {
-            "generate_media" => "generate_media",
-            "read_media" => "read_media",
-            "web_discover" => "web_discover",
-            _ => unreachable!("metadata_for filtered unsupported command"),
-        };
         let mut command = Command::new("cargo");
         command
             .arg("run")
             .arg("-q")
             .arg("-p")
-            .arg(package)
+            .arg(&metadata.command_id)
             .arg("--")
             .arg("--protocol");
         if let Some(root) = repo_root() {

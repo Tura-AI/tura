@@ -14,9 +14,6 @@ pub type AgentName = String;
 /// Natural-language prompt name.
 pub type PromptName = String;
 
-/// Natural-language persona name.
-pub type PersonaName = String;
-
 /// Natural-language capability name.
 pub type CapabilityName = String;
 
@@ -29,29 +26,31 @@ pub struct AgentPromptItem {
     pub prompt_directory: PathBuf,
 }
 
-/// One persona prompt resource attached to an agent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentPersonaItem {
-    /// Natural-language persona name.
-    pub persona_name: PersonaName,
-    /// Absolute path to the persona prompt directory.
-    pub persona_directory: PathBuf,
-}
-
 /// One command capability resource attached to an agent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentCapabilityItem {
     /// Natural-language capability name.
     pub capability_name: CapabilityName,
     /// Absolute path to the capability directory.
+    #[serde(default = "default_capability_directory")]
     pub capability_directory: PathBuf,
+}
+
+fn default_capability_directory() -> PathBuf {
+    PathBuf::from("crates/tools/src")
 }
 
 /// LLM/provider configuration used by the agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderConfig {
-    /// Internal LLM configuration name.
+    /// Legacy internal LLM route name. Prefer `default_model_tier` for new agent config.
     pub tura_llm_name: String,
+    /// Default model tier used when the agent has no explicit current model.
+    #[serde(default)]
+    pub default_model_tier: Option<String>,
+    /// Explicit provider/model selection, written as `provider/model`.
+    #[serde(default)]
+    pub current_model: Option<String>,
     /// Whether streaming is enabled.
     pub stream: bool,
     /// Sampling temperature.
@@ -131,9 +130,6 @@ pub struct AgentManagement {
     pub provider: ProviderConfig,
     /// Prompts bound to this agent.
     pub agent_prompt: Vec<AgentPromptItem>,
-    /// Persona prompt resources bound to this agent.
-    #[serde(default)]
-    pub agent_persona: Vec<AgentPersonaItem>,
     /// Capabilities bound to this agent.
     pub agent_capabilities: Vec<AgentCapabilityItem>,
     /// Validator configuration.
@@ -172,7 +168,6 @@ impl AgentManagement {
             default_config,
             provider,
             agent_prompt: Vec::new(),
-            agent_persona: Vec::new(),
             agent_capabilities: Vec::new(),
             validator,
             state: AgentState::Idle,
@@ -201,12 +196,6 @@ impl AgentManagement {
         self.updated_at = now;
     }
 
-    /// Adds a persona prompt binding to the agent.
-    pub fn add_persona(&mut self, persona: AgentPersonaItem, now: UtcDateTimeMs) {
-        self.agent_persona.push(persona);
-        self.updated_at = now;
-    }
-
     /// Adds a capability binding to the agent.
     pub fn add_capability(&mut self, capability: AgentCapabilityItem, now: UtcDateTimeMs) {
         self.agent_capabilities.push(capability);
@@ -216,7 +205,7 @@ impl AgentManagement {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentCapabilityItem, AgentManagement, AgentPersonaItem, AgentPromptItem};
+    use super::{AgentCapabilityItem, AgentManagement, AgentPromptItem};
     use super::{AgentState, ProviderConfig, ToolChoice, ValidatorConfig};
     use chrono::{Duration, Utc};
     use std::path::PathBuf;
@@ -224,6 +213,8 @@ mod tests {
     fn provider_config() -> ProviderConfig {
         ProviderConfig {
             tura_llm_name: "fast".to_string(),
+            default_model_tier: None,
+            current_model: None,
             stream: true,
             temperature: 0.0,
             max_tokens: 1024,
@@ -312,8 +303,7 @@ mod tests {
     fn agent_binding_mutators_append_items_and_bump_timestamp() {
         let mut agent = agent();
         let prompt_at = agent.created_at + Duration::milliseconds(1);
-        let persona_at = prompt_at + Duration::milliseconds(1);
-        let capability_at = persona_at + Duration::milliseconds(1);
+        let capability_at = prompt_at + Duration::milliseconds(1);
 
         agent.add_prompt(
             AgentPromptItem {
@@ -321,13 +311,6 @@ mod tests {
                 prompt_directory: PathBuf::from("prompts/coding"),
             },
             prompt_at,
-        );
-        agent.add_persona(
-            AgentPersonaItem {
-                persona_name: "concise".to_string(),
-                persona_directory: PathBuf::from("personas/concise"),
-            },
-            persona_at,
         );
         agent.add_capability(
             AgentCapabilityItem {
@@ -338,7 +321,6 @@ mod tests {
         );
 
         assert_eq!(agent.agent_prompt.len(), 1);
-        assert_eq!(agent.agent_persona.len(), 1);
         assert_eq!(agent.agent_capabilities.len(), 1);
         assert_eq!(agent.updated_at, capability_at);
     }

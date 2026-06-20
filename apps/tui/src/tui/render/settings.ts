@@ -1,5 +1,6 @@
 import { t } from "../../i18n.js";
 import type { SettingDetail, AppState } from "../reducer.js";
+import { runtimeModelFromConfig } from "../model-config.js";
 import { activeCapabilities } from "../render-terminal.js";
 import { secondaryText } from "../styles/text.js";
 import { SETTING_DETAILS } from "../settings-catalog.js";
@@ -30,15 +31,11 @@ export function settingsEntries(state: AppState): SettingEntry[] {
     {
       detail: "model",
       label: t("settingModel"),
-      value: config.model ?? config.active_model ?? t("unknown"),
+      value: configuredModel(config) ?? t("unknown"),
     },
     { detail: "provider", label: t("settingProvider"), value: configuredProviderSummary(state) },
     { detail: "agent", label: t("settingAgent"), value: config.active_agent ?? t("unknown") },
-    {
-      detail: "persona",
-      label: t("settingPersona"),
-      value: activePersonaID(state),
-    },
+    { detail: "persona", label: t("settingPersona"), value: config.active_persona ?? "tura" },
     { detail: "language", label: t("settingLanguage"), value: config.language ?? "en" },
     { detail: "variant", label: t("settingReasoning"), value: config.model_variant ?? "high" },
     {
@@ -104,11 +101,7 @@ export function settingsPageInfo(
     const pageSize = Math.max(1, maxLines - headerLines - promptLines - 1);
     return {
       label: settingPageLabel(state),
-      ...pageInfoForIndex(
-        state.selectedSettingOptionIndex,
-        pageSize,
-        settingOptions(state).length,
-      ),
+      ...pageInfoForIndex(state.selectedSettingOptionIndex, pageSize, settingOptions(state).length),
     };
   }
   const entries = settingValueEntries(
@@ -359,11 +352,11 @@ function pageInfoForIndex(
 
 function activeSettingValue(state: AppState): unknown {
   const config = state.sessionConfig;
-  if (state.settingDetail === "model") return config?.model ?? config?.active_model;
+  if (state.settingDetail === "model") return configuredModel(config);
   if (state.settingDetail === "provider") return config?.active_provider;
   if (state.settingDetail === "providerAuth") return undefined;
   if (state.settingDetail === "agent") return state.session?.agent ?? config?.active_agent;
-  if (state.settingDetail === "persona") return activePersonaID(state);
+  if (state.settingDetail === "persona") return config?.active_persona ?? "tura";
   if (state.settingDetail === "language") return config?.language ?? "en";
   if (state.settingDetail === "session") return config?.session_type ?? "coding";
   if (state.settingDetail === "variant") return config?.model_variant ?? "high";
@@ -373,6 +366,10 @@ function activeSettingValue(state: AppState): unknown {
   if (state.settingDetail === "stallGuard")
     return config?.command_run_stall_guard_profile ?? "balanced_20s";
   return undefined;
+}
+
+function configuredModel(config: AppState["sessionConfig"]): string | undefined {
+  return runtimeModelFromConfig(config);
 }
 
 function activeMarker(): string {
@@ -475,27 +472,6 @@ function isLlmProvider(provider: NonNullable<AppState["providers"]>["all"][numbe
 function personaID(persona: AppState["personas"][number] | undefined): string | undefined {
   const configName = persona?.config?.persona_name;
   return persona?.summary?.id ?? (typeof configName === "string" ? configName : undefined);
-}
-
-function activePersonaID(state: AppState): string | undefined {
-  const agentID = state.session?.agent ?? state.sessionConfig?.active_agent;
-  const agent = state.agents.find((item) => storedAgentID(item) === agentID);
-  const agentPersonas = Array.isArray(agent?.config?.agent_persona)
-    ? agent.config.agent_persona
-    : [];
-  const personaNames = agentPersonas
-    .map((item) =>
-      item && typeof item === "object"
-        ? (item as { persona_name?: unknown }).persona_name
-        : undefined,
-    )
-    .filter((item): item is string => typeof item === "string" && Boolean(item));
-  if (personaNames?.[0]) return personaNames[0];
-  const sessionPersona = stringField(
-    state.session as Record<string, unknown> | undefined,
-    "persona",
-  );
-  return sessionPersona ?? stringField(state.sessionConfig, "active_persona") ?? "tura";
 }
 
 function storedAgentID(agent: AppState["agents"][number]): string | undefined {

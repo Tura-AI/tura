@@ -32,7 +32,7 @@ export function selectedSettingOptionIndex(state: AppState, detail: SettingDetai
     const index = state.agents.findIndex((agent) => storedAgentID(agent) === active);
     return index >= 0 ? index : 0;
   }
-  if (detail === "persona") return state.selectedPersonaIndex;
+  if (detail === "persona") return selectedPersonaIndex(state.personas, state.agents, state.session, config);
   if (detail === "language")
     return Math.max(0, ["en", "zh-CN"].indexOf(String(config?.language ?? "en")));
   if (detail === "session")
@@ -101,11 +101,11 @@ export function selectedSessionIndex(sessions: Session[], sessionID: string | un
 
 export function selectedPersonaIndex(
   personas: StoredPersona[],
-  agents: StoredAgent[],
-  session: Session | undefined,
+  _agents: StoredAgent[],
+  _session: Session | undefined,
   config: SessionConfig | undefined,
 ): number {
-  const active = activePersonaID(agents, session, config);
+  const active = config?.active_persona;
   if (!active) return 0;
   const index = personas.findIndex((persona) => personaID(persona) === active);
   return index >= 0 ? index : 0;
@@ -114,24 +114,6 @@ export function selectedPersonaIndex(
 function personaID(persona: StoredPersona): string | undefined {
   const configName = persona.config?.persona_name;
   return persona.summary?.id ?? (typeof configName === "string" ? configName : undefined);
-}
-
-function activePersonaID(
-  agents: StoredAgent[],
-  session: Session | undefined,
-  config: SessionConfig | undefined,
-): string | undefined {
-  const agentID = session?.agent ?? config?.active_agent;
-  const agent = agents.find((item) => storedAgentID(item) === agentID);
-  const first = Array.isArray(agent?.config?.agent_persona)
-    ? agent?.config?.agent_persona[0]
-    : undefined;
-  if (!first || typeof first !== "object" || Array.isArray(first)) return undefined;
-  const name = (first as Record<string, unknown>).persona_name;
-  if (typeof name === "string" && name.trim()) return name.trim();
-  const runtimePersonas = (agent as unknown as { options?: { personas?: StoredPersona[] } }).options
-    ?.personas;
-  return runtimePersonas?.[0] ? personaID(runtimePersonas[0]) : "tura";
 }
 
 function storedAgentID(agent: StoredAgent): string | undefined {

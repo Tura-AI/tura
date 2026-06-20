@@ -20,9 +20,12 @@ const browserGlobals = {
   DataTransfer: "readonly",
   DragEvent: "readonly",
   File: "readonly",
+  cancelAnimationFrame: "readonly",
   document: "readonly",
   getComputedStyle: "readonly",
   navigator: "readonly",
+  performance: "readonly",
+  requestAnimationFrame: "readonly",
   window: "readonly",
 };
 

@@ -61,6 +61,7 @@ export function AppRail(props: { view: AppShellViewModel; collapseAfterSelection
               projects={state().projects}
               directory={state().directory}
               sessions={state().sessions}
+              sessionsLoading={state().sessionsLoading}
               selectedSessionId={state().selectedSessionId}
               productIssues={state().productIssues}
               filePath={state().filePath}

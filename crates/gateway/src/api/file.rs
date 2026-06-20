@@ -2,7 +2,12 @@
 
 use crate::contracts::*;
 use crate::mock::global_store;
-use axum::{extract::Query, http::StatusCode, Json};
+use axum::{
+    extract::Query,
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
+    Json,
+};
 use base64::Engine;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -233,6 +238,37 @@ pub async fn get_file_content(
             mime_type: None,
         })),
     }
+}
+
+pub async fn get_file_media(
+    Query(params): Query<FileContentQuery>,
+) -> Result<Response, (StatusCode, String)> {
+    let (_root, path) = resolve_workspace_file_path(params.directory, &params.path, "media read")?;
+    let mime_type = media_mime_type(&path).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "File is not a supported media type".to_string(),
+        )
+    })?;
+    let bytes = std::fs::read(&path).map_err(|error| {
+        (
+            if error.kind() == std::io::ErrorKind::NotFound {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            },
+            error.to_string(),
+        )
+    })?;
+
+    Ok((
+        [
+            (header::CONTENT_TYPE, mime_type),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        bytes,
+    )
+        .into_response())
 }
 
 pub async fn open_file(

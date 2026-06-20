@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandRunRequest {
@@ -22,14 +26,19 @@ pub struct CommandRunRequest {
 }
 
 #[derive(Debug, Clone)]
-pub struct CommandRunService;
+pub struct CommandRunService {
+    active: Arc<AtomicUsize>,
+}
 
 impl CommandRunService {
     pub fn new() -> Self {
-        Self
+        Self {
+            active: Arc::new(AtomicUsize::new(0)),
+        }
     }
 
     pub async fn execute(&self, input: Value) -> Result<Value> {
+        let _active = ActiveCommandRunGuard::new(Arc::clone(&self.active));
         let request: CommandRunRequest =
             serde_json::from_value(input).context("invalid command_run router payload")?;
         if request.session_directory.as_os_str().is_empty() {
@@ -49,6 +58,27 @@ impl CommandRunService {
             "runtime_id": request.runtime_id,
             "result": output,
         }))
+    }
+
+    pub fn active_count(&self) -> usize {
+        self.active.load(Ordering::SeqCst)
+    }
+}
+
+struct ActiveCommandRunGuard {
+    active: Arc<AtomicUsize>,
+}
+
+impl ActiveCommandRunGuard {
+    fn new(active: Arc<AtomicUsize>) -> Self {
+        active.fetch_add(1, Ordering::SeqCst);
+        Self { active }
+    }
+}
+
+impl Drop for ActiveCommandRunGuard {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -97,6 +127,44 @@ mod tests {
             "task_status"
         );
         assert_eq!(response["result"]["results"][0]["success"], true);
+        assert_eq!(CommandRunService::new().active_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn command_run_service_tracks_active_requests() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let service = CommandRunService::new();
+        assert_eq!(service.active_count(), 0);
+
+        let request = json!({
+            "session_id": "session-active",
+            "runtime_id": "runtime-active",
+            "session_directory": workspace.path().display().to_string(),
+            "arguments": {
+                "commands": [{
+                    "command": "shell_command",
+                    "command_line": json!({
+                        "command": delayed_read_only_command("active"),
+                        "timeout_ms": 5000
+                    }).to_string()
+                }]
+            }
+        });
+        let running = {
+            let service = service.clone();
+            tokio::spawn(async move { service.execute(request).await })
+        };
+
+        let started = Instant::now();
+        while service.active_count() == 0 && started.elapsed().as_secs() < 2 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(service.active_count(), 1);
+        running
+            .await
+            .expect("command_run task should join")
+            .expect("command_run should finish");
+        assert_eq!(service.active_count(), 0);
     }
 
     #[test]

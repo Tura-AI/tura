@@ -34,12 +34,7 @@ import {
   refreshOpenSessionPicker,
   SESSION_PICKER_REFRESH_MS,
 } from "./session-picker.js";
-import {
-  applyPersonaToActiveAgent,
-  applySelectedSetting,
-  submitSettingInput,
-  updateActiveSession,
-} from "./settings-actions.js";
+import { applySelectedSetting, submitSettingInput } from "./settings-actions.js";
 import { hasActiveAnimation, isBusyState } from "./busy-state.js";
 import { createAndSelectSession, submitPrompt } from "./session-actions.js";
 import { createResizeDrawGate, createTerminalResizeHandler } from "./resize.js";
@@ -414,23 +409,21 @@ async function inputLoop(
           }
           if (state.modelsOpen && !state.composer.trim()) {
             const model = selectedModel(state);
-            const sessionID = state.session?.id;
-            if (model && sessionID) {
-              await updateActiveSession(client, getState, dispatch, { model });
+            if (model) {
+              const config = await client.patchSessionConfig(
+                sessionConfigPatchFromAssignments([`model=${model}`]),
+              );
+              dispatch({ type: "session-config", value: config });
+              dispatch({ type: "notice", value: undefined });
             }
             return;
           }
           if (state.personasOpen && !state.composer.trim()) {
             const persona = selectedPersonaID(state);
             if (persona) {
-              try {
-                await applyPersonaToActiveAgent(client, getState, dispatch, persona);
-              } catch (error) {
-                dispatch({
-                  type: "notice",
-                  value: userFacingError(error),
-                });
-              }
+              const config = await client.patchSessionConfig({ active_persona: persona });
+              dispatch({ type: "session-config", value: config });
+              dispatch({ type: "notice", value: undefined });
             }
             return;
           }
@@ -616,36 +609,38 @@ async function slashCommand(
     }
   } else if (name === "model") {
     const model = args[0];
-    const sessionID = getState().session?.id;
     if (!model) {
       dispatch({ type: "toggle-models" });
-    } else if (sessionID) {
-      await updateActiveSession(client, getState, dispatch, { model });
+    } else {
+      const config = await client.patchSessionConfig(
+        sessionConfigPatchFromAssignments([`model=${model}`]),
+      );
+      dispatch({ type: "session-config", value: config, open: true });
+      dispatch({ type: "notice", value: undefined });
     }
   } else if (name === "agent") {
     const agent = args[0];
-    const sessionID = getState().session?.id;
     if (!agent) {
       dispatch({ type: "session-config", value: await client.getSessionConfig(), open: true });
       dispatch({ type: "open-setting-detail", detail: "agent" });
-    } else if (sessionID) {
-      await updateActiveSession(client, getState, dispatch, { agent });
+    } else {
+      const config = await client.patchSessionConfig({ active_agent: agent });
+      dispatch({ type: "session-config", value: config, open: true });
+      dispatch({ type: "notice", value: undefined });
     }
   } else if (name === "persona") {
     const persona = args[0];
-    if (!persona) {
-      dispatch({
-        type: "personas",
-        value: await client.listPersonas().catch(() => getState().personas),
-        open: true,
-      });
-    } else {
-      try {
-        await applyPersonaToActiveAgent(client, getState, dispatch, persona);
-      } catch (error) {
-        dispatch({ type: "notice", value: userFacingError(error) });
-      }
+    if (persona) {
+      const config = await client.patchSessionConfig({ active_persona: persona });
+      dispatch({ type: "session-config", value: config, open: true });
+      dispatch({ type: "notice", value: undefined });
+      return false;
     }
+    dispatch({
+      type: "personas",
+      value: await client.listPersonas().catch(() => getState().personas),
+      open: true,
+    });
   } else if (name === "abort" || name === "stop") {
     const sessionID = getState().session?.id;
     if (sessionID && !isDraftSession(getState().session)) {

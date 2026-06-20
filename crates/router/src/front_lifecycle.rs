@@ -99,6 +99,7 @@ impl FrontLifecycle {
         &self,
         active_runtime_workers: usize,
         active_sessions: usize,
+        active_command_runs: usize,
     ) -> bool {
         let active_fronts = self.prune_and_count_valid_leases();
         let active_connections = self.active_connections.load(Ordering::SeqCst);
@@ -106,6 +107,7 @@ impl FrontLifecycle {
             || active_connections > 0
             || active_runtime_workers > 0
             || active_sessions > 0
+            || active_command_runs > 0
         {
             self.mark_activity();
             return false;
@@ -164,9 +166,9 @@ mod tests {
             "ttl_ms": 100,
         }))?;
         std::thread::sleep(StdDuration::from_millis(50));
-        assert!(!lifecycle.should_shutdown_idle(0, 0));
+        assert!(!lifecycle.should_shutdown_idle(0, 0, 0));
         std::thread::sleep(StdDuration::from_millis(80));
-        assert!(lifecycle.should_shutdown_idle(0, 0));
+        assert!(lifecycle.should_shutdown_idle(0, 0, 0));
         Ok(())
     }
 
@@ -183,10 +185,26 @@ mod tests {
 
         lifecycle.connection_opened();
         std::thread::sleep(StdDuration::from_millis(20));
-        assert!(!lifecycle.should_shutdown_idle(0, 0));
+        assert!(!lifecycle.should_shutdown_idle(0, 0, 0));
         lifecycle.connection_closed();
-        assert!(!lifecycle.should_shutdown_idle(0, 0));
+        assert!(!lifecycle.should_shutdown_idle(0, 0, 0));
         std::thread::sleep(StdDuration::from_millis(20));
-        assert!(lifecycle.should_shutdown_idle(0, 0));
+        assert!(lifecycle.should_shutdown_idle(0, 0, 0));
+    }
+
+    #[test]
+    fn lifecycle_active_command_run_blocks_idle_shutdown() {
+        let lifecycle = FrontLifecycle {
+            active_connections: Arc::new(AtomicUsize::new(0)),
+            leases: Arc::new(ParkingMutex::new(HashMap::new())),
+            last_activity: Arc::new(ParkingMutex::new(
+                Instant::now() - StdDuration::from_millis(50),
+            )),
+            idle_shutdown_after: StdDuration::from_millis(10),
+        };
+
+        assert!(!lifecycle.should_shutdown_idle(0, 0, 1));
+        std::thread::sleep(StdDuration::from_millis(20));
+        assert!(lifecycle.should_shutdown_idle(0, 0, 0));
     }
 }
