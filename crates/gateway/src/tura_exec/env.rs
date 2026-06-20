@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use super::cli::CliConfig;
 
 pub(crate) fn configure_runtime_env(config: &CliConfig) {
+    std::env::set_var("TURA_FRONTEND_SOURCE", "cli");
     if let Some(model) = config.model.as_deref() {
         std::env::set_var("TURA_SESSION_MODEL_OVERRIDE", normalize_model(model));
     }

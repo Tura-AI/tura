@@ -160,6 +160,10 @@ function parseAgents(value) {
     ["tura-thinking", "tura-thinking-shll"],
     ["tura-thinking-shll", "tura-thinking-shll"],
     ["thinking", "tura-thinking-shll"],
+    ["tura-thinking-visual", "tura-thinking-visual-shll"],
+    ["tura-thinking-visual-shll", "tura-thinking-visual-shll"],
+    ["thinking-visual", "tura-thinking-visual-shll"],
+    ["think-visual", "tura-thinking-visual-shll"],
     ["tura-planning", "tura-planning-shll"],
     ["tura-planning-shll", "tura-planning-shll"],
     ["tura-fast", "tura-fast-shll"],
@@ -1608,6 +1612,7 @@ async function runAgent(agentId, task, taskIndex, agentIndex, onAgentUpdate = nu
   const agentPrompt =
     agentId === "tura-fast-shll" || agentId === "tura-fast-planning-shll" ? "fast" :
     agentId === "tura-thinking-shll" ? "thinking" :
+    agentId === "tura-thinking-visual-shll" ? "thinking-visual" :
     agentId === "tura-planning-shll" ? "thinking-planning" :
     null
   let lastContextArchive = null
@@ -1667,6 +1672,7 @@ async function runAgent(agentId, task, taskIndex, agentIndex, onAgentUpdate = nu
   else if (agentId === "tura-fast-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "fast", publishProgress)
   else if (agentId === "tura-fast-planning-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "fast", publishProgress)
   else if (agentId === "tura-thinking-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "thinking", publishProgress)
+  else if (agentId === "tura-thinking-visual-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "thinking-visual", publishProgress)
   else if (agentId === "tura-planning-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "thinking-planning", publishProgress)
   else if (agentId === "claude-code" || agentId === "pi-agent") result = await runExternalCliAgent(prep.workspace, agentDir, prompt, agentId, publishProgress)
   else throw new Error(`unsupported agent ${agentId}`)

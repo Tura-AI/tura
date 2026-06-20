@@ -167,6 +167,7 @@ fn worker_env_from_current_process() -> serde_json::Map<String, Value> {
         "TURA_SESSION_REASONING_EFFORT",
         "TURA_SESSION_ACCELERATION_ENABLED",
         "TURA_SESSION_MAX_TOKENS",
+        "TURA_FRONTEND_SOURCE",
         "TURA_SESSION_LANGUAGE",
         "TURA_SESSION_USER_NAME",
         "TURA_COMMAND_RUN_STALL_CHECK_SECS",

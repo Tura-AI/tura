@@ -1,4 +1,5 @@
 import fs from "node:fs"
+import os from "node:os"
 import path from "node:path"
 import process from "node:process"
 
@@ -43,7 +44,28 @@ export function claudeCodeArgs(prompt, options = {}) {
 }
 
 export function piAgentArgs(prompt) {
-  return ["--mode", "json", prompt]
+  const model = process.env.COMMAND_RUN_AGENT_PI_MODEL || process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "gpt-5.5"
+  const thinking = process.env.COMMAND_RUN_AGENT_REASONING_EFFORT || "medium"
+  const normalizedModel = model.includes("/") ? model : `openai/${model}`
+  const prefix = process.env.COMMAND_RUN_AGENT_PI_CLI_JS ? [process.env.COMMAND_RUN_AGENT_PI_CLI_JS] : []
+  if (process.platform === "win32" || String(prompt || "").length > 8000) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tura-pi-prompt-"))
+    const promptPath = path.join(dir, "prompt.md")
+    fs.writeFileSync(promptPath, prompt, "utf8")
+    return [
+      ...prefix,
+      "--mode",
+      "json",
+      "--print",
+      "--model",
+      normalizedModel,
+      "--thinking",
+      thinking,
+      `@${promptPath}`,
+      "Complete the task exactly as described in the attached prompt file.",
+    ]
+  }
+  return [...prefix, "--mode", "json", "--print", "--model", normalizedModel, "--thinking", thinking, prompt]
 }
 
 export function agentUsageFromJsonl(text) {

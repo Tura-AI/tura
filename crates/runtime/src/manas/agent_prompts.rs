@@ -58,6 +58,16 @@ fn ordered_agent_prompt_paths(prompt_item: &AgentPromptItem) -> Vec<PathBuf> {
 fn load_session_persona_messages(
     agent: &AgentManagement,
 ) -> Result<Vec<serde_json::Value>, String> {
+    if frontend_source_is_cli() {
+        let Some(project_root) = project_root_for_persona(agent) else {
+            return Ok(Vec::new());
+        };
+        if let Some(content) = load_shared_cli_communication_style(&project_root) {
+            return Ok(vec![system_message(content)]);
+        }
+        return Ok(Vec::new());
+    }
+
     let Some(persona_id) = session_persona_id() else {
         return Ok(Vec::new());
     };
@@ -69,15 +79,6 @@ fn load_session_persona_messages(
     };
 
     let mut messages = Vec::new();
-    if frontend_source_is_cli() {
-        if let Some(content) = persona
-            .cli_communication_style
-            .filter(|value| !value.trim().is_empty())
-        {
-            messages.push(system_message(content));
-        }
-        return Ok(messages);
-    }
     if let Some(content) = persona.persona.filter(|value| !value.trim().is_empty()) {
         messages.push(system_message(content));
     }
@@ -95,6 +96,17 @@ fn system_message(content: String) -> serde_json::Value {
         "role": "system",
         "content": content,
     })
+}
+
+fn load_shared_cli_communication_style(project_root: &Path) -> Option<String> {
+    std::fs::read_to_string(
+        project_root
+            .join(tura_persona::store::STATIC_PERSONAS_DIR)
+            .join(tura_persona::store::COMMUNICATION_STYLE_DIR)
+            .join(tura_persona::store::CLI_COMMUNICATION_STYLE_FILE),
+    )
+    .ok()
+    .filter(|value| !value.trim().is_empty())
 }
 
 fn session_persona_id() -> Option<String> {
@@ -263,6 +275,72 @@ mod tests {
             "cli communication style prompt",
         )
         .expect("cli communication style should be written");
+
+        std::env::remove_var("TURA_SESSION_PERSONA");
+        std::env::set_var("TURA_PROJECT_ROOT", &root);
+        std::env::set_var("TURA_FRONTEND_SOURCE", "cli");
+
+        let mut agent = test_agent(&agent_dir, "coding_agent");
+        let now = Utc::now();
+        agent.add_prompt(
+            AgentPromptItem {
+                agent_prompt: "coding_agent".to_string(),
+                prompt_directory: agent_dir,
+            },
+            now,
+        );
+
+        let messages =
+            load_agent_system_prompt_messages(&agent).expect("system prompts should load");
+        assert_eq!(
+            message_contents(&messages),
+            vec!["cli communication style prompt", "agent prompt"]
+        );
+
+        restore_env("TURA_SESSION_PERSONA", previous_persona);
+        restore_env("TURA_PROJECT_ROOT", previous_root);
+        restore_env("TURA_FRONTEND_SOURCE", previous_frontend_source);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_environment_selects_persona_and_communication_prompts() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let previous_persona = std::env::var_os("TURA_SESSION_PERSONA");
+        let previous_root = std::env::var_os("TURA_PROJECT_ROOT");
+        let previous_frontend_source = std::env::var_os("TURA_FRONTEND_SOURCE");
+        let run_id = format!(
+            "tura-persona-environment-prompt-test-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let root = std::env::temp_dir().join(run_id);
+        let agent_dir = root.join("agents").join("src").join("coding_agent");
+        let prompt_dir = root
+            .join("personas")
+            .join("src")
+            .join("guide")
+            .join("prompt");
+        let shared_style_dir = root
+            .join("personas")
+            .join("src")
+            .join("communication_style");
+        std::fs::create_dir_all(&agent_dir).expect("agent prompt dir should be created");
+        std::fs::create_dir_all(&prompt_dir).expect("persona prompt dir should be created");
+        std::fs::create_dir_all(&shared_style_dir).expect("shared style dir should be created");
+        std::fs::write(agent_dir.join("prompt.md"), "agent prompt")
+            .expect("agent prompt should be written");
+        std::fs::write(prompt_dir.join("persona.md"), "persona prompt")
+            .expect("persona prompt should be written");
+        std::fs::write(
+            shared_style_dir.join("communication_style.md"),
+            "gui communication style",
+        )
+        .expect("gui communication style should be written");
+        std::fs::write(
+            shared_style_dir.join("cli_communication_style.md"),
+            "cli communication style",
+        )
+        .expect("cli communication style should be written");
         std::fs::write(
             root.join("personas")
                 .join("src")
@@ -283,10 +361,6 @@ mod tests {
         )
         .expect("persona config should be written");
 
-        std::env::set_var("TURA_SESSION_PERSONA", "guide");
-        std::env::set_var("TURA_PROJECT_ROOT", &root);
-        std::env::set_var("TURA_FRONTEND_SOURCE", "cli");
-
         let mut agent = test_agent(&agent_dir, "coding_agent");
         let now = Utc::now();
         agent.add_prompt(
@@ -297,11 +371,36 @@ mod tests {
             now,
         );
 
-        let messages =
-            load_agent_system_prompt_messages(&agent).expect("system prompts should load");
+        std::env::set_var("TURA_PROJECT_ROOT", &root);
+
+        std::env::remove_var("TURA_SESSION_PERSONA");
+        std::env::remove_var("TURA_FRONTEND_SOURCE");
         assert_eq!(
-            message_contents(&messages),
-            vec!["cli communication style prompt", "agent prompt"]
+            message_contents(
+                &load_agent_system_prompt_messages(&agent).expect("gui without persona")
+            ),
+            vec!["agent prompt"]
+        );
+
+        std::env::set_var("TURA_SESSION_PERSONA", "guide");
+        std::env::remove_var("TURA_FRONTEND_SOURCE");
+        assert_eq!(
+            message_contents(&load_agent_system_prompt_messages(&agent).expect("gui persona")),
+            vec!["persona prompt", "gui communication style", "agent prompt"]
+        );
+
+        std::env::remove_var("TURA_SESSION_PERSONA");
+        std::env::set_var("TURA_FRONTEND_SOURCE", "cli");
+        assert_eq!(
+            message_contents(&load_agent_system_prompt_messages(&agent).expect("cli no persona")),
+            vec!["cli communication style", "agent prompt"]
+        );
+
+        std::env::set_var("TURA_SESSION_PERSONA", "guide");
+        std::env::set_var("TURA_FRONTEND_SOURCE", "cli");
+        assert_eq!(
+            message_contents(&load_agent_system_prompt_messages(&agent).expect("cli persona")),
+            vec!["cli communication style", "agent prompt"]
         );
 
         restore_env("TURA_SESSION_PERSONA", previous_persona);
