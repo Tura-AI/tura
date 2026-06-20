@@ -87,7 +87,7 @@ assertions.
 Required local tests:
 
 ```powershell
-.\xtask\scripts\check-backend-quality.ps1
+.\scripts\check-backend-quality.ps1
 npm --prefix apps\tui test
 bun run --cwd apps\gui test
 ```
@@ -95,39 +95,52 @@ bun run --cwd apps\gui test
 Crate-owned Rust tests are directory classified:
 
 ```text
-crates/*/tests/business/   required local business and link tests
+crates/*/tests/business/    required local business and link tests
+crates/*/tests/os_testing/  process, daemon, owner, IPC, and OS policy checks
 crates/*/tests/performance/ opt-in performance, stress, load, and soak checks
-crates/*/tests/live/       opt-in third-party, public-network, key, or token checks
-crates/*/tests/benchmark/  opt-in scoring and comparison checks
-tura/tests/business/       required workspace E2E business flows
-tura/tests/performance/    opt-in workspace performance/stability checks
-tura/tests/live/           opt-in workspace live checks
-tura/tests/benchmark/      opt-in scoring, comparison, and long-running benchmarks
+crates/*/tests/live/        opt-in third-party, public-network, key, or token checks
+crates/*/tests/benchmark/   opt-in scoring and comparison checks
+tura/tests/business/        required workspace E2E business flows
+tura/tests/os_testing/      process, daemon, owner, IPC, and OS policy checks
+tura/tests/performance/     opt-in workspace performance/stability checks
+tura/tests/live/            opt-in workspace live checks
+tura/tests/benchmark/       opt-in scoring, comparison, and long-running benchmarks
 ```
 
-The four typed directories are peers; do not nest `live`, `performance`, or
-`benchmark` under `business`. Create typed directories only when that type has
-files. Keep tests directly under the typed directory; do not create category
-subdirectories under `business`, `performance`, `live`, or `benchmark` because
-runners scan typed directories one level deep. Runners should discover cases by
-type and directory scan instead of hardcoding individual script paths. Do not
-use fixed response wording as product logic or test oracles; assert structured
-command results, protocol fields, parser contracts, files, or stored records.
+The typed directories are peers; do not nest `os_testing`, `live`,
+`performance`, or `benchmark` under `business`. Create typed directories only
+when that type has files. Business, OS testing, and crate-owned live tests may
+use `helpers/` plus target-owned module directories beside the top-level
+entrypoint. Runners should discover cases by type and directory scan instead of
+hardcoding individual script paths. Do not use fixed response wording as
+product logic or test oracles; assert structured command results, protocol
+fields, parser contracts, files, or stored records.
 
 Business tests may use local processes, local sockets, controlled fixtures, and
 workspace files. They must not require third-party services, provider tokens,
-API keys, paid providers, or public live systems. Run local business suites
+API keys, paid providers, or public live systems. Tests that exercise provider
+auth, configured provider catalogs, provider environment variables, or provider
+request/response compatibility belong in live even when they use local mock
+servers, because they share provider runtime state. Run local business suites
 with:
 
 ```powershell
-.\scripts\run-backend-business-tests.ps1 -Crate tools -TimeoutSeconds 240
+.\xtask\scripts\run-backend-business-tests.ps1 -Crate tools -TimeoutSeconds 240
+```
+
+Process, daemon, owner, IPC, service lifecycle, and cross-OS policy checks
+belong in OS testing and run serially:
+
+```powershell
+.\xtask\scripts\run-backend-os-tests.ps1
 ```
 
 Live tests may require provider credentials, public network access, model
-quota, or third-party systems. Run crate-owned live suites explicitly with:
+quota, third-party systems, or provider runtime state such as auth/config/env.
+Run crate-owned live suites explicitly with:
 
 ```powershell
-.\scripts\run-backend-live-tests.ps1 -Crate provider -TimeoutSeconds 300
+.\xtask\scripts\run-backend-live-tests.ps1 -Crate provider -TimeoutSeconds 300
 ```
 
 Release-entry live scripts validate the built command surfaces and write

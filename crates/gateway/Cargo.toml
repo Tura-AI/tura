@@ -54,17 +54,19 @@ tempfile.workspace = true
 
 [features]
 business-tests = []
+live-tests = []
 performance-tests = []
+os-tests = []
 
 [[test]]
 name = "provider_oauth_local_flow"
-path = "tests/business/provider_oauth_local_flow.rs"
-required-features = ["business-tests"]
+path = "tests/live/provider_oauth_local_flow.rs"
+required-features = ["live-tests"]
 
 [[test]]
 name = "session_db_local_flow"
-path = "tests/business/session_db_local_flow.rs"
-required-features = ["business-tests"]
+path = "tests/os_testing/session_db_local_flow.rs"
+required-features = ["os-tests"]
 
 [[test]]
 name = "session_log_api_flow"
@@ -78,13 +80,8 @@ required-features = ["business-tests"]
 
 [[test]]
 name = "session_prompt_router_flow"
-path = "tests/business/session_prompt_router_flow.rs"
-required-features = ["business-tests"]
-
-[[test]]
-name = "agent_persona_settings_flow"
-path = "tests/business/agent_persona_settings_flow.rs"
-required-features = ["business-tests"]
+path = "tests/os_testing/session_prompt_router_flow.rs"
+required-features = ["os-tests"]
 
 [[test]]
 name = "session_shell_path_flow"
@@ -103,23 +100,23 @@ required-features = ["business-tests"]
 
 [[test]]
 name = "process_snapshot_flow"
-path = "tests/business/process_snapshot_flow.rs"
-required-features = ["business-tests"]
+path = "tests/os_testing/process_snapshot_flow.rs"
+required-features = ["os-tests"]
 
 [[test]]
 name = "process_router_cleanup_flow"
-path = "tests/business/process_router_cleanup_flow.rs"
-required-features = ["business-tests"]
+path = "tests/os_testing/process_router_cleanup_flow.rs"
+required-features = ["os-tests"]
 
 [[test]]
 name = "service_status_flow"
-path = "tests/business/service_status_flow.rs"
-required-features = ["business-tests"]
+path = "tests/os_testing/service_status_flow.rs"
+required-features = ["os-tests"]
 
 [[test]]
 name = "task_scheduler_flow"
-path = "tests/business/task_scheduler_flow.rs"
-required-features = ["business-tests"]
+path = "tests/os_testing/task_scheduler_flow.rs"
+required-features = ["os-tests"]
 
 [[test]]
 name = "workspace_config_api_flow"
@@ -128,7 +125,12 @@ required-features = ["business-tests"]
 
 [[test]]
 name = "process_lifecycle_e2e"
-path = "tests/performance/process_lifecycle_e2e.rs"
+path = "tests/os_testing/process_lifecycle_e2e.rs"
+required-features = ["os-tests"]
+
+[[test]]
+name = "gateway_session_concurrency_stress"
+path = "tests/performance/gateway_session_concurrency_stress.rs"
 required-features = ["performance-tests"]
 
 [[test]]

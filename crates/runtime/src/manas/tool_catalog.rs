@@ -33,17 +33,9 @@ pub(super) fn load_agent_capabilities(
 
 pub(crate) fn filter_tools_for_turn(
     tools: Vec<serde_json::Value>,
-    is_final_turn: bool,
-    force_no_tools: bool,
+    _is_final_turn: bool,
+    _force_no_tools: bool,
 ) -> Result<Vec<serde_json::Value>, String> {
-    if force_no_tools {
-        return Ok(Vec::new());
-    }
-
-    if is_final_turn {
-        return Ok(Vec::new());
-    }
-
     Ok(keep_command_run_only(tools))
 }
 
@@ -370,6 +362,13 @@ fn command_run_description_for_active_shell(
             compact_schema(&command_schema("read_media")),
         ));
     }
+    if allowed_commands.contains("generate_media") {
+        command_lines.push(format!(
+            "- generate_media: {} Schema: {}",
+            compact_prompt(&command_prompt("generate_media")),
+            compact_schema(&command_schema("generate_media")),
+        ));
+    }
     if allowed_commands.contains("web_discover") {
         command_lines.push(format!(
             "- web_discover: {} Schema: {}",
@@ -433,6 +432,7 @@ fn command_list_for_description(commands: &BTreeSet<String>, active_shell: &str)
     let order = [
         "apply_patch",
         active_shell,
+        "generate_media",
         "read_media",
         "web_discover",
         "compact_context",
@@ -449,20 +449,23 @@ fn command_list_for_description(commands: &BTreeSet<String>, active_shell: &str)
 fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
     let mut patterns = vec![
         "- Batch investigation: use early commands for the specific discovery, searches, and file reads needed to understand the failure surface.",
-        "- Keep related path listing, targeted search, and candidate file reads in the same command_run batch; independent commands with no output dependency may share one step.",
+        "- Keep related path listing, targeted search, and candidate file reads in the same command_run batch; independent commands with no output dependency must share one step.",
         "- Do not run test/probe invocations before you have read the relevant code and determined the actual CLI command set.",
-        "- Use steps to express execution order and dependency relationships. Commands in the same step may run together; later steps should depend on earlier steps only when their inputs are already known before the batch is created.",
+        "- Use steps as dependency groups, not command indexes. Commands in the same step must have no output dependency on each other and may run together; commands that depend on earlier output must use later unique ordered steps whose inputs are already known before the batch is created.",
         "- Code repair loop: after discovery has produced enough facts, use one step for coordinated edits and later steps for already-known tests or focused validation.",
         "- Avoid embedding long generated source code or complex quoting directly in shell command lines; for complex logic, invoke a script/interpreter from the active shell rather than encoding the logic in shell syntax.",
         "- Verification: run the relevant test or build command after edits in the same command_run only when the verification command is already known.",
         "- Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.",
-        "- Context compaction: after a meaningful phase completes, or when context is near 200,000 tokens and feels crowded, put `compact_context` as the final command in the highest step with a concise handoff summary for the next turn.",
-        "- Example investigation batch: step 1 groups independent `rg --files`, targeted `rg -n`, and candidate file reads.",
-        "- Example repair batch: step 1 `apply_patch` across related files, step 2 write or update a focused test script when needed, step 3 run the narrow test and focused validation searches.",
+        "- Context compaction: after a meaningful phase completes, or when context is near the active context limit and feels crowded, put `compact_context` as the final command in the highest step with a concise handoff summary for the next turn.",
+        "- Example investigation batch: independent `rg --files`, targeted `rg -n`, and candidate file reads all use step 1.",
+        "- Example repair batch: step 1 `apply_patch` across related files, step 2 run the known build command, step 3 run multiple known test commands in the same step.",
         "- Example frontend batch: step 1 write or reuse the focused frontend test script, step 2 run that script and inspect generated textual outputs.",
     ];
-    if allowed_commands.contains("read_media") || allowed_commands.contains("web_discover") {
-        patterns.push("- Example media batch: step 1 use `web_discover` or generation to collect the needed media, docs, or repo artifacts, step 2 use `read_media` or focused reads to verify the resulting media or repo content.");
+    if allowed_commands.contains("read_media")
+        || allowed_commands.contains("web_discover")
+        || allowed_commands.contains("generate_media")
+    {
+        patterns.push("- Example media batch: step 1 use `web_discover` or `generate_media` to collect the needed media, docs, or repo artifacts, step 2 use `read_media` or focused reads to verify the resulting media or repo content.");
     }
     patterns.join("\n")
 }
@@ -555,7 +558,9 @@ mod tests {
             true,
             true,
             ProviderConfig {
-                tura_llm_name: "flagship_thinking".to_string(),
+                tura_llm_name: "thinking".to_string(),
+                default_model_tier: None,
+                current_model: None,
                 stream: true,
                 temperature: 0.2,
                 max_tokens: 0,
@@ -621,8 +626,12 @@ mod tests {
         );
         assert!(
             description.contains("Reminder: task_status only updates internal task state")
+                && description.contains("Before changing task_status `status`")
+                && description.contains("then call task_status in the same assistant response")
+                && description.contains("update the task name first")
+                && description.contains("has been read and inspected with read_media")
                 && description
-                    .contains("Mark `done` only after the task is complete and verified.")
+                    .contains("only command allowed besides the task_status `done` update")
                 && description.contains("if the user says hello or asks a simple question"),
             "description missing task_status reminder"
         );
@@ -649,7 +658,11 @@ mod tests {
 
         assert!(description.contains("task_status"));
         assert!(description.contains("Reminder: task_status only updates internal task state"));
-        assert!(description.contains("Mark `done` only after the task is complete and verified."));
+        assert!(description.contains("Before changing task_status `status`"));
+        assert!(description.contains("then call task_status in the same assistant response"));
+        assert!(description.contains("update the task name first"));
+        assert!(description.contains("has been read and inspected with read_media"));
+        assert!(description.contains("only command allowed besides the task_status `done` update"));
         assert!(description.contains("if the user says hello or asks a simple question"));
         assert!(!description.contains("Continue working toward the active thread goal."));
         assert!(!description.contains("[current objective]:"));
@@ -685,12 +698,28 @@ mod tests {
     }
 
     #[test]
+    fn final_turn_keeps_command_run_schema_for_prompt_cache() {
+        let filtered = filter_tools_for_turn(
+            vec![
+                tool(COMMAND_RUN_TOOL),
+                tool(PLANNING_TOOL),
+                tool("web_search"),
+            ],
+            true,
+            true,
+        )
+        .expect("filter should succeed");
+
+        assert_eq!(names(filtered), vec![COMMAND_RUN_TOOL]);
+    }
+
+    #[test]
     fn planning_capability_adds_command_for_configured_agent_capabilities() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         let agent = command_run_agent_with_capabilities(&[
             "command_run",
             "apply_patch",
-            "shell_command",
+            "shells",
             "task_status",
             "planning",
         ]);
@@ -699,6 +728,8 @@ mod tests {
 
         assert!(commands.contains("planning"));
         assert!(commands.contains("task_status"));
+        assert!(commands.contains(active_shell_command_name()));
+        assert!(!commands.contains("shells"));
     }
 
     #[test]
@@ -767,10 +798,17 @@ mod tests {
             .expect("commands item required should be an array");
 
         assert_eq!(schema["function"]["strict"], true);
-        assert_eq!(parameters["required"], serde_json::json!(["commands"]));
+        assert_eq!(
+            parameters["required"],
+            serde_json::json!(["commands", "sandbox"])
+        );
         assert_eq!(
             parameters["properties"]["commands"]["items"]["required"],
             serde_json::json!(["command_type", "command_line", "step"])
+        );
+        assert_eq!(
+            parameters["properties"]["sandbox"]["type"],
+            serde_json::json!("boolean")
         );
         assert!(parameters["properties"].get("task_status").is_none());
         assert!(command_required.contains(&serde_json::json!("command_type")));
@@ -959,6 +997,8 @@ mod tests {
             false,
             ProviderConfig {
                 tura_llm_name: "test".to_string(),
+                default_model_tier: None,
+                current_model: None,
                 stream: false,
                 temperature: 0.0,
                 max_tokens: 0,

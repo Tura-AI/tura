@@ -1,13 +1,12 @@
 //! Direct client for the session DB service data path.
 //!
-//! Gateway/session reads and writes use this client directly. Router is only
-//! responsible for service lifecycle and is intentionally not on this path.
+//! Gateway/session reads use this client directly. Runtime-owned code is
+//! responsible for session DB writes.
 
 use anyhow::{anyhow, Result};
-use serde_json::Value;
 use session_log::{
     GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, Page, SessionLogCommand,
-    SessionLogResponse, SessionRecord, SessionSnapshot, UpsertSessionRequest, WorkspaceSummary,
+    SessionLogResponse, SessionRecord, SessionSnapshot, WorkspaceSummary,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -16,22 +15,6 @@ pub struct SessionDbClient;
 impl SessionDbClient {
     pub fn discover() -> Result<Self> {
         Ok(Self)
-    }
-
-    pub fn upsert_session(
-        &self,
-        session: Value,
-        parent_id: Option<String>,
-        messages: Vec<Value>,
-        todos: Vec<Value>,
-    ) -> Result<()> {
-        let response = self.call(SessionLogCommand::UpsertSession(UpsertSessionRequest {
-            session,
-            parent_id,
-            messages,
-            todos,
-        }))?;
-        ok_response(response, "upsert_session")
     }
 
     pub fn list_workspaces(&self) -> Result<Vec<WorkspaceSummary>> {
@@ -75,6 +58,11 @@ impl SessionDbClient {
     }
 
     pub fn call(&self, command: SessionLogCommand) -> Result<SessionLogResponse> {
+        if !is_read_command(&command) {
+            return Err(anyhow!(
+                "gateway session_db client is read-only; write command rejected"
+            ));
+        }
         if tokio::runtime::Handle::try_current().is_ok() {
             return std::thread::spawn(move || Self::call_blocking(command))
                 .join()
@@ -87,22 +75,22 @@ impl SessionDbClient {
         if session_log::ipc::service_is_running() {
             return session_log::ipc::call_service(&command);
         }
-        if session_log::file_queue::is_async_write(&command) {
-            session_log::file_queue::enqueue_command(&command)?;
-            return Ok(SessionLogResponse::Ok);
-        }
         Err(anyhow!(
             "session_db service is not running; start the per-home tura_router/tura_session_db owner before reading session data"
         ))
     }
 }
 
-fn ok_response(response: SessionLogResponse, operation: &str) -> Result<()> {
-    match response {
-        SessionLogResponse::Ok => Ok(()),
-        SessionLogResponse::Error { error } => Err(service_error(operation, error)),
-        other => Err(unexpected_response(operation, other)),
-    }
+fn is_read_command(command: &SessionLogCommand) -> bool {
+    matches!(
+        command,
+        SessionLogCommand::Health
+            | SessionLogCommand::GetSession(_)
+            | SessionLogCommand::ListWorkspaces
+            | SessionLogCommand::ListSessions(_)
+            | SessionLogCommand::ListSessionRecords(_)
+            | SessionLogCommand::Shutdown
+    )
 }
 
 fn workspaces_response(response: SessionLogResponse) -> Result<Vec<WorkspaceSummary>> {
@@ -148,10 +136,13 @@ fn unexpected_response(operation: &str, response: SessionLogResponse) -> anyhow:
 #[cfg(test)]
 mod tests {
     use super::{
-        ok_response, records_response, session_response, sessions_response, workspaces_response,
+        is_read_command, records_response, session_response, sessions_response, workspaces_response,
     };
     use serde_json::json;
-    use session_log::{Page, SessionLogResponse, SessionSnapshot, WorkspaceSummary};
+    use session_log::{
+        CommandCheckpoint, DeleteSessionRequest, Page, SessionLogCommand, SessionLogResponse,
+        SessionSnapshot, WorkspaceSummary,
+    };
 
     fn snapshot(session_id: &str) -> SessionSnapshot {
         SessionSnapshot {
@@ -173,9 +164,6 @@ mod tests {
 
     #[test]
     fn response_mappers_accept_expected_success_variants() {
-        ok_response(SessionLogResponse::Ok, "upsert_session")
-            .expect("ok response should map to success");
-
         let workspaces = workspaces_response(SessionLogResponse::Workspaces {
             workspaces: vec![WorkspaceSummary {
                 directory: "workspace".to_string(),
@@ -229,19 +217,42 @@ mod tests {
 
     #[test]
     fn response_mappers_report_unexpected_variant_with_operation_context() {
-        let error = ok_response(
-            SessionLogResponse::Workspaces {
-                workspaces: Vec::new(),
-            },
-            "upsert_session",
-        )
-        .expect_err("wrong response variant should fail");
+        let error = workspaces_response(SessionLogResponse::Ok)
+            .expect_err("wrong response variant should fail");
 
         assert!(
             error
                 .to_string()
-                .contains("unexpected session_db response for upsert_session"),
+                .contains("unexpected session_db response for list_workspaces"),
             "unexpected response error should include operation context: {error}"
         );
+    }
+
+    #[test]
+    fn gateway_session_db_client_rejects_write_commands() {
+        assert!(is_read_command(&SessionLogCommand::ListWorkspaces));
+        assert!(!is_read_command(&SessionLogCommand::DeleteSession(
+            DeleteSessionRequest {
+                session_id: "session-1".to_string()
+            }
+        )));
+        assert!(!is_read_command(
+            &SessionLogCommand::ApplyCommandCheckpoint(Box::new(CommandCheckpoint {
+                session_id: "session-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                runtime_worker_id: None,
+                provider_call_id: None,
+                command_run_id: None,
+                command_id: None,
+                event_seq: None,
+                command_type: None,
+                command_line: None,
+                status: "turn_started".to_string(),
+                output_summary: None,
+                changes: json!({}),
+                started_at: None,
+                finished_at: None,
+            }))
+        ));
     }
 }

@@ -9,7 +9,7 @@ pub async fn dispatch_handler(
     force_exclusive: bool,
 ) -> Result<AnyToolResult, ToolError> {
     let mutating = force_exclusive || handler.is_mutating(&call, &ctx).await;
-    let access = if force_exclusive {
+    let mut access = if force_exclusive {
         file_locks::Access {
             workspace_write: true,
             ..file_locks::Access::default()
@@ -17,6 +17,9 @@ pub async fn dispatch_handler(
     } else {
         handler.access(&call, &ctx).await
     };
+    if let Some(scope) = ctx.lock_scope() {
+        access.lock_scope = Some(scope.to_string());
+    }
     let call_ctx = ctx.with_call_id(call.call_id.clone());
     let result = if mutating {
         let gate = Arc::clone(&ctx.execution_gate);

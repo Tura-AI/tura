@@ -79,6 +79,7 @@ export function PlanModeButtons(props: {
                 "icon-action",
                 (mode.id === "split" ? props.splitOpen : props.mode === mode.id) && "selected",
               )}
+              data-plan-mode={mode.id}
               title={mode.label}
               onClick={() => (mode.id === "split" ? props.onSplit() : props.onMode(mode.id))}
             >

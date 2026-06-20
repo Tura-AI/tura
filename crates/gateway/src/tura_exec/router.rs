@@ -44,8 +44,9 @@ pub(crate) fn run_via_router(
     if !worker_env.is_empty() {
         payload["worker_env"] = Value::Object(worker_env);
     }
+    let request_id = format!("exec-{}", uuid::Uuid::new_v4());
     let request = json!({
-        "request_id": format!("exec-{}", uuid::Uuid::new_v4()),
+        "request_id": request_id,
         "kind": "call",
         "method": "execution.enqueue_turn",
         "payload": { "turn_id": format!("turn-{}", uuid::Uuid::new_v4()), "session_id": session_id, "payload": payload },
@@ -59,12 +60,7 @@ pub(crate) fn run_via_router(
         .and_then(|_| writer.flush())
         .map_err(|err| format!("failed to send turn to router: {err}"))?;
 
-    let mut line = String::new();
-    BufReader::new(stream)
-        .read_line(&mut line)
-        .map_err(|err| format!("failed to read router response: {err}"))?;
-    let response: Value = serde_json::from_str(line.trim())
-        .map_err(|err| format!("invalid router response: {err}"))?;
+    let response = read_router_response(stream, &request_id)?;
     if !response.get("ok").and_then(Value::as_bool).unwrap_or(false) {
         return Err(response
             .get("error")
@@ -88,6 +84,31 @@ pub(crate) fn run_via_router(
         println!("{text}");
     }
     Ok(0)
+}
+
+fn read_router_response(stream: TcpStream, request_id: &str) -> Result<Value, String> {
+    let mut reader = BufReader::new(stream);
+    loop {
+        let mut line = String::new();
+        let bytes = reader
+            .read_line(&mut line)
+            .map_err(|err| format!("failed to read router response: {err}"))?;
+        if bytes == 0 {
+            return Err("router closed before final response".to_string());
+        }
+        let value: Value = serde_json::from_str(line.trim())
+            .map_err(|err| format!("invalid router response: {err}"))?;
+        let matches_request = value
+            .get("request_id")
+            .and_then(Value::as_str)
+            .is_some_and(|candidate| candidate == request_id);
+        if !matches_request {
+            continue;
+        }
+        if value.get("ok").and_then(Value::as_bool).is_some() {
+            return Ok(value);
+        }
+    }
 }
 
 /// Probe the per-home router daemon; start it detached if none is reachable.
@@ -146,6 +167,7 @@ fn worker_env_from_current_process() -> serde_json::Map<String, Value> {
         "TURA_SESSION_REASONING_EFFORT",
         "TURA_SESSION_ACCELERATION_ENABLED",
         "TURA_SESSION_MAX_TOKENS",
+        "TURA_FRONTEND_SOURCE",
         "TURA_SESSION_LANGUAGE",
         "TURA_SESSION_USER_NAME",
         "TURA_COMMAND_RUN_STALL_CHECK_SECS",
@@ -154,9 +176,12 @@ fn worker_env_from_current_process() -> serde_json::Map<String, Value> {
         "TURA_COMMAND_RUN_STRICT_JSON",
         "TURA_COMMAND_RUN_DISABLE_STRICT_JSON",
         "TURA_RUNTIME_ERRORS_FATAL",
-        "TURA_WORKER_INVOKE_TIMEOUT_SECS",
         "TURA_RUNTIME_WORKER_STDERR_LOG",
         "TURA_DEBUG_RUNTIME",
+        "TURA_PROFILE_TURN_TIMINGS",
+        "TURA_PROFILE_TIMINGS",
+        "TURA_PROFILE_TURN_TIMING_BYTES",
+        "TURA_PROFILE_TIMING_BYTES",
         "TURA_PROVIDER_CONFIG",
         "TURA_ENV_PATH",
         "TURA_PROJECT_ROOT",
@@ -286,7 +311,7 @@ fn resolve_router_binary() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        router_final_text, router_health_ok, router_stderr_log_path,
+        read_router_response, router_final_text, router_health_ok, router_stderr_log_path,
         worker_env_from_current_process,
     };
     use serde_json::json;
@@ -347,20 +372,28 @@ mod tests {
         let previous_model = std::env::var_os("TURA_SESSION_MAX_TOKENS");
         let previous_empty = std::env::var_os("TURA_SESSION_LANGUAGE");
         let previous_other = std::env::var_os("TURA_UNRELATED_ENV_FOR_TEST");
+        let legacy_timeout_key = ["TURA_WORKER", "INVOKE_TIMEOUT_SECS"].join("_");
+        let previous_timeout = std::env::var_os(&legacy_timeout_key);
 
         std::env::set_var("TURA_SESSION_MAX_TOKENS", "4096");
         std::env::set_var("TURA_SESSION_LANGUAGE", "");
         std::env::set_var("TURA_UNRELATED_ENV_FOR_TEST", "must-not-forward");
+        std::env::set_var(&legacy_timeout_key, "1");
 
         let env = worker_env_from_current_process();
 
         assert_eq!(env.get("TURA_SESSION_MAX_TOKENS"), Some(&json!("4096")));
         assert!(!env.contains_key("TURA_SESSION_LANGUAGE"));
         assert!(!env.contains_key("TURA_UNRELATED_ENV_FOR_TEST"));
+        assert!(
+            !env.keys().any(|key| key.contains("INVOKE_TIMEOUT")),
+            "worker env must not forward a session-wide invoke deadline"
+        );
 
         restore_env("TURA_SESSION_MAX_TOKENS", previous_model);
         restore_env("TURA_SESSION_LANGUAGE", previous_empty);
         restore_env("TURA_UNRELATED_ENV_FOR_TEST", previous_other);
+        restore_env(&legacy_timeout_key, previous_timeout);
     }
 
     #[test]
@@ -404,6 +437,35 @@ mod tests {
         server
             .join()
             .map_err(|_| anyhow::anyhow!("health probe server panicked"))??;
+        Ok(())
+    }
+
+    #[test]
+    fn read_router_response_skips_matching_notifications_until_final_response() -> anyhow::Result<()>
+    {
+        let listener = TcpListener::bind(("127.0.0.1", 0))?;
+        let addr = listener.local_addr()?;
+        let server = thread::spawn(move || -> anyhow::Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            stream.write_all(
+                br#"{"request_id":"request-1","kind":"gateway.callback","method":"session.agent_stream","payload":{"type":"turn.started"}}"#,
+            )?;
+            stream.write_all(b"\n")?;
+            stream.write_all(
+                br#"{"request_id":"request-1","ok":true,"payload":{"status":"finished"}}"#,
+            )?;
+            stream.write_all(b"\n")?;
+            stream.flush()?;
+            Ok(())
+        });
+
+        let stream = std::net::TcpStream::connect(addr)?;
+        let response = read_router_response(stream, "request-1").map_err(anyhow::Error::msg)?;
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["payload"]["status"], "finished");
+        server
+            .join()
+            .map_err(|_| anyhow::anyhow!("response server panicked"))??;
         Ok(())
     }
 }

@@ -7,6 +7,7 @@ pub mod external;
 pub mod modes;
 pub mod registry;
 pub mod runtime;
+pub mod shell_executor;
 pub mod state_machine;
 
 pub const TOOL_ROOT_KIND: &str = "tura-crate-tools";

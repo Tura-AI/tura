@@ -91,7 +91,9 @@ when that environment variable is set.
 cargo fmt -p session_log
 cargo check -p session_log
 cargo test -p session_log
-.\scripts\run-backend-performance-tests.ps1 -Crate session_log
+.\xtask\scripts\run-backend-os-tests.ps1 -Crate session_log
+.\xtask\scripts\run-backend-performance-tests.ps1 -Crate session_log
 ```
 
-The last command is the compatibility-named runner for `tests/benchmark`.
+The OS runner covers process/service-owner lifecycle tests; the performance
+runner covers non-process stress tests.

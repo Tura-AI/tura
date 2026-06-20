@@ -8,16 +8,28 @@ REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 TARGET_DIR="$REPO_ROOT/target/release"
 ICON_PATH="$REPO_ROOT/assets/tura/icon.ico"
 SKIP_TUI=0
+SKIP_GUI=0
+SKIP_TAURI=0
+BACKEND_ONLY=0
+CLEAN=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --skip-tui) SKIP_TUI=1 ;;
+    --skip-gui) SKIP_GUI=1 ;;
+    --skip-tauri) SKIP_TAURI=1 ;;
+    --backend-only|--skip-apps) BACKEND_ONLY=1 ;;
+    -clean|--clean) CLEAN=1 ;;
     -h|--help)
       cat <<'EOF'
 Usage:
-  scripts/build-release.sh [--skip-tui]
+  scripts/build-release.sh [--backend-only] [--skip-tui] [--skip-gui] [--skip-tauri] [-clean|--clean]
 
 Builds release artifacts directly into target/release.
+By default this builds backend binaries, the web GUI dist, the compiled TUI,
+and the Tauri desktop bundle. Use --backend-only when a CI job only needs Rust
+release artifacts.
+By default, local session DB/config state is preserved. Pass -clean to remove it before building.
 EOF
       exit 0
       ;;
@@ -27,8 +39,14 @@ EOF
 done
 
 command -v cargo >/dev/null 2>&1 || { echo "cargo was not found on PATH." >&2; exit 1; }
-if [ "$SKIP_TUI" -eq 0 ]; then
-  command -v bun >/dev/null 2>&1 || { echo "bun was not found on PATH; pass --skip-tui to build Rust only." >&2; exit 1; }
+BUILD_TUI=0
+BUILD_GUI=0
+BUILD_TAURI=0
+if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_TUI" -eq 0 ]; then BUILD_TUI=1; fi
+if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_GUI" -eq 0 ]; then BUILD_GUI=1; fi
+if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_TAURI" -eq 0 ]; then BUILD_TAURI=1; fi
+if [ "$BUILD_TUI" -eq 1 ] || [ "$BUILD_GUI" -eq 1 ] || [ "$BUILD_TAURI" -eq 1 ]; then
+  command -v bun >/dev/null 2>&1 || { echo "bun was not found on PATH; pass --backend-only to build Rust only." >&2; exit 1; }
 fi
 
 case "$(uname -s 2>/dev/null || echo unknown)" in
@@ -44,7 +62,7 @@ rm -f "$TARGET_DIR/cli" "$TARGET_DIR/cli.exe"
 
 copy_gui_dist() {
   src="$REPO_ROOT/apps/gui/app/dist"
-  dst="$TARGET_DIR/gui"
+  dst="$TARGET_DIR/tura_gui"
   if [ ! -f "$src/index.html" ]; then
     echo "GUI dist not found at $src. Run the GUI build before copying release artifacts." >&2
     exit 1
@@ -63,7 +81,7 @@ is_under_repo() {
 
 stop_repo_tura_backends() {
   command -v pgrep >/dev/null 2>&1 || return 0
-  for name in tura tura_gateway tura_router tura_session_db tura_runtime tura_exec; do
+  for name in tura tura_gui tura_gateway tura_router tura_session_db tura_runtime tura_exec; do
     pids=$(pgrep -f "$REPO_ROOT/target/.*/$name" 2>/dev/null || true)
     [ -n "$pids" ] || continue
     # shellcheck disable=SC2086
@@ -77,16 +95,17 @@ stop_repo_tura_backends() {
   done
 }
 
-remove_session_db_dirty_data() {
+remove_local_runtime_state() {
   for target in \
     "$REPO_ROOT/db/session_log" \
+    "$REPO_ROOT/.tura/config.conf" \
     "$REPO_ROOT/.tura/session_log.sqlite3" \
     "$REPO_ROOT/.tura/session_log.sqlite3-wal" \
     "$REPO_ROOT/.tura/session_log.sqlite3-shm" \
     "$REPO_ROOT/.tura/session_log.sqlite3.init.lock"
   do
     if ! is_under_repo "$target"; then
-      echo "Refusing to delete session DB path outside repository: $target" >&2
+      echo "Refusing to delete local runtime path outside repository: $target" >&2
       exit 1
     fi
     rm -rf -- "$target"
@@ -94,18 +113,25 @@ remove_session_db_dirty_data() {
 }
 
 stop_repo_tura_backends
-remove_session_db_dirty_data
+if [ "$CLEAN" -eq 1 ]; then
+  remove_local_runtime_state
+else
+  echo "Preserving local session DB/config state. Pass -clean to remove it before building."
+fi
 
 (cd "$REPO_ROOT" && cargo build --release -p gateway --bin tura_exec --bin tura_gateway)
 (cd "$REPO_ROOT" && cargo build --release -p router --bin tura_router)
 (cd "$REPO_ROOT" && cargo build --release -p session_log --bin tura_session_db)
 (cd "$REPO_ROOT" && cargo build --release -p runtime --bin tura_runtime)
-(cd "$REPO_ROOT" && cargo build --release -p read_media -p web_discover)
+(cd "$REPO_ROOT" && cargo build --release -p generate_media -p read_media -p web_discover)
 
-if [ "$SKIP_TUI" -eq 0 ]; then
-  mkdir -p "$TARGET_DIR"
+if [ "$BUILD_GUI" -eq 1 ]; then
   (cd "$REPO_ROOT/apps/gui" && bun run build)
   copy_gui_dist
+fi
+
+if [ "$BUILD_TUI" -eq 1 ]; then
+  mkdir -p "$TARGET_DIR"
   case "$(uname -s 2>/dev/null || echo unknown)" in
   MINGW*|MSYS*|CYGWIN*)
     (cd "$REPO_ROOT" && bun build --compile --windows-icon "$ICON_PATH" --outfile "$TARGET_DIR/tura" apps/tui/src/index.ts)
@@ -114,6 +140,10 @@ if [ "$SKIP_TUI" -eq 0 ]; then
     (cd "$REPO_ROOT" && bun build --compile --outfile "$TARGET_DIR/tura" apps/tui/src/index.ts)
     ;;
   esac
+fi
+
+if [ "$BUILD_TAURI" -eq 1 ]; then
+  (cd "$REPO_ROOT/apps/tauri" && bun run build)
 fi
 
 echo "Release artifacts ready in $TARGET_DIR"

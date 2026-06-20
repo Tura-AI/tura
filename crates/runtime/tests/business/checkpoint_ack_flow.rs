@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+use chrono::{Duration as ChronoDuration, Utc};
 use runtime::checkpoint::{
     checkpoint_command_ready, checkpoint_command_run_finished, checkpoint_command_run_started,
     checkpoint_command_started, checkpoint_streamed_command_finished, StreamedCommandCheckpoint,
@@ -24,6 +25,11 @@ fn runtime_checkpoint_business_flow_writes_applied_rows_idempotently() -> Result
     let runtime_id = "runtime-worker-online";
     let command_run_id = "command-run-online";
     let command_id = "command-online-1";
+    let run_started_at = Utc::now();
+    let ready_at = run_started_at + ChronoDuration::milliseconds(1);
+    let command_started_at = run_started_at + ChronoDuration::milliseconds(2);
+    let command_finished_at = run_started_at + ChronoDuration::milliseconds(3);
+    let run_finished_at = run_started_at + ChronoDuration::milliseconds(4);
     let command = json!({
         "id": command_id,
         "step": 1,
@@ -34,6 +40,7 @@ fn runtime_checkpoint_business_flow_writes_applied_rows_idempotently() -> Result
         &session_id,
         runtime_id,
         command_run_id,
+        run_started_at,
     ))?;
     checkpoint_ok(checkpoint_command_ready(
         &session_id,
@@ -42,6 +49,7 @@ fn runtime_checkpoint_business_flow_writes_applied_rows_idempotently() -> Result
         command_id,
         0,
         &command,
+        ready_at,
     ))?;
     checkpoint_ok(checkpoint_command_started(
         &session_id,
@@ -50,6 +58,7 @@ fn runtime_checkpoint_business_flow_writes_applied_rows_idempotently() -> Result
         command_id,
         0,
         &command,
+        command_started_at,
     ))?;
     let result = json!({
         "id": command_id,
@@ -66,6 +75,7 @@ fn runtime_checkpoint_business_flow_writes_applied_rows_idempotently() -> Result
         command_run_id,
         index: 0,
         result: &result,
+        finished_at: command_finished_at,
     };
     checkpoint_ok(checkpoint_streamed_command_finished(input.clone()))?;
     checkpoint_ok(checkpoint_streamed_command_finished(input))?;
@@ -75,9 +85,11 @@ fn runtime_checkpoint_business_flow_writes_applied_rows_idempotently() -> Result
         command_run_id,
         "success",
         1,
+        run_started_at,
+        run_finished_at,
     ))?;
 
-    let rows = checkpoint_rows(&home, &session_id)?;
+    let rows = wait_for_checkpoint_rows(&home, &session_id, 5, Duration::from_secs(10))?;
     assert_eq!(
         rows.len(),
         5,
@@ -103,6 +115,45 @@ fn runtime_checkpoint_business_flow_writes_applied_rows_idempotently() -> Result
         .iter()
         .find(|row| row.event_type == "command_finished")
         .ok_or_else(|| anyhow!("missing command_finished row"))?;
+    let run_started = rows
+        .iter()
+        .find(|row| row.event_type == "command_run_started")
+        .ok_or_else(|| anyhow!("missing command_run_started row"))?;
+    let ready = rows
+        .iter()
+        .find(|row| row.event_type == "command_ready")
+        .ok_or_else(|| anyhow!("missing command_ready row"))?;
+    let started = rows
+        .iter()
+        .find(|row| row.event_type == "command_started")
+        .ok_or_else(|| anyhow!("missing command_started row"))?;
+    let run_finished = rows
+        .iter()
+        .find(|row| row.event_type == "command_run_finished")
+        .ok_or_else(|| anyhow!("missing command_run_finished row"))?;
+    assert_eq!(
+        run_started.payload["started_at"],
+        run_started_at.to_rfc3339()
+    );
+    assert_eq!(ready.payload["started_at"], ready_at.to_rfc3339());
+    assert_eq!(
+        started.payload["started_at"],
+        command_started_at.to_rfc3339()
+    );
+    assert_eq!(
+        finished.payload["finished_at"],
+        command_finished_at.to_rfc3339()
+    );
+    assert_eq!(
+        run_finished.payload["started_at"],
+        run_started_at.to_rfc3339()
+    );
+    assert_eq!(
+        run_finished.payload["finished_at"],
+        run_finished_at.to_rfc3339()
+    );
+    assert_eq!(run_finished.payload["status"], "command_run_finished");
+    assert_eq!(run_finished.payload["changes"]["status"], "success");
     assert_eq!(finished.command_type.as_deref(), Some("shell_command"));
     assert_eq!(
         finished.payload["output_summary"],
@@ -130,10 +181,12 @@ fn runtime_checkpoint_business_flow_queues_offline_ack_and_drains_on_service_sta
     );
 
     let session_id = format!("runtime-checkpoint-offline-{}", uuid::Uuid::new_v4());
+    let run_started_at = Utc::now();
     checkpoint_ok(checkpoint_command_run_started(
         &session_id,
         "runtime-worker-offline",
         "command-run-offline",
+        run_started_at,
     ))?;
     assert!(
         pending_queue_files(&home)? >= 1,
@@ -169,6 +222,11 @@ fn runtime_checkpoint_business_flow_drains_offline_command_batch_idempotently() 
     let runtime_id = "runtime-worker-batch";
     let command_run_id = "command-run-batch";
     let command_id = "command-batch-1";
+    let run_started_at = Utc::now();
+    let ready_at = run_started_at + ChronoDuration::milliseconds(1);
+    let command_started_at = run_started_at + ChronoDuration::milliseconds(2);
+    let command_finished_at = run_started_at + ChronoDuration::milliseconds(3);
+    let run_finished_at = run_started_at + ChronoDuration::milliseconds(4);
     let command = json!({
         "id": command_id,
         "step": 1,
@@ -191,6 +249,7 @@ fn runtime_checkpoint_business_flow_drains_offline_command_batch_idempotently() 
         &session_id,
         runtime_id,
         command_run_id,
+        run_started_at,
     ))?;
     checkpoint_ok(checkpoint_command_ready(
         &session_id,
@@ -199,6 +258,7 @@ fn runtime_checkpoint_business_flow_drains_offline_command_batch_idempotently() 
         command_id,
         0,
         &command,
+        ready_at,
     ))?;
     checkpoint_ok(checkpoint_command_started(
         &session_id,
@@ -207,6 +267,7 @@ fn runtime_checkpoint_business_flow_drains_offline_command_batch_idempotently() 
         command_id,
         0,
         &command,
+        command_started_at,
     ))?;
     let finished = StreamedCommandCheckpoint {
         session_id: &session_id,
@@ -215,6 +276,7 @@ fn runtime_checkpoint_business_flow_drains_offline_command_batch_idempotently() 
         command_run_id,
         index: 0,
         result: &result,
+        finished_at: command_finished_at,
     };
     checkpoint_ok(checkpoint_streamed_command_finished(finished.clone()))?;
     checkpoint_ok(checkpoint_streamed_command_finished(finished))?;
@@ -224,6 +286,8 @@ fn runtime_checkpoint_business_flow_drains_offline_command_batch_idempotently() 
         command_run_id,
         "success",
         1,
+        run_started_at,
+        run_finished_at,
     ))?;
     assert!(
         pending_queue_files(&home)? >= 6,
@@ -276,6 +340,19 @@ fn runtime_checkpoint_business_flow_drains_offline_command_batch_idempotently() 
     assert_eq!(finished_row.payload["output_summary"], "checkpoint-batch");
     assert_eq!(finished_row.payload["changes"][0]["path"], "batch.txt");
     assert_eq!(finished_row.payload["changes"][1]["path"], "trace.log");
+    let run_finished = rows
+        .iter()
+        .find(|row| row.event_type == "command_run_finished")
+        .ok_or_else(|| anyhow!("missing command_run_finished row after offline drain"))?;
+    assert_eq!(
+        run_finished.payload["started_at"],
+        run_started_at.to_rfc3339()
+    );
+    assert_eq!(
+        run_finished.payload["finished_at"],
+        run_finished_at.to_rfc3339()
+    );
+    assert_eq!(run_finished.payload["changes"]["status"], "success");
 
     drop(service);
     wait_until(Duration::from_secs(5), || {

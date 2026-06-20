@@ -205,7 +205,7 @@ export function ToolInspector(props: {
                         type="button"
                         aria-expanded={expanded()}
                         onClick={() => {
-                          props.onSelect(record.id);
+                          props.onSelect(record.partId);
                           setExpandedId(expanded() ? undefined : record.id);
                         }}
                       >

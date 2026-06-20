@@ -6,8 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$XtaskRoot = Resolve-Path (Join-Path $ScriptDir "..")
-$RepoRoot = Resolve-Path (Join-Path $XtaskRoot "..")
+$RepoRoot = Resolve-Path (Join-Path $ScriptDir "..\..")
 
 Set-Location $RepoRoot
 

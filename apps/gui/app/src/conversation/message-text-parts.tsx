@@ -2,7 +2,8 @@ import type { MessagePart } from "@tura/gateway-sdk";
 import { Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import { jsonPreview } from "../state/format";
 import { partText } from "../state/global-store";
-import { RichText, stripReactionEmoji } from "./message-rich-text";
+import { stripEmojiDirectives } from "./message-rich-protocol";
+import { RichText } from "./message-rich-text";
 
 export function previewUserTextParts(parts: MessagePart[], expanded: boolean) {
   if (expanded) {
@@ -97,15 +98,26 @@ function appendUserPreviewEllipsis(
   return next;
 }
 
-export function TextPartCell(props: { part: MessagePart; streaming: boolean }) {
-  const text = createMemo(() => stripReactionEmoji(partText(props.part)));
+export function TextPartCell(props: {
+  part: MessagePart;
+  streaming: boolean;
+  workspaceDirectory?: string;
+}) {
+  const text = createMemo(() => stripEmojiDirectives(partText(props.part)));
   return (
     <div class="part text-part">
       <Show
         when={text()}
         fallback={<pre>{jsonPreview(props.part.state || props.part.metadata)}</pre>}
       >
-        {(value) => <TypingText id={props.part.id} text={value()} active={props.streaming} />}
+        {(value) => (
+          <TypingText
+            id={props.part.id}
+            text={value()}
+            active={props.streaming}
+            workspaceDirectory={props.workspaceDirectory}
+          />
+        )}
       </Show>
     </div>
   );
@@ -114,7 +126,12 @@ export function TextPartCell(props: { part: MessagePart; streaming: boolean }) {
 const typingTextCache = new Map<string, string>();
 const completedTypingTextCache = new Set<string>();
 
-export function TypingText(props: { id: string; text: string; active: boolean }) {
+export function TypingText(props: {
+  id: string;
+  text: string;
+  active: boolean;
+  workspaceDirectory?: string;
+}) {
   const [visible, setVisible] = createSignal(
     props.active && !completedTypingTextCache.has(props.text)
       ? (typingTextCache.get(props.id) ?? "")
@@ -172,5 +189,11 @@ export function TypingText(props: { id: string; text: string; active: boolean })
     }
   });
 
-  return <RichText text={visible()} active={props.active} />;
+  return (
+    <RichText
+      text={visible()}
+      active={props.active}
+      workspaceDirectory={props.workspaceDirectory}
+    />
+  );
 }

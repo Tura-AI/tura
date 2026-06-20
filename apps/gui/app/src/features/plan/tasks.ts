@@ -362,7 +362,7 @@ export function planTimedSessions(sessions: Session[]): Session[] {
 export function timedSessionTasks(session: Session): TaskManagement[] {
   return sortedSessionTasks(session).filter(
     (task) =>
-      (taskPlanStatus(task) ?? planStoredPlanStatus(session)) === "todo" &&
+      (taskPlanStatus(task) ?? planStoredPlanStatus(session) ?? "todo") === "todo" &&
       isTimedStartCondition(taskStartCondition(task)) &&
       Boolean(taskStartAt(task)),
   );

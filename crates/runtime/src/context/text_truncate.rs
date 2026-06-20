@@ -4,15 +4,17 @@
 //! `context::*` via `pub(super)`.
 
 use super::token_budget::{formatted_truncate_text, APPROX_CHARS_PER_TOKEN};
+use crate::prompt_style::context_blocks;
 
 pub(super) fn environment_context_message(cwd: &std::path::Path) -> String {
-    format!(
-        "<environment_context>\n  <cwd>{}</cwd>\n  <shell>{}</shell>\n  <current_date>{}</current_date>\n  <timezone>{}</timezone>\n  <system_language>{}</system_language>\n</environment_context>",
-        cwd.display(),
+    let timezone = std::env::var("TZ").unwrap_or_else(|_| "Europe/Paris".to_string());
+    let system_language = session_language();
+    context_blocks::environment_context(
+        cwd,
         context_shell_name(),
         chrono::Local::now().format("%Y-%m-%d"),
-        std::env::var("TZ").unwrap_or_else(|_| "Europe/Paris".to_string()),
-        session_language()
+        &timezone,
+        &system_language,
     )
 }
 

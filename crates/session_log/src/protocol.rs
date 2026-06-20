@@ -107,6 +107,7 @@ pub struct DeleteWorkspaceRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum SessionLogCommand {
+    Health,
     UpsertSession(UpsertSessionRequest),
     ApplyCommandCheckpoint(Box<CommandCheckpoint>),
     GetSession(GetSessionRequest),
@@ -188,6 +189,7 @@ mod tests {
     #[test]
     fn command_serde_uses_snake_case_tagged_contract() {
         let commands = [
+            SessionLogCommand::Health,
             SessionLogCommand::GetSession(GetSessionRequest {
                 session_id: "session".to_string(),
             }),

@@ -8,9 +8,10 @@ const CONFIG_FILE: &str = "config.conf";
 pub const DEFAULT_SESSION_MODEL: &str = "codex/gpt-5.5";
 pub const DEFAULT_SESSION_PROVIDER: &str = "codex";
 pub const DEFAULT_SESSION_MODEL_ID: &str = "gpt-5.5";
-pub const DEFAULT_SESSION_AGENT: &str = "fast";
+pub const DEFAULT_SESSION_AGENT: &str = "thinking";
+pub const DEFAULT_SESSION_PERSONA: &str = "tura";
 pub const DEFAULT_SESSION_TYPE: &str = "coding";
-pub const DEFAULT_SESSION_REASONING_EFFORT: &str = "medium";
+pub const DEFAULT_SESSION_REASONING_EFFORT: &str = "high";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -20,6 +21,7 @@ pub struct TuraSessionConfig {
     pub active_provider: Option<String>,
     pub active_model: Option<String>,
     pub active_agent: Option<String>,
+    pub active_persona: Option<String>,
     pub session_type: Option<String>,
     pub model_variant: Option<String>,
     pub model_acceleration_enabled: Option<bool>,
@@ -27,6 +29,7 @@ pub struct TuraSessionConfig {
     pub kill_processes_on_start: Option<bool>,
     pub validator_enabled: Option<bool>,
     pub force_planning: Option<bool>,
+    pub show_react_kaomoji: Option<bool>,
     pub command_run_stall_guard_profile: Option<String>,
     pub command_run_stall_guard_check_secs: Option<u64>,
     pub command_run_stall_guard_identical_checks: Option<u8>,
@@ -41,6 +44,7 @@ impl Default for TuraSessionConfig {
             active_provider: Some(DEFAULT_SESSION_PROVIDER.to_string()),
             active_model: Some(DEFAULT_SESSION_MODEL_ID.to_string()),
             active_agent: Some(DEFAULT_SESSION_AGENT.to_string()),
+            active_persona: Some(DEFAULT_SESSION_PERSONA.to_string()),
             session_type: Some(DEFAULT_SESSION_TYPE.to_string()),
             model_variant: Some(DEFAULT_SESSION_REASONING_EFFORT.to_string()),
             model_acceleration_enabled: Some(true),
@@ -48,6 +52,7 @@ impl Default for TuraSessionConfig {
             kill_processes_on_start: None,
             validator_enabled: None,
             force_planning: None,
+            show_react_kaomoji: Some(true),
             command_run_stall_guard_profile: None,
             command_run_stall_guard_check_secs: None,
             command_run_stall_guard_identical_checks: None,
@@ -58,6 +63,8 @@ impl Default for TuraSessionConfig {
 
 impl TuraSessionConfig {
     pub fn merge(&mut self, next: TuraSessionConfig) {
+        let model_updated = next.model.is_some();
+        let active_model_updated = next.active_provider.is_some() || next.active_model.is_some();
         if next.model.is_some() {
             self.model = next.model;
         }
@@ -72,6 +79,9 @@ impl TuraSessionConfig {
         }
         if next.active_agent.is_some() {
             self.active_agent = next.active_agent;
+        }
+        if next.active_persona.is_some() {
+            self.active_persona = next.active_persona;
         }
         if next.session_type.is_some() {
             self.session_type = next.session_type;
@@ -94,6 +104,9 @@ impl TuraSessionConfig {
         if next.force_planning.is_some() {
             self.force_planning = next.force_planning;
         }
+        if next.show_react_kaomoji.is_some() {
+            self.show_react_kaomoji = next.show_react_kaomoji;
+        }
         if next.command_run_stall_guard_profile.is_some() {
             self.command_run_stall_guard_profile = next.command_run_stall_guard_profile;
         }
@@ -107,25 +120,33 @@ impl TuraSessionConfig {
         if next.agent_avatar.is_some() {
             self.agent_avatar = next.agent_avatar;
         }
+        if model_updated && !active_model_updated {
+            self.active_provider = None;
+            self.active_model = None;
+        } else if active_model_updated && !model_updated {
+            self.model = None;
+        }
         self.fill_model_parts();
     }
 
     pub fn fill_model_parts(&mut self) {
-        if self.model.is_none() {
-            if let (Some(provider), Some(model)) = (&self.active_provider, &self.active_model) {
-                self.model = Some(format!("{provider}/{model}"));
-            }
+        if let (Some(provider), Some(model_id)) = (
+            non_empty(self.active_provider.as_deref()).map(ToString::to_string),
+            non_empty(self.active_model.as_deref()).map(ToString::to_string),
+        ) {
+            let model_id = normalize_model_id(&provider, &model_id);
+            self.active_provider = Some(provider.clone());
+            self.active_model = Some(model_id.clone());
+            self.model = Some(format!("{provider}/{model_id}"));
+            return;
         }
-        if let Some(model) = &self.model {
-            if let Some((provider, model_id)) = model.split_once('/') {
-                if self.active_provider.is_none() {
-                    self.active_provider = Some(provider.to_string());
-                }
-                if self.active_model.is_none() {
-                    self.active_model = Some(model_id.to_string());
-                }
-            }
-        }
+
+        if let Some((provider, model_id)) = self.model.as_deref().and_then(provider_model_pair) {
+            let model_id = normalize_model_id(provider, model_id);
+            self.active_provider = Some(provider.to_string());
+            self.active_model = Some(model_id.clone());
+            self.model = Some(format!("{provider}/{model_id}"));
+        };
     }
 
     pub fn command_run_stall_guard(&self) -> CommandRunStallGuardConfig {
@@ -142,6 +163,21 @@ impl TuraSessionConfig {
         }
         config
     }
+}
+
+fn provider_model_pair(value: &str) -> Option<(&str, &str)> {
+    let (provider, model) = value.trim().split_once('/')?;
+    let provider = non_empty(Some(provider))?;
+    let model = non_empty(Some(model))?;
+    Some((provider, model))
+}
+
+fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn normalize_model_id(provider: &str, model: &str) -> String {
+    tura_llm_rust::Settings::normalize_model_name(provider, model)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -236,22 +272,17 @@ fn parse_config(content: &str) -> TuraSessionConfig {
 
     let mut config = TuraSessionConfig {
         language: values.get("language").cloned(),
-        model: values
-            .get("model")
-            .cloned()
-            .or_else(|| Some(DEFAULT_SESSION_MODEL.to_string())),
-        active_provider: values
-            .get("active_provider")
-            .cloned()
-            .or_else(|| Some(DEFAULT_SESSION_PROVIDER.to_string())),
-        active_model: values
-            .get("active_model")
-            .cloned()
-            .or_else(|| Some(DEFAULT_SESSION_MODEL_ID.to_string())),
+        model: values.get("model").cloned(),
+        active_provider: values.get("active_provider").cloned(),
+        active_model: values.get("active_model").cloned(),
         active_agent: values
             .get("active_agent")
             .cloned()
             .or_else(|| Some(DEFAULT_SESSION_AGENT.to_string())),
+        active_persona: values
+            .get("active_persona")
+            .cloned()
+            .or_else(|| Some(DEFAULT_SESSION_PERSONA.to_string())),
         session_type: values
             .get("session_type")
             .cloned()
@@ -276,6 +307,9 @@ fn parse_config(content: &str) -> TuraSessionConfig {
         force_planning: values
             .get("force_planning")
             .and_then(|value| parse_bool(value)),
+        show_react_kaomoji: values
+            .get("show_react_kaomoji")
+            .and_then(|value| parse_bool(value)),
         command_run_stall_guard_profile: values.get("command_run_stall_guard_profile").cloned(),
         command_run_stall_guard_check_secs: values
             .get("command_run_stall_guard_check_secs")
@@ -292,7 +326,16 @@ fn parse_config(content: &str) -> TuraSessionConfig {
     if config.model_acceleration_enabled.is_none() {
         config.model_acceleration_enabled = Some(true);
     }
+    if config.show_react_kaomoji.is_none() {
+        config.show_react_kaomoji = Some(true);
+    }
     config.fill_model_parts();
+    if config.model.is_none() {
+        config.model = Some(DEFAULT_SESSION_MODEL.to_string());
+        config.active_provider = Some(DEFAULT_SESSION_PROVIDER.to_string());
+        config.active_model = Some(DEFAULT_SESSION_MODEL_ID.to_string());
+        config.fill_model_parts();
+    }
     config
 }
 
@@ -309,6 +352,11 @@ fn serialize_config(config: &TuraSessionConfig) -> String {
     );
     push_line(&mut lines, "active_model", config.active_model.as_deref());
     push_line(&mut lines, "active_agent", config.active_agent.as_deref());
+    push_line(
+        &mut lines,
+        "active_persona",
+        config.active_persona.as_deref(),
+    );
     push_line(&mut lines, "session_type", config.session_type.as_deref());
     push_line(&mut lines, "model_variant", config.model_variant.as_deref());
     if let Some(value) = config.model_acceleration_enabled {
@@ -325,6 +373,9 @@ fn serialize_config(config: &TuraSessionConfig) -> String {
     }
     if let Some(value) = config.force_planning {
         lines.push(format!("force_planning={value}"));
+    }
+    if let Some(value) = config.show_react_kaomoji {
+        lines.push(format!("show_react_kaomoji={value}"));
     }
     push_line(
         &mut lines,
@@ -460,6 +511,8 @@ mod tests {
 command_run_stall_guard_profile=long_io_60s
 command_run_stall_guard_check_secs=15
 command_run_stall_guard_identical_checks=4
+show_react_kaomoji=false
+active_persona=reviewer
 "#,
         );
 
@@ -468,11 +521,65 @@ command_run_stall_guard_identical_checks=4
             Some("long_io_60s")
         );
         assert_eq!(config.command_run_stall_guard().stall_secs(), 60);
+        assert_eq!(config.show_react_kaomoji, Some(false));
+        assert_eq!(config.active_persona.as_deref(), Some("reviewer"));
 
         let serialized = serialize_config(&config);
+        assert!(serialized.contains("active_persona=reviewer"));
         assert!(serialized.contains("command_run_stall_guard_profile=long_io_60s"));
         assert!(serialized.contains("command_run_stall_guard_check_secs=15"));
         assert!(serialized.contains("command_run_stall_guard_identical_checks=4"));
+        assert!(serialized.contains("show_react_kaomoji=false"));
+    }
+
+    #[test]
+    fn active_pair_takes_precedence_over_stale_model() {
+        let config = parse_config(
+            r#"
+model=codex/gpt-5.5
+active_provider=openrouter
+active_model=qwen/qwen3.7-max
+"#,
+        );
+
+        assert_eq!(config.model.as_deref(), Some("openrouter/qwen/qwen3.7-max"));
+        assert_eq!(config.active_provider.as_deref(), Some("openrouter"));
+        assert_eq!(config.active_model.as_deref(), Some("qwen/qwen3.7-max"));
+    }
+
+    #[test]
+    fn model_only_config_rebuilds_active_pair() {
+        let config = parse_config(
+            r#"
+model=openrouter/qwen/qwen3.7-max
+"#,
+        );
+
+        assert_eq!(config.model.as_deref(), Some("openrouter/qwen/qwen3.7-max"));
+        assert_eq!(config.active_provider.as_deref(), Some("openrouter"));
+        assert_eq!(config.active_model.as_deref(), Some("qwen/qwen3.7-max"));
+    }
+
+    #[test]
+    fn active_pair_patch_rebuilds_model_instead_of_reusing_stale_model() {
+        let mut config = TuraSessionConfig {
+            model: Some("codex/gpt-5.5".to_string()),
+            active_provider: Some("codex".to_string()),
+            active_model: Some("gpt-5.5".to_string()),
+            ..TuraSessionConfig::default()
+        };
+
+        let patch = serde_json::from_value::<TuraSessionConfig>(serde_json::json!({
+            "active_provider": "openrouter",
+            "active_model": "qwen/qwen3.7-max"
+        }))
+        .expect("patch config");
+
+        config.merge(patch);
+
+        assert_eq!(config.model.as_deref(), Some("openrouter/qwen/qwen3.7-max"));
+        assert_eq!(config.active_provider.as_deref(), Some("openrouter"));
+        assert_eq!(config.active_model.as_deref(), Some("qwen/qwen3.7-max"));
     }
 
     #[test]

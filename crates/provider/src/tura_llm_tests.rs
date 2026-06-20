@@ -90,10 +90,8 @@ fn provider_latency_defaults_match_fast_profile() {
 
 #[test]
 fn provider_latency_level_tracks_tier_flag() {
-    assert_eq!(super::latency_level_for_tier("flagship_thinking"), "x-high");
     assert_eq!(super::latency_level_for_tier("thinking"), "high");
     assert_eq!(super::latency_level_for_tier("fast"), "fast");
-    assert_eq!(super::latency_level_for_tier("instant"), "fast");
     assert_eq!(super::latency_level_for_tier("embedding_high"), "high");
     assert_eq!(super::latency_level_for_tier("embedding_low"), "fast");
     // Unknown tiers fall back to the lowest level.
@@ -104,13 +102,10 @@ fn provider_latency_level_tracks_tier_flag() {
 fn provider_latency_timeouts_for_tier_resolve_levels() {
     let config = ProviderLatencyConfig::default();
 
-    let flagship = config.timeouts_for_tier("flagship_thinking");
-    assert_eq!(flagship.total_timeout_ms, 1_200_000);
-
     let thinking = config.timeouts_for_tier("thinking");
     assert_eq!(thinking.total_timeout_ms, 960_000);
 
-    let fast = config.timeouts_for_tier("instant");
+    let fast = config.timeouts_for_tier("fast");
     assert_eq!(fast.total_timeout_ms, 240_000);
 }
 

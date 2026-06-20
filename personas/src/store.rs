@@ -8,6 +8,9 @@ pub const DYNAMIC_PERSONAS_DIR: &str = "personas";
 pub const STATIC_PERSONAS_DIR: &str = "personas/src";
 pub const PERSONA_CONFIG_FILE: &str = "persona_config.json";
 pub const PERSONA_PROMPT_DIR: &str = "prompt";
+pub const COMMUNICATION_STYLE_DIR: &str = "communication_style";
+pub const COMMUNICATION_STYLE_FILE: &str = "communication_style.md";
+pub const CLI_COMMUNICATION_STYLE_FILE: &str = "cli_communication_style.md";
 pub const EXPRESSION_MANIFEST_FILE: &str = "personas/src/expression_manifest.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -30,6 +33,8 @@ pub struct PersonaExpression {
     pub name: String,
     #[serde(default)]
     pub emoji_aliases: Vec<String>,
+    #[serde(default, rename = "reactKaomoji")]
+    pub react_kaomoji: Vec<String>,
     pub source_directory: PathBuf,
     pub grid_path: PathBuf,
     #[serde(default)]
@@ -66,6 +71,8 @@ struct ExpressionManifestItem {
     name: String,
     #[serde(default, rename = "emojiAliases")]
     emoji_aliases: Vec<String>,
+    #[serde(default, rename = "reactKaomoji")]
+    react_kaomoji: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -109,6 +116,8 @@ pub struct StoredPersona {
     pub persona: Option<String>,
     #[serde(default)]
     pub communication_style: Option<String>,
+    #[serde(default)]
+    pub cli_communication_style: Option<String>,
     pub management: PersonaManagement,
 }
 
@@ -203,7 +212,7 @@ pub fn save_dynamic_persona(
         fs::write(
             config
                 .prompt_directory(project_root)
-                .join("communication_style.md"),
+                .join(COMMUNICATION_STYLE_FILE),
             communication_style,
         )
         .map_err(|err| format!("failed to write communication style prompt: {err}"))?;
@@ -267,7 +276,8 @@ fn load_persona_at(
     apply_expression_manifest(project_root, &mut config);
     let prompt_dir = project_root.join(&config.prompt_directory);
     let persona = fs::read_to_string(prompt_dir.join("persona.md")).ok();
-    let communication_style = fs::read_to_string(prompt_dir.join("communication_style.md")).ok();
+    let communication_style = read_communication_style(project_root, &prompt_dir);
+    let cli_communication_style = read_cli_communication_style(project_root, &prompt_dir);
     let id = normalize_id(&config.persona_name);
     let management = PersonaManagement {
         persona_id: id.clone(),
@@ -301,6 +311,7 @@ fn load_persona_at(
         config,
         persona,
         communication_style,
+        cli_communication_style,
         management,
     })
 }
@@ -335,6 +346,11 @@ fn apply_expression_manifest(project_root: &Path, config: &mut PersonaConfig) {
         if let Some(item) = by_id.get(&expression.id) {
             expression.name = item.name.clone();
             expression.emoji_aliases = item.emoji_aliases.clone();
+            expression.react_kaomoji = item
+                .react_kaomoji
+                .get(&config.persona_name)
+                .cloned()
+                .unwrap_or_default();
         } else if expression.name.is_empty() {
             expression.name = expression.id.clone();
         }
@@ -382,6 +398,31 @@ impl PersonaConfig {
     fn prompt_directory(&self, project_root: &Path) -> PathBuf {
         project_root.join(&self.prompt_directory)
     }
+}
+
+fn read_communication_style(project_root: &Path, prompt_dir: &Path) -> Option<String> {
+    [
+        project_root
+            .join(STATIC_PERSONAS_DIR)
+            .join(COMMUNICATION_STYLE_DIR)
+            .join(COMMUNICATION_STYLE_FILE),
+        prompt_dir.join(COMMUNICATION_STYLE_FILE),
+        prompt_dir.join("communication_stlye.md"),
+    ]
+    .into_iter()
+    .find_map(|path| fs::read_to_string(path).ok())
+}
+
+fn read_cli_communication_style(project_root: &Path, prompt_dir: &Path) -> Option<String> {
+    [
+        project_root
+            .join(STATIC_PERSONAS_DIR)
+            .join(COMMUNICATION_STYLE_DIR)
+            .join(CLI_COMMUNICATION_STYLE_FILE),
+        prompt_dir.join(CLI_COMMUNICATION_STYLE_FILE),
+    ]
+    .into_iter()
+    .find_map(|path| fs::read_to_string(path).ok())
 }
 
 #[cfg(test)]
@@ -508,6 +549,71 @@ mod tests {
     }
 
     #[test]
+    fn shared_communication_style_is_loaded_before_persona_local_style() {
+        let temp = project();
+        let shared_dir = temp
+            .path()
+            .join(STATIC_PERSONAS_DIR)
+            .join(COMMUNICATION_STYLE_DIR);
+        fs::create_dir_all(&shared_dir).expect("shared communication style dir");
+        fs::write(
+            shared_dir.join(COMMUNICATION_STYLE_FILE),
+            "Shared communication style",
+        )
+        .expect("shared communication style");
+
+        let saved = save_dynamic_persona(
+            temp.path(),
+            &test_config(temp.path(), "Helpful Persona"),
+            Some("Persona prompt"),
+            Some("Local communication style"),
+        )
+        .expect("save persona");
+
+        assert_eq!(
+            saved.communication_style.as_deref(),
+            Some("Shared communication style")
+        );
+    }
+
+    #[test]
+    fn shared_cli_communication_style_is_loaded_separately() {
+        let temp = project();
+        let shared_dir = temp
+            .path()
+            .join(STATIC_PERSONAS_DIR)
+            .join(COMMUNICATION_STYLE_DIR);
+        fs::create_dir_all(&shared_dir).expect("shared communication style dir");
+        fs::write(
+            shared_dir.join(COMMUNICATION_STYLE_FILE),
+            "Messaging app communication style",
+        )
+        .expect("shared communication style");
+        fs::write(
+            shared_dir.join(CLI_COMMUNICATION_STYLE_FILE),
+            "CLI communication style",
+        )
+        .expect("cli communication style");
+
+        let saved = save_dynamic_persona(
+            temp.path(),
+            &test_config(temp.path(), "Helpful Persona"),
+            Some("Persona prompt"),
+            Some("Local communication style"),
+        )
+        .expect("save persona");
+
+        assert_eq!(
+            saved.communication_style.as_deref(),
+            Some("Messaging app communication style")
+        );
+        assert_eq!(
+            saved.cli_communication_style.as_deref(),
+            Some("CLI communication style")
+        );
+    }
+
+    #[test]
     fn discover_personas_prefers_dynamic_over_static_with_same_id_and_sorts() {
         let temp = project();
         save_dynamic_persona(temp.path(), &test_config(temp.path(), "Zulu"), None, None)
@@ -557,7 +663,7 @@ mod tests {
             serde_json::json!({
                 "directionOrder": ["front", "left"],
                 "expressions": [
-                    {"id":"happy","name":"Happy","emojiAliases":[":happy:"]},
+                    {"id":"happy","name":"Happy","emojiAliases":[":happy:"],"reactKaomoji":{"media-persona":["(^_^)","(^o^)","(^_^)"]}},
                     {"id":"sad","name":"Sad","emojiAliases":[":sad:"]}
                 ]
             })
@@ -578,6 +684,7 @@ mod tests {
                     id: "happy".to_string(),
                     name: String::new(),
                     emoji_aliases: Vec::new(),
+                    react_kaomoji: Vec::new(),
                     source_directory: PathBuf::from("happy"),
                     grid_path: PathBuf::from("happy/grid.png"),
                     frames: BTreeMap::new(),
@@ -586,6 +693,7 @@ mod tests {
                     id: "unknown".to_string(),
                     name: String::new(),
                     emoji_aliases: Vec::new(),
+                    react_kaomoji: Vec::new(),
                     source_directory: PathBuf::from("unknown"),
                     grid_path: PathBuf::from("unknown/grid.png"),
                     frames: BTreeMap::new(),
@@ -603,8 +711,13 @@ mod tests {
         assert_eq!(media.direction_order, vec!["front", "left"]);
         assert_eq!(media.expressions[0].name, "Happy");
         assert_eq!(media.expressions[0].emoji_aliases, vec![":happy:"]);
+        assert_eq!(
+            media.expressions[0].react_kaomoji,
+            vec!["(^_^)", "(^o^)", "(^_^)"]
+        );
         assert_eq!(media.expressions[1].name, "unknown");
         assert!(media.expressions[1].emoji_aliases.is_empty());
+        assert!(media.expressions[1].react_kaomoji.is_empty());
     }
 
     #[test]
@@ -623,6 +736,7 @@ mod tests {
                 id: "happy".to_string(),
                 name: String::new(),
                 emoji_aliases: Vec::new(),
+                react_kaomoji: Vec::new(),
                 source_directory: PathBuf::from("happy"),
                 grid_path: PathBuf::from("happy/grid.png"),
                 frames: BTreeMap::new(),
@@ -644,10 +758,7 @@ mod tests {
     fn delete_dynamic_persona_is_idempotent_for_missing_and_removes_existing() {
         let temp = project();
 
-        assert_eq!(
-            delete_dynamic_persona(temp.path(), "missing").expect("missing delete"),
-            false
-        );
+        assert!(!delete_dynamic_persona(temp.path(), "missing").expect("missing delete"));
         save_dynamic_persona(
             temp.path(),
             &test_config(temp.path(), "remove-me"),
@@ -656,15 +767,9 @@ mod tests {
         )
         .expect("save");
 
-        assert_eq!(
-            delete_dynamic_persona(temp.path(), "remove-me").expect("delete"),
-            true
-        );
+        assert!(delete_dynamic_persona(temp.path(), "remove-me").expect("delete"));
         assert!(load_persona(temp.path(), "remove-me").is_none());
-        assert_eq!(
-            delete_dynamic_persona(temp.path(), "remove-me").expect("second delete"),
-            false
-        );
+        assert!(!delete_dynamic_persona(temp.path(), "remove-me").expect("second delete"));
     }
 
     #[test]

@@ -2,10 +2,9 @@
 //!
 //! Refactor stage 3: the worker is its own binary (`crates/runtime` →
 //! `tura_runtime`), no longer the gateway binary re-invoked by role. The router
-//! spawns it, performs a version handshake (the `health_check` reply carries
-//! `tura_path::instance_version()`), and drives it over the persistent
-//! line-protocol: read `{ "kind", "payload" }` per line, write one JSON reply
-//! per line.
+//! spawns it and drives it over the line protocol: read `{ "kind", "payload" }`
+//! per line, write one JSON reply per line. Router-managed runtime workers run
+//! in one-shot mode so they exit after a single `call` envelope.
 //!
 //! Boundary: runtime stays a library; this entry only hosts the worker process,
 //! activates the agent spec the router hands down, and runs one prompt. Session
@@ -15,13 +14,15 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
 use serde_json::{json, Value};
+use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 
 use crate::mano::ManoProcessResult;
 use crate::state_machine::session_management::{SessionInput, SessionState};
 
 /// Run the runtime worker loop: blocking read on stdin, write on stdout, until
-/// the peer closes.
+/// the peer closes or one-shot mode completes a call.
 pub fn run() -> std::io::Result<()> {
+    start_router_parent_watchdog();
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     let mut line = String::new();
@@ -38,7 +39,14 @@ pub fn run() -> std::io::Result<()> {
             continue;
         }
 
-        let response = match serde_json::from_str::<Value>(trimmed) {
+        let parsed = serde_json::from_str::<Value>(trimmed);
+        let is_call = parsed
+            .as_ref()
+            .ok()
+            .and_then(|envelope| envelope.get("kind"))
+            .and_then(Value::as_str)
+            == Some("call");
+        let response = match parsed {
             Ok(envelope) => handle_envelope(&envelope),
             Err(error) => json!({ "ok": false, "error": format!("invalid envelope: {error}") }),
         };
@@ -48,7 +56,67 @@ pub fn run() -> std::io::Result<()> {
         stdout.write_all(encoded.as_bytes())?;
         stdout.write_all(b"\n")?;
         stdout.flush()?;
+        if runtime_oneshot_enabled() && is_call {
+            return Ok(());
+        }
     }
+}
+
+fn runtime_oneshot_enabled() -> bool {
+    std::env::var("TURA_RUNTIME_ONESHOT")
+        .ok()
+        .is_some_and(|value| env_flag(&value))
+}
+
+fn start_router_parent_watchdog() {
+    let Some(parent) = RouterParentProcess::from_env() else {
+        return;
+    };
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if !parent.is_alive() {
+            std::process::exit(70);
+        }
+    });
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RouterParentProcess {
+    pid: u32,
+    start_time: Option<u64>,
+}
+
+impl RouterParentProcess {
+    fn from_env() -> Option<Self> {
+        let pid = std::env::var("TURA_ROUTER_PARENT_PID")
+            .ok()
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .filter(|pid| *pid > 0)?;
+        let start_time = std::env::var("TURA_ROUTER_PARENT_START_TIME")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok());
+        Some(Self { pid, start_time })
+    }
+
+    fn is_alive(&self) -> bool {
+        let mut system = System::new_with_specifics(
+            RefreshKind::new().with_processes(ProcessRefreshKind::new()),
+        );
+        system.refresh_processes();
+        let Some(process) = system.process(Pid::from_u32(self.pid)) else {
+            return false;
+        };
+        self.start_time
+            .map(|expected| process.start_time() == expected)
+            .unwrap_or(true)
+    }
+}
+
+fn env_flag(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
 fn handle_envelope(envelope: &Value) -> Value {
@@ -243,6 +311,44 @@ mod tests {
     }
 
     #[test]
+    fn router_parent_process_from_env_uses_pid_and_start_time() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let previous_pid = std::env::var_os("TURA_ROUTER_PARENT_PID");
+        let previous_start = std::env::var_os("TURA_ROUTER_PARENT_START_TIME");
+        std::env::set_var("TURA_ROUTER_PARENT_PID", "1234");
+        std::env::set_var("TURA_ROUTER_PARENT_START_TIME", "5678");
+
+        let parent = RouterParentProcess::from_env().expect("parent env");
+        assert_eq!(parent.pid, 1234);
+        assert_eq!(parent.start_time, Some(5678));
+
+        restore_env("TURA_ROUTER_PARENT_PID", previous_pid);
+        restore_env("TURA_ROUTER_PARENT_START_TIME", previous_start);
+    }
+
+    #[test]
+    fn current_router_parent_process_is_alive_with_current_start_time() {
+        let pid = std::process::id();
+        let mut system = System::new_all();
+        system.refresh_processes();
+        let start_time = system
+            .process(Pid::from_u32(pid))
+            .expect("current process should be visible")
+            .start_time();
+
+        let parent = RouterParentProcess {
+            pid,
+            start_time: Some(start_time),
+        };
+        assert!(parent.is_alive());
+        let stale_parent = RouterParentProcess {
+            pid,
+            start_time: Some(start_time.saturating_sub(1)),
+        };
+        assert!(!stale_parent.is_alive());
+    }
+
+    #[test]
     fn final_assistant_text_ignores_tool_payloads() {
         let log = vec![
             json!({"role":"assistant","content":"{\"commands\":[]}"}).to_string(),
@@ -303,5 +409,15 @@ mod tests {
             "test prompt".to_string(),
             Utc::now(),
         )
+    }
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
+        if let Some(value) = previous {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
     }
 }

@@ -142,7 +142,7 @@ fn my_root() -> String {
 }
 
 /// Probe `/global/health` on a loopback port and return the gateway's reported
-/// `root`, or `None` if the port is not a healthy Tura gateway.
+/// `root`, or `None` if the port is not a healthy tura_gateway.
 fn gateway_root_on_port(port: u16) -> Option<String> {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(400)).ok()?;

@@ -1,16 +1,18 @@
 use chrono::Utc;
+use std::time::Instant;
 use tracing::warn;
 
 use crate::manas::constants::gateway_callbacks_disabled;
 use crate::manas::tool_catalog::env_flag;
+use crate::profile_timings;
 use crate::prompt_style::{runtime_fallback, tool_progress};
 use crate::runtime::types::ToolCallData;
-use crate::state_machine::runtime_management::RuntimeManagement;
-use crate::state_machine::session_management::SessionManagement;
-
-use super::agent_message::{
-    gateway_callback_base_url, gateway_callback_session_id, publish_gateway_agent_message,
+use crate::state_machine::runtime_management::{
+    RuntimeManagement, RuntimeSessionSyncStatus, UsageReport,
 };
+use crate::state_machine::session_management::{ContextTokenStats, SessionManagement};
+
+use super::agent_message::{gateway_callback_session_id, publish_gateway_agent_message};
 
 pub(crate) fn summarize_single_tool_output(tool_name: &str, output: &serde_json::Value) -> String {
     if let Some(markdown) = first_summary_markdown(output) {
@@ -162,7 +164,6 @@ pub(crate) fn publish_runtime_usage_record(
 ) {
     let target_session_id = gateway_callback_session_id(&session.session_id);
     let metadata = serde_json::json!({
-        "kind": "mano_runtime_usage",
         "runtime_id": runtime.runtime_id,
         "session_id": session.session_id,
         "target_session_id": target_session_id,
@@ -180,18 +181,26 @@ pub(crate) fn publish_runtime_usage_record(
         "metadata": metadata,
         "time": {
             "start": runtime.called_at.unwrap_or(runtime.created_at).timestamp_millis(),
-            "end": runtime.call_finished_at.unwrap_or_else(Utc::now).timestamp_millis()
+            "end": runtime.call_finished_at
+                .unwrap_or_else(|| runtime.called_at.unwrap_or(runtime.created_at))
+                .timestamp_millis()
         }
     });
+    let (created_at, updated_at) = runtime.assistant_message_timestamps();
 
-    if let Err(error) = publish_gateway_tool_message(
-        &target_session_id,
-        &runtime.runtime_id,
-        "runtime",
-        runtime.runtime_id.clone(),
+    if let Err(error) = publish_gateway_tool_message(GatewayToolMessage {
+        session_id: &target_session_id,
+        runtime_id: &runtime.runtime_id,
+        tool_name: "runtime",
+        call_id: runtime.runtime_id.clone(),
         state,
         metadata,
-    ) {
+        runtime_status: Some(runtime.session_sync_status()),
+        context_tokens: Some(session.context_tokens),
+        usage: runtime.usage.clone(),
+        created_at,
+        updated_at,
+    }) {
         warn!(
             session_id = %session.session_id,
             target_session_id = %target_session_id,
@@ -216,9 +225,47 @@ pub(crate) fn publish_tool_call_record(
     error: Option<&str>,
     started_at: chrono::DateTime<Utc>,
 ) {
+    let total_start = Instant::now();
+    let profiling = profile_timings::enabled();
+    let input_bytes = if profiling {
+        profile_timings::json_bytes(&input)
+    } else {
+        0
+    };
+    let output_bytes = if profiling {
+        profile_timings::json_bytes(output)
+    } else {
+        0
+    };
     let ended_at = Utc::now();
+    let (message_created_at, _) = runtime.assistant_message_timestamps();
+    let call_id_start = Instant::now();
     let call_id = stable_tool_call_id(&runtime.runtime_id, &tool_call.tool_name, &input);
+    profile_timings::log_elapsed(
+        "publish_tool_call_record.stable_tool_call_id",
+        call_id_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "runtime_id": runtime.runtime_id,
+            "tool_name": tool_call.tool_name,
+            "input_bytes": input_bytes,
+        }),
+    );
+    let output_text_start = Instant::now();
     let output_text = tool_output_text(output, error);
+    let output_text_len = output_text.len();
+    profile_timings::log_elapsed(
+        "publish_tool_call_record.tool_output_text",
+        output_text_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "runtime_id": runtime.runtime_id,
+            "tool_name": tool_call.tool_name,
+            "output_bytes": output_bytes,
+            "output_text_len": output_text_len,
+        }),
+    );
+    let metadata_start = Instant::now();
     let metadata = serde_json::json!({
         "kind": "mano_tool_call",
         "tool": tool_call.tool_name,
@@ -231,6 +278,21 @@ pub(crate) fn publish_tool_call_record(
         "session_id": session.session_id,
         "provider": runtime.provider,
     });
+    profile_timings::log_elapsed(
+        "publish_tool_call_record.metadata",
+        metadata_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "runtime_id": runtime.runtime_id,
+            "tool_name": tool_call.tool_name,
+            "metadata_bytes": if profiling {
+                profile_timings::json_bytes(&metadata)
+            } else {
+                0
+            },
+        }),
+    );
+    let state_start = Instant::now();
     let state = if success {
         serde_json::json!({
             "status": "completed",
@@ -255,15 +317,46 @@ pub(crate) fn publish_tool_call_record(
             }
         })
     };
+    profile_timings::log_elapsed(
+        "publish_tool_call_record.state",
+        state_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "runtime_id": runtime.runtime_id,
+            "tool_name": tool_call.tool_name,
+            "state_bytes": if profiling {
+                profile_timings::json_bytes(&state)
+            } else {
+                0
+            },
+        }),
+    );
 
-    if let Err(error) = publish_gateway_tool_message(
-        &gateway_callback_session_id(&session.session_id),
-        &runtime.runtime_id,
-        &tool_call.tool_name,
+    let publish_start = Instant::now();
+    let publish_result = publish_gateway_tool_message(GatewayToolMessage {
+        session_id: &gateway_callback_session_id(&session.session_id),
+        runtime_id: &runtime.runtime_id,
+        tool_name: &tool_call.tool_name,
         call_id,
         state,
         metadata,
-    ) {
+        runtime_status: None,
+        context_tokens: Some(runtime.context_tokens),
+        usage: runtime.usage.clone(),
+        created_at: message_created_at,
+        updated_at: ended_at.timestamp_millis(),
+    });
+    profile_timings::log_elapsed(
+        "publish_tool_call_record.publish_gateway_tool_message",
+        publish_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "runtime_id": runtime.runtime_id,
+            "tool_name": tool_call.tool_name,
+            "success": publish_result.is_ok(),
+        }),
+    );
+    if let Err(error) = publish_result {
         warn!(
             session_id = %session.session_id,
             tool_name = %tool_call.tool_name,
@@ -271,6 +364,18 @@ pub(crate) fn publish_tool_call_record(
             "failed to publish tool call record"
         );
     }
+    profile_timings::log_elapsed(
+        "publish_tool_call_record.total",
+        total_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "runtime_id": runtime.runtime_id,
+            "tool_name": tool_call.tool_name,
+            "input_bytes": input_bytes,
+            "output_bytes": output_bytes,
+            "output_text_len": output_text_len,
+        }),
+    );
 }
 
 pub(crate) fn publish_tool_call_started(
@@ -280,6 +385,7 @@ pub(crate) fn publish_tool_call_started(
     input: serde_json::Value,
     started_at: chrono::DateTime<Utc>,
 ) {
+    let (message_created_at, _) = runtime.assistant_message_timestamps();
     let call_id = stable_tool_call_id(&runtime.runtime_id, &tool_call.tool_name, &input);
     let metadata = serde_json::json!({
         "kind": "mano_tool_call",
@@ -302,14 +408,19 @@ pub(crate) fn publish_tool_call_started(
         }
     });
 
-    if let Err(error) = publish_gateway_tool_message(
-        &gateway_callback_session_id(&session.session_id),
-        &runtime.runtime_id,
-        &tool_call.tool_name,
+    if let Err(error) = publish_gateway_tool_message(GatewayToolMessage {
+        session_id: &gateway_callback_session_id(&session.session_id),
+        runtime_id: &runtime.runtime_id,
+        tool_name: &tool_call.tool_name,
         call_id,
         state,
         metadata,
-    ) {
+        runtime_status: None,
+        context_tokens: Some(runtime.context_tokens),
+        usage: runtime.usage.clone(),
+        created_at: message_created_at,
+        updated_at: started_at.timestamp_millis(),
+    }) {
         warn!(
             session_id = %session.session_id,
             tool_name = %tool_call.tool_name,
@@ -371,51 +482,90 @@ fn extract_tool_argument_string(arguments: &serde_json::Value, key: &str) -> Opt
         .filter(|text| !text.is_empty())
 }
 
-fn publish_gateway_tool_message(
-    session_id: &str,
-    runtime_id: &str,
-    tool_name: &str,
+struct GatewayToolMessage<'a> {
+    session_id: &'a str,
+    runtime_id: &'a str,
+    tool_name: &'a str,
     call_id: String,
     state: serde_json::Value,
     metadata: serde_json::Value,
-) -> Result<(), String> {
+    runtime_status: Option<RuntimeSessionSyncStatus>,
+    context_tokens: Option<ContextTokenStats>,
+    usage: Option<UsageReport>,
+    created_at: i64,
+    updated_at: i64,
+}
+
+fn publish_gateway_tool_message(message: GatewayToolMessage<'_>) -> Result<(), String> {
     if gateway_callbacks_disabled() {
         return Ok(());
     }
 
-    let target_session_id = gateway_callback_session_id(session_id);
-    let gateway_base = gateway_callback_base_url();
-    let endpoint = format!("{gateway_base}/session/{target_session_id}/message/agent");
+    let total_start = Instant::now();
+    let profiling = profile_timings::enabled();
+    let target_session_id = gateway_callback_session_id(message.session_id);
+    let payload_start = Instant::now();
     let payload = serde_json::json!({
         "reply_message": "",
         "new_learning": "",
         "media": [],
-        "runtime_id": runtime_id,
+        "runtime_id": message.runtime_id,
+        "runtime_status": message.runtime_status,
+        "context_tokens": message.context_tokens,
+        "usage": message.usage,
+        "created_at": message.created_at,
+        "updated_at": message.updated_at,
         "tool_call": {
-            "tool_name": tool_name,
-            "call_id": call_id,
-            "state": state,
-            "metadata": metadata,
+            "tool_name": message.tool_name,
+            "call_id": message.call_id,
+            "state": message.state,
+            "metadata": message.metadata,
         }
     });
+    let payload_bytes = if profiling {
+        profile_timings::json_bytes(&payload)
+    } else {
+        0
+    };
+    profile_timings::log_elapsed(
+        "publish_gateway_tool_message.payload",
+        payload_start,
+        serde_json::json!({
+            "target_session_id": target_session_id,
+            "runtime_id": message.runtime_id,
+            "tool_name": message.tool_name,
+            "payload_bytes": payload_bytes,
+        }),
+    );
 
-    tokio::runtime::Runtime::new()
-        .map_err(|err| format!("failed to create gateway callback runtime: {err}"))?
-        .block_on(async {
-            let response = reqwest::Client::new()
-                .post(endpoint)
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|err| format!("failed to call gateway: {err}"))?;
-            if response.status().is_success() {
-                Ok(())
-            } else {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                Err(format!("gateway returned {status}: {body}"))
-            }
-        })
+    let spawn_start = Instant::now();
+    let runtime_id = message.runtime_id.to_string();
+    crate::gateway_events::post_gateway_callback_detached(
+        "session.agent_message",
+        payload,
+        target_session_id,
+        runtime_id.clone(),
+        "tool_message",
+    );
+    profile_timings::log_elapsed(
+        "publish_gateway_tool_message.detached_spawn",
+        spawn_start,
+        serde_json::json!({
+            "runtime_id": runtime_id,
+            "tool_name": message.tool_name,
+            "payload_bytes": payload_bytes,
+        }),
+    );
+    profile_timings::log_elapsed(
+        "publish_gateway_tool_message.total",
+        total_start,
+        serde_json::json!({
+            "runtime_id": runtime_id,
+            "tool_name": message.tool_name,
+            "payload_bytes": payload_bytes,
+        }),
+    );
+    Ok(())
 }
 
 pub(crate) fn publish_task_plan_todos(session: &SessionManagement) {
@@ -453,23 +603,13 @@ pub(crate) fn publish_task_plan_todos(session: &SessionManagement) {
         .collect::<Vec<_>>();
 
     let target_session_id = gateway_callback_session_id(&session.session_id);
-    let endpoint = format!(
-        "{}/session/{target_session_id}/todo",
-        gateway_callback_base_url()
+    crate::gateway_events::post_gateway_callback_detached(
+        "session.todos",
+        serde_json::Value::Array(todos),
+        target_session_id,
+        "task-plan".to_string(),
+        "task_plan_todos",
     );
-    let _ = tokio::runtime::Runtime::new()
-        .map_err(|_| ())
-        .and_then(|runtime| {
-            runtime.block_on(async {
-                reqwest::Client::new()
-                    .post(endpoint)
-                    .json(&todos)
-                    .send()
-                    .await
-                    .map(|_| ())
-                    .map_err(|_| ())
-            })
-        });
 }
 
 fn first_non_empty<const N: usize>(items: [&str; N]) -> Option<String> {

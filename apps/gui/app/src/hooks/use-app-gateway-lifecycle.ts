@@ -8,7 +8,7 @@ import {
 } from "../app-gateway-startup";
 import { clampNumber, mergeSessions, normalizeThemeMode } from "../app-state-utils";
 import { DEFAULT_AGENT_ID, DEFAULT_MODEL_ID } from "../config/defaults";
-import { t } from "../i18n";
+import { setLanguage, t } from "../i18n";
 import { applyGatewayEvent } from "../state/event-reducer";
 import type { AppState } from "../state/global-store";
 import {
@@ -19,6 +19,7 @@ import {
   samePath,
   shortWorkspaceLabel,
 } from "../utils/app-format";
+import { workspaceModelFromConfig } from "../utils/runtime-model";
 import { safe } from "../utils/safe";
 import { configToDraft, defaultModel, providerIdFromModel, recordToDraft } from "../utils/settings";
 
@@ -26,7 +27,7 @@ function gatewayArray<T>(value: T[] | unknown): T[] {
   return Array.isArray(value) ? value : [];
 }
 
-const BOOTSTRAP_REQUEST_TIMEOUT_MS = 1_800;
+const BOOTSTRAP_REQUEST_TIMEOUT_MS = 5_000;
 
 export function useAppGatewayLifecycle(options: {
   state: Accessor<AppState>;
@@ -34,11 +35,20 @@ export function useAppGatewayLifecycle(options: {
   gatewayUrl: Accessor<string>;
   rootClient: Accessor<GatewayClient>;
   forceNewSession: boolean;
+  disableGatewayAutostart?: boolean;
   e2eFixture?: string;
   openSession: (sessionId: string) => Promise<void>;
 }) {
-  const { state, setState, gatewayUrl, rootClient, forceNewSession, e2eFixture, openSession } =
-    options;
+  const {
+    state,
+    setState,
+    gatewayUrl,
+    rootClient,
+    forceNewSession,
+    disableGatewayAutostart,
+    e2eFixture,
+    openSession,
+  } = options;
   const connection = createMemo(() => state().connection);
 
   createEffect(() => {
@@ -94,11 +104,12 @@ export function useAppGatewayLifecycle(options: {
     setState((previous) => ({
       ...previous,
       loading: true,
+      sessionsLoading: true,
       connection: "connecting",
       error: undefined,
       gatewayStartupNotice: previous.gatewayStartupNotice,
     }));
-    if (startAttempt === 0) {
+    if (startAttempt === 0 && !disableGatewayAutostart) {
       const started = await tryStartGateway(gatewayUrl(), setState);
       if (started) {
         await waitForGatewayHealth(gatewayUrl(), 5_000, setState);
@@ -147,24 +158,16 @@ export function useAppGatewayLifecycle(options: {
             ...projects,
           ];
       const scoped = client.withDirectory(directory);
-      const [
-        sessionsResult,
-        providers,
-        agentsResult,
-        personasResult,
-        commandsResult,
-        filesResult,
-        workspaceConfig,
-      ] = await Promise.all([
-        bootstrapSafe(() => scoped.sessions({ limit: 100 }), []),
-        bootstrapSafe(() => scoped.providers(), undefined),
-        bootstrapSafe(() => scoped.agents(), []),
-        bootstrapSafe(() => scoped.personas(), []),
-        bootstrapSafe(() => scoped.commands(), []),
-        bootstrapSafe(() => scoped.files(), []),
-        bootstrapSafe(() => scoped.workspaceConfig(), {}),
-      ]);
-      const sessions = gatewayArray<AppState["sessions"][number]>(sessionsResult);
+      const [sessions, providers, agentsResult, personasResult, commandsResult, filesResult, workspaceConfig] =
+        await Promise.all([
+          withTimeout(scoped.sessions({ limit: 100 }), BOOTSTRAP_REQUEST_TIMEOUT_MS),
+          bootstrapSafe(() => scoped.providers(), undefined),
+          bootstrapSafe(() => scoped.agents(), []),
+          bootstrapSafe(() => scoped.personas(), []),
+          bootstrapSafe(() => scoped.commands(), []),
+          bootstrapSafe(() => scoped.files(), []),
+          bootstrapSafe(() => scoped.workspaceConfig(), {}),
+        ]);
       const agents = gatewayArray<AppState["agents"][number]>(agentsResult);
       const personas = gatewayArray<AppState["personas"][number]>(personasResult);
       const commands = gatewayArray<AppState["commands"][number]>(commandsResult);
@@ -184,13 +187,19 @@ export function useAppGatewayLifecycle(options: {
       const selectedSessionId = forceNewSession
         ? undefined
         : (state().selectedSessionId ?? sessions[0]?.id);
-      const configuredModel = readConfigString(workspaceConfig, "model") ?? config.model;
+      const configuredModel = workspaceModelFromConfig(workspaceConfig) ?? config.model;
       const configuredAgent = readConfigString(workspaceConfig, "active_agent") ?? config.agent;
       const configuredVariant = readConfigString(workspaceConfig, "model_variant");
+      const configuredLanguage = readConfigString(workspaceConfig, "language") ?? config.language;
+      const effectiveWorkspaceConfig =
+        configuredLanguage && !readConfigString(workspaceConfig, "language")
+          ? { ...workspaceConfig, language: configuredLanguage }
+          : workspaceConfig;
       const configuredAcceleration = readConfigBoolean(
         workspaceConfig,
         "model_acceleration_enabled",
       );
+      setLanguage(configuredLanguage);
       setState((previous) => ({
         ...previous,
         health,
@@ -204,8 +213,8 @@ export function useAppGatewayLifecycle(options: {
         config,
         modelConfig,
         configDraft: configToDraft(config),
-        workspaceConfig,
-        workspaceConfigDraft: recordToDraft(workspaceConfig),
+        workspaceConfig: effectiveWorkspaceConfig,
+        workspaceConfigDraft: recordToDraft(effectiveWorkspaceConfig),
         currentProject,
         projects: workspaceProjects,
         directory,
@@ -239,7 +248,7 @@ export function useAppGatewayLifecycle(options: {
           : clampNumber(config.main_font_size, 11, 15, 12),
         codeFontSize: previous.bootstrapped
           ? previous.codeFontSize
-          : clampNumber(config.code_font_size, 9, 15, 11),
+          : clampNumber(config.code_font_size, 10, 15, 12),
         modelVariant: previous.bootstrapped
           ? previous.modelVariant
           : (configuredVariant ?? previous.modelVariant ?? "medium"),
@@ -247,6 +256,7 @@ export function useAppGatewayLifecycle(options: {
           ? previous.accelerationEnabled
           : (configuredAcceleration ?? previous.accelerationEnabled ?? true),
         loading: false,
+        sessionsLoading: false,
         bootstrapped: true,
         connection: "connected",
         gatewayStartupNotice: undefined,
@@ -256,7 +266,7 @@ export function useAppGatewayLifecycle(options: {
         await openSession(selectedSessionId);
       }
     } catch (error) {
-      if (isGatewayTimeoutError(error) && startAttempt < 1) {
+      if (isGatewayTimeoutError(error) && startAttempt < 1 && !disableGatewayAutostart) {
         const started = await tryStartGateway(gatewayUrl(), setState);
         if (started) {
           await waitForGatewayHealth(gatewayUrl(), 5_000, setState);
@@ -266,6 +276,7 @@ export function useAppGatewayLifecycle(options: {
       setState((previous) => ({
         ...previous,
         loading: false,
+        sessionsLoading: false,
         bootstrapped: true,
         connection: "disconnected",
         gatewayStartupNotice: undefined,

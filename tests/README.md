@@ -2,15 +2,16 @@
 
 Test scripts are split by runtime cost and blast radius.
 
-## Required Workspace Business Tests
+## Required Workspace OS Tests
 
 Root integration tests owned by the `tura_workspace` package are mandatory
-backend checks. Required local business/link tests live directly under
-`tests/business/`; `business`, `performance`, `live`, `release`, and
+backend checks. Process, daemon, socket-owner, shutdown, and cross-OS policy
+tests live directly under `tests/os_testing/` and run serially through the OS
+test runner. `business`, `os_testing`, `performance`, `live`, `release`, and
 `benchmark` are peer directories, and typed directories are scanned one level
 deep.
 
-`tests/business/process_state_management_e2e.rs` starts the real debug `tura_gateway`,
+`tests/os_testing/process_state_management_e2e.rs` starts the real debug `tura_gateway`,
 `tura_router serve-socket`, and `tura_session_db` binaries under isolated
 `TURA_HOME` directories.
 
@@ -37,7 +38,7 @@ It covers the process/state cases that must never regress:
 - router and session_db endpoint files are removed and unreachable after
   cleanup.
 
-`tests/business/process_lifecycle_policy_matrix.rs` is the cross-OS lifecycle
+`tests/os_testing/process_lifecycle_policy_matrix.rs` is the cross-OS lifecycle
 contract. It simulates Windows, Linux, macOS, and fallback OS families for the
 gateway front, router daemon, session_db owner, runtime worker, and command_run
 roles. It pins which roles are reusable owners, which roles must clean whole
@@ -47,20 +48,20 @@ it has no Linux-style parent-death signal.
 Run it directly with:
 
 ```powershell
-cargo test -p tura_workspace --test process_state_management_e2e -- --nocapture
+cargo test -p tura_workspace --features os-tests --test process_state_management_e2e -- --nocapture
 ```
 
 ```bash
-cargo test -p tura_workspace --test process_state_management_e2e -- --nocapture
+cargo test -p tura_workspace --features os-tests --test process_state_management_e2e -- --nocapture
 ```
 
-`tests/business/session_db_workspace_flow_e2e.rs` starts a real in-process session_db
+`tests/os_testing/session_db_workspace_flow_e2e.rs` starts a real in-process session_db
 socket owner and exercises the IPC path with concurrent short-lived clients
 across two workspaces. It verifies workspace summaries, session pagination,
 message record preservation, checkpoint ACK idempotency in the global index DB,
 workspace `.tura` storage, delete isolation, and graceful endpoint cleanup.
 
-`crates/session_log/tests/business/router_adopts_live_session_db_flow.rs`
+`crates/session_log/tests/os_testing/router_adopts_live_session_db_flow.rs`
 starts a real router/session_db pair, kills the router, verifies the still-live
 session_db continues to drain queued writes and serve direct socket writes, then
 starts a new router for the same home and verifies it adopts the existing
@@ -69,24 +70,28 @@ session_db endpoint.
 Run it directly with:
 
 ```powershell
-cargo test -p tura_workspace --test session_db_workspace_flow_e2e -- --nocapture
+cargo test -p tura_workspace --features os-tests --test session_db_workspace_flow_e2e -- --nocapture
 ```
 
 ```bash
-cargo test -p tura_workspace --test session_db_workspace_flow_e2e -- --nocapture
+cargo test -p tura_workspace --features os-tests --test session_db_workspace_flow_e2e -- --nocapture
 ```
 
-The backend quality CI matrix includes `tura_workspace` on Linux and Windows,
-so this root business suite is a required overall backend check rather than an
-optional performance or live suite.
+The GitHub CI crate matrix includes `tura_workspace`, so root package tests are
+part of the required crate checks rather than an optional performance or live
+suite.
 
-The workspace root also declares backend `default-members`; a bare `cargo test`
-runs the default backend crates plus this root package. `business`,
-`performance`, `live`, `release`, and `benchmark` are peer test types at the
-workspace root; crate-owned typed tests use the backend package directories.
-None of these types owns or nests the others. Backend quality checks enforce
-this layout through `tests/business`, `tests/performance`, `tests/live`,
-`tests/release`, and `tests/benchmark`.
+The workspace root also declares backend `default-members`, but CI does not use
+a single workspace cargo test as its main backend check. `business`,
+`os_testing`, `performance`, `live`, `release`, and `benchmark` are peer test
+types at the workspace root; crate-owned typed tests use the backend package
+directories. None of these types owns or nests the others. Backend quality
+checks enforce this layout through `tests/business`, `tests/os_testing`,
+`tests/performance`, `tests/live`, `tests/release`, and `tests/benchmark`.
+Do not run OS testing coverage with a single parallel workspace cargo command:
+process-owning tests share global env, local sockets, owner locks, and
+child-process cleanup, so the backend OS runner serializes every typed target
+with `--test-threads=1`.
 Do not create an empty typed directory; add a typed directory only when files in
 that type exist. Except for special hand-authored harness entrypoints, runners
 and docs should refer to the test type plus directory scan, not hardcoded
@@ -100,7 +105,7 @@ directories.
 Focused command-run CLI flows now live with the gateway crate under
 `crates/gateway/tests/command-run/`. Cross-crate command contracts that
 aggregate Cargo tests live under `crates/tools/tests/contracts/`. The TUI
-gateway CLI fixture lives under the app-owned `apps/tui/e2e/` suite.
+gateway CLI fixture lives under the app-owned `apps/tui/tests/e2e/` suite.
 
 Multi-agent dispatch (router-CLI subprocess + concurrent + 2-level recursive
 sub-sessions) is covered by `crates/runtime/tests/child_dispatch_test.rs`
@@ -111,9 +116,10 @@ internal runtime ↔ router traffic is CLI stdin/stdout JSON.
 ## Business Tests
 
 `tests/business/` contains required local business validation scripts. They may
-spawn local processes, use local sockets, drive local apps, and write artifacts,
-but must not require third-party services, provider tokens, API keys, paid
-providers, or public live systems.
+use local fixtures, local HTTP servers, files, and in-process stores, but
+process, daemon, socket-owner, shutdown, and OS policy coverage belongs in
+`tests/os_testing/`. Business tests must not require third-party services,
+provider tokens, API keys, paid providers, or public live systems.
 
 Crate-owned Rust business tests live under backend package
 `tests/business/` directories. The runner scans `crates/`, `commands/`,
@@ -125,16 +131,18 @@ The typed directories are peers, not nested suites:
 
 ```text
 <backend-package>/tests/business/           required local business/link flows
+<backend-package>/tests/os_testing/         process, daemon, owner, and OS policy flows
 <backend-package>/tests/performance/        performance, stress, load, and soak tests
 <backend-package>/tests/live/               third-party or live-network tests
 <backend-package>/tests/benchmark/          scoring and comparison tests
 ```
 
-Within each typed directory, keep test files directly at the first level. Do
-not create category subdirectories; encode the category in the filename instead.
-Runners select tests by type and a one-level directory scan, so do not add
-one-off script-path references when a typed directory scan can discover the
-case. Do not keep empty typed directories.
+Business and OS testing targets may use `helpers/` plus target-owned module
+directories beside the top-level `.rs` entrypoint. Performance, live, release,
+and benchmark crate-owned typed directories stay flat. Runners select tests by
+type and a one-level directory scan, so do not add one-off script-path
+references when a typed directory scan can discover the case. Do not keep empty
+typed directories.
 
 Tests and production logic must not special-case prompts or model text with
 fixed exact-response wording. If a flow needs a machine-readable assertion, use
@@ -142,13 +150,13 @@ a structured fixture, command result, protocol field, file artifact, or
 parser-owned output contract instead of matching user or model prose.
 
 ```powershell
-.\scripts\run-backend-business-tests.ps1 -List
-.\scripts\run-backend-business-tests.ps1 -Crate tools
+.\xtask\scripts\run-backend-business-tests.ps1 -List
+.\xtask\scripts\run-backend-business-tests.ps1 -Crate tools
 ```
 
 ```bash
-./scripts/run-backend-business-tests.sh --list
-./scripts/run-backend-business-tests.sh --crate tools
+sh xtask/scripts/run-backend-business-tests.sh --list
+sh xtask/scripts/run-backend-business-tests.sh --crate tools
 ```
 
 Business-test outputs default to
@@ -159,35 +167,61 @@ Override the artifact root with `TURA_BUSINESS_TARGET_ROOT` or
 
 See `tests/business/README.md` for command examples and output schema.
 
+## OS Testing
+
+`tests/os_testing/` contains process/OS-sensitive local validation: backend
+owners, router/session_db adoption, worker lifecycle, command-run process tree
+cleanup, task scheduler service state, and cross-OS lifecycle policy. These
+targets are gated by `os-tests` and are excluded from default workspace cargo
+runs.
+
+Run OS testing after business coverage:
+
+```powershell
+.\xtask\scripts\run-backend-os-tests.ps1 -List
+.\xtask\scripts\run-backend-os-tests.ps1
+```
+
+```bash
+sh xtask/scripts/run-backend-os-tests.sh --list
+sh xtask/scripts/run-backend-os-tests.sh
+```
+
 The backend business runners deliberately ignore root `.mjs` files and never
-run app-owned TUI/GUI/browser scripts. TUI scripts live under `apps/tui/e2e/`
-and GUI scripts live under `apps/gui/e2e/`; run those suites explicitly from
-their app package scripts.
+run app-owned TUI/GUI/browser scripts. TUI scripts live under
+`apps/tui/tests/e2e/` and GUI scripts live under `apps/gui/e2e/`; run those
+suites explicitly from their app package scripts.
 
 ## Live Tests
 
 `tests/live/` is the workspace peer for tests that require public network
 access, third-party systems, provider tokens, API keys, paid providers, or other
 external state. Crate-owned live tests use the same peer layout under
-`<backend-package>/tests/live/`.
+`<backend-package>/tests/live/`. Provider/auth/config compatibility tests also
+belong here when they use local mock servers, because they mutate provider
+runtime state such as env vars, auth stores, or configured catalogs.
 
 Live tests are opt-in and must not be nested under `business`, `performance`, or
 `benchmark`. When a live runner is needed, it should scan by the `live` test
 type and directory instead of naming individual scripts, unless the case is a
 special external harness that cannot be discovered generically.
 
+Crate-owned live Rust tests keep the runnable `[[test]]` entrypoint directly
+under `tests/live/`; target-owned helper modules may live in sibling
+subdirectories such as `tests/live/helpers/`.
+
 Backend live tests are selected by direct Rust scans and backend-owned root
 live scripts. App-owned TUI/GUI live scripts are not part of backend live
 runners; run them through the app package commands.
 
 ```powershell
-.\scripts\run-backend-live-tests.ps1 -List
-.\scripts\run-backend-live-tests.ps1 -Crate provider -TimeoutSeconds 300
+.\xtask\scripts\run-backend-live-tests.ps1 -List
+.\xtask\scripts\run-backend-live-tests.ps1 -Crate provider -TimeoutSeconds 300
 ```
 
 ```bash
-./scripts/run-backend-live-tests.sh --list
-./scripts/run-backend-live-tests.sh --crate provider --timeout-seconds 300
+sh xtask/scripts/run-backend-live-tests.sh --list
+sh xtask/scripts/run-backend-live-tests.sh --crate provider --timeout-seconds 300
 ```
 
 ## Release Tests
@@ -196,16 +230,23 @@ runners; run them through the app package commands.
 These are separated from business and live scans so ordinary test runs do not
 start or clean up release daemons.
 
-Release tests are selected by direct `tests/release/*.mjs` scans:
+Backend release tests are selected by direct `tests/release/*.mjs` scans. The
+backend runner skips `tui_*` and `gui_*` release entrypoints; run those directly
+from `tests/release` or through the app package aliases:
 
 ```powershell
-.\scripts\run-backend-release-tests.ps1 -List
-.\scripts\run-backend-release-tests.ps1 -TimeoutSeconds 600
+.\xtask\scripts\run-backend-release-tests.ps1 -List
+.\xtask\scripts\run-backend-release-tests.ps1 -TimeoutSeconds 600
 ```
 
 ```bash
-./scripts/run-backend-release-tests.sh --list
-./scripts/run-backend-release-tests.sh --timeout-seconds 600
+sh xtask/scripts/run-backend-release-tests.sh --list
+sh xtask/scripts/run-backend-release-tests.sh --timeout-seconds 600
+```
+
+```powershell
+npm --prefix apps\tui run test:live:release
+bun run --cwd apps\gui e2e:live:release
 ```
 
 Release-entry scripts validate the built command surfaces with real model
@@ -219,29 +260,30 @@ See `tests/release/README.md` for release-entry script commands.
 
 ## Backend Performance Tests
 
-Rust compatibility, concurrency, stress, and stability tests live under backend
-package `tests/performance/` directories. The performance runner scans
-`crates/`, `commands/`, `agents/`, and `personas/`; these tests are excluded
-from default `cargo test`.
+Rust compatibility, in-process concurrency, stress, and stability tests live
+under backend package `tests/performance/` directories. Process/lifecycle,
+router, and session_db IPC stress belongs in `tests/os_testing/` instead so it
+runs serially. The performance runner scans `crates/`, `commands/`, `agents/`,
+and `personas/`; these tests are excluded from default `cargo test`.
 
 ```powershell
-.\scripts\run-backend-performance-tests.ps1 -List
-.\scripts\run-backend-performance-tests.ps1 -Crate session_log
-.\scripts\run-backend-performance-tests.ps1 -Crate gateway -TimeoutSeconds 240
+.\xtask\scripts\run-backend-performance-tests.ps1 -List
+.\xtask\scripts\run-backend-performance-tests.ps1 -Crate session_log
+.\xtask\scripts\run-backend-performance-tests.ps1 -Crate gateway -TimeoutSeconds 240
 ```
 
 ```bash
-./scripts/run-backend-performance-tests.sh --list
-./scripts/run-backend-performance-tests.sh --crate session_log
-./scripts/run-backend-performance-tests.sh --crate gateway --timeout-seconds 240
+sh xtask/scripts/run-backend-performance-tests.sh --list
+sh xtask/scripts/run-backend-performance-tests.sh --crate session_log
+sh xtask/scripts/run-backend-performance-tests.sh --crate gateway --timeout-seconds 240
 ```
 
 ## Benchmarks
 
 `tests/benchmark/` contains manual comparison, scoring, and long-running repair
-suites. GitHub CI and default `cargo test --workspace` must not execute scripts
-from this directory or read them as test fixtures. Crate-owned tests should live
-under the owning crate, for example `crates/*/tests/`.
+suites. GitHub CI must not execute scripts from this directory or read them as
+test fixtures. Crate-owned tests should live under the owning crate, for example
+`crates/*/tests/`.
 
 See `tests/benchmark/README.md` for the benchmark entry list and contract.
 

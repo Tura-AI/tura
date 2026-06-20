@@ -3,18 +3,15 @@
 use anyhow::{Context, Result};
 use axum::{
     extract::Query,
-    http::{HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue},
     Json,
 };
 use gateway::api::{
-    global::{get_config, get_gui_config, health, patch_config, put_gui_config},
-    path::{get_paths, PathParams},
-    project::{
-        create_named_workspace, get_current_project, list_projects, use_default_workspace,
-        ProjectDirectoryParams, WorkspaceCreateRequest,
-    },
-    types::ConfigPatch,
+    global::{get_config, health, patch_config},
+    path::get_paths,
+    project::{create_named_workspace, get_current_project, list_projects, use_default_workspace},
 };
+use gateway::contracts::{ConfigPatch, PathParams, ProjectDirectoryParams, WorkspaceCreateRequest};
 use std::{
     env,
     ffi::OsString,
@@ -68,18 +65,6 @@ async fn workspace_config_path_and_project_apis_share_a_local_workspace_view() -
     assert_eq!(
         health_body.dev_log_path.as_deref().map(normalize_slashes),
         Some(normalize_path(temp.path().join("logs")))
-    );
-
-    let gui_body = "theme = \"midnight\"\nfont_size = 13\n".to_string();
-    let write_response = put_gui_config(gui_body.clone()).await;
-    assert_eq!(write_response.status(), StatusCode::OK);
-    assert_eq!(write_response.into_body(), gui_body);
-    let read_response = get_gui_config().await;
-    assert_eq!(read_response.status(), StatusCode::OK);
-    assert_eq!(read_response.into_body(), gui_body);
-    assert_eq!(
-        fs::read_to_string(temp.path().join("config").join("gui_config.toml"))?,
-        "theme = \"midnight\"\nfont_size = 13\n"
     );
 
     let Json(initial_config) = get_config().await;
@@ -200,25 +185,6 @@ async fn workspace_config_path_and_project_apis_share_a_local_workspace_view() -
         .iter()
         .any(|project| normalize_slashes(&project.worktree)
             == normalize_path(documents.join("tura_workspace"))));
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn gui_config_write_reports_filesystem_errors_without_creating_content() -> Result<()> {
-    let _guard = ENV_LOCK.lock().await;
-    let temp = TempDir::new().context("create temp gui config root")?;
-    let _cwd = CurrentDirGuard::change_to(temp.path())?;
-    fs::write(temp.path().join("config"), b"not a directory")?;
-
-    let response = put_gui_config("theme = \"broken\"\n".to_string()).await;
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(!response.into_body().trim().is_empty());
-
-    let read_response = get_gui_config().await;
-    assert_eq!(read_response.status(), StatusCode::OK);
-    assert_eq!(read_response.into_body(), "");
-    assert_eq!(fs::read(temp.path().join("config"))?, b"not a directory");
 
     Ok(())
 }

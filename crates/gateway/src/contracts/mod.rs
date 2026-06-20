@@ -1,0 +1,39 @@
+//! HTTP API contract types shared by gateway handlers and internal clients.
+
+pub mod agent;
+pub mod command;
+pub mod common;
+pub mod config;
+pub mod event;
+pub mod file;
+pub mod health;
+pub mod message;
+pub mod path;
+pub mod persona;
+pub mod product;
+pub mod project;
+pub mod provider;
+pub mod service;
+pub mod session;
+pub mod session_log;
+pub mod session_shell;
+pub mod session_summary;
+
+pub use agent::*;
+pub use command::*;
+pub use common::*;
+pub use config::*;
+pub use event::*;
+pub use file::*;
+pub use health::*;
+pub use message::*;
+pub use path::*;
+pub use persona::*;
+pub use product::*;
+pub use project::*;
+pub use provider::*;
+pub use service::*;
+pub use session::*;
+pub use session_log::*;
+pub use session_shell::*;
+pub use session_summary::*;

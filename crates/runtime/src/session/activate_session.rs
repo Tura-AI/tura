@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use chrono::Utc;
+use uuid::Uuid;
 
 use crate::state_machine::session_management::{SessionInput, SessionManagement};
 
@@ -62,5 +63,5 @@ fn generate_session_id(session_directory: &std::path::Path, now: chrono::DateTim
         .chars()
         .take(8)
         .collect::<String>();
-    format!("{prefix}-{}", now.timestamp_millis())
+    format!("{prefix}-{}-{}", now.timestamp_millis(), Uuid::new_v4())
 }

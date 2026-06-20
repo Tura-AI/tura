@@ -1,0 +1,27 @@
+id = "compact_context"
+name = "Compact Context"
+description = "Request runtime context compaction."
+core = true
+category = "runtime"
+execution = "in_process"
+state_machine = "default_command"
+supports_macro_command = false
+mutating = false
+network = false
+
+[runtime]
+binary = ""
+entry = "crate::commands::compact_context"
+language = "rust"
+
+[limits]
+default_timeout_ms = 5000
+max_timeout_ms = 30000
+
+[paths]
+prompt = "prompt.md"
+schema = "schema.json"
+policy = "policy.toml"
+
+[builder_config]
+raw = {}

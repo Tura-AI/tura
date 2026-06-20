@@ -6,13 +6,8 @@ use runtime::session::activate_session_with_topic;
 use runtime::state_machine::session_management::SessionInput;
 
 #[test]
-fn coding_agents_inject_persona_style_then_agent_prompt() {
+fn coding_agents_inject_agent_prompt_without_persona_binding() {
     let project_root = find_project_root();
-    let tura_persona_root = project_root.join("personas").join("src").join("tura");
-    let tura_persona_prompt_dir = tura_persona_root.join("prompt");
-    let persona = read_prompt(&tura_persona_prompt_dir.join("persona.md"));
-    let communication_style = read_prompt(&tura_persona_prompt_dir.join("communication_style.md"));
-
     for (agent_name, agent_prompt_path) in [
         (
             "thinking",
@@ -64,9 +59,6 @@ fn coding_agents_inject_persona_style_then_agent_prompt() {
         let agent = agents.first().expect("one agent should activate");
 
         assert_eq!(agent.agent_name, agent_name);
-        assert_eq!(agent.agent_persona.len(), 1);
-        assert_eq!(agent.agent_persona[0].persona_name, "tura");
-        assert_eq!(agent.agent_persona[0].persona_directory, tura_persona_root);
         assert_eq!(agent.agent_prompt.len(), 1);
         assert_eq!(agent.agent_prompt[0].agent_prompt, agent_name);
 
@@ -82,15 +74,7 @@ fn coding_agents_inject_persona_style_then_agent_prompt() {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(
-            contents,
-            vec![
-                persona.clone(),
-                communication_style.clone(),
-                agent_prompt.clone()
-            ],
-            "{agent_name} should inject tura persona, tura communication style, then agent prompt"
-        );
+        assert_eq!(contents, vec![agent_prompt.clone()]);
     }
 }
 

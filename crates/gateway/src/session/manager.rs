@@ -8,6 +8,7 @@ use runtime::state_machine::session_management::{
     SessionId, SessionInput, SessionManagement, SessionState, UserGoal,
 };
 use std::path::PathBuf;
+use uuid::Uuid;
 
 use crate::session::config::DEFAULT_SESSION_REASONING_EFFORT;
 
@@ -15,7 +16,7 @@ const DEFAULT_SESSION_DIRECTORY: &str = "sessions";
 pub const CODING_AGENT_NAME: &str = "fast";
 pub const THINKING_AGENT_NAME: &str = "thinking";
 pub const CODING_AGENT_FAST_NAME: &str = "fast";
-pub const CODING_AGENT_INSTANT_NAME: &str = "fast-text-only";
+pub const CODING_AGENT_FAST_TEXT_ONLY_NAME: &str = "fast-text-only";
 
 pub fn coding_agent_provider() -> String {
     runtime::agent_router::coding_agent_provider_name()
@@ -120,7 +121,7 @@ impl SessionManager {
             .chars()
             .take(8)
             .collect::<String>();
-        format!("{prefix}-{}", now.timestamp_millis())
+        format!("{prefix}-{}-{}", now.timestamp_millis(), Uuid::new_v4())
     }
 }
 
@@ -190,7 +191,7 @@ pub fn normalize_session_type(session_type: Option<String>, agent: Option<&str>)
         | Some("thinking-planning")
         | Some(THINKING_AGENT_NAME)
         | None => "coding".to_string(),
-        Some(CODING_AGENT_INSTANT_NAME) => "coding".to_string(),
+        Some(CODING_AGENT_FAST_TEXT_ONLY_NAME) => "coding".to_string(),
         Some("coding_agent") | Some("coding_agent_planning") | Some("coding_agent_thinking") => {
             "coding".to_string()
         }
@@ -209,7 +210,7 @@ pub fn agent_for_session_type(session_type: &str) -> Option<String> {
 
 pub fn runtime_provider_for_session(session_type: &str, agent: Option<&str>) -> Option<String> {
     match (session_type, agent) {
-        (_, Some(CODING_AGENT_INSTANT_NAME)) => Some("fast".to_string()),
+        (_, Some(CODING_AGENT_FAST_TEXT_ONLY_NAME)) => Some("fast".to_string()),
         ("coding", _)
         | (_, Some(CODING_AGENT_NAME))
         | (_, Some("thinking-planning"))
@@ -232,7 +233,7 @@ pub fn default_use_last_tool_call_response_for_session(
             | (_, Some(CODING_AGENT_NAME))
             | (_, Some("thinking-planning"))
             | (_, Some(THINKING_AGENT_NAME))
-            | (_, Some(CODING_AGENT_INSTANT_NAME))
+            | (_, Some(CODING_AGENT_FAST_TEXT_ONLY_NAME))
             | (_, Some("coding_agent"))
             | (_, Some("coding_agent_planning"))
             | (_, Some("coding_agent_thinking"))
@@ -287,6 +288,20 @@ mod tests {
         assert!(!info.management.use_last_tool_call_response);
         assert!(info.management.auto_session_name);
         assert!(info.id.starts_with("sessions-"));
+    }
+
+    #[test]
+    fn generated_session_ids_are_unique_within_the_same_millisecond() {
+        let now = Utc::now();
+        let session_directory = PathBuf::from("concurrent-session-a");
+
+        let first = SessionManager::generate_session_id(&session_directory, now);
+        let second = SessionManager::generate_session_id(&session_directory, now);
+
+        assert_ne!(first, second);
+        let expected_prefix = format!("concurre-{}-", now.timestamp_millis());
+        assert!(first.starts_with(&expected_prefix));
+        assert!(second.starts_with(&expected_prefix));
     }
 
     #[test]

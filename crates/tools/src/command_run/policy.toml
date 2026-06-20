@@ -1,5 +1,5 @@
 model_visible = true
-allowed_commands = ["shell_command", "bash", "zsh", "apply_patch", "read_media", "web_discover"]
+allowed_commands = ["shell_command", "bash", "zsh", "apply_patch", "generate_media", "read_media", "web_discover"]
 step_required = true
 same_step_read_concurrency = true
 mutating_commands_are_barriers = true

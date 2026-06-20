@@ -372,12 +372,14 @@ patch, file lock, or package environment behavior.
 selected agent prompt directory:
 
 1. `persona.md`
-2. `communication_style.md`
+2. shared `personas/src/communication_style/communication_style.md`
 3. `prompt.md`
 
-`prompt` and `fallback_agent.md` are accepted main-prompt resource names. Agent
-prompt loading must stay separate from command/tool prompt loading so agent
-identity and communication behavior do not depend on the active tool set.
+Legacy per-persona `communication_style.md` files are accepted only as a
+fallback. `prompt` and `fallback_agent.md` are accepted main-prompt resource
+names. Agent prompt loading must stay separate from command/tool prompt loading
+so agent identity and communication behavior do not depend on the active tool
+set.
 
 ## Prompt Assembly
 

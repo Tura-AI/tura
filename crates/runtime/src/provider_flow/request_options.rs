@@ -1,4 +1,8 @@
+use crate::context::USER_AGENT_CONTEXT_ROLE;
+use crate::profile_timings;
+use crate::session_log_client::SessionLogClient;
 use crate::state_machine::session_management::SessionId;
+use std::time::Instant;
 use tura_llm_rust::{openai_compatible_usage_stream_supported, prompt_cache_key_supported};
 
 const COMMAND_RUN_TOOL_NAME: &str = "command_run";
@@ -6,6 +10,14 @@ const COMMAND_RUN_TOOL_NAME: &str = "command_run";
 pub(crate) fn normalize_provider_messages(
     messages: Vec<serde_json::Value>,
 ) -> Vec<serde_json::Value> {
+    let start = Instant::now();
+    let profiling = profile_timings::enabled();
+    let input_message_count = messages.len();
+    let input_messages_bytes = if profiling {
+        profile_timings::json_vec_bytes(&messages)
+    } else {
+        0
+    };
     let mut normalized = Vec::new();
 
     for message in messages {
@@ -62,6 +74,7 @@ pub(crate) fn normalize_provider_messages(
         }
 
         let (role, content) = match role {
+            role if role == USER_AGENT_CONTEXT_ROLE => ("user", content),
             "system" | "developer" | "user" | "assistant" | "tool" => (role, content),
             other => (
                 "user",
@@ -76,6 +89,20 @@ pub(crate) fn normalize_provider_messages(
             "content": content
         }));
     }
+    profile_timings::log_elapsed(
+        "normalize_provider_messages.total",
+        start,
+        serde_json::json!({
+            "input_message_count": input_message_count,
+            "output_message_count": normalized.len(),
+            "input_messages_bytes": input_messages_bytes,
+            "output_messages_bytes": if profiling {
+                profile_timings::json_vec_bytes(&normalized)
+            } else {
+                0
+            },
+        }),
+    );
     normalized
 }
 
@@ -139,16 +166,43 @@ pub(crate) fn prompt_cache_key(
         .collect::<Vec<_>>();
     tool_names.sort();
     let tool_sig = tool_names.join(",");
+    let cache_session_id = prompt_cache_session_id(session_id);
     let hash_input = format!(
         "{}\n{}\n{}\n{}\n{}",
-        route_name, session_id, provider.provider, provider.model, tool_sig
+        route_name, cache_session_id, provider.provider, provider.model, tool_sig
     );
     Some(format!(
         "turaosv2:{}:{}:{}",
         short_key_part(route_name),
-        short_key_part(session_id),
+        short_key_part(&cache_session_id),
         fnv1a64_hex(&hash_input)
     ))
+}
+
+fn prompt_cache_session_id(session_id: &SessionId) -> String {
+    let client = match SessionLogClient::discover() {
+        Ok(client) => client,
+        Err(_) => return session_id.to_string(),
+    };
+    let mut current = session_id.to_string();
+    let mut seen = std::collections::HashSet::new();
+    loop {
+        if !seen.insert(current.clone()) {
+            return session_id.to_string();
+        }
+        let snapshot = match client.get_session(current.clone()) {
+            Ok(Some(snapshot)) => snapshot,
+            _ => return current,
+        };
+        let Some(parent_id) = snapshot
+            .parent_id
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+        else {
+            return current;
+        };
+        current = parent_id;
+    }
 }
 
 pub(crate) fn stream_options(
@@ -247,6 +301,22 @@ pub fn route_by_name<'a>(
     settings.route_by_name(provider_name)
 }
 
+pub(crate) fn route_for_provider_name(
+    settings: &tura_llm_rust::Settings,
+    provider_name: &str,
+) -> Option<tura_llm_rust::RouteConfig> {
+    let (provider, model) = provider_model_pair(provider_name)?;
+    provider_base_url(settings, provider).map(|base_url| tura_llm_rust::RouteConfig {
+        default_temperature: 0.2,
+        providers: vec![tura_llm_rust::ProviderConfig {
+            provider: provider.to_string(),
+            base_url,
+            model: tura_llm_rust::Settings::normalize_model_name(provider, model),
+            temperature: 0.2,
+        }],
+    })
+}
+
 pub(crate) fn session_model_override_route(
     settings: &tura_llm_rust::Settings,
     fallback: &tura_llm_rust::RouteConfig,
@@ -273,6 +343,16 @@ pub(crate) fn session_model_override_route(
             temperature,
         }],
     })
+}
+
+fn provider_model_pair(value: &str) -> Option<(&str, &str)> {
+    let (provider, model) = value.trim().split_once('/')?;
+    let provider = provider.trim();
+    let model = model.trim();
+    if provider.is_empty() || model.is_empty() {
+        return None;
+    }
+    Some((provider, model))
 }
 
 fn provider_base_url(settings: &tura_llm_rust::Settings, provider: &str) -> Option<String> {
@@ -359,17 +439,38 @@ mod tests {
 
         with_env(DISABLE_CACHE_ENV, None, || {
             assert_eq!(
-                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &tools_a),
-                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &tools_b)
+                prompt_cache_key(&route, "thinking", &"sess-a".to_string(), &tools_a),
+                prompt_cache_key(&route, "thinking", &"sess-a".to_string(), &tools_b)
             );
             assert!(
-                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &tools_a)
+                prompt_cache_key(&route, "thinking", &"sess-a".to_string(), &tools_a)
                     .expect("prompt cache key should be generated")
-                    .starts_with("turaosv2:flagship-thinking:sess-a:")
+                    .starts_with("turaosv2:thinking:sess-a:")
             );
             assert_ne!(
-                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &tools_a),
-                prompt_cache_key(&route, "flagship_thinking", &"sess-b".to_string(), &tools_a)
+                prompt_cache_key(&route, "thinking", &"sess-a".to_string(), &tools_a),
+                prompt_cache_key(&route, "thinking", &"sess-b".to_string(), &tools_a)
+            );
+        });
+    }
+
+    #[test]
+    fn prompt_cache_key_is_generated_for_codex_routes() {
+        let route = tura_llm_rust::RouteConfig {
+            default_temperature: 0.2,
+            providers: vec![tura_llm_rust::ProviderConfig {
+                provider: "codex".to_string(),
+                base_url: "https://chatgpt.com/backend-api/codex".to_string(),
+                model: "gpt-5.5".to_string(),
+                temperature: 0.2,
+            }],
+        };
+
+        with_env(DISABLE_CACHE_ENV, None, || {
+            assert!(
+                prompt_cache_key(&route, "thinking", &"sess-a".to_string(), &[])
+                    .expect("codex routes should use prompt cache keys")
+                    .starts_with("turaosv2:thinking:sess-a:")
             );
         });
     }
@@ -387,7 +488,7 @@ mod tests {
         };
         with_env(DISABLE_CACHE_ENV, None, || {
             assert_eq!(
-                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &[]),
+                prompt_cache_key(&route, "thinking", &"sess-a".to_string(), &[]),
                 None
             );
         });
@@ -398,7 +499,7 @@ mod tests {
         let route = openai_route();
         with_env(DISABLE_CACHE_ENV, Some("true"), || {
             assert_eq!(
-                prompt_cache_key(&route, "flagship_thinking", &"sess-a".to_string(), &[]),
+                prompt_cache_key(&route, "thinking", &"sess-a".to_string(), &[]),
                 None
             );
         });
@@ -432,15 +533,21 @@ mod tests {
             serde_json::json!({"role": "system", "content": "## Input rules\nstable"}),
             serde_json::json!({"role": "system", "content": "# COMMAND_RUN Tool Guide\nstable"}),
             serde_json::json!({"role": "system", "content": "Dynamic runtime state:\ncurrent_directory: C:/tmp"}),
+            serde_json::json!({"role": crate::context::USER_AGENT_CONTEXT_ROLE, "content": "<environment_context>stable</environment_context>"}),
             serde_json::json!({"role": "user", "content": "do the task"}),
             serde_json::json!({"role": "system", "content": "Recent tool callback result from `command_run`:\nok"}),
             serde_json::json!({"role": "debug", "content": "unknown role text"}),
             serde_json::json!({"role": "user", "content": ""}),
         ]);
 
-        assert_eq!(normalized.len(), 6);
+        assert_eq!(normalized.len(), 7);
+        assert_eq!(normalized[3]["role"], "user");
         assert_eq!(
-            normalized[5]["content"],
+            normalized[3]["content"],
+            "<environment_context>stable</environment_context>"
+        );
+        assert_eq!(
+            normalized[6]["content"],
             "Runtime context (debug):\nunknown role text"
         );
     }

@@ -1,6 +1,7 @@
 //! Project API handlers
 
-use crate::api::{directory_picker::select_directory, types::*};
+use crate::api::directory_picker::select_directory;
+use crate::contracts::*;
 use crate::mock::global_store;
 use axum::{
     extract::Query,
@@ -44,16 +45,6 @@ pub async fn get_current_project(
     Json(CurrentProjectResponse { project })
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ProjectDirectoryParams {
-    pub directory: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct WorkspaceCreateRequest {
-    pub name: Option<String>,
-}
-
 pub async fn create_named_workspace(
     Json(payload): Json<WorkspaceCreateRequest>,
 ) -> Result<Json<Project>, (StatusCode, String)> {
@@ -93,11 +84,6 @@ pub async fn select_local_workspace(
         let name = workspace_name_from_path(&path);
         upsert_workspace_project(path, Some(name))
     })))
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct DirectoryWorkspaceRequest {
-    pub title: Option<String>,
 }
 
 fn same_directory(left: &str, right: &str) -> bool {

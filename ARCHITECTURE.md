@@ -88,6 +88,8 @@ inside session-log records except as normalized runtime/session events.
 
   target/
   tests/
+  xtask/
+    scripts/
 ```
 
 ## Crate Names And Runnable Packages
@@ -257,11 +259,9 @@ agents/src/<agent_id>/
   prompt.md
 ```
 
-Agent-specific prompt text stays in `prompt.md`. Persona text and
-communication style live in `personas/src/<persona_id>/prompt` for built-ins
-or `personas/<persona_id>/prompt` for dynamic personas, and agents bind them
-through `agent_persona` in `agent_config.json`. Runtime prompt fragments and
-command prompts are injected separately by their owning crates.
+Agent-specific prompt text stays in `prompt.md`. Persona resources are
+independent from agent configuration. Runtime prompt fragments and command
+prompts are injected separately by their owning crates.
 
 ### `crates/provider`
 

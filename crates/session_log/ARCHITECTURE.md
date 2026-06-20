@@ -26,11 +26,11 @@ crates/session_log/
     session_state.rs
     store.rs
   tests/
-    business/
+    os_testing/
       router_adopts_live_session_db_flow.rs
-    process_lifecycle_e2e.rs
-    performance/
       process_management_test.rs
+      process_lifecycle_e2e.rs
+    performance/
       store_concurrency_test.rs
     store_test.rs
 ```
@@ -91,13 +91,13 @@ startup. It accepts `upsert_session`, `apply_command_checkpoint`,
 checkpoint idempotency key.
 
 Mandatory crate tests cover the service owner rule directly:
-`tests/process_lifecycle_e2e.rs` starts a real `tura_session_db`, verifies that a
+`tests/os_testing/process_lifecycle_e2e.rs` starts a real `tura_session_db`, verifies that a
 second owner is rejected, checks bad-input recovery and idempotent upsert, then
 performs graceful shutdown and asserts endpoint/lock cleanup.
-`tests/business/router_adopts_live_session_db_flow.rs` kills a real router while
+`tests/os_testing/router_adopts_live_session_db_flow.rs` kills a real router while
 leaving session_db alive, verifies queued and direct writes continue, and then
 starts a new router that adopts the existing session_db endpoint. Higher-level
-workspace process tests live in root `tests/business/process_state_management_e2e.rs`.
+workspace process tests live in root `tests/os_testing/process_state_management_e2e.rs`.
 
 ## Tables
 

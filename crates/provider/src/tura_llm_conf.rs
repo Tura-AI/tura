@@ -63,26 +63,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bundled_config_exposes_six_model_tiers() {
+    async fn bundled_config_exposes_four_model_tiers() {
         let _guard = crate::test_support::env_lock_async().await;
         let previous_provider = std::env::var_os("TURA_PROVIDER_CONFIG");
         std::env::remove_var("TURA_PROVIDER_CONFIG");
 
         let settings = super::load_settings().await.expect("load bundled config");
-        for route in [
-            "flagship_thinking",
-            "thinking",
-            "fast",
-            "instant",
-            "embedding_high",
-            "embedding_low",
-        ] {
+        for route in ["thinking", "fast", "embedding_high", "embedding_low"] {
             assert!(
                 settings.route_by_name(route).is_some(),
                 "missing route {route}"
             );
         }
-        assert_eq!(settings.routes.len(), 6);
+        assert_eq!(settings.routes.len(), 4);
         assert!(settings
             .configured_model_catalog()
             .contains_key("openrouter"));

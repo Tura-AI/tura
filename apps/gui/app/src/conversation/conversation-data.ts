@@ -4,14 +4,19 @@ import {
   avatarSettingsFromConfigValue,
   normalizeAvatarSettings,
 } from "../components/avatar/agent-avatar-canvas";
-import { type AppState, messageCreatedAt, partText, sessionUpdatedAt } from "../state/global-store";
-import { reactionEmojiValues, stickerEmojiValues, stripReactionEmoji } from "./message-rich-text";
+import { type AppState, messageCreatedAt, partText } from "../state/global-store";
+import { isReactionOnlyMessage } from "./conversation-protocol";
 import { isToolPart } from "./message-tools";
-
-export type ConversationReactionItem = {
-  message: Message;
-  reactions: string[];
-};
+export {
+  messagesWithSessionThinking,
+  sessionIsWorking,
+  sessionShowsBusyAnimation,
+} from "./session-animation";
+export {
+  conversationReactionItems,
+  latestSticker,
+  type ConversationReactionItem,
+} from "./conversation-protocol";
 
 export function groupConversationTurns(messages: Message[]): Message[] {
   const grouped: Message[] = [];
@@ -69,55 +74,6 @@ export function personaMediaForAvatar(
   );
 }
 
-export function latestSticker(messages: Message[]): string | undefined {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const stickers = messages[index]!.parts.filter((part) => !isToolPart(part)).flatMap((part) =>
-      stickerEmojiValues(partText(part)),
-    );
-    const sticker = stickers.at(-1);
-    if (sticker) {
-      return sticker;
-    }
-  }
-  return undefined;
-}
-
-export function conversationReactionItems(messages: Message[]): ConversationReactionItem[] {
-  const items: ConversationReactionItem[] = [];
-  for (const message of messages) {
-    const reactions = messageReactionEmojis(message);
-    if (
-      message.role === "assistant" &&
-      reactions.length > 0 &&
-      messageWithoutReactionsText(message).trim().length === 0
-    ) {
-      const target = [...items].reverse().find((item) => item.message.role === "user");
-      if (target) {
-        target.reactions = [...target.reactions, ...reactions].slice(0, 4);
-        continue;
-      }
-    }
-    items.push({
-      message,
-      reactions: message.role === "user" ? reactions : [],
-    });
-  }
-  return items;
-}
-
-export function messagesWithSessionThinking(
-  messages: Message[],
-  session: Session | undefined,
-): Message[] {
-  if (!session || !sessionIsWorking(session.status)) {
-    return messages;
-  }
-  if (messages.at(-1)?.role === "assistant") {
-    return messages;
-  }
-  return [...messages, sessionThinkingMessage(session)];
-}
-
 function mergeAssistantMessages(messages: Message[]): Message {
   const first = messages[0]!;
   const last = messages.at(-1)!;
@@ -138,42 +94,3 @@ function mergeAssistantMessages(messages: Message[]): Message {
   };
 }
 
-function sessionThinkingMessage(session: Session): Message {
-  const updatedAt = sessionUpdatedAt(session) ?? Date.now();
-  return {
-    id: `session-thinking:${session.id}`,
-    sessionID: session.id,
-    session_id: session.id,
-    role: "assistant",
-    created_at: updatedAt,
-    updated_at: updatedAt,
-    time: { created: updatedAt, updated: updatedAt },
-    parts: [],
-  };
-}
-
-export function sessionIsWorking(status: Session["status"] | undefined): boolean {
-  return status !== undefined && status !== "idle";
-}
-
-function messageReactionEmojis(message: Message): string[] {
-  return message.parts
-    .filter((part) => !isToolPart(part))
-    .flatMap((part) => reactionEmojiValues(partText(part)));
-}
-
-function messageWithoutReactionsText(message: Message): string {
-  return message.parts
-    .filter((part) => !isToolPart(part))
-    .map((part) => stripReactionEmoji(partText(part)))
-    .join("\n");
-}
-
-function isReactionOnlyMessage(message: Message): boolean {
-  return (
-    message.role === "assistant" &&
-    messageReactionEmojis(message).length > 0 &&
-    messageWithoutReactionsText(message).trim().length === 0 &&
-    message.parts.every((part) => !isToolPart(part))
-  );
-}

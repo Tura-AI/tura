@@ -7,11 +7,17 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
 TARGET_DIR="$REPO_ROOT/target/release"
 SKIP_TUI=0
+SKIP_GUI=0
+SKIP_TAURI=0
+BACKEND_ONLY=0
 RELEASE_PROBE="${TURA_RELEASE_PROBE:-release-v0.0.0-ci}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --skip-tui) SKIP_TUI=1 ;;
+    --skip-gui) SKIP_GUI=1 ;;
+    --skip-tauri) SKIP_TAURI=1 ;;
+    --backend-only|--skip-apps) BACKEND_ONLY=1 ;;
     --release-probe)
       shift
       [ "$#" -gt 0 ] || { echo "--release-probe requires a value" >&2; exit 2; }
@@ -20,7 +26,7 @@ while [ "$#" -gt 0 ]; do
     -h|--help)
       cat <<'EOF'
 Usage:
-  scripts/tests/scripts/test-build-release.sh [--skip-tui] [--release-probe release-v0.0.0-ci]
+  scripts/tests/scripts/test-build-release.sh [--backend-only] [--skip-tui] [--skip-gui] [--skip-tauri] [--release-probe release-v0.0.0-ci]
 EOF
       exit 0
       ;;
@@ -63,11 +69,12 @@ protocol_health() {
 
 step "Release probe: $RELEASE_PROBE"
 step "Running release build script"
-if [ "$SKIP_TUI" -eq 1 ]; then
-  sh "$REPO_ROOT/scripts/build-release.sh" --skip-tui
-else
-  sh "$REPO_ROOT/scripts/build-release.sh"
-fi
+build_args=""
+if [ "$SKIP_TUI" -eq 1 ]; then build_args="$build_args --skip-tui"; fi
+if [ "$SKIP_GUI" -eq 1 ]; then build_args="$build_args --skip-gui"; fi
+if [ "$SKIP_TAURI" -eq 1 ]; then build_args="$build_args --skip-tauri"; fi
+if [ "$BACKEND_ONLY" -eq 1 ]; then build_args="$build_args --backend-only"; fi
+sh "$REPO_ROOT/scripts/build-release.sh" $build_args
 
 step "Checking release artifacts"
 for name in \
@@ -82,9 +89,14 @@ do
   require_path "$TARGET_DIR/$name" "Missing release artifact: $name"
 done
 
-if [ "$SKIP_TUI" -eq 0 ]; then
+if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_TUI" -eq 0 ]; then
   require_path "$TARGET_DIR/tura" "Missing release TUI executable."
-  require_path "$TARGET_DIR/gui/index.html" "Missing release GUI dist."
+fi
+if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_GUI" -eq 0 ]; then
+  require_path "$TARGET_DIR/tura_gui/index.html" "Missing release GUI dist."
+fi
+if [ "$BACKEND_ONLY" -eq 0 ] && [ "$SKIP_TAURI" -eq 0 ]; then
+  require_path "$TARGET_DIR/release/bundle" "Missing Tauri release bundle directory."
 fi
 
 step "Checking command protocol health"

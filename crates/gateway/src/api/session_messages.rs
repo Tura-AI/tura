@@ -1,22 +1,15 @@
 use super::*;
-
+use runtime::state_machine::runtime_management::RuntimeSessionSyncStatus;
 pub async fn list_messages(
     Path(session_id): Path<String>,
     Query(params): Query<MessageListParams>,
-) -> Json<Vec<serde_json::Value>> {
-    let messages = page_messages(session_store().get_messages(&session_id), &params);
-    let api_messages: Vec<serde_json::Value> = messages
+) -> Json<Vec<Message>> {
+    let messages = page_messages(session_store().get_frontend_messages(&session_id), &params);
+    let api_messages: Vec<Message> = messages
         .into_iter()
         .map(message_with_parts_from_store)
         .collect();
     Json(api_messages)
-}
-
-#[derive(Debug, Clone, Default, serde::Deserialize)]
-pub struct MessageListParams {
-    pub limit: Option<usize>,
-    pub before: Option<String>,
-    pub after: Option<String>,
 }
 
 fn page_messages<T: Clone + MessageId>(messages: Vec<T>, params: &MessageListParams) -> Vec<T> {
@@ -96,7 +89,34 @@ pub async fn send_agent_message(
     Path(session_id): Path<String>,
     Json(payload): Json<SendAgentMessageRequest>,
 ) -> Json<SendAgentMessageResponse> {
+    Json(send_agent_message_payload(session_id, payload))
+}
+
+pub fn send_agent_message_payload(
+    session_id: String,
+    payload: SendAgentMessageRequest,
+) -> SendAgentMessageResponse {
     let content = agent_message_content(&payload);
+    if is_progress_only_agent_message(&content, &payload) {
+        return SendAgentMessageResponse {
+            ok: true,
+            session_id,
+            message_id: payload.runtime_id.as_deref().map(runtime_message_id),
+            event: None,
+            error: None,
+        };
+    }
+    if let Some(response) = runtime_managed_message_response(&session_id, &payload, &content) {
+        sync_auto_session_name_from_agent_tool_call(&session_id, payload.tool_call.as_ref());
+        return response;
+    }
+    if content.trim().is_empty() {
+        if let Some(response) = transient_tool_message_response(&session_id, &payload) {
+            sync_auto_session_name_from_agent_tool_call(&session_id, payload.tool_call.as_ref());
+            return response;
+        }
+    }
+
     let message = if content.trim().is_empty() {
         None
     } else {
@@ -104,27 +124,39 @@ pub async fn send_agent_message(
             &session_id,
             SessionMessageRole::Assistant,
             content,
-            payload.message_id.clone(),
-            payload.part_id.clone(),
+            None,
+            None,
             agent_message_metadata(&payload),
         )
     };
+    let visible_tool_call = payload
+        .tool_call
+        .as_ref()
+        .is_some_and(tool_call_visible_to_frontend);
+    let persistent_tool_call = payload
+        .tool_call
+        .as_ref()
+        .is_some_and(tool_call_persistent_to_store);
     let tool_message = payload.tool_call.as_ref().and_then(|tool_call| {
         if let Some(todos) = planning_todos(tool_call) {
             session_store().set_todos(&session_id, todos);
         }
-        session_store().add_tool_message(
+        if !visible_tool_call || !persistent_tool_call {
+            return None;
+        }
+        session_store().add_tool_message_with_message_id(
             &session_id,
             tool_call.tool_name.clone(),
             tool_call.call_id.clone(),
             tool_call.state.clone(),
             tool_call.metadata.clone(),
+            None,
         )
     });
     sync_auto_session_name_from_agent_tool_call(&session_id, payload.tool_call.as_ref());
 
     match message.or(tool_message) {
-        Some(message) => Json(SendAgentMessageResponse {
+        Some(message) => SendAgentMessageResponse {
             ok: true,
             session_id: session_id.clone(),
             message_id: Some(message.id.clone()),
@@ -137,44 +169,357 @@ pub async fn send_agent_message(
                 Some(event)
             },
             error: None,
-        }),
-        None => Json(SendAgentMessageResponse {
+        },
+        None if payload.tool_call.is_some() && (!visible_tool_call || !persistent_tool_call) => {
+            SendAgentMessageResponse {
+                ok: true,
+                session_id,
+                message_id: None,
+                event: None,
+                error: None,
+            }
+        }
+        None => SendAgentMessageResponse {
             ok: false,
             session_id,
             message_id: None,
             event: None,
             error: Some("failed to store agent message".to_string()),
-        }),
+        },
     }
+}
+
+fn is_progress_only_agent_message(content: &str, payload: &SendAgentMessageRequest) -> bool {
+    payload.tool_call.is_none()
+        && payload.media.is_empty()
+        && content.trim_start().starts_with("Step summary:")
+}
+
+fn tool_call_persistent_to_store(tool_call: &SendAgentToolCall) -> bool {
+    tool_call.tool_name != "command_run" && !is_transient_tool_call(tool_call)
+}
+
+fn tool_call_visible_to_frontend(tool_call: &SendAgentToolCall) -> bool {
+    tool_call.tool_name != "command_run"
+        || !task_status_payload(&tool_call.state)
+            && !tool_call.metadata.as_ref().is_some_and(task_status_payload)
+}
+
+fn task_status_payload(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(object) => {
+            object.contains_key("task_status")
+                || object
+                    .get("command_type")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|value| value.eq_ignore_ascii_case("task_status"))
+                || object.values().any(task_status_payload)
+        }
+        serde_json::Value::Array(items) => items.iter().any(task_status_payload),
+        serde_json::Value::String(text) => serde_json::from_str::<serde_json::Value>(text)
+            .ok()
+            .is_some_and(|value| task_status_payload(&value)),
+        _ => false,
+    }
+}
+
+fn transient_tool_message_response(
+    session_id: &str,
+    payload: &SendAgentMessageRequest,
+) -> Option<SendAgentMessageResponse> {
+    let tool_call = payload.tool_call.as_ref()?;
+    if !is_transient_tool_call(tool_call) {
+        return None;
+    }
+
+    Some(SendAgentMessageResponse {
+        ok: true,
+        session_id: session_id.to_string(),
+        message_id: None,
+        event: None,
+        error: None,
+    })
+}
+
+fn runtime_managed_message_response(
+    session_id: &str,
+    payload: &SendAgentMessageRequest,
+    content: &str,
+) -> Option<SendAgentMessageResponse> {
+    let status = payload.runtime_status.as_ref()?;
+    sync_runtime_session_metrics(session_id, payload.context_tokens, payload.usage.clone());
+    let runtime_message_id = runtime_message_id(&status.runtime_id);
+    if status.should_refresh_session_db() {
+        let final_message = runtime_final_message(session_id, payload, content, status);
+        let messages = session_store().finalize_runtime_live_messages(
+            session_id,
+            &status.runtime_id,
+            final_message,
+        );
+        emit_command_updates(session_id, payload);
+        let event = messages
+            .last()
+            .cloned()
+            .map(|message| GlobalEvent::MessageUpdated {
+                properties: MessageUpdatedProperties {
+                    session_id: session_id.to_string(),
+                    info: api_message_from_store(message),
+                },
+            });
+        return Some(SendAgentMessageResponse {
+            ok: true,
+            session_id: session_id.to_string(),
+            message_id: Some(runtime_message_id),
+            event,
+            error: None,
+        });
+    }
+
+    if !status.live_overlay_active() {
+        return Some(SendAgentMessageResponse {
+            ok: true,
+            session_id: session_id.to_string(),
+            message_id: Some(runtime_message_id),
+            event: None,
+            error: None,
+        });
+    }
+
+    if content.trim().is_empty() {
+        return runtime_live_tool_message_response(session_id, payload, status);
+    }
+
+    let (created_at, updated_at) = runtime_message_times(payload);
+    let message = session_store().build_text_message_with_ids_and_times(
+        session_id,
+        SessionMessageRole::Assistant,
+        content.to_string(),
+        Some(runtime_message_id),
+        Some(runtime_text_part_id(&status.runtime_id)),
+        agent_message_metadata(payload),
+        created_at,
+        updated_at,
+    );
+    let message_id = message.id.clone();
+    let event =
+        session_store().upsert_live_message(session_id, Some(status.runtime_id.clone()), message);
+    emit_command_updates(session_id, payload);
+    Some(SendAgentMessageResponse {
+        ok: true,
+        session_id: session_id.to_string(),
+        message_id: Some(message_id),
+        event: Some(event),
+        error: None,
+    })
+}
+
+fn runtime_final_message(
+    session_id: &str,
+    payload: &SendAgentMessageRequest,
+    content: &str,
+    status: &RuntimeSessionSyncStatus,
+) -> Option<crate::session::Message> {
+    let (created_at, updated_at) = runtime_message_times(payload);
+    if !content.trim().is_empty() {
+        return Some(session_store().build_text_message_with_ids_and_times(
+            session_id,
+            SessionMessageRole::Assistant,
+            content.to_string(),
+            Some(runtime_message_id(&status.runtime_id)),
+            Some(runtime_text_part_id(&status.runtime_id)),
+            agent_message_metadata(payload),
+            created_at,
+            updated_at,
+        ));
+    }
+
+    let tool_call = payload.tool_call.as_ref()?;
+    if !tool_call_visible_to_frontend(tool_call) {
+        return None;
+    }
+    Some(
+        session_store().build_transient_tool_message_with_ids_and_times(
+            session_id,
+            tool_call.tool_name.clone(),
+            tool_call.call_id.clone(),
+            tool_call.state.clone(),
+            tool_call.metadata.clone(),
+            runtime_message_id(&status.runtime_id),
+            runtime_tool_part_id(&status.runtime_id, &tool_call.tool_name),
+            created_at,
+            updated_at,
+        ),
+    )
+}
+
+fn runtime_live_tool_message_response(
+    session_id: &str,
+    payload: &SendAgentMessageRequest,
+    status: &RuntimeSessionSyncStatus,
+) -> Option<SendAgentMessageResponse> {
+    let tool_call = payload.tool_call.as_ref()?;
+    if !tool_call_visible_to_frontend(tool_call) {
+        return Some(SendAgentMessageResponse {
+            ok: true,
+            session_id: session_id.to_string(),
+            message_id: Some(runtime_message_id(&status.runtime_id)),
+            event: None,
+            error: None,
+        });
+    }
+
+    let message_id = runtime_message_id(&status.runtime_id);
+    let part_id = runtime_tool_part_id(&status.runtime_id, &tool_call.tool_name);
+    let (created_at, updated_at) = runtime_message_times(payload);
+    let message = session_store().build_transient_tool_message_with_ids_and_times(
+        session_id,
+        tool_call.tool_name.clone(),
+        tool_call.call_id.clone(),
+        tool_call.state.clone(),
+        tool_call.metadata.clone(),
+        message_id.clone(),
+        part_id,
+        created_at,
+        updated_at,
+    );
+    let event =
+        session_store().upsert_live_message(session_id, Some(status.runtime_id.clone()), message);
+    emit_command_updates(session_id, payload);
+    Some(SendAgentMessageResponse {
+        ok: true,
+        session_id: session_id.to_string(),
+        message_id: Some(message_id),
+        event: Some(event),
+        error: None,
+    })
+}
+
+fn emit_command_updates(session_id: &str, payload: &SendAgentMessageRequest) {
+    if payload.command_updates.is_empty() {
+        return;
+    }
+    if !payload
+        .tool_call
+        .as_ref()
+        .is_some_and(tool_call_visible_to_frontend)
+    {
+        return;
+    }
+    for update in &payload.command_updates {
+        session_store().push_event(GlobalEvent::CommandUpdated {
+            properties: crate::contracts::CommandUpdatedProperties {
+                session_id: session_id.to_string(),
+                message_id: update.message_id.clone(),
+                part_id: update.part_id.clone(),
+                runtime_id: update.runtime_id.clone(),
+                command_run_id: update.command_run_id.clone(),
+                command_id: update.command_id.clone(),
+                provider_tool_call_id: update.provider_tool_call_id.clone(),
+                command_index: update.command_index,
+                event_seq: update.event_seq,
+                status: update.status.clone(),
+                command: update.command.clone(),
+                result: update.result.clone(),
+                created_at: update.created_at,
+                updated_at: update.updated_at,
+            },
+        });
+    }
+}
+
+fn runtime_message_times(payload: &SendAgentMessageRequest) -> (i64, i64) {
+    (payload.created_at, payload.updated_at)
+}
+
+fn runtime_message_id(runtime_id: &str) -> String {
+    format!("{runtime_id}.message")
+}
+
+fn runtime_text_part_id(runtime_id: &str) -> String {
+    format!("{runtime_id}.message")
+}
+
+fn runtime_tool_part_id(runtime_id: &str, tool_name: &str) -> String {
+    format!("{runtime_id}.tool.{tool_name}")
+}
+
+fn is_transient_tool_call(tool_call: &SendAgentToolCall) -> bool {
+    tool_call.tool_name == "command_run"
+        || bool_field(&tool_call.state, "transient")
+        || tool_call
+            .metadata
+            .as_ref()
+            .is_some_and(|metadata| bool_field(metadata, "transient"))
+        || tool_call
+            .state
+            .get("metadata")
+            .is_some_and(|metadata| bool_field(metadata, "transient"))
+}
+
+fn bool_field(value: &serde_json::Value, key: &str) -> bool {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
 }
 
 pub async fn stream_agent_message(
     Path(session_id): Path<String>,
     Json(payload): Json<StreamAgentTextRequest>,
 ) -> Json<serde_json::Value> {
+    Json(stream_agent_message_payload(session_id, payload))
+}
+
+pub fn stream_agent_message_payload(
+    session_id: String,
+    payload: StreamAgentTextRequest,
+) -> serde_json::Value {
+    sync_runtime_session_metrics(&session_id, payload.context_tokens, payload.usage.clone());
     if payload.delta.is_empty() {
-        return Json(serde_json::json!({ "ok": true }));
+        return serde_json::json!({ "ok": true });
     }
+    let message_id = runtime_message_id(&payload.runtime_id);
+    let part_id = runtime_text_part_id(&payload.runtime_id);
     // Transient streaming overlay only: emit the delta so the frontend renders
     // tokens live. The persisted message arrives later via `send_agent_message`
     // reusing the same ids, which replaces these deltas with the full reply.
     session_store().push_event(GlobalEvent::MessagePartDelta {
-        properties: crate::api::types::MessagePartDeltaProperties {
+        properties: crate::contracts::MessagePartDeltaProperties {
             session_id: session_id.clone(),
-            message_id: payload.message_id,
-            part_id: payload.part_id,
+            message_id,
+            part_id,
+            created_at: payload.created_at,
+            updated_at: payload.updated_at,
             field: "text".to_string(),
             delta: payload.delta,
         },
     });
-    Json(serde_json::json!({ "ok": true, "session_id": session_id }))
+    serde_json::json!({ "ok": true, "session_id": session_id })
+}
+
+fn sync_runtime_session_metrics(
+    session_id: &str,
+    context_tokens: Option<crate::contracts::SessionContextTokens>,
+    usage: Option<serde_json::Value>,
+) -> bool {
+    let mut updated = false;
+    if let Some(context_tokens) = context_tokens {
+        updated |= session_store().update_session_context_tokens(session_id, context_tokens);
+    }
+    if let Some(usage) = usage {
+        updated |= session_store().update_session_runtime_usage(session_id, usage);
+    }
+    if updated {
+        session_store().push_current_session_status_event(session_id);
+    }
+    updated
 }
 
 fn sync_auto_session_name_from_agent_tool_call(
     session_id: &str,
     tool_call: Option<&SendAgentToolCall>,
 ) {
-    let Some(summary) = tool_call.and_then(last_task_detail_from_tool_call) else {
+    let Some(summary) = tool_call.and_then(auto_session_name_from_tool_call) else {
         return;
     };
     let Some(current_session) = session_store().get_session(session_id) else {
@@ -209,6 +554,38 @@ fn sync_auto_session_name_from_agent_tool_call(
     });
 }
 
+fn auto_session_name_from_tool_call(tool_call: &SendAgentToolCall) -> Option<String> {
+    if tool_call.tool_name == "planning" {
+        return last_task_summary_from_planning_tool_call(tool_call);
+    }
+    last_task_detail_from_tool_call(tool_call)
+}
+
+fn last_task_summary_from_planning_tool_call(tool_call: &SendAgentToolCall) -> Option<String> {
+    let mut summaries = Vec::new();
+    if let Some(output) = tool_call
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("output"))
+    {
+        collect_string_field(output, "task_summary", &mut summaries);
+    }
+    if summaries.is_empty() {
+        if let Some(output) = tool_call
+            .state
+            .get("metadata")
+            .and_then(|metadata| metadata.get("output"))
+            .or_else(|| tool_call.state.get("output"))
+        {
+            collect_string_field(output, "task_summary", &mut summaries);
+        }
+    }
+    if summaries.is_empty() {
+        collect_string_field(&tool_call.state, "task_summary", &mut summaries);
+    }
+    summaries.pop()
+}
+
 fn last_task_detail_from_tool_call(tool_call: &SendAgentToolCall) -> Option<String> {
     let mut details = Vec::new();
     if let Some(output) = tool_call
@@ -216,7 +593,7 @@ fn last_task_detail_from_tool_call(tool_call: &SendAgentToolCall) -> Option<Stri
         .as_ref()
         .and_then(|metadata| metadata.get("output"))
     {
-        collect_task_details(output, &mut details);
+        collect_string_field(output, "task_detail", &mut details);
     }
     if details.is_empty() {
         if let Some(output) = tool_call
@@ -225,97 +602,53 @@ fn last_task_detail_from_tool_call(tool_call: &SendAgentToolCall) -> Option<Stri
             .and_then(|metadata| metadata.get("output"))
             .or_else(|| tool_call.state.get("output"))
         {
-            collect_task_details(output, &mut details);
+            collect_string_field(output, "task_detail", &mut details);
         }
     }
     if details.is_empty() {
-        collect_task_details(&tool_call.state, &mut details);
+        collect_string_field(&tool_call.state, "task_detail", &mut details);
     }
     details.pop()
 }
 
-fn collect_task_details(value: &serde_json::Value, details: &mut Vec<String>) {
+fn collect_string_field(value: &serde_json::Value, field: &str, values: &mut Vec<String>) {
     match value {
         serde_json::Value::Object(object) => {
-            if let Some(detail) = object
-                .get("task_detail")
+            if let Some(value) = object
+                .get(field)
                 .and_then(serde_json::Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
             {
-                details.push(detail.to_string());
+                values.push(value.to_string());
             }
             for child in object.values() {
-                collect_task_details(child, details);
+                collect_string_field(child, field, values);
             }
         }
         serde_json::Value::Array(items) => {
             for item in items {
-                collect_task_details(item, details);
+                collect_string_field(item, field, values);
             }
         }
         _ => {}
     }
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct SendAgentMessageRequest {
-    pub reply_message: String,
-    pub new_learning: String,
-    pub step_summary: Option<String>,
-    #[serde(default)]
-    pub media: Vec<SendAgentMedia>,
-    pub runtime_id: Option<String>,
-    pub tool_call: Option<SendAgentToolCall>,
-    /// Stable id pair from the streamed assistant text so the persisted message
-    /// reuses the same ids without dropping already-visible frontend text.
-    pub message_id: Option<String>,
-    pub part_id: Option<String>,
-}
-
-/// One incremental assistant text token streamed from the runtime, re-emitted by
-/// the gateway as a `message.part.delta` so the frontend renders tokens live.
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct StreamAgentTextRequest {
-    pub message_id: String,
-    pub part_id: String,
-    pub delta: String,
-    pub runtime_id: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct SendAgentToolCall {
-    pub tool_name: String,
-    pub call_id: String,
-    pub state: serde_json::Value,
-    pub metadata: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct SendAgentMedia {
-    pub path: String,
-    #[serde(rename = "type")]
-    pub media_type: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct SendAgentMessageResponse {
-    pub ok: bool,
-    pub session_id: String,
-    pub message_id: Option<String>,
-    pub event: Option<GlobalEvent>,
-    pub error: Option<String>,
-}
-
 pub(super) fn agent_message_content(payload: &SendAgentMessageRequest) -> String {
     if payload.tool_call.is_some()
         && payload.reply_message.trim().is_empty()
         && payload.media.is_empty()
+        && runtime_output_text_from_tool_call(payload.tool_call.as_ref()).is_none()
     {
         return String::new();
     }
 
     let mut content = frontend_safe_reply_message(&payload.reply_message);
+    if content.trim().is_empty() {
+        content =
+            runtime_output_text_from_tool_call(payload.tool_call.as_ref()).unwrap_or_default();
+    }
 
     if !payload.media.is_empty() {
         if !content.trim().is_empty() {
@@ -329,6 +662,66 @@ pub(super) fn agent_message_content(payload: &SendAgentMessageRequest) -> String
     }
 
     content
+}
+
+fn runtime_output_text_from_tool_call(tool_call: Option<&SendAgentToolCall>) -> Option<String> {
+    let tool_call = tool_call?;
+    if !is_runtime_output_tool_call(tool_call) {
+        return None;
+    }
+
+    runtime_output_candidate_values(tool_call)
+        .into_iter()
+        .find_map(visible_text_from_runtime_value)
+}
+
+fn is_runtime_output_tool_call(tool_call: &SendAgentToolCall) -> bool {
+    tool_call.tool_name == "runtime"
+}
+
+fn runtime_output_candidate_values(tool_call: &SendAgentToolCall) -> Vec<serde_json::Value> {
+    let mut values = Vec::new();
+    for root in [tool_call.metadata.as_ref(), Some(&tool_call.state)]
+        .into_iter()
+        .flatten()
+    {
+        for key in ["output", "response", "result", "final", "message"] {
+            if let Some(value) = root.get(key) {
+                values.push(value.clone());
+            }
+        }
+    }
+    values
+}
+
+fn visible_text_from_runtime_value(value: serde_json::Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return visible_text_from_runtime_string(text);
+    }
+    for key in [
+        "reply_message",
+        "output_text",
+        "final_text",
+        "message",
+        "text",
+        "content",
+        "summary",
+    ] {
+        if let Some(text) = value.get(key).and_then(serde_json::Value::as_str) {
+            if let Some(text) = visible_text_from_runtime_string(text) {
+                return Some(text);
+            }
+        }
+    }
+
+    let normalized = tura_llm_rust::normalize_response_content(&value);
+    let text = tura_llm_rust::extract_response_text(&normalized)?;
+    visible_text_from_runtime_string(&tura_llm_rust::strip_thought_blocks(&text))
+}
+
+fn visible_text_from_runtime_string(text: &str) -> Option<String> {
+    let text = frontend_safe_reply_message(&tura_llm_rust::strip_thought_blocks(text));
+    (!text.trim().is_empty()).then_some(text)
 }
 
 pub(super) fn agent_message_metadata(
@@ -464,46 +857,44 @@ fn todo_content(step: &serde_json::Value, number: usize) -> String {
         .unwrap_or_else(|| format!("Step {number}"))
 }
 
-pub async fn get_message(
-    Path((session_id, message_id)): Path<(String, String)>,
-) -> Json<serde_json::Value> {
-    let messages = session_store().get_messages(&session_id);
+pub async fn get_message(Path((session_id, message_id)): Path<(String, String)>) -> Json<Message> {
+    let messages = session_store().get_frontend_messages(&session_id);
     let message = messages
         .into_iter()
         .find(|m| m.id == message_id)
         .map(message_with_parts_from_store)
-        .unwrap_or_else(|| {
-            serde_json::json!({
-                "info": {
-                    "id": message_id,
-                    "sessionID": session_id,
-                    "role": "user",
-                    "time": { "created": 0 },
-                    "parts": [],
-                },
-                "parts": [],
-            })
+        .unwrap_or_else(|| Message {
+            id: message_id,
+            session_id,
+            role: MessageRole::User,
+            parts: Vec::new(),
+            created_at: 0,
+            updated_at: 0,
+            parent_id: None,
         });
     Json(message)
 }
 
 pub async fn get_message_part(
     Path((session_id, message_id, part_id)): Path<(String, String, String)>,
-) -> Json<serde_json::Value> {
-    let messages = session_store().get_messages(&session_id);
+) -> Json<MessagePart> {
+    let messages = session_store().get_frontend_messages(&session_id);
     let message = messages.into_iter().find(|m| m.id == message_id);
 
     let part = message
         .and_then(|m| m.parts.into_iter().find(|p| p.id == part_id))
         .map(|p| part_json(&session_id, &message_id, p))
-        .unwrap_or_else(|| {
-            serde_json::json!({
-                "id": part_id,
-                "sessionID": session_id,
-                "messageID": message_id,
-                "type": "text",
-                "text": "",
-            })
+        .unwrap_or_else(|| MessagePart {
+            id: part_id,
+            session_id,
+            message_id,
+            part_type: "text".to_string(),
+            content: None,
+            text: Some(String::new()),
+            metadata: None,
+            call_id: None,
+            tool: None,
+            state: None,
         });
     Json(part)
 }
@@ -514,39 +905,20 @@ pub async fn get_message_part(
 
 pub async fn session_command(
     Path(session_id): Path<String>,
-    Json(payload): Json<CommandRequest>,
-) -> Json<CommandResponse> {
+    Json(payload): Json<SessionCommandRequest>,
+) -> Json<SessionCommandResponse> {
     let directory = session_store()
         .get_session(&session_id)
         .and_then(|session| session.directory)
         .unwrap_or_else(|| ".".to_string());
     let output = run_session_shell_command(&directory, &payload.command)
         .unwrap_or_else(|error| format!("failed to run session command: {error}"));
-    Json(CommandResponse { output })
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct CommandRequest {
-    pub command: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct CommandResponse {
-    pub output: String,
+    Json(SessionCommandResponse { output })
 }
 
 // ============================================================================
 // Session Todo
 // ============================================================================
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-#[allow(dead_code)]
-pub struct TodoItem {
-    pub id: String,
-    pub content: String,
-    pub status: String,
-    pub priority: String,
-}
 
 pub async fn get_todos(Path(session_id): Path<String>) -> Json<Vec<serde_json::Value>> {
     Json(session_store().get_todos(&session_id))
@@ -576,8 +948,12 @@ mod tests {
             media: Vec::new(),
             runtime_id: None,
             tool_call: None,
-            message_id: None,
-            part_id: None,
+            runtime_status: None,
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
+            created_at: 1,
+            updated_at: 1,
         }
     }
 
@@ -601,6 +977,16 @@ mod tests {
             state,
             metadata: None,
         }
+    }
+
+    fn next_session_event(cursor: &mut u64, session_id: &str) -> Option<GlobalEvent> {
+        std::iter::from_fn(|| session_store().next_event(cursor)).find(|event| match event {
+            GlobalEvent::SessionStatus { properties } => properties.session_id == session_id,
+            GlobalEvent::MessageUpdated { properties } => properties.session_id == session_id,
+            GlobalEvent::MessagePartDelta { properties } => properties.session_id == session_id,
+            GlobalEvent::CommandUpdated { properties } => properties.session_id == session_id,
+            _ => false,
+        })
     }
 
     #[test]
@@ -663,6 +1049,230 @@ mod tests {
     }
 
     #[test]
+    fn terminal_runtime_usage_callback_updates_session_usage_and_emits_status_event() {
+        let session = session_store().create_session(
+            Some("C:/workspace".to_string()),
+            None,
+            None,
+            Some("coding".to_string()),
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        let mut info = session_store()
+            .get_session_info(&session.id)
+            .expect("session info should exist");
+        info.management.context_tokens =
+            runtime::state_machine::session_management::ContextTokenStats {
+                input: 42_000,
+                limit: 128_000,
+            };
+        session_store().replace_management(&session.id, info.management);
+        let mut cursor = session_store().event_cursor();
+        let usage = json!({
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "total_tokens": 120,
+            "total_cost": 0.012,
+            "currency": "USD"
+        });
+
+        let response = send_agent_message_payload(
+            session.id.clone(),
+            SendAgentMessageRequest {
+                reply_message: String::new(),
+                new_learning: String::new(),
+                step_summary: None,
+                media: Vec::new(),
+                runtime_id: Some("runtime-usage-event".to_string()),
+                tool_call: Some(SendAgentToolCall {
+                    tool_name: "runtime".to_string(),
+                    call_id: "runtime-usage-event".to_string(),
+                    state: json!({ "output": {"reply_message": "done"} }),
+                    metadata: None,
+                }),
+                runtime_status: Some(
+                    runtime::state_machine::runtime_management::RuntimeSessionSyncStatus {
+                        runtime_id: "runtime-usage-event".to_string(),
+                        state: runtime::state_machine::runtime_management::RuntimeState::Finished,
+                        call_result_status: runtime::state_machine::runtime_management::RuntimeCallResultStatus::Succeeded,
+                        live: false,
+                        session_db_refresh_required: true,
+                    },
+                ),
+                context_tokens: None,
+                usage: Some(usage),
+                command_updates: Vec::new(),
+                created_at: 1,
+                updated_at: 2,
+            },
+        );
+
+        assert!(response.ok);
+        let event = next_session_event(&mut cursor, &session.id)
+            .expect("usage status event should be published");
+        match event {
+            GlobalEvent::SessionStatus { properties } => {
+                assert_eq!(properties.session_id, session.id);
+                assert!(properties.updated_at > 0);
+                assert_eq!(properties.usage.context_tokens.input, 42_000);
+                assert_eq!(properties.usage.context_tokens.limit, 128_000);
+                assert_eq!(properties.usage.tokens["total_tokens"], 120);
+                assert_eq!(properties.usage.cost, Some(0.012));
+                assert_eq!(properties.usage.currency.as_deref(), Some("USD"));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+        let updated = session_store()
+            .get_session(&session.id)
+            .expect("session should exist");
+        assert_eq!(updated.usage.tokens["total_tokens"], 120);
+        assert_eq!(updated.usage.cost, Some(0.012));
+    }
+
+    #[test]
+    fn live_runtime_callback_updates_session_metrics_before_message_event() {
+        let session = session_store().create_session(
+            Some("C:/workspace-live-metrics".to_string()),
+            None,
+            None,
+            Some("coding".to_string()),
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        let mut cursor = session_store().event_cursor();
+        let usage = json!({
+            "input_tokens": 200,
+            "output_tokens": 30,
+            "total_tokens": 230,
+            "total_cost": 0.023,
+            "currency": "USD"
+        });
+
+        let response = send_agent_message_payload(
+            session.id.clone(),
+            SendAgentMessageRequest {
+                reply_message: "live text".to_string(),
+                new_learning: String::new(),
+                step_summary: None,
+                media: Vec::new(),
+                runtime_id: Some("runtime-live-metrics".to_string()),
+                tool_call: None,
+                runtime_status: Some(
+                    runtime::state_machine::runtime_management::RuntimeSessionSyncStatus {
+                        runtime_id: "runtime-live-metrics".to_string(),
+                        state: runtime::state_machine::runtime_management::RuntimeState::Streaming,
+                        call_result_status: runtime::state_machine::runtime_management::RuntimeCallResultStatus::Streaming,
+                        live: true,
+                        session_db_refresh_required: false,
+                    },
+                ),
+                context_tokens: Some(crate::contracts::SessionContextTokens {
+                    input: 64_000,
+                    limit: 128_000,
+                }),
+                usage: Some(usage),
+                command_updates: Vec::new(),
+                created_at: 1,
+                updated_at: 1,
+            },
+        );
+
+        assert!(response.ok);
+        let first = next_session_event(&mut cursor, &session.id)
+            .expect("metrics status event should be published first");
+        match first {
+            GlobalEvent::SessionStatus { properties } => {
+                assert!(properties.updated_at > 0);
+                assert_eq!(properties.context_tokens.input, 64_000);
+                assert_eq!(properties.usage.tokens["total_tokens"], 230);
+            }
+            other => panic!("unexpected first event: {other:?}"),
+        }
+        assert!(matches!(
+            next_session_event(&mut cursor, &session.id),
+            Some(GlobalEvent::MessageUpdated { .. })
+        ));
+        let updated = session_store()
+            .get_session(&session.id)
+            .expect("session should exist");
+        assert_eq!(updated.context_tokens.input, 64_000);
+        assert_eq!(updated.usage.tokens["total_tokens"], 230);
+    }
+
+    #[test]
+    fn streamed_runtime_delta_updates_session_context_metrics() {
+        let session = session_store().create_session(
+            Some("C:/workspace-stream-metrics".to_string()),
+            None,
+            None,
+            Some("coding".to_string()),
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        let mut cursor = session_store().event_cursor();
+
+        let response = stream_agent_message_payload(
+            session.id.clone(),
+            StreamAgentTextRequest {
+                delta: "token".to_string(),
+                runtime_id: "runtime-stream-metrics".to_string(),
+                created_at: 1,
+                updated_at: 2,
+                context_tokens: Some(crate::contracts::SessionContextTokens {
+                    input: 32_000,
+                    limit: 96_000,
+                }),
+                usage: None,
+            },
+        );
+
+        assert_eq!(response["ok"], true);
+        let first = next_session_event(&mut cursor, &session.id)
+            .expect("stream metric status event should be published first");
+        match first {
+            GlobalEvent::SessionStatus { properties } => {
+                assert!(properties.updated_at > 0);
+                assert_eq!(properties.context_tokens.input, 32_000);
+                assert_eq!(properties.context_tokens.limit, 96_000);
+            }
+            other => panic!("unexpected first event: {other:?}"),
+        }
+        assert!(matches!(
+            next_session_event(&mut cursor, &session.id),
+            Some(GlobalEvent::MessagePartDelta { .. })
+        ));
+    }
+
+    #[test]
+    fn step_summary_agent_messages_are_progress_only() {
+        let mut payload = request("Step summary: inspect files");
+        payload.runtime_id = Some("runtime-1".to_string());
+
+        assert!(is_progress_only_agent_message(
+            &agent_message_content(&payload),
+            &payload
+        ));
+
+        payload.reply_message = "Final answer".to_string();
+        assert!(!is_progress_only_agent_message(
+            &agent_message_content(&payload),
+            &payload
+        ));
+    }
+
+    #[test]
     fn planning_todos_requires_planning_tool_and_nonempty_steps() {
         let non_planning = SendAgentToolCall {
             tool_name: "command_run".to_string(),
@@ -679,6 +1289,155 @@ mod tests {
             metadata: None,
         };
         assert!(planning_todos(&empty_steps).is_none());
+    }
+
+    #[test]
+    fn command_run_tool_calls_are_transient_and_not_persistent_without_marker() {
+        let tool_call = SendAgentToolCall {
+            tool_name: "command_run".to_string(),
+            call_id: "call-command-run".to_string(),
+            state: json!({
+                "status": "completed",
+                "metadata": {
+                    "kind": "mano_tool_call"
+                }
+            }),
+            metadata: Some(json!({
+                "kind": "mano_tool_call",
+                "tool": "command_run"
+            })),
+        };
+
+        assert!(is_transient_tool_call(&tool_call));
+        assert!(!tool_call_persistent_to_store(&tool_call));
+        assert!(tool_call_visible_to_frontend(&tool_call));
+    }
+
+    #[test]
+    fn command_updates_emit_incremental_gateway_events() {
+        let session = session_store().create_session(
+            Some("C:/workspace-command-updates".to_string()),
+            None,
+            None,
+            Some("coding".to_string()),
+            false,
+            false,
+            false,
+            None,
+            false,
+            false,
+        );
+        let mut cursor = session_store().event_cursor();
+
+        let response = send_agent_message_payload(
+            session.id,
+            SendAgentMessageRequest {
+                reply_message: String::new(),
+                new_learning: String::new(),
+                step_summary: None,
+                media: Vec::new(),
+                runtime_id: Some("runtime-command-update".to_string()),
+                tool_call: Some(SendAgentToolCall {
+                    tool_name: "command_run".to_string(),
+                    call_id: "runtime-command-update.tool.command_run".to_string(),
+                    state: json!({
+                        "status": "running",
+                        "input": {
+                            "commands": [{
+                                "command_id": "runtime-command-update.tool.command_run:call_1:0",
+                                "command_type": "shell_command",
+                                "command_line": "echo ok"
+                            }]
+                        }
+                    }),
+                    metadata: None,
+                }),
+                runtime_status: Some(
+                    runtime::state_machine::runtime_management::RuntimeSessionSyncStatus {
+                        runtime_id: "runtime-command-update".to_string(),
+                        state: runtime::state_machine::runtime_management::RuntimeState::Streaming,
+                        call_result_status: runtime::state_machine::runtime_management::RuntimeCallResultStatus::Streaming,
+                        live: true,
+                        session_db_refresh_required: false,
+                    },
+                ),
+                context_tokens: None,
+                usage: None,
+                command_updates: vec![CommandUpdatePayload {
+                    message_id: "runtime-command-update.message".to_string(),
+                    part_id: "runtime-command-update.tool.command_run".to_string(),
+                    runtime_id: "runtime-command-update".to_string(),
+                    command_run_id: "runtime-command-update.tool.command_run".to_string(),
+                    command_id: "runtime-command-update.tool.command_run:call_1:0".to_string(),
+                    provider_tool_call_id: Some("call_1".to_string()),
+                    command_index: Some(0),
+                    event_seq: Some(30),
+                    status: "running".to_string(),
+                    command: json!({
+                        "command_id": "runtime-command-update.tool.command_run:call_1:0",
+                        "command_type": "shell_command",
+                        "command_line": "echo ok"
+                    }),
+                    result: serde_json::Value::Null,
+                    created_at: 1,
+                    updated_at: 10,
+                }],
+                created_at: 1,
+                updated_at: 10,
+            },
+        );
+
+        assert!(response.ok);
+        let events =
+            std::iter::from_fn(|| session_store().next_event(&mut cursor)).collect::<Vec<_>>();
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                GlobalEvent::CommandUpdated { properties }
+                    if properties.command_id == "runtime-command-update.tool.command_run:call_1:0"
+                        && properties.command_run_id == "runtime-command-update.tool.command_run"
+                        && properties.status == "running"
+            )),
+            "events: {events:#?}"
+        );
+    }
+
+    #[test]
+    fn command_run_task_status_is_neither_visible_nor_persistent() {
+        let tool_call = SendAgentToolCall {
+            tool_name: "command_run".to_string(),
+            call_id: "call-task-status".to_string(),
+            state: json!({
+                "status": "running",
+                "input": {
+                    "commands": [{
+                        "command_type": "task_status",
+                        "task_status": { "status": "working" }
+                    }]
+                }
+            }),
+            metadata: None,
+        };
+
+        assert!(is_transient_tool_call(&tool_call));
+        assert!(!tool_call_visible_to_frontend(&tool_call));
+        assert!(!tool_call_persistent_to_store(&tool_call));
+    }
+
+    #[test]
+    fn explicit_transient_tool_calls_are_not_persistent() {
+        let tool_call = SendAgentToolCall {
+            tool_name: "grep".to_string(),
+            call_id: "call-grep".to_string(),
+            state: json!({
+                "status": "running",
+                "transient": true
+            }),
+            metadata: None,
+        };
+
+        assert!(is_transient_tool_call(&tool_call));
+        assert!(!tool_call_persistent_to_store(&tool_call));
     }
 
     #[test]
@@ -836,24 +1595,71 @@ mod tests {
             last_task_detail_from_tool_call(&call).as_deref(),
             Some("state metadata detail")
         );
+
+        let detail_only = SendAgentToolCall {
+            tool_name: "task_status".to_string(),
+            call_id: "call".to_string(),
+            state: json!({
+                "task_summary": "must not be used",
+                "metadata": {
+                    "output": {
+                        "task_summary": "must not be used either"
+                    }
+                }
+            }),
+            metadata: Some(json!({
+                "output": {
+                    "task_summary": "still not a task detail"
+                }
+            })),
+        };
+        assert_eq!(last_task_detail_from_tool_call(&detail_only), None);
     }
 
     #[test]
-    fn collect_task_details_walks_nested_arrays_and_objects_in_order() {
-        let mut details = Vec::new();
+    fn planning_auto_session_name_uses_task_summary_only() {
+        let call = SendAgentToolCall {
+            tool_name: "planning".to_string(),
+            call_id: "planning".to_string(),
+            state: json!({
+                "task_detail": "must not be used",
+                "metadata": {
+                    "output": {
+                        "steps": [
+                            { "task_summary": "First summary" },
+                            { "task_detail": "must not be used either" },
+                            { "task_summary": "Last summary" }
+                        ]
+                    }
+                }
+            }),
+            metadata: None,
+        };
 
-        collect_task_details(
+        assert_eq!(
+            auto_session_name_from_tool_call(&call).as_deref(),
+            Some("Last summary")
+        );
+    }
+
+    #[test]
+    fn collect_string_field_walks_nested_arrays_and_objects_in_order() {
+        let mut values = Vec::new();
+
+        collect_string_field(
             &json!({
                 "task_detail": "root",
                 "items": [
                     { "task_detail": "child one" },
                     { "nested": { "task_detail": "child two" } },
+                    { "task_detail": "", "task_summary": "must not fallback" },
                     { "task_detail": "   " }
                 ]
             }),
-            &mut details,
+            "task_detail",
+            &mut values,
         );
 
-        assert_eq!(details, vec!["root", "child one", "child two"]);
+        assert_eq!(values, vec!["root", "child one", "child two"]);
     }
 }

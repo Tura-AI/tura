@@ -1,0 +1,13 @@
+export const SETTING_DETAILS = [
+  "model",
+  "provider",
+  "agent",
+  "persona",
+  "language",
+  "variant",
+  "priority",
+  "commands",
+] as const;
+
+export type HiddenSettingDetail = "session" | "validator" | "stallGuard";
+export type SettingDetail = (typeof SETTING_DETAILS)[number] | HiddenSettingDetail | "providerAuth";

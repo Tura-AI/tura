@@ -18,6 +18,7 @@ export function WorkspaceChildren(props: {
   activeTab: MainTab;
   expandedGroup?: string;
   sessions: Session[];
+  sessionsLoading: boolean;
   attentionAcknowledged: (session: Session) => boolean;
   selectedSessionId?: string;
   productIssues: ProductIssue[];
@@ -48,13 +49,21 @@ export function WorkspaceChildren(props: {
   );
   const rootFiles = createMemo(() => props.fileTree[""] ?? props.files);
   const sortedPlanSessions = createMemo(() => rootSessions(props.sessions));
+  const sessionFallback = () =>
+    props.sessionsLoading ? (
+      <div class="rail-session-loading" aria-label={t("loading")}>
+        <span class="loading-bar medium" />
+      </div>
+    ) : (
+      <div class="rail-empty">{t("noSessions")}</div>
+    );
   return (
     <div class="workspace-children">
       <Switch>
         <Match when={props.activeTab === "plan"}>
           <For
             each={sortedPlanSessions()}
-            fallback={<div class="rail-empty">{t("noSessions")}</div>}
+            fallback={sessionFallback()}
           >
             {(session) => (
               <SessionButton
@@ -68,7 +77,7 @@ export function WorkspaceChildren(props: {
           </For>
         </Match>
         <Match when={props.activeTab === "conversation"}>
-          <For each={visibleSessions()} fallback={<div class="rail-empty">{t("noSessions")}</div>}>
+          <For each={visibleSessions()} fallback={sessionFallback()}>
             {(row) => (
               <SessionButton
                 session={row.session}

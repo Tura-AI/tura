@@ -21,9 +21,11 @@ use tura_llm_rust::{
 
 static MOCK_ROUTER_ADDR: OnceLock<String> = OnceLock::new();
 static MOCK_ROUTER_INIT: Mutex<()> = Mutex::new(());
+static TEST_ENV: Mutex<()> = Mutex::new(());
 
 #[tokio::test]
 async fn runtime_provider_timeout_business_flow_marks_runtime_timed_out_without_success_output() {
+    let _guard = TEST_ENV.lock().unwrap_or_else(|err| err.into_inner());
     let provider = DelayedProvider::start(Duration::from_millis(2_500));
     let _api_key = EnvGuard::set("LOCALTIMEOUT_API_KEY", "local-timeout-key");
     let settings = Arc::new(Settings {
@@ -107,25 +109,25 @@ async fn runtime_provider_timeout_business_flow_marks_runtime_timed_out_without_
 }
 
 #[tokio::test]
-async fn streamed_command_run_post_result_timeout_advances_without_final_provider_event() {
+async fn streamed_command_run_waits_for_commands_after_provider_stream_completes() {
+    let _guard = TEST_ENV.lock().unwrap_or_else(|err| err.into_inner());
     let workspace = tempfile::tempdir().expect("workspace");
-    let output_path = workspace.path().join("post-result-timeout.txt");
-    let provider = StalledResponsesProvider::start(stalled_command(&output_path));
+    let output_path = workspace.path().join("completed-provider-command.txt");
+    let provider = CompletedResponsesProvider::start(delayed_command(&output_path));
     let router_addr = mock_command_run_router_addr();
     let _api_key = EnvGuard::set("OPENAI_API_KEY", "local-stream-key");
-    let _post_result_timeout =
-        EnvGuard::set("TURA_STREAMED_COMMAND_RUN_POST_RESULT_TIMEOUT_MS", "150");
     let _router_addr = EnvGuard::set("TURA_ROUTER_ADDR", router_addr.as_str());
+    let _gateway_callbacks = EnvGuard::set("TURA_GATEWAY_CALLBACKS", "0");
     let settings = Arc::new(Settings {
         provider_base_url: HashMap::new(),
         routes: HashMap::from([(
-            "stream-timeout-route".to_string(),
+            "stream-complete-route".to_string(),
             RouteConfig {
                 default_temperature: 0.0,
                 providers: vec![LlmProviderConfig {
                     provider: "openai".to_string(),
                     base_url: provider.endpoint.clone(),
-                    model: "local-stream-timeout-model".to_string(),
+                    model: "local-stream-complete-model".to_string(),
                     temperature: 0.0,
                 }],
             },
@@ -134,12 +136,12 @@ async fn streamed_command_run_post_result_timeout_advances_without_final_provide
         provider_enums: ProviderEnumCatalog::default(),
     });
     let runtime = runtime_for_provider(
-        "runtime-post-command-timeout-business",
+        "runtime-stream-complete-command-business",
         30_000,
         true,
-        "stream-timeout-route",
+        "stream-complete-route",
         "openai",
-        "local-stream-timeout-model",
+        "local-stream-complete-model",
     );
 
     let started = std::time::Instant::now();
@@ -148,10 +150,10 @@ async fn streamed_command_run_post_result_timeout_advances_without_final_provide
             runtime,
             messages: vec![json!({
                 "role": "user",
-                "content": "run one streamed command then wait for provider finalization"
+                "content": "run one streamed command after the provider stream completes"
             })],
             tools: Vec::new(),
-            provider_name: "stream-timeout-route".to_string(),
+            provider_name: "stream-complete-route".to_string(),
             stream: true,
             max_tokens: 128,
             tool_choice: None,
@@ -160,20 +162,20 @@ async fn streamed_command_run_post_result_timeout_advances_without_final_provide
         },
         settings,
         Arc::new(TuraConfig::new(
-            ".env.runtime-stream-timeout-business-missing",
+            ".env.runtime-stream-complete-business-missing",
         )),
     )
     .await
-    .expect("post command_run stream timeout should finish with command results");
+    .expect("completed provider stream should wait for command results");
 
     let elapsed = started.elapsed();
+    assert!(elapsed >= Duration::from_millis(300));
     assert!(
-        elapsed < Duration::from_secs(12),
-        "post-result timeout should finish without waiting for the provider total timeout; elapsed={elapsed:?}, state={:?}, status={:?}, output={:?}, file_exists={}",
+        elapsed < Duration::from_secs(5),
+        "completed provider stream should only wait for command completion; elapsed={elapsed:?}, state={:?}, status={:?}, output={:?}",
         result.state,
         result.call_result_status,
-        result.output,
-        output_path.exists()
+        result.output
     );
     assert_eq!(result.state, RuntimeState::Finished);
     assert_eq!(
@@ -187,20 +189,19 @@ async fn streamed_command_run_post_result_timeout_advances_without_final_provide
         std::fs::read_to_string(&output_path).expect("command output file"),
         "stream command completed"
     );
-
     let output = result.output.as_ref().expect("runtime output");
-    assert_eq!(
-        output.pointer("/streamed_command_run_result/early_finish_reason"),
-        Some(&json!("post_command_run_stream_timeout"))
-    );
     assert_eq!(
         output.pointer("/streamed_command_run_result/results/0/success"),
         Some(&json!(true))
     );
     assert!(output
-        .pointer("/provider_content/text")
-        .and_then(|value| value.as_str())
-        .is_some_and(|text| text.contains("Provider stream did not finish")));
+        .pointer("/streamed_command_run_result/early_finish_reason")
+        .is_none());
+    assert_eq!(
+        output.pointer("/provider_content/text"),
+        Some(&json!("provider stream completed")),
+        "runtime output={output:#}"
+    );
     assert_eq!(result.tool_call.len(), 1);
     assert_eq!(result.tool_call[0].tool_called_name, "command_run");
 
@@ -209,6 +210,93 @@ async fn streamed_command_run_post_result_timeout_advances_without_final_provide
     assert!(request
         .to_ascii_lowercase()
         .contains("authorization: bearer local-stream-key"));
+}
+
+#[tokio::test]
+async fn streamed_command_run_gateway_callbacks_do_not_gate_command_execution_business_flow() {
+    let _guard = TEST_ENV.lock().unwrap_or_else(|err| err.into_inner());
+    let workspace = tempfile::tempdir().expect("workspace");
+    let output_path = workspace.path().join("completed-with-hanging-gateway.txt");
+    let provider = CompletedResponsesProvider::start(delayed_command(&output_path));
+    let hanging_gateway = HangingGateway::start(Duration::from_secs(5));
+    let router_addr = mock_command_run_router_addr();
+    let _api_key = EnvGuard::set("OPENAI_API_KEY", "local-stream-callback-key");
+    let _router_addr = EnvGuard::set("TURA_ROUTER_ADDR", router_addr.as_str());
+    let _gateway_callbacks = EnvGuard::set("TURA_GATEWAY_CALLBACKS", "1");
+    let _gateway_url = EnvGuard::set("TURA_GATEWAY_URL", hanging_gateway.endpoint.as_str());
+    let _gateway_timeout = EnvGuard::set("TURA_GATEWAY_CALLBACK_TIMEOUT_MS", "2000");
+    let settings = Arc::new(Settings {
+        provider_base_url: HashMap::new(),
+        routes: HashMap::from([(
+            "stream-callback-route".to_string(),
+            RouteConfig {
+                default_temperature: 0.0,
+                providers: vec![LlmProviderConfig {
+                    provider: "openai".to_string(),
+                    base_url: provider.endpoint.clone(),
+                    model: "local-stream-callback-model".to_string(),
+                    temperature: 0.0,
+                }],
+            },
+        )]),
+        model_catalog: ModelCatalog::default(),
+        provider_enums: ProviderEnumCatalog::default(),
+    });
+    let runtime = runtime_for_provider(
+        "runtime-stream-callback-command-business",
+        30_000,
+        true,
+        "stream-callback-route",
+        "openai",
+        "local-stream-callback-model",
+    );
+
+    let started = std::time::Instant::now();
+    let result = call_runtime(
+        CallRuntimeInput {
+            runtime,
+            messages: vec![json!({
+                "role": "user",
+                "content": "run one streamed command while gateway callbacks hang"
+            })],
+            tools: Vec::new(),
+            provider_name: "stream-callback-route".to_string(),
+            stream: true,
+            max_tokens: 128,
+            tool_choice: None,
+            session_directory: workspace.path().to_path_buf(),
+            allowed_command_run_commands: Some(BTreeSet::from(["shell_command".to_string()])),
+        },
+        settings,
+        Arc::new(TuraConfig::new(
+            ".env.runtime-stream-callback-business-missing",
+        )),
+    )
+    .await
+    .expect("hanging gateway callbacks must not block streamed command execution");
+
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "gateway callback timeout must not gate command execution; elapsed={elapsed:?}, state={:?}, status={:?}, output={:?}",
+        result.state,
+        result.call_result_status,
+        result.output
+    );
+    assert_eq!(result.state, RuntimeState::Finished);
+    assert_eq!(
+        result.call_result_status,
+        RuntimeCallResultStatus::Succeeded
+    );
+    assert_eq!(
+        std::fs::read_to_string(&output_path).expect("command output file"),
+        "stream command completed"
+    );
+    let output = result.output.as_ref().expect("runtime output");
+    assert_eq!(
+        output.pointer("/streamed_command_run_result/results/0/success"),
+        Some(&json!(true))
+    );
 }
 
 fn mock_command_run_router_addr() -> String {
@@ -334,6 +422,8 @@ fn runtime_for_provider(
         RuntimeProviderConfig {
             base: ProviderConfig {
                 tura_llm_name: route.to_string(),
+                default_model_tier: None,
+                current_model: None,
                 stream,
                 temperature: 0.0,
                 max_tokens: 128,
@@ -397,25 +487,26 @@ impl DelayedProvider {
     }
 }
 
-struct StalledResponsesProvider {
+struct CompletedResponsesProvider {
     endpoint: String,
     request: Arc<Mutex<Option<String>>>,
 }
 
-impl StalledResponsesProvider {
+impl CompletedResponsesProvider {
     fn start(command: serde_json::Value) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind stalled provider");
-        let addr = listener.local_addr().expect("stalled provider addr");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind completed provider");
+        let addr = listener.local_addr().expect("completed provider addr");
         let request = Arc::new(Mutex::new(None));
         let thread_request = Arc::clone(&request);
         thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept stalled provider request");
+            let (mut stream, _) = listener
+                .accept()
+                .expect("accept completed provider request");
             let request = read_request_head(&mut stream);
             *thread_request
                 .lock()
-                .expect("stalled provider request lock") = Some(request);
-            write_stalled_command_run_stream(&mut stream, command);
-            thread::sleep(Duration::from_secs(12));
+                .expect("completed provider request lock") = Some(request);
+            write_completed_command_run_stream(&mut stream, command);
         });
         Self {
             endpoint: format!("http://{addr}"),
@@ -426,20 +517,43 @@ impl StalledResponsesProvider {
     fn request(&self) -> String {
         self.request
             .lock()
-            .expect("stalled provider request lock")
+            .expect("completed provider request lock")
             .clone()
-            .expect("stalled provider request captured")
+            .expect("completed provider request captured")
     }
 }
 
-fn stalled_command(output_path: &std::path::Path) -> serde_json::Value {
+struct HangingGateway {
+    endpoint: String,
+}
+
+impl HangingGateway {
+    fn start(delay: Duration) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind hanging gateway");
+        let addr = listener.local_addr().expect("hanging gateway addr");
+        thread::spawn(move || {
+            while let Ok((mut stream, _)) = listener.accept() {
+                thread::spawn(move || {
+                    let mut buffer = [0_u8; 512];
+                    let _ = stream.read(&mut buffer);
+                    thread::sleep(delay);
+                });
+            }
+        });
+        Self {
+            endpoint: format!("http://{addr}"),
+        }
+    }
+}
+
+fn delayed_command(output_path: &std::path::Path) -> serde_json::Value {
     json!({
         "step": 1,
         "command": "shell_command",
         "command_type": "shell_command",
         "command_line": json!({
             "command": format!(
-                "python -c \"from pathlib import Path; Path(r'{}').write_text('stream command completed')\"",
+                "python -c \"import time; from pathlib import Path; time.sleep(0.35); Path(r'{}').write_text('stream command completed')\"",
                 output_path.display()
             ),
             "timeout_ms": 3_000
@@ -447,19 +561,19 @@ fn stalled_command(output_path: &std::path::Path) -> serde_json::Value {
     })
 }
 
-fn write_stalled_command_run_stream(stream: &mut TcpStream, command: serde_json::Value) {
+fn write_completed_command_run_stream(stream: &mut TcpStream, command: serde_json::Value) {
     let _ = write!(
         stream,
-        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n"
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
     );
     write_sse_chunk(
         stream,
         json!({
             "type": "response.output_item.added",
             "item": {
-                "id": "fc_stalled_cmd",
+                "id": "fc_completed_cmd",
                 "type": "function_call",
-                "call_id": "call_stalled_cmd",
+                "call_id": "call_completed_cmd",
                 "name": "command_run",
                 "arguments": ""
             }
@@ -467,14 +581,14 @@ fn write_stalled_command_run_stream(stream: &mut TcpStream, command: serde_json:
     );
     let arguments = json!({
         "commands": [command],
-        "step_summary": "Run a single local command before the provider stream stalls."
+        "step_summary": "Run a single local command before the provider stream completes."
     })
     .to_string();
     write_sse_chunk(
         stream,
         json!({
             "type": "response.function_call_arguments.delta",
-            "item_id": "fc_stalled_cmd",
+            "item_id": "fc_completed_cmd",
             "delta": arguments
         }),
     );
@@ -482,15 +596,52 @@ fn write_stalled_command_run_stream(stream: &mut TcpStream, command: serde_json:
         stream,
         json!({
             "type": "response.function_call_arguments.done",
-            "item_id": "fc_stalled_cmd",
+            "item_id": "fc_completed_cmd",
             "arguments": arguments
         }),
     );
+    write_sse_chunk(
+        stream,
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "id": "fc_completed_cmd",
+                "type": "function_call",
+                "call_id": "call_completed_cmd",
+                "name": "command_run",
+                "arguments": arguments
+            }
+        }),
+    );
+    write_sse_chunk(
+        stream,
+        json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_completed_cmd",
+                "object": "response",
+                "status": "completed",
+                "output_text": "provider stream completed",
+                "usage": {
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "total_tokens": 2
+                }
+            }
+        }),
+    );
+    write_sse_done(stream);
 }
 
 fn write_sse_chunk(stream: &mut TcpStream, value: serde_json::Value) {
     let data = format!("data: {value}\n\n");
     let _ = write!(stream, "{:X}\r\n{}\r\n", data.len(), data);
+    let _ = stream.flush();
+}
+
+fn write_sse_done(stream: &mut TcpStream) {
+    let data = "data: [DONE]\n\n";
+    let _ = write!(stream, "{:X}\r\n{}\r\n0\r\n\r\n", data.len(), data);
     let _ = stream.flush();
 }
 

@@ -1,13 +1,16 @@
 use crate::gateway_events::{
-    publish_gateway_agent_message, publish_runtime_failure_message, publish_runtime_usage_record,
+    publish_gateway_agent_message_from_runtime, publish_runtime_failure_message,
+    publish_runtime_usage_record, runtime_message_id, runtime_text_part_id,
 };
+use crate::manas::constants::PLANNING_TOOL;
 use crate::manas::prompt_messages::{
-    messages_for_turn, push_no_tool_task_status_retry_message, push_task_status_nudge,
+    push_no_tool_task_status_retry_message, push_task_status_nudge,
 };
 use crate::manas::runtime_turn::execute_turn;
 use crate::manas::tool_catalog::{command_run_commands_for_agent, planning_child_depth};
 use crate::manas::{user_visible_runtime_output_text, user_visible_runtime_text};
 use crate::manas::{COMMAND_RUN_TOOL, TASK_STATUS_COMMAND};
+use crate::prompt_style::{provider_retry, tail_injection, terminal_final_response};
 use crate::tool_flow::execute::execute_tool_calls;
 use chrono::Utc;
 use std::thread;
@@ -88,10 +91,13 @@ pub fn process_manas_internal(
     let mut no_tool_retries = 0_u8;
     let mut final_session_state = SessionState::Completed;
     let mut final_error: Option<String> = None;
-    let supports_task_status = agents
-        .first()
-        .map(command_run_commands_for_agent)
+    let agent_commands = agents.first().map(command_run_commands_for_agent);
+    let supports_task_status = agent_commands
+        .as_ref()
         .is_some_and(|commands| commands.contains(TASK_STATUS_COMMAND));
+    let supports_planning = agent_commands
+        .as_ref()
+        .is_some_and(|commands| commands.contains(PLANNING_TOOL));
     // Count consecutive command_run turns that neither wrote (apply_patch) nor
     // settled task state (task_status). After the threshold, inject the
     // task_status nudge so a model stuck re-running read-only/verification
@@ -128,7 +134,9 @@ pub fn process_manas_internal(
         let runtime_result = match execute_turn(
             agents,
             session,
-            &messages_for_turn(&current_messages, session, &original_user_task),
+            &current_messages,
+            &original_user_task,
+            None,
             redis_url,
             turn == 1,
             false,
@@ -161,9 +169,9 @@ pub fn process_manas_internal(
         last_runtime_id = Some(runtime.runtime_id.clone());
 
         accumulate_session_from_runtime(session, &runtime, true)?;
-        publish_runtime_usage_record(session, &runtime);
         increment_turn_with_fresh_timestamp(session);
         persist_session_checkpoint(session, "runtime");
+        publish_runtime_usage_record(session, &runtime);
 
         if runtime.call_result_status == RuntimeCallResultStatus::TimedOut
             || runtime_failure_allows_retry(&runtime)
@@ -213,17 +221,22 @@ pub fn process_manas_internal(
                 );
                 thread::sleep(wait_duration);
                 if let Some((content_type, removed)) = removed_media {
-                    current_messages.push(serde_json::json!({
-                        "role": "system",
-                        "content": format!(
-                            "The provider rejected `{content_type}` media content. {removed} item(s) were omitted from the next request and replaced with text placeholders; continue using the remaining text and supported media."
-                        )
-                    }));
+                    tail_injection::append_tail_prompt(
+                        &mut current_messages,
+                        tail_injection::TailPrompt::system(provider_retry::media_fallback(
+                            content_type,
+                            removed,
+                        )),
+                    );
                 }
-                current_messages.push(serde_json::json!({
-                    "role": "system",
-                    "content": format!("Provider failure while waiting for the model response: {error_text}. This is transient provider failure retry {} of 3, not task completion. Retry the current task with the normal command_run tool unless the requested edits and validation are actually complete.", provider_timeout_retries)
-                }));
+                tail_injection::append_tail_prompt(
+                    &mut current_messages,
+                    tail_injection::TailPrompt::system(provider_retry::transient_failure_retry(
+                        &error_text,
+                        provider_timeout_retries,
+                        3,
+                    )),
+                );
                 continue;
             }
 
@@ -268,9 +281,9 @@ pub fn process_manas_internal(
             let visible_reply_published_before_terminal_status =
                 visible_reply_before_tool.is_some();
             if let Some(content) = visible_reply_before_tool {
-                if let Err(error) = publish_gateway_agent_message(
+                if let Err(error) = publish_gateway_agent_message_from_runtime(
                     &session.session_id,
-                    &runtime.runtime_id,
+                    &runtime,
                     content,
                     String::new(),
                 ) {
@@ -286,7 +299,8 @@ pub fn process_manas_internal(
             no_tool_retries = 0;
             let mut tool_results =
                 execute_tool_calls(&tool_calls, agents.first(), session, &runtime, redis_url)?;
-            apply_compact_context_results(session, &mut tool_results)?;
+            let compact_context_applied =
+                apply_compact_context_results(session, &mut tool_results)?;
             let terminal_task_status = tool_results
                 .iter()
                 .find_map(|result| command_run_result_terminal_task_status(&result.result));
@@ -316,12 +330,26 @@ pub fn process_manas_internal(
                     tool_result.result.clone(),
                     tool_result.success,
                     tool_result.error.clone(),
+                    Some(&runtime.runtime_id),
                     tool_calls
                         .get(index)
                         .and_then(|tool_call| tool_call.provider_metadata.clone()),
                 )?;
             }
+            if compact_context_applied {
+                append_compact_checkpoint_assistant_message(session, &runtime);
+            }
             persist_session_checkpoint(session, "tool_results");
+
+            if compact_context_applied {
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    runtime_id = %runtime.runtime_id,
+                    "compact_context applied; ending current turn after persisting tool results"
+                );
+                break;
+            }
 
             let context_output = build_context(ContextInput {
                 session: session.clone(),
@@ -369,12 +397,10 @@ pub fn process_manas_internal(
                 if let Some(next_task) = active_doing_task_user_message(session) {
                     record_task_focus_message_for_terminal_done(session, &next_task, false);
                     persist_session_checkpoint(session, "task_focus");
-                    current_messages.push(next_task);
                 }
             } else if let Some(next_task) = active_task_user_message(session) {
                 record_task_focus_message_for_terminal_done(session, &next_task, false);
                 persist_session_checkpoint(session, "task_focus");
-                current_messages.push(next_task);
             }
 
             // The model keeps running command_run without writing or settling
@@ -420,13 +446,23 @@ pub fn process_manas_internal(
                 break;
             }
 
+            if !(supports_planning && supports_task_status) {
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    supports_planning = supports_planning,
+                    supports_task_status = supports_task_status,
+                    "turn completed without command_run while task_status is still active; non-planning agent ends without retry"
+                );
+                break;
+            }
+
             if no_tool_retries < no_tool_retry_limit() {
                 no_tool_retries = no_tool_retries.saturating_add(1);
                 push_no_tool_task_status_retry_message(&mut current_messages, session);
                 if let Some(next_task) = active_doing_task_user_message(session) {
                     record_task_focus_message(session, &next_task);
                     persist_session_checkpoint(session, "task_focus");
-                    current_messages.push(next_task);
                 }
                 warn!(
                     session_id = %session.session_id,
@@ -512,15 +548,12 @@ fn run_terminal_final_response_turn(
     redis_url: &str,
     original_user_task: &str,
 ) -> Result<bool, String> {
-    let mut final_messages = messages_for_turn(current_messages, session, original_user_task);
-    final_messages.push(serde_json::json!({
-        "role": "system",
-        "content": "The task was marked done. Now send the user-facing assistant reply directly, without calling tools and without mentioning task_status, command_run, or internal status updates.",
-    }));
     let (runtime, _tool_calls) = execute_turn(
         agents,
         session,
-        &final_messages,
+        current_messages,
+        original_user_task,
+        Some(terminal_final_response::TERMINAL_FINAL_RESPONSE),
         redis_url,
         false,
         true,
@@ -531,10 +564,14 @@ fn run_terminal_final_response_turn(
         .as_ref()
         .map(|text| !text.trim().is_empty())
         .unwrap_or(false);
-    if let Some(content) = visible_text.filter(|text| !text.trim().is_empty()) {
-        if let Err(error) = publish_gateway_agent_message(
+    let visible_text = visible_text.filter(|text| !text.trim().is_empty());
+    accumulate_session_from_runtime(session, &runtime, true)?;
+    session.increment_turn(Utc::now());
+    persist_session_checkpoint(session, "terminal_final_response");
+    if let Some(content) = visible_text {
+        if let Err(error) = publish_gateway_agent_message_from_runtime(
             &session.session_id,
-            &runtime.runtime_id,
+            &runtime,
             content,
             String::new(),
         ) {
@@ -546,10 +583,7 @@ fn run_terminal_final_response_turn(
             );
         }
     }
-    accumulate_session_from_runtime(session, &runtime, true)?;
     publish_runtime_usage_record(session, &runtime);
-    session.increment_turn(Utc::now());
-    persist_session_checkpoint(session, "terminal_final_response");
     Ok(has_visible_text)
 }
 
@@ -563,6 +597,27 @@ fn visible_runtime_reply(runtime: &RuntimeManagement) -> Option<String> {
         })
         .map(|text| text.trim().to_string())
         .filter(|text| !text.is_empty())
+}
+
+fn append_compact_checkpoint_assistant_message(
+    session: &mut SessionManagement,
+    runtime: &RuntimeManagement,
+) {
+    let now = Utc::now();
+    session.push_log(
+        serde_json::json!({
+            "id": runtime_message_id(&runtime.runtime_id),
+            "role": "assistant",
+            "content": "Context checkpoint created; I can continue from the compacted handoff on the next turn.",
+            "part_id": runtime_text_part_id(&runtime.runtime_id),
+            "runtime_id": runtime.runtime_id,
+            "created_at": now.timestamp_millis(),
+            "updated_at": now.timestamp_millis(),
+            "timestamp": now.to_rfc3339(),
+        })
+        .to_string(),
+        now,
+    );
 }
 
 fn terminal_status_needs_final_response_turn(

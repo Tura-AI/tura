@@ -1,6 +1,7 @@
 import type { AgentUpsertRequest, StoredAgent } from "../types/agent.js";
 import type { SessionConfig } from "../types/config.js";
 import type { GatewayEventEnvelope } from "../types/event.js";
+import type { ListMessagesOptions } from "./client.js";
 import type { StoredPersona } from "../types/gateway.js";
 import type {
   OAuthAuthorizeResponse,
@@ -9,7 +10,14 @@ import type {
   ProviderAuthUpsert,
   ProviderListResponse,
 } from "../types/provider.js";
-import type { CreateSessionRequest, Message, PromptPayload, Session } from "../types/session.js";
+import type {
+  CreateSessionRequest,
+  ForkSessionRequest,
+  Message,
+  MessagePart,
+  PromptPayload,
+  Session,
+} from "../types/session.js";
 
 export class MockGatewayClient {
   readonly baseUrl = "mock://tura";
@@ -17,9 +25,11 @@ export class MockGatewayClient {
   private sessions: Session[];
   private messagesBySession = new Map<string, Message[]>();
   private sessionConfig: SessionConfig = {
-    active_agent: "fast",
-    model: "mock/mock-fast",
-    model_variant: "medium",
+    active_agent: "thinking",
+    active_provider: "codex",
+    active_model: "gpt-5.5",
+    model: "codex/gpt-5.5",
+    model_variant: "high",
     model_acceleration_enabled: true,
   };
 
@@ -30,10 +40,13 @@ export class MockGatewayClient {
     let messages = [
       this.message(session.id, "assistant", "Mock TUI 已启动。当前不会连接真实 gateway。"),
     ];
-    if (process.env.TURA_TUI_MOCK_STREAM_ORDER === "1") {
+    if (process.env.TURA_TUI_MOCK_LOCAL_LINKS === "1") {
+      messages = [this.message(session.id, "assistant", this.localLinkFixtureText())];
+    } else if (process.env.TURA_TUI_MOCK_STREAM_ORDER === "1") {
       messages = this.streamingOrderMessages(session.id);
     } else if (process.env.TURA_TUI_MOCK_LONG_SESSION === "1") {
-      for (let index = 1; index <= 80; index += 1) {
+      const count = Number(process.env.TURA_TUI_MOCK_LONG_SESSION_COUNT || "1000");
+      for (let index = 1; index <= count; index += 1) {
         messages.push(
           this.message(
             session.id,
@@ -41,6 +54,9 @@ export class MockGatewayClient {
             `Mock history ${String(index).padStart(3, "0")} full session load marker`,
           ),
         );
+      }
+      if (process.env.TURA_TUI_MOCK_RENDER_REGRESSION === "1") {
+        messages.push(...this.renderRegressionMessages(session.id));
       }
     }
     this.messagesBySession.set(session.id, messages);
@@ -60,7 +76,7 @@ export class MockGatewayClient {
   }
 
   async patchSessionConfig(payload: SessionConfig): Promise<SessionConfig> {
-    this.sessionConfig = { ...this.sessionConfig, ...payload };
+    this.sessionConfig = canonicalSessionConfig({ ...this.sessionConfig, ...payload });
     return this.getSessionConfig();
   }
 
@@ -79,14 +95,44 @@ export class MockGatewayClient {
     return session;
   }
 
+  async forkSession(sessionID: string, payload: ForkSessionRequest = {}): Promise<Session> {
+    const source = await this.getSession(sessionID);
+    const session = this.mockSession(
+      `mock-session-${this.sessions.length + 1}`,
+      source.session_display_name ?? source.name ?? "Copied Mock Session",
+      {
+        directory: payload.directory ?? source.directory ?? this.directory,
+        model: payload.model ?? source.model ?? undefined,
+        agent: payload.agent ?? source.agent ?? undefined,
+        session_type: source.session_type ?? undefined,
+        model_variant: source.model_variant ?? undefined,
+        model_acceleration_enabled: source.model_acceleration_enabled,
+        validator_enabled: source.validator_enabled,
+        kill_processes_on_start: source.kill_processes_on_start,
+        auto_session_name: source.auto_session_name,
+      },
+    );
+    const shouldCopyContext = payload.copy_context ?? true;
+    const copiedMessages = shouldCopyContext
+      ? cloneMessagesForSession(session.id, this.messagesBySession.get(source.id) ?? [])
+      : [];
+    this.sessions = [
+      { ...session, parent_id: source.id, message_count: copiedMessages.length },
+      ...this.sessions,
+    ];
+    this.messagesBySession.set(session.id, copiedMessages);
+    return this.sessions[0];
+  }
+
   async getSession(sessionID: string): Promise<Session> {
     const session = this.sessions.find((item) => item.id === sessionID);
     if (!session) throw new Error(`mock session not found: ${sessionID}`);
     return session;
   }
 
-  async listMessages(sessionID: string): Promise<Message[]> {
-    return [...(this.messagesBySession.get(sessionID) ?? [])];
+  async listMessages(sessionID: string, options: ListMessagesOptions = {}): Promise<Message[]> {
+    const messages = this.messagesBySession.get(sessionID) ?? [];
+    return pageMessages(messages, options);
   }
 
   async sendPromptAsync(sessionID: string, payload: PromptPayload): Promise<void> {
@@ -97,13 +143,13 @@ export class MockGatewayClient {
       .trim();
     const messages = this.messagesBySession.get(sessionID) ?? [];
     messages.push({
-      id: `mock-user-${now}`,
+      id: payload.messageID,
       sessionID,
-      session_id: sessionID,
       role: "user",
       created_at: now,
       updated_at: now,
-      parts: payload.parts.map((part) => ({ ...part, sessionID, session_id: sessionID })),
+      time: { created: now, updated: now },
+      parts: payload.parts.map((part) => ({ ...part, sessionID, messageID: payload.messageID })),
     });
     messages.push(
       this.message(
@@ -129,6 +175,13 @@ export class MockGatewayClient {
     });
     if (!updated) throw new Error(`mock session not found: ${sessionID}`);
     return updated;
+  }
+
+  async deleteSession(sessionID: string): Promise<boolean> {
+    const before = this.sessions.length;
+    this.sessions = this.sessions.filter((session) => session.id !== sessionID);
+    this.messagesBySession.delete(sessionID);
+    return this.sessions.length !== before;
   }
 
   async updateSessionTaskManagement(
@@ -222,6 +275,22 @@ export class MockGatewayClient {
     return [
       {
         summary: {
+          id: "thinking",
+          name: "Thinking",
+          description: "Mock Tura thinking agent",
+          source: "static",
+          path: "mock://agents/thinking",
+          aliases: [],
+          capabilities: ["chat"],
+          hidden: false,
+        },
+        config: {
+          agent_name: "thinking",
+          description: "Mock Tura thinking agent",
+        },
+      },
+      {
+        summary: {
           id: "fast",
           name: "fast",
           description: "Mock fast agent",
@@ -254,15 +323,31 @@ export class MockGatewayClient {
     return [
       {
         summary: {
-          id: "mock",
-          display_name: "Mock Persona",
+          id: "tura",
+          display_name: "Tura",
           source: "static",
-          description: "Local mock persona",
-          short_description: "Mock",
-          path: "mock://personas/mock",
+          description: "Local mock Tura persona",
+          short_description: "Tura",
+          path: "personas/src/tura",
+          media: {
+            name: "Mock Tura avatar media",
+            root_directory: "personas/src/tura/media",
+            expression_directory: "personas/src/tura/media/expressions",
+            default_expression: "vigilant",
+            default_direction: "right",
+            expressions: [
+              {
+                id: "vigilant",
+                name: "Vigilant",
+                source_directory: "personas/src/tura/media/expressions/vigilant",
+                grid_path: "personas/src/tura/media/expressions/vigilant/grid/sheet.png",
+                frames: {},
+              },
+            ],
+          },
         },
-        config: { persona_name: "mock", display_name: "Mock Persona" },
-        persona: "A local mock persona for TUI startup checks.",
+        config: { persona_name: "tura", display_name: "Tura" },
+        persona: "A local mock Tura persona for TUI startup checks.",
       },
     ];
   }
@@ -284,44 +369,56 @@ export class MockGatewayClient {
     }
   }
 
+  streamSessionEvents(
+    _sessionID: string,
+    signal?: AbortSignal,
+  ): AsyncGenerator<GatewayEventEnvelope> {
+    return this.streamEvents(signal);
+  }
+
   private streamingOrderMessages(sessionID: string): Message[] {
     const base = Date.now() - 10_000;
     let index = 0;
     const nextTime = () => base + index++ * 100;
-    const user = (id: string, text: string): Message => ({
-      id,
-      sessionID,
-      session_id: sessionID,
-      role: "user",
-      created_at: nextTime(),
-      updated_at: base,
-      parts: [{ id: `${id}:text`, sessionID, session_id: sessionID, type: "text", text }],
-    });
+    const user = (id: string, text: string): Message => {
+      const created = nextTime();
+      return {
+        id,
+        sessionID,
+        role: "user",
+        created_at: created,
+        updated_at: created,
+        time: { created, updated: created },
+        parts: [{ id: `${id}:text`, sessionID, messageID: id, type: "text", text }],
+      };
+    };
     const assistant = (
       id: string,
       text: string,
       command: string,
       status = "completed",
-    ): Message => ({
-      id,
-      sessionID,
-      session_id: sessionID,
-      role: "assistant",
-      created_at: nextTime(),
-      updated_at: base,
-      parts: [
-        { id: `${id}:text`, sessionID, session_id: sessionID, type: "text", text },
-        {
-          id: `${id}:command`,
-          sessionID,
-          session_id: sessionID,
-          messageID: id,
-          type: "tool",
-          tool: "command_run",
-          state: { status, input: { command_line: command } },
-        },
-      ],
-    });
+    ): Message => {
+      const created = nextTime();
+      return {
+        id,
+        sessionID,
+        role: "assistant",
+        created_at: created,
+        updated_at: created,
+        time: { created, updated: created },
+        parts: [
+          { id: `${id}:text`, sessionID, messageID: id, type: "text", text },
+          {
+            id: `${id}:command`,
+            sessionID,
+            messageID: id,
+            type: "tool",
+            tool: "command_run",
+            state: { status, input: { command_line: command } },
+          },
+        ],
+      };
+    };
     return [
       user("mock-order-user-1", "User turn 1 asks for a zip-password CLI refactor."),
       assistant(
@@ -362,6 +459,81 @@ export class MockGatewayClient {
       ),
     ];
   }
+
+  private renderRegressionMessages(sessionID: string): Message[] {
+    const now = Date.now();
+    const longChinese = "滚动中文颜色保持一致".repeat(18);
+    const commandTail = "REGRESSION_COMMAND_TAIL_VISIBLE_AFTER_WRAP";
+    const command = `node scripts/check-render-regression.mjs --input ${"very-long-argument-".repeat(14)}${commandTail}`;
+    const userText = [
+      `REGRESSION_USER_LONG_LINE_START ${longChinese}`,
+      "REGRESSION_USER_SECOND_LINE_VISIBLE 用户第二行必须显示",
+      "REGRESSION_USER_THIRD_LINE_VISIBLE 用户第三行必须显示",
+    ].join("\n");
+    return [
+      {
+        id: "mock-render-regression-user",
+        sessionID,
+        role: "user",
+        created_at: now + 1,
+        updated_at: now + 1,
+        time: { created: now + 1, updated: now + 1 },
+        parts: [
+          {
+            id: "mock-render-regression-user:text",
+            sessionID,
+            messageID: "mock-render-regression-user",
+            type: "text",
+            text: userText,
+          },
+        ],
+      },
+      {
+        id: "mock-render-regression-assistant",
+        sessionID,
+        role: "assistant",
+        created_at: now + 2,
+        updated_at: now + 2,
+        time: { created: now + 2, updated: now + 2 },
+        parts: [
+          {
+            id: "mock-render-regression-assistant:text",
+            sessionID,
+            messageID: "mock-render-regression-assistant",
+            type: "text",
+            text:
+              "REGRESSION_AGENT_RICH_VISIBLE **agent rich text** with `REGRESSION_RICH_HIGHLIGHT_VISIBLE` and wrapped CJK " +
+              longChinese,
+          },
+          {
+            id: "mock-render-regression-assistant:command",
+            sessionID,
+            messageID: "mock-render-regression-assistant",
+            type: "tool",
+            tool: "command_run",
+            state: { status: "completed", input: { command_line: command } },
+          },
+        ],
+      },
+    ];
+  }
+
+  private localLinkFixtureText(): string {
+    const workspace = this.directory.replace(/\\/g, "/");
+    const fileUrlPath = `${workspace}/Project Files/Docs (review)`;
+    const fileUrl = `file://${encodeURI(/^[A-Za-z]:\//u.test(fileUrlPath) ? `/${fileUrlPath}` : fileUrlPath)}`;
+    return [
+      "Local Link Visual",
+      `raw directory ${workspace}/Project Files/Raw Directory and then plain words`,
+      "relative directory Project Files/Docs (review), then a comma clause",
+      "wrapped directory (Project Files/Docs (review)) after wrapper",
+      "markdown directory [Review Folder](Project Files/Docs (review))",
+      `file url ${fileUrl}.`,
+      "[MEDIA:Project Files/Agent Media/shot final.png:MEDIA]",
+      "[MEDIA:Project Files/Agent Media/missing final.png:MEDIA]",
+    ].join("\n");
+  }
+
   private mockSession(id: string, name: string, payload: CreateSessionRequest = {}): Session {
     const now = Date.now();
     return {
@@ -372,12 +544,22 @@ export class MockGatewayClient {
       status: "idle",
       created_at: now,
       updated_at: now,
-      model: payload.model ?? this.sessionConfig.model,
-      agent: payload.agent ?? this.sessionConfig.active_agent,
+      model: payload.model ?? this.sessionConfig.model ?? null,
+      agent: payload.agent ?? this.sessionConfig.active_agent ?? null,
+      session_type: payload.session_type ?? this.sessionConfig.session_type ?? "coding",
+      auto_session_name: payload.auto_session_name ?? true,
+      kill_processes_on_start: payload.kill_processes_on_start ?? false,
+      validator_enabled: payload.validator_enabled ?? false,
+      force_planning: payload.force_planning ?? false,
       model_variant: payload.model_variant ?? this.sessionConfig.model_variant,
       model_acceleration_enabled:
-        payload.model_acceleration_enabled ?? this.sessionConfig.model_acceleration_enabled,
+        payload.model_acceleration_enabled ??
+        this.sessionConfig.model_acceleration_enabled ??
+        false,
+      disable_permission_restrictions: false,
       message_count: 0,
+      task_management: {},
+      plan_summary: null,
     };
   }
 
@@ -387,13 +569,82 @@ export class MockGatewayClient {
     return {
       id,
       sessionID,
-      session_id: sessionID,
       role,
       created_at: now,
       updated_at: now,
-      parts: [{ id: `${id}:text`, sessionID, session_id: sessionID, type: "text", text }],
+      time: { created: now, updated: now },
+      parts: [{ id: `${id}:text`, sessionID, messageID: id, type: "text", text }],
     };
   }
+}
+
+function canonicalSessionConfig(config: SessionConfig): SessionConfig {
+  const model = typeof config.model === "string" ? config.model.trim() : "";
+  if (model.includes("/")) {
+    const [provider, ...modelParts] = model.split("/");
+    const modelID = modelParts.join("/");
+    if (provider && modelID) {
+      return {
+        ...config,
+        model: `${provider}/${modelID}`,
+        active_provider: provider,
+        active_model: modelID.startsWith(`${provider}/`)
+          ? modelID.slice(provider.length + 1)
+          : modelID,
+      };
+    }
+  }
+  const provider = typeof config.active_provider === "string" ? config.active_provider.trim() : "";
+  const activeModel = typeof config.active_model === "string" ? config.active_model.trim() : "";
+  if (!provider || !activeModel) return config;
+  const modelID = activeModel.startsWith(`${provider}/`)
+    ? activeModel.slice(provider.length + 1)
+    : activeModel;
+  return {
+    ...config,
+    model: `${provider}/${modelID}`,
+    active_provider: provider,
+    active_model: modelID,
+  };
+}
+
+function pageMessages(messages: Message[], options: ListMessagesOptions): Message[] {
+  const limit = options.limit && options.limit > 0 ? options.limit : undefined;
+  if (options.after) {
+    const start = messages.findIndex((message) => message.id === options.after);
+    const from = start >= 0 ? start + 1 : 0;
+    const to = limit ? Math.min(messages.length, from + limit) : messages.length;
+    return messages.slice(from, to);
+  }
+  const end = options.before
+    ? messages.findIndex((message) => message.id === options.before)
+    : messages.length;
+  const safeEnd = end >= 0 ? end : messages.length;
+  const start = limit ? Math.max(0, safeEnd - limit) : 0;
+  return messages.slice(start, safeEnd);
+}
+
+function cloneMessagesForSession(sessionID: string, messages: Message[]): Message[] {
+  const idMap = new Map<string, string>();
+  const now = Date.now();
+  return messages.map((message, index) => {
+    const id = `mock-copy-${now}-${index}`;
+    idMap.set(message.id, id);
+    return {
+      ...message,
+      id,
+      sessionID,
+      parentID: message.parentID ? (idMap.get(message.parentID) ?? null) : null,
+      parts: (message.parts ?? []).map(
+        (part, partIndex): MessagePart => ({
+          ...part,
+          id: `mock-copy-${now}-${index}-${partIndex}`,
+          sessionID,
+          messageID: part.messageID ? id : part.messageID,
+        }),
+      ),
+    };
+  });
 }
 
 function mockStreamYieldSentinel(): boolean {

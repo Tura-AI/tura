@@ -1,11 +1,12 @@
 use super::{
     agent_message_content, agent_message_metadata, api_message_from_store, apply_single_change,
-    filter_list_sessions, first_prompt_part_id, frontend_safe_reply_message, frontend_safe_value,
-    planning_todos, prompt_command_run_shell, prompt_message_id, prompt_model_acceleration,
-    prompt_model_variant, prompt_text, workspace_key, SendAgentMedia, SendAgentMessageRequest,
-    SendAgentToolCall, SessionChangeRecord, SessionListParams,
+    config_model_override, filter_list_sessions, first_prompt_part_id, frontend_safe_reply_message,
+    frontend_safe_value, planning_todos, prompt_command_run_shell, prompt_message_id,
+    prompt_model_acceleration, prompt_model_variant, prompt_text, workspace_key, SendAgentMedia,
+    SendAgentMessageRequest, SendAgentToolCall, SessionChangeRecord, SessionListParams,
 };
-use crate::api::types::{Session, SessionStatus};
+use crate::contracts::{Session, SessionContextTokens, SessionStatus};
+use crate::session::config::TuraSessionConfig;
 use crate::session_store;
 use axum::{
     extract::{Path, Query},
@@ -69,6 +70,21 @@ fn prompt_payload_treats_default_model_variant_as_unset() {
     assert_eq!(prompt_model_variant(&payload), None);
 }
 
+#[test]
+fn session_config_model_override_prefers_provider_model_pair_for_tier_names() {
+    let config = TuraSessionConfig {
+        model: Some("thinking".to_string()),
+        active_provider: Some("codex".to_string()),
+        active_model: Some("gpt-5.5".to_string()),
+        ..TuraSessionConfig::default()
+    };
+
+    assert_eq!(
+        config_model_override(&config).as_deref(),
+        Some("codex/gpt-5.5")
+    );
+}
+
 fn test_session(id: &str, directory: &str, parent_id: Option<&str>, updated_at: i64) -> Session {
     Session {
         id: id.to_string(),
@@ -90,6 +106,8 @@ fn test_session(id: &str, directory: &str, parent_id: Option<&str>, updated_at: 
         status: SessionStatus::Idle,
         message_count: 0,
         task_management: serde_json::json!({}),
+        context_tokens: SessionContextTokens::default(),
+        usage: Default::default(),
         plan_summary: None,
         session_display_name: None,
     }
@@ -209,7 +227,7 @@ async fn session_status_includes_task_management_display_fields() {
 
     assert_eq!(status["task_management"]["status"], "question");
     assert_eq!(status["plan_summary"], "Status Contract");
-    assert_eq!(status["session_display_name"], "Status Contract");
+    assert_eq!(status["session_display_name"], "Status task");
 }
 
 #[tokio::test]
@@ -245,7 +263,7 @@ async fn create_session_accepts_task_management_and_serializes_session_fields() 
     assert_eq!(session.plan_summary.as_deref(), Some("Create Route Plan"));
     assert_eq!(
         session.session_display_name.as_deref(),
-        Some("Create Route Plan")
+        Some("Create route task")
     );
     assert_eq!(session.task_management["task_summary"], "Create route task");
 
@@ -254,10 +272,14 @@ async fn create_session_accepts_task_management_and_serializes_session_fields() 
     assert!(value["task_management"].get("status").is_none());
     assert_eq!(value["task_management"]["start_condition"], "user_action");
     assert_eq!(value["plan_summary"], "Create Route Plan");
-    assert_eq!(value["session_display_name"], "Create Route Plan");
+    assert_eq!(value["session_display_name"], "Create route task");
     assert_eq!(value["auto_session_name"], true);
+    assert_eq!(value["context_tokens"]["input"], 0);
+    assert!(value["context_tokens"]["limit"].as_u64().is_some());
+    assert_eq!(value["usage"]["context_tokens"]["input"], 0);
+    assert!(value["usage"]["context_tokens"]["limit"].as_u64().is_some());
     let object = value.as_object().expect("session JSON should be an object");
-    assert_eq!(object.len(), 21);
+    assert_eq!(object.len(), 23);
 
     let Json(listed) = super::list_sessions(
         HeaderMap::new(),
@@ -314,10 +336,7 @@ async fn task_management_route_patches_session_and_returns_session_fields() {
         updated.plan_summary.as_deref(),
         Some("Dedicated Patch Route")
     );
-    assert_eq!(
-        updated.session_display_name.as_deref(),
-        Some("Dedicated Patch Route")
-    );
+    assert_eq!(updated.session_display_name.as_deref(), Some("Patch task"));
     assert_eq!(updated.task_management["status"], "question");
     assert_eq!(updated.task_management["start_condition"], "scheduled_task");
 
@@ -328,10 +347,14 @@ async fn task_management_route_patches_session_and_returns_session_fields() {
         "scheduled_task"
     );
     assert_eq!(value["plan_summary"], "Dedicated Patch Route");
-    assert_eq!(value["session_display_name"], "Dedicated Patch Route");
+    assert_eq!(value["session_display_name"], "Patch task");
     assert_eq!(value["auto_session_name"], true);
+    assert_eq!(value["context_tokens"]["input"], 0);
+    assert!(value["context_tokens"]["limit"].as_u64().is_some());
+    assert_eq!(value["usage"]["context_tokens"]["input"], 0);
+    assert!(value["usage"]["context_tokens"]["limit"].as_u64().is_some());
     let object = value.as_object().expect("session JSON should be an object");
-    assert_eq!(object.len(), 21);
+    assert_eq!(object.len(), 23);
 
     let Json(fetched) = super::get_session(Path(session.id)).await;
     assert_eq!(fetched.task_management["status"], "question");
@@ -367,8 +390,12 @@ async fn agent_tool_callback_updates_auto_session_name_from_last_task_detail() {
             step_summary: None,
             media: vec![],
             runtime_id: Some("runtime-1".to_string()),
-            message_id: None,
-            part_id: None,
+            runtime_status: None,
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
+            created_at: 1,
+            updated_at: 1,
             tool_call: Some(super::SendAgentToolCall {
                 tool_name: "command_run".to_string(),
                 call_id: "call-1".to_string(),
@@ -441,8 +468,12 @@ async fn agent_tool_callback_keeps_manual_session_name_when_auto_disabled() {
             step_summary: None,
             media: vec![],
             runtime_id: Some("runtime-1".to_string()),
-            message_id: None,
-            part_id: None,
+            runtime_status: None,
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
+            created_at: 1,
+            updated_at: 1,
             tool_call: Some(super::SendAgentToolCall {
                 tool_name: "command_run".to_string(),
                 call_id: "call-1".to_string(),
@@ -470,6 +501,94 @@ async fn agent_tool_callback_keeps_manual_session_name_when_auto_disabled() {
     assert!(!updated.auto_session_name);
 
     let _ = fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn transient_agent_tool_callback_without_runtime_status_is_ignored() {
+    let session = session_store().create_session(
+        Some("C:/workspace".to_string()),
+        None,
+        None,
+        Some("coding".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    let Json(response) = super::send_agent_message(
+        Path(session.id.clone()),
+        Json(SendAgentMessageRequest {
+            reply_message: String::new(),
+            new_learning: String::new(),
+            step_summary: None,
+            media: vec![],
+            runtime_id: Some("runtime-1".to_string()),
+            runtime_status: None,
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
+            created_at: 1,
+            updated_at: 1,
+            tool_call: Some(SendAgentToolCall {
+                tool_name: "command_run".to_string(),
+                call_id: "runtime-1.tool.command_run".to_string(),
+                state: serde_json::json!({
+                    "status": "running",
+                    "transient": true,
+                    "input": { "commands": [{ "command_type": "shell_command", "command_line": "npm test" }] },
+                    "metadata": { "kind": "mano_tool_call", "transient": true, "streaming_partial": true }
+                }),
+                metadata: Some(serde_json::json!({
+                    "kind": "mano_tool_call",
+                    "transient": true,
+                    "streaming_partial": true
+                })),
+            }),
+        }),
+    )
+    .await;
+
+    assert!(response.ok);
+    assert!(response.event.is_none());
+    assert!(session_store().get_messages(&session.id).is_empty());
+
+    let Json(response) = super::send_agent_message(
+        Path(session.id.clone()),
+        Json(SendAgentMessageRequest {
+            reply_message: String::new(),
+            new_learning: String::new(),
+            step_summary: None,
+            media: vec![],
+            runtime_id: Some("runtime-1".to_string()),
+            runtime_status: None,
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
+            created_at: 1,
+            updated_at: 1,
+            tool_call: Some(SendAgentToolCall {
+                tool_name: "command_run".to_string(),
+                call_id: "runtime-1.tool.command_run".to_string(),
+                state: serde_json::json!({
+                    "status": "completed",
+                    "transient": true,
+                    "metadata": { "kind": "mano_tool_call", "transient": true }
+                }),
+                metadata: Some(serde_json::json!({
+                    "kind": "mano_tool_call",
+                    "transient": true
+                })),
+            }),
+        }),
+    )
+    .await;
+
+    assert!(response.ok);
+    assert!(response.event.is_none());
+    assert!(session_store().get_messages(&session.id).is_empty());
 }
 
 #[test]
@@ -658,8 +777,12 @@ fn agent_message_metadata_keeps_step_summary_for_frontend() {
         step_summary: Some("send final response".to_string()),
         media: vec![],
         runtime_id: Some("runtime-1".to_string()),
-        message_id: None,
-        part_id: None,
+        runtime_status: None,
+        context_tokens: None,
+        usage: None,
+        command_updates: Vec::new(),
+        created_at: 1,
+        updated_at: 1,
         tool_call: None,
     })
     .expect("feedback metadata should be present");
@@ -681,8 +804,12 @@ fn agent_message_content_renders_media_as_rich_tokens() {
             media_type: Some("image/png".to_string()),
         }],
         runtime_id: Some("runtime-1".to_string()),
-        message_id: None,
-        part_id: None,
+        runtime_status: None,
+        context_tokens: None,
+        usage: None,
+        command_updates: Vec::new(),
+        created_at: 1,
+        updated_at: 1,
         tool_call: None,
     });
 

@@ -4,6 +4,7 @@ import {
   AVATAR_WORKSPACE_CONFIG_KEY,
   normalizeAvatarSettings,
 } from "../components/avatar/agent-avatar-canvas";
+import { setLanguage } from "../i18n";
 import { SettingsView } from "../pages/settings/settings-view";
 import type { AppState } from "../state/global-store";
 
@@ -35,24 +36,26 @@ export function SettingsPageOutlet(props: {
       onGetAgent={props.onGetAgent}
       onSaveAgent={props.onSaveAgent}
       onDeleteAgent={props.onDeleteAgent}
-      onSavePersonalization={(avatar) =>
+      onSavePersonalization={(avatar, personaId) =>
         props.onRuntimeSetting((previous) => ({
           ...previous,
           workspaceConfigDraft: {
             ...previous.workspaceConfigDraft,
+            active_persona: personaId,
             [AVATAR_WORKSPACE_CONFIG_KEY]: JSON.stringify(normalizeAvatarSettings(avatar)),
           },
         }))
       }
-      onLanguage={(language) =>
+      onLanguage={(language) => {
+        setLanguage(language);
         props.onRuntimeSetting((previous) => ({
           ...previous,
-          configDraft: {
-            ...previous.configDraft,
+          workspaceConfigDraft: {
+            ...previous.workspaceConfigDraft,
             language,
           },
-        }))
-      }
+        }));
+      }}
       onConfigureProviders={() =>
         props.setState((previous) => ({
           ...previous,

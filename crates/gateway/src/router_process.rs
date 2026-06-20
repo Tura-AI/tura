@@ -7,7 +7,7 @@
 use anyhow::{anyhow, Context, Result};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex as ParkingMutex;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::{
     io::{BufRead, BufReader, Write},
     net::{SocketAddr, TcpStream},
@@ -21,7 +21,7 @@ use std::{
 };
 
 const ROUTER_HEALTH_TIMEOUT: Duration = Duration::from_secs(10);
-const ROUTER_EXECUTION_TIMEOUT: Duration = Duration::from_secs(900);
+const DEFAULT_ROUTER_EXECUTION_TIMEOUT: Duration = Duration::from_secs(35 * 60);
 const ROUTER_PROBE_CONNECT_TIMEOUT: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -336,12 +336,92 @@ fn call_router_addr(
     writer.write_all(format!("{request}\n").as_bytes())?;
     writer.flush()?;
 
+    let mut reader = BufReader::new(stream);
     let mut line = String::new();
-    BufReader::new(stream).read_line(&mut line)?;
-    if line.trim().is_empty() {
-        return Err(anyhow!("router daemon closed without a response"));
+    loop {
+        line.clear();
+        let bytes_read = reader.read_line(&mut line)?;
+        if bytes_read == 0 {
+            return Err(anyhow!("router daemon closed without a response"));
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: Value =
+            serde_json::from_str(line.trim()).context("failed to decode router daemon response")?;
+        if handle_router_notification(&value) {
+            continue;
+        }
+        return Ok(value);
     }
-    serde_json::from_str(line.trim()).context("failed to decode router daemon response")
+}
+
+fn handle_router_notification(value: &Value) -> bool {
+    if value.get("kind").and_then(Value::as_str) != Some("gateway.callback") {
+        return false;
+    }
+    if let Err(error) = apply_gateway_callback_notification(value) {
+        tracing::warn!(error = %error, notification = %value, "failed to apply router gateway callback");
+    }
+    true
+}
+
+fn apply_gateway_callback_notification(value: &Value) -> Result<()> {
+    let method = value
+        .get("method")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("gateway callback notification missing method"))?;
+    let payload = value
+        .get("payload")
+        .ok_or_else(|| anyhow!("gateway callback notification missing payload"))?;
+    let session_id = payload
+        .get("session_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("gateway callback notification missing session_id"))?
+        .to_string();
+    let body = payload.get("body").cloned().unwrap_or(Value::Null);
+    match method {
+        "session.agent_message" => {
+            let request: crate::api::session::SendAgentMessageRequest =
+                serde_json::from_value(body)
+                    .context("failed to decode session.agent_message callback body")?;
+            let response = crate::api::session::send_agent_message_payload(session_id, request);
+            if !response.ok {
+                return Err(anyhow!(
+                    "{}",
+                    response
+                        .error
+                        .unwrap_or_else(|| "session.agent_message callback failed".to_string())
+                ));
+            }
+        }
+        "session.agent_stream" => {
+            let request: crate::api::session::StreamAgentTextRequest = serde_json::from_value(body)
+                .context("failed to decode session.agent_stream callback body")?;
+            let response = crate::api::session::stream_agent_message_payload(session_id, request);
+            if response
+                .get("ok")
+                .and_then(Value::as_bool)
+                .is_some_and(|ok| !ok)
+            {
+                return Err(anyhow!("session.agent_stream callback failed: {response}"));
+            }
+        }
+        "session.todos" => {
+            let todos = serde_json::from_value::<Vec<Value>>(body)
+                .context("failed to decode session.todos callback body")?;
+            crate::session::session_store().set_todos(&session_id, todos);
+        }
+        other => {
+            tracing::warn!(
+                method = other,
+                "dropping unknown gateway callback notification"
+            );
+        }
+    }
+    Ok(())
 }
 
 fn read_timeout_for(method: &str) -> Duration {
@@ -350,8 +430,17 @@ fn read_timeout_for(method: &str) -> Duration {
     } else if method == "execution.shutdown" {
         Duration::from_secs(10)
     } else {
-        ROUTER_EXECUTION_TIMEOUT
+        router_execution_timeout()
     }
+}
+
+fn router_execution_timeout() -> Duration {
+    std::env::var("TURA_ROUTER_EXECUTION_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_ROUTER_EXECUTION_TIMEOUT)
 }
 
 fn router_addr_path() -> PathBuf {
@@ -610,6 +699,15 @@ mod tests {
             std::env::remove_var("TURA_DB_ROOT");
             Self { previous }
         }
+
+        fn set(key: &'static str, value: Option<&str>) -> Self {
+            let previous = vec![(key, std::env::var_os(key))];
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+            Self { previous }
+        }
     }
 
     impl Drop for EnvGuard {
@@ -641,6 +739,32 @@ mod tests {
         }
         std::fs::write(path, serde_json::to_string(&endpoint)?)?;
         Ok(())
+    }
+
+    #[test]
+    fn router_execution_timeout_defaults_to_long_prompt_budget_and_allows_override() {
+        let _guard = crate::test_support::env_lock();
+        {
+            let _env = EnvGuard::set("TURA_ROUTER_EXECUTION_TIMEOUT_SECS", None);
+            assert_eq!(
+                read_timeout_for("execution.enqueue_turn"),
+                Duration::from_secs(35 * 60)
+            );
+            assert_eq!(
+                read_timeout_for("health_check"),
+                ROUTER_HEALTH_TIMEOUT + Duration::from_secs(1)
+            );
+            assert_eq!(
+                read_timeout_for("execution.shutdown"),
+                Duration::from_secs(10)
+            );
+        }
+
+        let _env = EnvGuard::set("TURA_ROUTER_EXECUTION_TIMEOUT_SECS", Some("42"));
+        assert_eq!(
+            read_timeout_for("execution.enqueue_turn"),
+            Duration::from_secs(42)
+        );
     }
 
     #[test]
@@ -742,6 +866,41 @@ mod tests {
             path.exists(),
             "reachable compatible router endpoint should remain published"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn healthy_router_probe_rejects_socket_that_does_not_answer_health() -> anyhow::Result<()> {
+        let _guard = crate::test_support::env_lock();
+        let home = temp_home("tura-router-abortive-health")?;
+        let _env = EnvGuard::set_home(&home);
+        let listener = TcpListener::bind(("127.0.0.1", 0))?;
+        let addr = listener.local_addr()?.to_string();
+        let server = thread::spawn(move || -> anyhow::Result<()> {
+            let (stream, _) = listener.accept()?;
+            drop(stream);
+            Ok(())
+        });
+        let path = router_addr_path();
+        write_router_endpoint(
+            &path,
+            json!({
+                "addr": addr,
+                "version": tura_path::instance_version(),
+            }),
+        )?;
+
+        assert!(
+            healthy_router_endpoint()?.is_none(),
+            "gateway must not adopt a raw TCP endpoint that does not answer router health"
+        );
+        assert!(
+            !path.exists(),
+            "failed router health probes should remove the stale endpoint"
+        );
+        server
+            .join()
+            .map_err(|_| anyhow!("abortive router endpoint panicked"))??;
         Ok(())
     }
 

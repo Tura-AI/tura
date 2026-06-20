@@ -1,5 +1,8 @@
 //! Session log API handlers.
 
+#[cfg(test)]
+use crate::contracts::default_session_log_page_size;
+use crate::contracts::{SessionLogListParams, SessionLogRecordsParams};
 use crate::mock::global_store;
 use crate::session_db_client::SessionDbClient;
 use axum::{
@@ -8,28 +11,6 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use serde::Deserialize;
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct SessionLogListParams {
-    pub workspace: Option<String>,
-    #[serde(default)]
-    pub page: u64,
-    #[serde(default = "default_session_log_page_size")]
-    pub page_size: u64,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct SessionLogRecordsParams {
-    #[serde(default)]
-    pub page: u64,
-    #[serde(default = "default_session_log_page_size")]
-    pub page_size: u64,
-}
-
-fn default_session_log_page_size() -> u64 {
-    50
-}
 
 pub async fn session_log_workspaces() -> impl IntoResponse {
     match tokio::task::spawn_blocking(|| {

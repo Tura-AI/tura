@@ -159,7 +159,10 @@ pub fn prompt_cache_key_supported(provider: &str, base_url: &str) -> bool {
     {
         return false;
     }
-    if provider.eq_ignore_ascii_case("openai") {
+    if matches!(
+        provider.to_ascii_lowercase().as_str(),
+        "openai" | "openai-api" | "chatgpt" | "codex"
+    ) {
         return true;
     }
     base_url.contains("api.openai.com")

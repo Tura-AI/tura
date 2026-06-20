@@ -85,6 +85,31 @@ export function messageDurationMs(message: Message): number | undefined {
   return Math.max(0, normalizeEpochMs(end) - normalizeEpochMs(start));
 }
 
+export function toolCreatedAt(part: MessagePart): number | undefined {
+  const state = asRecord(part.state);
+  const metadata = asRecord(part.metadata);
+  const time = asRecord(state.time);
+  const direct =
+    numberField(state, "created_at") ??
+    numberField(state, "createdAt") ??
+    numberField(time, "created") ??
+    numberField(time, "start") ??
+    numberField(metadata, "created_at") ??
+    numberField(metadata, "createdAt");
+  if (direct !== undefined) {
+    return normalizeEpochMs(direct);
+  }
+  const commandTimes = [
+    ...arrayField(asRecord(state.input), "commands"),
+    ...arrayField(asRecord(state.streamed_command_run_result), "results"),
+  ]
+    .map(asRecord)
+    .map((record) => numberField(record, "created_at") ?? numberField(record, "createdAt"))
+    .filter((value): value is number => value !== undefined)
+    .map(normalizeEpochMs);
+  return commandTimes.length > 0 ? Math.min(...commandTimes) : undefined;
+}
+
 export function formatDuration(ms?: number): string {
   if (ms === undefined) {
     return "0s";

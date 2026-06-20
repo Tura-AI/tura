@@ -1,11 +1,14 @@
 use chrono::Utc;
+use std::time::Instant;
 use tracing::info;
 
+use crate::profile_timings;
 use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::state_machine::session_management::SessionManagement;
 
 use super::compaction::context_compaction_messages;
 use super::types::ContextState;
+use super::USER_AGENT_CONTEXT_ROLE;
 #[derive(Debug, Clone)]
 pub struct ContextInput {
     pub session: SessionManagement,
@@ -21,7 +24,27 @@ pub struct ContextOutput {
 }
 
 pub fn build_context(input: ContextInput) -> Result<ContextOutput, String> {
+    let total_start = Instant::now();
+    let profiling = profile_timings::enabled();
+    let build_messages_start = Instant::now();
     let mut messages = build_messages_from_session_with_options(&input.session);
+    let build_messages_elapsed = build_messages_start.elapsed();
+    let initial_message_count = messages.len();
+    let initial_messages_bytes = if profiling {
+        profile_timings::json_vec_bytes(&messages)
+    } else {
+        0
+    };
+    profile_timings::log_duration(
+        "build_context.build_messages_from_session",
+        build_messages_elapsed,
+        serde_json::json!({
+            "session_id": input.session.session_id,
+            "session_log_entries": input.session.session_log.len(),
+            "message_count": initial_message_count,
+            "messages_bytes": initial_messages_bytes,
+        }),
+    );
 
     let mut context_state = ContextState {
         session_id: input.session.session_id.clone(),
@@ -75,13 +98,45 @@ pub fn build_context(input: ContextInput) -> Result<ContextOutput, String> {
         messages.push(msg.clone());
     }
 
+    let clone_start = Instant::now();
     context_state.messages = messages.clone();
+    let clone_elapsed = clone_start.elapsed();
+    profile_timings::log_duration(
+        "build_context.clone_messages_to_context_state",
+        clone_elapsed,
+        serde_json::json!({
+            "session_id": input.session.session_id,
+            "message_count": messages.len(),
+            "messages_bytes": if profiling {
+                profile_timings::json_vec_bytes(&messages)
+            } else {
+                0
+            },
+        }),
+    );
 
     info!(
         session_id = %input.session.session_id,
         message_count = messages.len(),
         tool_result_count = context_state.tool_results.len(),
         "context built"
+    );
+
+    let total_elapsed = total_start.elapsed();
+    profile_timings::log_duration(
+        "build_context.total",
+        total_elapsed,
+        serde_json::json!({
+            "session_id": input.session.session_id,
+            "session_log_entries": input.session.session_log.len(),
+            "message_count": messages.len(),
+            "tool_result_count": context_state.tool_results.len(),
+            "messages_bytes": if profiling {
+                profile_timings::json_vec_bytes(&messages)
+            } else {
+                0
+            },
+        }),
     );
 
     Ok(ContextOutput {
@@ -107,9 +162,14 @@ pub fn accumulate_tool_result(
         tool_success,
         tool_error,
         None,
+        None,
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "tool result checkpoints keep runtime id and provider metadata explicit at the persistence boundary"
+)]
 pub fn accumulate_tool_result_with_provider_metadata(
     session: &mut SessionManagement,
     tool_name: &str,
@@ -117,9 +177,23 @@ pub fn accumulate_tool_result_with_provider_metadata(
     tool_output: serde_json::Value,
     tool_success: bool,
     tool_error: Option<String>,
+    runtime_id: Option<&str>,
     provider_metadata: Option<serde_json::Value>,
 ) -> Result<(), String> {
+    let total_start = Instant::now();
+    let profiling = profile_timings::enabled();
+    let tool_input_bytes = if profiling {
+        profile_timings::json_bytes(&tool_input)
+    } else {
+        0
+    };
+    let tool_output_bytes = if profiling {
+        profile_timings::json_bytes(&tool_output)
+    } else {
+        0
+    };
     let now = Utc::now();
+    let sequence_start = Instant::now();
     let sequence = session
         .session_log
         .iter()
@@ -127,28 +201,147 @@ pub fn accumulate_tool_result_with_provider_metadata(
         .filter(|value| value.get("type").and_then(|kind| kind.as_str()) == Some("tool_result"))
         .count()
         + 1;
+    profile_timings::log_elapsed(
+        "accumulate_tool_result.sequence_scan",
+        sequence_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "session_log_entries": session.session_log.len(),
+            "sequence": sequence,
+        }),
+    );
+    let strip_input_start = Instant::now();
+    let stripped_input = strip_tool_reporting_fields(tool_input);
+    let strip_input_elapsed = strip_input_start.elapsed();
+    profile_timings::log_duration(
+        "accumulate_tool_result.strip_input",
+        strip_input_elapsed,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "input_bytes": tool_input_bytes,
+            "stripped_input_bytes": if profiling {
+                profile_timings::json_bytes(&stripped_input)
+            } else {
+                0
+            },
+        }),
+    );
+    let base_json_start = Instant::now();
     let mut tool_result_json = serde_json::json!({
         "type": "tool_result",
         "tool_name": tool_name,
-        "input": strip_tool_reporting_fields(tool_input),
+        "input": stripped_input,
         "output": tool_output,
         "success": tool_success,
         "error": tool_error,
         "sequence": sequence,
         "timestamp": now.to_rfc3339(),
     });
+    let base_json_elapsed = base_json_start.elapsed();
+    profile_timings::log_duration(
+        "accumulate_tool_result.base_json",
+        base_json_elapsed,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "output_bytes": tool_output_bytes,
+            "tool_result_bytes": if profiling {
+                profile_timings::json_bytes(&tool_result_json)
+            } else {
+                0
+            },
+        }),
+    );
+    if let Some(runtime_id) = runtime_id {
+        tool_result_json["runtime_id"] = serde_json::Value::String(runtime_id.to_string());
+    }
     if let Some(provider_metadata) = provider_metadata {
         tool_result_json["provider_metadata"] = provider_metadata;
     }
+    let context_cache_start = Instant::now();
     tool_result_json["context_cache"] = tool_result_context_cache(&tool_result_json);
+    let context_cache_elapsed = context_cache_start.elapsed();
+    profile_timings::log_duration(
+        "accumulate_tool_result.context_cache",
+        context_cache_elapsed,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "context_cache_bytes": if profiling {
+                profile_timings::json_bytes(&tool_result_json["context_cache"])
+            } else {
+                0
+            },
+        }),
+    );
+    let context_message_start = Instant::now();
     tool_result_json["context_message"] = immutable_tool_result_context_message(&tool_result_json);
+    let context_message_elapsed = context_message_start.elapsed();
+    profile_timings::log_duration(
+        "accumulate_tool_result.context_message",
+        context_message_elapsed,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "context_message_bytes": if profiling {
+                profile_timings::json_bytes(&tool_result_json["context_message"])
+            } else {
+                0
+            },
+        }),
+    );
+    let context_messages_start = Instant::now();
     tool_result_json["context_messages"] =
         serde_json::Value::Array(immutable_tool_result_context_messages(&tool_result_json));
+    let context_messages_elapsed = context_messages_start.elapsed();
+    profile_timings::log_duration(
+        "accumulate_tool_result.context_messages",
+        context_messages_elapsed,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "context_messages_bytes": if profiling {
+                profile_timings::json_bytes(&tool_result_json["context_messages"])
+            } else {
+                0
+            },
+        }),
+    );
 
-    session.push_log(
-        serde_json::to_string(&tool_result_json)
-            .unwrap_or_else(|_| format!("tool_result: {tool_name}")),
-        now,
+    let serialize_start = Instant::now();
+    let serialized = serde_json::to_string(&tool_result_json)
+        .unwrap_or_else(|_| format!("tool_result: {tool_name}"));
+    profile_timings::log_elapsed(
+        "accumulate_tool_result.serialize",
+        serialize_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "tool_result_bytes": serialized.len(),
+        }),
+    );
+    let push_start = Instant::now();
+    session.push_log(serialized, now);
+    profile_timings::log_elapsed(
+        "accumulate_tool_result.push_log",
+        push_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "session_log_entries": session.session_log.len(),
+        }),
+    );
+    profile_timings::log_elapsed(
+        "accumulate_tool_result.total",
+        total_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "session_log_entries": session.session_log.len(),
+            "tool_result_bytes": session.session_log.last().map(|entry| entry.len()).unwrap_or(0),
+        }),
     );
 
     Ok(())
@@ -164,6 +357,9 @@ pub fn accumulate_message(
     let message_json = serde_json::json!({
         "role": role,
         "content": content,
+        "created_at": now.timestamp_millis(),
+        "updated_at": now.timestamp_millis(),
+        "timestamp": now.to_rfc3339(),
     });
 
     session.push_log(
@@ -279,12 +475,21 @@ fn immutable_context_messages_from_log_entry(value: serde_json::Value) -> Vec<se
         return Vec::new();
     };
     if let Some(role) = obj.get("role").and_then(|role| role.as_str()) {
-        if role == "user" || role == "system" || role == "assistant" {
+        if role == USER_AGENT_CONTEXT_ROLE
+            || role == "user"
+            || role == "system"
+            || role == "assistant"
+        {
+            let provider_role = if role == USER_AGENT_CONTEXT_ROLE {
+                "user"
+            } else {
+                role
+            };
             return obj
                 .get("content")
                 .map(|content| {
                     vec![serde_json::json!({
-                    "role": role,
+                    "role": provider_role,
                     "content": content,
                     })]
                 })
@@ -300,7 +505,11 @@ fn immutable_context_messages_from_log_entry(value: serde_json::Value) -> Vec<se
         .get("context_messages")
         .and_then(|messages| messages.as_array())
     {
-        return messages.clone();
+        return messages
+            .iter()
+            .cloned()
+            .map(strip_context_reporting_fields)
+            .collect();
     }
 
     immutable_tool_result_context_messages(&value)
@@ -308,7 +517,8 @@ fn immutable_context_messages_from_log_entry(value: serde_json::Value) -> Vec<se
 
 use super::tool_results::{
     immutable_tool_result_context_message, immutable_tool_result_context_messages,
-    last_tool_call_response_from_session, strip_tool_reporting_fields, tool_result_context_cache,
+    last_tool_call_response_from_session, strip_context_reporting_fields,
+    strip_tool_reporting_fields, tool_result_context_cache,
 };
 
 #[cfg(test)]
@@ -318,6 +528,7 @@ mod tests {
         ContextInput,
     };
     use crate::context::compact_session_context;
+    use crate::context::USER_AGENT_CONTEXT_ROLE;
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
     use crate::state_machine::session_management::{
@@ -360,6 +571,8 @@ mod tests {
             RuntimeProviderConfig {
                 base: ProviderConfig {
                     tura_llm_name: provider_name.clone(),
+                    default_model_tier: None,
+                    current_model: None,
                     stream: false,
                     temperature: 0.0,
                     max_tokens: 0,
@@ -613,5 +826,34 @@ mod tests {
                 .count(),
             9
         );
+    }
+
+    #[test]
+    fn build_context_replays_user_agent_records_as_user_context() {
+        let mut session = session();
+        accumulate_message(
+            &mut session,
+            USER_AGENT_CONTEXT_ROLE,
+            json!("<environment_context>client context</environment_context>"),
+        )
+        .expect("user-agent context should log");
+
+        let output = build_context(ContextInput {
+            runtime: runtime(&session),
+            session,
+            additional_messages: vec![],
+        })
+        .expect("context should build");
+        let context = output
+            .messages
+            .iter()
+            .find(|message| {
+                message["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("client context"))
+            })
+            .expect("user-agent context should be replayed");
+
+        assert_eq!(context["role"], "user");
     }
 }

@@ -111,10 +111,12 @@ try {
   Pop-Location
 }
 
-Write-Step "Verifying command-owned Python environments"
+Write-Step "Verifying command-owned dependencies"
 Push-Location $RepoRoot
 try {
   & .\commands\read_media\install.ps1 -CheckOnly
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  & .\commands\generate_media\install.ps1 -CheckOnly
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   & .\commands\web_discover\install.ps1 -CheckOnly
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

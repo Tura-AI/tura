@@ -117,12 +117,12 @@ down after its idle grace when no valid gateway lease, exec socket, active
 runtime worker, or active turn remains.
 Process/state regressions are
 covered by the mandatory root test
-`tests/business/process_state_management_e2e.rs`: stale endpoints, gateway
+`tests/os_testing/process_state_management_e2e.rs`: stale endpoints, gateway
 restart, same-home gateway lock conflict, orphan router adoption, orphan
 session_db adoption through router, router-owned command_run cancellation on
 socket disconnect, stdin-EOF gateway exit followed by router idle self-shutdown,
 and endpoint cleanup after graceful shutdown.
-`tests/business/process_lifecycle_policy_matrix.rs` pins the same lifecycle
+`tests/os_testing/process_lifecycle_policy_matrix.rs` pins the same lifecycle
 contract for Windows, Linux, macOS, and fallback OS families so front leases,
 detached reusable owners, process-group cleanup, and Job Object cleanup remain
 explicit.

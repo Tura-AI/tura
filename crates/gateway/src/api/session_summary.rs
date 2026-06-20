@@ -1,7 +1,8 @@
 use super::*;
+use crate::contracts::SummaryResponse;
 
 pub async fn summarize_session(Path(session_id): Path<String>) -> Json<SummaryResponse> {
-    let messages = session_store().get_messages(&session_id);
+    let messages = session_store().get_frontend_messages(&session_id);
     let message_count = messages.len();
     let mut user_count = 0;
     let mut assistant_count = 0;
@@ -39,7 +40,9 @@ pub async fn summarize_session(Path(session_id): Path<String>) -> Json<SummaryRe
     }
 
     let summary = if snippets.is_empty() {
-        format!("Session {session_id} has {message_count} stored messages and no textual summary content yet.")
+        format!(
+            "Session {session_id} has {message_count} stored messages and no textual summary content yet."
+        )
     } else {
         format!(
             "Session {session_id}: {message_count} messages ({user_count} user, {assistant_count} assistant), {tool_count} tool parts. Recent context:\n{}",
@@ -48,9 +51,4 @@ pub async fn summarize_session(Path(session_id): Path<String>) -> Json<SummaryRe
     };
 
     Json(SummaryResponse { summary })
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct SummaryResponse {
-    pub summary: String,
 }

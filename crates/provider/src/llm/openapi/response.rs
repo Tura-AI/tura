@@ -72,6 +72,7 @@ pub(crate) async fn codex_oauth_call(
     }
 
     let data = parse_codex_response_stream(resp, stream_events).await?;
+    validate_responses_status("codex", &data)?;
     let mut content = normalize_codex_response_content(&data);
     if let Some(text) = content.as_str() {
         content = Value::String(strip_json_fence(text));
@@ -135,6 +136,7 @@ pub(crate) async fn responses_api_key_call(
     }
 
     let data = parse_codex_response_stream(resp, stream_events).await?;
+    validate_responses_status(profile.provider, &data)?;
     let mut content = normalize_codex_response_content(&data);
     if let Some(text) = content.as_str() {
         content = Value::String(strip_json_fence(text));
@@ -510,6 +512,25 @@ fn build_codex_stream_root(
     }
     root["events"] = Value::Array(events);
     root
+}
+
+fn validate_responses_status(provider: &str, data: &Value) -> Result<(), TuraError> {
+    let Some(status) = data.get("status").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    if matches!(status, "completed" | "in_progress" | "queued") {
+        return Ok(());
+    }
+
+    let detail = data
+        .get("incomplete_details")
+        .or_else(|| data.get("error"))
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "no detail".to_string());
+    Err(TuraError::ProviderRequest {
+        provider: provider.to_string(),
+        message: format!("responses api returned status '{status}': {detail}"),
+    })
 }
 
 fn openai_codex_endpoint() -> String {

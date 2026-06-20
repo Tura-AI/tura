@@ -37,6 +37,7 @@ export function WorkspaceTree(props: {
   projects: Project[];
   directory?: string;
   sessions: Session[];
+  sessionsLoading: boolean;
   selectedSessionId?: string;
   productIssues: ProductIssue[];
   filePath: string;
@@ -207,6 +208,7 @@ export function WorkspaceTree(props: {
                     activeTab={props.activeTab}
                     expandedGroup={props.expandedGroup}
                     sessions={activeWorkspaceSessions(project.worktree)}
+                    sessionsLoading={props.sessionsLoading}
                     attentionAcknowledged={props.attentionAcknowledged}
                     selectedSessionId={props.selectedSessionId}
                     productIssues={props.productIssues}

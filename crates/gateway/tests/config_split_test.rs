@@ -166,37 +166,6 @@ async fn tura_config_reads_configured_provider_model_options_and_updates_one_tie
     let _ = fs::remove_dir_all(temp_dir);
 }
 
-#[tokio::test]
-async fn gui_config_reads_and_writes_exact_text() {
-    let _guard = ENV_LOCK.lock().await;
-    let config_path = std::env::current_dir()
-        .expect("cwd")
-        .join("config")
-        .join("gui_config.toml");
-    let original_content = fs::read_to_string(&config_path).ok();
-
-    let content = "theme = \"dark\"\nraw = true\n";
-    let (status, body) = request(
-        Method::PUT,
-        "/gui_config",
-        "text/plain; charset=utf-8",
-        content.to_string(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, content);
-
-    let (status, body) = request(Method::GET, "/gui_config", "text/plain", String::new()).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, content);
-
-    if let Some(original_content) = original_content {
-        fs::write(&config_path, original_content).expect("restore gui config");
-    } else {
-        let _ = fs::remove_file(&config_path);
-    }
-}
-
 fn temp_dir(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "tura-{name}-{}-{}",

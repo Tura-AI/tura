@@ -1,7 +1,8 @@
 use axum::extract::{Json, Path, Query};
 use axum::http::HeaderMap;
-use gateway::api::path::{get_paths, PathParams};
-use gateway::api::session::{session_shell, tui_action, ShellRequest};
+use gateway::api::path::get_paths;
+use gateway::api::session::{session_shell, ShellRequest};
+use gateway::contracts::PathParams;
 use gateway::session_store;
 use serde_json::json;
 
@@ -172,28 +173,6 @@ async fn gateway_session_shell_business_flow_combines_stdout_stderr_status_and_s
         "spawn error should name the missing session directory: {}",
         spawn_error.output
     );
-}
-
-#[tokio::test]
-async fn gateway_tui_business_flow_handles_non_prompt_actions_without_background_work() {
-    let Json(clear) = tui_action(Some(Json(json!({
-        "action": "clear-prompt",
-        "prompt": "discard me"
-    }))))
-    .await;
-    assert_eq!(clear["ok"], true);
-    assert_eq!(clear["action"], "clear-prompt");
-    assert_eq!(clear["prompt"], "");
-
-    let payload = json!({
-        "action": "focus-session",
-        "sessionID": "session-ui-only",
-        "tab": "timeline"
-    });
-    let Json(unknown) = tui_action(Some(Json(payload.clone()))).await;
-    assert_eq!(unknown["ok"], true);
-    assert_eq!(unknown["action"], "focus-session");
-    assert_eq!(unknown["payload"], payload);
 }
 
 fn success_command() -> String {

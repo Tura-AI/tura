@@ -44,7 +44,7 @@ rm -f "$TARGET_DIR/cli" "$TARGET_DIR/cli.exe"
 
 copy_gui_dist() {
   src="$REPO_ROOT/apps/gui/app/dist"
-  dst="$TARGET_DIR/gui"
+  dst="$TARGET_DIR/tura_gui"
   if [ ! -f "$src/index.html" ]; then
     echo "GUI dist not found at $src. Run the GUI build before copying debug artifacts." >&2
     exit 1
@@ -58,7 +58,7 @@ copy_gui_dist() {
 (cd "$REPO_ROOT" && cargo build -p router --bin tura_router)
 (cd "$REPO_ROOT" && cargo build -p session_log --bin tura_session_db)
 (cd "$REPO_ROOT" && cargo build -p runtime --bin tura_runtime)
-(cd "$REPO_ROOT" && cargo build -p read_media -p web_discover)
+(cd "$REPO_ROOT" && cargo build -p generate_media -p read_media -p web_discover)
 
 if [ "$SKIP_TUI" -eq 0 ]; then
   mkdir -p "$TARGET_DIR"

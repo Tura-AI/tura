@@ -1,7 +1,7 @@
 {
   "persona_name": "wonderful",
   "display_name": "Wonderful",
-  "description": "Quiet, tireless, loyal dog companion.",
+  "description": "Quiet, reliable, steady companion.",
   "short_description": "Loyal companion",
   "default_config": true,
   "persona_directory": "personas/src/wonderful",

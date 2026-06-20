@@ -29,6 +29,11 @@ pub fn is_async_write(command: &SessionLogCommand) -> bool {
 }
 
 pub fn enqueue_command(command: &SessionLogCommand) -> Result<PathBuf> {
+    let payload = serde_json::to_vec(command)?;
+    enqueue_serialized_command(&payload)
+}
+
+pub fn enqueue_serialized_command(payload: &[u8]) -> Result<PathBuf> {
     let pending = queue_root().join(PENDING_DIR);
     fs::create_dir_all(&pending)
         .with_context(|| format!("failed to create session queue {}", pending.display()))?;
@@ -40,7 +45,6 @@ pub fn enqueue_command(command: &SessionLogCommand) -> Result<PathBuf> {
     let name = queue_item_name(now, std::process::id(), id);
     let tmp_path = pending.join(format!("{name}.tmp"));
     let final_path = pending.join(name);
-    let payload = serde_json::to_vec(command)?;
     fs::write(&tmp_path, payload)
         .with_context(|| format!("failed to write session queue item {}", tmp_path.display()))?;
     fs::rename(&tmp_path, &final_path).with_context(|| {
@@ -82,22 +86,31 @@ pub fn drain_queue(store: &SessionLogStore, limit: usize) -> Result<u64> {
                 applied += 1;
             }
             Err(error) => {
+                let failed = root.join(FAILED_DIR).join(&file_name);
+                let error_path = failed.with_extension("error.txt");
+                let move_result = fs::rename(&processing, &failed);
+                if move_result.is_ok() {
+                    let _ = fs::write(&error_path, error.to_string());
+                }
                 if is_discardable_queue_error(&error) {
-                    let _ = fs::remove_file(&processing);
                     tracing::warn!(
-                        path = %processing.display(),
+                        path = %failed.display(),
                         error = %error,
-                        "discarding dirty session queue item"
+                        "quarantined dirty session queue item"
                     );
                 } else {
-                    let failed = root.join(FAILED_DIR).join(&file_name);
-                    let _ = fs::rename(&processing, &failed);
-                    let error_path = failed.with_extension("error.txt");
-                    let _ = fs::write(&error_path, error.to_string());
                     tracing::warn!(
                         path = %failed.display(),
                         error = %error,
                         "failed to apply session queue item"
+                    );
+                }
+                if let Err(move_error) = move_result {
+                    tracing::warn!(
+                        path = %processing.display(),
+                        target = %failed.display(),
+                        error = %move_error,
+                        "failed to quarantine session queue item"
                     );
                 }
             }
@@ -253,6 +266,7 @@ mod tests {
         }
 
         let read_commands = [
+            SessionLogCommand::Health,
             SessionLogCommand::GetSession(GetSessionRequest {
                 session_id: "session".to_string(),
             }),

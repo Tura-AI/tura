@@ -1,7 +1,11 @@
 pub mod agent_identity;
 pub mod compact_context;
+pub mod context_blocks;
+pub mod provider_retry;
 pub mod runtime_fallback;
+pub mod tail_injection;
 pub mod task_status;
+pub mod terminal_final_response;
 pub mod tool_progress;
 pub mod user_new_command;
 

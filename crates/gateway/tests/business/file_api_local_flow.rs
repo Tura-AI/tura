@@ -1,8 +1,10 @@
 use axum::extract::{Json, Query};
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use gateway::api::file::{
-    get_file_content, list_files, open_file, open_file_location, FileContentQuery, ListFilesQuery,
+    get_file_content, get_file_media, list_files, open_file, open_file_location,
 };
+use gateway::contracts::{FileContentQuery, ListFilesQuery};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -77,6 +79,22 @@ async fn gateway_file_api_business_flow_lists_reads_and_rejects_workspace_escape
     assert_eq!(media.encoding.as_deref(), Some("base64"));
     assert_eq!(media.mime_type.as_deref(), Some("image/png"));
     assert!(!media.content.is_empty());
+
+    let media_response = get_file_media(Query(FileContentQuery {
+        directory: Some(root.to_string_lossy().to_string()),
+        path: "image.png".to_string(),
+    }))
+    .await
+    .expect("read raw media")
+    .into_response();
+    assert_eq!(media_response.status(), StatusCode::OK);
+    assert_eq!(
+        media_response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok()),
+        Some("image/png")
+    );
 
     let Json(binary) = get_file_content(Query(FileContentQuery {
         directory: Some(root.to_string_lossy().to_string()),

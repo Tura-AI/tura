@@ -51,10 +51,12 @@ apps/**/test-results/
 tests/command-run-codex-two-way/records/runs/
 tests/command-run-codex-two-way/records/summaries/
 priority-param-probe-results.json
+*.bun-build
 *.log
 *.tmp
 
 # Editors and OS metadata
 .idea/
 .vscode/
+.vs/
 .DS_Store

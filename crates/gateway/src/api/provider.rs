@@ -1,6 +1,6 @@
 //! Provider / Auth API handlers
 
-use crate::api::types::*;
+use crate::contracts::*;
 use crate::mock::global_store;
 use axum::extract::{Json, Path, Query};
 use chrono::Utc;
@@ -18,8 +18,6 @@ mod oauth_flow;
 use auth_validation::{validate_provider_auth_config, validation_detail};
 pub use oauth_flow::{
     oauth_authorize, oauth_callback, oauth_callback_info, oauth_redirect_callback,
-    OAuthAuthorizeParams, OAuthAuthorizePayload, OAuthAuthorizeResponse, OAuthCallbackParams,
-    OAuthCallbackPayload, OAuthRedirectCallbackParams,
 };
 mod catalog;
 pub use catalog::{list_providers, validate_model};
@@ -68,47 +66,6 @@ pub async fn set_auth(
 
 pub async fn remove_auth(Path(provider_id): Path<String>) -> Json<bool> {
     Json(logout_provider_auth(&provider_id).is_ok() && global_store().remove_auth(&provider_id))
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ProviderAuthStatusResponse {
-    pub provider_id: String,
-    pub display_name: String,
-    pub login: Option<String>,
-    pub configured: bool,
-    pub authenticated: bool,
-    pub expired: Option<bool>,
-    pub account_id: Option<String>,
-    pub token_env: Option<String>,
-    pub login_env: Option<String>,
-    pub refresh_env: Option<String>,
-    pub expires_env: Option<String>,
-    pub updated_at: Option<String>,
-    pub auth_state: tura_llm_rust::AuthState,
-    pub runtime_state: tura_llm_rust::ProviderRuntimeState,
-    pub last_error_category: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ProviderAuthActionResponse {
-    pub ok: bool,
-    pub provider_id: String,
-    pub code: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub level: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub details: Vec<ProviderAuthActionDetail>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<ProviderAuthStatusResponse>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ProviderAuthActionDetail {
-    pub code: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub value: Option<String>,
 }
 
 pub(super) async fn refresh_provider_auth_if_needed(
@@ -229,41 +186,6 @@ pub async fn provider_auth_logout(
 // ============================================================================
 // Provider Auth
 // ============================================================================
-
-#[derive(Debug, Clone, serde::Deserialize, Default)]
-pub struct ProviderAuthQuery {
-    pub directory: Option<String>,
-    pub workspace: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ProviderAuthMethod {
-    #[serde(rename = "type")]
-    pub method_type: String,
-    pub kind: AuthMethodKind,
-    pub login: String,
-    pub label: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompts: Option<Vec<serde_json::Value>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub token_env: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub login_env: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub authorize_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub token_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub docs_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub configured_value: Option<String>,
-    pub available: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unavailable_reason: Option<String>,
-    pub supports_refresh: bool,
-}
 
 pub async fn provider_auth(
     Query(_params): Query<ProviderAuthQuery>,

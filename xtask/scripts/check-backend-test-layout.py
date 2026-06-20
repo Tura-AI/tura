@@ -11,18 +11,21 @@ from pathlib import Path
 SCAN_ROOTS = ("crates", "commands", "agents", "personas")
 GATED_TEST_DIRS = {
     "tests/business/": "business-tests",
+    "tests/os_testing/": "os-tests",
     "tests/performance/": "performance-tests",
     "tests/live/": "live-tests",
     "tests/benchmark/": "benchmark-tests",
 }
-TYPED_TEST_DIRS = ("business", "performance", "live", "release", "benchmark")
+TYPED_TEST_DIRS = ("business", "os_testing", "performance", "live", "release", "benchmark")
 FORBIDDEN_TEST_DIRS = ("tests/e2e/",)
 WORKSPACE_BENCHMARK_DIRS = {
     "bug-fix",
+    "commands",
     "daily-ops",
     "frontend-playwright",
     "lib",
     "media-internet",
+    "media-presentation",
     "project-rebuild-refactor",
     "tooling",
     "tui",
@@ -99,8 +102,17 @@ def gated_test_files(crate_root: Path) -> list[Path]:
     return files
 
 
+def module_dir_allowed(typed_root: Path, child: Path) -> bool:
+    if child.name == "helpers":
+        return True
+    for suffix in ("", "_flow", "_e2e"):
+        if (typed_root / f"{child.name}{suffix}.rs").exists():
+            return True
+    return False
+
+
 def validate_typed_directory_shape(package: str, tests_root: Path, errors: list[str]) -> None:
-    """Typed suites are flat peers under tests/ with no child directories."""
+    """Typed suites are peers under tests/; business/os_testing may have helper modules."""
     if not tests_root.exists():
         return
 
@@ -121,12 +133,14 @@ def validate_typed_directory_shape(package: str, tests_root: Path, errors: list[
                             "is not a known benchmark category"
                         )
                     continue
+                if typed_name in {"business", "os_testing", "live"} and module_dir_allowed(typed_root, child):
+                    continue
                 errors.append(
                     f"{package}: {normalize(child.relative_to(tests_root.parent))}/ "
-                    "is not allowed; tests/business, tests/performance, "
-                    "tests/live, tests/release, and tests/benchmark are flat typed suites. "
-                    "Put test files directly under the typed directory and "
-                    "encode the category in the filename."
+                    "is not allowed; tests/business, tests/os_testing, and tests/live allow helpers "
+                    "or module directories tied to a top-level target, while "
+                    "tests/performance, tests/release, and tests/benchmark "
+                    "remain flat typed suites."
                 )
 
         for nested_name in TYPED_TEST_DIRS:
@@ -135,7 +149,7 @@ def validate_typed_directory_shape(package: str, tests_root: Path, errors: list[
                 errors.append(
                     f"{package}: {normalize(nested_root.relative_to(tests_root.parent))}/ "
                     "nests a typed suite under another typed suite; "
-                    "tests/business, tests/performance, tests/live, "
+                    "tests/business, tests/os_testing, tests/performance, tests/live, "
                     "tests/release, and tests/benchmark must be peers"
                 )
 
@@ -168,9 +182,10 @@ def main() -> int:
                         f"{package}: {normalized} must not live under {forbidden}; "
                         "required non-network integration tests belong under tests/ "
                         "so cargo test can discover them, business workflows under "
-                        "tests/business, performance/stress under tests/performance, "
-                        "key/third-party flows under tests/live, release binary "
-                        "checks under tests/release, and scoring under tests/benchmark"
+                        "tests/business, process/OS workflows under tests/os_testing, "
+                        "performance/stress under tests/performance, key/third-party "
+                        "flows under tests/live, release binary checks under "
+                        "tests/release, and scoring under tests/benchmark"
                     )
             targets_by_path[normalized] = target
             feature = expected_feature(normalized)
@@ -209,7 +224,8 @@ def main() -> int:
             "workspace: tests/e2e/ is not an allowed test directory; "
             "required local E2E flows belong under tests/business, live flows "
             "under tests/live, release binary checks under tests/release, "
-            "performance under tests/performance, and scoring under tests/benchmark"
+            "process/OS flows under tests/os_testing, performance under "
+            "tests/performance, and scoring under tests/benchmark"
         )
 
     if errors:

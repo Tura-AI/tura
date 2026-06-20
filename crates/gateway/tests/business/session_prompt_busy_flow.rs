@@ -2,9 +2,11 @@ use axum::extract::{Json, Path};
 use axum::response::IntoResponse;
 use gateway::api::session::{
     append_session_user_command, prompt_async, session_user_commands,
-    update_session_status_for_runtime, AppendUserCommandRequest, RuntimeSessionStatusRequest,
+    update_session_status_for_runtime,
 };
-use gateway::api::types::SessionStatus as ApiSessionStatus;
+use gateway::contracts::{
+    AppendUserCommandRequest, RuntimeSessionStatusRequest, SessionStatus as ApiSessionStatus,
+};
 use gateway::{session_store, SessionStatus};
 use serde_json::json;
 
@@ -71,7 +73,7 @@ async fn busy_session_prompt_business_flow_queues_user_command_without_router_di
 }
 
 #[tokio::test]
-async fn busy_session_prompt_business_flow_queues_multiple_commands_fifo_and_uses_text_only_parts()
+async fn busy_session_prompt_business_flow_queues_multiple_commands_fifo_and_preserves_voice_parts()
 {
     let directory = std::env::temp_dir()
         .join(format!("tura-busy-prompt-fifo-{}", uuid::Uuid::new_v4()))
@@ -99,7 +101,8 @@ async fn busy_session_prompt_business_flow_queues_multiple_commands_fifo_and_use
             "parts": [
                 { "id": "ignored-image", "type": "image", "text": "image text must not queue" },
                 { "id": "busy-part-fifo-1", "type": "text", "text": "first queued " },
-                { "id": "busy-part-fifo-2", "type": "text", "text": "command" }
+                { "id": "busy-part-fifo-2", "type": "text", "text": "command" },
+                { "id": "busy-part-voice-1", "type": "voice", "metadata": { "voice_status": "pending" } }
             ]
         })),
     )
@@ -158,10 +161,11 @@ async fn busy_session_prompt_business_flow_queues_multiple_commands_fifo_and_use
     assert_eq!(queued.len(), 3);
     assert_eq!(queued[0].id, "busy-message-fifo-1");
     assert_eq!(queued[0].parts[0].id, "busy-part-fifo-1");
-    assert_eq!(
-        queued[0].parts[0].text.as_deref(),
-        Some("first queued command")
-    );
+    assert_eq!(queued[0].parts[1].id, "busy-part-fifo-2");
+    assert_eq!(queued[0].parts[2].id, "busy-part-voice-1");
+    assert_eq!(queued[0].parts[2].part_type, "voice");
+    assert_eq!(queued[0].parts[0].text.as_deref(), Some("first queued "));
+    assert_eq!(queued[0].parts[1].text.as_deref(), Some("command"));
     assert_eq!(queued[1].id, "busy-message-fifo-2");
     assert_eq!(queued[1].parts[0].id, "busy-part-fifo-3");
     assert_eq!(

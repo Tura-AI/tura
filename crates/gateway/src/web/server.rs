@@ -33,15 +33,9 @@ pub fn build_router() -> Router {
     let router = Router::new()
         // Global
         .route("/global/health", get(api::global::health))
-        .route("/global/event", get(api::global::global_event))
         .route("/event", get(api::global::global_event))
-        .route("/global/sync-event", get(api::global::sync_event))
-        .route("/global/config", get(api::global::get_config))
-        .route("/global/config", patch(api::global::patch_config))
         .route("/model_config", get(api::global::get_tura_config))
         .route("/model_config", put(api::global::put_tura_config))
-        .route("/gui_config", get(api::global::get_gui_config))
-        .route("/gui_config", put(api::global::put_gui_config))
         // Multica-compatible product surface
         .route("/api/config", get(api::product::public_config))
         .route("/api/me", get(api::product::current_user))
@@ -96,7 +90,16 @@ pub fn build_router() -> Router {
             "/session-log/{sessionID}/records",
             get(api::session_log::session_log_records),
         )
-        .route("/session/{sessionID}", patch(api::session::update_session))
+        .route(
+            "/session/{sessionID}",
+            get(api::session::get_session)
+                .patch(api::session::update_session)
+                .delete(api::session::delete_session),
+        )
+        .route(
+            "/session/{sessionID}/fork",
+            post(api::session::fork_session),
+        )
         .route(
             "/session/{sessionID}/task-management",
             patch(api::session::update_session_task_management),
@@ -110,24 +113,16 @@ pub fn build_router() -> Router {
             get(api::session::list_messages),
         )
         .route(
-            "/session/{sessionID}/message/agent",
-            post(api::session::send_agent_message),
-        )
-        .route(
-            "/session/{sessionID}/message/agent/stream",
-            post(api::session::stream_agent_message),
+            "/session/{sessionID}/events",
+            get(api::global::session_event),
         )
         .route(
             "/session/{sessionID}/prompt_async",
             post(api::session::prompt_async),
         )
-        .route(
-            "/session/{sessionID}/user-commands",
-            get(api::session::session_user_commands)
-                .post(api::session::append_session_user_command),
-        )
         .route("/file", get(api::file::list_files))
         .route("/file/content", get(api::file::get_file_content))
+        .route("/file/media", get(api::file::get_file_media))
         .route("/file/open", post(api::file::open_file))
         .route("/file/open-location", post(api::file::open_file_location))
         // Provider
@@ -187,23 +182,7 @@ pub fn build_router() -> Router {
         .route("/tool/{toolID}/config", patch(api::tool::patch_tool_config))
         .route("/service/status", get(api::service::get_service_status))
         // Path
-        .route("/path", get(api::path::get_paths))
-        // TUI compatibility routes
-        .route("/tui/submit-prompt", post(api::session::tui_action))
-        .route("/tui/select-session", post(api::session::create_session))
-        .route("/tui/append-prompt", post(api::session::tui_action))
-        .route("/tui/clear-prompt", post(api::session::tui_action))
-        .route("/tui/control/next", post(api::session::tui_action))
-        .route("/tui/control/response", post(api::session::tui_action))
-        .route("/tui/execute-command", post(api::session::tui_action))
-        .route("/tui/open-help", post(api::session::tui_action))
-        .route("/tui/open-models", post(api::session::tui_action))
-        .route("/tui/open-sessions", post(api::session::tui_action))
-        .route("/tui/open-themes", post(api::session::tui_action))
-        .route("/tui/publish", post(api::session::tui_action))
-        .route("/tui/show-toast", post(api::session::tui_action))
-        // Experimental
-        .route("/experimental/session", get(api::session::list_sessions));
+        .route("/path", get(api::path::get_paths));
 
     // Serve the packaged web GUI (Vite SPA build) as a fallback for any path
     // the API routes above don't claim. The API uses explicit, non-root paths,
@@ -224,7 +203,7 @@ pub fn build_router() -> Router {
 
 /// Resolve the directory holding the built web GUI (`index.html` + `assets/`).
 ///
-/// Honors `TURA_GUI_DIST` first, then release-style `gui/` next to the gateway
+/// Honors `TURA_GUI_DIST` first, then release-style `tura_gui/` next to the gateway
 /// executable, then repository development build locations. Returns `None`
 /// when no built GUI is present so the gateway runs as a pure API server.
 fn gui_dist_dir() -> Option<PathBuf> {
@@ -253,14 +232,14 @@ fn gui_dist_candidates_for(
         candidates.push(dir);
     }
     if let Some(exe_dir) = exe_path.as_deref().and_then(Path::parent) {
-        candidates.push(exe_dir.join("gui"));
+        candidates.push(exe_dir.join("tura_gui"));
     }
     if let Some(root) = project_root {
         candidates.push(root.join("apps").join("gui").join("app").join("dist"));
-        candidates.push(root.join("gui"));
+        candidates.push(root.join("tura_gui"));
     }
     if let Some(cwd) = current_dir {
-        candidates.push(cwd.join("gui"));
+        candidates.push(cwd.join("tura_gui"));
     }
     candidates
 }
@@ -368,10 +347,10 @@ mod tests {
             candidates,
             vec![
                 PathBuf::from("explicit"),
-                PathBuf::from("target/release/gui"),
+                PathBuf::from("target/release/tura_gui"),
                 PathBuf::from("repo/apps/gui/app/dist"),
-                PathBuf::from("repo/gui"),
-                PathBuf::from("cwd/gui"),
+                PathBuf::from("repo/tura_gui"),
+                PathBuf::from("cwd/tura_gui"),
             ]
         );
     }

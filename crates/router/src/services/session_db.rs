@@ -28,9 +28,10 @@ impl SessionDbService {
     }
 
     pub fn start(&self) -> Result<serde_json::Value> {
-        if self.is_alive() {
+        if self.is_ready() {
             return Ok(self.status_payload("running"));
         }
+        self.kill_managed_child();
         let service_bin = session_db_binary()
             .ok_or_else(|| anyhow!("session_db service executable tura_session_db not found"))?;
         // tura_session_db owns the SQLite session-log write path. It serves a
@@ -63,7 +64,7 @@ impl SessionDbService {
     }
 
     pub fn status(&self) -> serde_json::Value {
-        self.status_payload(if self.is_alive() {
+        self.status_payload(if self.is_ready() {
             "running"
         } else {
             "stopped"
@@ -72,7 +73,9 @@ impl SessionDbService {
 
     pub fn stop(&self) {
         let child = self.child.lock().ok().and_then(|mut guard| guard.take());
-        let _ = session_log::ipc::call_service(&session_log::SessionLogCommand::Shutdown);
+        if session_log::ipc::service_is_running() {
+            let _ = session_log::ipc::call_service(&session_log::SessionLogCommand::Shutdown);
+        }
         if let Some(mut child) = child {
             if !wait_for_child_exit(&mut child, std::time::Duration::from_secs(10)) {
                 let _ = child.kill();
@@ -82,13 +85,13 @@ impl SessionDbService {
         let _ = std::fs::remove_file(session_log::ipc::service_addr_path());
     }
 
-    fn is_alive(&self) -> bool {
+    fn is_ready(&self) -> bool {
         let Ok(mut guard) = self.child.lock() else {
             return session_log::ipc::service_is_running();
         };
         match guard.as_mut() {
             Some(child) => match child.try_wait() {
-                Ok(None) => true,
+                Ok(None) => session_log::ipc::service_is_running(),
                 Ok(Some(_)) | Err(_) => {
                     *guard = None;
                     session_log::ipc::service_is_running()
@@ -214,6 +217,7 @@ fn hide_child_window(command: &mut Command) {
 #[cfg(test)]
 mod tests {
     use super::{find_repo_root, resolve_binary, SessionDbService};
+    use std::net::TcpListener;
     use std::path::PathBuf;
 
     #[test]
@@ -223,6 +227,46 @@ mod tests {
 
         assert_eq!(payload["status"], "running");
         assert!(payload["pid"].is_null());
+    }
+
+    #[test]
+    fn status_does_not_adopt_socket_that_fails_session_db_health() -> anyhow::Result<()> {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let home = tempfile::tempdir()?;
+        let _env = EnvGuard::set_home(home.path());
+        let listener = TcpListener::bind(("127.0.0.1", 0))?;
+        let addr = listener.local_addr()?;
+        let server = std::thread::spawn(move || -> anyhow::Result<()> {
+            let (stream, _) = listener.accept()?;
+            drop(stream);
+            Ok(())
+        });
+
+        let path = session_log::ipc::service_addr_path();
+        std::fs::create_dir_all(path.parent().expect("service addr parent"))?;
+        std::fs::write(
+            &path,
+            serde_json::to_string(&session_log::ipc::ServiceEndpoint {
+                addr: addr.to_string(),
+                version: tura_path::instance_version(),
+            })?,
+        )?;
+
+        let service = SessionDbService::new();
+        let status = service.status();
+
+        assert_eq!(
+            status["status"], "stopped",
+            "router must not adopt a socket that does not answer session_db health: {status}"
+        );
+        assert!(
+            !path.exists(),
+            "failed session_db health probes should remove the stale endpoint"
+        );
+        server
+            .join()
+            .map_err(|_| anyhow::anyhow!("abortive session_db endpoint panicked"))??;
+        Ok(())
     }
 
     #[test]
@@ -258,5 +302,42 @@ mod tests {
             resolve_binary("definitely-missing-tura-session-db-test-binary"),
             None
         );
+    }
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct EnvGuard {
+        previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    impl EnvGuard {
+        fn set_home(home: &std::path::Path) -> Self {
+            let keys = [
+                "TURA_HOME",
+                "SESSION_LOG_DB_ROOT",
+                "TURA_DB_ROOT",
+                "TURA_SESSION_DB_PROBE_TIMEOUT_MS",
+            ];
+            let previous = keys
+                .iter()
+                .map(|key| (*key, std::env::var_os(key)))
+                .collect::<Vec<_>>();
+            std::env::set_var("TURA_HOME", home);
+            std::env::remove_var("SESSION_LOG_DB_ROOT");
+            std::env::remove_var("TURA_DB_ROOT");
+            std::env::set_var("TURA_SESSION_DB_PROBE_TIMEOUT_MS", "25");
+            Self { previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.previous.drain(..) {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
     }
 }

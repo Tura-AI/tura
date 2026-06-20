@@ -9,5 +9,6 @@
 fn main() -> std::io::Result<()> {
     tura_path::process_hardening::harden_current_process("runtime_worker");
     std::env::set_var("TURA_ROLE", "runtime_worker");
+    std::env::set_var("TURA_RUNTIME_WORKER", "1");
     runtime::worker::run()
 }

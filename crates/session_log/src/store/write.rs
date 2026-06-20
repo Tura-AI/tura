@@ -10,11 +10,50 @@ use crate::path::{normalize_workspace, workspace_session_log_db};
 use crate::protocol::{DeleteSessionRequest, DeleteWorkspaceRequest, UpsertSessionRequest};
 use crate::SessionState;
 use anyhow::{Context, Result};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, params_from_iter, OptionalExtension};
 use std::path::Path;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+
+fn profile_timings_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("TURA_PROFILE_TURN_TIMINGS")
+            .or_else(|_| std::env::var("TURA_PROFILE_TIMINGS"))
+            .ok()
+            .map(|value| {
+                let value = value.trim().to_ascii_lowercase();
+                !matches!(value.as_str(), "" | "0" | "false" | "off" | "no")
+            })
+            .unwrap_or(false)
+    })
+}
+
+fn profile_log(label: &str, elapsed: Option<Duration>, fields: serde_json::Value) {
+    if !profile_timings_enabled() {
+        return;
+    }
+    let mut payload = fields.as_object().cloned().unwrap_or_default();
+    payload.insert(
+        "label".to_string(),
+        serde_json::Value::String(label.to_string()),
+    );
+    if let Some(elapsed) = elapsed {
+        payload.insert(
+            "elapsed_us".to_string(),
+            serde_json::Value::Number((elapsed.as_micros() as u64).into()),
+        );
+        payload.insert(
+            "elapsed_ms".to_string(),
+            serde_json::Value::Number((elapsed.as_millis() as u64).into()),
+        );
+    }
+    eprintln!("TURA_PROFILE_TIMING {}", serde_json::Value::Object(payload));
+}
 
 impl SessionLogStore {
     pub fn upsert_session(&self, request: UpsertSessionRequest) -> Result<()> {
+        let total_start = Instant::now();
         let UpsertSessionRequest {
             mut session,
             parent_id,
@@ -54,13 +93,29 @@ impl SessionLogStore {
         let name =
             string_at(&session, &["name"]).or_else(|| string_at(&management, &["session_name"]));
         let parent_id = parent_id.or_else(|| string_at(&session, &["parent_id"]));
+        let serialize_start = Instant::now();
         let task_management_json = serde_json::to_string(&task_management)?;
         let management_json = serde_json::to_string(&management)?;
         let session_json = serde_json::to_string(&session)?;
         let todos_json = serde_json::to_string(&todos)?;
+        profile_log(
+            "session_log_store.upsert_session.serialize_session_fields",
+            Some(serialize_start.elapsed()),
+            serde_json::json!({
+                "session_id": session_id,
+                "requested_message_count": requested_message_count,
+                "task_management_bytes": task_management_json.len(),
+                "management_bytes": management_json.len(),
+                "session_bytes": session_json.len(),
+                "todos_bytes": todos_json.len(),
+            }),
+        );
 
+        let workspace_write_start = Instant::now();
         let message_count = self.with_workspace_connection(&workspace_db, |conn| {
+            let transaction_start = Instant::now();
             let tx = conn.transaction()?;
+            let session_row_start = Instant::now();
             tx.execute(
                 "INSERT INTO sessions(
                     session_id, workspace, name, parent_id, created_at, updated_at,
@@ -96,8 +151,17 @@ impl SessionLogStore {
                     todos_json,
                 ],
             )?;
+            profile_log(
+                "session_log_store.upsert_session.workspace_session_row",
+                Some(session_row_start.elapsed()),
+                serde_json::json!({
+                    "session_id": session_id,
+                    "workspace_db": workspace_db_text,
+                }),
+            );
 
             {
+                let records_start = Instant::now();
                 let mut stmt = tx.prepare(
                     "INSERT INTO session_records(
                         session_id, message_id, role, created_at, updated_at, record_json
@@ -108,13 +172,22 @@ impl SessionLogStore {
                         updated_at=excluded.updated_at,
                         record_json=excluded.record_json",
                 )?;
+                let mut message_ids = Vec::new();
+                let mut record_json_bytes = 0usize;
+                let mut record_serialize_us = 0u128;
+                let mut record_execute_us = 0u128;
                 for message in messages {
                     let created = i64_at(&message, &["created_at"]).unwrap_or_default();
                     let message_id = string_at(&message, &["id"])
                         .unwrap_or_else(|| format!("{session_id}:{created}"));
+                    message_ids.push(message_id.clone());
                     let role = string_at(&message, &["role"]).unwrap_or_default();
                     let updated = i64_at(&message, &["updated_at"]).unwrap_or(created);
+                    let record_serialize_start = Instant::now();
                     let record_json = serde_json::to_string(&message)?;
+                    record_serialize_us += record_serialize_start.elapsed().as_micros();
+                    record_json_bytes += record_json.len();
+                    let record_execute_start = Instant::now();
                     stmt.execute(params![
                         session_id,
                         message_id,
@@ -123,8 +196,40 @@ impl SessionLogStore {
                         updated,
                         record_json,
                     ])?;
+                    record_execute_us += record_execute_start.elapsed().as_micros();
                 }
+                drop(stmt);
+                let cleanup_start = Instant::now();
+                if message_ids.is_empty() {
+                    tx.execute(
+                        "DELETE FROM session_records WHERE session_id = ?1",
+                        params![session_id],
+                    )?;
+                } else {
+                    let placeholders = std::iter::repeat_n("?", message_ids.len())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let sql = format!(
+                        "DELETE FROM session_records
+                         WHERE session_id = ? AND message_id NOT IN ({placeholders})"
+                    );
+                    let params = std::iter::once(session_id.clone()).chain(message_ids);
+                    tx.execute(&sql, params_from_iter(params))?;
+                }
+                let cleanup_elapsed = cleanup_start.elapsed();
+                profile_log(
+                    "session_log_store.upsert_session.workspace_records",
+                    Some(records_start.elapsed()),
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "record_json_bytes": record_json_bytes,
+                        "record_serialize_us": record_serialize_us,
+                        "record_execute_us": record_execute_us,
+                        "cleanup_us": cleanup_elapsed.as_micros(),
+                    }),
+                );
             }
+            let count_start = Instant::now();
             let message_count = tx.query_row(
                 "SELECT COUNT(*) FROM session_records WHERE session_id = ?1",
                 params![session_id],
@@ -134,10 +239,44 @@ impl SessionLogStore {
                 "UPDATE sessions SET message_count = ?2 WHERE session_id = ?1",
                 params![session_id, message_count],
             )?;
+            profile_log(
+                "session_log_store.upsert_session.workspace_count_update",
+                Some(count_start.elapsed()),
+                serde_json::json!({
+                    "session_id": session_id,
+                    "message_count": message_count,
+                }),
+            );
+            let commit_start = Instant::now();
             tx.commit()?;
+            profile_log(
+                "session_log_store.upsert_session.workspace_commit",
+                Some(commit_start.elapsed()),
+                serde_json::json!({
+                    "session_id": session_id,
+                    "message_count": message_count,
+                }),
+            );
+            profile_log(
+                "session_log_store.upsert_session.workspace_transaction",
+                Some(transaction_start.elapsed()),
+                serde_json::json!({
+                    "session_id": session_id,
+                    "message_count": message_count,
+                }),
+            );
             Ok(message_count)
         })?;
+        profile_log(
+            "session_log_store.upsert_session.workspace_total",
+            Some(workspace_write_start.elapsed()),
+            serde_json::json!({
+                "session_id": session_id,
+                "message_count": message_count,
+            }),
+        );
 
+        let index_write_start = Instant::now();
         self.with_index_connection(|conn| {
             conn.execute(
                 "INSERT INTO sessions(
@@ -173,7 +312,24 @@ impl SessionLogStore {
             )?;
             Ok(())
         })?;
+        profile_log(
+            "session_log_store.upsert_session.index_total",
+            Some(index_write_start.elapsed()),
+            serde_json::json!({
+                "session_id": session_id,
+                "message_count": message_count,
+            }),
+        );
 
+        profile_log(
+            "session_log_store.upsert_session.total",
+            Some(total_start.elapsed()),
+            serde_json::json!({
+                "session_id": session_id,
+                "requested_message_count": requested_message_count,
+                "message_count": message_count,
+            }),
+        );
         Ok(())
     }
 

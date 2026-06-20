@@ -1,26 +1,36 @@
 import { detectTerminalCapabilities, type TerminalCapabilities } from "./capabilities.js";
+import { borderColor, reset, textSecondary } from "./styles/colors.js";
+export {
+  bold,
+  borderColor,
+  dim,
+  elementBackground,
+  inverse,
+  italic,
+  lineColor,
+  reset,
+  richBlockBg,
+  richHighlight,
+  richInlineBg,
+  strike,
+  surfaceBackground,
+  textAgentRich,
+  textAuxiliary,
+  textBackground,
+  textPrimary,
+  textSecondary,
+  thinkingWaveBaseBlend,
+  thinkingWaveGlow,
+  thinkingWaveLow,
+  thinkingWaveMid,
+  underline,
+} from "./styles/colors.js";
 
-export const clear = "\x1b[3J\x1b[2J\x1b[H";
-export const reset = "\x1b[0m";
-export const bold = "\x1b[1m";
-export const italic = "\x1b[3m";
-export const underline = "\x1b[4m";
-export const strike = "\x1b[9m";
-export const inverse = "\x1b[7m";
-export const dim = "\x1b[2m";
-export const gray = "\x1b[90m";
-export const richInlineBg = "\x1b[48;5;236m";
-export const richBlockBg = "\x1b[48;5;235m";
-export const opencodePrimary = "\x1b[38;2;250;178;131m";
-export const opencodeText = "\x1b[38;2;238;238;238m";
-export const opencodeTextWeak = "\x1b[38;2;128;128;128m";
-export const opencodeBorder = "\x1b[38;2;58;58;58m";
-export const opencodeLine = "\x1b[38;2;58;58;58m";
-export const opencodePanelBg = "\x1b[48;2;32;32;34m";
-export const opencodeElementBg = "\x1b[48;2;38;38;40m";
+export const clear = "\x1bc\x1b[3J\x1b[2J\x1b[H\x1b[3J";
 
-const ansiControlPattern = /^(?:\x1b\[[0-9;]*m|\x1b\]8;;[^\x1b]*\x1b\\)/;
-const ansiControlGlobalPattern = /(?:\x1b\[[0-9;]*m|\x1b\]8;;[^\x1b]*\x1b\\)/g;
+const ansiControlPattern = /^(?:\x1b\[[0-9;]*[Km]|\x1b\]8;;[^\x1b]*\x1b\\)/;
+const ansiControlGlobalPattern = /(?:\x1b\[[0-9;]*[Km]|\x1b\]8;;[^\x1b]*\x1b\\)/g;
+const sgrControlPattern = /^\x1b\[([0-9;]*)m/;
 const segmenter =
   typeof Intl !== "undefined" && "Segmenter" in Intl
     ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
@@ -59,30 +69,34 @@ export function wrapAnsi(text: string, cols: number): string[] {
   for (const inputLine of text.split(/\r?\n/)) {
     let line = "";
     let visible = 0;
-    for (let index = 0; index < inputLine.length; index += 1) {
-      const char = inputLine[index];
-      if (char === "\x1b") {
-        const match = inputLine.slice(index).match(ansiControlPattern);
-        if (match) {
-          line += match[0];
-          index += match[0].length - 1;
-          continue;
-        }
+    let activeSgr = "";
+    for (const token of ansiTokens(inputLine)) {
+      if (token.control) {
+        line += token.value;
+        activeSgr = nextActiveSgr(activeSgr, token.value);
+        continue;
       }
-      const segment = firstGrapheme(inputLine.slice(index));
+      const segment = token.value;
       const next = graphemeWidth(segment);
       if (visible > 0 && visible + next > width) {
         result.push(line + reset);
-        line = "";
+        line = activeSgr;
         visible = 0;
       }
       line += segment;
       visible += next;
-      index += segment.length - 1;
     }
     result.push(line);
   }
   return result;
+}
+
+function nextActiveSgr(current: string, sequence: string): string {
+  const match = sequence.match(sgrControlPattern);
+  if (!match) return current;
+  const codes = (match[1] || "0").split(";").filter(Boolean);
+  if (!codes.length || codes.includes("0")) return "";
+  return `${current}${sequence}`;
 }
 
 export function fit(lines: string[], rows: number, cols: number): string[] {
@@ -110,30 +124,24 @@ export function truncateAnsi(text: string, width: number): string {
   let output = "";
   const ellipsis = activeCapabilities.unicode ? "…" : "...";
   const limit = Math.max(0, width - visibleTextWidth(ellipsis));
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    if (char === "\x1b") {
-      const match = text.slice(index).match(ansiControlPattern);
-      if (match) {
-        output += match[0];
-        index += match[0].length - 1;
-        continue;
-      }
+  for (const token of ansiTokens(text)) {
+    if (token.control) {
+      output += token.value;
+      continue;
     }
-    const segment = firstGrapheme(text.slice(index));
+    const segment = token.value;
     const next = graphemeWidth(segment);
     if (visible + next > limit) return `${output}${ellipsis}${reset}`;
     output += segment;
     visible += next;
-    index += segment.length - 1;
   }
   return output;
 }
 
 export function rule(cols: number): string {
   const line = (activeCapabilities.unicode ? "─" : "-").repeat(cols);
-  if (activeCapabilities.level === "rich") return `${opencodeBorder}${line}${reset}`;
-  if (activeCapabilities.level === "ansi") return `${gray}${line}${reset}`;
+  if (activeCapabilities.level === "rich") return `${borderColor}${line}${reset}`;
+  if (activeCapabilities.level === "ansi") return `${textSecondary}${line}${reset}`;
   return line;
 }
 
@@ -164,8 +172,26 @@ function graphemes(text: string): string[] {
   return segmenter ? [...segmenter.segment(text)].map((item) => item.segment) : Array.from(text);
 }
 
-function firstGrapheme(text: string): string {
-  return graphemes(text)[0] ?? "";
+function* ansiTokens(text: string): Generator<{ value: string; control: boolean }> {
+  let plain = "";
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === "\x1b") {
+      const match = text.slice(index).match(ansiControlPattern);
+      if (match) {
+        if (plain) {
+          for (const segment of graphemes(plain)) yield { value: segment, control: false };
+          plain = "";
+        }
+        yield { value: match[0], control: true };
+        index += match[0].length - 1;
+        continue;
+      }
+    }
+    plain += text[index];
+  }
+  if (plain) {
+    for (const segment of graphemes(plain)) yield { value: segment, control: false };
+  }
 }
 
 function graphemeWidth(segment: string): number {

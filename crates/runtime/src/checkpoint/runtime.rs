@@ -23,6 +23,8 @@ fn checkpoint_runtime_state_event(
         event_seq,
         event_type,
         payload,
+        started_at: None,
+        finished_at: None,
     }) {
         tracing::warn!(
             session_id = %runtime.session_id,
@@ -186,6 +188,8 @@ mod tests {
             RuntimeProviderConfig {
                 base: ProviderConfig {
                     tura_llm_name: "flagship".to_string(),
+                    default_model_tier: None,
+                    current_model: None,
                     stream: true,
                     temperature: 0.2,
                     max_tokens: 4096,

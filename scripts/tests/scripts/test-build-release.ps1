@@ -1,5 +1,8 @@
 param(
   [switch]$SkipTui,
+  [switch]$SkipGui,
+  [switch]$SkipTauri,
+  [switch]$BackendOnly,
   [string]$ReleaseProbe = $env:TURA_RELEASE_PROBE
 )
 
@@ -8,7 +11,9 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "..\..\.."))
 $TargetDir = Join-Path $RepoRoot "target\release"
-$BuildTui = -not [bool]$SkipTui
+$BuildTui = -not [bool]$SkipTui -and -not [bool]$BackendOnly
+$BuildGui = -not [bool]$SkipGui -and -not [bool]$BackendOnly
+$BuildTauri = -not [bool]$SkipTauri -and -not [bool]$BackendOnly
 
 if ([string]::IsNullOrWhiteSpace($ReleaseProbe)) {
   $ReleaseProbe = "release-v0.0.0-ci"
@@ -44,9 +49,15 @@ function Assert-Path {
 function Test-ProtocolHealth {
   param([string]$Binary)
   $payload = '{"kind":"health_check","payload":{}}'
-  $output = $payload | & $Binary --protocol
+  $requestPath = Join-Path ([System.IO.Path]::GetTempPath()) ("tura-protocol-health-{0}.json" -f ([guid]::NewGuid()))
+  [System.IO.File]::WriteAllText($requestPath, $payload, [System.Text.UTF8Encoding]::new($false))
+  try {
+    $output = & cmd.exe /d /s /c "type `"$requestPath`" | `"$Binary`" --protocol"
+  } finally {
+    Remove-Item -LiteralPath $requestPath -Force -ErrorAction SilentlyContinue
+  }
   if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+    throw "Protocol health process failed for $Binary exit $LASTEXITCODE`: $output"
   }
   $response = $output | ConvertFrom-Json
   if (-not $response.ok -or $response.output.status -ne "ok") {
@@ -58,11 +69,12 @@ Write-Step "Release probe: $ReleaseProbe"
 Write-Step "Running release build script"
 Push-Location $RepoRoot
 try {
-  if ($BuildTui) {
-    & .\scripts\build-release.ps1
-  } else {
-    & .\scripts\build-release.ps1 -SkipTui
-  }
+  $buildArgs = @{}
+  if ($SkipTui) { $buildArgs["SkipTui"] = $true }
+  if ($SkipGui) { $buildArgs["SkipGui"] = $true }
+  if ($SkipTauri) { $buildArgs["SkipTauri"] = $true }
+  if ($BackendOnly) { $buildArgs["BackendOnly"] = $true }
+  & .\scripts\build-release.ps1 @buildArgs
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } finally {
   Pop-Location
@@ -83,7 +95,12 @@ foreach ($name in @(
 
 if ($BuildTui) {
   Assert-Path (Join-Path $TargetDir "tura.exe") "Missing release TUI executable."
-  Assert-Path (Join-Path $TargetDir "gui\index.html") "Missing release GUI dist."
+}
+if ($BuildGui) {
+  Assert-Path (Join-Path $TargetDir "tura_gui\index.html") "Missing release GUI dist."
+}
+if ($BuildTauri) {
+  Assert-Path (Join-Path $TargetDir "release\bundle") "Missing Tauri release bundle directory."
 }
 
 Write-Step "Checking command protocol health"

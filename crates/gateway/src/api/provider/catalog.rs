@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use axum::extract::Json;
 use tokio::time::{timeout, Duration};
 
-use crate::api::types::*;
+use crate::contracts::*;
 use crate::mock::global_store;
 
 use super::{provider_env_key, provider_key_exists, provider_key_value_for_env};
@@ -678,22 +678,6 @@ pub(super) fn provider_base_url(
 ) -> Option<String> {
     let provider_id = provider_runtime_id(provider_id);
     settings.provider_base_url(provider_id)
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ValidateModelRequest {
-    #[serde(rename = "providerID")]
-    pub provider_id: String,
-    #[serde(rename = "modelID")]
-    pub model_id: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ValidateModelResponse {
-    pub ok: bool,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub output: Option<serde_json::Value>,
 }
 
 pub async fn validate_model(

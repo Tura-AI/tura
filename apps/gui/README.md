@@ -14,12 +14,6 @@ apps/gui/
   package.json
   bun.lock
   turbo.json
-  e2e/
-    business/
-      run_all_release.mjs
-      gui_single_request_release.mjs
-      gui_snake_release.mjs
-      gui_password_zip_release.mjs
   app/
     package.json
     vite.config.ts
@@ -29,6 +23,12 @@ apps/gui/
     gateway/
       package.json
       src/
+  tests/
+    unit/
+    e2e/
+      business/
+      live/
+        business/
 ```
 
 ## Install And Build
@@ -121,6 +121,7 @@ bun run --cwd apps/gui format:check
 bun run --cwd apps/gui typecheck
 bun run --cwd apps/gui build
 bun run --cwd apps/gui test
+bun run --cwd apps/gui test:e2e
 ```
 
 Focused app checks:
@@ -130,16 +131,21 @@ bun run --cwd apps/gui/app typecheck
 bun run --cwd apps/gui/app unused:check
 ```
 
-E2E scripts under `apps/gui/e2e` expect the gateway and any required provider
-credentials to be available.
+Tests follow the same shape as `apps/tui`: unit tests live under
+`apps/gui/tests/unit`, local/mock Playwright flows live under
+`apps/gui/tests/e2e`, and credential/provider/release tests live under
+`apps/gui/tests/e2e/live`.
 
-Release-entry live acceptance tests under `apps/gui/e2e/business` start the
+`bun run --cwd apps/gui test` runs only unit tests. `test:e2e` runs the local
+mock-gateway E2E suite and intentionally skips every `live` script.
+
+Release-entry live acceptance tests under `apps/gui/tests/e2e/live/business` start the
 release gateway and validate a single real request, Snake, and password-zip CLI
 refactor task through the GUI command surface:
 
 ```text
-bun run --cwd apps/gui e2e:live:release
-bun run --cwd apps/gui e2e:live:release:single
-bun run --cwd apps/gui e2e:live:release:snake
-bun run --cwd apps/gui e2e:live:release:password-zip
+bun run --cwd apps/gui test:live:release
+bun run --cwd apps/gui test:live:release:single
+bun run --cwd apps/gui test:live:release:snake
+bun run --cwd apps/gui test:live:release:password-zip
 ```

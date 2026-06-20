@@ -1,8 +1,12 @@
 use session_log::{ListSessionsRequest, SessionLogStore, UpsertSessionRequest};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Child, Command, ExitStatus};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+const TEST_TIMEOUT: Duration = Duration::from_secs(90);
+const CHILD_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct EnvRestore {
     keys: Vec<(&'static str, Option<std::ffi::OsString>)>,
@@ -66,11 +70,12 @@ impl DirectDbGuard {
 
 #[test]
 fn concurrent_upserts_keep_pagination_consistent() {
+    let test_started = Instant::now();
     let db = DirectDbGuard::new();
     let store = SessionLogStore::open_default().expect("store");
     let nonce = uuid::Uuid::new_v4().to_string();
     let workspace = db.workspace(&format!("stress-{nonce}"));
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     let worker_count = 16;
     let per_worker = 50;
 
@@ -91,7 +96,11 @@ fn concurrent_upserts_keep_pagination_consistent() {
     }
 
     for worker in workers {
-        worker.join().expect("worker");
+        join_thread_with_timeout(
+            worker,
+            remaining_timeout(test_started, TEST_TIMEOUT, "concurrent upsert pressure"),
+            "concurrent upsert worker",
+        );
     }
 
     let (page, sessions) = store
@@ -106,7 +115,7 @@ fn concurrent_upserts_keep_pagination_consistent() {
     assert_eq!(page.page_size, 50);
     assert_eq!(sessions.len(), 50);
     assert!(
-        started.elapsed() < std::time::Duration::from_secs(60),
+        started.elapsed() < Duration::from_secs(60),
         "concurrent upsert smoke test took {:?}",
         started.elapsed()
     );
@@ -114,6 +123,7 @@ fn concurrent_upserts_keep_pagination_consistent() {
 
 #[test]
 fn cross_process_writers_share_one_queued_local_database() {
+    let test_started = Instant::now();
     let db = DirectDbGuard::new();
     let nonce = uuid::Uuid::new_v4().to_string();
     let workspace = db.workspace(&format!("cross-process-{nonce}"));
@@ -136,11 +146,20 @@ fn cross_process_writers_share_one_queued_local_database() {
     }
 
     for mut child in children {
-        let status = child.wait().expect("wait helper");
+        let status = wait_child_with_timeout(
+            &mut child,
+            remaining_timeout(
+                test_started,
+                TEST_TIMEOUT,
+                "cross-process session_log pressure",
+            )
+            .min(CHILD_TIMEOUT),
+            "cross-process upsert helper",
+        );
         assert!(status.success(), "helper exited with {status}");
     }
 
-    let status = Command::new(&current_exe)
+    let mut verify = Command::new(&current_exe)
         .args(["--exact", "cross_process_session_log_helper", "--nocapture"])
         .env("SESSION_LOG_CROSS_PROCESS_MODE", "verify")
         .env("SESSION_LOG_CROSS_PROCESS_WORKSPACE", &workspace)
@@ -149,8 +168,18 @@ fn cross_process_writers_share_one_queued_local_database() {
             worker_count.to_string(),
         )
         .env("SESSION_LOG_DB_ROOT", db.root())
-        .status()
-        .expect("verify helper");
+        .spawn()
+        .expect("spawn verify helper");
+    let status = wait_child_with_timeout(
+        &mut verify,
+        remaining_timeout(
+            test_started,
+            TEST_TIMEOUT,
+            "cross-process session_log pressure",
+        )
+        .min(CHILD_TIMEOUT),
+        "cross-process verify helper",
+    );
     assert!(status.success(), "verify helper exited with {status}");
 }
 
@@ -210,4 +239,39 @@ fn upsert(session_id: &str, workspace: &str, sequence: i64) -> UpsertSessionRequ
         })],
         todos: vec![],
     }
+}
+
+fn join_thread_with_timeout<T>(handle: JoinHandle<T>, timeout: Duration, label: &str) -> T
+where
+    T: Send + 'static,
+{
+    let started = Instant::now();
+    while !handle.is_finished() {
+        if started.elapsed() >= timeout {
+            panic!("{label} timed out after {timeout:?}");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    handle.join().unwrap_or_else(|_| panic!("{label} panicked"))
+}
+
+fn wait_child_with_timeout(child: &mut Child, timeout: Duration, label: &str) -> ExitStatus {
+    let started = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait().expect("poll child process") {
+            return status;
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("{label} timed out after {timeout:?}");
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn remaining_timeout(started: Instant, timeout: Duration, label: &str) -> Duration {
+    timeout
+        .checked_sub(started.elapsed())
+        .unwrap_or_else(|| panic!("{label} exceeded total timeout {timeout:?}"))
 }

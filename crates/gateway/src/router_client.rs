@@ -39,6 +39,22 @@ impl RouterClient {
         )
     }
 
+    pub fn append_user_command(
+        &self,
+        session_id: &str,
+        root_session_id: &str,
+        command: &str,
+    ) -> Result<Value> {
+        crate::router_process::global_router_process()?.call(
+            "session.append_user_command",
+            json!({
+                "session_id": session_id,
+                "root_session_id": root_session_id,
+                "command": command,
+            }),
+        )
+    }
+
     pub fn shutdown(&self) -> Result<Value> {
         crate::router_process::global_router_process()?.shutdown()
     }

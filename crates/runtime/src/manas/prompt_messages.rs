@@ -1,33 +1,130 @@
-use crate::prompt_style::{compact_context, task_status, user_new_command, PromptBuilder};
-use crate::state_machine::session_management::{
-    PlanStatus, SessionManagement, StartCondition, TaskStep,
+use std::{
+    io::{BufRead, BufReader, Write},
+    net::{SocketAddr, TcpStream},
+    time::Instant,
 };
 
+use crate::profile_timings;
+use crate::prompt_style::{
+    compact_context, context_blocks, tail_injection, task_status, user_new_command, PromptBuilder,
+};
+use crate::state_machine::session_management::{
+    ContextTokenStats, PlanStatus, SessionManagement, StartCondition, TaskStep,
+};
+
+pub(crate) struct TurnMessages {
+    pub messages: Vec<serde_json::Value>,
+    pub context_tokens: ContextTokenStats,
+}
+
+#[cfg(test)]
 pub(crate) fn messages_for_turn(
     current_messages: &[serde_json::Value],
     session: &SessionManagement,
     original_user_task: &str,
 ) -> Vec<serde_json::Value> {
+    messages_for_turn_with_context_limit(
+        current_messages,
+        session,
+        original_user_task,
+        crate::state_machine::session_management::DEFAULT_CONTEXT_TOKEN_LIMIT,
+        0,
+    )
+    .messages
+}
+
+pub(crate) fn messages_for_turn_with_context_limit(
+    current_messages: &[serde_json::Value],
+    session: &SessionManagement,
+    original_user_task: &str,
+    context_limit_tokens: u64,
+    fixed_prefix_tokens: u64,
+) -> TurnMessages {
+    let total_start = Instant::now();
+    let profiling = profile_timings::enabled();
+    let clone_start = Instant::now();
     let mut messages = current_messages.to_vec();
+    profile_timings::log_elapsed(
+        "messages_for_turn.clone_current_messages",
+        clone_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "input_message_count": current_messages.len(),
+            "output_message_count": messages.len(),
+            "input_messages_bytes": if profiling {
+                profile_timings::json_vec_bytes(current_messages)
+            } else {
+                0
+            },
+        }),
+    );
     if should_append_original_user_task(&messages, original_user_task) {
         messages.push(serde_json::json!({
             "role": "user",
             "content": original_user_task.trim(),
         }));
     }
-    if let Some(content) = user_new_command_message(&session.session_id) {
-        messages.push(serde_json::json!({
-            "role": "system",
-            "content": content,
-        }));
+    let user_command_start = Instant::now();
+    let user_command = user_new_command_message(&session.session_id);
+    profile_timings::log_elapsed(
+        "messages_for_turn.user_new_command_message",
+        user_command_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "has_user_command": user_command.is_some(),
+        }),
+    );
+    if let Some(content) = user_command {
+        tail_injection::append_tail_prompt(
+            &mut messages,
+            tail_injection::TailPrompt::system(content),
+        );
     }
-    if approximate_message_tokens(&messages) >= compact_context_token_threshold() {
-        messages.push(serde_json::json!({
-            "role": "user",
-            "content": compact_context_required_message(),
-        }));
+    let token_estimate_start = Instant::now();
+    let message_token_estimate = approximate_message_tokens(&messages);
+    let token_estimate = fixed_prefix_tokens.saturating_add(message_token_estimate);
+    profile_timings::log_elapsed(
+        "messages_for_turn.approximate_message_tokens",
+        token_estimate_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "message_count": messages.len(),
+            "estimated_tokens": token_estimate,
+            "message_estimated_tokens": message_token_estimate,
+            "fixed_prefix_tokens": fixed_prefix_tokens,
+            "context_limit_tokens": context_limit_tokens,
+            "messages_bytes": if profiling {
+                profile_timings::json_vec_bytes(&messages)
+            } else {
+                0
+            },
+        }),
+    );
+    if token_estimate >= context_limit_tokens {
+        tail_injection::append_tail_prompt(
+            &mut messages,
+            tail_injection::TailPrompt::user(compact_context_required_message(
+                context_limit_tokens,
+            )),
+        );
     }
-    messages
+    profile_timings::log_elapsed(
+        "messages_for_turn.total",
+        total_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "message_count": messages.len(),
+            "estimated_tokens": token_estimate,
+            "context_limit_tokens": context_limit_tokens,
+        }),
+    );
+    TurnMessages {
+        messages,
+        context_tokens: ContextTokenStats {
+            input: token_estimate,
+            limit: context_limit_tokens,
+        },
+    }
 }
 
 fn should_append_original_user_task(
@@ -48,10 +145,10 @@ fn should_append_original_user_task(
     })
 }
 
-fn approximate_message_tokens(messages: &[serde_json::Value]) -> usize {
+pub(crate) fn approximate_message_tokens(messages: &[serde_json::Value]) -> u64 {
     messages
         .iter()
-        .map(|message| estimate_message_model_visible_chars(message) / 4)
+        .map(|message| (estimate_message_model_visible_chars(message) / 4) as u64)
         .sum()
 }
 
@@ -149,16 +246,11 @@ fn parse_base64_media_data_url<'a>(url: &'a str, mime_prefix: &str) -> Option<&'
     has_base64_marker.then_some(payload)
 }
 
-fn compact_context_token_threshold() -> usize {
-    std::env::var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD")
-        .ok()
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .unwrap_or(220_000)
-}
-
-fn compact_context_required_message() -> String {
+fn compact_context_required_message(context_limit_tokens: u64) -> String {
     PromptBuilder::new()
-        .part(compact_context::COMPACT_CONTEXT_REQUIRED)
+        .part(compact_context::compact_context_required(
+            context_limit_tokens,
+        ))
         .render()
 }
 
@@ -185,111 +277,98 @@ pub(super) fn fetch_user_commands(session_id: &str) -> Vec<String> {
     if super::constants::gateway_callbacks_disabled() {
         return Vec::new();
     }
-    let endpoint = format!(
-        "{}/session/{}/user-commands",
-        gateway_base_url(),
-        url_escape(session_id)
-    );
-    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    else {
-        return Vec::new();
-    };
-    runtime
-        .block_on(async move {
-            let response = reqwest::Client::new()
-                .get(endpoint)
-                .timeout(std::time::Duration::from_secs(2))
-                .send()
-                .await
-                .ok()?;
-            if !response.status().is_success() {
-                return None;
-            }
-            let value = response.json::<serde_json::Value>().await.ok()?;
-            Some(
-                value
-                    .get("commands")
-                    .and_then(serde_json::Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|item| item.as_str())
-                    .map(str::trim)
-                    .filter(|item| !item.is_empty())
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .unwrap_or_default()
+    fetch_user_commands_from_router(session_id).unwrap_or_default()
 }
 
-fn gateway_base_url() -> String {
-    std::env::var("TURA_GATEWAY_URL")
-        .or_else(|_| std::env::var("GATEWAY_BASE_URL"))
-        .unwrap_or_else(|_| {
-            let port = std::env::var("TURA_GATEWAY_PORT")
-                .ok()
-                .and_then(|value| value.parse::<u16>().ok())
-                .unwrap_or(4096);
-            format!("http://127.0.0.1:{port}")
-        })
-        .trim_end_matches('/')
-        .to_string()
+fn fetch_user_commands_from_router(session_id: &str) -> Option<Vec<String>> {
+    let addr = std::env::var("TURA_ROUTER_ADDR")
+        .ok()
+        .and_then(|addr| addr.trim().parse::<SocketAddr>().ok())?;
+    let target_session_id = user_command_router_session_id(session_id);
+    let request = serde_json::json!({
+        "request_id": format!("runtime-user-commands-{}-{}", std::process::id(), chrono::Utc::now().timestamp_millis()),
+        "kind": "call",
+        "method": "session.take_user_commands",
+        "payload": {
+            "session_id": target_session_id,
+            "root_session_id": target_session_id,
+        },
+        "deadline_ms": user_command_fetch_timeout().as_millis() as u64,
+    });
+    let timeout = user_command_fetch_timeout();
+    let mut stream = TcpStream::connect_timeout(&addr, timeout).ok()?;
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
+    stream
+        .write_all(format!("{request}\n").as_bytes())
+        .and_then(|_| stream.flush())
+        .ok()?;
+    let mut line = String::new();
+    BufReader::new(stream).read_line(&mut line).ok()?;
+    let response = serde_json::from_str::<serde_json::Value>(line.trim()).ok()?;
+    if !response.get("ok").and_then(serde_json::Value::as_bool)? {
+        return None;
+    }
+    Some(
+        response
+            .pointer("/payload/commands")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item.as_str())
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToString::to_string)
+            .collect(),
+    )
 }
 
-fn url_escape(value: &str) -> String {
-    value
-        .bytes()
-        .flat_map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                vec![byte as char]
-            }
-            _ => format!("%{byte:02X}").chars().collect(),
-        })
-        .collect()
+fn user_command_router_session_id(session_id: &str) -> String {
+    std::env::var("TURA_PARENT_SESSION_ID")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| session_id.to_string())
+}
+
+fn user_command_fetch_timeout() -> std::time::Duration {
+    std::env::var("TURA_USER_COMMAND_FETCH_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|millis| *millis > 0)
+        .map(std::time::Duration::from_millis)
+        .unwrap_or_else(|| std::time::Duration::from_millis(100))
 }
 
 /// Inject the short task_status reminder when the model keeps doing workspace
 /// work (command_run turns) without ever writing or settling the task state.
 /// Used by the runtime loop after N consecutive no-write command_run turns.
 pub(crate) fn push_task_status_nudge(messages: &mut Vec<serde_json::Value>) {
-    messages.push(serde_json::json!({
-        "role": "system",
-        "content": task_status::TASK_STATUS,
-    }));
+    tail_injection::append_tail_prompt(
+        messages,
+        tail_injection::TailPrompt::system(task_status::TASK_STATUS),
+    );
 }
 
 pub(crate) fn push_no_tool_task_status_retry_message(
     messages: &mut Vec<serde_json::Value>,
     session: &SessionManagement,
 ) {
-    let content = PromptBuilder::new()
-        .part(task_status::planning_objective_context(&planning_objective_block(
-            session,
-        )))
-        .part("If more command_run calls are required to complete the task, call command_run with task_status status doing. If user feedback, missing information, permissions, credentials, or keys are required, call command_run with task_status status question. If the task is complete and verified, call command_run with task_status status done. Every task_status status change must also have a normal assistant-channel reply.")
-        .render();
-    messages.push(serde_json::json!({
-        "role": "system",
-        "content": content,
-    }));
+    let content = task_status::no_tool_retry(&planning_objective_block(session));
+    tail_injection::append_tail_prompt(messages, tail_injection::TailPrompt::system(content));
 }
 
 pub(crate) fn planning_objective_block(session: &SessionManagement) -> String {
     let overall = session.current_objective.trim();
     let Some((_index, task)) = current_planning_task(session) else {
-        return format!("[current objective]:\n{overall}");
+        return context_blocks::current_objective_block(overall, None);
     };
-    format!(
-        "[current objective]:\n{}\n\n{}",
-        overall,
-        planning_current_task_text(task)
-    )
+    let current_task = planning_current_task_text(task);
+    context_blocks::current_objective_block(overall, Some(current_task))
 }
 
-pub(crate) fn planning_current_task_text(task: &TaskStep) -> String {
-    task.task_summary.trim().to_string()
+pub(crate) fn planning_current_task_text(task: &TaskStep) -> &str {
+    context_blocks::current_task_text(&task.task_summary)
 }
 
 fn current_planning_task(session: &SessionManagement) -> Option<(usize, &TaskStep)> {
@@ -308,8 +387,10 @@ fn current_planning_task(session: &SessionManagement) -> Option<(usize, &TaskSte
 #[cfg(test)]
 mod tests {
     use super::{
-        messages_for_turn, planning_objective_block, push_no_tool_task_status_retry_message,
+        messages_for_turn, messages_for_turn_with_context_limit, planning_objective_block,
+        push_no_tool_task_status_retry_message, push_task_status_nudge,
     };
+    use crate::prompt_style::task_status;
     use crate::state_machine::session_management::{
         PlanStatus, SessionInput, SessionManagement, StartCondition, TaskStep,
     };
@@ -375,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn no_tool_retry_injects_objective_context_without_original_user_task() {
+    fn no_tool_retry_reminds_that_last_user_message_is_objective() {
         let now = Utc::now();
         let mut session = SessionManagement::new(
             "sess-no-tool-retry".to_string(),
@@ -402,15 +483,20 @@ mod tests {
             .expect("prompt message content should be a string");
 
         assert!(content.contains("Continue working toward the active thread goal."));
-        assert!(content.contains("[current objective]:\nSTATE MACHINE OBJECTIVE"));
+        assert!(
+            content.contains("The last user message in the conversation is the current objective")
+        );
+        assert!(!content.contains("[current objective]:\nSTATE MACHINE OBJECTIVE"));
         assert!(content.contains("task_status status question"));
         assert!(content.contains("task_status status done"));
         assert!(content.contains("task_status status doing"));
+        assert!(content.contains("first send the user-facing assistant reply"));
+        assert!(content.contains("then call command_run with task_status status done"));
         assert!(!content.contains("original_user_task:"));
     }
 
     #[test]
-    fn no_tool_retry_injects_current_task_when_present() {
+    fn no_tool_retry_does_not_inject_current_task_when_present() {
         let now = Utc::now();
         let mut session = SessionManagement::new(
             "sess-no-tool-task".to_string(),
@@ -444,14 +530,35 @@ mod tests {
             .as_str()
             .expect("prompt message content should be a string");
 
-        assert!(content.contains("[current objective]:\nfix the task\n\nPatch parser"));
+        assert!(
+            content.contains("The last user message in the conversation is the current objective")
+        );
+        assert!(!content.contains("[current objective]:\nfix the task\n\nPatch parser"));
+        assert!(!content.contains("Patch parser"));
         assert!(!content.contains("original_user_task:"));
+    }
+
+    #[test]
+    fn task_status_nudge_appends_tail_system_prompt_without_moving_fixed_system() {
+        let mut messages = vec![
+            serde_json::json!({"role": "system", "content": "fixed system prefix"}),
+            serde_json::json!({"role": "user", "content": "work"}),
+        ];
+
+        push_task_status_nudge(&mut messages);
+
+        assert_eq!(messages[0]["content"], "fixed system prefix");
+        let last_message = messages
+            .last()
+            .expect("task status nudge should append a message");
+        assert_eq!(last_message["role"], "system");
+        assert_eq!(last_message["content"], task_status::TASK_STATUS);
     }
 
     #[test]
     fn messages_for_turn_injects_compact_context_prompt_above_threshold() {
         let _guard = ENV_LOCK.lock().expect("env lock");
-        std::env::set_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD", "10");
+        std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
         let now = Utc::now();
         let session = SessionManagement::new(
             "sess-compact-threshold".to_string(),
@@ -470,29 +577,61 @@ mod tests {
             now,
         );
 
-        let messages = messages_for_turn(
+        let turn = messages_for_turn_with_context_limit(
             &[serde_json::json!({
                 "role": "user",
                 "content": "x".repeat(100)
             })],
             &session,
             "fix the task",
+            10,
+            0,
         );
-        let joined = messages
+        let joined = turn
+            .messages
             .iter()
             .map(|message| message.to_string())
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(joined.contains("above about 220,000 tokens"));
+        assert!(joined.contains("above about 10 tokens"));
         assert!(joined.contains("compact_context as the final command"));
-        std::env::remove_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD");
+        assert_eq!(turn.context_tokens.limit, 10);
+        assert!(turn.context_tokens.input >= 10);
+        std::env::remove_var("TURA_GATEWAY_CALLBACKS");
+    }
+
+    #[test]
+    fn messages_for_turn_appends_temporary_prompt_after_fixed_system_prefix() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
+        let session = test_session("tail task");
+        let messages = messages_for_turn_with_context_limit(
+            &[
+                serde_json::json!({"role": "system", "content": "fixed system prefix"}),
+                serde_json::json!({"role": "user", "content": "x".repeat(100)}),
+            ],
+            &session,
+            "tail task",
+            10,
+            0,
+        )
+        .messages;
+        let last = messages.last().expect("temporary prompt should be last");
+
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "fixed system prefix");
+        assert_eq!(last["role"], "user");
+        assert!(last["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("compact_context as the final command")));
+        std::env::remove_var("TURA_GATEWAY_CALLBACKS");
     }
 
     #[test]
     fn image_data_urls_are_discounted_for_compact_threshold_estimation() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::set_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD", "50000");
+        std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
         let now = Utc::now();
         let session = SessionManagement::new(
             "sess-image-estimate".to_string(),
@@ -511,7 +650,7 @@ mod tests {
             now,
         );
 
-        let messages = messages_for_turn(
+        let messages = messages_for_turn_with_context_limit(
             &[serde_json::json!({
                 "type": "function_call_output",
                 "call_id": "call_image",
@@ -524,21 +663,24 @@ mod tests {
             })],
             &session,
             "remember the image",
-        );
+            50_000,
+            0,
+        )
+        .messages;
         let joined = messages
             .iter()
             .map(|message| message.to_string())
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(!joined.contains("above about 220,000 tokens"));
-        std::env::remove_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD");
+        assert!(!joined.contains("Context checkpoint required"));
+        std::env::remove_var("TURA_GATEWAY_CALLBACKS");
     }
 
     #[test]
     fn audio_payloads_are_discounted_for_compact_threshold_estimation() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::set_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD", "50000");
+        std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
         let now = Utc::now();
         let session = SessionManagement::new(
             "sess-audio-estimate".to_string(),
@@ -557,7 +699,7 @@ mod tests {
             now,
         );
 
-        let messages = messages_for_turn(
+        let messages = messages_for_turn_with_context_limit(
             &[serde_json::json!({
                 "type": "function_call_output",
                 "call_id": "call_audio",
@@ -573,19 +715,24 @@ mod tests {
             })],
             &session,
             "remember the audio",
-        );
+            50_000,
+            0,
+        )
+        .messages;
         let joined = messages
             .iter()
             .map(|message| message.to_string())
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(!joined.contains("above about 220,000 tokens"));
-        std::env::remove_var("TURA_COMPACT_CONTEXT_TOKEN_THRESHOLD");
+        assert!(!joined.contains("Context checkpoint required"));
+        std::env::remove_var("TURA_GATEWAY_CALLBACKS");
     }
 
     #[test]
-    fn messages_for_turn_injects_compact_context_prompt_at_default_220k_threshold() {
+    fn messages_for_turn_injects_compact_context_prompt_at_default_250k_threshold() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
         let now = Utc::now();
         let session = SessionManagement::new(
             "sess-compact-default-threshold".to_string(),
@@ -607,7 +754,7 @@ mod tests {
         let messages = messages_for_turn(
             &[serde_json::json!({
                 "role": "user",
-                "content": "x".repeat(900_000)
+                "content": "x".repeat(1_100_000)
             })],
             &session,
             "continue the long task",
@@ -618,7 +765,8 @@ mod tests {
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default();
 
-        assert!(last.contains("above about 220,000 tokens"));
+        assert!(last.contains("above about 250,000 tokens"));
         assert!(last.contains("compact_context as the final command"));
+        std::env::remove_var("TURA_GATEWAY_CALLBACKS");
     }
 }

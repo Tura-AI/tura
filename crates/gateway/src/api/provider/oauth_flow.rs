@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use axum::extract::{Json, Path, Query};
 use axum::response::{Html, IntoResponse};
 use chrono::Utc;
@@ -12,6 +10,10 @@ use oauth_exchange::{
     start_github_copilot_device_flow, wait_for_oauth_completed,
 };
 
+use crate::contracts::{
+    OAuthAuthorizeParams, OAuthAuthorizePayload, OAuthAuthorizeResponse, OAuthCallbackParams,
+    OAuthCallbackPayload, OAuthMethod, OAuthRedirectCallbackParams, ProviderAuthActionResponse,
+};
 use crate::mock::global_store;
 
 use super::oauth_support::{
@@ -20,7 +22,7 @@ use super::oauth_support::{
 };
 use super::{
     auth_update, build_provider_auth_status, persist_provider_auth, provider_auth_methods,
-    provider_display_name, validation_detail, ProviderAuthActionResponse,
+    provider_display_name, validation_detail,
 };
 
 pub async fn oauth_authorize(
@@ -159,34 +161,6 @@ pub async fn oauth_authorize(
         method,
         instructions,
     })
-}
-
-#[derive(Debug, Clone, serde::Deserialize, Default)]
-pub struct OAuthAuthorizeParams {
-    pub directory: Option<String>,
-    pub workspace: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct OAuthAuthorizePayload {
-    pub method: usize,
-    pub inputs: Option<HashMap<String, String>>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum OAuthMethod {
-    #[serde(rename = "auto")]
-    Auto,
-    #[serde(rename = "code")]
-    Code,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct OAuthAuthorizeResponse {
-    pub url: String,
-    pub method: OAuthMethod,
-    pub instructions: String,
 }
 
 pub async fn oauth_callback(
@@ -715,42 +689,6 @@ async fn finish_oauth_redirect_callback(
             provider_display_name(&provider_id)
         ),
     ))
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct OAuthCallbackParams {
-    pub directory: Option<String>,
-    pub workspace: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct OAuthCallbackPayload {
-    pub method: usize,
-    pub state: Option<String>,
-    pub code: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct OAuthRedirectCallbackParams {
-    pub code: Option<String>,
-    pub state: Option<String>,
-    pub error: Option<String>,
-}
-
-impl OAuthRedirectCallbackParams {
-    fn has_callback_payload(&self) -> bool {
-        self.code
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty())
-            || self
-                .state
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty())
-            || self
-                .error
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty())
-    }
 }
 
 #[cfg(test)]

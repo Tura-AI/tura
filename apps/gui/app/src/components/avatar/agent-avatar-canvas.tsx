@@ -1,6 +1,7 @@
 import type { AgentAvatarConfig, PersonaMediaConfig } from "@tura/gateway-sdk";
 import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { classNames } from "../../state/format";
+import { EMOJI_ALIASES, avatarExpressionIdsForEmoji } from "./agent-avatar-protocol";
 
 export type AvatarRenderSettings = AgentAvatarConfig;
 export type AvatarDisplayMode = NonNullable<AgentAvatarConfig["display_mode"]>;
@@ -10,15 +11,13 @@ export const DEFAULT_AVATAR_SETTINGS: AvatarRenderSettings = {
   role: "tura",
   display_mode: "static",
   pixel_size: 20,
-  threshold: 150,
-  scale: 100,
+  threshold: 160,
 };
 const FALLBACK_AVATAR_IMAGE = "/assets/avatar-fallback/tura-vigilant-right.png";
 
 export const AVATAR_SETTING_LIMITS = {
   pixelSize: { min: 10, max: 30 },
   threshold: { min: 100, max: 200 },
-  scale: { min: 100, max: 120 },
 };
 
 const CANVAS_SIZE = 768;
@@ -54,17 +53,6 @@ const FALLBACK_EXPRESSIONS = [
   "smirk",
   "tired",
 ];
-const EMOJI_ALIASES: Record<string, string[]> = {
-  panic: ["😱", "😨", "😰", "🤯", "🥶", "😧", "😵", "😦", "😮"],
-  crying: ["😭", "😢", "😿", "😥", "🥺", "😪", "😓"],
-  confused: ["😕", "🤔", "🙄", "🫤", "🤨", "🧐", "🙃", "🥴"],
-  nervous: ["😬", "😅", "😟", "😓", "😰", "🫥", "🫨"],
-  vigilant: ["👀", "🫢", "🫣", "🔎", "🔍", "⚠", "🚨", "🎯"],
-  laufgh: ["😂", "😄", "😆", "🤣", "😁", "😹", "😃"],
-  smirk: ["😏", "😉", "😌", "😼", "😈", "😎", "🤭"],
-  tired: ["😴", "😪", "😩", "🫠", "🥱", "😔", "🤧"],
-};
-
 type LoadedImages = Record<string, HTMLImageElement>;
 type ExpressionInfo = {
   id: string;
@@ -119,11 +107,6 @@ export function normalizeAvatarSettings(
       Number(value?.threshold ?? DEFAULT_AVATAR_SETTINGS.threshold),
       AVATAR_SETTING_LIMITS.threshold.min,
       AVATAR_SETTING_LIMITS.threshold.max,
-    ),
-    scale: clamp(
-      Number(value?.scale ?? DEFAULT_AVATAR_SETTINGS.scale),
-      AVATAR_SETTING_LIMITS.scale.min,
-      AVATAR_SETTING_LIMITS.scale.max,
     ),
   };
 }
@@ -211,12 +194,7 @@ export function AgentAvatarCanvas(props: {
   }
 
   function chooseExpressionForEmoji(emoji: string | undefined): string | undefined {
-    const clean = emoji?.trim();
-    if (!clean) {
-      return undefined;
-    }
-    const matches = expressions().filter((item) => item.aliases.includes(clean));
-    return randomItem(matches)?.id;
+    return randomItem(avatarExpressionIdsForEmoji(media(), emoji));
   }
 
   createEffect(() => {
@@ -396,9 +374,8 @@ export function AgentAvatarCanvas(props: {
 
     const baseWidth = identity ? CANVAS_SIZE : smallWidth * pixelSize;
     const baseHeight = identity ? CANVAS_SIZE : smallHeight * pixelSize;
-    const scaleFactor = settings().scale / 100;
-    const drawWidth = Math.max(1, Math.round(baseWidth * scaleFactor));
-    const drawHeight = Math.max(1, Math.round(baseHeight * scaleFactor));
+    const drawWidth = Math.max(1, Math.round(baseWidth));
+    const drawHeight = Math.max(1, Math.round(baseHeight));
     const offsetX = Math.round((CANVAS_SIZE - drawWidth) / 2);
     const offsetY = Math.round((CANVAS_SIZE - drawHeight) / 2);
     context.imageSmoothingEnabled = false;

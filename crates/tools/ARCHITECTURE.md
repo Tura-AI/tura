@@ -61,6 +61,17 @@ crates/tools/
         schema.json
         prompt.md
         policy.toml
+      generate_media/
+        mod.rs
+        src/
+          args.rs
+          config.rs
+          files.rs
+          providers.rs
+          runner.rs
+        schema.json
+        prompt.md
+        policy.toml
       read_media/
         mod.rs
         src/
@@ -214,14 +225,15 @@ Examples:
 - `bash` -> router command id -> tools handler
 - `zsh` -> router command id -> tools handler
 - `apply_patch` -> router command id -> tools handler
+- `generate_media` -> router command id -> external command package
 - `read_media` -> router command id -> tools handler
 - `web_discover` -> router command id -> tools handler
 - `compact_context` -> command-run lifecycle handler
 - `task_status` -> internal command-run status command
 - `planning` -> optional planning/multiple-task state handler
 
-Only `shell_command`, `bash`, `zsh`, `apply_patch`, read-only `read_media`,
-`web_discover`, `compact_context`, and internal `task_status` are enabled for
+Only `shell_command`, `bash`, `zsh`, `apply_patch`, mutating `generate_media`,
+read-only `read_media`, `web_discover`, `compact_context`, and internal `task_status` are enabled for
 normal command-run coding-agent sessions in this version. `planning` is
 injected only by the explicit multiple-task runtime mode.
 
@@ -247,8 +259,9 @@ Rules:
   The handler normalizes missing steps to the command's original 1-based
   position.
 - Every command executes with a positive step after normalization.
-- Duplicate or earlier step values are normalized to the next later unique
-  step in input order.
+- Duplicate step values are preserved as dependency groups. Earlier step values
+  that would move backwards are normalized to the next later step in input
+  order.
 - Later steps wait for earlier steps.
 - Mutating commands acquire file locks.
 - Partial results may be emitted after each step group.
@@ -312,6 +325,16 @@ fetch direct pages/media, search web or image routes, and write downloaded
 artifacts into declared workspace paths. Its fallback route order is controlled
 by `web_discover/policy.toml` `[configurable]` entries using the same
 `default` + `enum` policy shape as `read_media`.
+
+## Generate Media Command
+
+`generate_media` is a mutating, network-capable external command package under
+`commands/generate_media`. It writes generated images into declared workspace
+output directories and supports provider fallback across OpenAI GPT Image,
+Replicate Z-Image Turbo, Gemini image models, and xAI/Grok image endpoints.
+Provider keys are read through Tura config/environment instead of command-local
+secret storage. It is not macro-command safe because it writes files and spends
+provider quota.
 
 ## Command Interceptor
 
@@ -424,6 +447,7 @@ The current always-present command directories are:
 apply_patch
 bash
 compact_context
+generate_media
 planning
 read_media
 shell_command

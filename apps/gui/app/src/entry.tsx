@@ -1,6 +1,7 @@
 import { render } from "solid-js/web";
 import { Router } from "@solidjs/router";
 import { t } from "./i18n";
+import { installExternalLinkInterceptor } from "./utils/external-url";
 import "./styles/index.css";
 
 const root = document.getElementById("root");
@@ -10,6 +11,7 @@ if (!root) {
 }
 
 try {
+  installExternalLinkInterceptor();
   const { App } = await import("./app");
   const { AppRoutes } = await import("./routes/app-routes");
   render(

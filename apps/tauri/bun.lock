@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@tura/gui-tauri",
+      "name": "@tura/tura_gui",
       "devDependencies": {
         "@tauri-apps/cli": "^2.0.0",
       },

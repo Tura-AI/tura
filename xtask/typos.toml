@@ -11,6 +11,7 @@ extend-exclude = [
   "target/",
   "tmp/",
   "log/",
+  "workspace/docs/**",
   "apps/gui/test-results/",
   "apps/gui/app/public/assets/",
   "personas/src/**/media/",
@@ -27,4 +28,5 @@ oppend = "oppend"
 resul = "resul"
 shll = "shll"
 stlye = "stlye"
+Ue = "Ue"
 Vey = "Vey"

@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{Notify, RwLock};
 
 use super::file_locks;
@@ -35,10 +36,15 @@ pub struct ToolContext {
     events: Arc<std::sync::Mutex<Vec<ToolRuntimeEvent>>>,
     hooks: Arc<std::sync::Mutex<ToolHooks>>,
     current_call_id: Option<String>,
+    lock_scope: Option<String>,
 }
 
 impl ToolContext {
     pub fn new(session_dir: PathBuf) -> Self {
+        Self::new_with_lock_scope(session_dir, None)
+    }
+
+    pub fn new_with_lock_scope(session_dir: PathBuf, lock_scope: Option<String>) -> Self {
         Self {
             session_dir,
             cancellation: CancellationToken::new(),
@@ -46,6 +52,7 @@ impl ToolContext {
             events: Arc::new(std::sync::Mutex::new(Vec::new())),
             hooks: Arc::new(std::sync::Mutex::new(ToolHooks::default())),
             current_call_id: None,
+            lock_scope: normalize_lock_scope(lock_scope),
         }
     }
 
@@ -57,6 +64,7 @@ impl ToolContext {
             events: Arc::clone(&self.events),
             hooks: Arc::clone(&self.hooks),
             current_call_id: self.current_call_id.clone(),
+            lock_scope: self.lock_scope.clone(),
         }
     }
 
@@ -68,6 +76,10 @@ impl ToolContext {
 
     pub fn current_call_id(&self) -> Option<&str> {
         self.current_call_id.as_deref()
+    }
+
+    pub fn lock_scope(&self) -> Option<&str> {
+        self.lock_scope.as_deref()
     }
 
     pub fn record_event(&self, event: ToolRuntimeEvent) {
@@ -104,6 +116,12 @@ impl ToolContext {
             .unwrap_or_else(|err| err.into_inner())
             .clone()
     }
+}
+
+fn normalize_lock_scope(lock_scope: Option<String>) -> Option<String> {
+    lock_scope
+        .map(|scope| scope.trim().to_string())
+        .filter(|scope| !scope.is_empty())
 }
 
 #[derive(Clone, Debug)]
@@ -221,7 +239,7 @@ struct ToolHooks {
 
 #[async_trait::async_trait]
 pub trait ToolHandler: Send + Sync {
-    fn tool_name(&self) -> &'static str;
+    fn tool_name(&self) -> &str;
 
     fn supports_macro_command(&self) -> bool {
         false
@@ -247,42 +265,47 @@ pub trait ToolHandler: Send + Sync {
     ) -> Result<FunctionToolOutput, ToolError>;
 }
 
-pub struct ToolRouter {
+pub struct CommandRouter {
+    repo_root: Option<PathBuf>,
     shell: crate::commands::shell_command::ShellCommandHandler,
     bash: crate::commands::bash::BashHandler,
     zsh: crate::commands::zsh::ZshHandler,
     apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
     compact_context: crate::commands::compact_context::CompactContextHandler,
     planning: crate::commands::planning::PlanningHandler,
-    read_media: ExternalCommandHandler,
-    web_discover: ExternalCommandHandler,
 }
 
-impl ToolRouter {
+impl CommandRouter {
     pub fn new() -> Self {
         Self {
+            repo_root: None,
             shell: crate::commands::shell_command::ShellCommandHandler,
             bash: crate::commands::bash::BashHandler,
             zsh: crate::commands::zsh::ZshHandler,
             apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
             compact_context: crate::commands::compact_context::CompactContextHandler,
             planning: crate::commands::planning::PlanningHandler,
-            read_media: ExternalCommandHandler::new("read_media", false, true),
-            web_discover: ExternalCommandHandler::new("web_discover", false, true),
         }
     }
 
-    pub fn resolve_command_tool_name(&self, command: &str) -> Option<&'static str> {
+    pub fn new_in_root(repo_root: PathBuf) -> Self {
+        Self {
+            repo_root: Some(repo_root),
+            ..Self::new()
+        }
+    }
+
+    pub fn resolve_command_tool_name(&self, command: &str) -> Option<String> {
         match crate::commands::canonical_command(command).as_str() {
-            "shell_command" => Some("shell_command"),
-            "bash" => Some("bash"),
-            "zsh" => Some("zsh"),
-            "apply_patch" => Some("apply_patch"),
-            "compact_context" => Some("compact_context"),
-            "planning" if planning_command_enabled() => Some("planning"),
-            "read_media" => Some("read_media"),
-            "web_discover" => Some("web_discover"),
-            _ => None,
+            "shell_command" => Some("shell_command".to_string()),
+            "bash" => Some("bash".to_string()),
+            "zsh" => Some("zsh".to_string()),
+            "apply_patch" => Some("apply_patch".to_string()),
+            "compact_context" => Some("compact_context".to_string()),
+            "planning" if planning_command_enabled() => Some("planning".to_string()),
+            command_name => self
+                .external_manifest(command_name)
+                .map(|manifest| manifest.id),
         }
     }
 
@@ -294,16 +317,32 @@ impl ToolRouter {
             "apply_patch" => Some(&self.apply_patch),
             "compact_context" => Some(&self.compact_context),
             "planning" if planning_command_enabled() => Some(&self.planning),
-            "read_media" => Some(&self.read_media),
-            "web_discover" => Some(&self.web_discover),
             _ => None,
         }
     }
 
     pub fn tool_supports_macro_command(&self, call: &ToolCall) -> bool {
-        self.handler(&call.tool_name)
-            .map(|handler| handler.supports_macro_command())
+        if let Some(handler) = self.handler(&call.tool_name) {
+            return handler.supports_macro_command();
+        }
+        self.external_manifest(&call.tool_name)
+            .map(|manifest| manifest.supports_macro_command)
             .unwrap_or(false)
+    }
+
+    pub async fn command_is_mutating(&self, call: &ToolCall, ctx: &ToolContext) -> bool {
+        if let Some(handler) = self.handler(&call.tool_name) {
+            return handler.is_mutating(call, ctx).await;
+        }
+        self.external_manifest(&call.tool_name)
+            .map(|manifest| manifest.mutating)
+            .unwrap_or(false)
+    }
+
+    pub fn default_timeout_ms_for_command(&self, command: &str) -> Option<u64> {
+        let command_name = crate::commands::canonical_command(command);
+        self.external_manifest(&command_name)
+            .map(|manifest| manifest.default_timeout_ms)
     }
 
     pub async fn dispatch(
@@ -312,12 +351,18 @@ impl ToolRouter {
         ctx: ToolContext,
         force_exclusive: bool,
     ) -> Result<AnyToolResult, ToolError> {
-        let handler = self.handler(&call.tool_name).ok_or_else(|| {
-            ToolError::RespondToModel(format!(
+        let external_handler;
+        let handler = if let Some(handler) = self.handler(&call.tool_name) {
+            handler
+        } else if self.external_manifest(&call.tool_name).is_some() {
+            external_handler = ExternalCommandHandler::new(call.tool_name.clone())?;
+            &external_handler as &dyn ToolHandler
+        } else {
+            return Err(ToolError::RespondToModel(format!(
                 "unsupported command_run command: {}",
                 call.tool_name
-            ))
-        })?;
+            )));
+        };
         if let Some(pre) = ctx.hooks().pre {
             pre(&call)?;
         }
@@ -340,13 +385,24 @@ impl ToolRouter {
         dispatched.result = result;
         Ok(dispatched)
     }
+
+    fn external_manifest(&self, command_name: &str) -> Option<crate::registry::CommandManifest> {
+        let root = self
+            .repo_root
+            .clone()
+            .or_else(crate::external::client::repo_root)?;
+        let manifest = crate::registry::manifest_for(&root, command_name)?;
+        manifest.is_external_cli().then_some(manifest)
+    }
 }
 
-impl Default for ToolRouter {
+impl Default for CommandRouter {
     fn default() -> Self {
         Self::new()
     }
 }
+
+pub type ToolRouter = CommandRouter;
 
 fn planning_command_enabled() -> bool {
     ["TURA_FORCE_PLANNING", "TURA_FORCE_EXECUTE_TOOLS_PLANNING"]
@@ -365,45 +421,79 @@ fn planning_command_enabled() -> bool {
 }
 
 pub struct ExternalCommandHandler {
-    command_id: &'static str,
-    mutating: bool,
-    macro_command: bool,
+    command_id: String,
+    manifest: crate::registry::CommandManifest,
 }
 
 impl ExternalCommandHandler {
-    pub fn new(command_id: &'static str, mutating: bool, macro_command: bool) -> Self {
-        Self {
-            command_id,
-            mutating,
-            macro_command,
+    pub fn new(command_id: String) -> Result<Self, ToolError> {
+        let metadata = crate::external::client::metadata_for(&command_id).ok_or_else(|| {
+            ToolError::RespondToModel(format!("unsupported external command: {command_id}"))
+        })?;
+        Ok(Self {
+            command_id: metadata.command_id,
+            manifest: metadata.manifest,
+        })
+    }
+}
+
+fn take_external_command_timeout(command_id: &str, arguments: &mut Value) -> Duration {
+    let Some(object) = arguments.as_object_mut() else {
+        return Duration::from_millis(default_external_command_timeout_ms(command_id));
+    };
+    let timeout_ms = take_u64_field(object, &["timeout_ms", "timeoutMs"])
+        .or_else(|| {
+            take_u64_field(object, &["timeout_secs", "timeoutSecs"])
+                .map(|seconds| seconds.saturating_mul(1000))
+        })
+        .unwrap_or_else(|| default_external_command_timeout_ms(command_id))
+        .max(1);
+    Duration::from_millis(timeout_ms)
+}
+
+fn default_external_command_timeout_ms(command_id: &str) -> u64 {
+    CommandRouter::new()
+        .default_timeout_ms_for_command(command_id)
+        .unwrap_or(15_000)
+}
+
+fn take_u64_field(object: &mut serde_json::Map<String, Value>, keys: &[&str]) -> Option<u64> {
+    for key in keys {
+        if let Some(value) = object.remove(*key) {
+            return value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|text| text.parse::<u64>().ok()));
         }
     }
+    None
 }
 
 #[async_trait::async_trait]
 impl ToolHandler for ExternalCommandHandler {
-    fn tool_name(&self) -> &'static str {
-        self.command_id
+    fn tool_name(&self) -> &str {
+        &self.command_id
     }
 
     fn supports_macro_command(&self) -> bool {
-        self.macro_command
+        self.manifest.supports_macro_command
     }
 
     async fn is_mutating(&self, _call: &ToolCall, _ctx: &ToolContext) -> bool {
-        self.mutating
+        self.manifest.mutating
     }
 
     async fn access(&self, call: &ToolCall, ctx: &ToolContext) -> file_locks::Access {
-        let arguments = call.payload.code_mode_input();
-        let response = crate::external::launcher::invoke(
-            self.command_id,
+        let mut arguments = call.payload.code_mode_input();
+        let timeout = take_external_command_timeout(&self.command_id, &mut arguments);
+        let response = crate::external::launcher::invoke_with_timeout(
+            &self.command_id,
             "access",
             serde_json::json!({
                 "arguments": arguments,
                 "session_dir": ctx.session_dir.display().to_string(),
                 "call_id": call.call_id,
             }),
+            timeout,
         )
         .await;
         response
@@ -417,12 +507,14 @@ impl ToolHandler for ExternalCommandHandler {
         call: ToolCall,
         ctx: ToolContext,
     ) -> Result<FunctionToolOutput, ToolError> {
-        let arguments = call.payload.code_mode_input();
-        let output = crate::external::launcher::execute(
-            self.command_id,
+        let mut arguments = call.payload.code_mode_input();
+        let timeout = take_external_command_timeout(&self.command_id, &mut arguments);
+        let output = crate::external::launcher::execute_with_timeout(
+            &self.command_id,
             arguments,
             &ctx.session_dir,
             &call.call_id,
+            timeout,
         )
         .await?;
         Ok(FunctionToolOutput::from_value(output, Some(true)))
@@ -433,7 +525,10 @@ impl ToolHandler for ExternalCommandHandler {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -445,7 +540,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ToolHandler for StaticHandler {
-        fn tool_name(&self) -> &'static str {
+        fn tool_name(&self) -> &str {
             self.name
         }
 
@@ -507,6 +602,7 @@ mod tests {
 
         assert_eq!(child.session_dir, PathBuf::from("workspace"));
         assert_eq!(child.current_call_id(), Some("call-1"));
+        assert_eq!(child.lock_scope(), None);
         child.record_event(ToolRuntimeEvent::ToolStarted {
             call_id: "call-1".to_string(),
             tool_name: "shell_command".to_string(),
@@ -558,35 +654,120 @@ mod tests {
     }
 
     #[test]
+    fn external_command_timeout_is_taken_from_arguments_without_forwarding() {
+        let mut arguments = json!({
+            "path": "image.png",
+            "timeout_ms": 2500
+        });
+
+        let timeout = take_external_command_timeout("read_media", &mut arguments);
+
+        assert_eq!(timeout, std::time::Duration::from_millis(2500));
+        assert_eq!(arguments, json!({"path": "image.png"}));
+    }
+
+    #[test]
+    fn external_command_timeout_defaults_and_rounds_up_to_one_millisecond() {
+        let mut missing = json!({"path": "image.png"});
+        assert_eq!(
+            take_external_command_timeout("read_media", &mut missing),
+            std::time::Duration::from_millis(60_000)
+        );
+
+        let mut zero = json!({"timeout_secs": 0});
+        assert_eq!(
+            take_external_command_timeout("read_media", &mut zero),
+            std::time::Duration::from_millis(1)
+        );
+        assert_eq!(zero, json!({}));
+    }
+
+    #[test]
+    fn generate_media_external_command_timeout_defaults_to_100_seconds() {
+        let mut missing = json!({"prompt": "logo"});
+
+        assert_eq!(
+            take_external_command_timeout("generate_media", &mut missing),
+            std::time::Duration::from_millis(100_000)
+        );
+        assert_eq!(missing, json!({"prompt": "logo"}));
+    }
+
+    #[test]
+    fn command_router_resolves_external_cli_commands_from_registry_manifest() {
+        let root = temp_root("router-registry");
+        write_external_manifest(
+            &root,
+            "custom_cli",
+            "tura-command-custom-cli",
+            true,
+            false,
+            4321,
+        );
+
+        let router = CommandRouter::new_in_root(root.clone());
+        let call = ToolCall {
+            tool_name: "custom_cli".to_string(),
+            call_id: "custom".to_string(),
+            payload: ToolPayload::Function {
+                arguments: json!({}),
+            },
+        };
+
+        assert_eq!(
+            router.resolve_command_tool_name("custom_cli"),
+            Some("custom_cli".to_string())
+        );
+        assert!(router.handler("custom_cli").is_none());
+        assert!(router.tool_supports_macro_command(&call));
+        assert_eq!(
+            router.default_timeout_ms_for_command("custom_cli"),
+            Some(4321)
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn tool_router_resolves_documented_command_aliases_and_macro_support() {
-        let router = ToolRouter::new();
+        let router = CommandRouter::new();
         let active_shell = crate::commands::active_shell_command_name();
 
         assert_eq!(
             router.resolve_command_tool_name("shell_command"),
-            Some(active_shell)
+            Some(active_shell.to_string())
         );
         assert_eq!(
             router.resolve_command_tool_name("shell-command"),
-            Some(active_shell)
+            Some(active_shell.to_string())
         );
-        assert_eq!(router.resolve_command_tool_name("bash"), Some(active_shell));
-        assert_eq!(router.resolve_command_tool_name("zsh"), Some(active_shell));
+        assert_eq!(
+            router.resolve_command_tool_name("bash"),
+            Some(active_shell.to_string())
+        );
+        assert_eq!(
+            router.resolve_command_tool_name("zsh"),
+            Some(active_shell.to_string())
+        );
         assert_eq!(
             router.resolve_command_tool_name("apply_patch"),
-            Some("apply_patch")
+            Some("apply_patch".to_string())
         );
         assert_eq!(
             router.resolve_command_tool_name("compact_context"),
-            Some("compact_context")
+            Some("compact_context".to_string())
+        );
+        assert_eq!(
+            router.resolve_command_tool_name("generate_media"),
+            Some("generate_media".to_string())
         );
         assert_eq!(
             router.resolve_command_tool_name("read_media"),
-            Some("read_media")
+            Some("read_media".to_string())
         );
         assert_eq!(
             router.resolve_command_tool_name("web_discover"),
-            Some("web_discover")
+            Some("web_discover".to_string())
         );
         assert_eq!(router.resolve_command_tool_name("missing"), None);
 
@@ -615,7 +796,7 @@ mod tests {
         let previous_execute = std::env::var_os("TURA_FORCE_EXECUTE_TOOLS_PLANNING");
         std::env::remove_var("TURA_FORCE_PLANNING");
         std::env::remove_var("TURA_FORCE_EXECUTE_TOOLS_PLANNING");
-        let router = ToolRouter::new();
+        let router = CommandRouter::new();
         assert_eq!(router.resolve_command_tool_name("planning"), None);
         assert!(router.handler("planning").is_none());
 
@@ -623,7 +804,7 @@ mod tests {
             std::env::set_var("TURA_FORCE_PLANNING", value);
             assert_eq!(
                 router.resolve_command_tool_name("planning"),
-                Some("planning")
+                Some("planning".to_string())
             );
             assert!(router.handler("planning").is_some());
         }
@@ -631,7 +812,7 @@ mod tests {
         std::env::set_var("TURA_FORCE_EXECUTE_TOOLS_PLANNING", "yes");
         assert_eq!(
             router.resolve_command_tool_name("planning"),
-            Some("planning")
+            Some("planning".to_string())
         );
 
         restore_env("TURA_FORCE_PLANNING", previous_force);
@@ -640,7 +821,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_unknown_tool_responds_to_model_without_recording_events() {
-        let router = ToolRouter::new();
+        let router = CommandRouter::new();
         let context = ToolContext::new(PathBuf::from("workspace"));
         let call = ToolCall {
             tool_name: "missing".to_string(),
@@ -663,7 +844,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_pre_hook_failure_stops_before_start_event() {
-        let router = ToolRouter::new();
+        let router = CommandRouter::new();
         let context = ToolContext::new(PathBuf::from("workspace"));
         context.set_pre_hook(|call| {
             Err(ToolError::RespondToModel(format!(
@@ -692,7 +873,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_records_start_finish_and_post_hook_can_change_success() {
-        let router = ToolRouter::new();
+        let router = CommandRouter::new();
         let context = ToolContext::new(PathBuf::from("workspace"));
         let post_calls = Arc::new(AtomicUsize::new(0));
         let post_calls_for_hook = Arc::clone(&post_calls);
@@ -753,5 +934,56 @@ mod tests {
         } else {
             std::env::remove_var(key);
         }
+    }
+
+    fn temp_root(name: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("tura-command-router-{name}-{suffix}"))
+    }
+
+    fn write_external_manifest(
+        root: &Path,
+        id: &str,
+        binary: &str,
+        supports_macro_command: bool,
+        mutating: bool,
+        default_timeout_ms: u64,
+    ) {
+        let directory = root.join("commands").join(id);
+        fs::create_dir_all(&directory).expect("create command manifest directory");
+        fs::write(
+            directory.join("command.toml"),
+            format!(
+                r#"id = "{id}"
+name = "{id}"
+description = "{id}"
+core = false
+category = "test"
+execution = "one_shot"
+state_machine = "default_command"
+supports_macro_command = {supports_macro_command}
+mutating = {mutating}
+network = false
+
+[runtime]
+binary = "{binary}"
+entry = ""
+language = "rust"
+
+[limits]
+default_timeout_ms = {default_timeout_ms}
+max_timeout_ms = 300000
+
+[paths]
+prompt = "prompt.md"
+schema = "schema.json"
+policy = "policy.toml"
+"#
+            ),
+        )
+        .expect("write command manifest");
     }
 }

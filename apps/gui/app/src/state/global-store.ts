@@ -62,6 +62,7 @@ export type AppState = {
   connection: ConnectionState;
   gatewayStartupNotice?: string;
   loading: boolean;
+  sessionsLoading: boolean;
   bootstrapped: boolean;
   productConfig?: ProductConfig;
   me?: ProductUser;
@@ -145,6 +146,7 @@ export function initialAppState(gatewayUrl: string): AppState {
     connection: "connecting",
     gatewayStartupNotice: undefined,
     loading: true,
+    sessionsLoading: true,
     bootstrapped: false,
     sessions: [],
     workspaces: [],
@@ -165,7 +167,7 @@ export function initialAppState(gatewayUrl: string): AppState {
     mainFont: "",
     codeFont: "",
     mainFontSize: 12,
-    codeFontSize: 11,
+    codeFontSize: 12,
     messagesBySession: {},
     messagePagingBySession: {},
     todosBySession: {},
@@ -251,7 +253,7 @@ export function sessionDirectory(session: Session): string {
 }
 
 export function messageSessionId(message: Message): string {
-  return message.sessionID || message.session_id || "";
+  return message.sessionID;
 }
 
 export function messageCreatedAt(message: Message): number {

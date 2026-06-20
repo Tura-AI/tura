@@ -1,7 +1,10 @@
 use super::handler_parse::{
     command_values, parse_arguments_value, parse_command_item, string_field, u64_field,
 };
-use super::{normalize_command_steps, normalize_shell_command_arguments, parse_args};
+use super::{
+    normalize_command_steps, normalize_json_or_cli_command_arguments,
+    normalize_shell_command_arguments, parse_args,
+};
 use serde_json::json;
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -21,7 +24,7 @@ fn parse_missing_steps_default_to_original_order_steps() {
 }
 
 #[test]
-fn normalize_duplicate_steps_extends_in_input_order() {
+fn normalize_preserves_duplicate_dependency_groups_and_extends_backwards_steps() {
     let mut args = parse_args(&json!({
         "commands": [
             { "command": "shell_command", "command_line": "echo a", "step": 1 },
@@ -39,7 +42,29 @@ fn normalize_duplicate_steps_extends_in_input_order() {
         .iter()
         .map(|command| command.effective_step())
         .collect::<Vec<_>>();
-    assert_eq!(steps, vec![1, 2, 3, 4]);
+    assert_eq!(steps, vec![1, 2, 2, 3]);
+}
+
+#[test]
+fn normalize_scrambled_steps_never_move_backwards_or_merge_repaired_groups() {
+    let mut args = parse_args(&json!({
+        "commands": [
+            { "command": "shell_command", "command_line": "echo three", "step": 3 },
+            { "command": "shell_command", "command_line": "echo two", "step": 2 },
+            { "command": "shell_command", "command_line": "echo four", "step": 4 },
+            { "command": "shell_command", "command_line": "echo one", "step": 1 }
+        ]
+    }))
+    .expect("parse args");
+
+    normalize_command_steps(&mut args.commands);
+
+    let steps = args
+        .commands
+        .iter()
+        .map(|command| command.effective_step())
+        .collect::<Vec<_>>();
+    assert_eq!(steps, vec![3, 4, 5, 6]);
 }
 
 #[test]
@@ -109,6 +134,68 @@ fn normalize_shell_commands_default_to_15_second_timeout() {
 }
 
 #[test]
+fn normalize_external_commands_default_to_registry_timeout() {
+    let args = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "read_media",
+                "path": "note.txt",
+                "step": 1
+            }
+        ]
+    }))
+    .expect("parse command_run args");
+
+    let arguments = normalize_json_or_cli_command_arguments(&args.commands[0], "read_media")
+        .expect("normalize read_media arguments");
+
+    assert_eq!(arguments["path"], json!("note.txt"));
+    assert_eq!(arguments["timeout_ms"], json!(60_000));
+}
+
+#[test]
+fn normalize_generate_media_defaults_to_100_second_timeout() {
+    let args = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "generate_media",
+                "command_line": "--prompt logo",
+                "step": 1
+            }
+        ]
+    }))
+    .expect("parse command_run args");
+
+    let arguments = normalize_json_or_cli_command_arguments(&args.commands[0], "generate_media")
+        .expect("normalize generate_media arguments");
+
+    assert_eq!(arguments["cli"], json!("--prompt logo"));
+    assert_eq!(arguments["timeout_ms"], json!(100_000));
+}
+
+#[test]
+fn normalize_external_commands_keep_explicit_timeout_fields() {
+    let args = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "web_discover",
+                "command_line": "{\"query\":\"docs\",\"timeout_secs\":2}",
+                "timeout_ms": 5000,
+                "step": 1
+            }
+        ]
+    }))
+    .expect("parse command_run args");
+
+    let arguments = normalize_json_or_cli_command_arguments(&args.commands[0], "web_discover")
+        .expect("normalize web_discover arguments");
+
+    assert_eq!(arguments["query"], json!("docs"));
+    assert_eq!(arguments["timeout_secs"], json!(2));
+    assert!(arguments.get("timeout_ms").is_none());
+}
+
+#[test]
 fn parse_command_line_without_command_type_accepts_workdir_and_timeout() {
     let args = parse_args(&json!({
         "commands": [
@@ -129,6 +216,42 @@ fn parse_command_line_without_command_type_accepts_workdir_and_timeout() {
     assert_eq!(args.commands[0].command_line, "pwd");
     assert_eq!(args.commands[0].workdir.as_deref(), Some("subdir"));
     assert_eq!(args.commands[0].timeout_ms, Some(5000));
+}
+
+#[test]
+fn normalize_command_value_for_execution_adds_actual_shell_command_type() {
+    let normalized = super::normalize_command_value_for_execution(
+        json!({
+            "command_line": "Write-Output normalized-ok",
+            "step": 3,
+            "timeout_ms": 5000
+        }),
+        0,
+    )
+    .expect("normalize command value");
+
+    assert_eq!(
+        normalized["command_type"],
+        crate::commands::active_shell_command_name()
+    );
+    assert_eq!(normalized["command_line"], "Write-Output normalized-ok");
+    assert_eq!(normalized["step"], 3);
+    assert_eq!(normalized["timeout_ms"], 5000);
+}
+
+#[test]
+fn normalize_command_value_for_execution_does_not_type_plain_summary_text() {
+    let normalized = super::normalize_command_value_for_execution(
+        json!({
+            "command": "large file scan",
+            "step": 1
+        }),
+        0,
+    )
+    .expect("plain summary should still parse as a non-executable command record");
+
+    assert!(normalized.get("command_type").is_none());
+    assert_eq!(normalized["command"], "large file scan");
 }
 
 #[test]
@@ -220,6 +343,26 @@ fn parse_single_shell_object_without_commands_is_wrapped() {
 
     assert_eq!(args.commands.len(), 1);
     assert_eq!(args.commands[0].command_line, "echo ok");
+    assert_eq!(args.commands[0].timeout_ms, Some(120000));
+}
+
+#[test]
+fn parse_single_stringified_shell_object_without_commands_is_wrapped() {
+    let args = parse_args(&json!({
+        "command": json!({ "command": "echo ok", "timeout_ms": 5000 }).to_string(),
+        "timeoutMs": 120000
+    }))
+    .expect("parse args");
+
+    assert_eq!(args.commands.len(), 1);
+    assert_eq!(
+        args.commands[0].command,
+        crate::commands::active_shell_command_name()
+    );
+    assert_eq!(
+        args.commands[0].command_line,
+        json!({ "command": "echo ok", "timeout_ms": 5000 }).to_string()
+    );
     assert_eq!(args.commands[0].timeout_ms, Some(120000));
 }
 

@@ -4,6 +4,7 @@ use runtime::state_machine::agent_management::{ProviderConfig, ToolChoice};
 use runtime::state_machine::runtime_management::{
     RuntimeCallResultStatus, RuntimeManagement, RuntimeState,
 };
+use runtime::state_machine::session_management::ContextTokenStats;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -198,12 +199,15 @@ fn runtime_input(
         provider_config: provider_config(route),
         tura_settings: settings,
         thinking,
+        context_tokens: ContextTokenStats::default(),
     }
 }
 
 fn provider_config(route: &str) -> ProviderConfig {
     ProviderConfig {
         tura_llm_name: route.to_string(),
+        default_model_tier: None,
+        current_model: None,
         stream: true,
         temperature: 0.0,
         max_tokens: 512,

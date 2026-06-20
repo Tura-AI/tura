@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::HashSet, sync::Arc};
 
-use crate::{dispatch_run_agent, AppState, RunAgentRequest};
+use crate::{dispatch_run_agent, ipc, AppState, RunAgentRequest};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnqueueTurnRequest {
@@ -30,7 +30,19 @@ impl ExecutionService {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn enqueue_turn(&self, state: &AppState, input: Value) -> Result<Value> {
+        self.enqueue_turn_with_notifications(state, input, "", None)
+            .await
+    }
+
+    pub async fn enqueue_turn_with_notifications(
+        &self,
+        state: &AppState,
+        input: Value,
+        request_id: &str,
+        notifications: Option<ipc::IpcNotificationSender>,
+    ) -> Result<Value> {
         let request: EnqueueTurnRequest = serde_json::from_value(input)?;
         if debug_runtime_enabled() {
             eprintln!(
@@ -47,6 +59,8 @@ impl ExecutionService {
                 ));
             }
         }
+        let active_guard =
+            ActiveSessionGuard::new(Arc::clone(&self.active_sessions), &request.session_id);
 
         let run_request = payload_to_run_agent_request(&request)?;
         if debug_runtime_enabled() {
@@ -55,8 +69,9 @@ impl ExecutionService {
                 request.session_id
             );
         }
-        let (status, body) = dispatch_run_agent(state, run_request).await;
-        self.active_sessions.lock().remove(&request.session_id);
+        let (status, body) =
+            dispatch_run_agent(state, run_request, request_id.to_string(), notifications).await;
+        active_guard.finish();
         if debug_runtime_enabled() {
             eprintln!(
                 "router debug: enqueue_turn finished session_id={} status={} body={}",
@@ -100,6 +115,36 @@ impl ExecutionService {
 
     pub fn active_session_count(&self) -> usize {
         self.active_sessions.lock().len()
+    }
+}
+
+struct ActiveSessionGuard {
+    sessions: Arc<Mutex<HashSet<String>>>,
+    session_id: String,
+    active: std::sync::atomic::AtomicBool,
+}
+
+impl ActiveSessionGuard {
+    fn new(sessions: Arc<Mutex<HashSet<String>>>, session_id: &str) -> Self {
+        Self {
+            sessions,
+            session_id: session_id.to_string(),
+            active: std::sync::atomic::AtomicBool::new(true),
+        }
+    }
+
+    fn finish(&self) {
+        self.active
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.sessions.lock().remove(&self.session_id);
+    }
+}
+
+impl Drop for ActiveSessionGuard {
+    fn drop(&mut self) {
+        if self.active.load(std::sync::atomic::Ordering::SeqCst) {
+            self.sessions.lock().remove(&self.session_id);
+        }
     }
 }
 

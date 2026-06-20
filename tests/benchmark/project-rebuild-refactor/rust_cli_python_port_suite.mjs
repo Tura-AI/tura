@@ -39,7 +39,9 @@ const complexTodoHint = defaultTruthy(process.env.SOURCE_PORT_COMPLEX_TODO_HINT 
 const planningOverride = parsePlanningOverride(process.env.COMMAND_RUN_AGENT_TURA_PLANNING || "auto")
 const codexGoalsEnabled = truthy(process.env.COMMAND_RUN_AGENT_CODEX_GOALS || "0")
 const turaExplicitSessionId = truthy(process.env.COMMAND_RUN_AGENT_TURA_SESSION_ID || "0")
-const turaExe = path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura_exec.exe" : "tura_exec")
+const turaExe =
+  process.env.COMMAND_RUN_AGENT_TURA_EXE ||
+  path.join(repoRoot, "target", "debug", process.platform === "win32" ? "tura_exec.exe" : "tura_exec")
 const codexMainExe = findCodexMainExe()
 const codexDocumentsExe = findCodexDocumentsExe()
 const claudeExe = findClaudeExe()
@@ -158,6 +160,10 @@ function parseAgents(value) {
     ["tura-thinking", "tura-thinking-shll"],
     ["tura-thinking-shll", "tura-thinking-shll"],
     ["thinking", "tura-thinking-shll"],
+    ["tura-thinking-visual", "tura-thinking-visual-shll"],
+    ["tura-thinking-visual-shll", "tura-thinking-visual-shll"],
+    ["thinking-visual", "tura-thinking-visual-shll"],
+    ["think-visual", "tura-thinking-visual-shll"],
     ["tura-planning", "tura-planning-shll"],
     ["tura-planning-shll", "tura-planning-shll"],
     ["tura-fast", "tura-fast-shll"],
@@ -1205,6 +1211,15 @@ async function runTuraPlanning(workspace, agentDir, prompt, agentPrompt, onProgr
     TURA_COMMAND_RUN_STRICT_JSON: "0",
     TURA_SESSION_REASONING_EFFORT: reasoning,
     SESSION_LOG_DB_ROOT: sessionDbRoot,
+    ...optionalEnv([
+      "TURA_PROFILE_TURN_TIMINGS",
+      "TURA_PROFILE_TIMINGS",
+      "TURA_PROFILE_TURN_TIMING_BYTES",
+      "TURA_PROFILE_TIMING_BYTES",
+      "TURA_RUNTIME_WORKER_STDERR_LOG",
+      "TURA_ROUTER_STDERR_LOG",
+      "TURA_DEBUG_RUNTIME",
+    ]),
     ...(planningMode ? { TURA_FORCE_EXECUTE_TOOLS_PLANNING: "1" } : {}),
     COMMAND_RUN_AGENT_TIMEOUT_MS: String(timeoutMs),
     COMMAND_RUN_AGENT_CONTEXT_ARCHIVE: "1",
@@ -1235,6 +1250,14 @@ async function runTuraPlanning(workspace, agentDir, prompt, agentPrompt, onProgr
     onProgress,
     env,
   })
+}
+
+function optionalEnv(keys) {
+  return Object.fromEntries(
+    keys
+      .map((key) => [key, process.env[key]])
+      .filter(([, value]) => value != null && String(value).trim() !== ""),
+  )
 }
 
 async function runExternalCliAgent(workspace, agentDir, prompt, agentId, onProgress) {
@@ -1589,6 +1612,7 @@ async function runAgent(agentId, task, taskIndex, agentIndex, onAgentUpdate = nu
   const agentPrompt =
     agentId === "tura-fast-shll" || agentId === "tura-fast-planning-shll" ? "fast" :
     agentId === "tura-thinking-shll" ? "thinking" :
+    agentId === "tura-thinking-visual-shll" ? "thinking-visual" :
     agentId === "tura-planning-shll" ? "thinking-planning" :
     null
   let lastContextArchive = null
@@ -1648,6 +1672,7 @@ async function runAgent(agentId, task, taskIndex, agentIndex, onAgentUpdate = nu
   else if (agentId === "tura-fast-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "fast", publishProgress)
   else if (agentId === "tura-fast-planning-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "fast", publishProgress)
   else if (agentId === "tura-thinking-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "thinking", publishProgress)
+  else if (agentId === "tura-thinking-visual-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "thinking-visual", publishProgress)
   else if (agentId === "tura-planning-shll") result = await runTuraPlanning(prep.workspace, agentDir, prompt, "thinking-planning", publishProgress)
   else if (agentId === "claude-code" || agentId === "pi-agent") result = await runExternalCliAgent(prep.workspace, agentDir, prompt, agentId, publishProgress)
   else throw new Error(`unsupported agent ${agentId}`)

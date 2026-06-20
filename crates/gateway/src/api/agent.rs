@@ -1,4 +1,5 @@
-use crate::api::{registry, types::*};
+use crate::api::registry;
+use crate::contracts::*;
 use axum::{extract::Path, http::StatusCode, Json};
 use std::collections::HashMap;
 
@@ -18,16 +19,6 @@ pub async fn get_agent(
                 format!("agent `{agent_id}` not found"),
             )
         })
-}
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct UpsertAgentRequest {
-    #[serde(default)]
-    pub id: Option<String>,
-    #[serde(default)]
-    pub config: Option<tura_agents::store::AgentConfig>,
-    #[serde(default)]
-    pub prompt: Option<String>,
 }
 
 pub async fn create_agent(
@@ -95,13 +86,10 @@ fn agent_from_stored_agent(agent: tura_agents::store::StoredAgent) -> Agent {
         serde_json::json!(agent.summary.capabilities),
     );
     options.insert(
-        "personas".to_string(),
-        serde_json::json!(resolve_agent_personas(&agent.config)),
-    );
-    options.insert(
         "default_config".to_string(),
         serde_json::json!(agent.config.default_config),
     );
+    options.insert("provider".to_string(), agent.config.provider.clone());
     Agent {
         name: agent.summary.id,
         description: agent.summary.description,
@@ -115,21 +103,6 @@ fn agent_from_stored_agent(agent: tura_agents::store::StoredAgent) -> Agent {
             deny: Vec::new(),
         },
     }
-}
-
-fn resolve_agent_personas(
-    config: &tura_agents::store::AgentConfig,
-) -> Vec<tura_persona::store::StoredPersona> {
-    let root = registry::project_root();
-    config
-        .agent_persona
-        .iter()
-        .filter_map(|item| {
-            item.get("persona_name")
-                .and_then(serde_json::Value::as_str)
-                .and_then(|name| tura_persona::store::load_persona(&root, name))
-        })
-        .collect()
 }
 
 fn upsert_agent_in_store(
@@ -202,6 +175,10 @@ mod tests {
             agent.options["capabilities"],
             serde_json::json!(["write", "shell"])
         );
+        assert_eq!(
+            agent.options["provider"],
+            serde_json::json!({ "tura_llm_name": "flagship" })
+        );
         assert_eq!(agent.options["default_config"], serde_json::json!(true));
     }
 
@@ -224,7 +201,7 @@ mod tests {
         assert!(!agent.options.contains_key("icon_emoji"));
         assert_eq!(agent.options["source"], serde_json::json!("dynamic"));
         assert_eq!(agent.options["aliases"], serde_json::json!([]));
-        assert_eq!(agent.options["personas"], serde_json::json!([]));
+        assert!(!agent.options.contains_key("personas"));
     }
 
     #[test]
@@ -334,7 +311,6 @@ mod tests {
                 report_to_user: true,
                 default_config,
                 provider: serde_json::json!({ "tura_llm_name": "flagship" }),
-                agent_persona: Vec::new(),
                 agent_prompt: Vec::new(),
                 agent_capabilities: Vec::new(),
                 validator: serde_json::json!({ "need_validator": false }),

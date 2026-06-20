@@ -2,8 +2,7 @@
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-XTASK_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-REPO_ROOT=$(CDPATH= cd -- "$XTASK_ROOT/.." && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 CRATE=""
 LIST=0
 TIMEOUT_SECONDS=300
@@ -24,14 +23,15 @@ while [ "$#" -gt 0 ]; do
     -h|--help)
       cat <<'EOF'
 Usage:
-  scripts/run-backend-live-tests.sh [--crate PACKAGE] [--list] [--timeout-seconds N]
+  xtask/scripts/run-backend-live-tests.sh [--crate PACKAGE] [--list] [--timeout-seconds N]
 
 Scans root tests/live/*.rs, backend package tests/live/*.rs, and backend-owned
 root tests/live/*.mjs files and runs opt-in live tests.
 Backend package roots are crates/, commands/, agents/, and personas/.
-Typed test directories are flat: encode the scenario in the filename instead of
-creating tests/live subdirectories.
-Live tests may require provider credentials, public network access, or third-party services.
+Runnable live Rust entrypoints stay directly under tests/live; target-owned
+helper modules may live in sibling subdirectories.
+Live tests may require provider credentials, public network access, third-party
+services, or provider runtime state such as auth/config/env.
 EOF
       exit 0
       ;;

@@ -1,16 +1,14 @@
 //! Global API handlers (health, config, events)
 
-use crate::api::types::*;
+use crate::contracts::*;
 use crate::mock::global_store;
 use crate::session::session_store;
 use axum::{
-    http::{header, HeaderValue, StatusCode},
+    extract::Path as AxumPath,
     response::sse::{Event as SseEvent, KeepAlive, Sse},
-    response::Response,
     Json,
 };
 use serde_json::Value;
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -98,29 +96,6 @@ pub async fn patch_config(Json(payload): Json<ConfigPatch>) -> Json<Config> {
     Json(global_store().update_config(payload))
 }
 
-pub async fn get_gui_config() -> Response<String> {
-    match std::fs::read_to_string(gui_config_path()) {
-        Ok(content) => text_response(StatusCode::OK, content),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            text_response(StatusCode::OK, String::new())
-        }
-        Err(err) => text_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-    }
-}
-
-pub async fn put_gui_config(body: String) -> Response<String> {
-    let path = gui_config_path();
-    if let Some(parent) = path.parent() {
-        if let Err(err) = std::fs::create_dir_all(parent) {
-            return text_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
-        }
-    }
-    match std::fs::write(path, body.as_bytes()) {
-        Ok(()) => text_response(StatusCode::OK, body),
-        Err(err) => text_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-    }
-}
-
 pub async fn get_tura_config() -> Json<TuraConfigResponse> {
     Json(read_tura_config_response())
 }
@@ -133,42 +108,6 @@ pub async fn put_tura_config(Json(payload): Json<TuraConfigUpdate>) -> Json<Tura
         response.error = Some(error);
     }
     Json(response)
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct TuraConfigResponse {
-    pub path: String,
-    pub tiers: Vec<TuraConfigTier>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct TuraConfigUpdate {
-    pub tier: String,
-    pub provider: String,
-    pub model: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct TuraConfigTier {
-    pub tier: String,
-    pub current: Option<TuraConfigSelection>,
-    pub options: Vec<TuraConfigOption>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct TuraConfigSelection {
-    pub provider: String,
-    pub model: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct TuraConfigOption {
-    pub provider: String,
-    pub provider_name: String,
-    pub model: String,
-    pub model_name: String,
 }
 
 fn read_tura_config_response() -> TuraConfigResponse {
@@ -440,23 +379,6 @@ fn option_exists(root: &Value, tier: &str, provider_id: &str, model: &str) -> bo
         .any(|option| option.provider == provider_id && option.model == model)
 }
 
-fn gui_config_path() -> PathBuf {
-    std::env::current_dir()
-        .unwrap_or_default()
-        .join("config")
-        .join("gui_config.toml")
-}
-
-fn text_response(status: StatusCode, body: String) -> Response<String> {
-    let mut response = Response::new(body);
-    *response.status_mut() = status;
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("text/plain; charset=utf-8"),
-    );
-    response
-}
-
 // ============================================================================
 // Global Events (SSE)
 // ============================================================================
@@ -464,8 +386,26 @@ fn text_response(status: StatusCode, body: String) -> Response<String> {
 pub async fn global_event() -> Sse<impl futures::Stream<Item = Result<SseEvent, Infallible>>> {
     let state = EventStreamState {
         first: true,
-        seen_messages: seen_message_counts(),
+        event_cursor: session_store().event_cursor(),
+        session_id: None,
     };
+    Sse::new(event_stream(state)).keep_alive(KeepAlive::default())
+}
+
+pub async fn session_event(
+    AxumPath(session_id): AxumPath<String>,
+) -> Sse<impl futures::Stream<Item = Result<SseEvent, Infallible>>> {
+    let state = EventStreamState {
+        first: true,
+        event_cursor: session_store().event_cursor(),
+        session_id: Some(session_id),
+    };
+    Sse::new(event_stream(state)).keep_alive(KeepAlive::default())
+}
+
+fn event_stream(
+    state: EventStreamState,
+) -> impl futures::Stream<Item = Result<SseEvent, Infallible>> {
     let stream = futures::stream::unfold(state, |mut state| async move {
         loop {
             let event = if state.first {
@@ -474,12 +414,13 @@ pub async fn global_event() -> Sse<impl futures::Stream<Item = Result<SseEvent, 
                     properties: std::collections::HashMap::new(),
                 })
             } else {
-                session_store()
-                    .pop_event()
-                    .or_else(|| scan_message_events(&mut state.seen_messages))
+                session_store().next_event(&mut state.event_cursor)
             };
 
             if let Some(event) = event {
+                if !event_matches_session_filter(&event, state.session_id.as_deref()) {
+                    continue;
+                }
                 let directory = event_directory(&event);
                 let data = serde_json::json!({
                     "directory": directory,
@@ -492,64 +433,60 @@ pub async fn global_event() -> Sse<impl futures::Stream<Item = Result<SseEvent, 
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
     });
-
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    stream
 }
 
 struct EventStreamState {
     first: bool,
-    seen_messages: HashMap<String, usize>,
+    event_cursor: u64,
+    session_id: Option<String>,
 }
 
-fn seen_message_counts() -> HashMap<String, usize> {
-    session_store()
-        .list_sessions()
-        .into_iter()
-        .map(|session| {
-            let count = session_store().get_messages(&session.id).len();
-            (session.id, count)
-        })
-        .collect()
+fn event_matches_session_filter(event: &GlobalEvent, session_id: Option<&str>) -> bool {
+    let Some(session_id) = session_id else {
+        return true;
+    };
+    matches!(event, GlobalEvent::ServerConnected { .. })
+        || event_session_id(event).is_some_and(|event_session_id| event_session_id == session_id)
 }
 
-fn scan_message_events(seen: &mut HashMap<String, usize>) -> Option<GlobalEvent> {
-    for session in session_store().list_sessions() {
-        let messages = session_store().get_messages(&session.id);
-        let count = messages.len();
-        let previous = seen.entry(session.id.clone()).or_insert(0);
-        if count <= *previous {
-            continue;
+fn event_session_id(event: &GlobalEvent) -> Option<&str> {
+    match event {
+        GlobalEvent::SessionCreated { properties } => Some(properties.session_id.as_str()),
+        GlobalEvent::SessionUpdated { properties } => Some(properties.session_id.as_str()),
+        GlobalEvent::SessionDeleted { properties } => Some(properties.session_id.as_str()),
+        GlobalEvent::SessionStatus { properties } => Some(properties.session_id.as_str()),
+        GlobalEvent::MessageUpdated { properties } => Some(properties.session_id.as_str()),
+        GlobalEvent::MessageRemoved { properties } => Some(properties.session_id.as_str()),
+        GlobalEvent::MessagePartDelta { properties } => Some(properties.session_id.as_str()),
+        GlobalEvent::MessagePartUpdated { properties } => Some(properties.session_id.as_str()),
+        GlobalEvent::CommandUpdated { properties } => Some(properties.session_id.as_str()),
+        GlobalEvent::TodoUpdated { properties } => {
+            properties.get("sessionID").and_then(|value| value.as_str())
         }
-
-        let message = messages.get(*previous).cloned()?;
-        *previous += 1;
-        return Some(GlobalEvent::MessageUpdated {
-            properties: MessageUpdatedProperties {
-                session_id: session.id,
-                info: crate::api::session::api_message_from_store(message),
-            },
-        });
+        GlobalEvent::ServerConnected { .. }
+        | GlobalEvent::ServerInstanceDisposed { .. }
+        | GlobalEvent::ProjectUpdated { .. } => None,
     }
-
-    None
 }
 
 fn event_directory(event: &GlobalEvent) -> String {
     let session_id = match event {
         GlobalEvent::SessionCreated { properties } => {
-            return properties.info.directory.clone().unwrap_or_default()
+            return properties.info.directory.clone().unwrap_or_default();
         }
         GlobalEvent::SessionUpdated { properties } => {
-            return properties.info.directory.clone().unwrap_or_default()
+            return properties.info.directory.clone().unwrap_or_default();
         }
         GlobalEvent::SessionDeleted { properties } => {
-            return properties.info.directory.clone().unwrap_or_default()
+            return properties.info.directory.clone().unwrap_or_default();
         }
         GlobalEvent::SessionStatus { properties } => Some(properties.session_id.as_str()),
         GlobalEvent::MessageUpdated { properties } => Some(properties.session_id.as_str()),
         GlobalEvent::MessageRemoved { properties } => Some(properties.session_id.as_str()),
         GlobalEvent::MessagePartDelta { properties } => Some(properties.session_id.as_str()),
         GlobalEvent::MessagePartUpdated { properties } => Some(properties.session_id.as_str()),
+        GlobalEvent::CommandUpdated { properties } => Some(properties.session_id.as_str()),
         GlobalEvent::TodoUpdated { properties } => {
             properties.get("sessionID").and_then(|value| value.as_str())
         }
@@ -566,7 +503,7 @@ fn event_directory(event: &GlobalEvent) -> String {
 
 pub async fn sync_event() -> Json<SyncEvent> {
     Json(SyncEvent::SessionUpdated {
-        properties: global_store().get_or_create_session(),
+        properties: Box::new(global_store().get_or_create_session()),
     })
 }
 
@@ -592,7 +529,12 @@ pub async fn upgrade(Json(_payload): Json<UpgradeRequest>) -> Json<UpgradeRespon
 
 #[cfg(test)]
 mod tests {
-    use super::{read_json_config, update_tura_config_tier, TuraConfigUpdate};
+    use super::{
+        event_matches_session_filter, read_json_config, update_tura_config_tier, TuraConfigUpdate,
+    };
+    use crate::contracts::{
+        GlobalEvent, Message, MessageRole, MessageUpdatedProperties, SessionStatusProperties,
+    };
 
     #[test]
     fn read_json_config_reports_missing_path_context() {
@@ -637,5 +579,40 @@ mod tests {
             message.contains(&path.to_string_lossy().to_string()),
             "error should include the config path: {message}"
         );
+    }
+
+    #[test]
+    fn session_event_filter_keeps_only_matching_session_events_and_connection_events() {
+        let matching = GlobalEvent::MessageUpdated {
+            properties: MessageUpdatedProperties {
+                session_id: "session-a".to_string(),
+                info: Message {
+                    id: "runtime-1.message".to_string(),
+                    session_id: "session-a".to_string(),
+                    role: MessageRole::Assistant,
+                    parts: Vec::new(),
+                    created_at: 1,
+                    updated_at: 1,
+                    parent_id: None,
+                },
+            },
+        };
+        let other = GlobalEvent::SessionStatus {
+            properties: SessionStatusProperties {
+                session_id: "session-b".to_string(),
+                updated_at: 1,
+                status: serde_json::json!({"state": "busy"}),
+                context_tokens: Default::default(),
+                usage: Default::default(),
+            },
+        };
+        let connected = GlobalEvent::ServerConnected {
+            properties: std::collections::HashMap::new(),
+        };
+
+        assert!(event_matches_session_filter(&matching, Some("session-a")));
+        assert!(!event_matches_session_filter(&other, Some("session-a")));
+        assert!(event_matches_session_filter(&connected, Some("session-a")));
+        assert!(event_matches_session_filter(&other, None));
     }
 }

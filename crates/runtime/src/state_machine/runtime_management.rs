@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::agent_management::{AgentId, ProviderConfig};
-use super::session_management::SessionId;
+use super::session_management::{ContextTokenStats, SessionId};
 
 /// UTC timestamp with millisecond precision.
 pub type UtcDateTimeMs = DateTime<Utc>;
@@ -139,6 +139,30 @@ impl RuntimeState {
     }
 }
 
+/// Runtime-owned session sync status for one provider call.
+///
+/// Gateway uses this payload to decide whether a callback belongs in the live
+/// overlay or should trigger one session DB refresh. The decision stays tied to
+/// the runtime state machine instead of individual tool/message status fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeSessionSyncStatus {
+    pub runtime_id: RuntimeId,
+    pub state: RuntimeState,
+    pub call_result_status: RuntimeCallResultStatus,
+    pub live: bool,
+    pub session_db_refresh_required: bool,
+}
+
+impl RuntimeSessionSyncStatus {
+    pub fn live_overlay_active(&self) -> bool {
+        self.live && !self.session_db_refresh_required
+    }
+
+    pub fn should_refresh_session_db(&self) -> bool {
+        self.session_db_refresh_required || !self.live
+    }
+}
+
 /// Full runtime record for one LLM call.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeManagement {
@@ -178,6 +202,9 @@ pub struct RuntimeManagement {
     pub text: OutputText,
     /// Tool call reports.
     pub tool_call: Vec<ToolCallRecord>,
+    /// Latest model-visible input context token estimate for this runtime.
+    #[serde(default)]
+    pub context_tokens: ContextTokenStats,
     /// Usage and billing report.
     pub usage: Option<UsageReport>,
     /// Current runtime state.
@@ -211,6 +238,7 @@ impl RuntimeManagement {
             output: None,
             text: String::new(),
             tool_call: Vec::new(),
+            context_tokens: ContextTokenStats::default(),
             usage: None,
             state: RuntimeState::Created,
         }
@@ -269,6 +297,48 @@ impl RuntimeManagement {
         self.tool_call.push(record);
     }
 
+    /// True while gateway should keep callback payloads in the active live
+    /// overlay for this runtime call.
+    pub fn live_overlay_active(&self) -> bool {
+        matches!(
+            self.state,
+            RuntimeState::Created
+                | RuntimeState::Dispatching
+                | RuntimeState::WaitingFirstToken
+                | RuntimeState::Streaming
+        ) && matches!(
+            self.call_result_status,
+            RuntimeCallResultStatus::Pending | RuntimeCallResultStatus::Streaming
+        )
+    }
+
+    /// True once gateway should drop this runtime's live overlay and refresh
+    /// the canonical session DB history.
+    pub fn session_db_refresh_required(&self) -> bool {
+        !self.live_overlay_active()
+    }
+
+    pub fn session_sync_status(&self) -> RuntimeSessionSyncStatus {
+        RuntimeSessionSyncStatus {
+            runtime_id: self.runtime_id.clone(),
+            state: self.state,
+            call_result_status: self.call_result_status,
+            live: self.live_overlay_active(),
+            session_db_refresh_required: self.session_db_refresh_required(),
+        }
+    }
+
+    /// Runtime-owned assistant message timestamps shared by gateway callbacks
+    /// and persisted session snapshots.
+    pub fn assistant_message_timestamps(&self) -> (i64, i64) {
+        let created_at = self
+            .first_token_at
+            .or(self.called_at)
+            .unwrap_or(self.created_at);
+        let updated_at = self.call_finished_at.unwrap_or(created_at);
+        (created_at.timestamp_millis(), updated_at.timestamp_millis())
+    }
+
     /// Marks the runtime as successful.
     pub fn finish_success(
         &mut self,
@@ -312,6 +382,8 @@ mod tests {
         RuntimeProviderConfig {
             base: ProviderConfig {
                 tura_llm_name: "fast".to_string(),
+                default_model_tier: None,
+                current_model: None,
                 stream: true,
                 temperature: 0.0,
                 max_tokens: 1024,
@@ -394,6 +466,95 @@ mod tests {
         assert_eq!(
             runtime.call_result_status,
             RuntimeCallResultStatus::Streaming
+        );
+    }
+
+    #[test]
+    fn runtime_session_sync_status_is_derived_from_runtime_state_machine() {
+        let mut runtime = runtime();
+        let created_status = runtime.session_sync_status();
+        assert!(created_status.live_overlay_active());
+        assert!(!created_status.should_refresh_session_db());
+        assert_eq!(created_status.state, RuntimeState::Created);
+
+        let called_at = runtime.created_at + Duration::milliseconds(10);
+        runtime.mark_called(called_at).expect("mark called");
+        runtime
+            .mark_waiting_first_token()
+            .expect("mark waiting first token");
+        let waiting_status = runtime.session_sync_status();
+        assert!(waiting_status.live_overlay_active());
+        assert!(!waiting_status.session_db_refresh_required);
+
+        let first_token_at = called_at + Duration::milliseconds(25);
+        runtime
+            .mark_first_token(first_token_at)
+            .expect("mark first token");
+        let streaming_status = runtime.session_sync_status();
+        assert!(streaming_status.live_overlay_active());
+        assert_eq!(
+            streaming_status.call_result_status,
+            RuntimeCallResultStatus::Streaming
+        );
+
+        let finished_at = first_token_at + Duration::milliseconds(80);
+        runtime
+            .finish_success(finished_at, None)
+            .expect("finish success");
+        let finished_status = runtime.session_sync_status();
+        assert!(!finished_status.live_overlay_active());
+        assert!(finished_status.should_refresh_session_db());
+        assert_eq!(finished_status.state, RuntimeState::Finished);
+        assert_eq!(
+            finished_status.call_result_status,
+            RuntimeCallResultStatus::Succeeded
+        );
+    }
+
+    #[test]
+    fn assistant_message_timestamps_are_runtime_owned() {
+        let mut runtime = runtime();
+        let called_at = runtime.created_at + Duration::milliseconds(10);
+        let first_token_at = called_at + Duration::milliseconds(20);
+        let finished_at = first_token_at + Duration::milliseconds(30);
+
+        assert_eq!(
+            runtime.assistant_message_timestamps(),
+            (
+                runtime.created_at.timestamp_millis(),
+                runtime.created_at.timestamp_millis()
+            )
+        );
+
+        runtime.mark_called(called_at).expect("mark called");
+        assert_eq!(
+            runtime.assistant_message_timestamps(),
+            (called_at.timestamp_millis(), called_at.timestamp_millis())
+        );
+
+        runtime
+            .mark_waiting_first_token()
+            .expect("mark waiting first token");
+        runtime
+            .mark_first_token(first_token_at)
+            .expect("mark first token");
+        assert_eq!(
+            runtime.assistant_message_timestamps(),
+            (
+                first_token_at.timestamp_millis(),
+                first_token_at.timestamp_millis()
+            )
+        );
+
+        runtime
+            .finish_success(finished_at, None)
+            .expect("finish success");
+        assert_eq!(
+            runtime.assistant_message_timestamps(),
+            (
+                first_token_at.timestamp_millis(),
+                finished_at.timestamp_millis()
+            )
         );
     }
 

@@ -12,9 +12,13 @@ pub mod models;
 pub mod process_scope;
 #[path = "services/recovery.rs"]
 pub mod recovery;
+#[path = "services/runtime_orphans.rs"]
+pub mod runtime_orphans;
 #[path = "services/runtime_workers.rs"]
 pub mod runtime_workers;
 #[path = "services/session_db.rs"]
 pub mod session_db;
+#[path = "services/user_commands.rs"]
+pub mod user_commands;
 #[path = "services/worker_process.rs"]
 pub mod worker_process;

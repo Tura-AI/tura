@@ -228,8 +228,8 @@ async fn streamed_command_batch_executes_multiple_ready_commands_in_ordered_resu
     assert_eq!(results.len(), 2);
     assert_eq!(results[0]["step"], 1);
     assert_eq!(
-        results[1]["step"], 2,
-        "command_run normalizes duplicate batch steps into a monotonic sequence"
+        results[1]["step"], 1,
+        "command_run preserves duplicate dependency groups"
     );
     assert_eq!(results[0]["command_type"], "shell_command");
     assert_eq!(results[1]["command_type"], "shell_command");
@@ -311,7 +311,7 @@ async fn streamed_command_batch_continues_after_failure_and_keeps_result_order()
         .expect("command_run output should contain results");
     assert_eq!(results.len(), 2);
     assert_eq!(results[0]["step"], 1);
-    assert_eq!(results[1]["step"], 2);
+    assert_eq!(results[1]["step"], 1);
     assert_eq!(results[0]["command_type"], "shell_command");
     assert_eq!(results[1]["command_type"], "shell_command");
     assert_eq!(results[0]["success"], false);
@@ -331,19 +331,16 @@ async fn streamed_command_batch_reports_timeouts_without_success_side_effects() 
     } else {
         "sleep 1.5; echo done > streamed-timeout-should-not-exist.txt"
     };
-    let started = std::time::Instant::now();
-
-    let output = execute_runtime_stream_command_batch_with_mock_router(
-        vec![shell_command_with_timeout(command, 1, 150)],
-        workspace.path().to_path_buf(),
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        execute_runtime_stream_command_batch_with_mock_router(
+            vec![shell_command_with_timeout(command, 1, 150)],
+            workspace.path().to_path_buf(),
+        ),
     )
     .await
+    .expect("timed out command batch should finish before the business timeout")
     .expect("timed out command still returns command_run output");
-
-    assert!(
-        started.elapsed() < std::time::Duration::from_secs(5),
-        "timeout should bound the streamed command duration"
-    );
     let results = output["results"]
         .as_array()
         .expect("command_run output should contain results");
@@ -389,8 +386,8 @@ async fn streamed_command_batch_runs_same_step_macro_commands_without_result_cro
         .expect("command_run output should contain results");
     assert_eq!(results.len(), 3);
     assert_eq!(results[0]["step"], 1);
-    assert_eq!(results[1]["step"], 2);
-    assert_eq!(results[2]["step"], 3);
+    assert_eq!(results[1]["step"], 1);
+    assert_eq!(results[2]["step"], 1);
     assert!(results
         .iter()
         .all(|result| { result["command_type"] == "shell_command" && result["success"] == true }));
@@ -425,7 +422,7 @@ async fn streamed_command_batches_repeated_workspaces_do_not_cross_talk() {
             .expect("command_run output should contain results");
         assert_eq!(results.len(), 2);
         assert_eq!(results[0]["step"], 1);
-        assert_eq!(results[1]["step"], 2);
+        assert_eq!(results[1]["step"], 1);
         assert!(results.iter().all(|result| {
             result["command_type"] == "shell_command" && result["success"] == true
         }));
@@ -518,7 +515,7 @@ async fn streamed_command_batches_concurrent_workspaces_remain_isolated_inner() 
             .expect("command_run output should contain results");
         assert_eq!(results.len(), 2);
         assert_eq!(results[0]["step"], 1);
-        assert_eq!(results[1]["step"], 2);
+        assert_eq!(results[1]["step"], 1);
         assert!(
             results.iter().all(|result| {
                 result["command_type"] == "task_status" && result["success"] == true

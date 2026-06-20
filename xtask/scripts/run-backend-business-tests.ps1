@@ -1,14 +1,14 @@
 param(
   [string]$Crate = "",
   [switch]$List,
-  [int]$TimeoutSeconds = 180
+  [int]$TimeoutSeconds = 180,
+  [int]$Parallelism = 4
 )
 
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$XtaskRoot = Resolve-Path (Join-Path $ScriptDir "..")
-$RepoRoot = Resolve-Path (Join-Path $XtaskRoot "..")
+$RepoRoot = Resolve-Path (Join-Path $ScriptDir "..\..")
 
 Set-Location $RepoRoot
 
@@ -22,7 +22,7 @@ function Read-PackageName {
   $match.Groups[1].Value
 }
 
-function Read-TestFeatures {
+function Read-BusinessTestFeatures {
   param([string]$CargoToml)
   $content = Get-Content -Raw -LiteralPath $CargoToml
   $features = @()
@@ -32,22 +32,95 @@ function Read-TestFeatures {
   $features
 }
 
-function Invoke-CargoTestWithTimeout {
-  param([string[]]$Arguments, [int]$TimeoutSeconds)
+function New-BackendTestCase {
+  param(
+    [string]$Package,
+    [string]$Target,
+    [string[]]$Features,
+    [string]$Path
+  )
+  [pscustomobject]@{
+    Package = $Package
+    Target = $Target
+    Features = $Features
+    Path = $Path
+  }
+}
+
+function Get-CargoTestArguments {
+  param($Case)
+  $arguments = @("test", "-p", $Case.Package)
+  if ($Case.Features -and $Case.Features.Count -gt 0) {
+    $arguments += @("--features", ($Case.Features -join ","))
+  }
+  $arguments += @("--test", $Case.Target, "--", "--nocapture", "--test-threads=1")
+  $arguments
+}
+
+function Start-CargoTestProcess {
+  param($Case)
+  $arguments = Get-CargoTestArguments $Case
+  Write-Host ""
+  Write-Host "==> Running backend business test $($Case.Package)::$($Case.Target) [parallel]"
   $startInfo = New-Object System.Diagnostics.ProcessStartInfo
   $startInfo.FileName = "cargo"
   $startInfo.UseShellExecute = $false
   $startInfo.RedirectStandardOutput = $false
   $startInfo.RedirectStandardError = $false
-  $startInfo.Arguments = ($Arguments | ForEach-Object { Format-ProcessArgument $_ }) -join " "
+  $startInfo.Arguments = ($arguments | ForEach-Object { Format-ProcessArgument $_ }) -join " "
   $process = [System.Diagnostics.Process]::Start($startInfo)
-  if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-    Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-    throw "cargo $($Arguments -join ' ') exceeded ${TimeoutSeconds}s"
+  [pscustomobject]@{
+    Process = $process
+    Case = $Case
+    StartedAt = Get-Date
+    Arguments = $arguments
   }
-  $exitCode = $process.ExitCode
-  if ($exitCode -ne 0) {
-    exit $exitCode
+}
+
+function Invoke-ParallelBackendTestCases {
+  param([object[]]$Cases, [int]$Parallelism, [int]$TimeoutSeconds)
+  if ($Cases.Count -eq 0) {
+    Write-Host "No backend business tests matched."
+    return
+  }
+
+  $maxParallel = [Math]::Max(1, $Parallelism)
+  Write-Host ""
+  Write-Host "==> Running $($Cases.Count) backend business tests with parallelism $maxParallel"
+
+  $pending = [System.Collections.Queue]::new()
+  foreach ($case in $Cases) {
+    $pending.Enqueue($case)
+  }
+  $running = @()
+  while ($pending.Count -gt 0 -or $running.Count -gt 0) {
+    while ($pending.Count -gt 0 -and $running.Count -lt $maxParallel) {
+      $running += Start-CargoTestProcess $pending.Dequeue()
+    }
+    Start-Sleep -Milliseconds 200
+    $nextRunning = @()
+    foreach ($entry in $running) {
+      $entry.Process.Refresh()
+      $elapsed = ((Get-Date) - $entry.StartedAt).TotalSeconds
+      if (-not $entry.Process.HasExited -and $elapsed -gt $TimeoutSeconds) {
+        Stop-Process -Id $entry.Process.Id -Force -ErrorAction SilentlyContinue
+        throw "cargo $($entry.Arguments -join ' ') exceeded ${TimeoutSeconds}s"
+      }
+      if ($entry.Process.HasExited) {
+        $entry.Process.WaitForExit()
+        if ($entry.Process.ExitCode -ne 0) {
+          foreach ($other in $running) {
+            if (-not $other.Process.HasExited) {
+              Stop-Process -Id $other.Process.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
+          exit $entry.Process.ExitCode
+        }
+      } else {
+        $nextRunning += $entry
+      }
+    }
+    $running = $nextRunning
   }
 }
 
@@ -71,22 +144,24 @@ function Find-CrateRoot {
   throw "Business test is not under a crate: $Path"
 }
 
-function Get-RelativePathCompat {
-  param([string]$Root, [string]$Path)
-  $rootPath = (Resolve-Path -LiteralPath $Root).Path.TrimEnd('\', '/')
-  $targetPath = (Resolve-Path -LiteralPath $Path).Path
-  if ($targetPath.Length -eq $rootPath.Length) {
-    return ""
+$cases = @()
+
+$rootBusinessDir = Join-Path $RepoRoot "tests\business"
+if (Test-Path -LiteralPath $rootBusinessDir) {
+  foreach ($test in (Get-ChildItem -LiteralPath $rootBusinessDir -File -Filter *.rs | Sort-Object FullName)) {
+    if ($test.Name -match 'claude') {
+      continue
+    }
+    if ($Crate -and $Crate -ne "tura_workspace" -and $Crate -ne ".") {
+      continue
+    }
+    $target = [System.IO.Path]::GetFileNameWithoutExtension($test.Name)
+    if ($List) {
+      Write-Host "tura_workspace::$target [parallel] $($test.FullName)"
+    } else {
+      $cases += New-BackendTestCase -Package "tura_workspace" -Target $target -Features @() -Path $test.FullName
+    }
   }
-  $prefix = $rootPath + [System.IO.Path]::DirectorySeparatorChar
-  if ($targetPath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-    return $targetPath.Substring($prefix.Length)
-  }
-  $altPrefix = $rootPath + [System.IO.Path]::AltDirectorySeparatorChar
-  if ($targetPath.StartsWith($altPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-    return $targetPath.Substring($altPrefix.Length)
-  }
-  throw "Path $Path is not under $Root"
 }
 
 $scanRoots = @("crates", "commands", "agents", "personas") |
@@ -99,31 +174,7 @@ foreach ($root in $scanRoots) {
     Where-Object { $_.FullName -match [regex]::Escape("\tests\business") + "$" } |
     ForEach-Object { Get-ChildItem -LiteralPath $_.FullName -File -Filter *.rs }
 }
-) |
-  Sort-Object FullName
-
-$rootBusinessDir = Join-Path $RepoRoot "tests\business"
-$rootRustTests = @()
-if (Test-Path -LiteralPath $rootBusinessDir) {
-  $rootRustTests = Get-ChildItem -LiteralPath $rootBusinessDir -File -Filter *.rs |
-    Where-Object { $_.Name -notmatch 'claude' } |
-    Sort-Object FullName
-}
-
-foreach ($test in $rootRustTests) {
-  if ($Crate -and $Crate -ne "tura_workspace" -and $Crate -ne ".") {
-    continue
-  }
-  $target = [System.IO.Path]::GetFileNameWithoutExtension($test.Name)
-  if ($List) {
-    Write-Host "tura_workspace::$target $($test.FullName)"
-    continue
-  }
-
-  Write-Host ""
-  Write-Host "==> Running root business test tura_workspace::$target"
-  Invoke-CargoTestWithTimeout @("test", "-p", "tura_workspace", "--test", $target, "--", "--nocapture", "--test-threads=1") $TimeoutSeconds
-}
+) | Sort-Object FullName
 
 foreach ($test in $tests) {
   if ($test.Name -match 'claude') {
@@ -139,17 +190,14 @@ foreach ($test in $tests) {
     continue
   }
   $target = [System.IO.Path]::GetFileNameWithoutExtension($test.Name)
-  $features = Read-TestFeatures $cargoToml
-  $featureArgs = @()
-  if ($features.Count -gt 0) {
-    $featureArgs = @("--features", ($features -join ","))
-  }
+  $features = Read-BusinessTestFeatures $cargoToml
   if ($List) {
-    Write-Host "$package::$target $($test.FullName)"
-    continue
+    Write-Host "$package::$target [parallel] $($test.FullName)"
+  } else {
+    $cases += New-BackendTestCase -Package $package -Target $target -Features $features -Path $test.FullName
   }
+}
 
-  Write-Host ""
-  Write-Host "==> Running backend business test $package::$target"
-  Invoke-CargoTestWithTimeout (@("test", "-p", $package) + $featureArgs + @("--test", $target, "--", "--nocapture", "--test-threads=1")) $TimeoutSeconds
+if (-not $List) {
+  Invoke-ParallelBackendTestCases -Cases $cases -Parallelism $Parallelism -TimeoutSeconds $TimeoutSeconds
 }

@@ -1,6 +1,6 @@
 use crate::state_machine::agent_management::{
-    AgentCapabilityItem, AgentManagement, AgentPersonaItem, AgentPromptItem, AgentState,
-    ProviderConfig, ToolChoice, ValidatorConfig,
+    AgentCapabilityItem, AgentManagement, AgentPromptItem, AgentState, ProviderConfig, ToolChoice,
+    ValidatorConfig,
 };
 use crate::state_machine::session_management::SessionManagement;
 use chrono::Utc;
@@ -9,8 +9,7 @@ use std::path::{Path, PathBuf};
 use tura_agents::coding_agent::{CodingAgent, CodingAgentProviderConfig, CodingAgentToolChoice};
 
 const PROJECT_ROOT_ENV: &str = "TURA_PROJECT_ROOT";
-const DEFAULT_PERSONA_NAME: &str = "tura";
-const DEFAULT_CODING_AGENT_NAME: &str = "fast";
+const DEFAULT_CODING_AGENT_NAME: &str = "thinking";
 
 pub fn activate_agent_with_loader(
     session: &SessionManagement,
@@ -71,10 +70,9 @@ fn create_agent_by_name(
         "thinking-planning" | "coding_agent_planning" | "coding_agent" | "coding" => {
             create_coding_agent(project_directory, capabilities_directory, prompts_directory)
         }
-        "thinking" | "fast" | "fast-text-only" | "coding_agent_fast" | "coding_agent_instant" => {
+        "thinking" | "fast" | "fast-text-only" | "coding_agent_fast" => {
             let canonical_name = match agent_name {
                 "coding_agent_fast" => "fast",
-                "coding_agent_instant" => "fast-text-only",
                 other => other,
             };
             if let Some(agent) = load_agent_from_registry(project_directory, agent_name)? {
@@ -95,8 +93,11 @@ fn create_agent_by_name(
                         .agent_capabilities
                         .retain(|capability| capability.capability_name != "planning");
                 }
-                if canonical_name == "fast-text-only" {
+                if canonical_name == "fast" || canonical_name == "fast-text-only" {
                     agent.provider.tura_llm_name = "fast".to_string();
+                    agent.provider.default_model_tier = Some("fast".to_string());
+                }
+                if canonical_name == "fast-text-only" {
                     agent
                         .agent_capabilities
                         .retain(|capability| capability.capability_name != "read_media");
@@ -161,14 +162,12 @@ fn create_coding_agent(
             now,
         );
     }
-    add_default_persona(&mut agent, project_directory, now);
-
     Ok(agent)
 }
 
 fn create_general_agent(
     project_directory: &Path,
-    capabilities_directory: &Path,
+    _capabilities_directory: &Path,
     prompts_directory: &Path,
 ) -> Result<AgentManagement, String> {
     if let Some(agent) = load_agent_from_registry(project_directory, "general")? {
@@ -178,6 +177,8 @@ fn create_general_agent(
     let now = Utc::now();
     let provider = ProviderConfig {
         tura_llm_name: "fast".to_string(),
+        default_model_tier: Some("fast".to_string()),
+        current_model: None,
         stream: true,
         temperature: 0.7,
         max_tokens: 0,
@@ -200,14 +201,6 @@ fn create_general_agent(
         validator,
         now,
     );
-    agent.add_capability(
-        AgentCapabilityItem {
-            capability_name: "command_run".to_string(),
-            capability_directory: capabilities_directory.to_path_buf(),
-        },
-        now,
-    );
-
     agent.add_prompt(
         AgentPromptItem {
             agent_prompt: "general".to_string(),
@@ -215,8 +208,6 @@ fn create_general_agent(
         },
         now,
     );
-    add_default_persona(&mut agent, project_directory, now);
-
     Ok(agent)
 }
 
@@ -229,6 +220,8 @@ pub(crate) fn provider_config_from_coding_agent(
 ) -> ProviderConfig {
     ProviderConfig {
         tura_llm_name: config.tura_llm_name,
+        default_model_tier: config.default_model_tier,
+        current_model: config.current_model,
         stream: true,
         temperature: config.temperature,
         max_tokens: config.max_tokens,
@@ -250,8 +243,6 @@ struct AgentRegistryEntry {
     #[serde(default)]
     default_config: bool,
     provider: ProviderConfig,
-    #[serde(default)]
-    agent_persona: Vec<AgentPersonaItem>,
     agent_prompt: Vec<AgentPromptItem>,
     agent_capabilities: Vec<AgentCapabilityItem>,
     validator: ValidatorConfig,
@@ -337,23 +328,6 @@ fn build_agent_from_registry_entry(
         );
     }
 
-    if entry.agent_persona.is_empty() {
-        add_default_persona(&mut agent, project_directory, now);
-    } else {
-        for persona in entry.agent_persona {
-            agent.add_persona(
-                AgentPersonaItem {
-                    persona_name: persona.persona_name,
-                    persona_directory: resolve_project_path(
-                        project_directory,
-                        persona.persona_directory,
-                    ),
-                },
-                now,
-            );
-        }
-    }
-
     for capability in entry.agent_capabilities {
         agent.add_capability(
             AgentCapabilityItem {
@@ -368,28 +342,6 @@ fn build_agent_from_registry_entry(
     }
 
     Ok(agent)
-}
-
-fn add_default_persona(
-    agent: &mut AgentManagement,
-    project_directory: &Path,
-    now: chrono::DateTime<Utc>,
-) {
-    agent.add_persona(
-        AgentPersonaItem {
-            persona_name: DEFAULT_PERSONA_NAME.to_string(),
-            persona_directory: persona_prompt_directory(project_directory, DEFAULT_PERSONA_NAME),
-        },
-        now,
-    );
-}
-
-fn persona_prompt_directory(project_directory: &Path, persona_name: &str) -> PathBuf {
-    project_directory
-        .join("personas")
-        .join("src")
-        .join(persona_name)
-        .join("prompt")
 }
 
 fn resolve_project_path(project_directory: &Path, path: PathBuf) -> PathBuf {
@@ -474,13 +426,12 @@ pub fn initialize_agent_state_machine(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_agent_from_registry_entry, initialize_agent_state_machine, persona_prompt_directory,
+        build_agent_from_registry_entry, initialize_agent_state_machine,
         provider_config_from_coding_agent, resolve_project_path, AgentRegistryEntry,
-        DEFAULT_PERSONA_NAME,
     };
     use crate::state_machine::agent_management::{
-        AgentCapabilityItem, AgentManagement, AgentPersonaItem, AgentPromptItem, AgentState,
-        ProviderConfig, ToolChoice, ValidatorConfig,
+        AgentCapabilityItem, AgentManagement, AgentPromptItem, AgentState, ProviderConfig,
+        ToolChoice, ValidatorConfig,
     };
     use crate::state_machine::session_management::{SessionInput, SessionManagement, SessionState};
     use chrono::Utc;
@@ -490,6 +441,8 @@ mod tests {
     fn provider_config() -> ProviderConfig {
         ProviderConfig {
             tura_llm_name: "fast".to_string(),
+            default_model_tier: Some("fast".to_string()),
+            current_model: None,
             stream: true,
             temperature: 0.0,
             max_tokens: 1024,
@@ -550,7 +503,9 @@ mod tests {
             (CodingAgentToolChoice::Disable, ToolChoice::Disable),
         ] {
             let config = provider_config_from_coding_agent(CodingAgentProviderConfig {
-                tura_llm_name: "flagship_thinking".to_string(),
+                tura_llm_name: "thinking".to_string(),
+                default_model_tier: Some("thinking".to_string()),
+                current_model: None,
                 stream: false,
                 temperature: 0.3,
                 max_tokens: 4096,
@@ -558,7 +513,8 @@ mod tests {
                 time_out_ms: 1234,
             });
 
-            assert_eq!(config.tura_llm_name, "flagship_thinking");
+            assert_eq!(config.tura_llm_name, "thinking");
+            assert_eq!(config.default_model_tier.as_deref(), Some("thinking"));
             assert!(
                 config.stream,
                 "runtime provider config must force streaming"
@@ -571,7 +527,7 @@ mod tests {
     }
 
     #[test]
-    fn registry_entry_build_resolves_relative_paths_and_adds_default_persona() {
+    fn registry_entry_build_resolves_relative_paths_without_persona_binding() {
         let project = Path::new("C:/repo/tura");
         let entry = AgentRegistryEntry {
             agent_name: "custom".to_string(),
@@ -580,7 +536,6 @@ mod tests {
             report_to_user: false,
             default_config: true,
             provider: provider_config(),
-            agent_persona: Vec::new(),
             agent_prompt: vec![AgentPromptItem {
                 agent_prompt: "prompt".to_string(),
                 prompt_directory: PathBuf::from("prompts/custom"),
@@ -608,38 +563,6 @@ mod tests {
             agent.agent_capabilities[0].capability_directory,
             project.join("crates/tools/src")
         );
-        assert_eq!(agent.agent_persona.len(), 1);
-        assert_eq!(agent.agent_persona[0].persona_name, DEFAULT_PERSONA_NAME);
-    }
-
-    #[test]
-    fn registry_entry_preserves_explicit_persona_instead_of_defaulting() {
-        let project = Path::new("C:/repo/tura");
-        let entry = AgentRegistryEntry {
-            agent_name: "custom".to_string(),
-            agent_directory: PathBuf::from("agents/custom"),
-            parent_agent_id: None,
-            report_to_user: true,
-            default_config: false,
-            provider: provider_config(),
-            agent_persona: vec![AgentPersonaItem {
-                persona_name: "precise".to_string(),
-                persona_directory: PathBuf::from("personas/precise"),
-            }],
-            agent_prompt: Vec::new(),
-            agent_capabilities: Vec::new(),
-            validator: validator_config(),
-        };
-
-        let agent =
-            build_agent_from_registry_entry(project, entry).expect("registry entry should build");
-
-        assert_eq!(agent.agent_persona.len(), 1);
-        assert_eq!(agent.agent_persona[0].persona_name, "precise");
-        assert_eq!(
-            agent.agent_persona[0].persona_directory,
-            project.join("personas/precise")
-        );
     }
 
     #[test]
@@ -656,18 +579,6 @@ mod tests {
             project.join("agents/custom")
         );
         assert_eq!(resolve_project_path(project, absolute.clone()), absolute);
-    }
-
-    #[test]
-    fn default_persona_directory_uses_project_persona_prompt_layout() {
-        assert_eq!(
-            persona_prompt_directory(Path::new("C:/repo/tura"), "tura"),
-            Path::new("C:/repo/tura")
-                .join("personas")
-                .join("src")
-                .join("tura")
-                .join("prompt")
-        );
     }
 
     #[test]

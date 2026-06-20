@@ -1,14 +1,14 @@
 param(
   [string]$Crate = "",
   [switch]$List,
-  [int]$TimeoutSeconds = 240
+  [int]$TimeoutSeconds = 240,
+  [int]$Parallelism = 3
 )
 
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$XtaskRoot = Resolve-Path (Join-Path $ScriptDir "..")
-$RepoRoot = Resolve-Path (Join-Path $XtaskRoot "..")
+$RepoRoot = Resolve-Path (Join-Path $ScriptDir "..\..")
 
 Set-Location $RepoRoot
 
@@ -51,6 +51,135 @@ function Invoke-CargoTestWithTimeout {
   }
 }
 
+function Test-IsProcessSensitivePerformanceTest {
+  param([string]$Package, [string]$Target, [string]$Path)
+  $name = "$Package::$Target $Path".ToLowerInvariant()
+  foreach ($pattern in @("gateway_session_concurrency_stress", "process", "lifecycle", "router", "session_db", "service", "queue")) {
+    if ($name.Contains($pattern)) {
+      return $true
+    }
+  }
+  return $false
+}
+
+function Get-CargoTestArguments {
+  param($Case)
+  $arguments = @("test", "-p", $Case.Package)
+  if ($Case.Features -and $Case.Features.Count -gt 0) {
+    $arguments += @("--features", ($Case.Features -join ","))
+  }
+  $arguments += @("--test", $Case.Target, "--", "--nocapture", "--test-threads=1")
+  $arguments
+}
+
+function Start-CargoTestProcess {
+  param($Case, [string]$GroupKey = "")
+  $arguments = Get-CargoTestArguments $Case
+  $group = if ($Case.Serial) { "serial" } else { "parallel" }
+  Write-Host ""
+  $lane = if ($GroupKey) { " lane=$GroupKey" } else { "" }
+  Write-Host "==> Running backend performance test $($Case.Package)::$($Case.Target) [$group$lane]"
+  $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $startInfo.FileName = "cargo"
+  $startInfo.UseShellExecute = $false
+  $startInfo.RedirectStandardOutput = $false
+  $startInfo.RedirectStandardError = $false
+  $startInfo.Arguments = ($arguments | ForEach-Object { Format-ProcessArgument $_ }) -join " "
+  $process = [System.Diagnostics.Process]::Start($startInfo)
+  [pscustomobject]@{
+    Process = $process
+    Case = $Case
+    GroupKey = $GroupKey
+    StartedAt = Get-Date
+    Arguments = $arguments
+  }
+}
+
+function New-PerformanceCaseGroup {
+  param([string]$Key, [object[]]$Cases)
+  $queue = [System.Collections.Queue]::new()
+  foreach ($case in $Cases) {
+    $queue.Enqueue($case)
+  }
+  [pscustomobject]@{
+    Key = $Key
+    Cases = $queue
+  }
+}
+
+function Start-NextPerformanceGroupCase {
+  param($Group)
+  if ($Group.Cases.Count -eq 0) {
+    return $null
+  }
+  $entry = Start-CargoTestProcess $Group.Cases.Dequeue() $Group.Key
+  $entry | Add-Member -NotePropertyName Group -NotePropertyValue $Group
+  $entry
+}
+
+function Invoke-PerformanceTestCases {
+  param([object[]]$Cases, [int]$Parallelism, [int]$TimeoutSeconds)
+  $parallelCases = @($Cases | Where-Object { -not $_.Serial })
+  $serialCases = @($Cases | Where-Object { $_.Serial })
+  $maxParallel = [Math]::Max(1, $Parallelism)
+  if ($parallelCases.Count -gt 0) {
+    Write-Host ""
+    Write-Host "==> Running $($parallelCases.Count) non-conflicting backend performance tests with crate-lane parallelism $maxParallel"
+  }
+  $pending = [System.Collections.Queue]::new()
+  $parallelCases |
+    Group-Object -Property Package |
+    Sort-Object Name |
+    ForEach-Object {
+      $pending.Enqueue((New-PerformanceCaseGroup $_.Name @($_.Group | Sort-Object Target)))
+    }
+  if ($pending.Count -gt 0) {
+    Write-Host "==> Non-conflicting crate lanes: $($pending.Count)"
+  }
+  $running = @()
+  while ($pending.Count -gt 0 -or $running.Count -gt 0) {
+    while ($pending.Count -gt 0 -and $running.Count -lt $maxParallel) {
+      $entry = Start-NextPerformanceGroupCase $pending.Dequeue()
+      if ($null -ne $entry) {
+        $running += $entry
+      }
+    }
+    Start-Sleep -Milliseconds 200
+    $nextRunning = @()
+    foreach ($entry in $running) {
+      $elapsed = ((Get-Date) - $entry.StartedAt).TotalSeconds
+      if (-not $entry.Process.HasExited -and $elapsed -gt $TimeoutSeconds) {
+        Stop-Process -Id $entry.Process.Id -Force -ErrorAction SilentlyContinue
+        throw "cargo $($entry.Arguments -join ' ') exceeded ${TimeoutSeconds}s"
+      }
+      if ($entry.Process.HasExited) {
+        if ($entry.Process.ExitCode -ne 0) {
+          foreach ($other in $running) {
+            if (-not $other.Process.HasExited) {
+              Stop-Process -Id $other.Process.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
+          exit $entry.Process.ExitCode
+        }
+        if ($entry.Group) {
+          $nextEntry = Start-NextPerformanceGroupCase $entry.Group
+          if ($null -ne $nextEntry) {
+            $nextRunning += $nextEntry
+          }
+        }
+      } else {
+        $nextRunning += $entry
+      }
+    }
+    $running = $nextRunning
+  }
+  foreach ($case in $serialCases) {
+    Write-Host ""
+    Write-Host "==> Running process-sensitive backend performance test $($case.Package)::$($case.Target) [serial]"
+    Invoke-CargoTestWithTimeout (Get-CargoTestArguments $case) $TimeoutSeconds
+  }
+}
+
 function Format-ProcessArgument {
   param([string]$Value)
   if ($Value -notmatch '[\s"]') {
@@ -67,6 +196,8 @@ $tests = Get-ChildItem -Path $scanRoots -Recurse -File -Filter *.rs |
   Where-Object { $_.FullName -match [regex]::Escape("\tests\performance\") } |
   Sort-Object FullName
 
+$cases = @()
+
 foreach ($test in $tests) {
   $crateRoot = $test.Directory.Parent.Parent.FullName
   $cargoToml = Join-Path $crateRoot "Cargo.toml"
@@ -79,16 +210,22 @@ foreach ($test in $tests) {
   }
   $target = [System.IO.Path]::GetFileNameWithoutExtension($test.Name)
   $features = Read-TestFeatures $cargoToml
-  $featureArgs = @()
-  if ($features.Count -gt 0) {
-    $featureArgs = @("--features", ($features -join ","))
-  }
   if ($List) {
-    Write-Host "$package::$target $($test.FullName)"
+    $serial = Test-IsProcessSensitivePerformanceTest $package $target $test.FullName
+    $group = if ($serial) { "serial" } else { "parallel" }
+    Write-Host "$package::$target [$group] $($test.FullName)"
     continue
   }
 
-  Write-Host ""
-  Write-Host "==> Running backend performance test $package::$target"
-  Invoke-CargoTestWithTimeout (@("test", "-p", $package) + $featureArgs + @("--test", $target, "--", "--nocapture")) $TimeoutSeconds
+  $cases += [pscustomobject]@{
+    Package = $package
+    Target = $target
+    Features = $features
+    Path = $test.FullName
+    Serial = Test-IsProcessSensitivePerformanceTest $package $target $test.FullName
+  }
+}
+
+if (-not $List) {
+  Invoke-PerformanceTestCases -Cases $cases -Parallelism $Parallelism -TimeoutSeconds $TimeoutSeconds
 }

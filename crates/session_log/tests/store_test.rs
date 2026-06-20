@@ -342,7 +342,7 @@ fn reads_authoritative_workspace_snapshot_when_index_is_stale() {
 }
 
 #[test]
-fn upsert_session_records_are_idempotent_without_deleting_absent_records() {
+fn upsert_session_records_replace_absent_records_from_full_snapshot() {
     let db = DirectDbGuard::new();
     let store = SessionLogStore::open_default().expect("store");
     let session_id = format!("record-upsert-{}", uuid::Uuid::new_v4());
@@ -419,13 +419,13 @@ fn upsert_session_records_are_idempotent_without_deleting_absent_records() {
         })
         .expect("records");
 
-    assert_eq!(page.total, 3);
+    assert_eq!(page.total, 2);
     assert_eq!(
         records
             .iter()
             .map(|record| record.message_id.as_str())
             .collect::<Vec<_>>(),
-        vec!["m1", "m2", "m3"]
+        vec!["m2", "m3"]
     );
     assert_eq!(
         records
@@ -846,22 +846,34 @@ fn file_queue_recovers_orphaned_processing_items() {
 }
 
 #[test]
-fn dirty_file_queue_item_is_deleted_instead_of_moved_to_failed() {
+fn dirty_file_queue_item_is_quarantined_in_failed_without_retries() {
     let db = DirectDbGuard::new();
     let store = SessionLogStore::open_default().expect("store");
     let root = db.root().join("session_log").join("message_queue");
     let pending = root.join("pending");
     let failed = root.join("failed");
     std::fs::create_dir_all(&pending).expect("pending dir");
-    let dirty = pending.join("00000000000000000001-1-00000000000000000001.json");
+    let file_name = "00000000000000000001-1-00000000000000000001.json";
+    let dirty = pending.join(file_name);
     std::fs::write(&dirty, "{not-json").expect("dirty queue item");
 
     assert_eq!(file_queue::drain_queue(&store, 10).expect("drain"), 0);
-    assert!(!dirty.exists(), "dirty pending file should be deleted");
-    let failed_files = std::fs::read_dir(&failed)
-        .map(|entries| entries.flatten().count())
-        .unwrap_or(0);
-    assert_eq!(failed_files, 0, "dirty parse failures must not accumulate");
+    assert!(!dirty.exists(), "dirty pending file should leave pending");
+    let failed_json = failed.join(file_name);
+    let failed_error = failed_json.with_extension("error.txt");
+    assert!(
+        failed_json.exists(),
+        "dirty queue item should be retained in failed"
+    );
+    assert!(
+        failed_error.exists(),
+        "dirty queue item should have an error sidecar"
+    );
+    let error = std::fs::read_to_string(&failed_error).expect("failed sidecar");
+    assert!(
+        error.contains("failed to parse session queue item"),
+        "failed sidecar should explain the parse error: {error}"
+    );
 }
 
 #[test]

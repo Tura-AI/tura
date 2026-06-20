@@ -8,6 +8,7 @@ pub mod context;
 pub mod gateway_events;
 pub mod manas;
 pub mod mano;
+pub(crate) mod profile_timings;
 pub mod prompt_style;
 pub mod provider_flow;
 pub mod router_command_run;

@@ -1,8 +1,13 @@
 //! File API handlers
 
-use crate::api::types::*;
+use crate::contracts::*;
 use crate::mock::global_store;
-use axum::{extract::Query, http::StatusCode, Json};
+use axum::{
+    extract::Query,
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
+    Json,
+};
 use base64::Engine;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -12,25 +17,6 @@ use std::time::UNIX_EPOCH;
 // ============================================================================
 // File List
 // ============================================================================
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ListFilesQuery {
-    pub directory: Option<String>,
-    pub path: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct FileInfo {
-    pub name: String,
-    pub path: String,
-    #[serde(rename = "type")]
-    pub file_type: String,
-    pub absolute: String,
-    pub ignored: bool,
-    pub git_status: Option<String>,
-    pub size_bytes: Option<u64>,
-    pub modified_at: Option<u64>,
-}
 
 pub async fn list_files(Query(params): Query<ListFilesQuery>) -> Json<Vec<FileInfo>> {
     let Some(root) = workspace_root(params.directory) else {
@@ -203,12 +189,6 @@ fn normalize_git_path(path: &str) -> String {
 // File Content
 // ============================================================================
 
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct FileContentQuery {
-    pub path: String,
-    pub directory: Option<String>,
-}
-
 pub async fn get_file_content(
     Query(params): Query<FileContentQuery>,
 ) -> Result<Json<FileContentResponse>, (StatusCode, String)> {
@@ -258,6 +238,37 @@ pub async fn get_file_content(
             mime_type: None,
         })),
     }
+}
+
+pub async fn get_file_media(
+    Query(params): Query<FileContentQuery>,
+) -> Result<Response, (StatusCode, String)> {
+    let (_root, path) = resolve_workspace_file_path(params.directory, &params.path, "media read")?;
+    let mime_type = media_mime_type(&path).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "File is not a supported media type".to_string(),
+        )
+    })?;
+    let bytes = std::fs::read(&path).map_err(|error| {
+        (
+            if error.kind() == std::io::ErrorKind::NotFound {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            },
+            error.to_string(),
+        )
+    })?;
+
+    Ok((
+        [
+            (header::CONTENT_TYPE, mime_type),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        bytes,
+    )
+        .into_response())
 }
 
 pub async fn open_file(
@@ -330,12 +341,6 @@ fn resolve_workspace_file_path(
         )
     })?;
     Ok((root, path))
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct FileOpenResponse {
-    pub path: String,
-    pub opened: bool,
 }
 
 fn workspace_root(directory: Option<String>) -> Option<PathBuf> {
@@ -796,6 +801,7 @@ mod tests {
 
     #[test]
     fn resolve_workspace_file_path_handles_absolute_and_relative_inputs() {
+        let _global_state = crate::test_support::current_directory_lock();
         let _current_directory = CurrentDirectoryGuard::clear();
         let temp = tempfile::tempdir().expect("temp workspace");
         let root = temp.path();

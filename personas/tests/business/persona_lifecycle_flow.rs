@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 use tura_persona::state_machine::{PersonaManagement, PersonaState};
 use tura_persona::store::{
     default_persona_config, delete_dynamic_persona, discover_personas, load_persona,
-    save_dynamic_persona, PersonaConfig, PersonaSource, DYNAMIC_PERSONAS_DIR, PERSONA_CONFIG_FILE,
+    save_dynamic_persona, PersonaConfig, PersonaSource, CLI_COMMUNICATION_STYLE_FILE,
+    COMMUNICATION_STYLE_DIR, COMMUNICATION_STYLE_FILE, DYNAMIC_PERSONAS_DIR, PERSONA_CONFIG_FILE,
     PERSONA_PROMPT_DIR, STATIC_PERSONAS_DIR,
 };
 
@@ -120,6 +121,44 @@ fn persona_business_rules_reject_user_default_config_and_static_delete() {
         .join(STATIC_PERSONAS_DIR)
         .join("builtin")
         .exists());
+}
+
+#[test]
+fn persona_business_loads_shared_gui_and_cli_communication_styles() {
+    let project = temp_project();
+    let shared_dir = project
+        .path()
+        .join(STATIC_PERSONAS_DIR)
+        .join(COMMUNICATION_STYLE_DIR);
+    std::fs::create_dir_all(&shared_dir).expect("shared communication style dir");
+    std::fs::write(
+        shared_dir.join(COMMUNICATION_STYLE_FILE),
+        "Shared GUI communication style",
+    )
+    .expect("write gui communication style");
+    std::fs::write(
+        shared_dir.join(CLI_COMMUNICATION_STYLE_FILE),
+        "Shared CLI communication style",
+    )
+    .expect("write cli communication style");
+
+    let saved = save_dynamic_persona(
+        project.path(),
+        &default_persona_config(project.path(), "Guide").expect("default config"),
+        Some("Persona prompt"),
+        Some("Local communication style"),
+    )
+    .expect("save dynamic persona");
+
+    assert_eq!(saved.persona.as_deref(), Some("Persona prompt"));
+    assert_eq!(
+        saved.communication_style.as_deref(),
+        Some("Shared GUI communication style")
+    );
+    assert_eq!(
+        saved.cli_communication_style.as_deref(),
+        Some("Shared CLI communication style")
+    );
 }
 
 fn temp_project() -> tempfile::TempDir {

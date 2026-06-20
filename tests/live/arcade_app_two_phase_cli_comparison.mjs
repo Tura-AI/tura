@@ -6,11 +6,11 @@ import path from "node:path"
 import process from "node:process"
 import { performance } from "node:perf_hooks"
 import { fileURLToPath } from "node:url"
-import { agentEventStats, agentUsageFromJsonl, claudeCodeArgs, findClaudeExe, findPiExe, piAgentArgs } from "../lib/agent_cli.mjs"
-import { businessRunPaths, normalizeBusinessSummary } from "../lib/business_paths.mjs"
+import { agentEventStats, agentUsageFromJsonl, claudeCodeArgs, findClaudeExe, findPiExe, piAgentArgs } from "./live_lib_agent_cli.mjs"
+import { businessRunPaths, normalizeBusinessSummary } from "../business/business_lib_business_paths.mjs"
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
-const repoRoot = path.resolve(scriptDir, "..", "..", "..")
+const repoRoot = path.resolve(scriptDir, "..", "..")
 const runId = process.env.COMMAND_RUN_AGENT_RUN_ID || `arcade-two-step-${Date.now()}`
 const runPaths = businessRunPaths("tui-command-run-arcade-two-step", runId)
 const runRoot = runPaths.run_root

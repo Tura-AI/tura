@@ -1,15 +1,37 @@
 import type { TuraConfigModelPair, TuraConfigResponse } from "@tura/gateway-sdk";
-import { activeLanguage, t, type TextKey } from "../../i18n";
+import { currentLanguage, LANGUAGE_OPTIONS, t, type TextKey } from "../../i18n";
 import { DEFAULT_CODE_FONT } from "../../config/defaults";
 import type { ThemeMode } from "../../state/global-store";
 import type { AppearanceOption } from "./appearance-select";
 
-export const THEME_OPTIONS: Array<{ id: ThemeMode; label: string }> = [
-  { id: "light", label: t("light") },
-  { id: "dark", label: t("dark") },
-  { id: "caral", label: "Caral" },
-  { id: "uruk", label: "Uruk" },
-  { id: "liangzhu", label: "Liangzhu" },
+export const THEME_OPTIONS: Array<{
+  id: ThemeMode;
+  label: string;
+}> = [
+  {
+    id: "light",
+    get label() {
+      return t("light");
+    },
+  },
+  {
+    id: "dark",
+    get label() {
+      return t("dark");
+    },
+  },
+  {
+    id: "caral",
+    label: "Caral",
+  },
+  {
+    id: "uruk",
+    label: "Uruk",
+  },
+  {
+    id: "liangzhu",
+    label: "Liangzhu",
+  },
 ];
 export const DEFAULT_PROVIDER_DOMAIN = "llm";
 const PROVIDER_DOMAIN_LABELS: Record<string, TextKey> = {
@@ -20,13 +42,10 @@ const PROVIDER_DOMAIN_LABELS: Record<string, TextKey> = {
   productivity: "domainProductivity",
   search: "domainSearch",
 };
-export const AGENT_MODEL_TIERS = ["flagship_thinking", "thinking", "fast", "instant"] as const;
+export const DEFAULT_MODEL_TIERS = ["thinking", "fast"] as const;
 export const AGENT_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
-export const MODEL_SETTINGS_TIERS = ["flagship_thinking", "thinking", "fast", "instant"];
-export const LANGUAGE_OPTIONS = [
-  { id: "zh-CN", label: "简体中文" },
-  { id: "en", label: "English" },
-];
+export const DEFAULT_MODEL_TIER_CONFIG_TIERS = ["thinking", "fast"];
+export { LANGUAGE_OPTIONS };
 
 type FontLocale = "en" | "zhHans" | "zhHant" | "es" | "hi" | "ar" | "pt" | "bn" | "ru" | "ja";
 const FONT_LOCALE_ORDER: FontLocale[] = [
@@ -189,7 +208,7 @@ const CODE_FONT_OPTIONS = [
 ] as const;
 
 function displayFontLocale(): FontLocale {
-  return activeLanguage === "zh-CN" ? "zhHans" : "en";
+  return currentLanguage() === "zh-CN" ? "zhHans" : "en";
 }
 
 function fontFamilyValue(fonts: Record<FontLocale, string>, preferred: FontLocale): string {
@@ -310,9 +329,22 @@ export function modelTierLabel(tier: string): string {
     embedding_high: "modelTierEmbeddingHigh",
     embedding_low: "modelTierEmbeddingLow",
     fast: "modelTierFast",
-    flagship_thinking: "modelTierFlagshipThinking",
-    instant: "modelTierInstant",
     thinking: "modelTierThinking",
   };
   return labels[tier] ? t(labels[tier]) : tier;
+}
+
+export function canonicalDefaultModelTier(
+  value: string | undefined,
+): (typeof DEFAULT_MODEL_TIERS)[number] {
+  switch (value?.trim().toLowerCase()) {
+    case "fast":
+    case "instant":
+      return "fast";
+    case "flagship":
+    case "flagship_thinking":
+    case "thinking":
+    default:
+      return "thinking";
+  }
 }

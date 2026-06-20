@@ -90,6 +90,29 @@ pub enum PlanStatus {
 
 pub type TaskStatus = PlanStatus;
 
+pub const DEFAULT_CONTEXT_TOKEN_LIMIT: u64 = 250_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextTokenStats {
+    #[serde(default)]
+    pub input: u64,
+    #[serde(default = "default_context_token_limit")]
+    pub limit: u64,
+}
+
+impl Default for ContextTokenStats {
+    fn default() -> Self {
+        Self {
+            input: 0,
+            limit: DEFAULT_CONTEXT_TOKEN_LIMIT,
+        }
+    }
+}
+
+fn default_context_token_limit() -> u64 {
+    DEFAULT_CONTEXT_TOKEN_LIMIT
+}
+
 /// Condition that starts or resumes a task-plan item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -227,6 +250,12 @@ pub struct SessionManagement {
     /// Whether the active agent state for this run includes planning.
     #[serde(default)]
     pub planning_enabled: bool,
+    /// Latest model-visible input context token estimate and active compaction limit.
+    #[serde(default)]
+    pub context_tokens: ContextTokenStats,
+    /// Latest terminal provider token/cost report for the session.
+    #[serde(default)]
+    pub runtime_usage: serde_json::Value,
 }
 
 fn default_use_last_tool_call_response() -> bool {
@@ -274,6 +303,8 @@ impl SessionManagement {
             is_child_session: false,
             disable_permission_restrictions: false,
             planning_enabled: false,
+            context_tokens: ContextTokenStats::default(),
+            runtime_usage: serde_json::Value::Null,
         }
     }
 
