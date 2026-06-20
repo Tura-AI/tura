@@ -3,7 +3,7 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[path = "handler_parse.rs"]
@@ -22,6 +22,7 @@ struct CommandRunArgs {
     workdir: Option<String>,
     timeout_ms: Option<u64>,
     allowed_commands: Option<BTreeSet<String>>,
+    sandbox: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -166,6 +167,7 @@ pub struct StreamingCommandRunExecutor {
     router: Arc<CommandRouter>,
     ctx: ToolContext,
     allowed_commands: Option<BTreeSet<String>>,
+    sandbox: bool,
     active_step: Option<u64>,
     active_step_repaired: bool,
     next_index: usize,
@@ -196,6 +198,7 @@ impl StreamingCommandRunExecutor {
             router: Arc::new(CommandRouter::new()),
             ctx: ToolContext::new_with_lock_scope(session_dir, lock_scope),
             allowed_commands,
+            sandbox: false,
             active_step: None,
             active_step_repaired: false,
             next_index: 0,
@@ -241,8 +244,17 @@ impl StreamingCommandRunExecutor {
             let router = Arc::clone(&self.router);
             let ctx = self.ctx.child();
             let allowed_commands = self.allowed_commands.clone();
+            let sandbox = self.sandbox;
             self.macro_command_batch.push(tokio::spawn(async move {
-                run_command_run_item(&router, command, ctx, false, allowed_commands.as_ref()).await
+                run_command_run_item(
+                    &router,
+                    command,
+                    ctx,
+                    false,
+                    allowed_commands.as_ref(),
+                    sandbox,
+                )
+                .await
             }));
             self.flush_macro_command_batch().await;
             return self.drain_finished_results();
@@ -255,6 +267,7 @@ impl StreamingCommandRunExecutor {
             self.ctx.child(),
             true,
             self.allowed_commands.as_ref(),
+            self.sandbox,
         )
         .await;
         let should_halt = is_failed_apply_patch_result(&result);
@@ -375,6 +388,7 @@ async fn execute_async(args: CommandRunArgs, ctx: ToolContext) -> CommandRunOutp
     let CommandRunArgs {
         mut commands,
         allowed_commands,
+        sandbox,
         ..
     } = args;
     normalize_command_steps(&mut commands);
@@ -390,8 +404,14 @@ async fn execute_async(args: CommandRunArgs, ctx: ToolContext) -> CommandRunOutp
     let mut cancelled = false;
     let mut cancel_reason = None;
     for commands in by_step.into_values() {
-        let step_output =
-            run_command_run_step(&router, commands, ctx.child(), allowed_commands.as_ref()).await;
+        let step_output = run_command_run_step(
+            &router,
+            commands,
+            ctx.child(),
+            allowed_commands.as_ref(),
+            sandbox,
+        )
+        .await;
         results.extend(step_output.results);
         if step_output.cancelled {
             cancelled = true;
@@ -429,6 +449,7 @@ async fn run_command_run_step(
     commands: Vec<CommandItem>,
     ctx: ToolContext,
     allowed_commands: Option<&BTreeSet<String>>,
+    sandbox: bool,
 ) -> CommandRunStepOutput {
     let mut results = Vec::new();
     let mut macro_command_batch = Vec::new();
@@ -446,11 +467,19 @@ async fn run_command_run_step(
                 std::mem::take(&mut macro_command_batch),
                 ctx.child(),
                 allowed_commands,
+                sandbox,
             )
             .await,
         );
-        let result =
-            run_command_run_item(router, command, ctx.child(), true, allowed_commands).await;
+        let result = run_command_run_item(
+            router,
+            command,
+            ctx.child(),
+            true,
+            allowed_commands,
+            sandbox,
+        )
+        .await;
         let should_stop = is_failed_apply_patch_result(&result);
         results.push(result);
         if should_stop {
@@ -463,8 +492,9 @@ async fn run_command_run_step(
         }
     }
 
-    results
-        .extend(run_macro_command_batch(router, macro_command_batch, ctx, allowed_commands).await);
+    results.extend(
+        run_macro_command_batch(router, macro_command_batch, ctx, allowed_commands, sandbox).await,
+    );
     CommandRunStepOutput {
         results,
         cancelled: false,
@@ -481,6 +511,7 @@ async fn run_macro_command_batch(
     commands: Vec<CommandItem>,
     ctx: ToolContext,
     allowed_commands: Option<&BTreeSet<String>>,
+    sandbox: bool,
 ) -> Vec<CommandRunItemResult> {
     if commands.is_empty() {
         return Vec::new();
@@ -494,6 +525,7 @@ async fn run_macro_command_batch(
             ctx.child(),
             false,
             allowed_commands,
+            sandbox,
         ));
     }
     let mut results = Vec::new();
@@ -510,6 +542,7 @@ async fn run_command_run_item(
     ctx: ToolContext,
     force_exclusive: bool,
     allowed_commands: Option<&BTreeSet<String>>,
+    sandbox: bool,
 ) -> CommandRunItemResult {
     if !command_allowed(&command.command, allowed_commands) {
         return CommandRunItemResult::failed(
@@ -558,6 +591,16 @@ async fn run_command_run_item(
             );
         }
     };
+    if sandbox {
+        if let Err(message) = validate_command_sandbox(&command_name, &call, &ctx.session_dir) {
+            return CommandRunItemResult::blocked(
+                command.index,
+                command.effective_step(),
+                command_name,
+                message,
+            );
+        }
+    }
     match router.dispatch(call, ctx, force_exclusive).await {
         Ok(result) => CommandRunItemResult {
             index: command.index,
@@ -584,6 +627,114 @@ fn command_allowed(command: &str, allowed_commands: Option<&BTreeSet<String>>) -
         return true;
     };
     allowed_commands.contains(&crate::commands::canonical_command(command))
+}
+
+fn sandbox_enabled(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::Bool(enabled)) => *enabled,
+        Some(Value::String(text)) => matches!(
+            text.trim().to_ascii_lowercase().as_str(),
+            "true" | "1" | "on" | "enabled"
+        ),
+        Some(Value::Object(object)) => ["enabled", "workspace", "workspace_write"]
+            .iter()
+            .any(|name| sandbox_enabled(object.get(*name))),
+        _ => false,
+    }
+}
+
+fn validate_command_sandbox(
+    command_name: &str,
+    call: &ToolCall,
+    session_dir: &Path,
+) -> Result<(), String> {
+    match command_name {
+        "apply_patch" => match &call.payload {
+            ToolPayload::Freeform { input } => {
+                crate::commands::apply_patch::validate_paths_within_session_dir(input, session_dir)
+            }
+            ToolPayload::Function { .. } => Ok(()),
+        },
+        "shell_command" | "bash" | "zsh" => {
+            if let Some(workdir) = shell_workdir_from_payload(&call.payload) {
+                validate_workdir_within_session_dir(session_dir, &workdir)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn shell_workdir_from_payload(payload: &ToolPayload) -> Option<String> {
+    let ToolPayload::Function { arguments } = payload else {
+        return None;
+    };
+    arguments
+        .get("workdir")
+        .or_else(|| arguments.get("cwd"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToString::to_string)
+}
+
+fn validate_workdir_within_session_dir(session_dir: &Path, raw: &str) -> Result<(), String> {
+    let root = session_dir.canonicalize().map_err(|err| {
+        format!(
+            "failed to resolve command_run sandbox workspace {}: {err}",
+            session_dir.display()
+        )
+    })?;
+    let raw_path = PathBuf::from(raw.trim());
+    let path = if raw_path.is_absolute() {
+        raw_path
+    } else {
+        root.join(raw_path)
+    };
+    let path = normalize_path_lexically(&path.canonicalize().unwrap_or(path));
+    if path_is_within_root(&path, &root) {
+        return Ok(());
+    }
+    Err(format!(
+        "command_run sandbox blocked workdir outside workspace: {}",
+        PathBuf::from(raw.trim()).display()
+    ))
+}
+
+fn path_is_within_root(path: &Path, root: &Path) -> bool {
+    if path.strip_prefix(root).is_ok() {
+        return true;
+    }
+    let path = comparable_path_string(path);
+    let root = comparable_path_string(root);
+    path == root || path.starts_with(&(root + "/"))
+}
+
+fn normalize_path_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            std::path::Component::RootDir => normalized.push(component.as_os_str()),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            std::path::Component::Normal(part) => normalized.push(part),
+        }
+    }
+    normalized
+}
+
+fn comparable_path_string(path: &Path) -> String {
+    let mut text = path.to_string_lossy().replace('\\', "/");
+    if let Some(stripped) = text.strip_prefix("//?/") {
+        text = stripped.to_string();
+    }
+    #[cfg(windows)]
+    {
+        text = text.to_ascii_lowercase();
+    }
+    text.trim_end_matches('/').to_string()
 }
 
 fn command_run_task_status_result(command: CommandItem) -> CommandRunItemResult {
@@ -694,6 +845,7 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
     };
     let top_workdir = string_field(object, &["workdir", "cwd"]);
     let top_timeout_ms = u64_field(object, &["timeout_ms", "timeoutMs"]);
+    let sandbox = sandbox_enabled(object.get("sandbox"));
     let command_values = if let Some(commands) = object.get("commands") {
         command_values(commands)
     } else if let Some(steps) = object.get("steps") {
@@ -706,6 +858,7 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
         workdir: top_workdir,
         timeout_ms: top_timeout_ms,
         allowed_commands: None,
+        sandbox,
     };
     for value in command_values {
         args.commands.push(parse_command_item(&value)?);
@@ -953,6 +1106,26 @@ fn default_timeout_ms_for_command(command: &str) -> u64 {
 }
 
 impl CommandRunItemResult {
+    fn blocked(index: usize, step: u64, command: String, error: String) -> Self {
+        Self {
+            index,
+            step,
+            command_type: command,
+            success: false,
+            output: Some(crate::shell_executor::json_like_output(
+                126,
+                String::new(),
+                error.clone(),
+                json!({
+                    "error_type": "SandboxViolation",
+                    "message": error,
+                }),
+                Vec::new(),
+            )),
+            error: None,
+        }
+    }
+
     fn failed(index: usize, step: u64, command: String, error: String) -> Self {
         Self {
             index,

@@ -157,13 +157,10 @@ pub(super) fn parse_cli_args(input: &str) -> Result<GenerateMediaArgs, String> {
             continue;
         }
         if index == 0 {
-            match parse_media_kind(original_word) {
-                Ok(kind) => {
-                    parts.kind = Some(kind);
-                    index += 1;
-                    continue;
-                }
-                Err(_) => {}
+            if let Ok(kind) = parse_media_kind(original_word) {
+                parts.kind = Some(kind);
+                index += 1;
+                continue;
             }
         }
         let (word, inline_value) = split_cli_assignment(original_word);

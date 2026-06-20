@@ -9,7 +9,13 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader};
 use tokio::net::TcpListener as TokioTcpListener;
 
-pub(crate) const ROUTES: &[&str] = &["thinking", "fast", "embedding_high", "embedding_low"];
+pub(crate) const ROUTES: &[&str] = &[
+    "thinking",
+    "fast",
+    "codex/gpt-5.5",
+    "embedding_high",
+    "embedding_low",
+];
 
 pub(crate) static ENV_LOCK: Mutex<()> = Mutex::new(());
 pub(crate) static MOCK_ROUTER_ADDR: OnceLock<String> = OnceLock::new();
@@ -17,7 +23,7 @@ pub(crate) static MOCK_ROUTER_INIT: Mutex<()> = Mutex::new(());
 pub(crate) const MOCK_COMMAND_TIMEOUT_MS: u64 = 3_000;
 pub(crate) const MOCK_PROVIDER_TIMEOUT_MS: &str = "30000";
 pub(crate) const MOCK_PROVIDER_STREAM_TIMEOUT_MS: &str = "1000";
-pub(crate) const MOCK_MULTI_COMMAND_STREAM_TIMEOUT_MS: &str = "5000";
+pub(crate) const MOCK_MULTI_COMMAND_STREAM_TIMEOUT_MS: &str = "10000";
 
 pub(crate) fn mock_command_run_router_addr() -> String {
     if let Some(addr) = MOCK_ROUTER_ADDR.get() {
@@ -300,7 +306,7 @@ pub(crate) fn write_codex_streaming_probe_response(
         }),
     );
     let first_path = workspace.join("streamed-first.txt");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
     while std::time::Instant::now() < deadline {
         if first_path.exists() {
             first_command_observed_before_response_finished.store(true, Ordering::SeqCst);

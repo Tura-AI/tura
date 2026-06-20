@@ -32,7 +32,8 @@ export function selectedSettingOptionIndex(state: AppState, detail: SettingDetai
     const index = state.agents.findIndex((agent) => storedAgentID(agent) === active);
     return index >= 0 ? index : 0;
   }
-  if (detail === "persona") return selectedPersonaIndex(state.personas, state.agents, state.session, config);
+  if (detail === "persona")
+    return selectedPersonaIndex(state.personas, state.agents, state.session, config);
   if (detail === "language")
     return Math.max(0, ["en", "zh-CN"].indexOf(String(config?.language ?? "en")));
   if (detail === "session")

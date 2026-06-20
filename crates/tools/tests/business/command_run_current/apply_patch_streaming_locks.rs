@@ -77,7 +77,36 @@ fn pass_apply_patch_add_delete_and_move_are_tracked_in_output() {
 }
 
 #[test]
-fn fail_apply_patch_rejects_path_outside_workspace() {
+fn pass_apply_patch_allows_path_outside_workspace_without_sandbox() {
+    let root = temp_workspace("patch-outside-default");
+    let outside = root
+        .parent()
+        .expect("temp workspace should have a parent")
+        .join("outside-command-run-default-test.txt");
+    let _ = fs::remove_file(&outside);
+
+    let output = command_run::execute(
+        &json!({
+            "commands": [
+                {
+                    "command": "apply_patch",
+                    "command_line": format!("*** Begin Patch\n*** Add File: {}\n+ok\n*** End Patch\n", outside.display())
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["success"], true, "{output}");
+    assert_eq!(
+        fs::read_to_string(&outside).expect("outside file should be written"),
+        "ok\n"
+    );
+    let _ = fs::remove_file(outside);
+}
+
+#[test]
+fn fail_apply_patch_rejects_path_outside_workspace_when_sandboxed() {
     let root = temp_workspace("patch-outside");
     let outside = root
         .parent()
@@ -87,6 +116,7 @@ fn fail_apply_patch_rejects_path_outside_workspace() {
 
     let output = command_run::execute(
         &json!({
+            "sandbox": true,
             "commands": [
                 {
                     "command": "apply_patch",

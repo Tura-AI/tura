@@ -798,10 +798,17 @@ mod tests {
             .expect("commands item required should be an array");
 
         assert_eq!(schema["function"]["strict"], true);
-        assert_eq!(parameters["required"], serde_json::json!(["commands"]));
+        assert_eq!(
+            parameters["required"],
+            serde_json::json!(["commands", "sandbox"])
+        );
         assert_eq!(
             parameters["properties"]["commands"]["items"]["required"],
             serde_json::json!(["command_type", "command_line", "step"])
+        );
+        assert_eq!(
+            parameters["properties"]["sandbox"]["type"],
+            serde_json::json!("boolean")
         );
         assert!(parameters["properties"].get("task_status").is_none());
         assert!(command_required.contains(&serde_json::json!("command_type")));

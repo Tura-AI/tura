@@ -483,7 +483,9 @@ mod tests {
             .expect("prompt message content should be a string");
 
         assert!(content.contains("Continue working toward the active thread goal."));
-        assert!(content.contains("The last user message in the conversation is the current objective"));
+        assert!(
+            content.contains("The last user message in the conversation is the current objective")
+        );
         assert!(!content.contains("[current objective]:\nSTATE MACHINE OBJECTIVE"));
         assert!(content.contains("task_status status question"));
         assert!(content.contains("task_status status done"));
@@ -528,7 +530,9 @@ mod tests {
             .as_str()
             .expect("prompt message content should be a string");
 
-        assert!(content.contains("The last user message in the conversation is the current objective"));
+        assert!(
+            content.contains("The last user message in the conversation is the current objective")
+        );
         assert!(!content.contains("[current objective]:\nfix the task\n\nPatch parser"));
         assert!(!content.contains("Patch parser"));
         assert!(!content.contains("original_user_task:"));

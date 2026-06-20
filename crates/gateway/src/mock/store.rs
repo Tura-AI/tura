@@ -93,7 +93,7 @@ impl Store {
             parts: vec![MessagePart {
                 id: Uuid::new_v4().to_string(),
                 session_id: session_id.clone(),
-                message_id: message_id.clone(),
+                message_id,
                 part_type: "text".to_string(),
                 content: Some(
                     "Hello! I'm ready to help you. How can I assist you today?".to_string(),
@@ -249,7 +249,7 @@ impl Store {
             parts: vec![MessagePart {
                 id: part_id,
                 session_id: session_id.to_string(),
-                message_id: message_id.clone(),
+                message_id,
                 part_type: "text".to_string(),
                 content: Some(content.clone()),
                 text: Some(content),

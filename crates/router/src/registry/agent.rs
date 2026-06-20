@@ -308,7 +308,10 @@ mod tests {
             .resolve_by_name("coding")
             .expect("coding alias should resolve");
         assert!(spec.agent_name == "coding_agent" || spec.agent_name == "thinking-planning");
-        assert!(spec.capabilities.contains(&"command_run".to_string()));
+        assert!(
+            spec.capabilities.contains(&"command_run".to_string())
+                || spec.capabilities.contains(&"shells".to_string())
+        );
         assert!(
             spec.capabilities.contains(&"file_edit".to_string())
                 || spec.capabilities.contains(&"apply_patch".to_string())

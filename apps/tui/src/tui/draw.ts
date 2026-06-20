@@ -129,9 +129,7 @@ function drawChatFrame(
   const previousTotalLineCount = previousBodyLineCount + lastChatReservationLineCount;
   const stableTailCacheToBody =
     rendered.activeLiveMessageCount === 0 && rendered.tailCacheMessageCount > 0;
-  const finalizingLiveToCache =
-    lastChatActiveLiveMessageCount > 0 &&
-    stableTailCacheToBody;
+  const finalizingLiveToCache = lastChatActiveLiveMessageCount > 0 && stableTailCacheToBody;
   if (stableTailCacheToBody) target = promoteLiveFrameToScrollbackBody(target);
   target = preserveSpilledLivePrefix(target, previousBodyLineCount);
   const bodyShrank = previousBodyLineCount !== 0 && target.bodyLines.length < previousBodyLineCount;
@@ -149,7 +147,8 @@ function drawChatFrame(
   const chromeChanged = lastChatChromeFrame !== rendered.chromeFrame;
   const bodyChanged = target.bodyLines.length !== previousBodyLineCount;
   const reservationChanged = target.mutableLines.length !== lastChatReservationLineCount;
-  const rewriteMutableRegion = liveChanged || tailCacheChanged || chromeChanged || reservationChanged;
+  const rewriteMutableRegion =
+    liveChanged || tailCacheChanged || chromeChanged || reservationChanged;
 
   if (!rewriteAllRegions && !bodyChanged && !rewriteMutableRegion) {
     return frame;

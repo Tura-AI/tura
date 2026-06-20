@@ -36,7 +36,10 @@ export function lastAbsoluteCursorBefore(
   return cursor;
 }
 
-export function assertMutableRegionRepaintedWithoutClearBefore(output: string, marker: string): void {
+export function assertMutableRegionRepaintedWithoutClearBefore(
+  output: string,
+  marker: string,
+): void {
   const markerIndex = output.indexOf(marker);
   assert.ok(markerIndex >= 0, `expected rewritten output to include ${marker}`);
   const clearIndex = output.search(/\x1b\[\d+;1H\x1b\[J/u);

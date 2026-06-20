@@ -289,6 +289,62 @@ pub fn access(patch_text: &str, session_dir: &Path) -> Access {
     }
 }
 
+pub(crate) fn validate_paths_within_session_dir(
+    patch_text: &str,
+    session_dir: &Path,
+) -> Result<(), String> {
+    let changes = parse_patch(patch_text)?;
+    for change in changes {
+        validate_patch_path_within_session_dir(session_dir, &change.path)?;
+        if let Some(move_path) = change.move_path {
+            validate_patch_path_within_session_dir(session_dir, &move_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_patch_path_within_session_dir(session_dir: &Path, raw: &str) -> Result<(), String> {
+    let root = session_dir.canonicalize().map_err(|err| {
+        format!(
+            "failed to resolve patch workspace {}: {err}",
+            session_dir.display()
+        )
+    })?;
+    let path = normalize_path_lexically(&safe_path(session_dir, raw)?);
+    if path_is_within_root(&path, &root) {
+        return Ok(());
+    }
+    Err(format!(
+        "apply_patch path is outside workspace: {}",
+        patch_path(raw).display()
+    ))
+}
+
+fn path_is_within_root(path: &Path, root: &Path) -> bool {
+    if path.strip_prefix(root).is_ok() {
+        return true;
+    }
+    let path = comparable_path_string(path);
+    let root = comparable_path_string(root);
+    path == root || path.starts_with(&(root + "/"))
+}
+
+fn normalize_path_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            std::path::Component::RootDir => normalized.push(component.as_os_str()),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            std::path::Component::Normal(part) => normalized.push(part),
+        }
+    }
+    normalized
+}
+
 fn parse_patch(patch_text: &str) -> Result<Vec<PatchChange>, String> {
     let mut changes = Vec::new();
     let mut current: Option<PatchChange> = None;

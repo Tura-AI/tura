@@ -208,13 +208,9 @@ export function assertNoDuplicatedFrameText(text, label, markers = []) {
 }
 
 export async function waitForComposer(page, timeoutMs = 5000) {
-  await page.waitForFunction(
-    () => /Enter(?::| to)? send/.test(document.body.innerText),
-    null,
-    {
-      timeout: timeoutMs,
-    },
-  );
+  await page.waitForFunction(() => /Enter(?::| to)? send/.test(document.body.innerText), null, {
+    timeout: timeoutMs,
+  });
 }
 
 export async function submitTypedPrompt(page, text) {

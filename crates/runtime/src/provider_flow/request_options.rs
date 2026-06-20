@@ -306,7 +306,7 @@ pub(crate) fn route_for_provider_name(
     provider_name: &str,
 ) -> Option<tura_llm_rust::RouteConfig> {
     let (provider, model) = provider_model_pair(provider_name)?;
-    provider_base_url(settings, &provider).map(|base_url| tura_llm_rust::RouteConfig {
+    provider_base_url(settings, provider).map(|base_url| tura_llm_rust::RouteConfig {
         default_temperature: 0.2,
         providers: vec![tura_llm_rust::ProviderConfig {
             provider: provider.to_string(),

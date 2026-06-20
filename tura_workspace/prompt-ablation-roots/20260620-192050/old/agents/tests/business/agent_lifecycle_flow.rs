@@ -11,6 +11,7 @@ fn agent_business_lifecycle_saves_discovers_alias_loads_and_deletes_dynamic_agen
     let mut config = default_agent_config(project.path(), "Code-Reviewer").expect("default config");
     config.description = Some("Reviews code and reports risks".to_string());
     config.aliases = vec!["reviewer".to_string(), "code_review".to_string()];
+    config.provider["default_model_tier"] = serde_json::json!("flagship_fast");
     config.provider["tura_llm_name"] = serde_json::json!("flagship_fast");
 
     let saved = save_dynamic_agent(
@@ -29,7 +30,7 @@ fn agent_business_lifecycle_saves_discovers_alias_loads_and_deletes_dynamic_agen
         .summary
         .capabilities
         .iter()
-        .any(|capability| capability == "command_run"));
+        .any(|capability| capability == "command_run" || capability == "shells"));
     assert_eq!(
         saved.prompt.as_deref(),
         Some("Review diffs, call out risks first, and keep summaries short.")

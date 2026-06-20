@@ -20,10 +20,12 @@ TYPED_TEST_DIRS = ("business", "os_testing", "performance", "live", "release", "
 FORBIDDEN_TEST_DIRS = ("tests/e2e/",)
 WORKSPACE_BENCHMARK_DIRS = {
     "bug-fix",
+    "commands",
     "daily-ops",
     "frontend-playwright",
     "lib",
     "media-internet",
+    "media-presentation",
     "project-rebuild-refactor",
     "tooling",
     "tui",
@@ -131,13 +133,13 @@ def validate_typed_directory_shape(package: str, tests_root: Path, errors: list[
                             "is not a known benchmark category"
                         )
                     continue
-                if typed_name in {"business", "os_testing"} and module_dir_allowed(typed_root, child):
+                if typed_name in {"business", "os_testing", "live"} and module_dir_allowed(typed_root, child):
                     continue
                 errors.append(
                     f"{package}: {normalize(child.relative_to(tests_root.parent))}/ "
-                    "is not allowed; tests/business and tests/os_testing allow helpers "
+                    "is not allowed; tests/business, tests/os_testing, and tests/live allow helpers "
                     "or module directories tied to a top-level target, while "
-                    "tests/performance, tests/live, tests/release, and tests/benchmark "
+                    "tests/performance, tests/release, and tests/benchmark "
                     "remain flat typed suites."
                 )
 

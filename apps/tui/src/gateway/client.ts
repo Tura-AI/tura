@@ -156,10 +156,7 @@ export class GatewayClient {
     if (options.limit) query.limit = options.limit;
     if (options.before) query.before = options.before;
     if (options.after) query.after = options.after;
-    return this.get<Message[]>(
-      `/session/${encodeURIComponent(sessionID)}/message`,
-      query,
-    );
+    return this.get<Message[]>(`/session/${encodeURIComponent(sessionID)}/message`, query);
   }
 
   async sendPromptAsync(sessionID: string, payload: PromptPayload): Promise<void> {

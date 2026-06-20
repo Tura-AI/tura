@@ -103,6 +103,37 @@ fn pass_top_level_workdir_is_accepted_for_current_style_shell_items() {
 }
 
 #[test]
+fn fail_sandbox_rejects_shell_workdir_outside_workspace() {
+    let _guard = env_lock_blocking();
+    std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    let root = temp_workspace("sandbox-shell-workdir");
+    let outside = root
+        .parent()
+        .expect("temp workspace should have a parent")
+        .join("sandbox-shell-outside");
+    fs::create_dir_all(&outside).expect("outside workdir");
+
+    let output = command_run::execute(
+        &json!({
+            "sandbox": true,
+            "commands": [
+                {
+                    "command": "shell_command",
+                    "command_line": json!({ "command": "Get-Location", "workdir": outside, "timeout_ms": 5000 }).to_string()
+                }
+            ]
+        }),
+        &root,
+    );
+
+    assert_eq!(output["results"][0]["success"], false, "{output}");
+    assert!(output["results"][0]["output"]["stderr"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("outside workspace"));
+}
+
+#[test]
 fn pass_unknown_command_with_shell_payload_is_mapped_to_active_shell_command() {
     let _guard = env_lock_blocking();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");

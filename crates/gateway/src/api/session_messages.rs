@@ -1330,7 +1330,7 @@ mod tests {
         let mut cursor = session_store().event_cursor();
 
         let response = send_agent_message_payload(
-            session.id.clone(),
+            session.id,
             SendAgentMessageRequest {
                 reply_message: String::new(),
                 new_learning: String::new(),

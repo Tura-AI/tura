@@ -68,7 +68,7 @@ fn router_registry_business_flow_persists_discovers_resolves_and_deletes_dynamic
         .summary
         .capabilities
         .iter()
-        .any(|capability| capability == "command_run"));
+        .any(|capability| capability == "command_run" || capability == "shells"));
     assert_eq!(
         saved_agent.summary.path,
         PathBuf::from("agents").join("src").join("router-coding")

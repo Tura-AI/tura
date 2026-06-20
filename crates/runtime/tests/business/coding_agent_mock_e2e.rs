@@ -44,7 +44,7 @@ fn coding_agent_can_call_command_run_tool_e2e() {
             user_input: "Run pwd with command_run, then patch src/lib.rs with command_run apply_patch, verify it with shell_command, and finish with normal assistant text."
                 .to_string(),
             file_input: vec![],
-            agent: None,
+            agent: Some("fast".to_string()),
             runtime_context: None,
             planning_mode_override: None,
         },
@@ -54,7 +54,13 @@ fn coding_agent_can_call_command_run_tool_e2e() {
 
     assert_eq!(result.agents.len(), 1);
     assert_eq!(result.agents[0].agent_name, "fast");
-    assert_eq!(result.session.state, SessionState::Completed);
+    assert_eq!(
+        result.session.state,
+        SessionState::Completed,
+        "final_error={:?}; session log: {:#?}",
+        result.final_error,
+        result.session.session_log
+    );
 
     let tool_results = tool_results(&result.session.session_log);
     assert_tool_success(&tool_results, "command_run");
@@ -147,7 +153,7 @@ fn coding_agent_executes_command_run_command_before_stream_finishes() {
             user_input: "Use command_run in this code file workspace to create streamed-first.txt, then create streamed-second.txt."
                 .to_string(),
             file_input: vec![],
-            agent: None,
+            agent: Some("fast".to_string()),
             runtime_context: None,
             planning_mode_override: None,
         },
@@ -159,7 +165,10 @@ fn coding_agent_executes_command_run_command_before_stream_finishes() {
         provider
             .first_command_observed_before_response_finished
             .load(Ordering::SeqCst),
-        "first streamed command did not execute before the provider finished sending the response"
+        "first streamed command did not execute before the provider finished sending the response; requests={:#?}; first_exists={}; second_exists={}",
+        provider.requests.lock().expect("mock provider requests lock"),
+        workspace.join("streamed-first.txt").exists(),
+        workspace.join("streamed-second.txt").exists()
     );
     assert_eq!(result.session.state, SessionState::Completed);
     assert!(

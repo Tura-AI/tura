@@ -699,7 +699,7 @@ mod tests {
         let variant_cache = tool_result_context_cache(&variant);
         assert_eq!(base_cache["cache_id"], variant_cache["cache_id"]);
 
-        let mut with_cache = base.clone();
+        let mut with_cache = base;
         with_cache["context_cache"] = base_cache;
         let context = serde_json::to_string(&command_run_responses_api_context_items(&with_cache))
             .expect("context messages should serialize");

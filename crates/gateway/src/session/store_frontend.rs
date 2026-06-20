@@ -125,7 +125,7 @@ fn upsert_streamed_command_run_results(
     object: &mut serde_json::Map<String, serde_json::Value>,
     results: Vec<serde_json::Value>,
 ) {
-    let results_value = serde_json::Value::Array(results.clone());
+    let results_value = serde_json::Value::Array(results);
     let stream = object
         .entry("streamed_command_run_result".to_string())
         .or_insert_with(|| serde_json::json!({}));

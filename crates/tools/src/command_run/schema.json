@@ -32,6 +32,12 @@
             }
           }
         }
+      },
+      "sandbox": {
+        "type": "boolean",
+        "default": false,
+        "x-tura-optional": true,
+        "description": "Optional workspace sandbox. Defaults to false. When true, command_run rejects apply_patch paths and shell workdirs outside the current workspace before executing the command."
       }
     }
   }

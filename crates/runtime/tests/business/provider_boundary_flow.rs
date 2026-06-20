@@ -555,6 +555,8 @@ fn runtime_for_provider(
         RuntimeProviderConfig {
             base: ProviderConfig {
                 tura_llm_name: route.to_string(),
+                default_model_tier: None,
+                current_model: None,
                 stream,
                 temperature: 0.0,
                 max_tokens: 128,

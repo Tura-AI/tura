@@ -31,6 +31,8 @@ async fn gateway_session_messages_business_flow_streams_then_persists_agent_repl
         Json(StreamAgentTextRequest {
             delta: "partial token".to_string(),
             runtime_id: "runtime-business-1".to_string(),
+            created_at: 0,
+            updated_at: 0,
             context_tokens: None,
             usage: None,
         }),
@@ -57,6 +59,8 @@ async fn gateway_session_messages_business_flow_streams_then_persists_agent_repl
         Json(StreamAgentTextRequest {
             delta: String::new(),
             runtime_id: "runtime-business-1".to_string(),
+            created_at: 0,
+            updated_at: 0,
             context_tokens: None,
             usage: None,
         }),
@@ -81,8 +85,8 @@ async fn gateway_session_messages_business_flow_streams_then_persists_agent_repl
             context_tokens: None,
             usage: None,
             command_updates: Vec::new(),
-            created_at: None,
-            updated_at: None,
+            created_at: 0,
+            updated_at: 0,
         }),
     )
     .await;
@@ -178,8 +182,8 @@ async fn gateway_session_messages_business_flow_updates_planning_tool_message_an
             context_tokens: None,
             usage: None,
             command_updates: Vec::new(),
-            created_at: None,
-            updated_at: None,
+            created_at: 0,
+            updated_at: 0,
         }),
     )
     .await;
@@ -217,8 +221,8 @@ async fn gateway_session_messages_business_flow_updates_planning_tool_message_an
             context_tokens: None,
             usage: None,
             command_updates: Vec::new(),
-            created_at: None,
-            updated_at: None,
+            created_at: 0,
+            updated_at: 0,
         }),
     )
     .await;
@@ -297,8 +301,8 @@ async fn gateway_session_messages_business_flow_publishes_session_name_updates(
             context_tokens: None,
             usage: None,
             command_updates: Vec::new(),
-            created_at: None,
-            updated_at: None,
+            created_at: 0,
+            updated_at: 0,
         }),
     )
     .await;
@@ -400,8 +404,8 @@ async fn gateway_session_messages_business_flow_reads_projection_history_without
             context_tokens: None,
             usage: None,
             command_updates: Vec::new(),
-            created_at: Some(assistant_created_at),
-            updated_at: Some(assistant_created_at),
+            created_at: assistant_created_at,
+            updated_at: assistant_created_at,
         }),
     )
     .await;
@@ -426,8 +430,8 @@ async fn gateway_session_messages_business_flow_reads_projection_history_without
             context_tokens: None,
             usage: None,
             command_updates: Vec::new(),
-            created_at: Some(command_started_at),
-            updated_at: Some(command_finished_at),
+            created_at: command_started_at,
+            updated_at: command_finished_at,
         }),
     )
     .await;
@@ -446,8 +450,8 @@ async fn gateway_session_messages_business_flow_reads_projection_history_without
             context_tokens: None,
             usage: None,
             command_updates: Vec::new(),
-            created_at: Some(assistant_created_at + 1),
-            updated_at: Some(assistant_created_at + 1),
+            created_at: assistant_created_at + 1,
+            updated_at: assistant_created_at + 1,
         }),
     )
     .await;
@@ -472,8 +476,8 @@ async fn gateway_session_messages_business_flow_reads_projection_history_without
             context_tokens: None,
             usage: None,
             command_updates: Vec::new(),
-            created_at: Some(command_started_at + 1),
-            updated_at: Some(command_finished_at + 1),
+            created_at: command_started_at + 1,
+            updated_at: command_finished_at + 1,
         }),
     )
     .await;
@@ -538,8 +542,8 @@ async fn gateway_session_messages_business_flow_reads_projection_history_without
             context_tokens: None,
             usage: None,
             command_updates: Vec::new(),
-            created_at: Some(assistant_created_at),
-            updated_at: Some(assistant_final_updated_at),
+            created_at: assistant_created_at,
+            updated_at: assistant_final_updated_at,
         }),
     )
     .await;
@@ -615,8 +619,8 @@ async fn gateway_session_messages_business_flow_concurrent_agent_writes_stay_ses
                     context_tokens: None,
                     usage: None,
                     command_updates: Vec::new(),
-                    created_at: None,
-                    updated_at: None,
+                    created_at: 0,
+                    updated_at: 0,
                 }),
             )
             .await;

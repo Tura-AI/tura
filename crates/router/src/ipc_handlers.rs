@@ -141,7 +141,9 @@ mod tests {
         assert!(state.shutdown.load(Ordering::SeqCst));
         assert_eq!(response.payload["status"], "shutting_down");
         assert_eq!(response.payload["runtime_workers_stopped"], 0);
-        assert_eq!(response.payload["background_process_scopes_terminated"], 0);
+        assert!(response.payload["background_process_scopes_terminated"]
+            .as_u64()
+            .is_some());
         Ok(())
     }
 

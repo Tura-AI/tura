@@ -220,7 +220,7 @@ fn validate_openai_gpt_image_2_size(dims: Dimensions) -> Result<(), String> {
     if max_edge > 3840 {
         return Err("gpt-image-2 maximum edge is 3840px".to_string());
     }
-    if dims.width % 16 != 0 || dims.height % 16 != 0 {
+    if !dims.width.is_multiple_of(16) || !dims.height.is_multiple_of(16) {
         return Err("gpt-image-2 width and height must be multiples of 16".to_string());
     }
     if max_edge as f64 / min_edge as f64 > 3.0 {
