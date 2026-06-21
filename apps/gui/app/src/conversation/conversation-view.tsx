@@ -39,11 +39,11 @@ import {
   avatarConfigForAgent,
   conversationReactionItems,
   type ConversationReactionItem,
-  groupConversationTurns,
   latestSticker,
   messagesWithSessionThinking,
   personaMediaForAvatar,
 } from "./conversation-data";
+import { groupConversationTurns } from "./conversation-turns";
 import { assistantPartBlocks, assistantToolBlockForPart } from "./assistant-blocks";
 import { Composer } from "./composer";
 import { TextPartCell, previewUserTextParts } from "./message-text-parts";
@@ -82,7 +82,6 @@ export function ConversationView(props: {
   onQueueSubmit?: () => void;
   compact?: boolean;
   composerToolbar?: JSX.Element;
-  composerTaskList?: JSX.Element;
   conversationNotice?: JSX.Element;
   submitDisabled?: boolean;
   running?: boolean;
@@ -395,9 +394,6 @@ export function ConversationView(props: {
         </Show>
       </div>
       <div class="conversation-bottom page-layer-bottom">
-        <Show when={props.composerTaskList}>
-          <div class="composer-task-dock">{props.composerTaskList}</div>
-        </Show>
         <Composer
           text={props.state.composerText}
           images={props.state.composerImages}
@@ -470,6 +466,16 @@ function Transcript(props: {
       .join("|"),
   );
   const latestId = createMemo(() => displayMessages().at(-1)?.message.id);
+  const latestAssistantId = createMemo(() => {
+    const items = displayMessages();
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const message = items[index]?.message;
+      if (message?.role === "assistant") {
+        return message.id;
+      }
+    }
+    return undefined;
+  });
   const [scrollTop, setScrollTop] = createSignal(0);
   const [clientHeight, setClientHeight] = createSignal(0);
   const [heightVersion, setHeightVersion] = createSignal(0);
@@ -488,6 +494,7 @@ function Transcript(props: {
   const virtualEntryCache = new Map<string, VirtualMessageEntry>();
   let lastScrollUpdateAt = 0;
   let lastScrolledAwayFromBottomAt = 0;
+  let measuredSessionId = props.session?.id;
 
   const virtualLayout = createMemo(() => {
     heightVersion();
@@ -538,6 +545,20 @@ function Transcript(props: {
       return;
     }
 
+    const targetMessageId = latestAssistantId();
+    const targetRow = targetMessageId
+      ? Array.from(transcriptEl.querySelectorAll<HTMLElement>(".transcript-virtual-row")).find(
+          (row) => row.dataset.messageId === targetMessageId,
+        )
+      : undefined;
+    const targetAnchors = targetRow
+      ? Array.from(targetRow.querySelectorAll<HTMLElement>("[data-agent-avatar-anchor]"))
+      : [];
+    const anchors =
+      targetAnchors.length > 0
+        ? targetAnchors
+        : Array.from(transcriptEl.querySelectorAll<HTMLElement>("[data-agent-avatar-anchor]"));
+
     let selected:
       | {
           element: HTMLElement;
@@ -545,9 +566,7 @@ function Transcript(props: {
           bottom: number;
         }
       | undefined;
-    for (const block of transcriptEl.querySelectorAll<HTMLElement>(
-      "[data-agent-avatar-anchor], [data-agent-text-block]",
-    )) {
+    for (const block of anchors) {
       const rect = block.getBoundingClientRect();
       const blockTop = rect.top - transcriptRect.top + viewportTop;
       const blockBottom = blockTop + rect.height;
@@ -747,7 +766,11 @@ function Transcript(props: {
     queueFloatingAvatarUpdate();
   });
   createEffect(() => {
-    props.session?.id;
+    const sessionId = props.session?.id;
+    if (sessionId === measuredSessionId) {
+      return;
+    }
+    measuredSessionId = sessionId;
     virtualEntryCache.clear();
     measuredHeights.clear();
     setHeightVersion((version) => version + 1);

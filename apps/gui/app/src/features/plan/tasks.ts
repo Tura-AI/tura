@@ -322,6 +322,11 @@ export function sessionAttentionKey(session: Session): string | undefined {
   return `${session.id}:${status}:${normalizeTimeMs(sessionUpdatedAt(session) ?? 0)}`;
 }
 
+export function shouldShowSessionAttention(session: Session, acknowledged: boolean): boolean {
+  const status = planSessionStatus(session);
+  return status === "doing" || (!acknowledged && (status === "question" || status === "done"));
+}
+
 export function planStoredPlanStatus(session: Session): PlanStatus | undefined {
   const task = sessionTaskState(session);
   const status = task.status;

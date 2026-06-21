@@ -21,7 +21,9 @@ export type SessionLogSnapshot = {
   status?: string | null;
   message_count: number;
   task_management: unknown;
-  management: unknown;
+  management?: unknown;
+  session?: unknown;
+  todos?: unknown[];
 };
 
 export type SessionLogRecord = {

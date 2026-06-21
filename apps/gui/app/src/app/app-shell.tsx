@@ -336,7 +336,6 @@ export function AppShell(props: { view: AppShellViewModel }) {
                   closeInspectorSignal={conversationInspectorCloseToken()}
                   onRequestCollapseLeftRail={collapseRailForMainWidth}
                   onOpenProviderSettings={openProviderSettings}
-                  onEditTask={editComposerTask}
                   onRunTask={(session, task) => void runEditingTaskNow(session, task)}
                   onRuntimeSetting={applyRuntimeSetting}
                   onOpenSettings={openSettings}

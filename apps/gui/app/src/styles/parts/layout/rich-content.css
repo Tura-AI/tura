@@ -71,6 +71,12 @@
   line-height: 1.55;
 }
 
+.rich-text pre::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 .rich-text pre code {
   padding: 0;
   border: 0;
@@ -92,21 +98,15 @@
   max-width: 100%;
   max-height: min(36vh, 320px);
   overflow: auto;
-  scrollbar-color: var(--muted) transparent;
+  scrollbar-width: none;
   scrollbar-gutter: auto;
   overscroll-behavior: contain;
 }
 
 .rich-table-scroll::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
-}
-
-.rich-table-scroll::-webkit-scrollbar-thumb {
-  border: 3px solid transparent;
-  border-radius: 999px;
-  background: var(--muted);
-  background-clip: content-box;
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .rich-table-scroll:focus-visible {

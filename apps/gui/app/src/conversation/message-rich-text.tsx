@@ -73,40 +73,62 @@ export function RichText(props: { text: string; active?: boolean; workspaceDirec
       .flatMap((group) => (group.kind === "gallery" ? group.paths : []))
       .filter((path) => isImagePath(path)),
   );
+  const renderStablePlainText = createMemo(
+    () => Boolean(props.active) && isPlainStreamingText(props.text),
+  );
   return (
     <div class={classNames("rich-text", props.active && "typing-text")}>
-      <For each={groups()}>
-        {(group) => (
-          <Show
-            when={group.kind === "gallery"}
-            fallback={
-              <RichNodeView
-                node={(group as Extract<RichGroup, { kind: "node" }>).node}
-                workspaceDirectory={props.workspaceDirectory}
-              />
-            }
-          >
-            <MediaGallery
-              paths={(group as Extract<RichGroup, { kind: "gallery" }>).paths}
-              workspaceDirectory={props.workspaceDirectory}
-              onOpen={(path) => setViewerIndex(galleryPaths().indexOf(path))}
-            />
-          </Show>
-        )}
-      </For>
-      <Show when={viewerIndex() !== undefined}>
-        <Portal>
-          <ImageLightbox
-            paths={galleryPaths()}
-            index={viewerIndex() ?? 0}
-            workspaceDirectory={props.workspaceDirectory}
-            onIndex={setViewerIndex}
-            onClose={() => setViewerIndex(undefined)}
-          />
-        </Portal>
+      <Show
+        when={renderStablePlainText()}
+        fallback={
+          <>
+            <For each={groups()}>
+              {(group) => (
+                <Show
+                  when={group.kind === "gallery"}
+                  fallback={
+                    <RichNodeView
+                      node={(group as Extract<RichGroup, { kind: "node" }>).node}
+                      workspaceDirectory={props.workspaceDirectory}
+                    />
+                  }
+                >
+                  <MediaGallery
+                    paths={(group as Extract<RichGroup, { kind: "gallery" }>).paths}
+                    workspaceDirectory={props.workspaceDirectory}
+                    onOpen={(path) => setViewerIndex(galleryPaths().indexOf(path))}
+                  />
+                </Show>
+              )}
+            </For>
+            <Show when={viewerIndex() !== undefined}>
+              <Portal>
+                <ImageLightbox
+                  paths={galleryPaths()}
+                  index={viewerIndex() ?? 0}
+                  workspaceDirectory={props.workspaceDirectory}
+                  onIndex={setViewerIndex}
+                  onClose={() => setViewerIndex(undefined)}
+                />
+              </Portal>
+            </Show>
+          </>
+        }
+      >
+        {props.text}
       </Show>
     </div>
   );
+}
+
+function isPlainStreamingText(text: string): boolean {
+  RICH_TOKEN_PATTERN.lastIndex = 0;
+  if (RICH_TOKEN_PATTERN.test(text)) {
+    RICH_TOKEN_PATTERN.lastIndex = 0;
+    return false;
+  }
+  RICH_TOKEN_PATTERN.lastIndex = 0;
+  return !/<\/?[A-Za-z][\s\S]*?>/u.test(text);
 }
 
 function RichNodeView(props: { node: RichNode; workspaceDirectory?: string }) {
@@ -663,11 +685,81 @@ function parseHtmlFragment(source: string): RichNode[] {
   if (markdownTableNodes) {
     return markdownTableNodes;
   }
+  return parseInlineRichText(source);
+}
+
+function parseInlineRichText(source: string): RichNode[] {
+  const normalized = preserveUnknownAngleBrackets(normalizeHtmlBlockBreaks(source));
   if (typeof DOMParser === "undefined") {
-    return splitInlineTextReferences(source);
+    return splitInlineTextReferences(normalized);
   }
-  const document = new DOMParser().parseFromString(source, "text/html");
+  const document = new DOMParser().parseFromString(normalized, "text/html");
   return Array.from(document.body.childNodes).flatMap(readDomNode);
+}
+
+function normalizeHtmlBlockBreaks(source: string): string {
+  return source
+    .replace(/<br\s*\/?>/giu, "\n")
+    .replace(/<li(?:\s[^>]*)?>/giu, "\n")
+    .replace(/<\/li>/giu, "\n")
+    .replace(
+      /<\/?(?:address|article|aside|details|div|figcaption|figure|footer|h[1-6]|header|hr|main|nav|ol|p|section|summary|ul)(?:\s[^>]*)?>/giu,
+      "\n",
+    );
+}
+
+const SUPPORTED_HTML_TAGS = new Set([
+  "a",
+  "address",
+  "article",
+  "aside",
+  "b",
+  "blockquote",
+  "br",
+  "caption",
+  "code",
+  "del",
+  "details",
+  "div",
+  "em",
+  "figcaption",
+  "figure",
+  "footer",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "header",
+  "hr",
+  "i",
+  "li",
+  "main",
+  "nav",
+  "ol",
+  "p",
+  "pre",
+  "s",
+  "section",
+  "span",
+  "strong",
+  "summary",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "tr",
+  "u",
+  "ul",
+]);
+
+function preserveUnknownAngleBrackets(source: string): string {
+  return source.replace(/<\/?([A-Za-z][A-Za-z0-9_-]*)(?:\s[^<>]*)?\/?>/gu, (match, tagName) =>
+    SUPPORTED_HTML_TAGS.has(String(tagName).toLowerCase()) ? match : escapeHtml(match),
+  );
 }
 
 function parseMarkdownTables(source: string): RichNode[] | undefined {
@@ -681,13 +773,7 @@ function parseMarkdownTables(source: string): RichNode[] | undefined {
       return;
     }
     const text = textLines.join("\n");
-    nodes.push(
-      ...(typeof DOMParser === "undefined"
-        ? splitInlineTextReferences(text)
-        : Array.from(new DOMParser().parseFromString(text, "text/html").body.childNodes).flatMap(
-            readDomNode,
-          )),
-    );
+    nodes.push(...parseInlineRichText(text));
     textLines = [];
   }
 
@@ -704,7 +790,7 @@ function parseMarkdownTables(source: string): RichNode[] | undefined {
         {
           cells: header.map((cell) => ({
             kind: "header",
-            children: splitInlineTextReferences(cell.trim()),
+            children: parseInlineRichText(cell.trim()),
           })),
         },
       ];
@@ -717,7 +803,7 @@ function parseMarkdownTables(source: string): RichNode[] | undefined {
         rows.push({
           cells: normalizeMarkdownCells(cells, header.length).map((cell) => ({
             kind: "data",
-            children: splitInlineTextReferences(cell.trim()),
+            children: parseInlineRichText(cell.trim()),
           })),
         });
         index += 1;
@@ -958,4 +1044,8 @@ function groupMediaNodes(nodes: RichNode[]): RichGroup[] {
 
 function isSafeUrl(value: string): boolean {
   return /^https?:\/\//iu.test(value);
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/gu, "&amp;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;");
 }

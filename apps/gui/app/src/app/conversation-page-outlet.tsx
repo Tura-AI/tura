@@ -6,7 +6,6 @@ import { ConversationView } from "../conversation/conversation-view";
 import {
   defaultLocalStartAt,
   defaultPollInterval,
-  hasVisibleSessionTasks,
   localDateTimeToUtcIso,
   taskNonceId,
   taskPollInterval,
@@ -17,7 +16,6 @@ import {
 import { ConversationEmptyView } from "../pages/new-session";
 import {
   PlanComposerControls,
-  PlanComposerTaskList,
   PlanConversationFeedbackNotice,
 } from "../pages/plan/plan-composer";
 import type { AppState } from "../state/global-store";
@@ -37,10 +35,7 @@ export function ConversationPageOutlet(props: {
   view: Pick<
     AppShellViewModel,
     | "createNamedWorkspace"
-    | "createSessionFromPlanTask"
-    | "deletePlanTask"
     | "pickExistingWorkspaceDirectory"
-    | "reorderPlanTasks"
     | "abortSession"
     | "updatePlanTicketTask"
     | "useWorkspaceDirectory"
@@ -51,11 +46,6 @@ export function ConversationPageOutlet(props: {
   closeInspectorSignal?: number;
   onRequestCollapseLeftRail: () => void;
   onOpenProviderSettings: (providerId?: string) => void;
-  onEditTask: (
-    sessionId: string,
-    taskNonceIdValue: string | undefined,
-    composerText: string,
-  ) => void;
   onRunTask: (session: Session, task: TaskManagement) => void;
   onRuntimeSetting: (
     updater: (previous: AppState) => AppState,
@@ -66,10 +56,7 @@ export function ConversationPageOutlet(props: {
   const selectedSession = createMemo(() => props.selectedSession());
   const {
     createNamedWorkspace,
-    createSessionFromPlanTask,
-    deletePlanTask,
     pickExistingWorkspaceDirectory,
-    reorderPlanTasks,
     abortSession,
     updatePlanTicketTask,
     useWorkspaceDirectory,
@@ -110,7 +97,6 @@ export function ConversationPageOutlet(props: {
   return (
     <Show
       when={selectedSession()}
-      keyed
       fallback={
         <ConversationEmptyView
           state={props.state()}
@@ -144,16 +130,16 @@ export function ConversationPageOutlet(props: {
       {(session) => (
         <ConversationView
           state={props.state()}
-          session={session}
+          session={session()}
           messages={props.selectedMessages()}
-          onLoadEarlierMessages={() => props.loadEarlierMessages(session.id)}
+          onLoadEarlierMessages={() => props.loadEarlierMessages(session().id)}
           slashCommands={props.slashCommands()}
           onComposerText={setComposerText}
           onComposerImages={setComposerImages}
           onSubmit={props.onSubmit}
-          onStop={() => abortSession(session.id)}
+          onStop={() => abortSession(session().id)}
           onQueueSubmit={props.onQueueSubmit}
-          running={session.status !== "idle"}
+          running={session().status !== "idle"}
           leftRailOpen={props.leftRailOpen}
           leftRailWidth={props.leftRailWidth}
           onRequestCollapseLeftRail={props.onRequestCollapseLeftRail}
@@ -237,31 +223,6 @@ export function ConversationPageOutlet(props: {
                 />
                 {agentMenu()}
               </>
-            ) : undefined
-          }
-          composerTaskList={
-            selectedSession() && hasVisibleSessionTasks(selectedSession()!) ? (
-              <PlanComposerTaskList
-                session={selectedSession()!}
-                selected_task_id={props.state().editingTask?.task_id}
-                pulseNonceId={
-                  props.state().taskPulse?.sessionId === selectedSession()!.id
-                    ? props.state().taskPulse?.task_id
-                    : undefined
-                }
-                pulseToken={
-                  props.state().taskPulse?.sessionId === selectedSession()!.id
-                    ? props.state().taskPulse?.token
-                    : undefined
-                }
-                onEdit={(task, composerText) =>
-                  props.onEditTask(selectedSession()!.id, taskNonceId(task), composerText)
-                }
-                onDelete={(task) => deletePlanTask(selectedSession()!, task)}
-                onRun={(task) => props.onRunTask(selectedSession()!, task)}
-                onCreateSession={(task) => createSessionFromPlanTask(selectedSession()!, task)}
-                onReorder={(tasks) => reorderPlanTasks(selectedSession()!, tasks)}
-              />
             ) : undefined
           }
         />

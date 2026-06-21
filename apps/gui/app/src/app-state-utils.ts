@@ -1,10 +1,11 @@
-import { GatewayError, type Session } from "@tura/gateway-sdk";
+import { GatewayError, type Message, type Session } from "@tura/gateway-sdk";
 import {
   sessionHasDisplayName,
   systemThemeMode,
   type AppState,
   type ThemeMode,
 } from "./state/global-store";
+import { mergeMessageForCache } from "./state/message-cache";
 import { providerIdFromAuthError, providerIdFromModel } from "./utils/settings";
 
 const LAST_SESSION_OPENED_STORAGE_KEY = "last_session_opened";
@@ -94,6 +95,41 @@ export function mergeSessions(remoteSessions: Session[], localSessions: Session[
     }
   }
   return [...byId.values()].sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
+}
+
+export function mergeMessagePages(prefix: Message[], suffix: Message[]): Message[] {
+  const merged = [...prefix];
+  for (const incoming of suffix) {
+    const existingIndex = merged.findIndex((message) => message.id === incoming.id);
+    if (existingIndex >= 0) {
+      merged[existingIndex] = mergeMessageForCache(merged[existingIndex]!, incoming);
+      continue;
+    }
+    const optimisticIndex = merged.findIndex((message) => isOptimisticDuplicate(message, incoming));
+    if (optimisticIndex >= 0) {
+      merged[optimisticIndex] = incoming;
+      continue;
+    }
+    merged.push(incoming);
+  }
+  return sameMessageArray(prefix, merged) ? prefix : merged;
+}
+
+function isOptimisticDuplicate(existing: Message, incoming: Message): boolean {
+  return (
+    existing.role === "user" &&
+    incoming.role === "user" &&
+    existing.id.startsWith("prompt:") &&
+    messagePlainText(existing).trim() === messagePlainText(incoming).trim()
+  );
+}
+
+function messagePlainText(message: Message): string {
+  return message.parts.map((part) => part.text || part.content || "").join("\n");
+}
+
+function sameMessageArray(left: Message[], right: Message[]): boolean {
+  return left.length === right.length && left.every((message, index) => message === right[index]);
 }
 
 export function normalizeThemeMode(value: string | null | undefined): ThemeMode {

@@ -29,7 +29,7 @@ export type AppShellViewModel = {
   slashCommands: Accessor<Command[]>;
   openBlankSession: () => void;
   openSession: (sessionId: string) => Promise<void>;
-  useWorkspaceDirectory: (directory: string) => void;
+  useWorkspaceDirectory: (directory: string) => void | Promise<void>;
   createNamedWorkspace: (name: string) => Promise<void>;
   pickExistingWorkspaceDirectory: () => Promise<void>;
   submitPrompt: (options?: { queued?: boolean }) => Promise<void>;

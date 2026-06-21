@@ -11,6 +11,7 @@ from playwright.async_api import async_playwright
 
 ROOT = Path(__file__).resolve().parents[4]
 GUI_URL = os.environ.setdefault("TURA_GUI_URL", "http://127.0.0.1:5181")
+STREAM_ROOT_SELECTOR = '[data-message-id="fixture-stream-assistant"] .rich-text'
 OUT = Path(
     os.environ.setdefault(
         "TURA_GUI_E2E_OUT",
@@ -126,21 +127,22 @@ async def append_stream_delta(page, index: int, delta: str | None = None) -> Non
 
 async def assert_stream_append_only(page) -> None:
     await page.goto(f"{GUI_URL}/?e2eFixture=streaming-delta", wait_until="domcontentloaded")
+    await page.evaluate("selector => { window.__streamRootSelector = selector; }", STREAM_ROOT_SELECTOR)
     await page.wait_for_selector(".transcript-virtual-space[data-virtual-count='82']", state="attached", timeout=20_000)
     await page.locator(".transcript").evaluate("(el) => { el.scrollTop = el.scrollHeight; }")
     await page.locator(".transcript").dispatch_event("scroll")
-    await page.wait_for_selector(".append-only-text", state="attached", timeout=20_000)
+    await page.wait_for_selector(STREAM_ROOT_SELECTOR, state="attached", timeout=20_000)
     await page.wait_for_timeout(120)
     await page.evaluate(
         """
         () => {
-          const root = document.querySelector(".append-only-text");
+          const root = document.querySelector(window.__streamRootSelector);
           if (!root) throw new Error("append-only stream root missing");
           window.__streamOriginalRoot = root;
           window.__streamFrameSamples = [];
           window.__streamSampling = true;
           const sample = () => {
-            const currentRoot = document.querySelector(".append-only-text");
+            const currentRoot = document.querySelector(window.__streamRootSelector);
             const userRow = document.querySelector('[data-message-id="fixture-stream-user"]');
             window.__streamFrameSamples.push({
               sameRoot: currentRoot === window.__streamOriginalRoot,
@@ -187,13 +189,14 @@ async def assert_stream_append_only(page) -> None:
         """
     )
     rects = []
+    avatars = []
     for index in range(12):
         await append_stream_delta(page, index)
         await page.wait_for_timeout(35)
         rect = await page.evaluate(
             """
             () => {
-              const root = document.querySelector(".append-only-text");
+              const root = document.querySelector(window.__streamRootSelector);
               if (!root?.firstChild) throw new Error("append-only stream text node missing");
               const range = document.createRange();
               range.setStart(root.firstChild, 0);
@@ -204,6 +207,17 @@ async def assert_stream_append_only(page) -> None:
             """
         )
         rects.append(rect)
+        avatar = await page.evaluate(
+            """
+            () => {
+              const avatar = document.querySelector(".floating-agent-avatar");
+              if (!avatar) return null;
+              const box = avatar.getBoundingClientRect();
+              return { x: box.x, y: box.y, width: box.width, height: box.height };
+            }
+            """
+        )
+        avatars.append(avatar)
         await page.screenshot(path=str(OUT / f"stream-delta-{index:02d}.png"), full_page=False)
     await page.evaluate("() => { window.__streamSampling = false; }")
     await page.wait_for_timeout(50)
@@ -212,7 +226,7 @@ async def assert_stream_append_only(page) -> None:
         () => ({
           stats: window.__streamMutationStats,
           samples: window.__streamFrameSamples,
-          finalText: document.querySelector(".append-only-text")?.textContent ?? null,
+          finalText: document.querySelector(window.__streamRootSelector)?.textContent ?? null,
         })
         """
     )
@@ -222,10 +236,17 @@ async def assert_stream_append_only(page) -> None:
     max_y = max(abs(rect["y"] - rects[0]["y"]) for rect in rects)
     if max_x > 0.5 or max_y > 0.5:
         raise AssertionError(f"stream prefix jittered while appending delta: max_x={max_x}, max_y={max_y}, rects={rects}")
-    if stats["characterData"] or stats["removed"] or stats["transcriptRemovedRows"]:
-        raise AssertionError(f"streaming delta rewrote existing DOM instead of appending: {stats}")
-    if stats["added"] < 12:
-        raise AssertionError(f"streaming delta did not append one node per update: {stats}")
+    visible_avatars = [avatar for avatar in avatars if avatar]
+    if len(visible_avatars) < 8:
+        raise AssertionError(f"streaming avatar was not consistently visible: {avatars}")
+    max_avatar_x = max(abs(avatar["x"] - visible_avatars[0]["x"]) for avatar in visible_avatars)
+    max_avatar_y = max(abs(avatar["y"] - visible_avatars[0]["y"]) for avatar in visible_avatars)
+    if max_avatar_x > 2 or max_avatar_y > 2:
+        raise AssertionError(
+            f"streaming avatar jittered while appending delta: max_x={max_avatar_x}, max_y={max_avatar_y}, avatars={avatars}"
+        )
+    if stats["removed"] or stats["transcriptRemovedRows"]:
+        raise AssertionError(f"streaming delta replaced visible DOM instead of updating in place: {stats}")
     if len(samples) < 12:
         raise AssertionError(f"streaming frame sampler did not observe enough frames: {len(samples)}")
     bad_samples = [
@@ -247,10 +268,11 @@ async def assert_stream_append_only(page) -> None:
 
 async def assert_scrollbar_drag_not_pulled_by_delta(page) -> None:
     await page.goto(f"{GUI_URL}/?e2eFixture=streaming-delta", wait_until="domcontentloaded")
+    await page.evaluate("selector => { window.__streamRootSelector = selector; }", STREAM_ROOT_SELECTOR)
     await page.wait_for_selector(".transcript-virtual-space[data-virtual-count='82']", state="attached", timeout=20_000)
     await page.locator(".transcript").evaluate("(el) => { el.scrollTop = el.scrollHeight; }")
     await page.locator(".transcript").dispatch_event("scroll")
-    await page.wait_for_selector(".append-only-text", state="attached", timeout=20_000)
+    await page.wait_for_selector(STREAM_ROOT_SELECTOR, state="attached", timeout=20_000)
     await page.wait_for_timeout(120)
     await page.locator(".transcript").evaluate(
         "(el) => { el.dataset.e2eManualScrollbarDrag = '1'; el.scrollTop = el.scrollHeight; }"

@@ -144,7 +144,6 @@
   overflow: visible;
 }
 
-.conversation-bottom > .composer-task-dock,
 .conversation-bottom > .bottom-composer {
   width: min(var(--page-max), calc(100% - var(--page-edge-space) * 2));
 }
