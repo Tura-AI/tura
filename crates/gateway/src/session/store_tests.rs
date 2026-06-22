@@ -2029,6 +2029,121 @@ fn scheduler_claim_persists_next_polling_start() {
 }
 
 #[test]
+fn abort_pause_marks_all_non_terminal_tasks_waiting_user_and_stops_scheduler_claims() {
+    let store = SessionStore::new();
+    let now = Utc::now();
+    let session = store.create_session(
+        Some("C:/workspace".to_string()),
+        None,
+        None,
+        Some("coding".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+    store.update_session(
+        &session.id,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(serde_json::json!({
+            "plan_summary": "abort pause plan",
+            "tasks": [
+                {
+                    "task_id": "todo-due",
+                    "task_summary": "scheduled todo",
+                    "status": "todo",
+                    "start_condition": "scheduled_task",
+                    "start_at": (now - chrono::Duration::minutes(5)).to_rfc3339()
+                },
+                {
+                    "task_id": "doing-now",
+                    "task_summary": "running work",
+                    "status": "doing",
+                    "start_condition": "session_idle"
+                },
+                {
+                    "task_id": "question-now",
+                    "task_summary": "question work",
+                    "status": "question",
+                    "start_condition": "session_idle"
+                },
+                {
+                    "task_id": "done-work",
+                    "task_summary": "completed work",
+                    "status": "done",
+                    "start_condition": "session_idle"
+                },
+                {
+                    "task_id": "archived-work",
+                    "task_summary": "archived work",
+                    "status": "archived",
+                    "start_condition": "session_idle"
+                }
+            ]
+        })),
+    );
+    store.update_session_status(&session.id, SessionStatusMano::Busy);
+    store.append_user_command(&session.id, "stale queued command");
+
+    let paused = store
+        .pause_session_for_abort(&session.id)
+        .expect("session should pause for abort");
+    let cleared = store.clear_user_commands_for_session(&session.id);
+
+    assert_eq!(paused.status, ApiSessionStatus::Idle);
+    assert_eq!(cleared, vec!["stale queued command".to_string()]);
+    assert!(store.user_commands_for_session(&session.id).is_empty());
+    let tasks = paused
+        .task_management
+        .get("tasks")
+        .and_then(serde_json::Value::as_array)
+        .expect("multi task state should serialize tasks");
+    assert_eq!(
+        task_by_id_for_store_test(tasks, "todo-due")["status"],
+        "waiting_user"
+    );
+    assert_eq!(
+        task_by_id_for_store_test(tasks, "doing-now")["status"],
+        "waiting_user"
+    );
+    assert_eq!(
+        task_by_id_for_store_test(tasks, "question-now")["status"],
+        "waiting_user"
+    );
+    assert_eq!(
+        task_by_id_for_store_test(tasks, "done-work")["status"],
+        "done"
+    );
+    assert_eq!(
+        task_by_id_for_store_test(tasks, "archived-work")["status"],
+        "archived"
+    );
+    assert!(
+        store.claim_due_task_runs(now).is_empty(),
+        "paused tasks must not be scheduler-claimed after abort"
+    );
+}
+
+fn task_by_id_for_store_test<'a>(
+    tasks: &'a [serde_json::Value],
+    task_id: &str,
+) -> &'a serde_json::Value {
+    tasks
+        .iter()
+        .find(|task| task.get("task_id").and_then(serde_json::Value::as_str) == Some(task_id))
+        .expect("task should exist")
+}
+
+#[test]
 fn api_session_exposes_runtime_context_token_stats() {
     let now = chrono::Utc::now();
     let mut management = runtime::state_machine::session_management::SessionManagement::new(

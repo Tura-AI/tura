@@ -461,6 +461,32 @@ test("render keeps thinking visible across an idle hydrate while the user turn i
   assert.match(completedOutput, /^codex\/gpt-5\.5 │ medium │ tura$/mu);
 });
 
+test("render does not keep thinking alive from a stale doing task after an assistant reply", () => {
+  const session = sessionFixture("sess-stale-doing-idle", "Stale Doing Idle", "idle", {
+    task_management: {
+      status: "doing",
+      task_summary: "Already summarized",
+    },
+  });
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [textMessage("msg-stale-final", session.id, "assistant", 1_500, "Done.")],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+    sessionConfig: {
+      model: "codex/gpt-5.5",
+      model_variant: "medium",
+    },
+  });
+
+  const output = stripAnsi(render({ ...state, thinkingFrame: 0 }, richCapabilities()));
+
+  assert.doesNotMatch(output, /thinking\s+\d+s/);
+  assert.match(output, /^codex\/gpt-5\.5 │ medium │ tura$/mu);
+});
+
 test("render keeps model and auth tables readable across display levels", () => {
   const session = sessionFixture("sess-tables", "Tables");
   let state = reducer(initialState("C:/repo"), {

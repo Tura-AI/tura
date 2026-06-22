@@ -2,8 +2,8 @@ use super::handler_parse::{
     command_values, parse_arguments_value, parse_command_item, string_field, u64_field,
 };
 use super::{
-    normalize_command_steps, normalize_json_or_cli_command_arguments,
-    normalize_shell_command_arguments, parse_args,
+    normalize_command_steps, normalize_compact_context_arguments,
+    normalize_json_or_cli_command_arguments, normalize_shell_command_arguments, parse_args,
 };
 use serde_json::json;
 use serde_json::Value;
@@ -193,6 +193,50 @@ fn normalize_external_commands_keep_explicit_timeout_fields() {
     assert_eq!(arguments["query"], json!("docs"));
     assert_eq!(arguments["timeout_secs"], json!(2));
     assert!(arguments.get("timeout_ms").is_none());
+}
+
+#[test]
+fn normalize_compact_context_accepts_json_with_raw_newlines() {
+    let args = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "compact_context",
+                "command_line": "{\"summary\":\"Goal: keep going.\nNext: rerun focused tests.\"}",
+                "step": 1
+            }
+        ]
+    }))
+    .expect("parse args");
+
+    let arguments = normalize_compact_context_arguments(&args.commands[0])
+        .expect("compact_context should tolerate raw newlines inside summary JSON");
+
+    assert_eq!(
+        arguments["summary"],
+        json!("Goal: keep going.\nNext: rerun focused tests.")
+    );
+}
+
+#[test]
+fn normalize_compact_context_recovers_jsonish_summary_text() {
+    let args = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "compact_context",
+                "command_line": "{\"summary\":\"Goal: preserve \\\"quoted\\\" paths.\nNext: inspect C:\\\\tmp.\"}",
+                "step": 1
+            }
+        ]
+    }))
+    .expect("parse args");
+
+    let arguments = normalize_compact_context_arguments(&args.commands[0])
+        .expect("compact_context should recover JSON-like summary text");
+
+    assert_eq!(
+        arguments["summary"],
+        json!("Goal: preserve \"quoted\" paths.\nNext: inspect C:\\tmp.")
+    );
 }
 
 #[test]

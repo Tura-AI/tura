@@ -14,8 +14,6 @@ export function PlanPageOutlet(props: {
   view: Pick<
     AppShellViewModel,
     | "createPlanTicket"
-    | "createSessionFromPlanTask"
-    | "deletePlanTask"
     | "openPlanSession"
     | "abortSession"
     | "selectDraftSession"
@@ -40,8 +38,6 @@ export function PlanPageOutlet(props: {
 }) {
   const {
     createPlanTicket,
-    createSessionFromPlanTask,
-    deletePlanTask,
     openPlanSession,
     abortSession,
     selectDraftSession,
@@ -99,9 +95,7 @@ export function PlanPageOutlet(props: {
       onTask={updatePlanTicketTask}
       onReorderTasks={reorderPlanTasks}
       onEditTask={props.onEditTask}
-      onDeleteTask={deletePlanTask}
       onRunTask={props.onRunTask}
-      onCreateSessionFromTask={createSessionFromPlanTask}
       onOpenSession={openPlanSession}
       onComposerText={(composerText) =>
         props.setState((previous) => ({ ...previous, composerText }))

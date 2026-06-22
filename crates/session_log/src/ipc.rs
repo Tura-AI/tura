@@ -322,6 +322,10 @@ fn dispatch_inner(
             let (page, sessions) = store.list_sessions(payload)?;
             SessionLogResponse::Sessions { page, sessions }
         }
+        SessionLogCommand::ListSessionSummaries(payload) => {
+            let (page, sessions) = store.list_session_summaries(payload)?;
+            SessionLogResponse::SessionSummaries { page, sessions }
+        }
         SessionLogCommand::ListSessionRecords(payload) => {
             let (page, records) = store.list_session_records(payload)?;
             SessionLogResponse::Records { page, records }

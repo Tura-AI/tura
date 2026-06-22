@@ -202,7 +202,7 @@ pub struct RuntimeManagement {
     pub text: OutputText,
     /// Tool call reports.
     pub tool_call: Vec<ToolCallRecord>,
-    /// Latest model-visible input context token estimate for this runtime.
+    /// Latest provider-reported input token count for this runtime.
     #[serde(default)]
     pub context_tokens: ContextTokenStats,
     /// Usage and billing report.
@@ -625,7 +625,7 @@ mod tests {
             output_cost: 0.0,
             total_cost: 0.0,
             currency: "USD".to_string(),
-            pricing_source: "runtime_estimate_timeout".to_string(),
+            pricing_source: "provider".to_string(),
             latency_ms: 1000,
             time_to_first_token_ms: 0,
             token_per_second: 1.0,

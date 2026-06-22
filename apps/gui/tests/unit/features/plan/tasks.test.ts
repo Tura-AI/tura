@@ -8,6 +8,7 @@ import {
   planSessionStatus,
   queuedSessionTasks,
   reorderTasksInSession,
+  shouldShowSessionAttention,
   sortedSessionTasks,
   taskStartCondition,
   timedSessionTasks,
@@ -106,6 +107,31 @@ describe("plan task contract", () => {
         }),
       ),
     ).toBe("todo");
+  });
+
+  test("keeps running session attention visible after acknowledgement", () => {
+    expect(shouldShowSessionAttention(session("busy"), false)).toBe(true);
+    expect(shouldShowSessionAttention(session("busy"), true)).toBe(true);
+  });
+
+  test("does not keep completed non-planning sessions busy from a stale doing task", () => {
+    const staleDoing = session("idle", {
+      status: "doing",
+      task_summary: "Already summarized",
+    });
+
+    expect(planSessionStatus(staleDoing)).toBe("todo");
+    expect(shouldShowSessionAttention(staleDoing, false)).toBe(false);
+  });
+
+  test("allows question and done attention to be acknowledged", () => {
+    const question = session("idle", { status: "question", task_summary: "Need input" });
+    const done = session("idle", { status: "done", task_summary: "Complete" });
+
+    expect(shouldShowSessionAttention(question, false)).toBe(true);
+    expect(shouldShowSessionAttention(question, true)).toBe(false);
+    expect(shouldShowSessionAttention(done, false)).toBe(true);
+    expect(shouldShowSessionAttention(done, true)).toBe(false);
   });
 
   test("does not treat question or completed tasks as runnable", () => {

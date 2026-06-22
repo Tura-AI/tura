@@ -51,6 +51,20 @@ pub struct SessionSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub session_id: String,
+    pub workspace: String,
+    pub name: Option<String>,
+    pub parent_id: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub state: Option<String>,
+    pub status: Option<String>,
+    pub message_count: u64,
+    pub task_management: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionRecord {
     pub session_id: String,
     pub message_id: String,
@@ -113,6 +127,7 @@ pub enum SessionLogCommand {
     GetSession(GetSessionRequest),
     ListWorkspaces,
     ListSessions(ListSessionsRequest),
+    ListSessionSummaries(ListSessionsRequest),
     ListSessionRecords(ListSessionRecordsRequest),
     DeleteSession(DeleteSessionRequest),
     DeleteWorkspace(DeleteWorkspaceRequest),
@@ -129,6 +144,10 @@ pub enum SessionLogResponse {
     Sessions {
         page: Page,
         sessions: Vec<SessionSnapshot>,
+    },
+    SessionSummaries {
+        page: Page,
+        sessions: Vec<SessionSummary>,
     },
     Session {
         session: Option<Box<SessionSnapshot>>,

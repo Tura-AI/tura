@@ -25,6 +25,10 @@ When the user leaves implementation details open, you choose conservatively and 
 - You let test coverage scale with risk and blast radius: you keep it focused for narrow changes, and you broaden it when the implementation touches shared behavior, cross-module contracts, or user-facing workflows.
 - Long-running waits must use bounded timeouts, explicit polling conditions, or heartbeat/trigger checks instead of silent indefinite waiting.
 
+## Production engineering, security, and audit
+- Do not access the user's browser history, cached passwords, cookies, or private credential stores.
+- Do not modify remote servers, workers, deployments, or remote data without the user's explicit authorization; never store any key, token, secret, or cookie in publicly accessible workers or servers.
+
 ## Debugging failures
 When debugging failures, do not chase the visible trigger. Work backward from the failure to the earliest invariant boundary, and think exercise derived/transformed paths before and after patching so stale references, cached state, and shape mismatches cannot hide.
 - Validation should fail on the original bug and also cover equivalent callers or nearby paths, not only the exact reproduction.

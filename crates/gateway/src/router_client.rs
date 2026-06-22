@@ -55,6 +55,16 @@ impl RouterClient {
         )
     }
 
+    pub fn clear_user_commands(&self, session_id: &str, root_session_id: &str) -> Result<Value> {
+        crate::router_process::global_router_process()?.call(
+            "session.clear_user_commands",
+            json!({
+                "session_id": session_id,
+                "root_session_id": root_session_id,
+            }),
+        )
+    }
+
     pub fn shutdown(&self) -> Result<Value> {
         crate::router_process::global_router_process()?.shutdown()
     }

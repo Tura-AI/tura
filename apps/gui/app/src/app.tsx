@@ -18,7 +18,12 @@ import {
   storedAgentFromRuntimeAgent,
   storedAgentFromUpsert,
 } from "./app-agent-config";
-import { mergeSessions, providerIssueIdFromError, writeLastSessionOpened } from "./app-state-utils";
+import {
+  mergeMessagePages,
+  mergeSessions,
+  providerIssueIdFromError,
+  writeLastSessionOpened,
+} from "./app-state-utils";
 import { AppShell } from "./app/app-shell";
 import { AppProviders } from "./context/app-providers";
 import { isToolPart } from "./conversation/message-tools";
@@ -177,7 +182,7 @@ export function App() {
       ...previous,
       messagesBySession: {
         ...previous.messagesBySession,
-        [sessionId]: mergeMessagePages(existingMessages, messages),
+        [sessionId]: mergeMessagePages(previous.messagesBySession[sessionId] ?? [], messages),
       },
       messagePagingBySession: {
         ...previous.messagePagingBySession,
@@ -282,31 +287,54 @@ export function App() {
     }
   }
 
-  function useWorkspaceDirectory(directory: string) {
+  async function useWorkspaceDirectory(directory: string) {
     const workspaceDirectory = directory.trim();
     if (!workspaceDirectory) {
       return;
     }
+    const project: Project = {
+      id: workspaceDirectory,
+      name: shortWorkspaceLabel(workspaceDirectory),
+      worktree: workspaceDirectory,
+    };
     setState((previous) => ({
       ...previous,
       directory: workspaceDirectory,
       projects: previous.projects.some((project) => samePath(project.worktree, workspaceDirectory))
         ? previous.projects
-        : [
-            {
-              id: workspaceDirectory,
-              name: shortWorkspaceLabel(workspaceDirectory),
-              worktree: workspaceDirectory,
-            },
-            ...previous.projects,
-          ],
+        : [project, ...previous.projects],
       activeTab: "conversation",
       previousMainTab: "conversation",
       selectedSessionId: undefined,
       sessions: samePath(previous.directory, workspaceDirectory) ? previous.sessions : [],
+      sessionsLoading: true,
       composerText: "",
     }));
     setExpandedWorkspace(workspaceDirectory);
+    if (e2eFixture) {
+      setState((previous) => ({ ...previous, sessionsLoading: false }));
+      return;
+    }
+    try {
+      const scoped = rootClient().withDirectory(workspaceDirectory);
+      const [currentProject, sessions] = await Promise.all([
+        safe(() => scoped.currentProject(), { project }),
+        scoped.sessions({ limit: 100 }),
+      ]);
+      setState((previous) => ({
+        ...previous,
+        currentProject,
+        sessions,
+        sessionsLoading: false,
+        error: undefined,
+      }));
+    } catch (error) {
+      setState((previous) => ({
+        ...previous,
+        sessionsLoading: false,
+        error: errorMessage(error),
+      }));
+    }
   }
 
   function activateWorkspaceProject(project: Project) {
@@ -665,7 +693,6 @@ export function App() {
         previousMainTab: "conversation",
         planNotice: undefined,
       }));
-      await openSession(sessionId, { forceRefreshMessages: true });
       setState((previous) => ({
         ...previous,
         selectedSessionId: sessionId,
@@ -1097,39 +1124,6 @@ export function App() {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function mergeMessagePages(prefix: Message[], suffix: Message[]): Message[] {
-  const merged = [...prefix];
-  for (const incoming of suffix) {
-    if (merged.some((message) => message.id === incoming.id)) {
-      continue;
-    }
-    const optimisticIndex = merged.findIndex((message) => isOptimisticDuplicate(message, incoming));
-    if (optimisticIndex >= 0) {
-      merged[optimisticIndex] = incoming;
-      continue;
-    }
-    merged.push(incoming);
-  }
-  return merged.sort((left, right) => messageSortTime(left) - messageSortTime(right));
-}
-
-function isOptimisticDuplicate(existing: Message, incoming: Message): boolean {
-  return (
-    existing.role === "user" &&
-    incoming.role === "user" &&
-    existing.id.startsWith("prompt:") &&
-    messagePlainText(existing).trim() === messagePlainText(incoming).trim()
-  );
-}
-
-function messagePlainText(message: Message): string {
-  return message.parts.map((part) => part.text || part.content || "").join("\n");
-}
-
-function messageSortTime(message: Message): number {
-  return message.time?.created ?? message.created_at ?? 0;
 }
 
 function hasVisibleAssistantReply(messages: Message[]): boolean {

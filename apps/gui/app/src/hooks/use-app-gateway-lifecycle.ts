@@ -1,4 +1,10 @@
-import { connectGatewayEvents, errorMessage, type GatewayClient } from "@tura/gateway-sdk";
+import {
+  connectGatewayEvents,
+  errorMessage,
+  type GatewayClient,
+  type Project,
+  type SessionLogWorkspace,
+} from "@tura/gateway-sdk";
 import { createEffect, createMemo, onCleanup, onMount, type Accessor, type Setter } from "solid-js";
 import {
   GATEWAY_CONNECT_TIMEOUT_MS,
@@ -136,6 +142,10 @@ export function useAppGatewayLifecycle(options: {
           bootstrapSafe(() => client.currentProject(), fallbackCurrentProject),
           bootstrapSafe(() => client.projects(), []),
         ]);
+      const sessionLogWorkspaces = await bootstrapSafe(
+        () => client.sessionLogWorkspaces(),
+        { workspaces: [] },
+      );
       const [productConfig, me, workspaces, productIssues, productProjects] = await Promise.all([
         bootstrapSafe(() => client.productConfig(), undefined),
         bootstrapSafe(() => client.me(), undefined),
@@ -147,16 +157,11 @@ export function useAppGatewayLifecycle(options: {
         ...paths,
         directory: paths.directory || currentProject.project?.worktree || paths.worktree,
       });
-      const workspaceProjects = projects.some((project) => samePath(project.worktree, directory))
-        ? projects
-        : [
-            {
-              id: directory,
-              name: shortWorkspaceLabel(directory),
-              worktree: directory,
-            },
-            ...projects,
-          ];
+      const workspaceProjects = mergeWorkspaceProjects(
+        projects,
+        sessionLogWorkspaces.workspaces,
+        directory,
+      );
       const scoped = client.withDirectory(directory);
       const [sessions, providers, agentsResult, personasResult, commandsResult, filesResult, workspaceConfig] =
         await Promise.all([
@@ -284,6 +289,41 @@ export function useAppGatewayLifecycle(options: {
       }));
     }
   }
+}
+
+function mergeWorkspaceProjects(
+  projects: Project[],
+  workspaces: SessionLogWorkspace[],
+  directory: string,
+): Project[] {
+  const merged: Project[] = [];
+  const push = (project: Project) => {
+    if (!project.worktree || merged.some((item) => samePath(item.worktree, project.worktree))) {
+      return;
+    }
+    merged.push(project);
+  };
+  push({
+    id: directory,
+    name: shortWorkspaceLabel(directory),
+    worktree: directory,
+  });
+  for (const workspace of workspaces) {
+    push({
+      id: workspace.directory,
+      name: shortWorkspaceLabel(workspace.directory),
+      worktree: workspace.directory,
+      time: {
+        created: workspace.last_updated_at,
+        updated: workspace.last_updated_at,
+        initialized: null,
+      },
+    });
+  }
+  for (const project of projects) {
+    push(project);
+  }
+  return merged;
 }
 
 async function bootstrapSafe<T>(run: () => Promise<T>, fallback: T): Promise<T> {

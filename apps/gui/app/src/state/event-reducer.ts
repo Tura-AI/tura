@@ -8,8 +8,12 @@ import type {
 } from "@tura/gateway-sdk";
 import type { AppState } from "./global-store";
 import { messageSessionId, sessionHasDisplayName, sessionUpdatedAt } from "./global-store";
-
-const STREAMED_DELTA_FIELDS_METADATA_KEY = "__turaStreamedDeltaFields";
+import {
+  markStreamedDeltaFields,
+  mergeMessageForCache,
+  mergeMessagePartForCache,
+  streamedDeltaFields,
+} from "./message-cache";
 
 export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelope): AppState {
   const event = envelope.payload;
@@ -72,13 +76,26 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
       if (!sessionId || !status) {
         return next;
       }
+      let changed = false;
+      const sessions = next.sessions.map((session) => {
+        if (session.id !== sessionId) {
+          return session;
+        }
+        const updated = sessionWithStatusMetrics(
+          session,
+          status,
+          properties.context_tokens,
+          properties.usage,
+        );
+        changed ||= updated !== session;
+        return updated;
+      });
+      if (!changed) {
+        return next;
+      }
       return {
         ...next,
-        sessions: next.sessions.map((session) =>
-          session.id === sessionId
-            ? sessionWithStatusMetrics(session, status, properties.context_tokens, properties.usage)
-            : session,
-        ),
+        sessions,
       };
     }
     case "message.updated": {
@@ -120,6 +137,8 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
       const partId = readId(properties, "partID", "part_id");
       const field = readString(properties, "field");
       const delta = readString(properties, "delta");
+      const createdAt = readNumber(properties, "createdAt", "created_at");
+      const updatedAt = readNumber(properties, "updatedAt", "updated_at");
       if (!sessionId || !messageId || !partId || delta === undefined) {
         return next;
       }
@@ -134,6 +153,8 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
             field,
             delta,
             sessionId,
+            createdAt,
+            updatedAt,
           ),
         },
       };
@@ -141,11 +162,16 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
     case "message.part.updated": {
       const sessionId = readId(properties, "sessionID", "session_id");
       const part = properties.part as MessagePart | undefined;
+      const createdAt = readNumber(properties, "createdAt", "created_at");
+      const updatedAt = readNumber(properties, "updatedAt", "updated_at");
       if (!sessionId || !part?.id) {
         return next;
       }
       const messageId = part.messageID;
       const messages = next.messagesBySession[sessionId] ?? [];
+      if (!messageId && messages.length === 0) {
+        return next;
+      }
       const hasMessage = messageId
         ? messages.some((message) => message.id === messageId)
         : messages.length > 0;
@@ -163,22 +189,16 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
                   ...message,
                   parts: hasPart
                     ? message.parts.map((existing) =>
-                        existing.id === part.id ? mergeMessagePart(existing, part) : existing,
+                        existing.id === part.id
+                          ? mergeMessagePartForCache(existing, part)
+                          : existing,
                       )
                     : [...message.parts, part],
                 };
               })
             : [
                 ...messages,
-                {
-                  id: messageId,
-                  sessionID: sessionId,
-                  role: "assistant",
-                  parts: [part],
-                  created_at: Date.now(),
-                  updated_at: Date.now(),
-                  time: { created: Date.now(), updated: Date.now() },
-                },
+                placeholderAssistantMessage(sessionId, messageId, [part], createdAt, updatedAt),
               ],
         },
       };
@@ -291,81 +311,30 @@ export function upsertSession(sessions: Session[], session: Session): Session[] 
 }
 
 export function upsertMessage(messages: Message[], message: Message): Message[] {
-  const existing = messages.find((item) => item.id === message.id);
+  const existingIndex = messages.findIndex((item) => item.id === message.id);
+  const existing = existingIndex >= 0 ? messages[existingIndex] : undefined;
   const nextMessage = existing ? mergeMessage(existing, message) : message;
-  const without = messages.filter(
-    (item) => item.id !== message.id && !isOptimisticDuplicateUserMessage(item, message),
-  );
-  return [...without, nextMessage].sort((left, right) => {
-    const leftTime = left.time?.created ?? left.created_at ?? 0;
-    const rightTime = right.time?.created ?? right.created_at ?? 0;
-    return leftTime - rightTime;
-  });
-}
-
-function mergeMessage(existing: Message, incoming: Message): Message {
-  return {
-    ...existing,
-    ...incoming,
-    parts: mergeMessageParts(existing.parts, incoming.parts),
-  };
-}
-
-function mergeMessageParts(
-  existingParts: MessagePart[],
-  incomingParts: MessagePart[],
-): MessagePart[] {
-  const incomingIds = new Set(incomingParts.map((part) => part.id));
+  if (existingIndex >= 0) {
+    return messages
+      .map((item, index) => (index === existingIndex ? nextMessage : item))
+      .filter((item) => item.id === message.id || !isOptimisticDuplicateUserMessage(item, message));
+  }
   return [
-    ...incomingParts.map((incoming) => {
-      const existing = existingParts.find((part) => part.id === incoming.id);
-      return existing ? mergeMessagePart(existing, incoming) : incoming;
-    }),
-    ...existingParts.filter((part) => !incomingIds.has(part.id)),
+    ...messages.filter((item) => !isOptimisticDuplicateUserMessage(item, message)),
+    nextMessage,
   ];
 }
 
-function mergeMessagePart(existing: MessagePart, incoming: MessagePart): MessagePart {
-  const streamedFields = streamedDeltaFields(existing);
-  const merged = { ...existing, ...incoming } as MessagePart;
-  if (streamedFields.text && existing.text !== undefined) {
-    merged.text = existing.text;
-  }
-  if (streamedFields.content && existing.content !== undefined) {
-    merged.content = existing.content;
-  }
-  if (!streamedFields.text && !streamedFields.content) {
-    return merged;
-  }
-  merged.metadata = {
-    ...recordValue(incoming.metadata),
-    ...recordValue(existing.metadata),
-    [STREAMED_DELTA_FIELDS_METADATA_KEY]: streamedFields,
-  };
-  return merged;
-}
-
-function streamedDeltaFields(part: MessagePart): Record<"text" | "content", boolean> {
-  const fields = recordValue(recordValue(part.metadata)[STREAMED_DELTA_FIELDS_METADATA_KEY]);
-  return {
-    text: fields.text === true,
-    content: fields.content === true,
-  };
+function mergeMessage(existing: Message, incoming: Message): Message {
+  return mergeMessageForCache(existing, incoming);
 }
 
 function appendPartDelta(part: MessagePart, field: "text" | "content", delta: string): MessagePart {
-  const metadata = recordValue(part.metadata);
   const streamedFields = streamedDeltaFields(part);
   return {
     ...part,
     [field]: `${(part as Record<string, unknown>)[field] ?? ""}${delta}`,
-    metadata: {
-      ...metadata,
-      [STREAMED_DELTA_FIELDS_METADATA_KEY]: {
-        ...streamedFields,
-        [field]: true,
-      },
-    },
+    metadata: markStreamedDeltaFields(part.metadata, field, streamedFields),
   };
 }
 
@@ -398,6 +367,8 @@ function applyPartDelta(
   field: string | undefined,
   delta: string,
   sessionId: string,
+  createdAt: number | undefined,
+  updatedAt: number | undefined,
 ): Message[] {
   if (field !== "text" && field !== "content") {
     return messages;
@@ -405,7 +376,6 @@ function applyPartDelta(
 
   let foundMessage = false;
   let foundPart = false;
-  const now = Date.now();
   const next = messages.map((message) => {
     if (message.id !== messageId) {
       return message;
@@ -413,11 +383,8 @@ function applyPartDelta(
     foundMessage = true;
     return {
       ...message,
-      updated_at: now,
-      time: {
-        ...message.time,
-        updated: now,
-      },
+      ...(updatedAt === undefined ? {} : { updated_at: updatedAt }),
+      ...mergeMessageTime(message.time, undefined, updatedAt),
       parts: message.parts.map((part) => {
         if (part.id !== partId) {
           return part;
@@ -433,11 +400,8 @@ function applyPartDelta(
       message.id === messageId
         ? {
             ...message,
-            updated_at: now,
-            time: {
-              ...message.time,
-              updated: now,
-            },
+            ...(updatedAt === undefined ? {} : { updated_at: updatedAt }),
+            ...mergeMessageTime(message.time, undefined, updatedAt),
             parts: [
               ...message.parts,
               {
@@ -446,9 +410,7 @@ function applyPartDelta(
                 messageID: messageId,
                 type: "text",
                 [field]: delta,
-                metadata: {
-                  [STREAMED_DELTA_FIELDS_METADATA_KEY]: { [field]: true },
-                },
+                metadata: markStreamedDeltaFields(undefined, field),
               } as MessagePart,
             ],
           }
@@ -457,33 +419,25 @@ function applyPartDelta(
   }
 
   if (!foundMessage) {
-    next.push({
-      id: messageId,
-      sessionID: sessionId,
-      role: "assistant",
-      created_at: now,
-      updated_at: now,
-      time: { created: now, updated: now },
-      parts: [
+    next.push(
+      placeholderAssistantMessage(
+        sessionId,
+        messageId,
         {
           id: partId,
           sessionID: sessionId,
           messageID: messageId,
           type: "text",
           [field]: delta,
-          metadata: {
-            [STREAMED_DELTA_FIELDS_METADATA_KEY]: { [field]: true },
-          },
+          metadata: markStreamedDeltaFields(undefined, field),
         } as MessagePart,
-      ],
-    });
+        createdAt,
+        updatedAt,
+      ),
+    );
   }
 
-  return next.sort((left, right) => {
-    const leftTime = left.time?.created ?? left.created_at ?? 0;
-    const rightTime = right.time?.created ?? right.created_at ?? 0;
-    return leftTime - rightTime;
-  });
+  return next;
 }
 
 function applyCommandUpdate(
@@ -491,8 +445,8 @@ function applyCommandUpdate(
   sessionId: string,
   update: CommandUpdate,
 ): Message[] {
-  const createdAt = update.createdAt ?? update.updatedAt ?? Date.now();
-  const updatedAt = update.updatedAt ?? Date.now();
+  const createdAt = update.createdAt ?? update.updatedAt ?? undefined;
+  const updatedAt = update.updatedAt ?? undefined;
   const part = commandPartFromUpdate(update);
   let foundMessage = false;
   const next = messages.map((message) => {
@@ -508,39 +462,24 @@ function applyCommandUpdate(
       foundPart = true;
       return mergeCommandPart(existing, update);
     });
+    const messageCreatedAt = minDefined(message.time?.created ?? message.created_at, createdAt);
     return {
       ...message,
-      created_at: Math.min(message.time?.created ?? message.created_at ?? createdAt, createdAt),
-      updated_at: updatedAt,
-      time: {
-        ...message.time,
-        created: Math.min(message.time?.created ?? message.created_at ?? createdAt, createdAt),
-        updated: updatedAt,
-      },
+      ...(messageCreatedAt === undefined ? {} : { created_at: messageCreatedAt }),
+      ...(updatedAt === undefined ? {} : { updated_at: updatedAt }),
+      ...mergeMessageTime(message.time, messageCreatedAt, updatedAt),
       parts: foundPart ? parts : [...parts, part],
     };
   });
   if (!foundMessage) {
-    next.push({
-      id: update.messageID,
-      sessionID: sessionId,
-      role: "assistant",
-      created_at: createdAt,
-      updated_at: updatedAt,
-      time: { created: createdAt, updated: updatedAt },
-      parts: [part],
-    });
+    next.push(
+      placeholderAssistantMessage(sessionId, update.messageID, [part], createdAt, updatedAt),
+    );
   }
-  return next.sort((left, right) => {
-    const leftTime = left.time?.created ?? left.created_at ?? 0;
-    const rightTime = right.time?.created ?? right.created_at ?? 0;
-    return leftTime - rightTime;
-  });
+  return next;
 }
 
 function commandPartFromUpdate(update: CommandUpdate): MessagePart {
-  const createdAt = update.createdAt ?? update.updatedAt ?? Date.now();
-  const updatedAt = update.updatedAt ?? createdAt;
   return mergeCommandPart(
     {
       id: update.partID,
@@ -551,9 +490,6 @@ function commandPartFromUpdate(update: CommandUpdate): MessagePart {
       callID: update.commandRunID,
       state: {
         status: "running",
-        created_at: createdAt,
-        updated_at: updatedAt,
-        time: { start: createdAt, updated: updatedAt },
         input: { commands: [] },
         streamed_command_run_result: { results: [] },
       },
@@ -564,13 +500,22 @@ function commandPartFromUpdate(update: CommandUpdate): MessagePart {
 
 function mergeCommandPart(part: MessagePart, update: CommandUpdate): MessagePart {
   const state = recordValue(part.state);
+  const updateCreatedAt = update.createdAt ?? update.updatedAt ?? undefined;
+  const updatedAt = update.updatedAt ?? numberValue(state.updated_at) ?? undefined;
+  const previousUpdatedAt = numberValue(state.updated_at) ?? numberValue(state.updatedAt);
+  const previousEventSeq = numberValue(state.eventSeq) ?? numberValue(state.event_seq);
+  const updateEventSeq = update.eventSeq ?? undefined;
+  if (
+    (previousEventSeq !== undefined && updateEventSeq !== undefined && updateEventSeq < previousEventSeq) ||
+    (previousUpdatedAt !== undefined && updatedAt !== undefined && updatedAt < previousUpdatedAt)
+  ) {
+    return part;
+  }
   const input = recordValue(state.input);
   const stream = recordValue(state.streamed_command_run_result);
   const time = recordValue(state.time);
   const previousCreatedAt = numberValue(state.created_at) ?? numberValue(state.createdAt);
-  const updateCreatedAt = update.createdAt ?? update.updatedAt ?? Date.now();
-  const createdAt = Math.min(previousCreatedAt ?? updateCreatedAt, updateCreatedAt);
-  const updatedAt = update.updatedAt ?? numberValue(state.updated_at) ?? createdAt;
+  const createdAt = minDefined(previousCreatedAt, updateCreatedAt);
   const commands = upsertCommandRecord(arrayValue(input.commands), update.command, update);
   const results = update.result
     ? upsertCommandRecord(arrayValue(stream.results), update.result, update)
@@ -585,11 +530,11 @@ function mergeCommandPart(part: MessagePart, update: CommandUpdate): MessagePart
     callID: part.callID ?? update.commandRunID,
     state: {
       ...state,
-      status: commandRunStatus(commands, results, update.status),
-      created_at: createdAt,
-      updated_at: updatedAt,
-      eventSeq: Math.max(numberValue(state.eventSeq) ?? 0, update.eventSeq ?? 0),
-      time: { ...time, start: numberValue(time.start) ?? createdAt, updated: updatedAt },
+      status: mergedCommandRunStatus(stringValue(state.status), update.status),
+      ...(createdAt === undefined ? {} : { created_at: createdAt }),
+      ...(updatedAt === undefined ? {} : { updated_at: updatedAt }),
+      eventSeq: update.eventSeq ?? numberValue(state.eventSeq) ?? undefined,
+      time: commandTimeFields(time, createdAt, updatedAt),
       input: { ...input, commands },
       streamed_command_run_result: { ...stream, results },
     },
@@ -617,48 +562,54 @@ function upsertCommandRecord(
   };
   const existingIndex = current.findIndex((item) => commandRecordID(item) === update.commandID);
   if (existingIndex < 0) {
-    return sortCommandRecords([...current, incomingRecord]);
+    return [...current, incomingRecord];
   }
   const existing = recordValue(current[existingIndex]);
-  if ((numberValue(existing.event_seq) ?? -1) > (update.eventSeq ?? -1)) {
+  const previousEventSeq = numberValue(existing.event_seq) ?? numberValue(existing.eventSeq);
+  const updateEventSeq = update.eventSeq ?? undefined;
+  if (
+    previousEventSeq !== undefined &&
+    updateEventSeq !== undefined &&
+    updateEventSeq < previousEventSeq
+  ) {
+    return current;
+  }
+  const previousUpdatedAt = numberValue(existing.updated_at) ?? numberValue(existing.updatedAt);
+  const updateUpdatedAt = update.updatedAt ?? undefined;
+  if (
+    previousUpdatedAt !== undefined &&
+    updateUpdatedAt !== undefined &&
+    updateUpdatedAt < previousUpdatedAt
+  ) {
     return current;
   }
   const next = [...current];
   next[existingIndex] = { ...existing, ...incomingRecord };
-  return sortCommandRecords(next);
+  return next;
 }
 
-function commandRunStatus(commands: unknown[], results: unknown[], fallback: string): string {
-  const resultRecords = results.map(recordValue);
-  if (resultRecords.some((result) => result.success === false || result.status === "failed")) {
-    return "failed";
+function mergedCommandRunStatus(existing: string | undefined, incoming: string): string {
+  if (!existing) {
+    return incoming;
   }
-  if (
-    commands.length > 0 &&
-    resultRecords.length >= commands.length &&
-    resultRecords.every((result) => result.success === true || result.status === "completed")
-  ) {
-    return "completed";
+  if (isTerminalStatus(existing) && !isTerminalStatus(incoming)) {
+    return existing;
   }
-  return fallback === "ready" ? "running" : fallback;
+  if (existing === "running" && incoming === "ready") {
+    return existing;
+  }
+  return incoming;
+}
+
+function isTerminalStatus(status: string): boolean {
+  return ["completed", "failed", "error", "cancelled", "done", "success"].includes(
+    status.toLowerCase(),
+  );
 }
 
 function commandRecordID(value: unknown): string | undefined {
   const record = recordValue(value);
   return stringValue(record.command_id) ?? stringValue(record.commandID);
-}
-
-function sortCommandRecords(values: unknown[]): unknown[] {
-  return [...values].sort((left, right) => {
-    const leftRecord = recordValue(left);
-    const rightRecord = recordValue(right);
-    return (
-      (numberValue(leftRecord.command_index) ?? Number.MAX_SAFE_INTEGER) -
-        (numberValue(rightRecord.command_index) ?? Number.MAX_SAFE_INTEGER) ||
-      (numberValue(leftRecord.step) ?? Number.MAX_SAFE_INTEGER) -
-        (numberValue(rightRecord.step) ?? Number.MAX_SAFE_INTEGER)
-    );
-  });
 }
 
 function readSession(properties: Record<string, unknown>): Session | undefined {
@@ -682,6 +633,74 @@ function readId(
   snakeKey: string,
 ): string | undefined {
   return readString(properties, camelKey) ?? readString(properties, snakeKey);
+}
+
+function readNumber(
+  properties: Record<string, unknown>,
+  camelKey: string,
+  snakeKey: string,
+): number | undefined {
+  return numberValue(properties[camelKey]) ?? numberValue(properties[snakeKey]);
+}
+
+function minDefined(left: number | undefined, right: number | undefined): number | undefined {
+  if (left === undefined) {
+    return right;
+  }
+  if (right === undefined) {
+    return left;
+  }
+  return Math.min(left, right);
+}
+
+function mergeMessageTime(
+  current: Message["time"] | undefined,
+  createdAt: number | undefined,
+  updatedAt: number | undefined,
+): { time?: Message["time"] } {
+  const nextCreated = createdAt ?? current?.created;
+  const nextUpdated = updatedAt ?? current?.updated;
+  if (nextCreated === undefined || nextUpdated === undefined) {
+    return {};
+  }
+  return {
+    time: {
+      created: nextCreated,
+      updated: nextUpdated,
+    },
+  };
+}
+
+function placeholderAssistantMessage(
+  sessionId: string,
+  messageId: string,
+  parts: MessagePart | MessagePart[],
+  createdAt: number | undefined,
+  updatedAt: number | undefined,
+): Message {
+  return {
+    id: messageId,
+    sessionID: sessionId,
+    role: "assistant",
+    ...(createdAt === undefined ? {} : { created_at: createdAt }),
+    ...(updatedAt === undefined ? {} : { updated_at: updatedAt }),
+    ...mergeMessageTime(undefined, createdAt, updatedAt),
+    parts: Array.isArray(parts) ? parts : [parts],
+  };
+}
+
+function commandTimeFields(
+  current: Record<string, unknown>,
+  createdAt: number | undefined,
+  updatedAt: number | undefined,
+): Record<string, unknown> {
+  return {
+    ...current,
+    ...(numberValue(current.start) !== undefined || createdAt === undefined
+      ? {}
+      : { start: createdAt }),
+    ...(updatedAt === undefined ? {} : { updated: updatedAt }),
+  };
 }
 
 function normalizeStatus(value: unknown): "idle" | "busy" | "error" | undefined {
@@ -710,12 +729,45 @@ function sessionWithStatusMetrics(
   const contextTokens = readContextTokens(
     recordValue(usageValue).context_tokens ?? contextTokensValue,
   );
+  if (
+    session.status === status &&
+    (!contextTokens || sameContextTokens(session.context_tokens, contextTokens)) &&
+    (!usage || sameSessionUsage(session.usage, usage))
+  ) {
+    return session;
+  }
   return {
     ...session,
     status,
     ...(contextTokens ? { context_tokens: contextTokens } : {}),
     ...(usage ? { usage } : {}),
   };
+}
+
+function sameContextTokens(
+  left: Session["context_tokens"] | undefined,
+  right: Session["context_tokens"] | undefined,
+): boolean {
+  return (left?.input ?? 0) === (right?.input ?? 0) && (left?.limit ?? 0) === (right?.limit ?? 0);
+}
+
+function sameSessionUsage(
+  left: Session["usage"] | undefined,
+  right: Session["usage"] | undefined,
+): boolean {
+  if (!left || !right) {
+    return !left && !right;
+  }
+  return (
+    sameContextTokens(left.context_tokens, right.context_tokens) &&
+    jsonEquivalent(left.tokens, right.tokens) &&
+    left.cost === right.cost &&
+    left.currency === right.currency
+  );
+}
+
+function jsonEquivalent(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
 }
 
 function readSessionUsage(value: unknown): Session["usage"] | undefined {

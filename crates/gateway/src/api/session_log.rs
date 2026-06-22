@@ -45,7 +45,7 @@ pub async fn session_log_sessions(
     let page_size = params.page_size;
     match tokio::task::spawn_blocking(move || {
         SessionDbClient::discover()
-            .and_then(|client| client.list_sessions(workspace, page, page_size))
+            .and_then(|client| client.list_session_summaries(workspace, page, page_size))
     })
     .await
     {

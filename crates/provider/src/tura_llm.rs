@@ -931,7 +931,7 @@ pub fn normalize_response_content(raw: &Value) -> Value {
     raw.clone()
 }
 
-pub fn estimate_context_utilization(metrics: &mut CallMetrics) {
+pub fn record_context_utilization(metrics: &mut CallMetrics) {
     if let (Some(window), Some(input), maybe_output) = (
         metrics.usage.context_window,
         metrics.usage.input_tokens,

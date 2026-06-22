@@ -63,6 +63,7 @@ pub(crate) async fn handle_ipc_request_with_notifications(
         "execution.get_status" => Ok(json!({ "status": "ok" })),
         "session.append_user_command" => Ok(state.user_commands.append(&request.payload)),
         "session.take_user_commands" => Ok(state.user_commands.take(&request.payload)),
+        "session.clear_user_commands" => Ok(state.user_commands.clear(&request.payload)),
         "execution.kill_session_workers" => {
             let session_id = request
                 .payload

@@ -1,5 +1,5 @@
 import type { MessagePart } from "@tura/gateway-sdk";
-import { Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
+import { Show, createMemo } from "solid-js";
 import { jsonPreview } from "../state/format";
 import { partText } from "../state/global-store";
 import { stripEmojiDirectives } from "./message-rich-protocol";
@@ -123,75 +123,15 @@ export function TextPartCell(props: {
   );
 }
 
-const typingTextCache = new Map<string, string>();
-const completedTypingTextCache = new Set<string>();
-
 export function TypingText(props: {
   id: string;
   text: string;
   active: boolean;
   workspaceDirectory?: string;
 }) {
-  const [visible, setVisible] = createSignal(
-    props.active && !completedTypingTextCache.has(props.text)
-      ? (typingTextCache.get(props.id) ?? "")
-      : props.text,
-  );
-  let timer: number | undefined;
-
-  const setCachedVisible = (id: string, text: string, value: string) => {
-    setVisible(value);
-    typingTextCache.set(id, value);
-    if (value === text) {
-      completedTypingTextCache.add(text);
-    }
-  };
-
-  createEffect(() => {
-    const text = props.text;
-    const active = props.active;
-    const id = props.id;
-    if (timer) {
-      window.clearInterval(timer);
-      timer = undefined;
-    }
-    if (!active || completedTypingTextCache.has(text)) {
-      setCachedVisible(id, text, text);
-      return;
-    }
-    const cached = typingTextCache.get(id);
-    const current = untrack(visible);
-    const seed =
-      cached && text.startsWith(cached) && cached.length > current.length ? cached : current;
-    if (seed === text) {
-      setCachedVisible(id, text, text);
-      return;
-    }
-    const start = text.startsWith(seed) ? seed.length : 0;
-    if (start === 0) {
-      setCachedVisible(id, text, "");
-    }
-    let index = start;
-    timer = window.setInterval(() => {
-      index = Math.min(text.length, index + Math.max(1, Math.ceil((text.length - index) / 24)));
-      const next = text.slice(0, index);
-      setCachedVisible(id, text, next);
-      if (index >= text.length && timer) {
-        window.clearInterval(timer);
-        timer = undefined;
-      }
-    }, 18);
-  });
-
-  onCleanup(() => {
-    if (timer) {
-      window.clearInterval(timer);
-    }
-  });
-
   return (
     <RichText
-      text={visible()}
+      text={props.text}
       active={props.active}
       workspaceDirectory={props.workspaceDirectory}
     />

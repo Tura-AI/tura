@@ -85,4 +85,18 @@ describe("session busy animation state", () => {
       "assistant-runtime",
     ]);
   });
+
+  test("does not start thinking from a stale doing task on an idle session", () => {
+    const idleWithStaleTask: Session = {
+      ...session("idle"),
+      task_management: {
+        status: "doing",
+        task_summary: "Already summarized",
+      },
+    };
+
+    expect(messagesWithSessionThinking([userMessage()], idleWithStaleTask).map((item) => item.id)).toEqual([
+      "user-1",
+    ]);
+  });
 });

@@ -9,6 +9,7 @@ use gateway::session_store;
 use runtime::state_machine::runtime_management::{
     RuntimeCallResultStatus, RuntimeSessionSyncStatus, RuntimeState,
 };
+use runtime::state_machine::session_management::PlanStatus;
 use serde_json::{json, Value};
 use session_log::{SessionLogCommand, SessionLogStore};
 use std::collections::BTreeSet;
@@ -582,6 +583,121 @@ async fn gateway_session_messages_business_flow_reads_projection_history_without
 }
 
 #[tokio::test]
+async fn gateway_session_messages_business_flow_refreshes_session_task_management_after_runtime_terminal_callback(
+) -> anyhow::Result<()> {
+    let _flow_guard = SESSION_MESSAGES_FLOW_LOCK.lock().await;
+    let _guard = SESSION_DB_ENV_LOCK.lock().await;
+    let root = tempfile::tempdir()?;
+    let home = root.path().join("home");
+    let workspace = root.path().join("workspace-task-refresh");
+    std::fs::create_dir_all(&home)?;
+    std::fs::create_dir_all(&workspace)?;
+    let _env = EnvGuard::new(&home);
+    let _service = ServiceThread::start()?;
+
+    let workspace_key = session_log::path::normalize_workspace(&workspace.to_string_lossy());
+    let session_id = create_business_session(workspace_key.clone());
+    let task_id = "runtime-task-refresh";
+    session_store()
+        .update_session(
+            &session_id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(json!({
+                "task_id": task_id,
+                "task_summary": "Refresh runtime task status",
+                "status": "doing"
+            })),
+        )
+        .expect("task management should update before DB refresh");
+    assert_eq!(stored_task_status(&session_id, task_id), Some("doing"));
+    drain_events();
+
+    upsert_canonical_session_with_info(
+        &session_id,
+        &workspace_key,
+        vec![db_text_message(
+            &session_id,
+            "runtime-task-refresh-user",
+            "runtime-task-refresh-user-part",
+            "user",
+            "Refresh task status from DB",
+            1_781_514_294_000,
+            1_781_514_294_000,
+        )],
+        |info| {
+            let task = info
+                .management
+                .task_plan
+                .detailed_tasks
+                .iter_mut()
+                .find(|task| task.task_id == task_id)
+                .expect("task should exist in persisted session info");
+            task.status = PlanStatus::Done;
+        },
+    )?;
+    assert_eq!(
+        stored_task_status(&session_id, task_id),
+        Some("doing"),
+        "test setup should reproduce the stale gateway projection before the terminal callback"
+    );
+
+    let runtime_id = "runtime-task-refresh";
+    let Json(response) = send_agent_message(
+        Path(session_id.clone()),
+        Json(SendAgentMessageRequest {
+            reply_message: String::new(),
+            new_learning: String::new(),
+            step_summary: None,
+            media: Vec::new(),
+            runtime_id: Some(runtime_id.to_string()),
+            tool_call: Some(SendAgentToolCall {
+                tool_name: "runtime".to_string(),
+                call_id: runtime_id.to_string(),
+                state: json!({ "status": "completed" }),
+                metadata: None,
+            }),
+            runtime_status: Some(runtime_sync_status(runtime_id, false)),
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
+            created_at: 1_781_514_294_500,
+            updated_at: 1_781_514_295_000,
+        }),
+    )
+    .await;
+    assert!(response.ok);
+
+    assert_eq!(stored_task_status(&session_id, task_id), Some("done"));
+
+    let mut saw_session_updated = false;
+    while let Some(event) = session_store().pop_event() {
+        if let GlobalEvent::SessionUpdated { properties } = event {
+            if properties.session_id == session_id {
+                saw_session_updated = true;
+                assert_eq!(
+                    task_management_status(&properties.info.task_management, task_id),
+                    Some("done"),
+                    "session.updated should include refreshed task management"
+                );
+            }
+        }
+    }
+    assert!(
+        saw_session_updated,
+        "terminal runtime DB refresh must publish session.updated so plan views receive task_management"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn gateway_session_messages_business_flow_concurrent_agent_writes_stay_session_scoped(
 ) -> anyhow::Result<()> {
     let _flow_guard = SESSION_MESSAGES_FLOW_LOCK.lock().await;
@@ -723,6 +839,15 @@ fn upsert_canonical_session(
     workspace: &str,
     messages: Vec<Value>,
 ) -> anyhow::Result<()> {
+    upsert_canonical_session_with_info(session_id, workspace, messages, |_| {})
+}
+
+fn upsert_canonical_session_with_info(
+    session_id: &str,
+    workspace: &str,
+    messages: Vec<Value>,
+    mutate_info: impl FnOnce(&mut gateway::SessionInfo),
+) -> anyhow::Result<()> {
     let mut info = session_store()
         .get_session_info(session_id)
         .ok_or_else(|| anyhow::anyhow!("session should exist before DB upsert"))?;
@@ -733,6 +858,7 @@ fn upsert_canonical_session(
         .filter_map(|message| message.get("updated_at").and_then(Value::as_i64))
         .max()
         .unwrap_or(info.updated_at);
+    mutate_info(&mut info);
     let response = session_log::ipc::call_service(&SessionLogCommand::UpsertSession(
         session_log::UpsertSessionRequest {
             session: serde_json::to_value(info)?,
@@ -746,6 +872,40 @@ fn upsert_canonical_session(
         session_log::SessionLogResponse::Error { error } => anyhow::bail!("{error}"),
         other => anyhow::bail!("unexpected session_log response: {other:?}"),
     }
+}
+
+fn stored_task_status(session_id: &str, task_id: &str) -> Option<&'static str> {
+    session_store()
+        .get_session_info(session_id)?
+        .management
+        .task_plan
+        .detailed_tasks
+        .into_iter()
+        .find(|task| task.task_id == task_id)
+        .map(|task| match task.status {
+            PlanStatus::Todo => "todo",
+            PlanStatus::WaitingUser => "waiting_user",
+            PlanStatus::Doing => "doing",
+            PlanStatus::Question => "question",
+            PlanStatus::Done => "done",
+            PlanStatus::Archived => "archived",
+        })
+}
+
+fn task_management_status<'a>(task_management: &'a Value, task_id: &str) -> Option<&'a str> {
+    task_management
+        .get("tasks")
+        .and_then(Value::as_array)
+        .and_then(|tasks| {
+            tasks
+                .iter()
+                .find(|task| task.get("task_id") == Some(&json!(task_id)))
+        })
+        .or_else(|| {
+            (task_management.get("task_id") == Some(&json!(task_id))).then_some(task_management)
+        })
+        .and_then(|task| task.get("status"))
+        .and_then(Value::as_str)
 }
 
 fn db_text_message(

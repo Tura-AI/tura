@@ -29,7 +29,7 @@ use crate::state_machine::agent_management::{AgentManagement, AgentState};
 use crate::state_machine::runtime_management::{
     RuntimeCallResultStatus, RuntimeId, RuntimeManagement,
 };
-use crate::state_machine::session_management::{SessionManagement, SessionState};
+use crate::state_machine::session_management::{PlanStatus, SessionManagement, SessionState};
 use crate::turn_loop::finalization::create_dummy_runtime;
 use crate::turn_loop::no_tool_policy::no_tool_retry_limit;
 use crate::turn_loop::provider_step::accumulate_session_from_runtime;
@@ -362,6 +362,24 @@ pub fn process_manas_internal(
                 context_output.messages,
                 &original_user_task,
             );
+            if should_auto_complete_non_planning_doing_after_tool_turn(
+                supports_planning,
+                terminal_task_status.as_deref(),
+                visible_reply_published_before_terminal_status,
+                terminal_status_followed_real_command,
+            ) {
+                if complete_active_doing_task_after_non_planning_reply(session, true) {
+                    persist_session_checkpoint(session, "task_auto_completed");
+                }
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    supports_planning = supports_planning,
+                    supports_task_status = supports_task_status,
+                    "non-planning agent returned visible final text with only task_status doing; active task was auto-completed and loop ended"
+                );
+                break;
+            }
             if matches!(terminal_task_status.as_deref(), Some("done" | "question")) {
                 let final_response_published = if terminal_status_needs_final_response_turn(
                     terminal_task_status.as_deref(),
@@ -446,6 +464,23 @@ pub fn process_manas_internal(
                 break;
             }
 
+            if !supports_planning {
+                if complete_active_doing_task_after_non_planning_reply(
+                    session,
+                    visible_runtime_reply(&runtime).is_some(),
+                ) {
+                    persist_session_checkpoint(session, "task_auto_completed");
+                }
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    supports_planning = supports_planning,
+                    supports_task_status = supports_task_status,
+                    "turn completed without command_run while task_status is still active; non-planning agent ended and active task was settled when a visible reply existed"
+                );
+                break;
+            }
+
             if !(supports_planning && supports_task_status) {
                 info!(
                     session_id = %session.session_id,
@@ -522,6 +557,38 @@ fn manas_max_turns() -> u64 {
 
 fn increment_turn_with_fresh_timestamp(session: &mut SessionManagement) {
     session.increment_turn(Utc::now());
+}
+
+fn complete_active_doing_task_after_non_planning_reply(
+    session: &mut SessionManagement,
+    has_visible_reply: bool,
+) -> bool {
+    if !has_visible_reply {
+        return false;
+    }
+    let Some(task) = session
+        .task_plan
+        .detailed_tasks
+        .iter_mut()
+        .find(|task| task.status == PlanStatus::Doing)
+    else {
+        return false;
+    };
+    task.status = PlanStatus::Done;
+    session.session_last_update_at = Utc::now();
+    true
+}
+
+fn should_auto_complete_non_planning_doing_after_tool_turn(
+    supports_planning: bool,
+    terminal_task_status: Option<&str>,
+    visible_reply_already_published: bool,
+    terminal_status_followed_real_command: bool,
+) -> bool {
+    !supports_planning
+        && terminal_task_status == Some("doing")
+        && visible_reply_already_published
+        && !terminal_status_followed_real_command
 }
 
 fn messages_with_initial_context_prefix(
@@ -637,10 +704,14 @@ fn terminal_status_needs_final_response_turn(
 #[cfg(test)]
 mod tests {
     use super::{
-        increment_turn_with_fresh_timestamp, manas_max_turns, messages_with_initial_context_prefix,
+        complete_active_doing_task_after_non_planning_reply, increment_turn_with_fresh_timestamp,
+        manas_max_turns, messages_with_initial_context_prefix,
+        should_auto_complete_non_planning_doing_after_tool_turn,
         terminal_status_needs_final_response_turn, DEFAULT_MANAS_MAX_TURNS,
     };
-    use crate::state_machine::session_management::{SessionInput, SessionManagement};
+    use crate::state_machine::session_management::{
+        PlanStatus, SessionInput, SessionManagement, TaskStep,
+    };
     use chrono::{Duration, Utc};
     use serde_json::json;
     use std::path::PathBuf;
@@ -725,6 +796,81 @@ mod tests {
     }
 
     #[test]
+    fn non_planning_visible_reply_auto_completes_active_doing_task() {
+        let mut session = test_session("session-auto-done");
+        session.task_plan.detailed_tasks.push(TaskStep {
+            task_id: "active".to_string(),
+            step: 1,
+            task_summary: "Answer directly".to_string(),
+            status: PlanStatus::Doing,
+            ..TaskStep::default()
+        });
+
+        assert!(complete_active_doing_task_after_non_planning_reply(
+            &mut session,
+            true,
+        ));
+
+        assert_eq!(session.task_plan.detailed_tasks[0].status, PlanStatus::Done);
+    }
+
+    #[test]
+    fn non_planning_without_visible_reply_keeps_active_doing_task_open() {
+        let mut session = test_session("session-no-visible-reply");
+        session.task_plan.detailed_tasks.push(TaskStep {
+            task_id: "active".to_string(),
+            step: 1,
+            task_summary: "Wait for real output".to_string(),
+            status: PlanStatus::Doing,
+            ..TaskStep::default()
+        });
+
+        assert!(!complete_active_doing_task_after_non_planning_reply(
+            &mut session,
+            false,
+        ));
+
+        assert_eq!(
+            session.task_plan.detailed_tasks[0].status,
+            PlanStatus::Doing
+        );
+    }
+
+    #[test]
+    fn non_planning_tool_turn_auto_completes_only_visible_status_only_doing() {
+        assert!(should_auto_complete_non_planning_doing_after_tool_turn(
+            false,
+            Some("doing"),
+            true,
+            false,
+        ));
+        assert!(!should_auto_complete_non_planning_doing_after_tool_turn(
+            true,
+            Some("doing"),
+            true,
+            false,
+        ));
+        assert!(!should_auto_complete_non_planning_doing_after_tool_turn(
+            false,
+            Some("doing"),
+            false,
+            false,
+        ));
+        assert!(!should_auto_complete_non_planning_doing_after_tool_turn(
+            false,
+            Some("doing"),
+            true,
+            true,
+        ));
+        assert!(!should_auto_complete_non_planning_doing_after_tool_turn(
+            false,
+            Some("done"),
+            true,
+            false,
+        ));
+    }
+
+    #[test]
     fn terminal_done_skips_final_response_turn_when_reply_is_already_visible() {
         assert!(!terminal_status_needs_final_response_turn(
             Some("done"),
@@ -762,5 +908,25 @@ mod tests {
             true,
         ));
         assert!(!terminal_status_needs_final_response_turn(None, true, true));
+    }
+
+    fn test_session(id: &str) -> SessionManagement {
+        let now = Utc::now();
+        SessionManagement::new(
+            id.to_string(),
+            "Test".to_string(),
+            PathBuf::from("C:/workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "work".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "work".to_string(),
+            now,
+        )
     }
 }

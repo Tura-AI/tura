@@ -91,7 +91,7 @@ test("run result accepts user-facing runtime tool output as final assistant text
   assert.equal(buildRunResult("sess-1", messages).finalText, "TUI_BUSINESS_OK");
 });
 
-test("run result still ignores internal runtime task status payloads", () => {
+test("run result includes runtime task_status payloads", () => {
   const messages: Message[] = [
     {
       id: "msg-user",
@@ -110,15 +110,15 @@ test("run result still ignores internal runtime task status payloads", () => {
           tool: "runtime",
           metadata: {
             command_type: "task_status",
-            output: { task_status: { status: "done", task_detail: "internal only" } },
+            output: { task_status: { status: "done", task_detail: "task status is visible" } },
           },
         },
       ],
     },
   ];
 
-  assert.equal(hasUserFacingAssistantText(messages, 1), false);
-  assert.equal(buildRunResult("sess-1", messages).finalText, "");
+  assert.equal(hasUserFacingAssistantText(messages, 1), true);
+  assert.equal(buildRunResult("sess-1", messages).finalText, "task status is visible");
 });
 
 test("run result includes CLI metadata usage, timing, command, and turn stats", () => {

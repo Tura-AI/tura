@@ -1,7 +1,6 @@
 import type { CommandUpdatedEventProperties } from "../../types/event.js";
 import type { Message, MessagePart, Session } from "../../types/session.js";
 import {
-  isInternalTaskStatusPart,
   messageSortValue,
   messageText,
   partMessageID,
@@ -10,6 +9,7 @@ import {
 import type { AppState, LiveStream, RefreshSessionState } from "../reducer.js";
 
 const rawAnsiControlPattern = /\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-_]/g;
+const liveStreamPartMetadataKey = "tui_live_stream_snapshot";
 
 export function displayMessages(state: AppState): Message[] {
   const streams = Object.values(state.liveStreams).filter((stream) =>
@@ -219,11 +219,22 @@ function mergeMessagePartsForDisplay(
   existingParts: MessagePart[],
   incomingParts: MessagePart[],
 ): MessagePart[] {
+  const hasLiveTextSnapshot = existingParts.some(liveStreamSnapshotPart);
   const incomingPartIDs = new Set(incomingParts.map((part) => part.id));
   const preservedCommandParts = existingParts.filter(
-    (part) => commandRunSnapshotPart(part) && !incomingPartIDs.has(part.id),
+    (part) => commandRunSnapshotPart(part) && (hasLiveTextSnapshot || !incomingPartIDs.has(part.id)),
   );
-  return orderMessagePartsForDisplay([...incomingParts, ...preservedCommandParts]);
+  const preservedLiveTextParts = existingParts.filter(liveStreamSnapshotPart);
+  const filteredIncomingParts = incomingParts.filter((part) => {
+    if (hasLiveTextSnapshot && partIsText(part)) return false;
+    if (hasLiveTextSnapshot && commandRunSnapshotPart(part)) return false;
+    return true;
+  });
+  return orderMessagePartsForDisplay([
+    ...filteredIncomingParts,
+    ...preservedLiveTextParts,
+    ...preservedCommandParts,
+  ]);
 }
 
 export function upsertPart(
@@ -497,11 +508,7 @@ function applyLiveStream(messages: Message[], stream: LiveStream): Message[] {
       parts: message.parts.map((part) => {
         if (part.id !== stream.partID) return part;
         foundPart = true;
-        const base = isInternalTaskStatusPart(part)
-          ? ""
-          : stream.field === "text"
-            ? (part.text ?? "")
-            : (part.content ?? "");
+        const base = stream.field === "text" ? (part.text ?? "") : (part.content ?? "");
         if (stream.field === "text") return { ...part, text: `${base}${stream.text}` };
         return { ...part, content: `${base}${stream.text}` };
       }),
@@ -539,6 +546,7 @@ function liveStreamPart(stream: LiveStream): MessagePart {
     sessionID: stream.sessionID,
     messageID: stream.messageID,
     type: "text",
+    metadata: { [liveStreamPartMetadataKey]: true },
     [stream.field]: stream.text,
   };
 }
@@ -599,14 +607,24 @@ function commitLiveStreamsForMessages(
       if (stableMessage.parts.length) nextMessages = upsertMessage(nextMessages, stableMessage);
       continue;
     }
-    for (const [, stream] of matching) {
+    for (const [key, stream] of matching) {
       nextMessages = applyLiveStream(nextMessages, stream);
+      const { [key]: _committed, ...rest } = nextStreams;
+      nextStreams = rest;
     }
-    nextStreams = Object.fromEntries(
-      Object.entries(nextStreams).filter(([key]) => !matching.some(([matched]) => matched === key)),
-    );
   }
   return { messages: nextMessages, liveStreams: nextStreams };
+}
+
+function removeLiveStreamsMatchingMessage(
+  streams: Record<string, LiveStream>,
+  sessionID: string | undefined,
+  message: Message,
+): Record<string, LiveStream> {
+  return filterLiveStreams(
+    streams,
+    (stream) => !streamMatchesSession(stream, sessionID) || !liveStreamMatchesMessage(stream, message),
+  );
 }
 
 function messageShouldRemainLive(messages: Message[], incoming: Message): boolean {
@@ -656,6 +674,15 @@ function partMatchesLiveStreamText(
 
 function partIsText(part: MessagePart): boolean {
   return part.type === "text" || part.type === "message" || !part.type;
+}
+
+function liveStreamSnapshotPart(part: MessagePart): boolean {
+  if (!partIsText(part)) return false;
+  const metadata =
+    part.metadata && typeof part.metadata === "object"
+      ? (part.metadata as Record<string, unknown>)
+      : {};
+  return metadata[liveStreamPartMetadataKey] === true;
 }
 
 function commandRunSnapshotPart(part: MessagePart): boolean {

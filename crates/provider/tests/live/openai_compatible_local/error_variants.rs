@@ -493,8 +493,7 @@ async fn openai_compatible_business_flow_preserves_reasoning_only_stream_as_cont
     let metrics = response.metrics.expect("metrics");
     assert_eq!(metrics.finish_reason.as_deref(), Some("stop"));
     assert_eq!(metrics.usage.context_window, Some(128));
-    assert!(
-        metrics.usage.total_tokens.unwrap_or_default() > 0,
-        "stream without provider usage should receive estimated usage"
-    );
+    assert_eq!(metrics.usage.input_tokens, None);
+    assert_eq!(metrics.usage.output_tokens, None);
+    assert_eq!(metrics.usage.total_tokens, None);
 }
