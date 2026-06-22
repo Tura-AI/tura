@@ -129,12 +129,12 @@ function isInternalTaskStatusPayload(value) {
 }
 
 function taskStatusOnlyObject(value) {
-  const allowed = new Set(["status", "task_detail", "summary", "label"]);
+  const allowed = new Set(["status", "task_group", "summary", "label"]);
   const keys = Object.keys(value);
   return (
     keys.length > 0 &&
     keys.every((key) => allowed.has(key)) &&
-    ("task_detail" in value ||
+    ("task_group" in value ||
       "summary" in value ||
       (typeof value.status === "string" && /^(doing|done|question)$/iu.test(value.status.trim())))
   );

@@ -527,14 +527,14 @@ mod tests {
         accumulate_message, accumulate_tool_result, build_context, build_messages_from_session,
         ContextInput,
     };
-    use crate::context::compact_session_context;
     use crate::context::USER_AGENT_CONTEXT_ROLE;
+    use crate::context::{compact_session_context, compact_session_context_automatically};
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
     use crate::state_machine::session_management::{
         PlanStatus, PollInterval, SessionInput, SessionManagement, StartCondition, TaskStep,
     };
-    use chrono::Utc;
+    use chrono::{Duration, Utc};
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Mutex;
@@ -662,6 +662,172 @@ mod tests {
     }
 
     #[test]
+    fn compact_session_context_rebuilds_next_turn_from_timestamped_user_and_agent_timeline() {
+        let root = tempfile::TempDir::new().expect("tempdir");
+        let base = Utc::now() - Duration::minutes(20);
+        let mut session = session();
+        session.session_directory = root.path().to_path_buf();
+        session.session_started_at = base + Duration::minutes(10);
+        session.push_log(
+            serde_json::json!({
+                "role": "user",
+                "content": "old user requirement kept from retained context",
+                "timestamp": (base + Duration::minutes(1)).to_rfc3339(),
+                "created_at": (base + Duration::minutes(1)).timestamp_millis(),
+                "updated_at": (base + Duration::minutes(1)).timestamp_millis()
+            })
+            .to_string(),
+            base + Duration::minutes(1),
+        );
+        session.push_log(
+            serde_json::json!({
+                "type": "context_compaction",
+                "content": "earlier agent summary that remains in current context",
+                "workspace_snapshot": "<WORKSPACE_SNAPSHOT>\nold\n</WORKSPACE_SNAPSHOT>",
+                "environment_context": "<environment_context>old</environment_context>",
+                "timestamp": (base + Duration::minutes(2)).to_rfc3339()
+            })
+            .to_string(),
+            base + Duration::minutes(2),
+        );
+        session.push_log(
+            serde_json::json!({
+                "role": "user",
+                "content": "current run real user request",
+                "timestamp": (base + Duration::minutes(11)).to_rfc3339(),
+                "created_at": (base + Duration::minutes(11)).timestamp_millis(),
+                "updated_at": (base + Duration::minutes(11)).timestamp_millis()
+            })
+            .to_string(),
+            base + Duration::minutes(11),
+        );
+        session.push_log(
+            serde_json::json!({
+                "role": "assistant",
+                "content": "current run visible agent progress",
+                "timestamp": (base + Duration::minutes(12)).to_rfc3339(),
+                "created_at": (base + Duration::minutes(12)).timestamp_millis(),
+                "updated_at": (base + Duration::minutes(12)).timestamp_millis()
+            })
+            .to_string(),
+            base + Duration::minutes(12),
+        );
+
+        compact_session_context(&mut session, "new compact handoff text")
+            .expect("compact should succeed");
+        let messages = build_messages_from_session(&session);
+        let joined = messages
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            joined.contains("Context rebuild timeline before this checkpoint"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains(&(base + Duration::minutes(2)).to_rfc3339()),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("retained_context/agent_summary: earlier agent summary"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains(&(base + Duration::minutes(11)).to_rfc3339()),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("current_run/user: current run real user request"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("current_run/agent: current run visible agent progress"),
+            "{joined}"
+        );
+        assert!(joined.contains("Compact context handoff"), "{joined}");
+        assert!(joined.contains("new compact handoff text"), "{joined}");
+        assert!(
+            !joined.contains("old user requirement kept from retained context"),
+            "{joined}"
+        );
+        let summary = joined
+            .find("earlier agent summary")
+            .expect("summary position");
+        let user = joined
+            .find("current run real user request")
+            .expect("user position");
+        let agent = joined
+            .find("current run visible agent progress")
+            .expect("agent position");
+        assert!(
+            summary < user && user < agent,
+            "timeline must be timestamp sorted: {joined}"
+        );
+    }
+
+    #[test]
+    fn automatic_compact_context_preserves_recent_tool_results_and_trims_older_history() {
+        let root = tempfile::TempDir::new().expect("tempdir");
+        let base = Utc::now() - Duration::minutes(90);
+        let mut session = session();
+        session.session_directory = root.path().to_path_buf();
+        session.session_started_at = base;
+        for index in 0..90 {
+            let content = format!("old-history-{index:02} {}", "x".repeat(900));
+            session.push_log(
+                serde_json::json!({
+                    "role": "user",
+                    "content": content,
+                    "timestamp": (base + Duration::seconds(index)).to_rfc3339(),
+                    "created_at": (base + Duration::seconds(index)).timestamp_millis(),
+                    "updated_at": (base + Duration::seconds(index)).timestamp_millis()
+                })
+                .to_string(),
+                base + Duration::seconds(index),
+            );
+        }
+        session.push_log(
+            serde_json::json!({
+                "type": "tool_result",
+                "tool_name": "command_run",
+                "context_cache": {
+                    "output": "RECENT_TOOL_RESULT_SENTINEL"
+                },
+                "success": true,
+                "timestamp": (base + Duration::minutes(80)).to_rfc3339()
+            })
+            .to_string(),
+            base + Duration::minutes(80),
+        );
+
+        compact_session_context_automatically(&mut session, "automatic handoff")
+            .expect("automatic compact should succeed");
+        let compact = session
+            .session_log
+            .iter()
+            .rev()
+            .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+            .find(|value| {
+                value.get("type").and_then(serde_json::Value::as_str) == Some("context_compaction")
+            })
+            .expect("compact record should be present");
+        let content = compact
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .expect("compact content should be text");
+
+        assert!(content.len() <= 36_000 + 100);
+        assert!(
+            content.contains("older timeline entries omitted"),
+            "{content}"
+        );
+        assert!(content.contains("RECENT_TOOL_RESULT_SENTINEL"), "{content}");
+        assert!(!content.contains("old-history-00"), "{content}");
+    }
+
+    #[test]
     fn compact_session_context_does_not_append_task_management_state() {
         let mut session = session();
         session.task_plan.plan_summary = "Inspect workspace".to_string();
@@ -712,7 +878,9 @@ mod tests {
             .filter_map(|message| message.get("content").and_then(serde_json::Value::as_str))
             .collect::<Vec<_>>();
 
-        assert_eq!(contents.first().copied(), Some("compact handoff summary"));
+        assert!(contents.first().is_some_and(
+            |content| content.contains("Compact context handoff:\ncompact handoff summary")
+        ));
         assert!(contents
             .iter()
             .any(|content| content.contains("Continue working toward the active thread goal.")));

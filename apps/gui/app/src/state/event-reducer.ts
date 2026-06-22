@@ -59,12 +59,14 @@ export function applyGatewayEvent(state: AppState, envelope: GatewayEventEnvelop
       const sessions = next.sessions.filter((session) => session.id !== sessionId);
       const { [sessionId]: _messages, ...messagesBySession } = next.messagesBySession;
       const { [sessionId]: _paging, ...messagePagingBySession } = next.messagePagingBySession;
+      const { [sessionId]: _scroll, ...transcriptScrollBySession } = next.transcriptScrollBySession;
       const { [sessionId]: _todos, ...todosBySession } = next.todosBySession;
       return {
         ...next,
         sessions,
         messagesBySession,
         messagePagingBySession,
+        transcriptScrollBySession,
         todosBySession,
         selectedSessionId:
           next.selectedSessionId === sessionId ? sessions[0]?.id : next.selectedSessionId,
@@ -506,7 +508,9 @@ function mergeCommandPart(part: MessagePart, update: CommandUpdate): MessagePart
   const previousEventSeq = numberValue(state.eventSeq) ?? numberValue(state.event_seq);
   const updateEventSeq = update.eventSeq ?? undefined;
   if (
-    (previousEventSeq !== undefined && updateEventSeq !== undefined && updateEventSeq < previousEventSeq) ||
+    (previousEventSeq !== undefined &&
+      updateEventSeq !== undefined &&
+      updateEventSeq < previousEventSeq) ||
     (previousUpdatedAt !== undefined && updatedAt !== undefined && updatedAt < previousUpdatedAt)
   ) {
     return part;

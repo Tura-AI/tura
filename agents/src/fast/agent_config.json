@@ -45,9 +45,6 @@
       "capability_name": "web_discover"
     },
     {
-      "capability_name": "compact_context"
-    },
-    {
       "capability_name": "task_status"
     }
   ],

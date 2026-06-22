@@ -4541,7 +4541,7 @@ async function runTuraAgent({ id = "tura", workspace, shellSurface = "shell_comm
       "--agent-id",
       turaCliAgentName(id),
       ...(turaAccelerationEnabled ? ["-p"] : []),
-      "--dangerously-bypass-approvals-and-sandbox",
+      "--sandbox",
       "--model-reasoning-effort",
       reasoningEffort,
       "--output-last-message",

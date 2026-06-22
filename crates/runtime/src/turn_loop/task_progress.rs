@@ -257,7 +257,7 @@ mod tests {
                     "output": {
                         "task_status": {
                             "status": "done",
-                            "task_detail": "finished"
+                            "task_group": "finished"
                         }
                     }
                 }]

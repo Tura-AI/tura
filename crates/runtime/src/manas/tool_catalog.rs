@@ -160,7 +160,6 @@ fn default_command_run_commands() -> BTreeSet<String> {
         active_shell_command_name(),
         "read_media",
         "web_discover",
-        "compact_context",
         "task_status",
     ]
     .into_iter()
@@ -376,13 +375,6 @@ fn command_run_description_for_active_shell(
             compact_schema(&command_schema("web_discover")),
         ));
     }
-    if allowed_commands.contains("compact_context") {
-        command_lines.push(format!(
-            "- compact_context: {} Schema: {}",
-            compact_prompt(code_tools::commands::compact_context::PROMPT),
-            compact_schema(code_tools::commands::compact_context::SCHEMA),
-        ));
-    }
     if allowed_commands.contains("task_status") {
         command_lines.push(format!(
             "- task_status: {} Schema: {}",
@@ -435,7 +427,6 @@ fn command_list_for_description(commands: &BTreeSet<String>, active_shell: &str)
         "generate_media",
         "read_media",
         "web_discover",
-        "compact_context",
         "task_status",
         "planning",
     ];
@@ -456,7 +447,7 @@ fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
         "- Avoid embedding long generated source code or complex quoting directly in shell command lines; for complex logic, invoke a script/interpreter from the active shell rather than encoding the logic in shell syntax.",
         "- Verification: run the relevant test or build command after edits in the same command_run only when the verification command is already known.",
         "- Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.",
-        "- Context compaction: after a meaningful phase completes, or when context is near the active context limit and feels crowded, put `compact_context` as the final command in the highest step with a concise handoff summary for the next turn.",
+        "- Context compaction: after a meaningful phase completes, or when context is near the active context limit and feels crowded, put the handoff summary in `task_status.compact_context` after the work it summarizes.",
         "- Example investigation batch: independent `rg --files`, targeted `rg -n`, and candidate file reads all use step 1.",
         "- Example repair batch: step 1 `apply_patch` across related files, step 2 run the known build command, step 3 run multiple known test commands in the same step.",
         "- Example frontend batch: step 1 write or reuse the focused frontend test script, step 2 run that script and inspect generated textual outputs.",
@@ -479,7 +470,7 @@ fn current_apply_patch_command_format() -> String {
 
 fn current_shell_command_format(shell_prompt: &str) -> String {
     let guidance = format!(
-        "Use for tests, builds, scripts, package tools, and host-shell behavior. Default timeout is 15 seconds; set timeout_ms explicitly for legitimate long-running one-shot commands. Put verification after edits in a later step only when that verification command is already known. {} {}",
+        "Use for tests, builds, scripts, package tools, and host-shell behavior. Default timeout is 15 seconds; set timeout_ms explicitly for legitimate long-running one-shot commands. Put verification after edits in a later step only when that verification command is already known. Delete commands are allowed only when every delete target is a literal path inside the workspace; variable targets such as `$file.FullName` may be blocked. {} {}",
         compact_prompt(shell_prompt),
         long_running_service_guidance(),
     );
@@ -628,10 +619,10 @@ mod tests {
             description.contains("Reminder: task_status only updates internal task state")
                 && description.contains("Before changing task_status `status`")
                 && description.contains("then call task_status in the same assistant response")
-                && description.contains("update the task name first")
+                && description.contains("Keep task_group available")
                 && description.contains("has been read and inspected with read_media")
                 && description
-                    .contains("only command allowed besides the task_status `done` update")
+                    .contains("Use task_status `compact_context` to create a context checkpoint")
                 && description.contains("if the user says hello or asks a simple question"),
             "description missing task_status reminder"
         );
@@ -660,9 +651,10 @@ mod tests {
         assert!(description.contains("Reminder: task_status only updates internal task state"));
         assert!(description.contains("Before changing task_status `status`"));
         assert!(description.contains("then call task_status in the same assistant response"));
-        assert!(description.contains("update the task name first"));
+        assert!(description.contains("Keep task_group available"));
         assert!(description.contains("has been read and inspected with read_media"));
-        assert!(description.contains("only command allowed besides the task_status `done` update"));
+        assert!(description
+            .contains("Use task_status `compact_context` to create a context checkpoint"));
         assert!(description.contains("if the user says hello or asks a simple question"));
         assert!(!description.contains("Continue working toward the active thread goal."));
         assert!(!description.contains("[current objective]:"));
@@ -798,18 +790,12 @@ mod tests {
             .expect("commands item required should be an array");
 
         assert_eq!(schema["function"]["strict"], true);
-        assert_eq!(
-            parameters["required"],
-            serde_json::json!(["commands", "sandbox"])
-        );
+        assert_eq!(parameters["required"], serde_json::json!(["commands"]));
         assert_eq!(
             parameters["properties"]["commands"]["items"]["required"],
             serde_json::json!(["command_type", "command_line", "step"])
         );
-        assert_eq!(
-            parameters["properties"]["sandbox"]["type"],
-            serde_json::json!("boolean")
-        );
+        assert!(parameters["properties"].get("sandbox").is_none());
         assert!(parameters["properties"].get("task_status").is_none());
         assert!(command_required.contains(&serde_json::json!("command_type")));
         assert!(command_required.contains(&serde_json::json!("step")));
@@ -827,15 +813,17 @@ mod tests {
             .unwrap_or_default();
 
         assert!(description.contains(
-            "Available commands: apply_patch, shell_command, read_media, web_discover, compact_context, task_status."
+            "Available commands: apply_patch, shell_command, read_media, web_discover, task_status."
         ));
         assert!(description.contains(
             "Use assistant content only for concise reasoning, progress, and conclusions."
         ));
         assert!(description.contains("- shell_command:"));
+        assert!(description.contains(
+            "Delete commands are allowed only when every delete target is a literal path inside the workspace; variable targets such as `$file.FullName` may be blocked."
+        ));
         assert!(description.contains("- read_media:"));
         assert!(description.contains("- web_discover:"));
-        assert!(description.contains("- compact_context:"));
         assert!(description.contains("- task_status:"));
         assert!(!description.contains("- planning:"));
         assert!(description.contains("\"command\":{\"type\":\"string\""));
@@ -872,7 +860,7 @@ mod tests {
             .unwrap_or_default();
 
         assert!(description.contains(
-            "Available commands: apply_patch, bash, read_media, web_discover, compact_context, task_status."
+            "Available commands: apply_patch, bash, read_media, web_discover, task_status."
         ));
         assert!(description.contains(
             "Use assistant content only for concise reasoning, progress, and conclusions."
@@ -880,7 +868,6 @@ mod tests {
         assert!(description.contains("- bash:"));
         assert!(description.contains("- read_media:"));
         assert!(description.contains("- web_discover:"));
-        assert!(description.contains("- compact_context:"));
         assert!(description.contains("- task_status:"));
         assert!(!description.contains("- planning:"));
         assert!(description.contains("\"command\":{\"type\":\"string\""));
@@ -919,7 +906,7 @@ mod tests {
             .unwrap_or_default();
 
         assert!(description.contains(
-            "Available commands: apply_patch, zsh, read_media, web_discover, compact_context, task_status."
+            "Available commands: apply_patch, zsh, read_media, web_discover, task_status."
         ));
         assert!(description.contains("- zsh:"));
         assert!(description.contains("zsh-specific syntax"));
@@ -949,7 +936,7 @@ mod tests {
             .unwrap_or_default();
 
         assert!(description.contains(
-            "Available commands: apply_patch, shell_command, read_media, web_discover, compact_context, task_status, planning."
+            "Available commands: apply_patch, shell_command, read_media, web_discover, task_status, planning."
         ));
         assert!(description.contains("- planning:"));
 

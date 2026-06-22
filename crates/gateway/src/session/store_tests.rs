@@ -1501,11 +1501,18 @@ fn user_messages_are_recorded_in_session_management_log() {
     let info = store
         .get_session_info(&session.id)
         .expect("session info should exist");
-    assert!(info
+    let user_log = info
         .management
         .session_log
         .iter()
-        .any(|entry| entry.contains("补充新的约束")));
+        .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+        .find(|entry| entry.get("role").and_then(serde_json::Value::as_str) == Some("user"))
+        .expect("user message should be recorded as structured JSON");
+    assert_eq!(user_log["role"], "user");
+    assert_eq!(user_log["parts"][0]["text"], "补充新的约束");
+    assert!(user_log["id"]
+        .as_str()
+        .is_some_and(|id| !id.trim().is_empty()));
 }
 
 #[test]

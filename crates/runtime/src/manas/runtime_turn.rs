@@ -275,7 +275,8 @@ fn messages_already_request_compact(messages: &[serde_json::Value]) -> bool {
     messages.iter().any(|message| {
         serde_json::to_string(message).is_ok_and(|text| {
             text.contains("Context checkpoint required")
-                || text.contains("compact_context as the final command")
+                || text.contains("task_status with compact_context")
+                || text.contains("task_status update carrying compact_context")
         })
     })
 }
@@ -455,7 +456,7 @@ mod tests {
         );
         let messages = vec![serde_json::json!({
             "role": "user",
-            "content": "Context checkpoint required. compact_context as the final command"
+            "content": "Context checkpoint required. task_status with compact_context"
         })];
 
         assert!(!should_force_compact_prompt(&session, &messages, 200_000));

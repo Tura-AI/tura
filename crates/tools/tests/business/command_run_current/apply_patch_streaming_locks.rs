@@ -77,7 +77,10 @@ fn pass_apply_patch_add_delete_and_move_are_tracked_in_output() {
 }
 
 #[test]
-fn pass_apply_patch_allows_path_outside_workspace_without_sandbox() {
+fn pass_apply_patch_allows_path_outside_workspace_without_cli_sandbox() {
+    let _guard = env_lock_blocking();
+    let previous_sandbox = std::env::var_os("TURA_COMMAND_RUN_SANDBOX");
+    std::env::remove_var("TURA_COMMAND_RUN_SANDBOX");
     let root = temp_workspace("patch-outside-default");
     let outside = root
         .parent()
@@ -103,10 +106,14 @@ fn pass_apply_patch_allows_path_outside_workspace_without_sandbox() {
         "ok\n"
     );
     let _ = fs::remove_file(outside);
+    restore_env_var("TURA_COMMAND_RUN_SANDBOX", previous_sandbox);
 }
 
 #[test]
-fn fail_apply_patch_rejects_path_outside_workspace_when_sandboxed() {
+fn fail_apply_patch_rejects_path_outside_workspace_when_cli_sandboxed() {
+    let _guard = env_lock_blocking();
+    let previous_sandbox = std::env::var_os("TURA_COMMAND_RUN_SANDBOX");
+    std::env::set_var("TURA_COMMAND_RUN_SANDBOX", "1");
     let root = temp_workspace("patch-outside");
     let outside = root
         .parent()
@@ -116,7 +123,6 @@ fn fail_apply_patch_rejects_path_outside_workspace_when_sandboxed() {
 
     let output = command_run::execute(
         &json!({
-            "sandbox": true,
             "commands": [
                 {
                     "command": "apply_patch",
@@ -133,6 +139,7 @@ fn fail_apply_patch_rejects_path_outside_workspace_when_sandboxed() {
         .unwrap_or_default()
         .contains("outside"));
     assert!(!outside.exists());
+    restore_env_var("TURA_COMMAND_RUN_SANDBOX", previous_sandbox);
 }
 
 #[test]
@@ -428,7 +435,7 @@ fn pass_streaming_executor_repairs_scrambled_steps_without_accidental_grouping()
     for (step, detail) in [(3, "three"), (2, "two"), (4, "four"), (1, "one")] {
         results.extend(runtime.block_on(executor.push_command_value(json!({
             "command": "task_status",
-            "command_line": json!({ "status": "doing", "task_detail": detail }).to_string(),
+            "command_line": json!({ "status": "doing", "task_group": detail }).to_string(),
             "step": step
         }))));
     }
@@ -445,9 +452,9 @@ fn pass_streaming_executor_repairs_scrambled_steps_without_accidental_grouping()
         results
             .iter()
             .map(|result| {
-                result["output"]["task_status"]["task_detail"]
+                result["output"]["task_status"]["task_group"]
                     .as_str()
-                    .expect("task detail")
+                    .expect("task group")
                     .to_string()
             })
             .collect::<Vec<_>>(),
@@ -637,10 +644,10 @@ fn pass_scrambled_steps_are_repaired_without_accidental_parallel_grouping() {
     let output = command_run::execute(
         &json!({
             "commands": [
-                { "step": 3, "command": "task_status", "command_line": json!({ "status": "doing", "task_detail": "three" }).to_string() },
-                { "step": 2, "command": "task_status", "command_line": json!({ "status": "doing", "task_detail": "two" }).to_string() },
-                { "step": 4, "command": "task_status", "command_line": json!({ "status": "doing", "task_detail": "four" }).to_string() },
-                { "step": 1, "command": "task_status", "command_line": json!({ "status": "done", "task_detail": "one" }).to_string() }
+                { "step": 3, "command": "task_status", "command_line": json!({ "status": "doing", "task_group": "three" }).to_string() },
+                { "step": 2, "command": "task_status", "command_line": json!({ "status": "doing", "task_group": "two" }).to_string() },
+                { "step": 4, "command": "task_status", "command_line": json!({ "status": "doing", "task_group": "four" }).to_string() },
+                { "step": 1, "command": "task_status", "command_line": json!({ "status": "done", "task_group": "one" }).to_string() }
             ]
         }),
         &root,
@@ -658,9 +665,9 @@ fn pass_scrambled_steps_are_repaired_without_accidental_parallel_grouping() {
         results
             .iter()
             .map(|result| {
-                result["output"]["task_status"]["task_detail"]
+                result["output"]["task_status"]["task_group"]
                     .as_str()
-                    .expect("task detail")
+                    .expect("task group")
                     .to_string()
             })
             .collect::<Vec<_>>(),

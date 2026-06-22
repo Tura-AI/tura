@@ -144,10 +144,6 @@ Minimal custom agent example:
       "capability_directory": "crates/tools/src"
     },
     {
-      "capability_name": "compact_context",
-      "capability_directory": "crates/tools/src"
-    },
-    {
       "capability_name": "task_status",
       "capability_directory": "crates/tools/src"
     }

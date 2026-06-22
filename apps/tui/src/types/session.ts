@@ -236,7 +236,7 @@ function userFacingOutputText(value: unknown): string {
     const output = userFacingOutputText(object[key]);
     if (output) return output;
   }
-  for (const key of ["task_detail", "summary", "status", "label"]) {
+  for (const key of ["task_group", "summary", "status", "label"]) {
     const output = userFacingOutputText(object[key]);
     if (output) return output;
   }

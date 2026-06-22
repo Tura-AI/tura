@@ -74,6 +74,8 @@ export function PlanView(props: {
   state: AppState;
   previewSession?: Session;
   previewMessages: Message[];
+  previewInitialScrollTop?: number;
+  onPreviewTranscriptScroll?: (scrollTop: number) => void;
   slashCommands: Command[];
   onPlanMode: (value: PlanMode) => void;
   onSearch: (value: string) => void;
@@ -437,6 +439,8 @@ export function PlanView(props: {
             state={props.state}
             session={props.previewSession}
             messages={props.previewMessages}
+            initialScrollTop={props.previewInitialScrollTop}
+            onTranscriptScroll={props.onPreviewTranscriptScroll}
             slashCommands={props.slashCommands}
             onComposerText={props.onComposerText}
             onComposerImages={props.onComposerImages}
@@ -636,6 +640,7 @@ export function PlanBoard(props: {
                           "board-card",
                           props.selectedSessionId === session.id && "selected",
                         )}
+                        data-session-id={session.id}
                         draggable="true"
                         onPointerDown={(event) => beginBoardDrag(event, session)}
                         onMouseDown={(event) => beginBoardDrag(event, session)}

@@ -28,7 +28,7 @@ pub async fn prompt_async(
         append_user_command_for_runtime(&session_id, content);
         return StatusCode::NO_CONTENT;
     }
-    let _ = session_store().add_message_with_parts(
+    let user_message = session_store().add_message_with_parts(
         &session_id,
         SessionMessageRole::User,
         prompt_message_parts(&payload),
@@ -50,7 +50,10 @@ pub async fn prompt_async(
         session_store().get_messages(&session_id).len(),
     );
     let session_id_for_task = session_id;
-    let payload_for_task = payload;
+    let payload_for_task = user_message
+        .as_ref()
+        .map(|message| prompt_payload_with_frontend_ids(payload.clone(), message))
+        .unwrap_or(payload);
     tokio::task::spawn_blocking(move || {
         if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             run_mano_for_prompt(session_id_for_task.clone(), payload_for_task);
@@ -327,12 +330,58 @@ pub(super) fn first_prompt_part_id(payload: &serde_json::Value) -> Option<String
         .get("parts")?
         .as_array()?
         .iter()
-        .find(|part| part.get("type").and_then(|value| value.as_str()) == Some("text"))?
+        .find(|part| {
+            part.get("type")
+                .and_then(|value| value.as_str())
+                .is_none_or(|part_type| part_type == "text")
+        })?
         .get("id")
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
+}
+
+fn prompt_payload_with_frontend_ids(
+    mut payload: serde_json::Value,
+    message: &crate::session::Message,
+) -> serde_json::Value {
+    let Some(object) = payload.as_object_mut() else {
+        return payload;
+    };
+    object
+        .entry("messageID".to_string())
+        .or_insert_with(|| serde_json::Value::String(message.id.clone()));
+
+    if first_prompt_part_id(&serde_json::Value::Object(object.clone())).is_some() {
+        return payload;
+    }
+
+    let Some(part_id) = message
+        .parts
+        .iter()
+        .find(|part| part.part_type == "text")
+        .map(|part| part.id.clone())
+    else {
+        return payload;
+    };
+    if let Some(parts) = object
+        .get_mut("parts")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        if let Some(part) = parts.iter_mut().find(|part| {
+            part.get("type")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|part_type| part_type == "text")
+        }) {
+            if let Some(part_object) = part.as_object_mut() {
+                part_object
+                    .entry("id".to_string())
+                    .or_insert_with(|| serde_json::Value::String(part_id));
+            }
+        }
+    }
+    payload
 }
 
 fn prompt_runtime_context(payload: &serde_json::Value) -> Option<String> {

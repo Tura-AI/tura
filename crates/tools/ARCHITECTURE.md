@@ -79,11 +79,6 @@ crates/tools/
         schema.json
         prompt.md
         policy.toml
-      compact_context/
-        mod.rs
-        schema.json
-        prompt.md
-        policy.toml
       planning/
         mod.rs
         schema.json
@@ -228,13 +223,13 @@ Examples:
 - `generate_media` -> router command id -> external command package
 - `read_media` -> router command id -> tools handler
 - `web_discover` -> router command id -> tools handler
-- `compact_context` -> command-run lifecycle handler
+- `task_status.compact_context` -> internal command-run context checkpoint
 - `task_status` -> internal command-run status command
 - `planning` -> optional planning/multiple-task state handler
 
 Only `shell_command`, `bash`, `zsh`, `apply_patch`, mutating `generate_media`,
-read-only `read_media`, `web_discover`, `compact_context`, and internal `task_status` are enabled for
-normal command-run coding-agent sessions in this version. `planning` is
+read-only `read_media`, `web_discover`, and internal `task_status` are enabled
+for normal command-run coding-agent sessions in this version. `planning` is
 injected only by the explicit multiple-task runtime mode.
 
 Shell surface selection is controlled by `TURA_COMMAND_RUN_SHELL`. Windows
@@ -285,12 +280,13 @@ The OpenAI provider-side wire field `parallel_tool_calls` is **unrelated** to
 this rename — that field is an OpenAI request parameter owned by the provider
 crate and keeps its upstream name.
 
-## Context Compaction Command
+## Context Compaction Checkpoint
 
-`compact_context` is a lifecycle command inside `command_run`. It should always
-be scheduled as the last step in a batch. The command output is a single
-handoff summary, capped by prompt guidance to stay compact enough for the next
-agent turn.
+Context compaction is carried by `task_status.compact_context` inside
+`command_run`; the standalone `compact_context` command has been removed. The
+checkpoint should always be scheduled as the last command in the highest step of
+a batch. The output is a single handoff summary, capped by prompt guidance to
+stay compact enough for the next agent turn.
 
 Runtime handles the command specially after execution:
 
@@ -299,6 +295,13 @@ Runtime handles the command specially after execution:
 - The session and task state machine continue; compaction does not reset work.
 - Workspace snapshot and recent-file snapshot are regenerated and injected.
 - Other commands in the same batch remain ordered and are not repeated.
+
+Runtime may also write an automatic checkpoint without a `task_status` handoff
+when the current provider input plus newly persisted context estimated as
+`bytes / 3` would exceed the active context limit. The automatic path preserves
+current-turn tool results in the rebuild timeline and trims older timeline
+entries when the compact text itself grows beyond roughly 12,000 estimated
+tokens.
 
 This is the main long-context optimization path. Prompt wording only tells the
 model when to call the command; the token reduction comes from runtime context
@@ -446,7 +449,6 @@ The current always-present command directories are:
 ```text
 apply_patch
 bash
-compact_context
 generate_media
 planning
 read_media

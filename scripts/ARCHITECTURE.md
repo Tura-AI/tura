@@ -14,7 +14,7 @@ Command entries:
 Important scripts:
 
 - `install.*`: install dependencies only. The root installer checks
-  `shell_command`, `bash`, and `zsh` coverage on every platform, ensures
+  `shell_command`, `bash`, `zsh`, and `git` coverage on every platform, ensures
   user-local `uv` and `bun`, calls command-owned `commands/*/install.*`
   scripts, and runs Bun installs inside app/package directories. It does not
   build binaries or register PATH launchers. Windows adds common Git/MSYS shell

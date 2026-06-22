@@ -96,14 +96,14 @@ fn apply_status_result(session: &mut SessionManagement, result: &mut serde_json:
         }) else {
             continue;
         };
-        let requested_detail = status
-            .get("task_detail")
+        let requested_group = status
+            .get("task_group")
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToString::to_string);
-        if let Some(detail) = requested_detail {
-            changed |= apply_task_detail(session, status, detail);
+        if let Some(group) = requested_group {
+            changed |= apply_task_group(session, status, group);
         }
         match status.get("status").and_then(serde_json::Value::as_str) {
             Some("doing") => changed |= mark_active_task_doing(session),
@@ -115,29 +115,29 @@ fn apply_status_result(session: &mut SessionManagement, result: &mut serde_json:
     changed
 }
 
-fn apply_task_detail(
+fn apply_task_group(
     session: &mut SessionManagement,
     output: &mut serde_json::Map<String, serde_json::Value>,
-    detail: String,
+    group: String,
 ) -> bool {
     let mut changed = false;
-    if session.auto_session_name && session.session_name.trim() != detail.trim() {
-        session.session_name = detail.clone();
+    if session.auto_session_name && session.session_name.trim() != group.trim() {
+        session.session_name = group.clone();
         changed = true;
     }
     if session.task_plan.plan_summary.trim().is_empty() {
-        session.task_plan.plan_summary = detail.clone();
+        session.task_plan.plan_summary = group.clone();
         ensure_single_task(session, Utc::now());
         if let Some(task) = session.task_plan.detailed_tasks.first_mut() {
-            task.task_summary = detail;
+            task.task_summary = group;
         }
         return true;
     }
-    if session.task_plan.plan_summary.trim() != detail.trim() {
+    if session.task_plan.plan_summary.trim() != group.trim() {
         output.insert(
             "warning".to_string(),
             serde_json::Value::String(
-                "task_detail rename ignored because the task already has a name; no other task-management parameter needs updating for this rename".to_string(),
+                "task_group update ignored because the task already has a work area; no other task-management parameter needs updating for this group update".to_string(),
             ),
         );
     }
@@ -443,7 +443,7 @@ mod tests {
                 "success": true,
                 "output": {
                     "status": {
-                        "task_detail": "Fix startup crash",
+                        "task_group": "商城前端",
                         "status": "done"
                     }
                 }
@@ -454,8 +454,8 @@ mod tests {
             apply_tool_result_session_state_update(&mut session, COMMAND_RUN_TOOL, &mut result);
 
         assert!(changed);
-        assert_eq!(session.task_plan.plan_summary, "Fix startup crash");
-        assert_eq!(session.session_name, "Fix startup crash");
+        assert_eq!(session.task_plan.plan_summary, "商城前端");
+        assert_eq!(session.session_name, "商城前端");
         assert_eq!(session.task_plan.detailed_tasks.len(), 1);
         assert_eq!(session.task_plan.detailed_tasks[0].status, PlanStatus::Done);
         assert_eq!(session.task_plan.detailed_tasks[0].step, 1);
@@ -486,7 +486,7 @@ mod tests {
                 "success": true,
                 "output": {
                     "task_status": {
-                        "task_detail": "Inspect available behavior clues",
+                        "task_group": "Rust CLI rebuild",
                         "status": "done"
                     }
                 }
@@ -502,7 +502,7 @@ mod tests {
     }
 
     #[test]
-    fn task_detail_does_not_rename_session_when_auto_name_disabled() {
+    fn task_group_does_not_rename_session_when_auto_name_disabled() {
         let mut session = session();
         session.session_name = "Manual title".to_string();
         session.auto_session_name = false;
@@ -512,7 +512,7 @@ mod tests {
                 "success": true,
                 "output": {
                     "status": {
-                        "task_detail": "Generated task"
+                        "task_group": "订单清结算微服务"
                     }
                 }
             }]
@@ -522,7 +522,7 @@ mod tests {
             apply_tool_result_session_state_update(&mut session, COMMAND_RUN_TOOL, &mut result);
 
         assert!(changed);
-        assert_eq!(session.task_plan.plan_summary, "Generated task");
+        assert_eq!(session.task_plan.plan_summary, "订单清结算微服务");
         assert_eq!(session.session_name, "Manual title");
     }
 
@@ -594,7 +594,7 @@ mod tests {
     }
 
     #[test]
-    fn status_summary_refreshes_auto_session_name_after_summary_exists() {
+    fn task_group_refreshes_auto_session_name_after_summary_exists() {
         let mut session = session();
         session.task_plan.plan_summary = "Existing task".to_string();
         session.session_name = "Existing task".to_string();
@@ -611,7 +611,7 @@ mod tests {
                 "success": true,
                 "output": {
                     "status": {
-                        "task_detail": "New task name"
+                        "task_group": "pdf编辑制作"
                     }
                 }
             }]
@@ -622,14 +622,14 @@ mod tests {
 
         assert!(changed);
         assert_eq!(session.task_plan.plan_summary, "Existing task");
-        assert_eq!(session.session_name, "New task name");
+        assert_eq!(session.session_name, "pdf编辑制作");
         assert_eq!(
             session.task_plan.detailed_tasks[0].task_summary,
             "Existing task"
         );
         assert!(result["results"][0]["output"]["status"]["warning"]
             .as_str()
-            .is_some_and(|text| text.contains("rename ignored")));
+            .is_some_and(|text| text.contains("group update")));
     }
 
     #[test]

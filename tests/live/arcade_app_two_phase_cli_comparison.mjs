@@ -620,7 +620,7 @@ async function runAgent(agent, template, index) {
       "exec",
       "--json",
       "--skip-git-repo-check",
-      "--dangerously-bypass-approvals-and-sandbox",
+      "--sandbox",
       "--session-id",
       sessionId,
       "--agent-id",

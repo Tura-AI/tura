@@ -533,11 +533,11 @@ impl SessionStore {
             if role == MessageRole::User {
                 if let Some(text) = message.parts.iter().find_map(|part| part.text.clone()) {
                     if info.management.input.user_input.trim().is_empty() {
-                        info.management.input.user_input = text.clone();
+                        info.management.input.user_input = text;
                     }
-                    info.management
-                        .session_log
-                        .push(format!("user_input: {text}"));
+                    if let Ok(entry) = serde_json::to_string(&message) {
+                        info.management.session_log.push(entry);
+                    }
                 }
             }
         }

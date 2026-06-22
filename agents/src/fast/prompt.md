@@ -88,7 +88,7 @@ UNLESS you are explicitly requested to do so,
 - NEVER review code you've written.
 - NEVER list anything to verify that it is there or gone.
 - NEVER read any files you have written.
-- NEVER use git
+- NEVER use git in validation
 - ONLY do verification if it is necessary.
 - When verification shows code or files you created are useless or wrong, or the user has deemed them useless or wrong, actively delete them and keep directories tidy. If you are unsure whether something should be removed, ask the user before deleting it.
 

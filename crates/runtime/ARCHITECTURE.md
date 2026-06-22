@@ -196,7 +196,10 @@ Session bootstrap and gateway session loading stay in focused modules:
 `session_bootstrap/persisted.rs`, and `session_bootstrap/initial_messages.rs`.
 
 Runtime gateway-session persistence goes through `crates/session_log`, not
-workspace-local JSON files. `checkpoint/session_snapshot.rs` uses
+workspace-local JSON files. Each session workspace is also initialized as a
+local Git repository when it is prepared, and terminal runtime exits create a
+workspace commit whose message includes the session id and task group.
+`checkpoint/session_snapshot.rs` uses
 `SessionLogClient::upsert_session` to persist runtime session snapshots.
 `session_bootstrap/persisted.rs` uses `SessionLogClient::get_session` to resume
 an existing gateway session. Resumed sessions must match the requested workspace
@@ -335,6 +338,16 @@ Compact context is written by `context/compaction.rs` and rebuilds the next turn
 from the compaction summary, workspace snapshot, environment context, and active
 planning objective. Runtime owns this prompt state; gateway should not assemble
 runtime prompts.
+
+The active compact threshold is capped at 250,000 tokens. Runtime still asks the
+agent to provide a `task_status.compact_context` handoff when provider-reported
+input reaches the active threshold, but it also applies an automatic checkpoint
+after a turn if `provider_input_tokens + newly_persisted_context_bytes / 3`
+would exceed that threshold. Automatic checkpoints include the current turn's
+persisted tool results in the rebuild timeline so completed work is not lost.
+When rebuilt compact text itself exceeds roughly 12,000 estimated tokens using
+the same bytes/3 estimate, older timeline entries are omitted before writing the
+checkpoint.
 
 Task-status guidance should use `doing` only when more `command_run` calls are
 required, `done` for finished work, and `question` when

@@ -15,6 +15,10 @@ pub use build::{
     user_input_content_value, ContextInput, ContextOutput,
 };
 pub use compaction::compact_session_context;
+pub(crate) use compaction::{
+    compact_session_context_automatically, compact_session_context_with_agent_message,
+    CompactContextAgentMessage,
+};
 pub(crate) use workspace::WorkspaceSnapshot;
 
 pub trait ContextualUserFragment {

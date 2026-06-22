@@ -37,6 +37,7 @@ Options:
       --planning MODE       planning override: auto, on, or off
                                   (default: auto, follows selected agent config)
       --bash, --zsh, --shll       force the command-run shell surface for this turn
+      --sandbox                   restrict command_run writes/workdirs to the workspace
   -c, --config KEY=VALUE          runtime override:
                                   model_reasoning_effort, max_tokens,
                                   model_max_tokens,
@@ -44,7 +45,7 @@ Options:
                                   command_run_shell=bash|zsh|shll
       --skip-git-repo-check       accepted for compatibility
       --dangerously-bypass-approvals-and-sandbox
-                                  accepted for compatibility
+                                  accepted for Codex CLI compatibility; does not enable sandboxing
   -h, --help                      show this help
 
 Output:
@@ -78,6 +79,7 @@ pub(crate) struct CliConfig {
     pub(crate) planning_mode: Option<bool>,
     pub(crate) max_tokens: Option<u64>,
     pub(crate) command_run_shell: Option<String>,
+    pub(crate) command_run_sandbox: bool,
     pub(crate) agent: Option<String>,
     pub(crate) session_id: Option<String>,
     pub(crate) last_message_path: Option<PathBuf>,
@@ -104,6 +106,7 @@ impl CliConfig {
             planning_mode: None,
             max_tokens: None,
             command_run_shell: None,
+            command_run_sandbox: false,
             agent: None,
             session_id: None,
             last_message_path: None,
@@ -146,6 +149,10 @@ impl CliConfig {
             }
             match arg {
                 "--skip-git-repo-check" | "--dangerously-bypass-approvals-and-sandbox" => {
+                    index += 1;
+                }
+                "--sandbox" => {
+                    config.command_run_sandbox = true;
                     index += 1;
                 }
                 "--bash" | "--zsh" | "--shll" => {
@@ -494,5 +501,24 @@ mod tests {
         assert_eq!(zsh.command_run_shell.as_deref(), Some("zsh"));
         assert_eq!(typo.command_run_shell, None);
         assert_eq!(typo.prompt_parts, vec!["zash", "inspect"]);
+    }
+
+    #[test]
+    fn sandbox_flag_enables_command_run_workspace_sandbox() {
+        let config = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--sandbox".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse sandbox flag");
+        let compat = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--dangerously-bypass-approvals-and-sandbox".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse compatibility flag");
+
+        assert!(config.command_run_sandbox);
+        assert!(!compat.command_run_sandbox);
     }
 }

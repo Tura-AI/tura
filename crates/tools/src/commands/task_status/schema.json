@@ -2,14 +2,19 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "task_detail": {
+    "task_group": {
       "type": "string",
-      "description": "Optional few-word current task name/task label. Update it when starting execution of a newly recognized task. This is internal state, not a user-visible reply."
+      "description": "Optional few-word code work area for the active task. This is a broad implementation domain, not a specific task detail, progress report, completion summary, or user-visible reply. Correct examples: PDF editing, storefront frontend, order settlement service. Wrong examples: Create a slide deck about the fall of Constantinople in 1453, Add cart button animation, Check order system logs."
     },
     "status": {
       "type": "string",
       "enum": ["doing", "question", "done"],
       "description": "doing only when more command_run calls are required; question when blocked on user feedback; done only when the task is complete, verified, and any media to send/show has been read and inspected."
+    },
+    "compact_context": {
+      "type": "string",
+      "maxLength": 60000,
+      "description": "Optional context handoff summary. Use only when a new task no longer depends on the current main context or when a context checkpoint is needed. Include only details not already present in the current task conversation or prior summary."
     }
   }
 }

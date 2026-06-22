@@ -1,6 +1,6 @@
 use std::path::Path;
 
-pub const PERMISSIONS_INSTRUCTIONS: &str = "<permissions instructions>\nFilesystem sandboxing defines which files can be read or written. `sandbox_mode` is `danger-full-access`: No filesystem sandboxing - all commands are permitted. Network access is enabled.\nApproval policy is currently never. Do not provide the `sandbox_permissions` for any reason, commands will be rejected.\n</permissions instructions>";
+pub const PERMISSIONS_INSTRUCTIONS: &str = "<permissions instructions>\nNetwork access is enabled. Approval policy is currently never.\n</permissions instructions>";
 
 pub fn environment_context(
     cwd: &Path,

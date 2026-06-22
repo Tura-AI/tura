@@ -734,6 +734,7 @@ async function runTuraPlanning(workspace, agentDir, prompt, agentPrompt) {
     "--skip-git-repo-check",
     "--session-id",
     sessionId,
+    "--sandbox",
     "--agent-id",
     agentPrompt,
     "-m",

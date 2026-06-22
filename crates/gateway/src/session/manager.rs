@@ -39,6 +39,13 @@ impl SessionManager {
                 .unwrap_or_default()
                 .join(DEFAULT_SESSION_DIRECTORY)
         });
+        if let Err(error) = runtime::workspace_git::ensure_workspace_git_repo(&session_directory) {
+            tracing::warn!(
+                directory = %session_directory.display(),
+                error = %error,
+                "failed to ensure workspace git repository"
+            );
+        }
         let session_id = Self::generate_session_id(&session_directory, now);
         let session_name = format!("Session-{}", now.format("%Y%m%d%H%M%S"));
 

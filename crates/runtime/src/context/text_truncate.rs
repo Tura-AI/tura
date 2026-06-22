@@ -132,7 +132,7 @@ fn truncate_marker_sections_for_command_run(
     }
 
     for section in sections {
-        output.push_str(&formatted_truncate_text(&section, max_chars));
+        output.push_str(&formatted_truncate_section_body(&section, max_chars));
         if !output.ends_with('\n') {
             output.push('\n');
         }
@@ -377,7 +377,7 @@ fn truncate_query_sections_for_command_run(
         }
     }
     for (_, section, _) in sections {
-        output.push_str(&formatted_truncate_text(&section, max_chars));
+        output.push_str(&formatted_truncate_section_body(&section, max_chars));
         if !output.ends_with('\n') {
             output.push('\n');
         }
@@ -503,12 +503,26 @@ fn truncate_ripgrep_file_sections_for_command_run(
         }
     }
     for (_, section) in sections {
-        output.push_str(&formatted_truncate_text(&section, max_chars));
+        output.push_str(&formatted_truncate_section_body(&section, max_chars));
         if !output.ends_with('\n') {
             output.push('\n');
         }
     }
     Some(output)
+}
+
+fn formatted_truncate_section_body(section: &str, max_chars: usize) -> String {
+    let Some((header, body)) = section.split_once('\n') else {
+        return formatted_truncate_text(section, max_chars);
+    };
+    if !is_command_run_section_marker(&format!("{header}\n")) {
+        return formatted_truncate_text(section, max_chars);
+    }
+    if body.is_empty() {
+        return section.to_string();
+    }
+    let body = formatted_truncate_text(body, max_chars);
+    format!("{header}\n{body}")
 }
 
 fn ripgrep_result_path(line: &str) -> Option<String> {

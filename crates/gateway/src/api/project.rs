@@ -34,12 +34,8 @@ pub async fn get_current_project(
         .or_else(|| global_store().get_current_directory());
 
     let project = directory.map(|dir| {
-        global_store().set_current_directory(dir.clone());
-        global_store()
-            .list_projects()
-            .into_iter()
-            .find(|p| same_directory(&p.worktree, &dir))
-            .unwrap_or_else(|| global_store().add_project(dir, None))
+        let path = PathBuf::from(&dir);
+        upsert_workspace_project(path, None)
     });
 
     Json(CurrentProjectResponse { project })
@@ -50,14 +46,14 @@ pub async fn create_named_workspace(
 ) -> Result<Json<Project>, (StatusCode, String)> {
     let name = sanitize_workspace_name(payload.name.as_deref().unwrap_or("New project"));
     let directory = documents_directory().join(&name);
-    fs::create_dir_all(&directory).map_err(internal_error)?;
+    prepare_workspace_directory(&directory)?;
     Ok(Json(upsert_workspace_project(directory, Some(name))))
 }
 
 pub async fn use_default_workspace() -> Result<Json<Project>, (StatusCode, String)> {
     let name = DEFAULT_WORKSPACE_NAME.to_string();
     let directory = documents_directory().join(&name);
-    fs::create_dir_all(&directory).map_err(internal_error)?;
+    prepare_workspace_directory(&directory)?;
     Ok(Json(upsert_workspace_project(directory, Some(name))))
 }
 
@@ -82,6 +78,13 @@ pub async fn select_local_workspace(
     Ok(Json(selected.map(|directory| {
         let path = PathBuf::from(directory);
         let name = workspace_name_from_path(&path);
+        if let Err(error) = prepare_workspace_directory(&path) {
+            tracing::warn!(
+                directory = %path.display(),
+                error = ?error,
+                "failed to prepare selected workspace directory"
+            );
+        }
         upsert_workspace_project(path, Some(name))
     })))
 }
@@ -93,6 +96,13 @@ fn same_directory(left: &str, right: &str) -> bool {
 }
 
 fn upsert_workspace_project(directory: PathBuf, name: Option<String>) -> Project {
+    if let Err(error) = prepare_workspace_directory(&directory) {
+        tracing::warn!(
+            directory = %directory.display(),
+            error = ?error,
+            "failed to ensure project workspace directory"
+        );
+    }
     let worktree = directory.to_string_lossy().to_string();
     global_store().set_current_directory(worktree.clone());
     global_store()
@@ -110,13 +120,23 @@ fn list_projects_with_default_workspace() -> Vec<Project> {
         .iter()
         .any(|project| same_directory(&project.worktree, &default_worktree))
     {
-        let _ = fs::create_dir_all(&default_directory);
+        let _ = prepare_workspace_directory(&default_directory);
         projects.insert(
             0,
             global_store().add_project(default_worktree, Some(DEFAULT_WORKSPACE_NAME.to_string())),
         );
     }
     projects
+}
+
+fn prepare_workspace_directory(directory: &Path) -> Result<(), (StatusCode, String)> {
+    fs::create_dir_all(directory).map_err(internal_error)?;
+    runtime::workspace_git::ensure_workspace_git_repo(directory).map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to prepare workspace git repository: {error}"),
+        )
+    })
 }
 
 fn documents_directory() -> PathBuf {

@@ -19,6 +19,11 @@ pub(crate) fn configure_runtime_env(config: &CliConfig) {
     if let Some(shell) = config.command_run_shell.as_deref() {
         std::env::set_var("TURA_COMMAND_RUN_SHELL", shell);
     }
+    if config.command_run_sandbox {
+        std::env::set_var("TURA_COMMAND_RUN_SANDBOX", "1");
+    } else {
+        std::env::remove_var("TURA_COMMAND_RUN_SANDBOX");
+    }
     configure_release_runtime_env();
     configure_progress_env(config);
 }

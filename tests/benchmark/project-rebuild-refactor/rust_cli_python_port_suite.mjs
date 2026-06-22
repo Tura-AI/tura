@@ -1191,6 +1191,7 @@ async function runTuraPlanning(workspace, agentDir, prompt, agentPrompt, onProgr
     "--json",
     "--skip-git-repo-check",
     ...(turaExplicitSessionId ? ["--session-id", launchId] : []),
+    "--sandbox",
     "--agent-id",
     agentPrompt,
     "-m",

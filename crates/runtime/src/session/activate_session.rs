@@ -21,6 +21,7 @@ pub fn activate_session_with_topic(
     session_topic: impl Into<String>,
     input: SessionInput,
 ) -> Result<SessionManagement, String> {
+    crate::workspace_git::ensure_workspace_git_repo(&session_directory)?;
     let session_topic = session_topic.into();
     let mut session = create_session_for_topic(session_directory, session_topic.clone(), input)?;
     session.use_last_tool_call_response = session_topic != CODING_SESSION_TOPIC;

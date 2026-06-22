@@ -11,11 +11,10 @@ pub(crate) fn create_session_with_topic(
         .map_err(|err| format!("failed to resolve project directory: {err}"))?;
 
     let session_topic = infer_session_topic(&input.user_input);
-    activate_session_with_topic(
-        session_directory_override.unwrap_or_else(|| project_directory.join("sessions")),
-        session_topic,
-        input,
-    )
+    let session_directory =
+        session_directory_override.unwrap_or_else(|| project_directory.join("sessions"));
+    crate::workspace_git::ensure_workspace_git_repo(&session_directory)?;
+    activate_session_with_topic(session_directory, session_topic, input)
 }
 
 fn infer_session_topic(user_input: &str) -> String {

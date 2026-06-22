@@ -29,7 +29,7 @@ pub(super) fn strip_context_reporting_fields(value: serde_json::Value) -> serde_
 fn is_context_reporting_field(key: &str) -> bool {
     matches!(
         key,
-        "task_detail"
+        "task_group"
             | "step_summary"
             | "last_tool_call_status"
             | "last_tool_call_summary"

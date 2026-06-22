@@ -1,6 +1,6 @@
 use crate::gateway_events::{
     publish_gateway_agent_message_from_runtime, publish_runtime_failure_message,
-    publish_runtime_usage_record, runtime_message_id, runtime_text_part_id,
+    publish_runtime_usage_record,
 };
 use crate::manas::constants::PLANNING_TOOL;
 use crate::manas::prompt_messages::{
@@ -20,7 +20,10 @@ use tura_llm_rust::{
 };
 
 use crate::checkpoint::session_snapshot::persist_session_checkpoint;
-use crate::context::{accumulate_tool_result_with_provider_metadata, build_context, ContextInput};
+use crate::context::{
+    accumulate_tool_result_with_provider_metadata, build_context,
+    compact_session_context_automatically, ContextInput,
+};
 use crate::manas::ManasOverrides;
 use crate::provider_flow::errors::{
     provider_timeout_retry_wait, runtime_failure_allows_retry, runtime_failure_text,
@@ -300,7 +303,7 @@ pub fn process_manas_internal(
             let mut tool_results =
                 execute_tool_calls(&tool_calls, agents.first(), session, &runtime, redis_url)?;
             let compact_context_applied =
-                apply_compact_context_results(session, &mut tool_results)?;
+                apply_compact_context_results(session, &mut tool_results, Some(&runtime))?;
             let terminal_task_status = tool_results
                 .iter()
                 .find_map(|result| command_run_result_terminal_task_status(&result.result));
@@ -336,9 +339,6 @@ pub fn process_manas_internal(
                         .and_then(|tool_call| tool_call.provider_metadata.clone()),
                 )?;
             }
-            if compact_context_applied {
-                append_compact_checkpoint_assistant_message(session, &runtime);
-            }
             persist_session_checkpoint(session, "tool_results");
 
             if compact_context_applied {
@@ -347,6 +347,20 @@ pub fn process_manas_internal(
                     turn = turn,
                     runtime_id = %runtime.runtime_id,
                     "compact_context applied; ending current turn after persisting tool results"
+                );
+                break;
+            }
+
+            if let Some(summary) =
+                auto_compact_summary_after_new_context(session, &runtime, &tool_results)
+            {
+                compact_session_context_automatically(session, &summary)?;
+                persist_session_checkpoint(session, "auto_compact_context");
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    runtime_id = %runtime.runtime_id,
+                    "automatic context compaction applied after new tool context exceeded active limit"
                 );
                 break;
             }
@@ -435,6 +449,18 @@ pub fn process_manas_internal(
                 push_task_status_nudge(&mut current_messages);
             }
         } else {
+            if let Some(summary) = auto_compact_summary_after_new_context(session, &runtime, &[]) {
+                compact_session_context_automatically(session, &summary)?;
+                persist_session_checkpoint(session, "auto_compact_context");
+                info!(
+                    session_id = %session.session_id,
+                    turn = turn,
+                    runtime_id = %runtime.runtime_id,
+                    "automatic context compaction applied after new assistant context exceeded active limit"
+                );
+                break;
+            }
+
             let context_output = build_context(ContextInput {
                 session: session.clone(),
                 runtime: runtime.clone(),
@@ -527,6 +553,30 @@ pub fn process_manas_internal(
             "completed"
         },
     );
+    let git_event = if final_session_state == SessionState::Failed {
+        "failed"
+    } else {
+        "completed"
+    };
+    match crate::workspace_git::commit_session_checkpoint(session, git_event) {
+        Ok(Some(commit)) => info!(
+            session_id = %session.session_id,
+            commit = %commit,
+            event = git_event,
+            "committed workspace session checkpoint"
+        ),
+        Ok(None) => info!(
+            session_id = %session.session_id,
+            event = git_event,
+            "workspace session checkpoint commit completed without a resolved hash"
+        ),
+        Err(error) => warn!(
+            session_id = %session.session_id,
+            event = git_event,
+            error = %error,
+            "failed to commit workspace session checkpoint"
+        ),
+    }
 
     for agent in agents.iter_mut() {
         agent.state = if final_session_state == SessionState::Failed {
@@ -666,25 +716,49 @@ fn visible_runtime_reply(runtime: &RuntimeManagement) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
-fn append_compact_checkpoint_assistant_message(
-    session: &mut SessionManagement,
+fn auto_compact_summary_after_new_context(
+    session: &SessionManagement,
     runtime: &RuntimeManagement,
-) {
-    let now = Utc::now();
-    session.push_log(
-        serde_json::json!({
-            "id": runtime_message_id(&runtime.runtime_id),
-            "role": "assistant",
-            "content": "Context checkpoint created; I can continue from the compacted handoff on the next turn.",
-            "part_id": runtime_text_part_id(&runtime.runtime_id),
-            "runtime_id": runtime.runtime_id,
-            "created_at": now.timestamp_millis(),
-            "updated_at": now.timestamp_millis(),
-            "timestamp": now.to_rfc3339(),
+    tool_results: &[crate::tool_router::execute_tool::ToolExecutionResult],
+) -> Option<String> {
+    let limit = session.context_tokens.limit;
+    if limit == 0 {
+        return None;
+    }
+    let added_tokens = estimated_new_context_tokens(runtime, tool_results);
+    if added_tokens == 0 {
+        return None;
+    }
+    let input_tokens = session.context_tokens.input;
+    let projected = input_tokens.saturating_add(added_tokens);
+    if projected <= limit {
+        return None;
+    }
+    Some(format!(
+        "Automatic context checkpoint: provider input was about {input_tokens} tokens, newly persisted context is estimated at about {added_tokens} tokens by bytes/3, and the projected total {projected} exceeds the active context limit {limit}. Continue the same task from the retained timeline above; preserve completed commands and validation results, and do not rerun work unless the current task requires it."
+    ))
+}
+
+fn estimated_new_context_tokens(
+    runtime: &RuntimeManagement,
+    tool_results: &[crate::tool_router::execute_tool::ToolExecutionResult],
+) -> u64 {
+    let visible_bytes = visible_runtime_reply(runtime)
+        .map(|text| text.len() as u64)
+        .unwrap_or(0);
+    let tool_bytes = tool_results
+        .iter()
+        .map(|result| {
+            serde_json::to_string(result)
+                .map(|text| text.len() as u64)
+                .unwrap_or(0)
         })
-        .to_string(),
-        now,
-    );
+        .sum::<u64>();
+    estimated_tokens_from_bytes(visible_bytes.saturating_add(tool_bytes))
+}
+
+fn estimated_tokens_from_bytes(bytes: u64) -> u64 {
+    bytes.saturating_add(2) / 3
 }
 
 fn terminal_status_needs_final_response_turn(
@@ -704,14 +778,20 @@ fn terminal_status_needs_final_response_turn(
 #[cfg(test)]
 mod tests {
     use super::{
+        auto_compact_summary_after_new_context,
         complete_active_doing_task_after_non_planning_reply, increment_turn_with_fresh_timestamp,
         manas_max_turns, messages_with_initial_context_prefix,
         should_auto_complete_non_planning_doing_after_tool_turn,
         terminal_status_needs_final_response_turn, DEFAULT_MANAS_MAX_TURNS,
     };
+    use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
+    use crate::state_machine::runtime_management::{
+        RuntimeManagement, RuntimeProviderConfig, UsageReport,
+    };
     use crate::state_machine::session_management::{
         PlanStatus, SessionInput, SessionManagement, TaskStep,
     };
+    use crate::tool_router::execute_tool::ToolExecutionResult;
     use chrono::{Duration, Utc};
     use serde_json::json;
     use std::path::PathBuf;
@@ -871,6 +951,38 @@ mod tests {
     }
 
     #[test]
+    fn auto_compact_summary_triggers_when_new_context_estimate_exceeds_limit() {
+        let mut session = test_session("session-auto-compact");
+        session.context_tokens.input = 950;
+        session.context_tokens.limit = 1_000;
+        let runtime = test_runtime_with_usage(&session, 950);
+        let tool_results = vec![ToolExecutionResult {
+            tool_name: "command_run".to_string(),
+            arguments: json!({"commands":[{"command_type":"shell_command","command_line":"probe"}]}),
+            result: json!({"results":[{"step":1,"command_type":"shell_command","success":true,"output":"X".repeat(300)}]}),
+            success: true,
+            error: None,
+        }];
+
+        let summary = auto_compact_summary_after_new_context(&session, &runtime, &tool_results)
+            .expect("new context should force automatic compaction");
+
+        assert!(summary.contains("Automatic context checkpoint"));
+        assert!(summary.contains("bytes/3"));
+        assert!(summary.contains("active context limit 1000"));
+    }
+
+    #[test]
+    fn auto_compact_summary_does_not_trigger_when_projection_fits_limit() {
+        let mut session = test_session("session-auto-compact-fits");
+        session.context_tokens.input = 100;
+        session.context_tokens.limit = 1_000;
+        let runtime = test_runtime_with_usage(&session, 100);
+
+        assert!(auto_compact_summary_after_new_context(&session, &runtime, &[]).is_none());
+    }
+
+    #[test]
     fn terminal_done_skips_final_response_turn_when_reply_is_already_visible() {
         assert!(!terminal_status_needs_final_response_turn(
             Some("done"),
@@ -928,5 +1040,52 @@ mod tests {
             "work".to_string(),
             now,
         )
+    }
+
+    fn test_runtime_with_usage(
+        session: &SessionManagement,
+        input_tokens: u64,
+    ) -> RuntimeManagement {
+        let mut runtime = RuntimeManagement::new(
+            format!("runtime-{}", session.session_id),
+            session.session_id.clone(),
+            "agent-test".to_string(),
+            RuntimeProviderConfig {
+                base: ProviderConfig {
+                    tura_llm_name: "provider".to_string(),
+                    default_model_tier: None,
+                    current_model: None,
+                    stream: false,
+                    temperature: 0.0,
+                    max_tokens: 0,
+                    tool_choice: ToolChoice::Auto,
+                    time_out_ms: 120_000,
+                },
+                thinking: false,
+                provider_name: "provider".to_string(),
+                model_name: "model".to_string(),
+                provider_url_name: "provider".to_string(),
+                llm_provider_name: "provider".to_string(),
+            },
+            Utc::now(),
+        );
+        runtime.usage = Some(UsageReport {
+            input_tokens,
+            output_tokens: 0,
+            total_tokens: input_tokens,
+            cached_input_tokens: 0,
+            cache_write_tokens: 0,
+            reasoning_tokens: 0,
+            attachment_input_tokens: 0,
+            input_cost: 0.0,
+            output_cost: 0.0,
+            total_cost: 0.0,
+            currency: "USD".to_string(),
+            pricing_source: "test".to_string(),
+            latency_ms: 0,
+            time_to_first_token_ms: 0,
+            token_per_second: 0.0,
+        });
+        runtime
     }
 }

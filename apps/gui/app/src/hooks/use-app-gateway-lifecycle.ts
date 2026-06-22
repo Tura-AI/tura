@@ -231,7 +231,7 @@ export function useAppGatewayLifecycle(options: {
         personas,
         commands,
         files,
-        selectedSessionId: previous.selectedSessionId ?? selectedSessionId,
+        selectedSessionId: forceNewSession ? undefined : (previous.selectedSessionId ?? selectedSessionId),
         selectedAgent: previous.selectedAgent ?? configuredAgent ?? DEFAULT_AGENT_ID,
         selectedModel:
           previous.selectedModel ?? configuredModel ?? defaultModel(providers) ?? DEFAULT_MODEL_ID,

@@ -103,9 +103,11 @@ fn pass_top_level_workdir_is_accepted_for_current_style_shell_items() {
 }
 
 #[test]
-fn fail_sandbox_rejects_shell_workdir_outside_workspace() {
+fn fail_cli_sandbox_rejects_shell_workdir_outside_workspace() {
     let _guard = env_lock_blocking();
+    let previous_sandbox = std::env::var_os("TURA_COMMAND_RUN_SANDBOX");
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+    std::env::set_var("TURA_COMMAND_RUN_SANDBOX", "1");
     let root = temp_workspace("sandbox-shell-workdir");
     let outside = root
         .parent()
@@ -115,7 +117,6 @@ fn fail_sandbox_rejects_shell_workdir_outside_workspace() {
 
     let output = command_run::execute(
         &json!({
-            "sandbox": true,
             "commands": [
                 {
                     "command": "shell_command",
@@ -131,6 +132,7 @@ fn fail_sandbox_rejects_shell_workdir_outside_workspace() {
         .as_str()
         .unwrap_or_default()
         .contains("outside workspace"));
+    restore_env_var("TURA_COMMAND_RUN_SANDBOX", previous_sandbox);
 }
 
 #[test]

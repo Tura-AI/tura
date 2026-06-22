@@ -4,7 +4,6 @@ pub const CORE_COMMANDS: &[&str] = &[
     "zsh",
     "apply_patch",
     "task_status",
-    "compact_context",
     "planning",
 ];
 

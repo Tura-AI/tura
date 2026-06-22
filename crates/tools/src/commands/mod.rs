@@ -1,7 +1,6 @@
 pub mod apply_patch;
 pub mod bash;
 pub mod command_safety;
-pub mod compact_context;
 pub mod planning;
 pub mod shell_command;
 pub mod task_status;
@@ -32,7 +31,6 @@ pub fn execute(
     match canonical_command(command).as_str() {
         "apply_patch" => apply_patch::execute(command_line, session_dir),
         "bash" => bash::execute(command_line, session_dir, timeout_secs),
-        "compact_context" => compact_context::execute(command_line, session_dir),
         "generate_media" => {
             execute_external("generate_media", command_line, session_dir, timeout_secs)
         }
@@ -55,7 +53,6 @@ pub fn execute(
 pub fn access(command: &str, command_line: &str, session_dir: &Path) -> Access {
     match canonical_command(command).as_str() {
         "apply_patch" => apply_patch::access(command_line, session_dir),
-        "compact_context" => Access::default(),
         "generate_media" => access_external("generate_media", command_line, session_dir),
         "planning" if planning_command_enabled() => Access::default(),
         "read_media" => access_external("read_media", command_line, session_dir),
@@ -83,9 +80,6 @@ pub fn display_command(
     if canonical_command(command) == "planning" && planning_command_enabled() {
         return "planning".to_string();
     }
-    if canonical_command(command) == "compact_context" {
-        return "compact_context".to_string();
-    }
     if canonical_command(command) == "read_media" {
         return "read_media".to_string();
     }
@@ -109,9 +103,6 @@ pub fn canonical_command(name: &str) -> String {
             active_shell_command_name().to_string()
         }
         "apply_patch" => "apply_patch".to_string(),
-        "compact_context" | "compact" | "compact_message" | "context_compaction" => {
-            "compact_context".to_string()
-        }
         "planning" => "planning".to_string(),
         "read_media" | "view_media" | "inspect_media" => "read_media".to_string(),
         "web_discover" | "web_search" | "web_fetch" | "discover_web" | "search_web" => {

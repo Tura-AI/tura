@@ -24,7 +24,7 @@ pub fn normalize_output(
     let trimmed = command_line.trim();
     if !trimmed.is_empty() {
         value = if trimmed.starts_with('{') {
-            serde_json::from_str(trimmed)
+            parse_task_status_json(trimmed)
                 .map_err(|err| format!("invalid task_status command_line JSON: {err}"))?
         } else {
             parse_status_text(trimmed)
@@ -40,15 +40,72 @@ pub fn normalize_output(
             return Err("task_status status must be doing, question, or done".to_string());
         }
     }
-    let task_detail = string_field(object, &["task_detail"]);
+    let task_group = string_field(object, &["task_group"]);
+    let compact_context = string_field(object, &["compact_context"]);
     let mut task_status = serde_json::Map::new();
     if let Some(status) = status {
         task_status.insert("status".to_string(), Value::String(status));
     }
-    if let Some(task_detail) = task_detail {
-        task_status.insert("task_detail".to_string(), Value::String(task_detail));
+    if let Some(task_group) = task_group {
+        task_status.insert("task_group".to_string(), Value::String(task_group));
+    }
+    if let Some(compact_context) = compact_context {
+        task_status.insert(
+            "compact_context".to_string(),
+            Value::String(compact_context),
+        );
     }
     Ok(json!({ "task_status": task_status }))
+}
+
+fn parse_task_status_json(trimmed: &str) -> Result<Value, serde_json::Error> {
+    match serde_json::from_str(trimmed) {
+        Ok(value) => Ok(value),
+        Err(err) => {
+            let escaped = escape_control_chars_in_json_strings(trimmed);
+            if escaped != trimmed {
+                serde_json::from_str(&escaped)
+            } else {
+                Err(err)
+            }
+        }
+    }
+}
+
+fn escape_control_chars_in_json_strings(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    for ch in input.chars() {
+        if in_string {
+            if escaped {
+                output.push(ch);
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => {
+                    output.push(ch);
+                    escaped = true;
+                }
+                '"' => {
+                    output.push(ch);
+                    in_string = false;
+                }
+                '\n' => output.push_str("\\n"),
+                '\r' => output.push_str("\\r"),
+                '\t' => output.push_str("\\t"),
+                ch if ch.is_control() => output.push_str(&format!("\\u{:04x}", ch as u32)),
+                _ => output.push(ch),
+            }
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+        }
+        output.push(ch);
+    }
+    output
 }
 
 fn parse_status_text(text: &str) -> Value {
@@ -80,16 +137,16 @@ mod tests {
 
     #[test]
     fn done_status_normalizes() {
-        let out = normalize_output(None, "{\"status\":\"done\",\"task_detail\":\"Fix bug\"}")
-            .expect("ok");
+        let out =
+            normalize_output(None, "{\"status\":\"done\",\"task_group\":\"Fix bug\"}").expect("ok");
         assert_eq!(
             out.pointer("/task_status/status")
                 .expect("status should be present"),
             "done"
         );
         assert_eq!(
-            out.pointer("/task_status/task_detail")
-                .expect("task detail should be present"),
+            out.pointer("/task_status/task_group")
+                .expect("task group should be present"),
             "Fix bug"
         );
     }
@@ -115,13 +172,13 @@ mod tests {
     }
 
     #[test]
-    fn detail_only_omits_status() {
-        let out = normalize_output(None, "{\"task_detail\":\"Rename task\"}").expect("ok");
+    fn group_only_omits_status() {
+        let out = normalize_output(None, "{\"task_group\":\"商城前端\"}").expect("ok");
         assert!(out.pointer("/task_status/status").is_none());
         assert_eq!(
-            out.pointer("/task_status/task_detail")
-                .expect("task detail should be present"),
-            "Rename task"
+            out.pointer("/task_status/task_group")
+                .expect("task group should be present"),
+            "商城前端"
         );
     }
 
@@ -145,6 +202,26 @@ mod tests {
         );
         assert!(out.pointer("/task_status/reply_message").is_none());
         assert!(out.pointer("/task_status/message").is_none());
+    }
+
+    #[test]
+    fn compact_context_is_preserved() {
+        let out = normalize_output(
+            None,
+            "{\"task_group\":\"Continue parser\",\"compact_context\":\"Need to rerun parser fixture tests.\"}",
+        )
+        .expect("ok");
+
+        assert_eq!(
+            out.pointer("/task_status/task_group")
+                .expect("task group should be present"),
+            "Continue parser"
+        );
+        assert_eq!(
+            out.pointer("/task_status/compact_context")
+                .expect("compact context should be present"),
+            "Need to rerun parser fixture tests."
+        );
     }
 
     #[test]

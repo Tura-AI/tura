@@ -173,6 +173,7 @@ fn worker_env_from_current_process() -> serde_json::Map<String, Value> {
         "TURA_COMMAND_RUN_STALL_CHECK_SECS",
         "TURA_COMMAND_RUN_STALL_IDENTICAL_CHECKS",
         "TURA_COMMAND_RUN_SHELL",
+        "TURA_COMMAND_RUN_SANDBOX",
         "TURA_COMMAND_RUN_STRICT_JSON",
         "TURA_COMMAND_RUN_DISABLE_STRICT_JSON",
         "TURA_RUNTIME_ERRORS_FATAL",
@@ -389,6 +390,7 @@ mod tests {
             !env.keys().any(|key| key.contains("INVOKE_TIMEOUT")),
             "worker env must not forward a session-wide invoke deadline"
         );
+        assert!(!env.contains_key("TURA_COMMAND_RUN_SANDBOX"));
 
         restore_env("TURA_SESSION_MAX_TOKENS", previous_model);
         restore_env("TURA_SESSION_LANGUAGE", previous_empty);

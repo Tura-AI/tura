@@ -8,7 +8,7 @@
   "report_to_user": true,
   "default_config": true,
   "provider": {
-    "current_model": "codex/gpt-5.3-codex-spark",
+    "current_model": "codex/gpt-5.5",
     "default_model_tier": "fast",
     "max_tokens": 0,
     "model_acceleration_enabled": true,
@@ -35,9 +35,6 @@
     },
     {
       "capability_name": "web_discover"
-    },
-    {
-      "capability_name": "compact_context"
     },
     {
       "capability_name": "task_status"

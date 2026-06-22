@@ -47,11 +47,36 @@ export function PlanPageOutlet(props: {
     reorderPlanTasks,
   } = props.view;
 
+  function setTranscriptScroll(sessionId: string, scrollTop: number) {
+    const value = Math.max(0, Math.round(scrollTop));
+    props.setState((previous) => {
+      const current = previous.transcriptScrollBySession[sessionId] ?? 0;
+      if (Math.abs(current - value) < 4) {
+        return previous;
+      }
+      return {
+        ...previous,
+        transcriptScrollBySession: {
+          ...previous.transcriptScrollBySession,
+          [sessionId]: value,
+        },
+      };
+    });
+  }
+
   return (
     <PlanView
       state={props.state}
       previewSession={props.previewSession}
       previewMessages={props.previewMessages}
+      previewInitialScrollTop={
+        props.previewSession
+          ? props.state.transcriptScrollBySession[props.previewSession.id]
+          : undefined
+      }
+      onPreviewTranscriptScroll={(scrollTop) =>
+        props.previewSession && setTranscriptScroll(props.previewSession.id, scrollTop)
+      }
       slashCommands={props.slashCommands}
       onPlanMode={(planMode) => props.setState((previous) => ({ ...previous, planMode }))}
       onClosePanel={() =>

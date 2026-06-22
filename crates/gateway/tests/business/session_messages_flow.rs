@@ -289,7 +289,7 @@ async fn gateway_session_messages_business_flow_publishes_session_name_updates(
                             "results": [{
                                 "output": {
                                     "status": {
-                                        "task_detail": "Gateway Session Name Updated"
+                                        "task_group": "订单清结算微服务"
                                     }
                                 }
                             }]
@@ -316,26 +316,20 @@ async fn gateway_session_messages_business_flow_publishes_session_name_updates(
     let updated_session = session_store()
         .get_session(&session_id)
         .ok_or_else(|| anyhow::anyhow!("created session should still exist"))?;
-    assert_eq!(
-        updated_session.name.as_deref(),
-        Some("Gateway Session Name Updated")
-    );
+    assert_eq!(updated_session.name.as_deref(), Some("订单清结算微服务"));
     assert_eq!(
         updated_session.session_display_name.as_deref(),
-        Some("Gateway Session Name Updated")
+        Some("订单清结算微服务")
     );
 
     let mut saw_session_updated = false;
     while let Some(event) = session_store().pop_event() {
         if let GlobalEvent::SessionUpdated { properties } = event {
             if properties.session_id == session_id {
-                assert_eq!(
-                    properties.info.name.as_deref(),
-                    Some("Gateway Session Name Updated")
-                );
+                assert_eq!(properties.info.name.as_deref(), Some("订单清结算微服务"));
                 assert_eq!(
                     properties.info.session_display_name.as_deref(),
-                    Some("Gateway Session Name Updated")
+                    Some("订单清结算微服务")
                 );
                 saw_session_updated = true;
             }

@@ -165,7 +165,7 @@ export function toolSummary(state: Record<string, unknown>): string {
   const input = state.input;
   if (input && typeof input === "object") {
     const object = input as Record<string, unknown>;
-    for (const key of ["step_summary", "task_detail", "summary", "status", "label"]) {
+    for (const key of ["step_summary", "task_group", "summary", "status", "label"]) {
       const value = object[key];
       if (typeof value === "string" && value.trim()) return sanitizeRawTerminalText(value).trim();
     }
@@ -198,7 +198,7 @@ function cleanToolText(value: string): string {
 
 export function compactPayloadField(value: string): string | undefined {
   const normalized = normalizePayloadText(value);
-  for (const key of ["task_detail", "summary", "status", "label"]) {
+  for (const key of ["task_group", "summary", "status", "label"]) {
     const index = normalized.indexOf(key);
     if (index < 0) continue;
     const colon = normalized.indexOf(":", index + key.length);
@@ -213,7 +213,7 @@ export function compactPayloadField(value: string): string | undefined {
         90,
       );
   }
-  for (const key of ["task_detail", "summary", "status", "label"]) {
+  for (const key of ["task_group", "summary", "status", "label"]) {
     const direct = normalized.match(new RegExp(`${key}\\\\*"?\\s*:\\s*\\\\*"([^"\\\\]+)`, "u"));
     if (direct?.[1]?.trim()) return truncate(direct[1].trim().replace(/\s+/g, " "), 90);
   }
@@ -223,12 +223,12 @@ export function compactPayloadField(value: string): string | undefined {
     const compact = compactCommandJson(normalized.slice(start, end + 1));
     if (compact) return compact;
   }
-  for (const key of ["task_detail", "summary", "status", "label"]) {
+  for (const key of ["task_group", "summary", "status", "label"]) {
     const match = normalized.match(new RegExp(`\\\\*"${key}\\\\*"\\s*:\\s*\\\\*"([^"\\\\]+)`, "u"));
     if (match?.[1]?.trim()) return truncate(match[1].trim().replace(/\s+/g, " "), 90);
   }
   const loose = normalized.replace(/[\\"]/g, "");
-  for (const key of ["task_detail", "summary", "status", "label"]) {
+  for (const key of ["task_group", "summary", "status", "label"]) {
     const index = loose.indexOf(`${key}:`);
     if (index < 0) continue;
     const rest = loose.slice(index + key.length + 1);
@@ -272,7 +272,7 @@ function compactCommandValue(value: unknown): string | undefined {
   const commandType = object.command_type;
   if (typeof commandType === "string" && commandType.trim())
     return `[${t("tool")}: ${commandType.trim()}]`;
-  for (const key of ["task_detail", "summary", "status", "label"]) {
+  for (const key of ["task_group", "summary", "status", "label"]) {
     const value = object[key];
     if (typeof value === "string" && value.trim())
       return truncate(value.trim().replace(/\s+/g, " "), 90);

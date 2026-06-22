@@ -322,7 +322,6 @@ fn default_capabilities() -> Vec<serde_json::Value> {
         "generate_media",
         "read_media",
         "web_discover",
-        "compact_context",
         "task_status",
     ]
     .into_iter()

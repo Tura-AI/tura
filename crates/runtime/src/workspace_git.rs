@@ -1,0 +1,243 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+use crate::state_machine::session_management::{PlanStatus, SessionManagement};
+
+const TURA_GIT_USER_NAME: &str = "Tura";
+const TURA_GIT_USER_EMAIL: &str = "tura@local.invalid";
+const TURA_EXCLUDE_LINE: &str = ".tura/";
+
+pub fn ensure_workspace_git_repo(workspace: impl AsRef<Path>) -> Result<(), String> {
+    let workspace = workspace.as_ref();
+    if workspace.as_os_str().is_empty() {
+        return Err("workspace path is empty".to_string());
+    }
+    fs::create_dir_all(workspace).map_err(|error| {
+        format!(
+            "failed to create workspace directory {}: {error}",
+            workspace.display()
+        )
+    })?;
+
+    let git_marker = workspace.join(".git");
+    if !git_marker.exists() {
+        run_git(workspace, &["init"])?;
+    }
+    ensure_tura_git_exclude(workspace)?;
+    Ok(())
+}
+
+pub fn commit_session_checkpoint(
+    session: &SessionManagement,
+    event: impl AsRef<str>,
+) -> Result<Option<String>, String> {
+    let workspace = &session.session_directory;
+    ensure_workspace_git_repo(workspace)?;
+
+    run_git(workspace, &["add", "-A", "--", "."])?;
+
+    let event = normalized_line(event.as_ref(), "session_exit");
+    let task_group = session_task_group(session);
+    let subject = format!(
+        "tura {event} {}: {}",
+        session.session_id,
+        truncate_for_subject(&task_group, 72)
+    );
+    let body = format!(
+        "Session-Id: {}\nTask-Group: {}\nEvent: {}",
+        session.session_id, task_group, event
+    );
+
+    let user_name_config = format!("user.name={TURA_GIT_USER_NAME}");
+    let user_email_config = format!("user.email={TURA_GIT_USER_EMAIL}");
+    run_git(
+        workspace,
+        &[
+            "-c",
+            &user_name_config,
+            "-c",
+            &user_email_config,
+            "commit",
+            "--allow-empty",
+            "-m",
+            &subject,
+            "-m",
+            &body,
+        ],
+    )?;
+
+    let output = run_git(workspace, &["rev-parse", "HEAD"])?;
+    let hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok((!hash.is_empty()).then_some(hash))
+}
+
+fn ensure_tura_git_exclude(workspace: &Path) -> Result<(), String> {
+    let output = run_git(workspace, &["rev-parse", "--git-path", "info/exclude"])?;
+    let raw_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if raw_path.is_empty() {
+        return Ok(());
+    }
+    let exclude_path = if Path::new(&raw_path).is_absolute() {
+        PathBuf::from(raw_path)
+    } else {
+        workspace.join(raw_path)
+    };
+    if let Some(parent) = exclude_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create git exclude directory {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+    let existing = fs::read_to_string(&exclude_path).unwrap_or_default();
+    if existing
+        .lines()
+        .any(|line| line.trim() == TURA_EXCLUDE_LINE)
+    {
+        return Ok(());
+    }
+    let mut updated = existing;
+    if !updated.is_empty() && !updated.ends_with('\n') {
+        updated.push('\n');
+    }
+    updated.push_str(TURA_EXCLUDE_LINE);
+    updated.push('\n');
+    fs::write(&exclude_path, updated).map_err(|error| {
+        format!(
+            "failed to update git exclude {}: {error}",
+            exclude_path.display()
+        )
+    })
+}
+
+fn run_git(workspace: &Path, args: &[&str]) -> Result<Output, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(workspace)
+        .args(args)
+        .output()
+        .map_err(|error| format!("failed to run git in {}: {error}", workspace.display()))?;
+    if output.status.success() {
+        return Ok(output);
+    }
+    Err(format!(
+        "git -C {} {} failed with status {}\nstdout:\n{}\nstderr:\n{}",
+        workspace.display(),
+        args.join(" "),
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    ))
+}
+
+fn session_task_group(session: &SessionManagement) -> String {
+    let plan_summary = session.task_plan.plan_summary.trim();
+    let task_group = if !plan_summary.is_empty() {
+        plan_summary
+    } else {
+        session
+            .task_plan
+            .detailed_tasks
+            .iter()
+            .find(|task| matches!(task.status, PlanStatus::Doing | PlanStatus::Todo))
+            .map(|task| task.task_summary.as_str())
+            .or_else(|| {
+                session
+                    .task_plan
+                    .detailed_tasks
+                    .iter()
+                    .find(|task| !task.task_summary.trim().is_empty())
+                    .map(|task| task.task_summary.as_str())
+            })
+            .unwrap_or(session.session_name.as_str())
+    };
+    normalized_line(task_group, "untitled task group")
+}
+
+fn normalized_line(value: &str, fallback: &str) -> String {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        fallback.to_string()
+    } else {
+        normalized
+    }
+}
+
+fn truncate_for_subject(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    value.chars().take(max_chars).collect::<String>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{commit_session_checkpoint, ensure_workspace_git_repo};
+    use crate::state_machine::session_management::{
+        PlanStatus, SessionInput, SessionManagement, TaskStep,
+    };
+    use chrono::Utc;
+    use std::process::Command;
+
+    #[test]
+    fn ensure_workspace_git_repo_initializes_local_git_and_excludes_tura_state() {
+        let temp = tempfile::tempdir().expect("temp workspace");
+
+        ensure_workspace_git_repo(temp.path()).expect("workspace git init");
+
+        assert!(temp.path().join(".git").exists());
+        let exclude = temp.path().join(".git").join("info").join("exclude");
+        let content = std::fs::read_to_string(exclude).expect("git exclude");
+        assert!(content.lines().any(|line| line.trim() == ".tura/"));
+    }
+
+    #[test]
+    fn commit_session_checkpoint_creates_commit_with_session_id_and_task_group() {
+        let temp = tempfile::tempdir().expect("temp workspace");
+        std::fs::write(temp.path().join("src.txt"), "first").expect("fixture file");
+        let mut session = SessionManagement::new(
+            "session-git-test".to_string(),
+            "Git test".to_string(),
+            temp.path().to_path_buf(),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "commit workspace".to_string(),
+                file_input: Vec::new(),
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "commit workspace".to_string(),
+            Utc::now(),
+        );
+        session.task_plan.plan_summary = "Runtime git checkpoint".to_string();
+        session.task_plan.detailed_tasks.push(TaskStep {
+            task_id: "task-1".to_string(),
+            task_summary: "Runtime git checkpoint".to_string(),
+            status: PlanStatus::Doing,
+            ..TaskStep::default()
+        });
+
+        let hash = commit_session_checkpoint(&session, "completed")
+            .expect("session checkpoint commit")
+            .expect("commit hash");
+        assert!(!hash.is_empty());
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(temp.path())
+            .args(["log", "-1", "--pretty=%B"])
+            .output()
+            .expect("git log");
+        assert!(output.status.success());
+        let message = String::from_utf8_lossy(&output.stdout);
+        assert!(message.contains("session-git-test"));
+        assert!(message.contains("Session-Id: session-git-test"));
+        assert!(message.contains("Task-Group: Runtime git checkpoint"));
+        assert!(message.contains("Runtime git checkpoint"));
+        assert!(message.contains("completed"));
+    }
+}

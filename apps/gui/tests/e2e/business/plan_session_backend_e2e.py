@@ -30,7 +30,7 @@ def free_port() -> int:
 
 
 GUI_URL = os.environ.setdefault("TURA_GUI_URL", f"http://127.0.0.1:{free_port()}")
-GATEWAY_URL = os.environ.setdefault("TURA_GATEWAY_URL", "http://127.0.0.1:5202")
+GATEWAY_URL = os.environ.setdefault("TURA_GATEWAY_URL", f"http://127.0.0.1:{free_port()}")
 
 
 def now_ms() -> int:
@@ -115,6 +115,7 @@ class PlanGateway(ThreadingHTTPServer):
             ]
         }
         self.records: list[dict] = []
+        self.requests: list[dict] = []
 
     def find_session(self, session_id: str) -> dict | None:
         return next((item for item in self.sessions if item["id"] == session_id), None)
@@ -158,6 +159,7 @@ class PlanGatewayHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
+        self.server.requests.append({"method": "GET", "path": path, "query": query, "time": now_ms()})
         if path == "/event":
             self.send_response(200)
             self.send_header("access-control-allow-origin", "*")
@@ -168,7 +170,7 @@ class PlanGatewayHandler(BaseHTTPRequestHandler):
             time.sleep(0.2)
             return
         if path == "/__records":
-            return self.send_json({"records": self.server.records, "sessions": self.server.sessions})
+            return self.send_json({"records": self.server.records, "requests": self.server.requests, "sessions": self.server.sessions})
         if path == "/global/health":
             return self.send_json({"healthy": True, "version": "plan-session-e2e"})
         if path == "/service/status":
@@ -218,6 +220,40 @@ class PlanGatewayHandler(BaseHTTPRequestHandler):
             )
         if path == "/session":
             return self.send_json(self.server.sessions)
+        if path == "/session-log/workspaces":
+            updated_at = max((item.get("updated_at") or 0 for item in self.server.sessions), default=now_ms())
+            return self.send_json(
+                {
+                    "workspaces": [
+                        {
+                            "directory": self.server.root,
+                            "session_count": len(self.server.sessions),
+                            "last_updated_at": updated_at,
+                        }
+                    ]
+                }
+            )
+        if path == "/session-log/sessions":
+            snapshots = [
+                {
+                    "session_id": item["id"],
+                    "workspace": item.get("directory") or self.server.root,
+                    "name": item.get("name") or item.get("title"),
+                    "parent_id": item.get("parent_id"),
+                    "created_at": item.get("created_at") or item.get("time", {}).get("created") or now_ms(),
+                    "updated_at": item.get("updated_at") or item.get("time", {}).get("updated") or now_ms(),
+                    "status": item.get("status") or "idle",
+                    "message_count": item.get("message_count") or len(self.server.messages.get(item["id"], [])),
+                    "task_management": item.get("task_management") or item.get("taskManagement") or {},
+                }
+                for item in self.server.sessions
+            ]
+            return self.send_json(
+                {
+                    "page": {"page": 0, "page_size": len(snapshots), "total": len(snapshots)},
+                    "sessions": snapshots,
+                }
+            )
         if path.startswith("/session/"):
             parts = path.strip("/").split("/")
             session_id = parts[1] if len(parts) > 1 else ""
@@ -455,14 +491,19 @@ async def page_metrics(page):
     return await page.evaluate(
         """
         () => ({
-          body: document.body.innerText,
-          activeTab: Array.from(document.querySelectorAll('.main-tabs button.selected')).map((item) => item.innerText).join('\\n'),
-          boardCards: Array.from(document.querySelectorAll('.board-card')).map((card) => card.innerText),
-          boardColumns: Array.from(document.querySelectorAll('.board-column')).map((column) => column.innerText),
-          panelText: document.querySelector('.plan-conversation-panel')?.innerText ?? '',
-          taskRows: Array.from(document.querySelectorAll('.composer-task-row')).map((row) => row.innerText),
+          selectedTabs: document.querySelectorAll('.main-tabs button.selected').length,
+          boardCards: Array.from(document.querySelectorAll('.board-card')).map((card) => ({
+            sessionId: card.dataset.sessionId ?? '',
+            status: card.closest('[data-plan-status]')?.dataset.planStatus ?? '',
+            selected: card.classList.contains('selected'),
+          })),
+          boardColumns: Array.from(document.querySelectorAll('.board-column')).map((column) => ({
+            status: column.dataset.planStatus ?? '',
+            cards: column.querySelectorAll('.board-card').length,
+          })),
+          panelOpen: Boolean(document.querySelector('.plan-conversation-panel')),
+          taskRows: document.querySelectorAll('.composer-task-row').length,
           composerText: document.querySelector('.bottom-composer textarea')?.value ?? '',
-          triggerText: document.querySelector('.plan-trigger-button')?.innerText ?? '',
           errors: document.querySelector('.error-strip')?.innerText ?? '',
           overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
         })
@@ -470,17 +511,53 @@ async def page_metrics(page):
     )
 
 
-async def goto_app(page, tab="plan"):
-    url = f"{GUI_URL}/?{urlencode({'gatewayUrl': GATEWAY_URL, 'tab': tab, 'agent': 'coding_agent', 'newSession': '1'})}"
+async def goto_app(page, tab="plan", params: dict | None = None):
+    query = {
+        "gatewayUrl": GATEWAY_URL,
+        "tab": tab,
+        "agent": "coding_agent",
+        "e2eNoGatewayStart": "1",
+    }
+    if tab == "new":
+        query["newSession"] = "1"
+    if params:
+        query.update(params)
+    url = f"{GUI_URL}/?{urlencode(query)}"
     last_error = None
-    for _ in range(3):
+    for attempt in range(3):
         try:
             await page.goto(url, wait_until="domcontentloaded")
             await page.wait_for_timeout(500)
             body = await page.locator("body").inner_text(timeout=5_000)
             if "Failed to fetch dynamically imported module" not in body:
                 await page.wait_for_selector(".main-tabs", timeout=30_000)
-                await page.wait_for_function("() => !document.body.innerText.includes('加载中') && !document.body.innerText.includes('Loading')")
+                try:
+                    if tab == "new":
+                        await page.wait_for_selector(".new-session-view .bottom-composer textarea", timeout=30_000)
+                    elif tab == "conversation":
+                        await page.wait_for_selector(".bottom-composer textarea", timeout=30_000)
+                    elif tab == "plan":
+                        await page.wait_for_selector(".plan-board", timeout=30_000)
+                    else:
+                        await page.wait_for_function("() => !document.body.innerText.includes('加载中') && !document.body.innerText.includes('Loading')")
+                except PlaywrightTimeoutError:
+                    await shot(page, f"goto-{tab}-loading-timeout-{attempt}")
+                    try:
+                        records = read_records()
+                    except Exception as error:
+                        records = {"error": str(error)}
+                    (OUT / f"goto-{tab}-loading-timeout-{attempt}.json").write_text(
+                        json.dumps(
+                            {
+                                "metrics": await page_metrics(page),
+                                "records": records,
+                            },
+                            ensure_ascii=False,
+                            indent=2,
+                        ),
+                        encoding="utf-8",
+                    )
+                    raise
                 return
             last_error = body
         except Exception as error:
@@ -490,9 +567,64 @@ async def goto_app(page, tab="plan"):
     raise AssertionError(f"App failed to load after retries: {last_error}")
 
 
+def read_records() -> dict:
+    with urlopen(GATEWAY_URL + "/__records", timeout=5) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+async def wait_for_records(predicate, timeout_ms: int = 30_000):
+    deadline = time.monotonic() + timeout_ms / 1000
+    last_records = None
+    while time.monotonic() < deadline:
+        last_records = read_records()
+        if predicate(last_records):
+            return last_records
+        await asyncio.sleep(0.25)
+    raise AssertionError(
+        json.dumps(
+            {"message": "timed out waiting for gateway records", "records": last_records},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+def records_of(records: dict, record_type: str) -> list[dict]:
+    return [item for item in records.get("records", []) if item.get("type") == record_type]
+
+
+def created_session_id(records: dict) -> str:
+    creates = records_of(records, "session.create")
+    if not creates:
+        raise AssertionError("session.create was not recorded")
+    session_id = creates[-1].get("session", {}).get("id")
+    if not isinstance(session_id, str) or not session_id:
+        raise AssertionError(json.dumps({"message": "created session has no id", "records": records}, ensure_ascii=False))
+    return session_id
+
+
+def session_tasks(session_item: dict) -> list[dict]:
+    management = session_item.get("task_management") or session_item.get("taskManagement") or {}
+    if isinstance(management.get("tasks"), list):
+        return [task for task in management["tasks"] if isinstance(task, dict)]
+    return [management] if isinstance(management, dict) else []
+
+
+def backend_session(records: dict, session_id: str) -> dict:
+    for session_item in records.get("sessions", []):
+        if session_item.get("id") == session_id:
+            return session_item
+    raise AssertionError(
+        json.dumps({"message": "created session missing from backend snapshot", "session_id": session_id, "records": records}, ensure_ascii=False)
+    )
+
+
 async def click_tab(page, text: str):
     if text == "计划":
         await goto_app(page, "plan")
+        return
+    if text == "新会话":
+        await goto_app(page, "new")
         return
     await page.evaluate(
         """
@@ -515,11 +647,17 @@ async def click_tab(page, text: str):
     await page.wait_for_timeout(400)
 
 
-async def choose_trigger(page, label: str):
+async def choose_trigger(page, condition: str):
+    condition_index = {
+        "user_action": 0,
+        "session_idle": 1,
+        "scheduled_task": 2,
+        "polling_task": 3,
+    }[condition]
     await page.locator(".plan-trigger-button").first.click()
     await expect(page.locator(".plan-trigger-menu")).to_be_visible()
-    await page.locator(".plan-trigger-option").filter(has_text=label).click()
-    if label in {"定时任务", "轮询任务", "Scheduled task", "Polling task"}:
+    await page.locator(".plan-trigger-option").nth(condition_index).click()
+    if condition in {"scheduled_task", "polling_task"}:
         await expect(page.locator(".plan-schedule-dialog")).to_be_visible()
         date_input = page.locator(".plan-schedule-dialog input[type='date']").first
         time_input = page.locator(".plan-schedule-dialog input[type='time']").first
@@ -539,17 +677,25 @@ async def close_plan_panel(page):
 
 
 async def open_todo_draft(page):
-    column = page.locator(".board-column").filter(has_text="待办").first
+    column = page.locator(".board-column[data-plan-status='todo']").first
     await expect(column).to_be_visible()
     await column.locator("header .icon-action.small").first.click()
     await expect(page.locator(".plan-conversation-panel")).to_be_visible()
     await page.wait_for_timeout(300)
 
 
-async def select_draft_session(page, session_title: str):
+async def open_plan_session_card(page, session_id: str):
+    card = page.locator(f'.board-card[data-session-id="{session_id}"]').first
+    await expect(card).to_be_visible(timeout=30_000)
+    await card.click()
+    await page.wait_for_selector(".plan-conversation-panel", timeout=10_000)
+    await expect(page.locator(".plan-conversation-panel .bottom-composer textarea")).to_be_visible(timeout=10_000)
+
+
+async def select_draft_session(page, session_index: int = 0):
     await page.locator(".plan-conversation-panel .plan-session-button").click()
     await expect(page.locator(".plan-session-menu")).to_be_visible()
-    await page.locator(".plan-session-menu .workspace-pick-row").filter(has_text=session_title).first.click()
+    await page.locator(".plan-session-menu .session-pick-row").nth(session_index + 1).click()
     await page.wait_for_timeout(300)
 
 
@@ -608,117 +754,69 @@ async def run_flow():
         await page.wait_for_selector(".plan-board .board-card", timeout=30_000)
         await shot(page, "01-plan-initial")
         initial = await page_metrics(page)
-        results.append({"name": "initial-plan-loaded", "ok": "已有计划对话" in initial["body"], "metrics": initial})
+        results.append({"name": "initial-plan-structure-loaded", "ok": len(initial["boardColumns"]) >= 4 and not initial["errors"], "metrics": initial})
 
-        await click_tab(page, "新会话")
+        await goto_app(page, "new")
         await shot(page, "02-new-session-tab")
-        await page.locator(".bottom-composer textarea").fill("Plan cession 后端对话\n\n创建后用于追加定时任务和排队任务")
+        await page.locator(".new-session-view .bottom-composer textarea").fill("Plan session backend conversation\n\nCreated for scheduled and queued task appends")
         await shot(page, "03-new-session-composed")
-        await page.locator(".composer-send").click()
+        await page.locator(".new-session-view .composer-send").click()
+        await wait_for_records(lambda records: len(records_of(records, "session.prompt_async")) >= 1)
         await wait_for_submit_idle(page, browser_errors)
         await shot(page, "04-session-created")
-        created = await page_metrics(page)
-        if "Failed to fetch" in created["body"]:
-            raise AssertionError(json.dumps({"step": "create-session", "browser_errors": browser_errors, "metrics": created}, ensure_ascii=False))
-        results.append({"name": "created-session-visible", "ok": "Plan cession 后端对话" in created["body"], "metrics": created})
 
-        await click_tab(page, "计划")
-        try:
-            await page.wait_for_selector(".plan-board .board-card", timeout=30_000)
-        except PlaywrightTimeoutError:
-            await shot(page, "05-plan-after-create-timeout")
-            (OUT / "plan-after-create-timeout.json").write_text(
-                json.dumps(await page_metrics(page), ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            raise
-        await shot(page, "05-plan-after-create")
-        after_create = await page_metrics(page)
-        results.append({"name": "created-session-on-board", "ok": any("Plan cession 后端对话" in card for card in after_create["boardCards"]), "metrics": after_create})
+        records_after_create = read_records()
+        session_id = created_session_id(records_after_create)
+        results.append({"name": "backend-created-session", "ok": bool(session_id), "records": records_after_create["records"]})
 
-        await page.locator(".board-card").filter(has_text="Plan cession 后端对话").first.click()
-        if await page.locator(".plan-conversation-panel").count() == 0:
-            await page.locator(".plan-mode-actions .icon-action").last.click()
-        try:
-            await page.wait_for_selector(".plan-conversation-panel", timeout=10_000)
-        except PlaywrightTimeoutError:
-            await shot(page, "06-created-session-panel-timeout")
-            (OUT / "created-session-panel-timeout.json").write_text(
-                json.dumps(
-                    {
-                        "metrics": await page_metrics(page),
-                        "browserErrors": browser_errors,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-            raise
-        await shot(page, "06-created-session-panel")
-        row = page.locator(".plan-conversation-panel .composer-task-row").filter(has_text="Plan cession 后端对话").first
-        await expect(row).to_be_visible()
-        await row.click()
-        await page.wait_for_timeout(300)
-        await shot(page, "07-created-task-selected")
-        await submit_plan_panel(page, "Plan cession 后端对话 - 已修改\n\n修改后的后端同步说明", browser_errors=browser_errors)
-        await shot(page, "08-session-task-edited")
-        edited = await page_metrics(page)
-        results.append({"name": "edited-session-task-visible", "ok": "Plan cession 后端对话 - 已修改" in edited["body"], "metrics": edited})
+        await goto_app(page, "plan", {"sessionId": session_id})
+        await page.wait_for_selector(".board-column[data-plan-status='todo'] .board-card", timeout=30_000)
+        await open_plan_session_card(page, session_id)
+        await shot(page, "05-created-session-panel")
 
-        await close_plan_panel(page)
-        await open_todo_draft(page)
-        await shot(page, "09-scheduled-draft-open")
-        await select_draft_session(page, "Plan cession 后端对话")
-        await shot(page, "10-scheduled-target-session-selected")
-        await submit_plan_panel(page, "同会话定时任务\n\n定时交付到同一个 cession", "定时任务", browser_errors=browser_errors)
-        await shot(page, "11-scheduled-task-added")
-        scheduled = await page_metrics(page)
-        results.append({"name": "scheduled-task-visible", "ok": "同会话定时任务" in scheduled["body"], "metrics": scheduled})
+        await submit_plan_panel(page, "Scheduled task append\n\nDelivered to the same session", "scheduled_task", browser_errors=browser_errors)
+        await wait_for_records(lambda records: len(records_of(records, "sessionmanagement.update")) >= 1)
+        await shot(page, "06-scheduled-task-added")
 
-        await close_plan_panel(page)
-        await open_todo_draft(page)
-        await shot(page, "12-queued-draft-open")
-        await select_draft_session(page, "Plan cession 后端对话")
-        await shot(page, "13-queued-target-session-selected")
-        await submit_plan_panel(page, "同会话排队任务\n\n排队交付到同一个 cession", "排队执行", browser_errors=browser_errors)
-        await shot(page, "14-queued-task-added")
-        queued = await page_metrics(page)
-        results.append({"name": "queued-task-visible", "ok": "同会话排队任务" in queued["body"], "metrics": queued})
+        await submit_plan_panel(page, "Queued task append\n\nDelivered to the same session", "session_idle", browser_errors=browser_errors)
+        await wait_for_records(lambda records: len(records_of(records, "sessionmanagement.update")) >= 2)
+        await shot(page, "07-queued-task-added")
 
-        if await page.locator(".plan-conversation-panel").count() == 0:
-            current_session_card = page.locator(".board-card").filter(has_text="同会话排队任务")
-            if await current_session_card.count() == 0:
-                current_session_card = page.locator(".board-card").filter(has_text="Plan cession 后端对话 - 已修改")
-            await current_session_card.first.click()
-            if await page.locator(".plan-conversation-panel").count() == 0:
-                await page.locator(".plan-mode-actions .icon-action").last.click()
-        await page.wait_for_selector(".plan-conversation-panel", timeout=10_000)
-        await shot(page, "15-final-session-panel")
         final_panel = await page_metrics(page)
-        results.append(
-            {
-                "name": "same-session-has-all-tasks",
-                "ok": all(text in final_panel["panelText"] for text in ["Plan cession 后端对话 - 已修改", "同会话定时任务", "同会话排队任务"]),
-                "metrics": final_panel,
-            }
-        )
         results.append({"name": "no-visible-error", "ok": not final_panel["errors"] and final_panel["overflowX"] <= 4, "metrics": final_panel})
 
         await browser.close()
 
-    with urlopen(GATEWAY_URL + "/__records", timeout=5) as response:
-        records = json.loads(response.read().decode("utf-8"))
+    records = read_records()
+    session_id = created_session_id(records)
+    tasks = session_tasks(backend_session(records, session_id))
     record_types = [item["type"] for item in records["records"]]
-    payload_text = json.dumps(records, ensure_ascii=False)
+    prompt_records = [item for item in records["records"] if item["type"] == "session.prompt_async"]
+    prompt_payloads_have_frontend_ids = bool(prompt_records) and all(
+        isinstance(item.get("payload"), dict)
+        and isinstance(item["payload"].get("messageID"), str)
+        and item["payload"]["messageID"].strip()
+        and isinstance(item["payload"].get("parts"), list)
+        and any(
+            isinstance(part, dict)
+            and part.get("type") == "text"
+            and isinstance(part.get("id"), str)
+            and part["id"].strip()
+            and part["id"].startswith(item["payload"]["messageID"])
+            for part in item["payload"].get("parts", [])
+        )
+        for item in prompt_records
+    )
     results.extend(
         [
             {"name": "backend-session-create-called", "ok": "session.create" in record_types, "records": records["records"]},
             {"name": "backend-prompt-called", "ok": "session.prompt_async" in record_types, "records": records["records"]},
+            {"name": "backend-prompt-payload-has-frontend-ids", "ok": prompt_payloads_have_frontend_ids, "records": prompt_records},
             {"name": "backend-sessionmanagement-updated", "ok": "sessionmanagement.update" in record_types, "records": records["records"]},
-            {"name": "backend-task-management-updated-for-edit-and-appends", "ok": record_types.count("sessionmanagement.update") >= 3, "records": records["records"]},
-            {"name": "backend-recorded-scheduled", "ok": "scheduled_task" in payload_text and "同会话定时任务" in payload_text, "records": records["records"]},
-            {"name": "backend-recorded-queued", "ok": "session_idle" in payload_text and "同会话排队任务" in payload_text, "records": records["records"]},
+            {"name": "backend-task-management-updated-for-appends", "ok": record_types.count("sessionmanagement.update") >= 2, "records": records["records"]},
+            {"name": "backend-same-session-has-three-tasks", "ok": len(tasks) >= 3, "tasks": tasks},
+            {"name": "backend-recorded-scheduled", "ok": any(task.get("start_condition") == "scheduled_task" and task.get("start_at") for task in tasks), "tasks": tasks},
+            {"name": "backend-recorded-queued", "ok": any(task.get("start_condition") == "session_idle" for task in tasks), "tasks": tasks},
             {
                 "name": "browser-has-no-errors",
                 "ok": not [

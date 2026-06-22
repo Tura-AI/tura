@@ -239,7 +239,7 @@ function looksLikeInternalTaskStatus(text) {
   if (/^(?:doing|done|question)\s*:\s*\{\s*\}$/iu.test(trimmed)) return true
   try {
     const parsed = JSON.parse(trimmed)
-    return Boolean(parsed?.task_status || parsed?.status || parsed?.task_detail)
+    return Boolean(parsed?.task_status || parsed?.status || parsed?.task_group)
   } catch {
     return false
   }

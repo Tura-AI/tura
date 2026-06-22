@@ -440,7 +440,7 @@ mod tests {
             .join("\n");
 
         assert!(!joined.contains("Context checkpoint required"));
-        assert!(!joined.contains("compact_context as the final command"));
+        assert!(!joined.contains("command_type\":\"compact_context"));
         assert_eq!(turn.context_tokens.limit, 10);
         assert_eq!(turn.context_tokens.input, 1234);
         std::env::remove_var("TURA_GATEWAY_CALLBACKS");

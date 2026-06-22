@@ -138,6 +138,7 @@ async fn workspace_config_path_and_project_apis_share_a_local_workspace_view() -
         normalize_slashes(current_from_query.worktree),
         normalize_path(&selected)
     );
+    assert!(selected.join(".git").exists());
 
     let Json(current_from_header) =
         get_current_project(headers, Query(ProjectDirectoryParams { directory: None })).await;
@@ -148,12 +149,16 @@ async fn workspace_config_path_and_project_apis_share_a_local_workspace_view() -
         normalize_slashes(current_from_header.worktree),
         normalize_path(&header_selected)
     );
+    assert!(header_selected.join(".git").exists());
 
     let Json(default_project) = use_default_workspace()
         .await
         .map_err(|(_, body)| anyhow::anyhow!(body))?;
     assert_eq!(default_project.name.as_deref(), Some("tura_workspace"));
     assert!(PathBuf::from(&default_project.worktree).is_dir());
+    assert!(PathBuf::from(&default_project.worktree)
+        .join(".git")
+        .exists());
     assert_eq!(
         normalize_slashes(default_project.worktree),
         normalize_path(documents.join("tura_workspace"))
@@ -169,6 +174,7 @@ async fn workspace_config_path_and_project_apis_share_a_local_workspace_view() -
         Some("Bad--Name - With Spaces")
     );
     assert!(PathBuf::from(&named_project.worktree).is_dir());
+    assert!(PathBuf::from(&named_project.worktree).join(".git").exists());
     assert_eq!(
         normalize_slashes(named_project.worktree),
         normalize_path(documents.join("Bad--Name - With Spaces"))

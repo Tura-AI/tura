@@ -83,7 +83,7 @@ fn pass_task_status_command_inside_command_run_is_not_shell_executed() {
                 {
                     "step": 1,
                     "command_type": "task_status",
-                    "command_line": "{\"status\":\"done\",\"task_detail\":\"Patch code\"}"
+                    "command_line": "{\"status\":\"done\",\"task_group\":\"商城前端\"}"
                 }
             ]
         }),
@@ -94,7 +94,7 @@ fn pass_task_status_command_inside_command_run_is_not_shell_executed() {
     assert_eq!(output["results"][0]["success"], true);
     assert_eq!(
         output["results"][0]["output"],
-        json!({ "task_status": { "status": "done", "task_detail": "Patch code" } })
+        json!({ "task_status": { "status": "done", "task_group": "商城前端" } })
     );
 }
 
@@ -107,7 +107,7 @@ fn pass_task_status_payload_in_command_field_is_recovered() {
                 {
                     "step": 1,
                     "command_type": "task_status",
-                    "command": "{\"status\":\"done\",\"task_detail\":\"Smoke confirmation\"}"
+                    "command": "{\"status\":\"done\",\"task_group\":\"订单清结算微服务\"}"
                 }
             ]
         }),
@@ -118,7 +118,7 @@ fn pass_task_status_payload_in_command_field_is_recovered() {
     assert_eq!(output["results"][0]["success"], true);
     assert_eq!(
         output["results"][0]["output"],
-        json!({ "task_status": { "status": "done", "task_detail": "Smoke confirmation" } })
+        json!({ "task_status": { "status": "done", "task_group": "订单清结算微服务" } })
     );
 }
 
@@ -220,7 +220,7 @@ async fn fail_command_run_rejects_commands_outside_agent_capabilities() {
 }
 
 #[test]
-fn pass_compact_context_command_routes_and_outputs_summary() {
+fn pass_task_status_compact_context_routes_and_outputs_summary() {
     let _guard = env_lock_blocking();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("compact-context");
@@ -234,24 +234,24 @@ fn pass_compact_context_command_routes_and_outputs_summary() {
                 },
                 {
                     "step": 2,
-                    "command_type": "compact_context",
-                    "command_line": "{\"summary\":\"Goal done partly. Next read src/lib.rs.\"}"
+                    "command_type": "task_status",
+                    "command_line": "{\"compact_context\":\"Goal done partly. Next read src/lib.rs.\"}"
                 }
             ]
         }),
         &root,
     );
 
-    assert_eq!(output["results"][1]["command_type"], "compact_context");
+    assert_eq!(output["results"][1]["command_type"], "task_status");
     assert_eq!(output["results"][1]["success"], true);
     assert_eq!(
-        output["results"][1]["output"]["compact_context"],
+        output["results"][1]["output"]["task_status"]["compact_context"],
         "Goal done partly. Next read src/lib.rs."
     );
 }
 
 #[test]
-fn fail_compact_context_must_be_final_highest_step() {
+fn fail_task_status_compact_context_must_be_final_highest_step() {
     let _guard = env_lock_blocking();
     std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
     let root = temp_workspace("compact-context-position");
@@ -260,8 +260,8 @@ fn fail_compact_context_must_be_final_highest_step() {
             "commands": [
                 {
                     "step": 2,
-                    "command_type": "compact_context",
-                    "command_line": "summary"
+                    "command_type": "task_status",
+                    "command_line": "{\"compact_context\":\"summary\"}"
                 },
                 {
                     "step": 3,
@@ -276,6 +276,6 @@ fn fail_compact_context_must_be_final_highest_step() {
     assert_eq!(output["results"][0]["success"], false);
     assert_eq!(
         output["results"][0]["error"],
-        "compact_context must be the final command in the highest step of command_run"
+        "task_status compact_context must be the final command in the highest step of command_run"
     );
 }

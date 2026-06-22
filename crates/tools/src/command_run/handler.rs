@@ -15,6 +15,7 @@ use handler_parse::{
 const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 15_000;
 const APPLY_PATCH_FAILURE_CANCEL_REASON: &str =
     "apply_patch failed; command_run stopped before later commands";
+const COMMAND_RUN_SANDBOX_ENV: &str = "TURA_COMMAND_RUN_SANDBOX";
 
 #[derive(Clone, Debug)]
 struct CommandRunArgs {
@@ -117,11 +118,29 @@ pub async fn execute_async_value_with_allowed_and_lock_scope(
     allowed_commands: Option<BTreeSet<String>>,
     lock_scope: Option<String>,
 ) -> Value {
+    execute_async_value_with_allowed_lock_scope_and_sandbox(
+        arguments,
+        session_dir,
+        allowed_commands,
+        lock_scope,
+        command_run_sandbox_enabled(),
+    )
+    .await
+}
+
+pub async fn execute_async_value_with_allowed_lock_scope_and_sandbox(
+    arguments: Value,
+    session_dir: std::path::PathBuf,
+    allowed_commands: Option<BTreeSet<String>>,
+    lock_scope: Option<String>,
+    sandbox: bool,
+) -> Value {
     let mut args = match parse_args(&arguments) {
         Ok(args) => args,
         Err(message) => return error_payload(message),
     };
     args.allowed_commands = allowed_commands;
+    args.sandbox = sandbox;
     execute_async_args_with_lock_scope(args, session_dir, lock_scope).await
 }
 
@@ -198,7 +217,7 @@ impl StreamingCommandRunExecutor {
             router: Arc::new(CommandRouter::new()),
             ctx: ToolContext::new_with_lock_scope(session_dir, lock_scope),
             allowed_commands,
-            sandbox: false,
+            sandbox: command_run_sandbox_enabled(),
             active_step: None,
             active_step_repaired: false,
             next_index: 0,
@@ -629,18 +648,16 @@ fn command_allowed(command: &str, allowed_commands: Option<&BTreeSet<String>>) -
     allowed_commands.contains(&crate::commands::canonical_command(command))
 }
 
-fn sandbox_enabled(value: Option<&Value>) -> bool {
-    match value {
-        Some(Value::Bool(enabled)) => *enabled,
-        Some(Value::String(text)) => matches!(
-            text.trim().to_ascii_lowercase().as_str(),
-            "true" | "1" | "on" | "enabled"
-        ),
-        Some(Value::Object(object)) => ["enabled", "workspace", "workspace_write"]
-            .iter()
-            .any(|name| sandbox_enabled(object.get(*name))),
-        _ => false,
-    }
+fn command_run_sandbox_enabled() -> bool {
+    std::env::var(COMMAND_RUN_SANDBOX_ENV)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on" | "enabled"
+            )
+        })
+        .unwrap_or(false)
 }
 
 fn validate_command_sandbox(
@@ -778,9 +795,6 @@ fn build_tool_call(command_name: &str, command: &CommandItem) -> Result<ToolCall
             input: extract_apply_patch_body(&command.command_line)
                 .unwrap_or_else(|| command.command_line.clone()),
         },
-        "compact_context" => ToolPayload::Function {
-            arguments: normalize_compact_context_arguments(command)?,
-        },
         "generate_media" => ToolPayload::Function {
             arguments: normalize_json_or_cli_command_arguments(command, "generate_media")?,
         },
@@ -845,7 +859,6 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
     };
     let top_workdir = string_field(object, &["workdir", "cwd"]);
     let top_timeout_ms = u64_field(object, &["timeout_ms", "timeoutMs"]);
-    let sandbox = sandbox_enabled(object.get("sandbox"));
     let command_values = if let Some(commands) = object.get("commands") {
         command_values(commands)
     } else if let Some(steps) = object.get("steps") {
@@ -858,7 +871,7 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
         workdir: top_workdir,
         timeout_ms: top_timeout_ms,
         allowed_commands: None,
-        sandbox,
+        sandbox: command_run_sandbox_enabled(),
     };
     for value in command_values {
         args.commands.push(parse_command_item(&value)?);
@@ -891,15 +904,15 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
             continue;
         }
         let canonical_command = crate::commands::canonical_command(&command.command);
+        if canonical_command == "compact_context" {
+            return Err(
+                "standalone compact_context command has been removed; use task_status compact_context"
+                    .to_string(),
+            );
+        }
         if !matches!(
             canonical_command.as_str(),
-            "shell_command"
-                | "bash"
-                | "zsh"
-                | "apply_patch"
-                | "planning"
-                | "task_status"
-                | "compact_context"
+            "shell_command" | "bash" | "zsh" | "apply_patch" | "planning" | "task_status"
         ) {
             if CommandRouter::new()
                 .resolve_command_tool_name(&canonical_command)
@@ -926,7 +939,7 @@ fn parse_args(arguments: &Value) -> Result<CommandRunArgs, String> {
             command.command = crate::commands::active_shell_command_name().to_string();
         }
     }
-    validate_compact_context_position(&args.commands)?;
+    validate_task_status_compact_context_position(&args.commands)?;
     Ok(args)
 }
 
@@ -965,15 +978,22 @@ fn with_command_timeout(mut arguments: Value, command: &CommandItem) -> Value {
     arguments
 }
 
-fn validate_compact_context_position(commands: &[CommandItem]) -> Result<(), String> {
+fn validate_task_status_compact_context_position(commands: &[CommandItem]) -> Result<(), String> {
     let Some((compact_index, compact)) = commands.iter().enumerate().find(|(_, command)| {
-        crate::commands::canonical_command(&command.command) == "compact_context"
+        crate::commands::canonical_command(&command.command) == "task_status"
+            && command_has_compact_context(command)
     }) else {
         return Ok(());
     };
+    if commands[compact_index + 1..]
+        .iter()
+        .any(|command| command_has_compact_context(command))
+    {
+        return Err("only one task_status compact_context command is allowed".to_string());
+    }
     if commands.get(compact_index + 1).is_some() {
         return Err(
-            "compact_context must be the final command in the highest step of command_run"
+            "task_status compact_context must be the final command in the highest step of command_run"
                 .to_string(),
         );
     }
@@ -984,11 +1004,38 @@ fn validate_compact_context_position(commands: &[CommandItem]) -> Result<(), Str
         .unwrap_or(1);
     if compact.effective_step() != max_step {
         return Err(
-            "compact_context must be the final command in the highest step of command_run"
+            "task_status compact_context must be the final command in the highest step of command_run"
                 .to_string(),
         );
     }
     Ok(())
+}
+
+fn command_has_compact_context(command: &CommandItem) -> bool {
+    command
+        .inline_arguments
+        .as_ref()
+        .is_some_and(value_has_compact_context)
+        || command_line_has_compact_context(&command.command_line)
+}
+
+fn value_has_compact_context(value: &Value) -> bool {
+    value
+        .get("compact_context")
+        .and_then(Value::as_str)
+        .is_some_and(|text| !text.trim().is_empty())
+}
+
+fn command_line_has_compact_context(command_line: &str) -> bool {
+    let trimmed = command_line.trim();
+    if trimmed.is_empty() || !trimmed.starts_with('{') {
+        return false;
+    }
+    serde_json::from_str::<Value>(trimmed)
+        .ok()
+        .is_some_and(|value| value_has_compact_context(&value))
+        || extract_jsonish_string_field(trimmed, "compact_context")
+            .is_some_and(|value| !value.trim().is_empty())
 }
 
 fn normalize_planning_arguments(command: &CommandItem) -> Result<Value, String> {
@@ -999,28 +1046,6 @@ fn normalize_planning_arguments(command: &CommandItem) -> Result<Value, String> 
     let value: Value = serde_json::from_str(trimmed)
         .map_err(|err| format!("invalid planning command_line JSON: {err}"))?;
     Ok(value)
-}
-
-fn normalize_compact_context_arguments(command: &CommandItem) -> Result<Value, String> {
-    let trimmed = command.command_line.trim();
-    if trimmed.is_empty() {
-        return Err("compact_context command_line must include checkpoint text".to_string());
-    }
-    if trimmed.starts_with('{') {
-        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-            return Ok(value);
-        }
-        let escaped = escape_control_chars_in_json_strings(trimmed);
-        if escaped != trimmed {
-            if let Ok(value) = serde_json::from_str::<Value>(&escaped) {
-                return Ok(value);
-            }
-        }
-        if let Some(summary) = compact_context_summary_from_jsonish_object(trimmed) {
-            return Ok(json!({ "summary": summary }));
-        }
-    }
-    Ok(json!({ "summary": trimmed }))
 }
 
 fn escape_control_chars_in_json_strings(input: &str) -> String {
@@ -1059,14 +1084,6 @@ fn escape_control_chars_in_json_strings(input: &str) -> String {
         output.push(ch);
     }
     output
-}
-
-fn compact_context_summary_from_jsonish_object(input: &str) -> Option<String> {
-    ["summary", "content", "text"].iter().find_map(|field| {
-        extract_jsonish_string_field(input, field)
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-    })
 }
 
 fn extract_jsonish_string_field(input: &str, field: &str) -> Option<String> {

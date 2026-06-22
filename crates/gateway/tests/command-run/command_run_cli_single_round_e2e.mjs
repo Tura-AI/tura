@@ -751,7 +751,7 @@ async function runTura(workspace) {
     "-m",
     turaModel,
     ...(turaPriority ? ["-p"] : []),
-    "--dangerously-bypass-approvals-and-sandbox",
+    "--sandbox",
     "--model-reasoning-effort",
     reasoningEffort,
     "--output-last-message",

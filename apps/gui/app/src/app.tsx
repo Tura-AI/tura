@@ -673,7 +673,8 @@ export function App() {
       }));
       await Promise.race([
         directoryClient().promptAsync(sessionId, {
-          parts: [{ type: "text", text: content }],
+          messageID: optimisticId,
+          parts: [{ id: `${optimisticId}:text`, type: "text", text: content }],
           model: state().selectedModel,
           agent: state().selectedAgent,
         }),

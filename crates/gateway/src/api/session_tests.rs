@@ -364,7 +364,7 @@ async fn task_management_route_patches_session_and_returns_session_fields() {
 }
 
 #[tokio::test]
-async fn agent_tool_callback_updates_auto_session_name_from_last_task_detail() {
+async fn agent_tool_callback_updates_auto_session_name_from_last_task_group() {
     let directory = std::env::temp_dir()
         .join(format!("auto-session-name-{}", uuid::Uuid::new_v4()))
         .to_string_lossy()
@@ -404,8 +404,8 @@ async fn agent_tool_callback_updates_auto_session_name_from_last_task_detail() {
                     "metadata": {
                         "output": {
                             "results": [
-                                { "output": { "task_status": { "task_detail": "First detail" } } },
-                                { "output": { "status": { "task_detail": "Last detail" } } }
+                                { "output": { "task_status": { "task_group": "商城前端" } } },
+                                { "output": { "status": { "task_group": "订单清结算微服务" } } }
                             ]
                         }
                     }
@@ -418,8 +418,11 @@ async fn agent_tool_callback_updates_auto_session_name_from_last_task_detail() {
 
     assert!(response.ok);
     let Json(updated) = super::get_session(Path(session.id)).await;
-    assert_eq!(updated.name.as_deref(), Some("Last detail"));
-    assert_eq!(updated.session_display_name.as_deref(), Some("Last detail"));
+    assert_eq!(updated.name.as_deref(), Some("订单清结算微服务"));
+    assert_eq!(
+        updated.session_display_name.as_deref(),
+        Some("订单清结算微服务")
+    );
 
     let _ = fs::remove_dir_all(directory);
 }
@@ -483,7 +486,7 @@ async fn agent_tool_callback_keeps_manual_session_name_when_auto_disabled() {
                         "output": {
                             "results": [{
                                 "output": {
-                                    "status": { "task_detail": "Generated detail" }
+                                    "status": { "task_group": "pdf编辑制作" }
                                 }
                             }]
                         }

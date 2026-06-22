@@ -329,6 +329,54 @@ async def assert_scrollbar_drag_not_pulled_by_delta(page) -> None:
         raise AssertionError(f"visible row jittered after offscreen delta: before={anchor_before}, after={anchor_after}")
 
 
+async def assert_scroll_restored_after_conversation_remount(page) -> None:
+    await page.goto(f"{GUI_URL}/?e2eFixture=long-transcript", wait_until="domcontentloaded")
+    await page.wait_for_selector(
+        ".transcript-virtual-space[data-virtual-count='2200']",
+        state="attached",
+        timeout=20_000,
+    )
+    await page.locator(".transcript").evaluate(
+        "(el) => { el.scrollTop = Math.floor(el.scrollHeight * 0.42); el.dispatchEvent(new Event('scroll', { bubbles: true })); }"
+    )
+    await page.wait_for_timeout(180)
+    anchor_before = await page.evaluate(
+        """
+        () => {
+          const row = Array.from(document.querySelectorAll(".transcript-virtual-row"))
+            .find((item) => item.getBoundingClientRect().top > 220);
+          if (!row) throw new Error("restore anchor row missing before remount");
+          const box = row.getBoundingClientRect();
+          const transcript = document.querySelector(".transcript");
+          return { id: row.dataset.messageId, y: box.y, scrollTop: transcript.scrollTop };
+        }
+        """
+    )
+    await page.screenshot(path=str(OUT / "scroll-restore-before.png"), full_page=False)
+    await page.get_by_role("button", name="文件浏览器").click()
+    await page.wait_for_selector(".files-view", state="attached", timeout=20_000)
+    await page.get_by_role("button", name="会话").click()
+    await page.wait_for_selector(".transcript-virtual-space[data-virtual-count='2200']", state="attached", timeout=20_000)
+    await page.wait_for_timeout(260)
+    anchor_after = await page.evaluate(
+        """
+        (id) => {
+          const row = document.querySelector(`[data-message-id="${id}"]`);
+          if (!row) throw new Error(`restore anchor row missing after remount: ${id}`);
+          const box = row.getBoundingClientRect();
+          const transcript = document.querySelector(".transcript");
+          return { id, y: box.y, scrollTop: transcript.scrollTop };
+        }
+        """,
+        anchor_before["id"],
+    )
+    await page.screenshot(path=str(OUT / "scroll-restore-after.png"), full_page=False)
+    if abs(anchor_after["scrollTop"] - anchor_before["scrollTop"]) > 4:
+        raise AssertionError(f"conversation remount did not restore scrollTop: before={anchor_before}, after={anchor_after}")
+    if abs(anchor_after["y"] - anchor_before["y"]) > 6:
+        raise AssertionError(f"conversation remount changed visible anchor: before={anchor_before}, after={anchor_after}")
+
+
 async def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     gui_server = start_gui_server()
@@ -428,6 +476,7 @@ async def main() -> None:
 
             await assert_stream_append_only(page)
             await assert_scrollbar_drag_not_pulled_by_delta(page)
+            await assert_scroll_restored_after_conversation_remount(page)
             await browser.close()
     finally:
         stop_process_tree(gui_server)

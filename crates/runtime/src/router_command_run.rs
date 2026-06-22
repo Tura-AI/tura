@@ -35,6 +35,7 @@ pub async fn execute_command_run_value(
         "session_directory": session_directory,
         "arguments": arguments,
         "allowed_commands": allowed_commands,
+        "sandbox": command_run_sandbox_enabled(),
     });
     let request_id = format!(
         "runtime-command-run-{}-{}",
@@ -209,6 +210,18 @@ pub(crate) async fn execute_command_value_results(
 
 fn command_run_results(output: &Value) -> Option<Vec<Value>> {
     output.get("results")?.as_array().cloned()
+}
+
+fn command_run_sandbox_enabled() -> bool {
+    std::env::var("TURA_COMMAND_RUN_SANDBOX")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on" | "enabled"
+            )
+        })
+        .unwrap_or(false)
 }
 
 fn is_failed_apply_patch_result(result: &Value) -> bool {

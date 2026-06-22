@@ -790,6 +790,7 @@ async function runTura(agentId, workspace, agentDir) {
     "--skip-git-repo-check",
     "--session-id",
     sessionId,
+    "--sandbox",
     "--agent-id",
     turaAgentName(agentId),
     "-m",
