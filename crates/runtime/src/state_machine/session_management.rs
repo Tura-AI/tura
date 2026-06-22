@@ -90,7 +90,7 @@ pub enum PlanStatus {
 
 pub type TaskStatus = PlanStatus;
 
-pub const DEFAULT_CONTEXT_TOKEN_LIMIT: u64 = 250_000;
+pub const DEFAULT_CONTEXT_TOKEN_LIMIT: u64 = 200_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextTokenStats {
@@ -250,7 +250,7 @@ pub struct SessionManagement {
     /// Whether the active agent state for this run includes planning.
     #[serde(default)]
     pub planning_enabled: bool,
-    /// Latest model-visible input context token estimate and active compaction limit.
+    /// Latest provider-reported input token count and active compaction limit.
     #[serde(default)]
     pub context_tokens: ContextTokenStats,
     /// Latest terminal provider token/cost report for the session.

@@ -43,7 +43,11 @@ pub fn execute(
     if let Some(patch_text) = request::embedded_apply_patch_text(&request.command) {
         return apply_patch::execute(&patch_text, session_dir);
     }
-    if let Some(reason) = command_safety::is_dangerous_command(&request.command) {
+    if let Some(reason) = command_safety::is_dangerous_command_with_workspace(
+        &request.command,
+        &request.cwd,
+        session_dir,
+    ) {
         return response::blocked_command_response(&request.command, &reason);
     }
     let shell_kind = shell_kind.id();
@@ -100,7 +104,11 @@ pub async fn execute_async(
     if let Some(patch_text) = request::embedded_apply_patch_text(&request.command) {
         return apply_patch::execute(&patch_text, session_dir);
     }
-    if let Some(reason) = command_safety::is_dangerous_command(&request.command) {
+    if let Some(reason) = command_safety::is_dangerous_command_with_workspace(
+        &request.command,
+        &request.cwd,
+        session_dir,
+    ) {
         return response::blocked_command_response(&request.command, &reason);
     }
     if ctx.cancellation.is_cancelled() {

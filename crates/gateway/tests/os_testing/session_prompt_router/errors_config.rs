@@ -233,10 +233,7 @@ async fn gateway_prompt_business_flow_inherits_agent_runtime_settings_for_router
         request["payload"]["payload"]["agent"],
         "business-runtime-agent"
     );
-    assert!(
-        request["payload"]["payload"]["model"].is_null(),
-        "session model must not override the selected agent model config"
-    );
+    assert_eq!(request["payload"]["payload"]["model"], "codex/gpt-5.5");
     assert_eq!(
         request["payload"]["payload"]["worker_env"]["TURA_SESSION_REASONING_EFFORT"],
         "high"
@@ -280,6 +277,8 @@ async fn gateway_prompt_business_flow_applies_workspace_runtime_config_to_router
     let config = TuraSessionConfig {
         language: Some("zh-CN".to_string()),
         model: Some("openai/gpt-5.5".to_string()),
+        active_provider: Some("openai".to_string()),
+        active_model: Some("gpt-5.5".to_string()),
         active_agent: Some("workspace-config-agent".to_string()),
         active_persona: Some("workspace-persona".to_string()),
         model_variant: Some("high".to_string()),

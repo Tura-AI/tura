@@ -6,7 +6,7 @@
 use anyhow::{anyhow, Result};
 use session_log::{
     GetSessionRequest, ListSessionRecordsRequest, ListSessionsRequest, Page, SessionLogCommand,
-    SessionLogResponse, SessionRecord, SessionSnapshot, WorkspaceSummary,
+    SessionLogResponse, SessionRecord, SessionSnapshot, SessionSummary, WorkspaceSummary,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -34,6 +34,21 @@ impl SessionDbClient {
                 page_size,
             }))?,
         )
+    }
+
+    pub fn list_session_summaries(
+        &self,
+        workspace: String,
+        page: u64,
+        page_size: u64,
+    ) -> Result<(Page, Vec<SessionSummary>)> {
+        session_summaries_response(self.call(SessionLogCommand::ListSessionSummaries(
+            ListSessionsRequest {
+                workspace,
+                page,
+                page_size,
+            },
+        ))?)
     }
 
     pub fn get_session(&self, session_id: String) -> Result<Option<SessionSnapshot>> {
@@ -88,6 +103,7 @@ fn is_read_command(command: &SessionLogCommand) -> bool {
             | SessionLogCommand::GetSession(_)
             | SessionLogCommand::ListWorkspaces
             | SessionLogCommand::ListSessions(_)
+            | SessionLogCommand::ListSessionSummaries(_)
             | SessionLogCommand::ListSessionRecords(_)
             | SessionLogCommand::Shutdown
     )
@@ -106,6 +122,14 @@ fn sessions_response(response: SessionLogResponse) -> Result<(Page, Vec<SessionS
         SessionLogResponse::Sessions { page, sessions } => Ok((page, sessions)),
         SessionLogResponse::Error { error } => Err(service_error("list_sessions", error)),
         other => Err(unexpected_response("list_sessions", other)),
+    }
+}
+
+fn session_summaries_response(response: SessionLogResponse) -> Result<(Page, Vec<SessionSummary>)> {
+    match response {
+        SessionLogResponse::SessionSummaries { page, sessions } => Ok((page, sessions)),
+        SessionLogResponse::Error { error } => Err(service_error("list_session_summaries", error)),
+        other => Err(unexpected_response("list_session_summaries", other)),
     }
 }
 

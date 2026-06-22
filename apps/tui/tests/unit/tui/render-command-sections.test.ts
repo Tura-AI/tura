@@ -145,7 +145,10 @@ test("render shows assistant command summaries, command details setting, and thi
             id: "tool-input-status",
             type: "tool",
             tool: "command_run",
-            state: { status: "completed", input: { status: "done" } },
+            state: {
+              status: "completed",
+              input: { step: 8, command_type: "task_status", command_line: '{"status":"done"}' },
+            },
           },
         ],
       },
@@ -176,7 +179,8 @@ test("render shows assistant command summaries, command details setting, and thi
   assert.doesNotMatch(collapsed, /\[command_run:/);
   assert.doesNotMatch(collapsed, /bash: npm test -- --runInBand/);
   assert.doesNotMatch(collapsed, /task_detail/);
-  assert.doesNotMatch(collapsed, /\{"status"/);
+  assert.match(collapsed, /task_status/);
+  assert.match(collapsed, /\$ \{"status":"done"\}/);
   assert.match(stripAnsi(collapsed), /thinking\s+12s/);
   assert.match(stripAnsi(collapsed), /✦ thinking\s+12s/);
   assert.doesNotMatch(collapsed, /thinking.*Commands/);
@@ -196,9 +200,9 @@ test("render shows assistant command summaries, command details setting, and thi
   assert.match(expanded, /#1 shell_command completed\s+\$ npm test -- --runInBand/);
   assert.match(expanded, /#1 shell_command completed\s+\$ node tools\/snake_playwright\.mjs/);
   assert.match(expanded, /#7 shell_command completed\s+\$ Get-ChildItem -Force/);
+  assert.match(expanded, /#8 task_status completed\s+\$ \{"status":"done"\}/);
   assert.match(expanded, /#9 shell_command running\s+\$ pnpm test --watch/);
   assert.doesNotMatch(expanded, /provide concise final verification summary/);
-  assert.doesNotMatch(expanded, /\$ done/);
   assert.match(expanded, /\x1b\[38;2;103;116;111m.*\$ pnpm test --watch/);
   const npmTestLine = expanded
     .split("\n")
@@ -233,7 +237,8 @@ test("render shows assistant command summaries, command details setting, and thi
   assert.match(starburst, /✶ thinking\s+12s/);
   assert.match(solid, /^└─ ■ #9 shell_command running\s+\$ pnpm test --watch$/mu);
   assert.match(hollow, /^└─ □ #9 shell_command running\s+\$ pnpm test --watch$/mu);
-  assert.doesNotMatch(solid, /task_status|provide concise final verification summary|\$ done/u);
+  assert.match(solid, /task_status/u);
+  assert.doesNotMatch(solid, /provide concise final verification summary/u);
 });
 
 test("render shows streamed command_run results before the whole command batch finishes", () => {

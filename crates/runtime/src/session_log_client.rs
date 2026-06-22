@@ -210,6 +210,7 @@ fn session_log_command_name(command: &SessionLogCommand) -> &'static str {
         SessionLogCommand::GetSession(_) => "get_session",
         SessionLogCommand::ListWorkspaces => "list_workspaces",
         SessionLogCommand::ListSessions(_) => "list_sessions",
+        SessionLogCommand::ListSessionSummaries(_) => "list_session_summaries",
         SessionLogCommand::ListSessionRecords(_) => "list_session_records",
         SessionLogCommand::DeleteSession(_) => "delete_session",
         SessionLogCommand::DeleteWorkspace(_) => "delete_workspace",

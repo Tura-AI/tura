@@ -276,6 +276,11 @@ mod tests {
                 page: 0,
                 page_size: 10,
             }),
+            SessionLogCommand::ListSessionSummaries(ListSessionsRequest {
+                workspace: "workspace".to_string(),
+                page: 0,
+                page_size: 10,
+            }),
             SessionLogCommand::ListSessionRecords(ListSessionRecordsRequest {
                 session_id: "session".to_string(),
                 page: 0,

@@ -30,6 +30,18 @@ pub(super) struct WorkspacePayload {
     pub(super) todos: Vec<Value>,
 }
 
+pub(super) struct WorkspaceSessionSummaryPayload {
+    pub(super) workspace: String,
+    pub(super) name: Option<String>,
+    pub(super) parent_id: Option<String>,
+    pub(super) created_at: i64,
+    pub(super) updated_at: i64,
+    pub(super) state: Option<String>,
+    pub(super) status: Option<String>,
+    pub(super) message_count: i64,
+    pub(super) task_management: Value,
+}
+
 pub(super) fn index_session_from_row(row: &Row<'_>) -> rusqlite::Result<IndexSessionRow> {
     Ok(IndexSessionRow {
         session_id: row.get(0)?,
@@ -108,6 +120,70 @@ pub(super) fn load_workspace_session_payload(
                     )?,
                     session: parse_json_field(&session_json, "session_json", Some(session_id))?,
                     todos: parse_json_field(&todos_json, "todos_json", Some(session_id))?,
+                })
+            },
+        )
+        .transpose()
+}
+
+pub(super) fn load_workspace_session_summary_payload(
+    workspace_db_path: &Path,
+    session_id: &str,
+) -> Result<Option<WorkspaceSessionSummaryPayload>> {
+    if !workspace_db_path.exists() {
+        return Ok(None);
+    }
+    let payload = with_connection(workspace_db_path, init_workspace_db, |conn| {
+        conn.query_row(
+            "SELECT workspace, name, parent_id, created_at, updated_at, state, status,
+                    message_count, task_management_json
+             FROM sessions
+             WHERE session_id = ?1",
+            params![session_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, String>(8)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(Into::into)
+    })?;
+    payload
+        .map(
+            |(
+                workspace,
+                name,
+                parent_id,
+                created_at,
+                updated_at,
+                state,
+                status,
+                message_count,
+                task_management_json,
+            )| {
+                Ok(WorkspaceSessionSummaryPayload {
+                    workspace,
+                    name,
+                    parent_id,
+                    created_at,
+                    updated_at,
+                    state,
+                    status,
+                    message_count,
+                    task_management: parse_json_field(
+                        &task_management_json,
+                        "task_management_json",
+                        Some(session_id),
+                    )?,
                 })
             },
         )

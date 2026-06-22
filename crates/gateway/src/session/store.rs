@@ -472,6 +472,10 @@ impl SessionStore {
             .unwrap_or_default()
     }
 
+    pub fn clear_user_commands_for_session(&self, session_id: &str) -> Vec<String> {
+        self.take_user_commands_for_session(session_id)
+    }
+
     pub fn register_child_session(
         &self,
         parent_session_id: &str,
@@ -846,6 +850,37 @@ impl SessionStore {
                 usage,
             },
         });
+    }
+
+    pub fn pause_session_for_abort(&self, session_id: &str) -> Option<ApiSession> {
+        let parent_id = self.parent_for_child(session_id);
+        let mut sessions = self.sessions.write();
+        let info = sessions.get_mut(session_id)?;
+        let now = Utc::now();
+
+        for task in &mut info.management.task_plan.detailed_tasks {
+            if !matches!(
+                task.status,
+                PlanStatus::WaitingUser | PlanStatus::Done | PlanStatus::Archived
+            ) {
+                task.status = PlanStatus::WaitingUser;
+            }
+        }
+
+        info.management.state = match info.management.state {
+            SessionState::Running | SessionState::Paused | SessionState::Completed => {
+                SessionState::Completed
+            }
+            SessionState::Created
+            | SessionState::Failed
+            | SessionState::Cancelled
+            | SessionState::Interrupted => SessionState::Created,
+        };
+        info.status = SessionStatusMano::Idle;
+        info.updated_at = now.timestamp_millis();
+        info.management.session_last_update_at = now;
+
+        Some(api_session_from_info(info, parent_id))
     }
 
     pub fn update_session_runtime_usage(&self, session_id: &str, usage: serde_json::Value) -> bool {

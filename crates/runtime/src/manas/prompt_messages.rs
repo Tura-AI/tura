@@ -6,7 +6,7 @@ use std::{
 
 use crate::profile_timings;
 use crate::prompt_style::{
-    compact_context, context_blocks, tail_injection, task_status, user_new_command, PromptBuilder,
+    context_blocks, tail_injection, task_status, user_new_command, PromptBuilder,
 };
 use crate::state_machine::session_management::{
     ContextTokenStats, PlanStatus, SessionManagement, StartCondition, TaskStep,
@@ -17,28 +17,11 @@ pub(crate) struct TurnMessages {
     pub context_tokens: ContextTokenStats,
 }
 
-#[cfg(test)]
-pub(crate) fn messages_for_turn(
-    current_messages: &[serde_json::Value],
-    session: &SessionManagement,
-    original_user_task: &str,
-) -> Vec<serde_json::Value> {
-    messages_for_turn_with_context_limit(
-        current_messages,
-        session,
-        original_user_task,
-        crate::state_machine::session_management::DEFAULT_CONTEXT_TOKEN_LIMIT,
-        0,
-    )
-    .messages
-}
-
 pub(crate) fn messages_for_turn_with_context_limit(
     current_messages: &[serde_json::Value],
     session: &SessionManagement,
     original_user_task: &str,
     context_limit_tokens: u64,
-    fixed_prefix_tokens: u64,
 ) -> TurnMessages {
     let total_start = Instant::now();
     let profiling = profile_timings::enabled();
@@ -80,48 +63,19 @@ pub(crate) fn messages_for_turn_with_context_limit(
             tail_injection::TailPrompt::system(content),
         );
     }
-    let token_estimate_start = Instant::now();
-    let message_token_estimate = approximate_message_tokens(&messages);
-    let token_estimate = fixed_prefix_tokens.saturating_add(message_token_estimate);
-    profile_timings::log_elapsed(
-        "messages_for_turn.approximate_message_tokens",
-        token_estimate_start,
-        serde_json::json!({
-            "session_id": session.session_id,
-            "message_count": messages.len(),
-            "estimated_tokens": token_estimate,
-            "message_estimated_tokens": message_token_estimate,
-            "fixed_prefix_tokens": fixed_prefix_tokens,
-            "context_limit_tokens": context_limit_tokens,
-            "messages_bytes": if profiling {
-                profile_timings::json_vec_bytes(&messages)
-            } else {
-                0
-            },
-        }),
-    );
-    if token_estimate >= context_limit_tokens {
-        tail_injection::append_tail_prompt(
-            &mut messages,
-            tail_injection::TailPrompt::user(compact_context_required_message(
-                context_limit_tokens,
-            )),
-        );
-    }
     profile_timings::log_elapsed(
         "messages_for_turn.total",
         total_start,
         serde_json::json!({
             "session_id": session.session_id,
             "message_count": messages.len(),
-            "estimated_tokens": token_estimate,
             "context_limit_tokens": context_limit_tokens,
         }),
     );
     TurnMessages {
         messages,
         context_tokens: ContextTokenStats {
-            input: token_estimate,
+            input: session.context_tokens.input,
             limit: context_limit_tokens,
         },
     }
@@ -143,115 +97,6 @@ fn should_append_original_user_task(
                 .map(str::trim)
                 == Some(task)
     })
-}
-
-pub(crate) fn approximate_message_tokens(messages: &[serde_json::Value]) -> u64 {
-    messages
-        .iter()
-        .map(|message| (estimate_message_model_visible_chars(message) / 4) as u64)
-        .sum()
-}
-
-fn estimate_message_model_visible_chars(message: &serde_json::Value) -> usize {
-    let raw = serde_json::to_string(message).unwrap_or_default().len();
-    let mut media_payload_chars = 0usize;
-    let mut media_replacement_chars = 0usize;
-    accumulate_media_payload_estimate_adjustment(
-        message,
-        &mut media_payload_chars,
-        &mut media_replacement_chars,
-    );
-    raw.saturating_sub(media_payload_chars)
-        .saturating_add(media_replacement_chars)
-}
-
-fn accumulate_media_payload_estimate_adjustment(
-    value: &serde_json::Value,
-    payload_chars: &mut usize,
-    replacement_chars: &mut usize,
-) {
-    match value {
-        serde_json::Value::Object(object) => {
-            if object.get("type").and_then(serde_json::Value::as_str) == Some("input_image") {
-                if let Some(image_url) = object.get("image_url").and_then(serde_json::Value::as_str)
-                {
-                    if let Some(payload) = parse_base64_media_data_url(image_url, "image/") {
-                        *payload_chars = payload_chars.saturating_add(payload.len());
-                        *replacement_chars = replacement_chars.saturating_add(4096);
-                    }
-                }
-            }
-            if object.get("type").and_then(serde_json::Value::as_str) == Some("input_audio") {
-                if let Some(payload) = object
-                    .get("input_audio")
-                    .and_then(|input_audio| input_audio.get("data"))
-                    .and_then(serde_json::Value::as_str)
-                {
-                    *payload_chars = payload_chars.saturating_add(payload.len());
-                    *replacement_chars = replacement_chars.saturating_add(8192);
-                }
-                if let Some(audio_url) = object
-                    .get("audio_url")
-                    .or_else(|| object.get("input_audio"))
-                    .and_then(|audio| audio.get("url"))
-                    .and_then(serde_json::Value::as_str)
-                {
-                    if let Some(payload) = parse_base64_media_data_url(audio_url, "audio/") {
-                        *payload_chars = payload_chars.saturating_add(payload.len());
-                        *replacement_chars = replacement_chars.saturating_add(8192);
-                    }
-                }
-            }
-            for child in object.values() {
-                accumulate_media_payload_estimate_adjustment(
-                    child,
-                    payload_chars,
-                    replacement_chars,
-                );
-            }
-        }
-        serde_json::Value::Array(items) => {
-            for item in items {
-                accumulate_media_payload_estimate_adjustment(
-                    item,
-                    payload_chars,
-                    replacement_chars,
-                );
-            }
-        }
-        _ => {}
-    }
-}
-
-fn parse_base64_media_data_url<'a>(url: &'a str, mime_prefix: &str) -> Option<&'a str> {
-    if !url
-        .get(.."data:".len())
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"))
-    {
-        return None;
-    }
-    let comma_index = url.find(',')?;
-    let metadata = &url[..comma_index];
-    let payload = &url[comma_index + 1..];
-    let metadata_without_scheme = &metadata["data:".len()..];
-    let mut metadata_parts = metadata_without_scheme.split(';');
-    let mime_type = metadata_parts.next().unwrap_or_default();
-    let has_base64_marker = metadata_parts.any(|part| part.eq_ignore_ascii_case("base64"));
-    if !mime_type
-        .get(..mime_prefix.len())
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(mime_prefix))
-    {
-        return None;
-    }
-    has_base64_marker.then_some(payload)
-}
-
-fn compact_context_required_message(context_limit_tokens: u64) -> String {
-    PromptBuilder::new()
-        .part(compact_context::compact_context_required(
-            context_limit_tokens,
-        ))
-        .render()
 }
 
 pub(super) fn user_new_command_message(session_id: &str) -> Option<String> {
@@ -387,7 +232,7 @@ fn current_planning_task(session: &SessionManagement) -> Option<(usize, &TaskSte
 #[cfg(test)]
 mod tests {
     use super::{
-        messages_for_turn, messages_for_turn_with_context_limit, planning_objective_block,
+        messages_for_turn_with_context_limit, planning_objective_block,
         push_no_tool_task_status_retry_message, push_task_status_nudge,
     };
     use crate::prompt_style::task_status;
@@ -556,11 +401,11 @@ mod tests {
     }
 
     #[test]
-    fn messages_for_turn_injects_compact_context_prompt_above_threshold() {
+    fn messages_for_turn_preserves_provider_context_tokens_without_estimating() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
         let now = Utc::now();
-        let session = SessionManagement::new(
+        let mut session = SessionManagement::new(
             "sess-compact-threshold".to_string(),
             "compact threshold".to_string(),
             PathBuf::from("C:/workspace"),
@@ -576,6 +421,7 @@ mod tests {
             "fix the task".to_string(),
             now,
         );
+        session.context_tokens.input = 1234;
 
         let turn = messages_for_turn_with_context_limit(
             &[serde_json::json!({
@@ -585,7 +431,6 @@ mod tests {
             &session,
             "fix the task",
             10,
-            0,
         );
         let joined = turn
             .messages
@@ -594,10 +439,10 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(joined.contains("above about 10 tokens"));
-        assert!(joined.contains("compact_context as the final command"));
+        assert!(!joined.contains("Context checkpoint required"));
+        assert!(!joined.contains("compact_context as the final command"));
         assert_eq!(turn.context_tokens.limit, 10);
-        assert!(turn.context_tokens.input >= 10);
+        assert_eq!(turn.context_tokens.input, 1234);
         std::env::remove_var("TURA_GATEWAY_CALLBACKS");
     }
 
@@ -614,7 +459,6 @@ mod tests {
             &session,
             "tail task",
             10,
-            0,
         )
         .messages;
         let last = messages.last().expect("temporary prompt should be last");
@@ -622,151 +466,7 @@ mod tests {
         assert_eq!(messages[0]["role"], "system");
         assert_eq!(messages[0]["content"], "fixed system prefix");
         assert_eq!(last["role"], "user");
-        assert!(last["content"]
-            .as_str()
-            .is_some_and(|content| content.contains("compact_context as the final command")));
-        std::env::remove_var("TURA_GATEWAY_CALLBACKS");
-    }
-
-    #[test]
-    fn image_data_urls_are_discounted_for_compact_threshold_estimation() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
-        let now = Utc::now();
-        let session = SessionManagement::new(
-            "sess-image-estimate".to_string(),
-            "image estimate".to_string(),
-            PathBuf::from("C:/workspace"),
-            false,
-            "coding".to_string(),
-            SessionInput {
-                user_input: "remember the image".to_string(),
-                file_input: vec![],
-                agent: None,
-                runtime_context: None,
-                planning_mode_override: None,
-            },
-            "remember the image".to_string(),
-            now,
-        );
-
-        let messages = messages_for_turn_with_context_limit(
-            &[serde_json::json!({
-                "type": "function_call_output",
-                "call_id": "call_image",
-                "output": [
-                    {
-                        "type": "input_image",
-                        "image_url": format!("data:image/png;base64,{}", "A".repeat(240_000))
-                    }
-                ]
-            })],
-            &session,
-            "remember the image",
-            50_000,
-            0,
-        )
-        .messages;
-        let joined = messages
-            .iter()
-            .map(|message| message.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        assert!(!joined.contains("Context checkpoint required"));
-        std::env::remove_var("TURA_GATEWAY_CALLBACKS");
-    }
-
-    #[test]
-    fn audio_payloads_are_discounted_for_compact_threshold_estimation() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
-        let now = Utc::now();
-        let session = SessionManagement::new(
-            "sess-audio-estimate".to_string(),
-            "audio estimate".to_string(),
-            PathBuf::from("C:/workspace"),
-            false,
-            "coding".to_string(),
-            SessionInput {
-                user_input: "remember the audio".to_string(),
-                file_input: vec![],
-                agent: None,
-                runtime_context: None,
-                planning_mode_override: None,
-            },
-            "remember the audio".to_string(),
-            now,
-        );
-
-        let messages = messages_for_turn_with_context_limit(
-            &[serde_json::json!({
-                "type": "function_call_output",
-                "call_id": "call_audio",
-                "output": [
-                    {
-                        "type": "input_audio",
-                        "input_audio": {
-                            "format": "mp3",
-                            "data": "A".repeat(240_000)
-                        }
-                    }
-                ]
-            })],
-            &session,
-            "remember the audio",
-            50_000,
-            0,
-        )
-        .messages;
-        let joined = messages
-            .iter()
-            .map(|message| message.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        assert!(!joined.contains("Context checkpoint required"));
-        std::env::remove_var("TURA_GATEWAY_CALLBACKS");
-    }
-
-    #[test]
-    fn messages_for_turn_injects_compact_context_prompt_at_default_250k_threshold() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
-        let now = Utc::now();
-        let session = SessionManagement::new(
-            "sess-compact-default-threshold".to_string(),
-            "compact default threshold".to_string(),
-            PathBuf::from("C:/workspace"),
-            false,
-            "coding".to_string(),
-            SessionInput {
-                user_input: "continue the long task".to_string(),
-                file_input: vec![],
-                agent: None,
-                runtime_context: None,
-                planning_mode_override: None,
-            },
-            "continue the long task".to_string(),
-            now,
-        );
-
-        let messages = messages_for_turn(
-            &[serde_json::json!({
-                "role": "user",
-                "content": "x".repeat(1_100_000)
-            })],
-            &session,
-            "continue the long task",
-        );
-        let last = messages
-            .last()
-            .and_then(|message| message.get("content"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
-
-        assert!(last.contains("above about 250,000 tokens"));
-        assert!(last.contains("compact_context as the final command"));
+        assert_eq!(last["content"], "tail task");
         std::env::remove_var("TURA_GATEWAY_CALLBACKS");
     }
 }

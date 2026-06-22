@@ -79,8 +79,8 @@ async fn gateway_prompt_business_flow_uses_runtime_callback_message_instead_of_f
                             context_tokens: None,
                             usage: None,
                             command_updates: Vec::new(),
-                            created_at: None,
-                            updated_at: None,
+                            created_at: chrono::Utc::now().timestamp_millis(),
+                            updated_at: chrono::Utc::now().timestamp_millis(),
                         }),
                     )
                     .await;

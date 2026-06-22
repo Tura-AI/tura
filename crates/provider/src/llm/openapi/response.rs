@@ -12,7 +12,7 @@ use std::time::Instant;
 use super::common::{
     insert_opt, message_content_text, normalized_reasoning_effort, normalized_service_tier,
 };
-use crate::metrics::{extract_openapi_metrics, fill_missing_estimated_usage};
+use crate::metrics::extract_openapi_metrics;
 use crate::streaming::{next_provider_stream_chunk, send_provider_request_first_response};
 use crate::tura_llm::{
     normalize_response_content, CostDetails, ProviderResponse, ProviderStreamEvent,
@@ -78,12 +78,6 @@ pub(crate) async fn codex_oauth_call(
         content = Value::String(strip_json_fence(text));
     }
     let mut metrics = extract_openapi_metrics(&data, options.context_window);
-    fill_missing_estimated_usage(
-        &mut metrics,
-        &payload,
-        &content,
-        "codex_oauth_stream_returned_before_provider_usage",
-    );
     metrics.cost = CostDetails::default();
     metrics.provider_request_id = req_id;
     Ok(ProviderResponse {
@@ -142,12 +136,6 @@ pub(crate) async fn responses_api_key_call(
         content = Value::String(strip_json_fence(text));
     }
     let mut metrics = extract_openapi_metrics(&data, options.context_window);
-    fill_missing_estimated_usage(
-        &mut metrics,
-        &payload,
-        &content,
-        "responses_stream_returned_before_provider_usage",
-    );
     metrics.provider_request_id = req_id;
     Ok(ProviderResponse {
         content,

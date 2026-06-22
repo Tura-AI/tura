@@ -6,7 +6,7 @@
 //! Pure rendering layer that exposes only `command_run_display_command` and
 //! `command_run_llm_streams`.
 
-use super::token_budget::{formatted_truncate_text, COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS};
+use super::char_budget::{formatted_truncate_text, COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS};
 
 pub(super) fn command_run_display_command(command: &str, command_line: &str) -> String {
     if command_line.trim().is_empty() {
@@ -98,7 +98,7 @@ fn verify_stdout_as_cli_streams(stdout: &str) -> Option<(String, String)> {
             };
             failure_blocks.push(format!(
                 "{name} {label}:\n{}",
-                formatted_truncate_text(text, COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS)
+                formatted_truncate_text(text, COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS)
             ));
         }
     }

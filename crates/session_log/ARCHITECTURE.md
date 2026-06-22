@@ -161,8 +161,9 @@ session_records
 
 The workspace `sessions` row is the authoritative snapshot for reads and
 resume. The index row locates that workspace database and supports listing, but
-`get_session` and `list_sessions` hydrate lifecycle fields and management JSON
-from the workspace row so stale index state cannot resurrect an old FSM value.
+`get_session`, `list_sessions`, and `list_session_summaries` hydrate lifecycle
+fields from the workspace row so stale index state cannot resurrect an old FSM
+value.
 
 `session_records` is append/update oriented. Records are uniquely identified by
 `session_id + message_id`; an upsert updates an existing record with the same
@@ -198,9 +199,11 @@ The protocol is `SessionLogCommand` in `src/protocol.rs`.
 '{"command":"delete_workspace","workspace":"C:/repo"}' | target\debug\tura_gateway.exe session-log
 ```
 
-`list_sessions` returns snapshots for a workspace. `get_session` returns one
-snapshot by id. `list_session_records` returns ordered records; page `0` means
-the last page for records.
+`list_sessions` returns full snapshots for runtime/debug clients.
+`list_session_summaries` returns lightweight list rows for GUI/sidebar use and
+does not include `management_json` or `session_json`. `get_session` returns one
+full snapshot by id. `list_session_records` returns ordered records; page `0`
+means the last page for records.
 
 ## HTTP Projection
 

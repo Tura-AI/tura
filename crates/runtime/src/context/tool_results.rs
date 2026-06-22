@@ -1,9 +1,9 @@
+use super::char_budget::{
+    context_output_byte_budget, formatted_truncate_text, COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS,
+    CONTEXT_OUTPUT_MAX_CHARS,
+};
 use super::command_run_streams::{command_run_display_command, command_run_llm_streams};
 use super::text_truncate::command_run_truncate_text;
-use super::token_budget::{
-    context_output_byte_budget, formatted_truncate_text, APPROX_CHARS_PER_TOKEN,
-    COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS, CONTEXT_OUTPUT_MAX_TOKENS,
-};
 use crate::state_machine::session_management::SessionManagement;
 
 use super::media::command_run_media_content_items_for_context;
@@ -257,7 +257,7 @@ pub(super) fn command_run_current_style_output_string(value: &serde_json::Value)
             let error = result
                 .get("error")
                 .and_then(serde_json::Value::as_str)
-                .map(|error| formatted_truncate_text(error, COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS));
+                .map(|error| formatted_truncate_text(error, COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS));
             CommandRunContextItem {
                 step: result
                     .get("step")
@@ -286,18 +286,18 @@ fn compact_command_run_result_output(
     match value {
         serde_json::Value::String(text) => serde_json::Value::String(command_run_truncate_text(
             &text,
-            COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS,
+            COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS,
             command_line_from_input(input),
         )),
         other => {
             let serialized =
                 serde_json::to_string_pretty(&other).unwrap_or_else(|_| other.to_string());
-            if serialized.len() <= COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS * APPROX_CHARS_PER_TOKEN {
+            if serialized.len() <= COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS {
                 other
             } else {
                 serde_json::Value::String(command_run_truncate_text(
                     &serialized,
-                    COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS,
+                    COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS,
                     command_line_from_input(input),
                 ))
             }
@@ -312,7 +312,7 @@ fn command_run_model_output_value(
     if let Some(text) = value.get("output").and_then(serde_json::Value::as_str) {
         return serde_json::Value::String(command_run_truncate_text(
             text,
-            COMMAND_RUN_RESULT_OUTPUT_MAX_TOKENS,
+            COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS,
             command_line_from_input(input),
         ));
     }
@@ -505,7 +505,7 @@ fn compact_json_for_context(value: serde_json::Value) -> serde_json::Value {
     }
     serde_json::Value::String(formatted_truncate_text(
         &serialized,
-        CONTEXT_OUTPUT_MAX_TOKENS,
+        CONTEXT_OUTPUT_MAX_CHARS,
     ))
 }
 

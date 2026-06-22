@@ -14,7 +14,6 @@ import {
   compactInlinePayloads,
   compactPayloadField,
   firstCommandLine,
-  isTaskStatusPayload,
   sanitizeRawTerminalText,
   toolSummary,
 } from "../render-payload.js";
@@ -70,7 +69,7 @@ function commandInfosFromUnknown(
   }
   if (Array.isArray(value))
     return value.flatMap((item) => commandInfosFromUnknown(item, tool, status));
-  if (!isRecord(value) || isTaskStatusPayload(value)) return [];
+  if (!isRecord(value)) return [];
   const commands: CommandInfo[] = [];
   const step = numberField(value, "step");
   const command = commandLineFromRecord(value);
@@ -118,9 +117,7 @@ function streamedCommandRunResults(
     ...arrayField(stateMetadataOutput, "results"),
     ...arrayField(metadataStream, "results"),
     ...arrayField(metadataOutput, "results"),
-  ].filter(
-    (value): value is Record<string, unknown> => isRecord(value) && !isTaskStatusPayload(value),
-  );
+  ].filter((value): value is Record<string, unknown> => isRecord(value));
 }
 
 function commandSpecs(
@@ -157,7 +154,6 @@ function commandInfoFromStreamedResult(
   tool: string,
   fallbackStatus: string | undefined,
 ): CommandInfo | undefined {
-  if (isTaskStatusCommand(result) || (spec && isTaskStatusCommand(spec))) return undefined;
   const name = commandNameFromStreamedResult(result, spec);
   if (!name) return undefined;
   const command = commandLineFromStreamedResult(result, spec);
@@ -200,7 +196,8 @@ function commandLineFromStreamedResult(
     commandFieldWithType(resultCommand) ??
     commandFieldWithType(spec ?? {}) ??
     commandFieldWithType(specCommand);
-  return command ? sanitizeRawTerminalText(command).trim() : undefined;
+  if (command) return sanitizeRawTerminalText(command).trim();
+  return commandNameFromStreamedResult(result, spec);
 }
 
 function commandNameFromStreamedResult(
@@ -226,16 +223,6 @@ function commandStatusFromStreamedResult(
     return result.status === "in_progress" ? "running" : result.status;
   if (result.success === true) return "completed";
   return fallbackStatus;
-}
-
-function isTaskStatusCommand(record: Record<string, unknown>): boolean {
-  const commandType = stringField(record, "command_type") ?? stringField(record, "command");
-  return (
-    commandType
-      ?.trim()
-      .toLowerCase()
-      .replace(/[-\s]+/g, "_") === "task_status"
-  );
 }
 
 function recordLike(value: unknown): Record<string, unknown> {
@@ -275,13 +262,14 @@ function numberField(record: Record<string, unknown>, key: string): number | und
 }
 
 function commandLineFromRecord(record: Record<string, unknown>): string | undefined {
-  if (!commandTypeFromRecord(record)) return undefined;
+  const commandType = commandTypeFromRecord(record);
+  if (!commandType) return undefined;
   const command =
     stringField(record, "command_line") ??
     stringField(record, "commandLine") ??
     commandFieldWithType(record);
   if (command) return firstCommandLine(command);
-  return undefined;
+  return commandType;
 }
 
 function commandNameFromRecord(record: Record<string, unknown>): string | undefined {
