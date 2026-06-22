@@ -91,15 +91,7 @@ async fn runtime_provider_timeout_business_flow_marks_runtime_timed_out_without_
         .error_text
         .as_deref()
         .is_some_and(|text| text.contains("runtime call timed out after 1000 ms")));
-    let usage = result.usage.as_ref().expect("estimated timeout usage");
-    assert_eq!(usage.pricing_source, "runtime_estimate_timeout");
-    assert!(usage.input_tokens > 0);
-    assert!(usage.output_tokens > 0);
-    assert_eq!(
-        usage.total_tokens,
-        usage.input_tokens + usage.output_tokens + usage.reasoning_tokens
-    );
-    assert!(usage.latency_ms >= 1_000);
+    assert_eq!(result.usage, None);
 
     let request = provider.join();
     assert!(request.starts_with("POST /chat/completions "));

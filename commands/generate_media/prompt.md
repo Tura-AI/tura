@@ -6,7 +6,7 @@ For images, pass `image` with a strong visual prompt. Optional image fields are 
 
 Image prompts must be positive-only. For character image prompts, you must describe the distinct character's style, facial features, body type/build, hairstyle, posture, and visual identity in detail.
 
-Describe only the elements that appear in the media, and do not include any information about the media’s intended use. Do not include the name of any character or any text that describe the object in the prompt.
+Describe only the elements that appear in the media, and do not include any information about the media’s intended use. Do not include the name of any character, any text that describe the object, or words such as "magazine cover", poser in the prompt.
 
 Image prompts must avoid AI slop, safe stock-like defaults, and CGI-heavy fantasy/game visuals by choosing concrete positive art direction such as stylized, atmospheric, cinematic, editorial...
 
@@ -24,7 +24,7 @@ Speech enums:
 Example image command:
 
 ```text
-image "full-bleed editorial hero image for a minimalist furniture website, warm natural light, quiet premium design system, generous negative space, clean intentional composition, quiet neutral palette" --size 1536x864 --aspect-ratio 16:9 --quality high --output-dir media/furniture-hero
+image "full-bleed editorial headshot portrait of a young athletic Asian woman with a short square face, almond-shaped eyes,  and a sleek high ponytail, robust build, poised upright posture with relaxed shoulders, wearing fitted matte yoga leggings and a minimal fitted top, grey blank background, atmospheric editorial photography." --size 1536x864 --quality high --output-dir media/furniture-hero
 ```
 
 Example speech command:

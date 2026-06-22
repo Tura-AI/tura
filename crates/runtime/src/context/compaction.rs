@@ -4,8 +4,8 @@ use crate::manas::prompt_messages::planning_objective_block;
 use crate::prompt_style::task_status;
 use crate::state_machine::session_management::SessionManagement;
 
+use super::char_budget::{truncate_text_to_char_budget, COMPACT_CONTEXT_MAX_CHARS};
 use super::text_truncate::environment_context_message;
-use super::token_budget::truncate_text_to_token_budget;
 use super::{ContextualUserFragment, WorkspaceSnapshot, USER_AGENT_CONTEXT_ROLE};
 
 pub fn compact_session_context(
@@ -13,7 +13,7 @@ pub fn compact_session_context(
     compact_text: &str,
 ) -> Result<(), String> {
     let now = Utc::now();
-    let compact_text = truncate_text_to_token_budget(compact_text.trim(), 20_000);
+    let compact_text = truncate_text_to_char_budget(compact_text.trim(), COMPACT_CONTEXT_MAX_CHARS);
     let workspace_snapshot = WorkspaceSnapshot::from_cwd(&session.session_directory)
         .map(|snapshot| snapshot.render())
         .unwrap_or_else(|| "<WORKSPACE_SNAPSHOT>\n\n</WORKSPACE_SNAPSHOT>".to_string());
@@ -25,6 +25,8 @@ pub fn compact_session_context(
             "environment_context": environment_context,
             "timestamp": now.to_rfc3339(),
     });
+    session.context_tokens.input = 0;
+    session.runtime_usage = serde_json::Value::Null;
     session.push_log(compact_record.to_string(), now);
     Ok(())
 }

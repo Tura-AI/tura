@@ -1,4 +1,7 @@
-use code_tools::commands::command_safety::is_dangerous_command;
+use code_tools::commands::command_safety::{
+    is_dangerous_command, is_dangerous_command_with_workspace,
+};
+use std::path::Path;
 
 fn assert_blocked(surface: &str, command: &str) {
     let reason = is_dangerous_command(command);
@@ -13,6 +16,22 @@ fn assert_allowed(surface: &str, command: &str) {
     assert!(
         reason.is_none(),
         "{surface} command should remain allowed, got {reason:?}: {command}"
+    );
+}
+
+fn assert_blocked_with_workspace(surface: &str, command: &str, cwd: &str, workspace: &str) {
+    let reason = is_dangerous_command_with_workspace(command, Path::new(cwd), Path::new(workspace));
+    assert!(
+        reason.is_some(),
+        "{surface} command should be blocked by the static interceptor without execution, got allowed: {command}"
+    );
+}
+
+fn assert_allowed_with_workspace(surface: &str, command: &str, cwd: &str, workspace: &str) {
+    let reason = is_dangerous_command_with_workspace(command, Path::new(cwd), Path::new(workspace));
+    assert!(
+        reason.is_none(),
+        "{surface} command should be allowed by the static interceptor without execution, got {reason:?}: {command}"
     );
 }
 
@@ -96,6 +115,94 @@ fn static_interceptor_blocks_windows_and_nested_shell_shapes_without_execution()
 
     for (surface, command) in cases {
         assert_blocked(surface, command);
+    }
+}
+
+#[test]
+fn static_interceptor_allows_workspace_deletes_without_execution() {
+    let cases = [
+        ("bash-rm-rf", "rm -rf cache", "/workspace/project", "/workspace/project"),
+        (
+            "bash-batch-rm",
+            "rm -f cache/a.txt cache/b.txt",
+            "/workspace/project",
+            "/workspace/project",
+        ),
+        (
+            "powershell-file-list",
+            "Remove-Item -Force cache\\a.txt,cache\\b.txt -ErrorAction SilentlyContinue",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        ),
+        (
+            "powershell-recursive",
+            "Remove-Item -Recurse -Force 'C:\\workspace\\project\\cache'",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        ),
+        (
+            "cmd-rmdir",
+            "rd /s /q cache",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        ),
+        (
+            "cmd-del-force",
+            "del /f cache\\scratch.txt",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        ),
+    ];
+
+    for (surface, command, cwd, workspace) in cases {
+        assert_allowed_with_workspace(surface, command, cwd, workspace);
+    }
+}
+
+#[test]
+fn static_interceptor_blocks_outside_workspace_and_system_deletes_without_execution() {
+    let cases = [
+        ("bash-outside-rm", "rm -rf ../outside", "/workspace/project", "/workspace/project"),
+        (
+            "bash-outside-batch",
+            "rm -f /tmp/outside-a /tmp/outside-b",
+            "/workspace/project",
+            "/workspace/project",
+        ),
+        (
+            "powershell-outside-batch",
+            "Remove-Item -Force 'C:\\outside\\a.txt','C:\\outside\\b.txt'",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        ),
+        (
+            "powershell-system",
+            "Remove-Item -Recurse -Force 'C:\\Windows\\System32'",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        ),
+        (
+            "cmd-outside-rmdir",
+            "rd /s /q C:\\outside\\cache",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        ),
+        (
+            "cmd-drive-format",
+            "format C:",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        ),
+        (
+            "powershell-clear-disk",
+            "Clear-Disk -Number 1",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        ),
+    ];
+
+    for (surface, command, cwd, workspace) in cases {
+        assert_blocked_with_workspace(surface, command, cwd, workspace);
     }
 }
 

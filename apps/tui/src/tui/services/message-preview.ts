@@ -9,7 +9,11 @@ export function lastMessagePreview(
     const message = messages[index];
     if (!message || message.id === excludeMessageId) continue;
     const text = messageText(message).replace(/\s+/g, " ").trim();
-    if (text) return text;
+    if (text && isUserFacingPreview(text)) return text;
   }
   return undefined;
+}
+
+function isUserFacingPreview(text: string): boolean {
+  return text !== "done: {}";
 }

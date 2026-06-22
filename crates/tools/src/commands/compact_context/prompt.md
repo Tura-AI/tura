@@ -1,4 +1,4 @@
-Use `compact_context` to create a context checkpoint when a meaningful phase is complete, or when most of the previous context is no longer relevant to the current task.
+Use `compact_context` to create a context checkpoint when a meaningful phase is complete, when most of the previous context is no longer relevant to the current task, or when the active context reaches the 200,000 tokens hard cap.
 
 The command must be the final command in the highest step of a `command_run` batch. Do not place any command after it.
 
@@ -16,4 +16,4 @@ The output is one handoff text for the next model turn. Include:
 - directory/file requirements needed to continue
 - exactly what to do next
 
-Keep the text concise and structured. Do not exceed 15,000 tokens, roughly 10,000 English words.
+Keep the text concise and structured. Do not exceed 15,000 English words.

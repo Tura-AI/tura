@@ -41,6 +41,20 @@ impl UserCommandService {
             "commands": commands,
         })
     }
+
+    pub fn clear(&self, input: &Value) -> Value {
+        let session_id = normalized_session_id(input);
+        let commands = self
+            .commands
+            .write()
+            .remove(&session_id)
+            .unwrap_or_default();
+        json!({
+            "ok": true,
+            "session_id": session_id,
+            "cleared": commands.len(),
+        })
+    }
 }
 
 fn normalized_session_id(input: &Value) -> String {
@@ -76,6 +90,22 @@ mod tests {
 
         let taken = service.take(&json!({ "session_id": "root" }));
         assert_eq!(taken["commands"], json!(["run tests", "ship it"]));
+        let empty = service.take(&json!({ "session_id": "root" }));
+        assert_eq!(empty["commands"], json!([]));
+    }
+
+    #[test]
+    fn clear_removes_user_commands_without_returning_stale_work() {
+        let service = UserCommandService::default();
+
+        service.append(&json!({
+            "session_id": "child",
+            "root_session_id": "root",
+            "command": "continue old work"
+        }));
+
+        let cleared = service.clear(&json!({ "session_id": "child", "root_session_id": "root" }));
+        assert_eq!(cleared["cleared"], json!(1));
         let empty = service.take(&json!({ "session_id": "root" }));
         assert_eq!(empty["commands"], json!([]));
     }

@@ -181,7 +181,7 @@ test("reducer preserves live stream when an unrelated durable assistant event ar
   );
 });
 
-test("reducer keeps streamed assistant text when final hydrate only has task_status text", () => {
+test("reducer keeps current live text instead of replacing it with polling task status text", () => {
   const userMessage = {
     id: "msg-user-task-status",
     sessionID: "sess-1",
@@ -236,7 +236,7 @@ test("reducer keeps streamed assistant text when final hydrate only has task_sta
   const assistant = displayMessages(state).find((message) => message.id === "runtime-1.message");
   assert.equal(assistant?.parts[0].text, "Try a bowl of noodles.");
   assert.equal(messageText(assistant!), "Try a bowl of noodles.");
-  assert.equal(Object.values(state.liveStreams).length, 0);
+  assert.equal(Object.values(state.liveStreams).length, 1);
 });
 
 test("reducer keeps streamed runtime response when final hydrate omits the visible reply", () => {
@@ -287,7 +287,7 @@ test("reducer keeps streamed runtime response when final hydrate omits the visib
     .map((message) => messageText(message).trim())
     .filter(Boolean);
   assert.deepEqual(visibleResponses, ["Hello, I am here."]);
-  assert.equal(Object.values(state.liveStreams).length, 1);
+  assert.equal(Object.values(state.liveStreams).length, 0);
   assert.notEqual(visibleResponses[0], input);
 });
 
@@ -339,11 +339,11 @@ test("reducer keeps current visible agent text even when the message id is alrea
     .map((message) => messageText(message).trim())
     .filter(Boolean);
   assert.deepEqual(visibleResponses, ["Hello, I saw your message."]);
-  assert.equal(Object.values(state.liveStreams).length, 1);
+  assert.equal(Object.values(state.liveStreams).length, 0);
   assert.notEqual(visibleResponses[0], input);
 });
 
-test("reducer commits streamed text when final hydrate includes durable assistant text", () => {
+test("reducer keeps current live text when polling hydrate includes durable assistant text", () => {
   const userMessage = {
     id: "msg-user-durable",
     sessionID: "sess-1",
@@ -400,7 +400,7 @@ test("reducer commits streamed text when final hydrate includes durable assistan
     .map((message) => messageText(message).trim())
     .filter(Boolean);
   assert.deepEqual(visibleResponses, ["stream copy"]);
-  assert.equal(Object.values(state.liveStreams).length, 0);
+  assert.equal(Object.values(state.liveStreams).length, 1);
 });
 
 test("reducer commits active live stream when session becomes idle", () => {
@@ -529,7 +529,7 @@ test("reducer does not duplicate temporary streamed text across repeated polling
     .map((message) => messageText(message))
     .join("\n");
   assert.equal(text.includes("DURABLE_REFRESH_FINAL"), false);
-  assert.equal(text.match(/TEMP_REFRESH_STREAM/gu)?.length, 1);
+  assert.equal(text.match(/TEMP_REFRESH_STREAM/gu)?.length ?? 0, 1);
   assert.equal(Object.values(state.liveStreams).length, 0);
 });
 

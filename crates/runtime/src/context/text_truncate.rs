@@ -3,7 +3,7 @@
 //! Pure text-processing layer with no external state. Exposed only inside
 //! `context::*` via `pub(super)`.
 
-use super::token_budget::{formatted_truncate_text, APPROX_CHARS_PER_TOKEN};
+use super::char_budget::formatted_truncate_text;
 use crate::prompt_style::context_blocks;
 
 pub(super) fn environment_context_message(cwd: &std::path::Path) -> String {
@@ -51,35 +51,35 @@ fn context_shell_name() -> &'static str {
 
 pub(super) fn command_run_truncate_text(
     content: &str,
-    max_tokens: usize,
+    max_chars: usize,
     command_line: Option<&str>,
 ) -> String {
-    let effective_max_tokens = command_run_effective_max_tokens(max_tokens, command_line);
-    if content.len() <= effective_max_tokens * APPROX_CHARS_PER_TOKEN {
+    let effective_max_chars = command_run_effective_max_chars(max_chars, command_line);
+    if content.len() <= effective_max_chars {
         return content.to_string();
     }
-    truncate_marker_sections_for_command_run(content, effective_max_tokens, command_line)
+    truncate_marker_sections_for_command_run(content, effective_max_chars, command_line)
         .or_else(|| {
-            truncate_query_sections_for_command_run(content, effective_max_tokens, command_line)
+            truncate_query_sections_for_command_run(content, effective_max_chars, command_line)
         })
-        .or_else(|| truncate_ripgrep_file_sections_for_command_run(content, effective_max_tokens))
-        .unwrap_or_else(|| formatted_truncate_text(content, effective_max_tokens))
+        .or_else(|| truncate_ripgrep_file_sections_for_command_run(content, effective_max_chars))
+        .unwrap_or_else(|| formatted_truncate_text(content, effective_max_chars))
 }
 
-fn command_run_effective_max_tokens(max_tokens: usize, command_line: Option<&str>) -> usize {
+fn command_run_effective_max_chars(max_chars: usize, command_line: Option<&str>) -> usize {
     let Some(command_line) = command_line else {
-        return max_tokens;
+        return max_chars;
     };
     if extract_read_targets(command_line).len() == 1 {
-        max_tokens.saturating_mul(3)
+        max_chars.saturating_mul(3)
     } else {
-        max_tokens
+        max_chars
     }
 }
 
 fn truncate_marker_sections_for_command_run(
     content: &str,
-    max_tokens: usize,
+    max_chars: usize,
     command_line: Option<&str>,
 ) -> Option<String> {
     let mut preamble = String::new();
@@ -125,14 +125,14 @@ fn truncate_marker_sections_for_command_run(
 
     let mut output = String::new();
     if !preamble.is_empty() {
-        output.push_str(&formatted_truncate_text(&preamble, max_tokens));
+        output.push_str(&formatted_truncate_text(&preamble, max_chars));
         if !output.ends_with('\n') {
             output.push('\n');
         }
     }
 
     for section in sections {
-        output.push_str(&formatted_truncate_text(&section, max_tokens));
+        output.push_str(&formatted_truncate_text(&section, max_chars));
         if !output.ends_with('\n') {
             output.push('\n');
         }
@@ -330,7 +330,7 @@ fn shell_like_tokens(value: &str) -> Vec<String> {
 
 fn truncate_query_sections_for_command_run(
     content: &str,
-    max_tokens: usize,
+    max_chars: usize,
     command_line: Option<&str>,
 ) -> Option<String> {
     let terms = extract_query_terms(command_line?);
@@ -371,13 +371,13 @@ fn truncate_query_sections_for_command_run(
 
     let mut output = String::new();
     if !preamble.trim().is_empty() {
-        output.push_str(&formatted_truncate_text(&preamble, max_tokens));
+        output.push_str(&formatted_truncate_text(&preamble, max_chars));
         if !output.ends_with('\n') {
             output.push('\n');
         }
     }
     for (_, section, _) in sections {
-        output.push_str(&formatted_truncate_text(&section, max_tokens));
+        output.push_str(&formatted_truncate_text(&section, max_chars));
         if !output.ends_with('\n') {
             output.push('\n');
         }
@@ -473,7 +473,7 @@ fn is_query_term(value: &str) -> bool {
 
 fn truncate_ripgrep_file_sections_for_command_run(
     content: &str,
-    max_tokens: usize,
+    max_chars: usize,
 ) -> Option<String> {
     let mut preamble = String::new();
     let mut sections = Vec::<(String, String)>::new();
@@ -497,13 +497,13 @@ fn truncate_ripgrep_file_sections_for_command_run(
 
     let mut output = String::new();
     if !preamble.trim().is_empty() {
-        output.push_str(&formatted_truncate_text(&preamble, max_tokens));
+        output.push_str(&formatted_truncate_text(&preamble, max_chars));
         if !output.ends_with('\n') {
             output.push('\n');
         }
     }
     for (_, section) in sections {
-        output.push_str(&formatted_truncate_text(&section, max_tokens));
+        output.push_str(&formatted_truncate_text(&section, max_chars));
         if !output.ends_with('\n') {
             output.push('\n');
         }

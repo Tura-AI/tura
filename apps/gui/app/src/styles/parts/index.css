@@ -12,7 +12,7 @@
 @import "./surfaces/composer-content.css";
 @import "./plan/board.css";
 @import "./plan/controls-menus.css";
-@import "./plan/task-dock.css";
+@import "./plan/feedback.css";
 @import "./conversation/animations-schedule.css";
 @import "./conversation/plan-panel.css";
 @import "./conversation/timeline.css";

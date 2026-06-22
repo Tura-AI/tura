@@ -229,6 +229,85 @@ test("load session rich text degradation preserves html block newlines", () => {
   assert.doesNotMatch(secondLine, /const a = 1;/u);
 });
 
+test("render recognizes common code tag attributes and markdown fence info strings", () => {
+  const session = sessionFixture("sess-rich-code-attrs", "Rich Code Attributes");
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      textMessage(
+        "msg-rich-code-attrs",
+        session.id,
+        [
+          "Inline <code class='language-ts'>const answer = 42;</code>",
+          "<pre><code data-lang='ts' class='language-ts'>const htmlBlock = true;</code></pre>",
+          "```tsx filename=src/App.tsx",
+          "export function App() {",
+          "  return <main />;",
+          "}",
+          "```",
+          "~~~c++ title=engine.cpp",
+          "int main() { return 0; }",
+          "~~~",
+        ].join("\n"),
+      ),
+    ],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+  });
+
+  const transcript = withTerminalSize(110, 34, () => render(state, richCapabilities()));
+  const plain = stripAnsi(transcript);
+
+  assert.match(transcript, /\x1b\[48;5;236m\x1b\[38;2;217;222;205m const answer = 42; \x1b\[0m/);
+  assert.match(transcript, /\x1b\[48;5;234m\x1b\[38;2;217;222;205mconst htmlBlock = true;/);
+  assert.match(transcript, /\x1b\[48;5;234m\x1b\[38;2;217;222;205mexport function App\(\) \{/);
+  assert.match(transcript, /\x1b\[48;5;234m\x1b\[38;2;217;222;205mint main\(\) \{ return 0; \}/);
+  assert.doesNotMatch(plain, /```|~~~|<code|<\/code>|<pre|<\/pre>/u);
+  assert.doesNotMatch(plain, /filename=src\/App\.tsx|title=engine\.cpp/u);
+});
+
+test("render keeps compaction threshold rich text visible around angle bracket formulas", () => {
+  const session = sessionFixture("sess-compact-rich", "Compact Rich");
+  const compactAnswer = [
+    "按现在代码逻辑：",
+    "触发注入条件是：<context_tokens >= min(60% * model_context_limit, 200k hard cap)>",
+    "所以：<100万模型 -> 200k；16万模型 -> 96k>",
+    "| 模型上下文上限 | 60% 阈值 | 200k hard cap 后 | 会在多少 context token 注入 compact 要求 |",
+    "|---:|---:|---:|---:|",
+    "| 1,000,000 | 600,000 | 200,000 | <b>200,000</b> |",
+    "| 160,000 | 96,000 | 96,000 | <b>96,000</b> |",
+    "也就是说：",
+    "- <b>100 万上下文模型</b>：到 <code>200k input tokens</code> 左右。",
+    "- <b>16 万上下文模型</b>：到 <code>96k input tokens</code> 左右。",
+    "补一句边界：<code>COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS</code> 会覆盖这个计算。",
+  ].join("\n");
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [textMessage("msg-compact-rich", session.id, compactAnswer)],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+  });
+
+  for (const capabilities of [plainCapabilities(), ansiCapabilities(), richCapabilities()]) {
+    const output = withTerminalSize(120, 34, () => render(state, capabilities));
+    const plain = stripAnsi(output);
+    assert.match(
+      plain,
+      /触发注入条件是：<context_tokens >= min\(60% \* model_context_limit, 200k hard cap\)>/u,
+    );
+    assert.match(plain, /所以：<100万模型 -> 200k；16万模型 -> 96k>/u);
+    assert.match(plain, /1,000,000\s+(?:│\s+)?600,000\s+(?:│\s+)?200,000\s+(?:│\s+)?200,000/u);
+    assert.match(plain, /160,000\s+(?:│\s+)?96,000\s+(?:│\s+)?96,000\s+(?:│\s+)?96,000/u);
+    assert.match(plain, /100 万上下文模型/u);
+    assert.match(plain, /COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS/u);
+    assert.doesNotMatch(plain, /<b>|<\/b>|<code>|<\/code>/u);
+  }
+});
+
 test("render supports markdown tables, markdown links, and local path access by level", () => {
   const session = sessionFixture("sess-md", "Markdown");
   const state = reducer(initialState("C:/repo"), {

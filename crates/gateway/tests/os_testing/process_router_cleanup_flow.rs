@@ -1,9 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use axum::extract::{Json, Path, Query};
 use axum::http::HeaderMap;
-use gateway::api::session::{
-    abort_session, create_session, CreateSessionRequest, SessionDirectoryParams,
-};
+use gateway::api::session::{abort_session, create_session};
+use gateway::contracts::{CreateSessionRequest, SessionDirectoryParams};
 use std::path::{Path as FsPath, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
@@ -40,7 +39,30 @@ async fn gateway_abort_session_stops_router_worker_without_workspace_process_sca
             model_acceleration_enabled: Some(false),
             disable_permission_restrictions: Some(false),
             auto_session_name: Some(false),
-            task_management: None,
+            task_management: Some(serde_json::json!({
+                "plan_summary": "abort all work",
+                "tasks": [
+                    {
+                        "task_id": "doing-task",
+                        "task_summary": "currently running work",
+                        "status": "doing",
+                        "start_condition": "session_idle"
+                    },
+                    {
+                        "task_id": "todo-task",
+                        "task_summary": "queued work must pause",
+                        "status": "todo",
+                        "start_condition": "scheduled_task",
+                        "start_at": chrono::Utc::now().to_rfc3339()
+                    },
+                    {
+                        "task_id": "done-task",
+                        "task_summary": "completed work stays completed",
+                        "status": "done",
+                        "start_condition": "session_idle"
+                    }
+                ]
+            })),
         })),
     )
     .await;
@@ -73,10 +95,25 @@ async fn gateway_abort_session_stops_router_worker_without_workspace_process_sca
         serde_json::to_value(after_abort.status)?,
         serde_json::json!("idle")
     );
+    let tasks = after_abort
+        .task_management
+        .get("tasks")
+        .and_then(serde_json::Value::as_array)
+        .expect("abort should preserve multi-task state");
+    assert_eq!(task_by_id(tasks, "doing-task")["status"], "waiting_user");
+    assert_eq!(task_by_id(tasks, "todo-task")["status"], "waiting_user");
+    assert_eq!(task_by_id(tasks, "done-task")["status"], "done");
 
     scoped_child.kill_and_wait()?;
     unrelated_child.kill_and_wait()?;
     Ok(())
+}
+
+fn task_by_id<'a>(tasks: &'a [serde_json::Value], task_id: &str) -> &'a serde_json::Value {
+    tasks
+        .iter()
+        .find(|task| task.get("task_id").and_then(serde_json::Value::as_str) == Some(task_id))
+        .expect("task should exist")
 }
 
 #[tokio::test]

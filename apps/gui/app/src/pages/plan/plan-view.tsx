@@ -36,11 +36,11 @@ import { rootSessions } from "../../state/session-tree";
 import { PlanDragGhost, beginPlanPointerDrag, type PlanDragState } from "../../features/plan/drag";
 import {
   defaultPollInterval,
-  hasVisibleSessionTasks,
   localDateTimeToUtcIso,
   planSessionStatus,
   sessionTaskState,
   sessionTasks,
+  shouldShowSessionAttention,
   shortSessionId,
   sortedSessionTasks,
   taskDisplayText,
@@ -56,7 +56,6 @@ import { relativeSessionTime, samePath, shortWorkspaceLabel } from "../../utils/
 import { PlanCalendarView } from "./plan-calendar";
 import {
   PlanComposerControls,
-  PlanComposerTaskList,
   PlanConversationFeedbackNotice,
   PlanDraftSessionPicker,
   PlanModeButtons,
@@ -98,9 +97,7 @@ export function PlanView(props: {
   ) => void;
   onReorderTasks: (session: Session, tasks: TaskManagement[]) => void;
   onEditTask: (session: Session, task: TaskManagement, composerText: string) => void;
-  onDeleteTask: (session: Session, task: TaskManagement) => void;
   onRunTask: (session: Session, task: TaskManagement) => void;
-  onCreateSessionFromTask: (session: Session, task: TaskManagement) => void;
   onOpenSession: (session: Session) => void;
   onComposerText: (text: string) => void;
   onComposerImages: (images: ComposerImage[]) => void;
@@ -520,35 +517,6 @@ export function PlanView(props: {
                 </>
               ) : undefined
             }
-            composerTaskList={
-              props.previewSession &&
-              !props.state.planDraftLane &&
-              hasVisibleSessionTasks(props.previewSession) ? (
-                <PlanComposerTaskList
-                  session={props.previewSession}
-                  selected_task_id={props.state.editingTask?.task_id}
-                  pulseNonceId={
-                    props.state.taskPulse?.sessionId === props.previewSession.id
-                      ? props.state.taskPulse.task_id
-                      : undefined
-                  }
-                  pulseToken={
-                    props.state.taskPulse?.sessionId === props.previewSession.id
-                      ? props.state.taskPulse.token
-                      : undefined
-                  }
-                  onEdit={(task, composerText) =>
-                    props.onEditTask(props.previewSession!, task, composerText)
-                  }
-                  onDelete={(task) => props.onDeleteTask(props.previewSession!, task)}
-                  onRun={(task) => props.onRunTask(props.previewSession!, task)}
-                  onCreateSession={(task) =>
-                    props.onCreateSessionFromTask(props.previewSession!, task)
-                  }
-                  onReorder={(tasks) => props.onReorderTasks(props.previewSession!, tasks)}
-                />
-              ) : undefined
-            }
             conversationNotice={
               props.state.planNotice ? (
                 <PlanConversationFeedbackNotice
@@ -733,11 +701,6 @@ export function PlanStatusIndicator(props: { status: PlanStatus }) {
       />
     </Show>
   );
-}
-
-export function shouldShowSessionAttention(session: Session, acknowledged: boolean): boolean {
-  const status = planSessionStatus(session);
-  return !acknowledged && (status === "doing" || status === "question" || status === "done");
 }
 
 export function SessionRowMeta(props: { session: Session; attentionAcknowledged: boolean }) {

@@ -1,5 +1,4 @@
 import { t } from "../i18n.js";
-import { isInternalTaskStatusPayload } from "../types/session.js";
 import { truncate } from "./render-terminal.js";
 
 const rawAnsiControlPattern =
@@ -101,7 +100,6 @@ export function extractCommandsFromUnknown(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(extractCommandsFromUnknown);
   if (typeof value !== "object") return [];
   const object = value as Record<string, unknown>;
-  if (isTaskStatusPayload(object)) return [];
   const commands: string[] = [];
   for (const key of ["command_line", "command"]) {
     const command = object[key];
@@ -140,9 +138,7 @@ function decodeJsonString(value: string): string {
 
 export function toolSummary(state: Record<string, unknown>): string {
   const output = state.output;
-  if (isTaskStatusPayload(output)) return "";
   if (typeof output === "string") {
-    if (isTaskStatusPayload(output)) return "";
     const clean = cleanToolText(output);
     return (
       compactPayloadField(clean) ??
@@ -167,7 +163,6 @@ export function toolSummary(state: Record<string, unknown>): string {
     }
   }
   const input = state.input;
-  if (isTaskStatusPayload(input)) return "";
   if (input && typeof input === "object") {
     const object = input as Record<string, unknown>;
     for (const key of ["step_summary", "task_detail", "summary", "status", "label"]) {
@@ -192,7 +187,6 @@ export function toolSummary(state: Record<string, unknown>): string {
 }
 
 function cleanToolText(value: string): string {
-  if (isTaskStatusPayload(value)) return "";
   return sanitizeRawTerminalText(value)
     .replace(/<br\s*\/?>/g, "\n")
     .replace(/^\s*\[command_run:\s*[^\r\n\]]*\]\s*$/gimu, "")
@@ -203,7 +197,6 @@ function cleanToolText(value: string): string {
 }
 
 export function compactPayloadField(value: string): string | undefined {
-  if (isTaskStatusPayload(value)) return undefined;
   const normalized = normalizePayloadText(value);
   for (const key of ["task_detail", "summary", "status", "label"]) {
     const index = normalized.indexOf(key);
@@ -274,7 +267,6 @@ function compactCommandValue(value: unknown): string | undefined {
   }
   if (!value || typeof value !== "object") return undefined;
   const object = value as Record<string, unknown>;
-  if (isTaskStatusPayload(object)) return undefined;
   const command = object.command ?? object.command_line;
   if (typeof command === "string" && command.trim()) return `[${t("bash")}: ${command.trim()}]`;
   const commandType = object.command_type;
@@ -297,9 +289,4 @@ function compactCommandValue(value: unknown): string | undefined {
     if (nested) return nested;
   }
   return undefined;
-}
-
-export function isTaskStatusPayload(value: unknown): boolean {
-  if (typeof value === "string") return isInternalTaskStatusPayload(sanitizeRawTerminalText(value));
-  return isInternalTaskStatusPayload(value);
 }

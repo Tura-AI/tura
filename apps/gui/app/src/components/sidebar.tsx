@@ -20,8 +20,9 @@ import {
   type MainTab,
 } from "../state/global-store";
 import { isRootSession } from "../state/session-tree";
+import { sidebarWorkspaceProjects } from "./sidebar/workspace-projects";
 
-import { planSessionStatus } from "../features/plan/tasks";
+import { planSessionStatus, shouldShowSessionAttention } from "../features/plan/tasks";
 import { PlanStatusIndicator } from "../pages/plan/plan-view";
 import {
   normalizePath,
@@ -63,27 +64,7 @@ export function WorkspaceTree(props: {
 }) {
   const [workspaceSectionOpen, setWorkspaceSectionOpen] = createSignal(true);
   const [archivedSectionOpen, setArchivedSectionOpen] = createSignal(true);
-  const fallbackProject = createMemo<Project | undefined>(() =>
-    props.directory
-      ? {
-          id: props.directory,
-          name: shortWorkspaceLabel(props.directory),
-          worktree: props.directory,
-        }
-      : undefined,
-  );
-  const projects = createMemo(() =>
-    props.projects
-      .filter((project) => samePath(project.worktree, props.directory))
-      .slice(0, 1)
-      .concat(
-        props.projects.some((project) => samePath(project.worktree, props.directory))
-          ? []
-          : fallbackProject()
-            ? [fallbackProject()!]
-            : [],
-      ),
-  );
+  const projects = createMemo(() => sidebarWorkspaceProjects(props.projects, props.directory));
   const activeWorkspaceSessions = (worktree: string) =>
     props.sessions.filter(
       (session) =>
@@ -94,11 +75,9 @@ export function WorkspaceTree(props: {
   }
   function workspaceAttentionStatus(worktree: string): PlanStatus | undefined {
     const sessions = activeWorkspaceSessions(worktree)
-      .filter((session) => {
-        const status = planSessionStatus(session);
-        return status === "doing" || status === "question" || status === "done";
-      })
-      .filter((session) => !props.attentionAcknowledged(session))
+      .filter((session) =>
+        shouldShowSessionAttention(session, props.attentionAcknowledged(session)),
+      )
       .sort(
         (left, right) =>
           normalizeTimeMs(sessionUpdatedAt(right) ?? 0) -

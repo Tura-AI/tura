@@ -111,6 +111,7 @@ pub(crate) fn normalize_command_run_frontend_state(
 ) {
     let results_snapshot = command_run_frontend_results_snapshot(state, metadata);
     if let Some(object) = state.as_object_mut() {
+        strip_task_status_command_run_records(object);
         if let Some(results) = results_snapshot {
             upsert_streamed_command_run_results(object, results);
         }
@@ -118,6 +119,56 @@ pub(crate) fn normalize_command_run_frontend_state(
     let commands = command_run_frontend_commands(state, metadata);
     if let Some(object) = state.as_object_mut() {
         object.insert("commands".to_string(), serde_json::Value::Array(commands));
+    }
+}
+
+fn strip_task_status_command_run_records(object: &mut serde_json::Map<String, serde_json::Value>) {
+    strip_nested_command_run_records(object, &["input", "metadata"], "commands");
+    strip_nested_command_run_records(object, &["output", "metadata"], "results");
+    strip_array_field(object, "commands");
+    strip_array_field(object, "results");
+    if let Some(stream) = object
+        .get_mut("streamed_command_run_result")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        strip_array_field(stream, "commands");
+        strip_array_field(stream, "results");
+    }
+    if let Some(output) = object
+        .get_mut("output")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        if let Some(stream) = output
+            .get_mut("streamed_command_run_result")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            strip_array_field(stream, "commands");
+            strip_array_field(stream, "results");
+        }
+    }
+}
+
+fn strip_nested_command_run_records(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    parent_keys: &[&str],
+    array_key: &str,
+) {
+    for key in parent_keys {
+        if let Some(parent) = object
+            .get_mut(*key)
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            strip_array_field(parent, array_key);
+        }
+    }
+}
+
+fn strip_array_field(object: &mut serde_json::Map<String, serde_json::Value>, key: &str) {
+    if let Some(items) = object
+        .get_mut(key)
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        items.retain(|item| !is_task_status_command(item));
     }
 }
 
@@ -188,7 +239,12 @@ fn command_run_frontend_results_snapshot(
         return None;
     }
     if specs.is_empty() {
-        return Some(results);
+        return Some(
+            results
+                .into_iter()
+                .filter(|result| !is_task_status_command(result))
+                .collect(),
+        );
     }
 
     let fallback_status = string_field_from_value(state, "status");
@@ -752,5 +808,74 @@ mod tests {
         assert_eq!(commands[0]["status"], "running");
         assert_eq!(commands[1]["command"], "npm run e2e");
         assert_eq!(commands[1]["status"], "completed");
+    }
+
+    #[test]
+    fn command_run_frontend_state_filters_task_status_without_dropping_mixed_batch() {
+        let mut state = json!({
+            "status": "completed",
+            "input": {
+                "commands": [
+                    {
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "command_line": "npm test"
+                    },
+                    {
+                        "step": 2,
+                        "command_type": "task_status",
+                        "command_line": "{\"status\":\"done\"}"
+                    },
+                    {
+                        "step": 3,
+                        "command_type": "shell_command",
+                        "command_line": "npm run build"
+                    }
+                ]
+            },
+            "output": {
+                "results": [
+                    {
+                        "step": 1,
+                        "command_type": "shell_command",
+                        "command_line": "npm test",
+                        "success": true,
+                        "output": "tests passed"
+                    },
+                    {
+                        "step": 2,
+                        "command_type": "task_status",
+                        "success": true,
+                        "output": { "task_status": { "status": "done" } }
+                    },
+                    {
+                        "step": 3,
+                        "command_type": "shell_command",
+                        "command_line": "npm run build",
+                        "success": true,
+                        "output": "built"
+                    }
+                ]
+            }
+        });
+
+        normalize_command_run_frontend_state(&mut state, None);
+
+        let results = state
+            .pointer("/streamed_command_run_result/results")
+            .and_then(serde_json::Value::as_array)
+            .expect("normalized command_run results should be present");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["command_line"], "npm test");
+        assert_eq!(results[1]["command_line"], "npm run build");
+
+        let commands = state["commands"]
+            .as_array()
+            .expect("commands should be normalized from visible command records");
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0]["command"], "npm test");
+        assert_eq!(commands[1]["command"], "npm run build");
+        let serialized = serde_json::to_string(&state).expect("state should serialize");
+        assert!(!serialized.contains("task_status"));
     }
 }

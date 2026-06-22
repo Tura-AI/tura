@@ -10,7 +10,7 @@ use crate::state_machine::session_management::{SessionManagement, DEFAULT_CONTEX
 
 use super::agent_prompts::load_agent_system_prompt_messages;
 use super::constants::{COMMAND_RUN_TOOL, PLANNING_TOOL};
-use super::prompt_messages::{approximate_message_tokens, messages_for_turn_with_context_limit};
+use super::prompt_messages::messages_for_turn_with_context_limit;
 use super::tool_catalog::{
     command_run_commands_for_agent, filter_tools_for_turn, load_agent_capabilities,
     planning_tool_disabled, tool_schema_name,
@@ -77,8 +77,6 @@ pub(crate) fn execute_turn(
             runtime_provider_config_from_tura(&agent.provider, settings.as_ref(), false)?;
         let compact_limit_tokens =
             dynamic_context_limit_tokens(settings.as_ref(), &runtime_provider_config);
-        let context_window_tokens =
-            model_context_window_tokens(settings.as_ref(), &runtime_provider_config);
         let language = session_language();
         let user_name = session_user_name();
         let identity = PromptBuilder::new()
@@ -96,13 +94,11 @@ pub(crate) fn execute_turn(
             "content": identity,
         })];
         runtime_messages.extend(load_agent_system_prompt_messages(agent)?);
-        let fixed_prefix_tokens = approximate_message_tokens(&runtime_messages);
         let turn = messages_for_turn_with_context_limit(
             current_messages,
             session,
             original_user_task,
             compact_limit_tokens,
-            fixed_prefix_tokens,
         );
         session.context_tokens = turn.context_tokens;
         let mut turn_messages = turn.messages;
@@ -113,14 +109,8 @@ pub(crate) fn execute_turn(
             );
         }
         runtime_messages.extend(turn_messages);
-        let mut final_context_input = approximate_message_tokens(&runtime_messages);
         if !disable_tool_invocation
-            && should_force_compact_prompt(
-                session,
-                &runtime_messages,
-                final_context_input,
-                compact_limit_tokens,
-            )
+            && should_force_compact_prompt(session, &runtime_messages, compact_limit_tokens)
         {
             crate::prompt_style::tail_injection::append_tail_prompt(
                 &mut runtime_messages,
@@ -128,13 +118,9 @@ pub(crate) fn execute_turn(
                     compact_context_required_message(compact_limit_tokens),
                 ),
             );
-            final_context_input = approximate_message_tokens(&runtime_messages);
         }
-        session.context_tokens.input = previous_provider_input_tokens(session)
-            .filter(|value| *value > 0)
-            .map(|value| value.max(final_context_input))
-            .unwrap_or(final_context_input);
-        session.context_tokens.limit = context_window_tokens;
+        session.context_tokens.input = provider_context_input_tokens(session).unwrap_or(0);
+        session.context_tokens.limit = compact_limit_tokens;
         let (runtime, queue_item) = create_runtime(CreateRuntimeInput {
             session_id: session.session_id.clone(),
             agent_id: agent.agent_id.clone(),
@@ -165,7 +151,7 @@ pub(crate) fn execute_turn(
             config,
         )
         .await?;
-        sync_context_tokens_from_provider_usage(session, &mut runtime, context_window_tokens);
+        sync_context_tokens_from_provider_usage(session, &mut runtime, compact_limit_tokens);
         Ok::<RuntimeManagement, String>(runtime)
     })?;
 
@@ -260,6 +246,7 @@ fn catalog_model_context_tokens(
         .map(|detail| u64::from(detail.limit.context))
 }
 
+#[cfg(test)]
 fn model_context_window_tokens(
     settings: &tura_llm_rust::Settings,
     runtime_provider_config: &crate::state_machine::runtime_management::RuntimeProviderConfig,
@@ -275,15 +262,13 @@ fn model_context_window_tokens(
 fn should_force_compact_prompt(
     session: &SessionManagement,
     messages: &[serde_json::Value],
-    estimated_input_tokens: u64,
     context_limit_tokens: u64,
 ) -> bool {
     if messages_already_request_compact(messages) {
         return false;
     }
-    estimated_input_tokens >= context_limit_tokens
-        || previous_provider_input_tokens(session)
-            .is_some_and(|input_tokens| input_tokens >= context_limit_tokens)
+    provider_context_input_tokens(session)
+        .is_some_and(|input_tokens| input_tokens >= context_limit_tokens)
 }
 
 fn messages_already_request_compact(messages: &[serde_json::Value]) -> bool {
@@ -302,15 +287,20 @@ fn previous_provider_input_tokens(session: &SessionManagement) -> Option<u64> {
         .and_then(serde_json::Value::as_u64)
 }
 
+fn provider_context_input_tokens(session: &SessionManagement) -> Option<u64> {
+    previous_provider_input_tokens(session)
+        .or_else(|| (session.context_tokens.input > 0).then_some(session.context_tokens.input))
+}
+
 fn sync_context_tokens_from_provider_usage(
     session: &mut SessionManagement,
     runtime: &mut RuntimeManagement,
-    context_window_tokens: u64,
+    active_context_limit_tokens: u64,
 ) {
     if let Some(input_tokens) = runtime_input_tokens(runtime.usage.as_ref()) {
         session.context_tokens.input = input_tokens;
     }
-    session.context_tokens.limit = context_window_tokens;
+    session.context_tokens.limit = active_context_limit_tokens;
     runtime.context_tokens = session.context_tokens;
 }
 
@@ -384,6 +374,8 @@ mod tests {
 
     #[test]
     fn dynamic_context_limit_uses_sixty_percent_of_model_context_when_smaller_than_cap() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let _env = clean_context_limit_env();
         let settings = settings_with_model_context("openai", "gpt-small", 128_000);
         let provider = runtime_provider("openai", "gpt-small");
 
@@ -392,6 +384,8 @@ mod tests {
 
     #[test]
     fn dynamic_context_limit_caps_at_default_limit_for_large_models() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let _env = clean_context_limit_env();
         let settings = settings_with_model_context("openai", "gpt-large", 1_000_000);
         let provider = runtime_provider("openai", "gpt-large");
 
@@ -404,21 +398,16 @@ mod tests {
     #[test]
     fn dynamic_context_limit_honors_fixed_context_env_override() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        let previous_fixed = std::env::var_os("COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS");
-        let previous_tura = std::env::var_os("TURA_CONTEXT_LIMIT_TOKENS");
+        let _env = clean_context_limit_env();
         std::env::set_var("COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS", "4096");
-        std::env::remove_var("TURA_CONTEXT_LIMIT_TOKENS");
         let settings = settings_with_model_context("openai", "gpt-large", 1_000_000);
         let provider = runtime_provider("openai", "gpt-large");
 
         assert_eq!(dynamic_context_limit_tokens(&settings, &provider), 4096);
-
-        restore_env("COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS", previous_fixed);
-        restore_env("TURA_CONTEXT_LIMIT_TOKENS", previous_tura);
     }
 
     #[test]
-    fn force_compact_prompt_uses_previous_provider_usage_when_estimate_lags() {
+    fn force_compact_prompt_uses_previous_provider_usage() {
         let mut session = SessionManagement::new(
             "sess-provider-usage-compact".to_string(),
             "provider usage compact".to_string(),
@@ -436,16 +425,14 @@ mod tests {
             chrono::Utc::now(),
         );
         session.runtime_usage = serde_json::json!({
-            "input_tokens": 250_012_u64,
+            "input_tokens": 200_012_u64,
         });
         let messages = vec![serde_json::json!({
             "role": "user",
-            "content": "small estimated context"
+            "content": "small provider-visible context"
         })];
 
-        assert!(should_force_compact_prompt(
-            &session, &messages, 100, 250_000
-        ));
+        assert!(should_force_compact_prompt(&session, &messages, 200_000));
     }
 
     #[test]
@@ -471,13 +458,11 @@ mod tests {
             "content": "Context checkpoint required. compact_context as the final command"
         })];
 
-        assert!(!should_force_compact_prompt(
-            &session, &messages, 300_000, 250_000
-        ));
+        assert!(!should_force_compact_prompt(&session, &messages, 200_000));
     }
 
     #[test]
-    fn provider_usage_replaces_estimated_context_tokens_for_display() {
+    fn provider_usage_replaces_context_tokens_for_display() {
         let mut session = SessionManagement::new(
             "sess-provider-usage-display".to_string(),
             "provider usage display".to_string(),
@@ -495,7 +480,7 @@ mod tests {
             chrono::Utc::now(),
         );
         session.context_tokens.input = 255_298;
-        session.context_tokens.limit = 250_000;
+        session.context_tokens.limit = 200_000;
 
         let provider = runtime_provider("codex", "gpt-5.5");
         let mut runtime = RuntimeManagement::new(
@@ -523,15 +508,17 @@ mod tests {
             token_per_second: 0.33,
         });
 
-        sync_context_tokens_from_provider_usage(&mut session, &mut runtime, 1_050_000);
+        sync_context_tokens_from_provider_usage(&mut session, &mut runtime, 200_000);
 
         assert_eq!(session.context_tokens.input, 1_353_553);
-        assert_eq!(session.context_tokens.limit, 1_050_000);
+        assert_eq!(session.context_tokens.limit, 200_000);
         assert_eq!(runtime.context_tokens, session.context_tokens);
     }
 
     #[test]
     fn model_context_window_uses_catalog_without_compact_cap() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let _env = clean_context_limit_env();
         let settings = settings_with_model_context("codex", "gpt-5.5", 1_050_000);
         let provider = runtime_provider("codex", "gpt-5.5");
 
@@ -548,6 +535,28 @@ mod tests {
         } else {
             std::env::remove_var(key);
         }
+    }
+
+    struct ContextLimitEnvGuard {
+        fixed: Option<OsString>,
+        tura: Option<OsString>,
+    }
+
+    impl Drop for ContextLimitEnvGuard {
+        fn drop(&mut self) {
+            restore_env("COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS", self.fixed.take());
+            restore_env("TURA_CONTEXT_LIMIT_TOKENS", self.tura.take());
+        }
+    }
+
+    fn clean_context_limit_env() -> ContextLimitEnvGuard {
+        let guard = ContextLimitEnvGuard {
+            fixed: std::env::var_os("COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS"),
+            tura: std::env::var_os("TURA_CONTEXT_LIMIT_TOKENS"),
+        };
+        std::env::remove_var("COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS");
+        std::env::remove_var("TURA_CONTEXT_LIMIT_TOKENS");
+        guard
     }
 
     fn runtime_provider(provider_id: &str, model_id: &str) -> RuntimeProviderConfig {
