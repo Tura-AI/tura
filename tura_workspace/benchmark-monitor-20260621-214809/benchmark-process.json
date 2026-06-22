@@ -1,0 +1,16 @@
+{
+  "RunId": "source-port-eza-fast-thinking-visual-20260621-214809",
+  "RunRoot": "C:\\Users\\liuliu\\Documents\\tura_workspace\\target\\project-rebuild-source-port\\source-port-eza-fast-thinking-visual-20260621-214809",
+  "MonitorRoot": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-20260621-214809",
+  "Pid": 22292,
+  "Stdout": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-20260621-214809\\benchmark.stdout.log",
+  "Stderr": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-20260621-214809\\benchmark.stderr.log",
+  "ReleaseExe": "C:\\Users\\liuliu\\Documents\\tura\\target\\release\\tura_exec.exe",
+  "Agents": "tura-fast,tura-thinking,tura-thinking-visual",
+  "Task": "eza",
+  "Model": "openai/gpt-5.5",
+  "TimeoutMs": 1200000,
+  "Started": "2026-06-21T21:48:14.1537327+02:00",
+  "ExitedAfter5s": false,
+  "ExitCode": null
+}

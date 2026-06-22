@@ -394,7 +394,7 @@ async function main() {
     for (const command of ["project", "file", "persona", "command", "inspect", "gateway"]) {
       assert.match(help.stdout, new RegExp(`^  ${command}\\s`, "m"));
     }
-    assert.match(help.stdout, /agent\s+list, read, create, update, or tier agents/);
+    assert.match(help.stdout, /agent\s+list, read, create, update, or set agent models/);
     assert.match(help.stdout, /session\s+list or show sessions/);
     const zhHelp = await expectCliOk([...baseArgs(gateway), "--lang", "zh-CN", "help"]);
     assert.match(zhHelp.stdout, /命令:/);

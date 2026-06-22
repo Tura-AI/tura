@@ -222,7 +222,8 @@ function mergeMessagePartsForDisplay(
   const hasLiveTextSnapshot = existingParts.some(liveStreamSnapshotPart);
   const incomingPartIDs = new Set(incomingParts.map((part) => part.id));
   const preservedCommandParts = existingParts.filter(
-    (part) => commandRunSnapshotPart(part) && (hasLiveTextSnapshot || !incomingPartIDs.has(part.id)),
+    (part) =>
+      commandRunSnapshotPart(part) && (hasLiveTextSnapshot || !incomingPartIDs.has(part.id)),
   );
   const preservedLiveTextParts = existingParts.filter(liveStreamSnapshotPart);
   const filteredIncomingParts = incomingParts.filter((part) => {
@@ -525,6 +526,7 @@ function applyLiveStream(messages: Message[], stream: LiveStream): Message[] {
       };
     });
   }
+
   if (!foundMessage) {
     next.push({
       id: stream.messageID,
@@ -614,17 +616,6 @@ function commitLiveStreamsForMessages(
     }
   }
   return { messages: nextMessages, liveStreams: nextStreams };
-}
-
-function removeLiveStreamsMatchingMessage(
-  streams: Record<string, LiveStream>,
-  sessionID: string | undefined,
-  message: Message,
-): Record<string, LiveStream> {
-  return filterLiveStreams(
-    streams,
-    (stream) => !streamMatchesSession(stream, sessionID) || !liveStreamMatchesMessage(stream, message),
-  );
 }
 
 function messageShouldRemainLive(messages: Message[], incoming: Message): boolean {

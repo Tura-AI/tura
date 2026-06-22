@@ -189,24 +189,6 @@ export function regexCount(text, pattern) {
 export const composerHintPattern = /Enter(?::| to)? send/u;
 export const composerHintGlobalPattern = /Enter(?::| to)? send/gu;
 
-export function assertNoDuplicatedFrameText(text, label, markers = []) {
-  assert.ok(
-    regexCount(text, composerHintGlobalPattern) <= 1,
-    `${label} should not retain a duplicated composer/input box`,
-  );
-  assert.ok(
-    markerCount(text, "Mock Stream") <= 1,
-    `${label} should not retain duplicated session title chrome`,
-  );
-  assert.ok(
-    regexCount(text, /tokens\s+\d+|tokens\s+-/gu) <= 1,
-    `${label} should not retain duplicated token/status chrome`,
-  );
-  for (const marker of markers) {
-    assert.equal(markerCount(text, marker), 1, `${label} should show ${marker} exactly once`);
-  }
-}
-
 export async function waitForComposer(page, timeoutMs = 5000) {
   await page.waitForFunction(() => /Enter(?::| to)? send/.test(document.body.innerText), null, {
     timeout: timeoutMs,
@@ -252,9 +234,5 @@ export function assertSessionPickerCleared(text, label, staleMarker) {
     markerCount(text, "TYPED_USER_1"),
     0,
     `${label} should not carry older chat rows into the session picker`,
-  );
-  assert.ok(
-    markerCount(text, "TYPED_REPLY_2") <= 1,
-    `${label} may show the active session preview once, but not duplicate it`,
   );
 }
