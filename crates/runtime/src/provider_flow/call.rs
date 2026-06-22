@@ -7,9 +7,7 @@ use tracing::error;
 
 use crate::profile_timings;
 use crate::provider_flow::checkpointing;
-use crate::provider_flow::errors::{
-    finish_runtime_failure, finish_runtime_failure_with_usage, runtime_timeout,
-};
+use crate::provider_flow::errors::{finish_runtime_failure, runtime_timeout};
 use crate::provider_flow::provider_response::apply_provider_response;
 use crate::provider_flow::provider_streaming::call_runtime_streaming;
 pub use crate::provider_flow::request_options::route_by_name;
@@ -18,9 +16,7 @@ use crate::provider_flow::request_options::{
     route_for_provider_name, session_max_tokens, session_model_override_route,
     session_reasoning_effort, session_service_tier, stream_options,
 };
-use crate::provider_flow::usage::{
-    estimated_usage_report_for_interrupted_runtime, usage_report_from_metrics,
-};
+use crate::provider_flow::usage::usage_report_from_metrics;
 use crate::runtime::types::RuntimeQueueItem;
 use crate::state_machine::runtime_management::{
     RuntimeCallResultStatus, RuntimeManagement, RuntimeState,
@@ -259,20 +255,12 @@ async fn call_runtime_non_streaming(
             runtime.set_output(serde_json::json!({
                 "error": message
             }));
-            let usage = estimated_usage_report_for_interrupted_runtime(
-                runtime,
-                started_at,
-                finished_at,
-                finished_at,
-                "runtime_estimate_timeout",
-            );
-            finish_runtime_failure_with_usage(
+            finish_runtime_failure(
                 runtime,
                 finished_at,
                 "CALL_TIMED_OUT",
                 message,
                 RuntimeCallResultStatus::TimedOut,
-                Some(usage),
             )?;
         }
         Ok(Ok(response)) => {

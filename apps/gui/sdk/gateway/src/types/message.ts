@@ -19,12 +19,12 @@ export type Message = {
   parentID?: string | null;
   role: MessageRole;
   parts: MessagePart[];
-  time: {
-    created: number;
-    updated: number;
+  time?: {
+    created?: number;
+    updated?: number;
   };
-  created_at: number;
-  updated_at: number;
+  created_at?: number;
+  updated_at?: number;
   cost?: number;
   providerID?: string;
   modelID?: string;

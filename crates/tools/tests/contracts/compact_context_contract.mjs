@@ -50,7 +50,7 @@ run("cargo", [
   "test",
   "-p",
   "runtime",
-  "messages_for_turn_injects_compact_context_prompt_at_default_220k_threshold",
+  "messages_for_turn_injects_compact_context_prompt_at_default_200k_threshold",
   "--",
   "--nocapture",
 ]);
@@ -60,6 +60,6 @@ console.log(JSON.stringify({
   coverage: [
     "compact_context command routes through command_run and enforces final highest step",
     "context checkpoint hides prior tool history, preserves later command_run backfill, and reinjects workspace snapshot",
-    "220k-token threshold injects a user continuation requiring compact_context",
+    "200k-token threshold injects a user continuation requiring compact_context",
   ],
 }, null, 2));

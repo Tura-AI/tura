@@ -596,6 +596,8 @@ mod tests {
         std::fs::write(root.path().join("src").join("lib.rs"), "fn main() {}\n").expect("fixture");
         let mut session = session();
         session.session_directory = root.path().to_path_buf();
+        session.context_tokens.input = 209_234;
+        session.runtime_usage = json!({"input_tokens": 209_234});
 
         accumulate_tool_result(
                 &mut session,
@@ -619,6 +621,8 @@ mod tests {
             "Checkpoint: prior tool history is no longer needed. Continue with src/lib.rs.",
         )
         .expect("compact should write");
+        assert_eq!(session.context_tokens.input, 0);
+        assert!(session.runtime_usage.is_null());
         accumulate_tool_result(
                 &mut session,
                 "command_run",

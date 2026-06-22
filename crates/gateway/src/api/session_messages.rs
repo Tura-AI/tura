@@ -200,9 +200,21 @@ fn tool_call_persistent_to_store(tool_call: &SendAgentToolCall) -> bool {
 }
 
 fn tool_call_visible_to_frontend(tool_call: &SendAgentToolCall) -> bool {
-    tool_call.tool_name != "command_run"
-        || !task_status_payload(&tool_call.state)
-            && !tool_call.metadata.as_ref().is_some_and(task_status_payload)
+    if tool_call.tool_name != "command_run" {
+        return true;
+    }
+
+    let has_task_status = task_status_payload(&tool_call.state)
+        || tool_call.metadata.as_ref().is_some_and(task_status_payload);
+    if !has_task_status {
+        return true;
+    }
+
+    command_run_has_frontend_visible_payload(&tool_call.state)
+        || tool_call
+            .metadata
+            .as_ref()
+            .is_some_and(command_run_has_frontend_visible_payload)
 }
 
 fn task_status_payload(value: &serde_json::Value) -> bool {
@@ -221,6 +233,71 @@ fn task_status_payload(value: &serde_json::Value) -> bool {
             .is_some_and(|value| task_status_payload(&value)),
         _ => false,
     }
+}
+
+fn command_run_has_frontend_visible_payload(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(object) => {
+            ["commands", "results"].iter().any(|key| {
+                object
+                    .get(*key)
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|items| items.iter().any(command_run_visible_record))
+            }) || ["input", "output", "streamed_command_run_result", "metadata"]
+                .iter()
+                .any(|key| {
+                    object
+                        .get(*key)
+                        .is_some_and(command_run_has_frontend_visible_payload)
+                })
+        }
+        serde_json::Value::Array(items) => items.iter().any(command_run_visible_record),
+        serde_json::Value::String(text) => serde_json::from_str::<serde_json::Value>(text)
+            .ok()
+            .is_some_and(|value| command_run_has_frontend_visible_payload(&value)),
+        _ => false,
+    }
+}
+
+fn command_run_visible_record(value: &serde_json::Value) -> bool {
+    if task_status_payload(value) {
+        return false;
+    }
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    [
+        "command_line",
+        "display_command",
+        "command",
+        "name",
+        "command_type",
+    ]
+    .iter()
+    .any(|key| {
+        object
+            .get(*key)
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+    }) || object
+        .get("command")
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|command| {
+            [
+                "command_line",
+                "display_command",
+                "command",
+                "name",
+                "command_type",
+            ]
+            .iter()
+            .any(|key| {
+                command
+                    .get(*key)
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|value| !value.trim().is_empty())
+            })
+        })
 }
 
 fn transient_tool_message_response(
@@ -257,6 +334,7 @@ fn runtime_managed_message_response(
             final_message,
         );
         emit_command_updates(session_id, payload);
+        publish_refreshed_session_event(session_id);
         let event = messages
             .last()
             .cloned()
@@ -311,6 +389,26 @@ fn runtime_managed_message_response(
         event: Some(event),
         error: None,
     })
+}
+
+fn publish_refreshed_session_event(session_id: &str) {
+    if let Err(error) = session_store().refresh_session_db_cache(session_id) {
+        tracing::warn!(
+            session_id,
+            error = %error,
+            "failed to refresh session DB cache before publishing session.updated"
+        );
+        return;
+    }
+    let Some(session) = session_store().get_session(session_id) else {
+        return;
+    };
+    session_store().push_event(GlobalEvent::SessionUpdated {
+        properties: SessionUpdatedProperties {
+            session_id: session.id.clone(),
+            info: session,
+        },
+    });
 }
 
 fn runtime_final_message(
@@ -474,7 +572,6 @@ pub fn stream_agent_message_payload(
     session_id: String,
     payload: StreamAgentTextRequest,
 ) -> serde_json::Value {
-    sync_runtime_session_metrics(&session_id, payload.context_tokens, payload.usage.clone());
     if payload.delta.is_empty() {
         return serde_json::json!({ "ok": true });
     }
@@ -1208,7 +1305,7 @@ mod tests {
     }
 
     #[test]
-    fn streamed_runtime_delta_updates_session_context_metrics() {
+    fn streamed_runtime_delta_does_not_sync_session_context_metrics() {
         let session = session_store().create_session(
             Some("C:/workspace-stream-metrics".to_string()),
             None,
@@ -1239,20 +1336,20 @@ mod tests {
         );
 
         assert_eq!(response["ok"], true);
-        let first = next_session_event(&mut cursor, &session.id)
-            .expect("stream metric status event should be published first");
-        match first {
-            GlobalEvent::SessionStatus { properties } => {
-                assert!(properties.updated_at > 0);
-                assert_eq!(properties.context_tokens.input, 32_000);
-                assert_eq!(properties.context_tokens.limit, 96_000);
+        let event = next_session_event(&mut cursor, &session.id)
+            .expect("stream delta event should be published");
+        match event {
+            GlobalEvent::MessagePartDelta { properties } => {
+                assert_eq!(properties.session_id, session.id);
+                assert_eq!(properties.delta, "token");
             }
-            other => panic!("unexpected first event: {other:?}"),
+            other => panic!("unexpected event: {other:?}"),
         }
-        assert!(matches!(
-            next_session_event(&mut cursor, &session.id),
-            Some(GlobalEvent::MessagePartDelta { .. })
-        ));
+        assert!(next_session_event(&mut cursor, &session.id).is_none());
+        let updated = session_store()
+            .get_session(&session.id)
+            .expect("session should exist");
+        assert_eq!(updated.context_tokens.input, 0);
     }
 
     #[test]
@@ -1421,6 +1518,50 @@ mod tests {
 
         assert!(is_transient_tool_call(&tool_call));
         assert!(!tool_call_visible_to_frontend(&tool_call));
+        assert!(!tool_call_persistent_to_store(&tool_call));
+    }
+
+    #[test]
+    fn command_run_mixed_task_status_keeps_visible_commands_visible() {
+        let tool_call = SendAgentToolCall {
+            tool_name: "command_run".to_string(),
+            call_id: "runtime-mixed.tool.command_run".to_string(),
+            state: json!({
+                "status": "completed",
+                "input": {
+                    "commands": [
+                        {
+                            "step": 1,
+                            "command_type": "shell_command",
+                            "command_line": "npm test"
+                        },
+                        {
+                            "step": 2,
+                            "command_type": "task_status",
+                            "command_line": "{\"status\":\"done\"}"
+                        }
+                    ]
+                },
+                "output": {
+                    "results": [
+                        {
+                            "command_type": "shell_command",
+                            "command_line": "npm test",
+                            "success": true,
+                            "output": "tests passed"
+                        },
+                        {
+                            "command_type": "task_status",
+                            "success": true,
+                            "output": { "task_status": { "status": "done" } }
+                        }
+                    ]
+                }
+            }),
+            metadata: None,
+        };
+
+        assert!(tool_call_visible_to_frontend(&tool_call));
         assert!(!tool_call_persistent_to_store(&tool_call));
     }
 

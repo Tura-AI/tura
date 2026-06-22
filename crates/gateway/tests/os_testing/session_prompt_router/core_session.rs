@@ -248,7 +248,12 @@ async fn gateway_prompt_business_flow_routes_only_text_parts_and_keeps_first_tex
     assert_eq!(user_message.parts[0].id, "first-text-turn");
     assert_eq!(
         user_message.parts[0].text.as_deref(),
-        Some("Inspect the local screenshot context. Then continue with the saved workspace state.")
+        Some("Inspect the local screenshot context. ")
+    );
+    assert_eq!(user_message.parts[1].id, "second-text-part");
+    assert_eq!(
+        user_message.parts[1].text.as_deref(),
+        Some("Then continue with the saved workspace state.")
     );
     assert_gateway_did_not_prewrite_session_db(&session.id)?;
 

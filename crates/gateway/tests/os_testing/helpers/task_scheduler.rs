@@ -3,9 +3,10 @@ pub(crate) use chrono::{DateTime, Utc};
 pub(crate) use gateway::api::session::{
     run_due_task_scheduler_tick_for_business_test,
     run_due_task_scheduler_tick_for_store_business_test, update_session_task_management,
-    UpdateSessionTaskManagementRequest,
 };
-pub(crate) use gateway::contracts::SessionStatus as ApiSessionStatus;
+pub(crate) use gateway::contracts::{
+    SessionStatus as ApiSessionStatus, UpdateSessionTaskManagementRequest,
+};
 pub(crate) use gateway::session::MessageRole;
 pub(crate) use gateway::{session_store, SessionStatus as StoreSessionStatus, SessionStore};
 pub(crate) use serde_json::json;

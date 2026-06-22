@@ -133,6 +133,7 @@ pub(crate) enum MockMode {
     CommandRun,
     CodexStreamingProbe,
     RateLimit,
+    TaskStatusDoingWithVisibleReply,
 }
 
 impl MockProvider {
@@ -146,6 +147,10 @@ impl MockProvider {
 
     pub(crate) fn start_rate_limit() -> Self {
         Self::start_with_mode(MockMode::RateLimit, None)
+    }
+
+    pub(crate) fn start_task_status_doing_with_visible_reply() -> Self {
+        Self::start_with_mode(MockMode::TaskStatusDoingWithVisibleReply, None)
     }
 
     fn start_with_mode(mode: MockMode, workspace: Option<PathBuf>) -> Self {
@@ -231,6 +236,9 @@ pub(crate) fn handle_provider_connection(
         MockMode::RateLimit => {
             write_rate_limit_response(stream);
         }
+        MockMode::TaskStatusDoingWithVisibleReply => {
+            write_command_run_responses(stream, &response);
+        }
     }
 }
 
@@ -239,6 +247,9 @@ pub(crate) fn provider_response(index: usize, mode: MockMode) -> Value {
         MockMode::CommandRun => command_run_provider_response(index),
         MockMode::CodexStreamingProbe => assistant_response("streaming probe completed."),
         MockMode::RateLimit => json!({}),
+        MockMode::TaskStatusDoingWithVisibleReply => {
+            task_status_doing_with_visible_reply_response(index)
+        }
     }
 }
 
@@ -416,7 +427,32 @@ pub(crate) fn write_command_run_responses(stream: &mut TcpStream, response: &Val
         .unwrap_or_else(|| json!({}));
 
     if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
+        let content = message
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if !content.is_empty() {
+            write_codex_sse(
+                stream,
+                json!({
+                    "type": "response.output_text.delta",
+                    "delta": content
+                }),
+            );
+        }
         let mut output_items = Vec::new();
+        if !content.is_empty() {
+            output_items.push(json!({
+                "id": "msg_cmd_run_visible",
+                "type": "message",
+                "role": "assistant",
+                "content": [{
+                    "type": "output_text",
+                    "text": content
+                }]
+            }));
+        }
         for (index, call) in tool_calls.iter().enumerate() {
             let call_id = call
                 .get("id")
@@ -613,6 +649,29 @@ pub(crate) fn command_run_provider_response(index: usize) -> Value {
     }
 }
 
+pub(crate) fn task_status_doing_with_visible_reply_response(index: usize) -> Value {
+    match index {
+        0 => tool_response_with_content(
+            "call_task_status_doing",
+            "command_run",
+            json!({
+                "commands": [
+                    {
+                        "step": 1,
+                        "command_type": "task_status",
+                        "command_line": json!({
+                            "task_detail": "Quick status task",
+                            "status": "doing"
+                        }).to_string()
+                    }
+                ]
+            }),
+            "Done. The requested work is complete.",
+        ),
+        _ => assistant_response("Unexpected follow-up turn."),
+    }
+}
+
 pub(crate) fn assistant_response(content: &str) -> Value {
     json!({
         "id": "chatcmpl-final",
@@ -630,6 +689,24 @@ pub(crate) fn assistant_response(content: &str) -> Value {
 }
 
 pub(crate) fn tool_response(id: &str, name: &str, arguments: Value) -> Value {
+    tool_response_message(id, name, arguments, Value::Null)
+}
+
+pub(crate) fn tool_response_with_content(
+    id: &str,
+    name: &str,
+    arguments: Value,
+    content: &str,
+) -> Value {
+    tool_response_message(id, name, arguments, json!(content))
+}
+
+pub(crate) fn tool_response_message(
+    id: &str,
+    name: &str,
+    arguments: Value,
+    content: Value,
+) -> Value {
     json!({
         "id": format!("chatcmpl-{id}"),
         "object": "chat.completion",
@@ -637,7 +714,7 @@ pub(crate) fn tool_response(id: &str, name: &str, arguments: Value) -> Value {
             "index": 0,
             "message": {
                 "role": "assistant",
-                "content": Value::Null,
+                "content": content,
                 "tool_calls": [{
                     "id": id,
                     "type": "function",

@@ -19,11 +19,7 @@ import {
   underline,
   visibleTextWidth,
 } from "./render-terminal.js";
-import {
-  compactInlinePayloads,
-  isTaskStatusPayload,
-  sanitizeRawTerminalText,
-} from "./render-payload.js";
+import { compactInlinePayloads, sanitizeRawTerminalText } from "./render-payload.js";
 
 export {
   compactInlinePayloads,
@@ -31,7 +27,6 @@ export {
   extractCommandsFromText,
   extractCommandsFromUnknown,
   firstCommandLine,
-  isTaskStatusPayload,
   looksLikeCommand,
   sanitizeRawTerminalText,
   toolSummary,
@@ -73,7 +68,6 @@ export function displayMessageText(role: string, value: string): string {
 }
 
 function cleanMessageText(value: string): string {
-  if (isTaskStatusPayload(value)) return "";
   const text = sanitizeRawTerminalText(value)
     .replace(/<br\s*\/?>/g, "\n")
     .replace(/^\s*\[command_run:\s*[^\r\n\]]*\]\s*$/gimu, "")
@@ -140,10 +134,8 @@ function basicRichText(source: string, options: RenderRichTextOptions): string {
 function renderHtmlSubset(source: string, options: RenderRichTextOptions = {}): string {
   let output = source;
   output = output.replace(
-    /<pre(?:\s[^>]*)?>\s*<code(?:\s+class=['"]language-([^'"]+)['"])?>([\s\S]*?)<\/code>\s*<\/pre>/giu,
-    (_match, _language, body) => {
-      return renderCodeFence(decodeHtml(body));
-    },
+    /<pre(?:\s[^>]*)?>\s*<code(?:\s[^>]*)?>([\s\S]*?)<\/code>\s*<\/pre>/giu,
+    (_match, body) => renderCodeFence(decodeHtml(body)),
   );
   output = output.replace(/<blockquote>([\s\S]*?)<\/blockquote>/giu, (_match, body) =>
     decodeHtml(stripHtml(body))
@@ -168,7 +160,10 @@ function renderHtmlSubset(source: string, options: RenderRichTextOptions = {}): 
       /<(?:s|del)>([\s\S]*?)<\/(?:s|del)>/giu,
       (body) => `${textAgentRich}${strike}${renderHtmlSubset(body, options)}${reset}`,
     ],
-    [/<code>([\s\S]*?)<\/code>/giu, (body) => inlineRegion(decodeHtml(stripHtml(body)))],
+    [
+      /<code(?:\s[^>]*)?>([\s\S]*?)<\/code>/giu,
+      (body) => inlineRegion(decodeHtml(stripHtml(body))),
+    ],
     [
       /<span\s+class=['"]tg-spoiler['"]>([\s\S]*?)<\/span>/giu,
       (body) => `${inverse}${decodeHtml(stripHtml(body))}${reset}`,
@@ -210,12 +205,18 @@ function renderMarkdownRegions(source: string): string {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
   const output: string[] = [];
   for (let index = 0; index < lines.length; index += 1) {
-    const fence = lines[index].match(/^\s*```([A-Za-z0-9_-]+)?\s*$/u);
+    const fence = lines[index].match(/^\s*(`{3,}|~{3,})[^`~]*$/u);
     if (fence) {
+      const fenceMarker = fence[1] ?? "```";
+      const fenceChar = fenceMarker[0] ?? "`";
+      const closingFence = new RegExp(
+        `^\\s*${escapeRegExp(fenceChar).repeat(fenceMarker.length)}${escapeRegExp(fenceChar)}*\\s*$`,
+        "u",
+      );
       pushBlankBeforeBlock(output);
       index += 1;
       const codeLines: string[] = [];
-      while (index < lines.length && !/^\s*```\s*$/u.test(lines[index])) {
+      while (index < lines.length && !closingFence.test(lines[index])) {
         codeLines.push(lines[index]);
         index += 1;
       }
@@ -238,6 +239,10 @@ function renderMarkdownRegions(source: string): string {
     output.push(lines[index]);
   }
   return output.join("\n");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function blockRegion(value: string): string {
@@ -642,11 +647,62 @@ function terminalLink(url: string, label: string): string {
 }
 
 function stripHtml(value: string): string {
-  return stripUnsupportedHtml(value).replace(/<[^>]+>/gu, "");
+  return stripUnsupportedHtml(value).replace(supportedHtmlTagPattern, "");
 }
 
+const supportedHtmlTags = new Set([
+  "a",
+  "address",
+  "article",
+  "aside",
+  "b",
+  "blockquote",
+  "br",
+  "caption",
+  "code",
+  "del",
+  "details",
+  "div",
+  "em",
+  "figcaption",
+  "figure",
+  "footer",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "header",
+  "hr",
+  "i",
+  "li",
+  "main",
+  "mark",
+  "nav",
+  "ol",
+  "p",
+  "pre",
+  "s",
+  "section",
+  "span",
+  "strong",
+  "summary",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "tr",
+  "u",
+  "ul",
+]);
+const supportedHtmlTagPattern = /<\/?([A-Za-z][A-Za-z0-9_-]*)(?:\s[^<>]*)?\/?>/gu;
+
 function stripUnsupportedHtml(value: string): string {
-  return value
+  const preserved = preserveMarkdownCodeFences(value);
+  const stripped = preserved.text
     .replace(/<br\s*\/?>/giu, "\n")
     .replace(/<li(?:\s[^>]*)?>/giu, "\n")
     .replace(/<\/li>/giu, "\n")
@@ -654,7 +710,44 @@ function stripUnsupportedHtml(value: string): string {
       /<\/?(?:address|article|aside|blockquote|details|div|figcaption|figure|footer|h[1-6]|header|hr|main|nav|ol|p|pre|section|summary|table|tbody|td|tfoot|th|thead|tr|ul)(?:\s[^>]*)?>/giu,
       "\n",
     )
-    .replace(/<\/?[^>]+>/gu, "");
+    .replace(supportedHtmlTagPattern, (match, tagName) =>
+      supportedHtmlTags.has(String(tagName).toLowerCase()) ? "" : match,
+    );
+  return restoreMarkdownCodeFences(stripped, preserved.tokens);
+}
+
+function preserveMarkdownCodeFences(source: string): { text: string; tokens: string[] } {
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  const output: string[] = [];
+  const tokens: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const fence = lines[index].match(/^\s*(`{3,}|~{3,})[^`~]*$/u);
+    if (!fence) {
+      output.push(lines[index]);
+      continue;
+    }
+    const fenceMarker = fence[1] ?? "```";
+    const fenceChar = fenceMarker[0] ?? "`";
+    const closingFence = new RegExp(
+      `^\\s*${escapeRegExp(fenceChar).repeat(fenceMarker.length)}${escapeRegExp(fenceChar)}*\\s*$`,
+      "u",
+    );
+    const block = [lines[index]];
+    index += 1;
+    while (index < lines.length) {
+      block.push(lines[index]);
+      if (closingFence.test(lines[index])) break;
+      index += 1;
+    }
+    const token = `\u0000FENCE${tokens.length}\u0000`;
+    tokens.push(block.join("\n"));
+    output.push(token);
+  }
+  return { text: output.join("\n"), tokens };
+}
+
+function restoreMarkdownCodeFences(source: string, tokens: string[]): string {
+  return source.replace(/\u0000FENCE(\d+)\u0000/gu, (_match, index) => tokens[Number(index)] ?? "");
 }
 
 function isLinkTarget(value: string): boolean {

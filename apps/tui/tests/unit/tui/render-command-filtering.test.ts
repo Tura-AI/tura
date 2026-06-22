@@ -17,7 +17,7 @@ import {
 
 process.env.TURA_LANG = "en";
 
-test("render filters internal task_status command updates from command sections", () => {
+test("render shows task_status-only command updates", () => {
   const session = {
     id: "sess-task-status-hidden",
     title: "Task Status Hidden",
@@ -77,9 +77,75 @@ test("render filters internal task_status command updates from command sections"
   const plain = stripAnsi(render(state, richCapabilities()));
 
   assert.match(plain, /Try a bowl of noodles./u);
-  assert.doesNotMatch(plain, /Commands/u);
-  assert.doesNotMatch(plain, /command_run completed/u);
-  assert.doesNotMatch(plain, /task_status|user asked for a random food suggestion/u);
+  assert.match(plain, /Commands/u);
+  assert.match(plain, /#1 task_status completed\s+\$ task_status/u);
+  assert.doesNotMatch(plain, /user asked for a random food suggestion/u);
+});
+
+test("render shows task_status rows when they share the batch", () => {
+  const session = {
+    id: "sess-task-status-mixed",
+    title: "Task Status Mixed",
+    status: "idle" as const,
+  };
+  const state = reducer(initialState("C:/repo"), {
+    type: "hydrate",
+    session,
+    messages: [
+      {
+        id: "msg-agent",
+        sessionID: session.id,
+        role: "assistant",
+        parts: [
+          {
+            id: "mixed-command-run",
+            type: "tool",
+            tool: "command_run",
+            state: {
+              status: "completed",
+              input: {
+                commands: [
+                  { step: 1, command_type: "shell_command", command_line: "npm test" },
+                  {
+                    step: 2,
+                    command_type: "task_status",
+                    command_line: '{"status":"done"}',
+                  },
+                ],
+              },
+              output: {
+                results: [
+                  {
+                    step: 1,
+                    command_type: "shell_command",
+                    command_line: "npm test",
+                    success: true,
+                    output: "tests passed",
+                  },
+                  {
+                    step: 2,
+                    command_type: "task_status",
+                    success: true,
+                    output: { task_status: { status: "done" } },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    ],
+    permissions: [],
+    providers: { all: [], default: {}, connected: [], enums: providerEnums },
+    sessions: [session],
+    sessionConfig: { show_command_instructions: true },
+  });
+
+  const plain = stripAnsi(render(state, richCapabilities()));
+
+  assert.match(plain, /Commands/u);
+  assert.match(plain, /#1 shell_command completed\s+\$ npm test/u);
+  assert.match(plain, /#2 task_status completed\s+\$ \{"status":"done"\}/u);
 });
 
 test("render keeps L1 L2 L3 readable without overflow across terminal sizes", () => {
@@ -320,7 +386,7 @@ test("render ignores adjacent command_run summaries without command types", () =
   assert.ok(userIndex >= 0);
 });
 
-test("render filters command_run summaries and type-only records from command sections", () => {
+test("render keeps command records while leaving command_run summaries out of command sections", () => {
   const session = { id: "sess-command-filter", title: "Command Filter", status: "idle" as const };
   const state = reducer(initialState("C:/repo"), {
     type: "hydrate",
@@ -386,7 +452,7 @@ test("render filters command_run summaries and type-only records from command se
   assert.match(plain, /\$ \$ErrorActionPreference='Stop'/u);
   assert.doesNotMatch(plain, /\$ large file scan/u);
   assert.doesNotMatch(plain, /\$ \{"status":"done","task_detail":"large file scan"\}/u);
-  assert.doesNotMatch(plain, /\$ shell_command/u);
+  assert.match(plain, /\$ shell_command/u);
 });
 
 test("render keeps command-only updates at their exact message position", () => {

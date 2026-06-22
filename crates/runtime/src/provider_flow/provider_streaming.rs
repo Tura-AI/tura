@@ -11,17 +11,13 @@ use crate::provider_flow::command_run_streaming::{
     apply_cancelled_streamed_command_run_result, spawn_streamed_command_run_task,
     SpawnStreamedCommandRunTask, StreamedCommandRunState,
 };
-use crate::provider_flow::errors::{
-    finish_runtime_failure, finish_runtime_failure_with_usage, runtime_timeout,
-};
+use crate::provider_flow::errors::{finish_runtime_failure, runtime_timeout};
 use crate::provider_flow::provider_response::apply_provider_response_with_options;
 use crate::provider_flow::streamed_command_run::{
     command_run_stream_events_from_provider_content, should_replay_final_response_command_run,
     streamed_command_run_call_id,
 };
-use crate::provider_flow::usage::{
-    estimated_usage_report_for_interrupted_runtime, usage_report_from_metrics,
-};
+use crate::provider_flow::usage::usage_report_from_metrics;
 use crate::state_machine::runtime_management::{RuntimeCallResultStatus, RuntimeManagement};
 
 pub(crate) async fn call_runtime_streaming(
@@ -122,21 +118,12 @@ pub(crate) async fn call_runtime_streaming(
                 runtime.set_output(serde_json::json!({
                     "error": message
                 }));
-                let first_token_at = first_stream_output_or(&first_stream_output_at, finished_at);
-                let usage = estimated_usage_report_for_interrupted_runtime(
-                    runtime,
-                    started_at,
-                    finished_at,
-                    first_token_at,
-                    "runtime_estimate_timeout",
-                );
-                finish_runtime_failure_with_usage(
+                finish_runtime_failure(
                     runtime,
                     finished_at,
                     "CALL_TIMED_OUT",
                     message,
                     RuntimeCallResultStatus::TimedOut,
-                    Some(usage),
                 )?;
                 provider_task.abort();
                 let _ = (&mut provider_task).await;
@@ -199,21 +186,13 @@ pub(crate) async fn call_runtime_streaming(
                     runtime
                         .mark_first_token(first_token_at)
                         .map_err(|e| format!("failed to mark first token: {e}"))?;
-                    let usage = estimated_usage_report_for_interrupted_runtime(
-                        runtime,
-                        started_at,
-                        finished_at,
-                        first_token_at,
-                        "runtime_estimate_cancelled",
-                    );
-                    finish_runtime_failure_with_usage(
+                    finish_runtime_failure(
                         runtime,
                         finished_at,
                         "COMMAND_RUN_CANCELLED",
                         "apply_patch failed; runtime stream cancelled after command_run result"
                             .to_string(),
                         RuntimeCallResultStatus::Cancelled,
-                        Some(usage),
                     )?;
                     provider_task.abort();
                     let _ = (&mut provider_task).await;

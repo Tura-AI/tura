@@ -13,12 +13,12 @@ use std::time::Instant;
 use super::common::{
     insert_opt, normalized_reasoning_effort, normalized_service_tier, should_pass_service_tier,
 };
-use crate::metrics::{extract_openapi_metrics, fill_missing_estimated_usage};
+use crate::metrics::extract_openapi_metrics;
 use crate::streaming::{
     next_provider_stream_chunk, read_provider_response_body, send_provider_request_first_response,
 };
 use crate::tura_llm::{
-    default_client, estimate_context_utilization, normalize_response_content, CallMetrics,
+    default_client, normalize_response_content, record_context_utilization, CallMetrics,
     CallOptions, CostDetails, ProviderResponse, ProviderStreamEvent, ProviderStreamEventSink,
     TuraError, UsageDetails,
 };
@@ -514,15 +514,7 @@ async fn stream_call(
             raw_usage: None,
         }
     };
-    if stream_state.stream_usage.is_none() {
-        fill_missing_estimated_usage(
-            &mut metrics,
-            &payload,
-            &content,
-            "codex_oauth_stream_returned_before_provider_usage",
-        );
-    }
-    estimate_context_utilization(&mut metrics);
+    record_context_utilization(&mut metrics);
 
     Ok(ProviderResponse {
         content,

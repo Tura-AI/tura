@@ -833,54 +833,6 @@ fn codex_oauth_payload_keeps_system_messages_in_input() {
     assert_eq!(payload["tool_choice"], "auto");
 }
 
-#[test]
-fn codex_oauth_usage_falls_back_to_estimate_when_stream_stops_before_usage() {
-    let payload = json!({
-        "model": "gpt-5.1-codex",
-        "input": [{"role": "user", "content": "Run tests"}],
-        "tools": [{"type": "function", "name": "command_run"}]
-    });
-    let content = json!({
-        "tool_calls": [{
-            "function": {
-                "name": "command_run",
-                "arguments": {"commands": [{"step": 1, "command": "npm", "command_line": "npm test"}]}
-            }
-        }]
-    });
-    let mut metrics = crate::metrics::extract_openapi_metrics(&json!({}), None);
-
-    crate::metrics::fill_missing_estimated_usage(
-        &mut metrics,
-        &payload,
-        &content,
-        "codex_oauth_stream_returned_before_provider_usage",
-    );
-
-    assert!(
-        metrics
-            .usage
-            .input_tokens
-            .expect("estimated input tokens should be present")
-            > 0
-    );
-    assert!(
-        metrics
-            .usage
-            .output_tokens
-            .expect("estimated output tokens should be present")
-            > 0
-    );
-    assert_eq!(
-        metrics
-            .raw_usage
-            .as_ref()
-            .and_then(|usage| usage.get("estimated"))
-            .and_then(serde_json::Value::as_bool),
-        Some(true)
-    );
-}
-
 fn header_value<'a>(headers: &'a str, name: &str) -> Option<&'a str> {
     headers.lines().find_map(|line| {
         let (candidate, value) = line.split_once(':')?;

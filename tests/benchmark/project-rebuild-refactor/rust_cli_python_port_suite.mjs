@@ -23,7 +23,6 @@ const suiteRoot =
   path.join(runPaths.target_root, runPaths.test_name, "_cache")
 const runRoot = runPaths.run_root
 const summaryPath = runPaths.summary_path
-const sessionDbRoot = process.env.SESSION_LOG_DB_ROOT || path.join(runRoot, "_session-db")
 const model = process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "gpt-5.5"
 const turaModel = process.env.COMMAND_RUN_AGENT_TURA_MODEL || (model.includes("/") ? model : `openai/${model}`)
 const reasoning = process.env.COMMAND_RUN_AGENT_REASONING_EFFORT || "medium"
@@ -1082,7 +1081,6 @@ function safeArchiveEnv(env) {
     "TURA_COMMAND_RUN_STRICT_JSON",
     "TURA_FORCE_EXECUTE_TOOLS_PLANNING",
     "TURA_PROJECT_ROOT",
-    "SESSION_LOG_DB_ROOT",
     "TURA_SESSION_REASONING_EFFORT",
   ])
   const out = {}
@@ -1210,7 +1208,6 @@ async function runTuraPlanning(workspace, agentDir, prompt, agentPrompt, onProgr
     TURA_COMMAND_RUN_SHELL: process.env.COMMAND_RUN_AGENT_TURA_SHELL || "shell_command",
     TURA_COMMAND_RUN_STRICT_JSON: "0",
     TURA_SESSION_REASONING_EFFORT: reasoning,
-    SESSION_LOG_DB_ROOT: sessionDbRoot,
     ...optionalEnv([
       "TURA_PROFILE_TURN_TIMINGS",
       "TURA_PROFILE_TIMINGS",

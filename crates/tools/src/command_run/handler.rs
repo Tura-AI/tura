@@ -1007,11 +1007,111 @@ fn normalize_compact_context_arguments(command: &CommandItem) -> Result<Value, S
         return Err("compact_context command_line must include checkpoint text".to_string());
     }
     if trimmed.starts_with('{') {
-        let value: Value = serde_json::from_str(trimmed)
-            .map_err(|err| format!("invalid compact_context command_line JSON: {err}"))?;
-        return Ok(value);
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+            return Ok(value);
+        }
+        let escaped = escape_control_chars_in_json_strings(trimmed);
+        if escaped != trimmed {
+            if let Ok(value) = serde_json::from_str::<Value>(&escaped) {
+                return Ok(value);
+            }
+        }
+        if let Some(summary) = compact_context_summary_from_jsonish_object(trimmed) {
+            return Ok(json!({ "summary": summary }));
+        }
     }
     Ok(json!({ "summary": trimmed }))
+}
+
+fn escape_control_chars_in_json_strings(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    for ch in input.chars() {
+        if in_string {
+            if escaped {
+                output.push(ch);
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => {
+                    output.push(ch);
+                    escaped = true;
+                }
+                '"' => {
+                    output.push(ch);
+                    in_string = false;
+                }
+                '\n' => output.push_str("\\n"),
+                '\r' => output.push_str("\\r"),
+                '\t' => output.push_str("\\t"),
+                ch if ch.is_control() => {
+                    output.push_str(&format!("\\u{:04x}", ch as u32));
+                }
+                _ => output.push(ch),
+            }
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+        }
+        output.push(ch);
+    }
+    output
+}
+
+fn compact_context_summary_from_jsonish_object(input: &str) -> Option<String> {
+    ["summary", "content", "text"].iter().find_map(|field| {
+        extract_jsonish_string_field(input, field)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn extract_jsonish_string_field(input: &str, field: &str) -> Option<String> {
+    let key = format!("\"{field}\"");
+    let key_start = input.find(&key)?;
+    let after_key = &input[key_start + key.len()..];
+    let colon_index = after_key.find(':')?;
+    let after_colon = after_key[colon_index + 1..].trim_start();
+    let value_start = after_colon.strip_prefix('"')?;
+    let close = find_jsonish_string_close(value_start)?;
+    let raw = &value_start[..close];
+    decode_jsonish_string(raw)
+}
+
+fn find_jsonish_string_close(input: &str) -> Option<usize> {
+    let mut escaped = false;
+    for (index, ch) in input.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '"' if looks_like_field_close(&input[index + ch.len_utf8()..]) => return Some(index),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn looks_like_field_close(suffix: &str) -> bool {
+    let suffix = suffix.trim_start();
+    suffix.starts_with('}') || suffix.starts_with(',')
+}
+
+fn decode_jsonish_string(raw: &str) -> Option<String> {
+    let escaped = escape_control_chars_in_json_strings(&format!("\"{raw}\""));
+    serde_json::from_str::<String>(&escaped).ok().or_else(|| {
+        Some(
+            raw.replace("\\\"", "\"")
+                .replace("\\n", "\n")
+                .replace("\\r", "\r")
+                .replace("\\t", "\t"),
+        )
+    })
 }
 
 fn normalize_json_command_arguments(

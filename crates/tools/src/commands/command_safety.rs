@@ -18,6 +18,7 @@
 //! and blocks local decoder-to-shell pipelines such as `base64 -d | sh`.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 /// Environment variable that turns the interceptor off entirely. Useful for
 /// trusted automation that opts out of the guardrail. Any of `0`/`false`/`off`
@@ -60,6 +61,10 @@ const SYSTEM_PATHS: &[&str] = &[
     "/home",
     "c:\\",
     "c:/",
+    "c:\\windows",
+    "c:/windows",
+    "c:\\windows\\system32",
+    "c:/windows/system32",
     "%systemroot%",
     "%windir%",
 ];
@@ -74,7 +79,42 @@ pub fn is_dangerous_command(command: &str) -> Option<String> {
     if command.is_empty() {
         return None;
     }
-    scan(command, 0)
+    scan(command, 0, None)
+}
+
+/// Context-aware variant used by shell execution. Destructive deletion commands
+/// are allowed when every resolved deletion target stays inside `workspace_root`.
+/// Disk formatting, disk/partition removal, system power controls, and deletion
+/// of system roots remain blocked regardless of workspace context.
+pub fn is_dangerous_command_with_workspace(
+    command: &str,
+    cwd: &Path,
+    workspace_root: &Path,
+) -> Option<String> {
+    if interceptor_disabled() {
+        return None;
+    }
+    let command = command.trim();
+    if command.is_empty() {
+        return None;
+    }
+    let context = SafetyContext::new(cwd, workspace_root);
+    scan(command, 0, Some(&context))
+}
+
+#[derive(Debug)]
+struct SafetyContext {
+    cwd: PathBuf,
+    workspace_root: PathBuf,
+}
+
+impl SafetyContext {
+    fn new(cwd: &Path, workspace_root: &Path) -> Self {
+        Self {
+            cwd: cwd.to_path_buf(),
+            workspace_root: workspace_root.to_path_buf(),
+        }
+    }
 }
 
 fn interceptor_disabled() -> bool {
@@ -92,7 +132,7 @@ fn interceptor_disabled() -> bool {
 /// Recursively scans a command string: every connector-delimited segment plus
 /// every command-substitution body is inspected. `depth` guards against
 /// pathological nesting.
-fn scan(command: &str, depth: usize) -> Option<String> {
+fn scan(command: &str, depth: usize, context: Option<&SafetyContext>) -> Option<String> {
     if depth > 8 {
         return None;
     }
@@ -114,21 +154,23 @@ fn scan(command: &str, depth: usize) -> Option<String> {
         if segment.is_empty() {
             continue;
         }
-        if let Some(reason) = check_variable_indirection(segment, &variables, depth) {
+        if let Some(reason) = check_variable_indirection(segment, &variables, depth, context) {
             return Some(reason);
         }
-        if let Some(reason) = check_nested_variable_indirection(segment, &variables, depth) {
+        if let Some(reason) = check_nested_variable_indirection(segment, &variables, depth, context)
+        {
             return Some(reason);
         }
-        if let Some(reason) = check_argument_variable_expansion(segment, &variables, depth) {
+        if let Some(reason) = check_argument_variable_expansion(segment, &variables, depth, context)
+        {
             return Some(reason);
         }
-        if let Some(reason) = check_segment(segment, depth) {
+        if let Some(reason) = check_segment(segment, depth, context) {
             return Some(reason);
         }
     }
     for body in extract_substitutions(command) {
-        if let Some(reason) = scan(&body, depth + 1) {
+        if let Some(reason) = scan(&body, depth + 1, context) {
             return Some(reason);
         }
     }
@@ -138,14 +180,14 @@ fn scan(command: &str, depth: usize) -> Option<String> {
     // through this same blacklist; only a confirmed-dangerous inner command is
     // blocked, so benign calls such as `subprocess.run(['ls'])` are untouched.
     for inner in extract_library_shell_commands(command) {
-        if let Some(reason) = scan(&inner, depth + 1) {
+        if let Some(reason) = scan(&inner, depth + 1, context) {
             return Some(format!("{reason} smuggled through a library exec call"));
         }
     }
     None
 }
 
-fn check_segment(segment: &str, depth: usize) -> Option<String> {
+fn check_segment(segment: &str, depth: usize, context: Option<&SafetyContext>) -> Option<String> {
     if let Some(device) = redirect_to_block_device(segment) {
         return Some(format!("redirect overwrites block device `{device}`"));
     }
@@ -158,7 +200,7 @@ fn check_segment(segment: &str, depth: usize) -> Option<String> {
     // `eval "<script>"` runs its argument as a command; inspect the argument.
     if base_name(&tokens[0]) == "eval" {
         let inner = tokens[1..].join(" ");
-        return scan(&inner, depth + 1);
+        return scan(&inner, depth + 1, context);
     }
 
     let tokens = strip_wrappers(tokens);
@@ -169,12 +211,12 @@ fn check_segment(segment: &str, depth: usize) -> Option<String> {
     // `bash`/`zsh`/`sh -c "<script>"` indirection.
     if NESTED_SHELLS.contains(&base.as_str()) {
         if let Some(script) = nested_shell_script(args) {
-            return scan(&script, depth + 1);
+            return scan(&script, depth + 1, context);
         }
     }
     if base == "cmd" {
         if let Some(script) = nested_cmd_script(args) {
-            return scan(&script, depth + 1);
+            return scan(&script, depth + 1, context);
         }
     }
     if POWERSHELL_SHELLS.contains(&base.as_str()) {
@@ -182,29 +224,39 @@ fn check_segment(segment: &str, depth: usize) -> Option<String> {
             return Some("encoded PowerShell command".to_string());
         }
         if let Some(script) = nested_powershell_script(args) {
-            return scan(&script, depth + 1);
+            return scan(&script, depth + 1, context);
         }
     }
 
-    check_unix_base(&base, args)
-        .or_else(|| check_windows_base(&base, args, segment))
-        .or_else(|| check_cmd_base(&base, args, segment))
+    check_unix_base(&base, args, context)
+        .or_else(|| check_cmd_base(&base, args, segment, context))
+        .or_else(|| check_windows_base(&base, args, segment, context))
 }
 
-fn check_unix_base(base: &str, args: &[String]) -> Option<String> {
+fn check_unix_base(base: &str, args: &[String], context: Option<&SafetyContext>) -> Option<String> {
     match base {
         "rm" => {
             let recursive = short_flag(args, 'r') || long_flag(args, "--recursive");
             let force = short_flag(args, 'f') || long_flag(args, "--force");
+            if targets_system_path(args) {
+                return Some("removal targeting a system path".to_string());
+            }
+            if deletion_targets_inside_workspace(posix_removal_targets(args), context) {
+                return None;
+            }
             if recursive || force {
                 return Some("recursive/forced file removal (rm)".to_string());
             }
-            if targets_system_path(args) {
-                return Some("removal targeting a system path".to_string());
+            if is_batch_removal(posix_removal_targets(args)) {
+                return Some("batch removal outside workspace (rm)".to_string());
             }
             None
         }
         "rmdir" if targets_system_path(args) => Some("rmdir targeting a system path".to_string()),
+        "rmdir" if deletion_targets_inside_workspace(posix_removal_targets(args), context) => None,
+        "rmdir" if is_batch_removal(posix_removal_targets(args)) => {
+            Some("batch rmdir outside workspace".to_string())
+        }
         "shutdown" | "reboot" | "halt" | "poweroff" => {
             Some(format!("system power control (`{base}`)"))
         }
@@ -235,15 +287,30 @@ fn check_unix_base(base: &str, args: &[String]) -> Option<String> {
     }
 }
 
-fn check_windows_base(base: &str, args: &[String], segment: &str) -> Option<String> {
+fn check_windows_base(
+    base: &str,
+    args: &[String],
+    segment: &str,
+    context: Option<&SafetyContext>,
+) -> Option<String> {
     let lower = segment.to_ascii_lowercase();
     match base {
         "remove-item" | "ri" | "rd" | "rmdir" | "del" | "erase" => {
+            if targets_system_path(args) {
+                return Some(format!("removal targeting a system path (`{base}`)"));
+            }
+            let targets = powershell_removal_targets(args);
+            if deletion_targets_inside_workspace(targets.clone(), context) {
+                return None;
+            }
             if args
                 .iter()
                 .any(|a| is_powershell_flag(a, "force") || is_powershell_flag(a, "recurse"))
             {
                 return Some(format!("forced/recursive removal (`{base}`)"));
+            }
+            if is_batch_removal(targets) {
+                return Some(format!("batch removal outside workspace (`{base}`)"));
             }
             None
         }
@@ -260,18 +327,40 @@ fn check_windows_base(base: &str, args: &[String], segment: &str) -> Option<Stri
                 None
             }
         }
-        "format-volume" | "clear-disk" | "remove-partition" | "initialize-disk" => {
+        "format-volume" | "clear-disk" | "remove-partition" | "initialize-disk"
+        | "remove-volume" | "diskpart" => {
             Some(format!("destructive disk cmdlet (`{base}`)"))
         }
         _ => None,
     }
 }
 
-fn check_cmd_base(base: &str, args: &[String], segment: &str) -> Option<String> {
+fn check_cmd_base(
+    base: &str,
+    args: &[String],
+    segment: &str,
+    context: Option<&SafetyContext>,
+) -> Option<String> {
     let lower = segment.to_ascii_lowercase();
     match base {
+        "del" | "erase" if targets_system_path(args) => {
+            Some("cmd delete targeting a system path".to_string())
+        }
+        "del" | "erase" if deletion_targets_inside_workspace(cmd_removal_targets(args), context) => {
+            None
+        }
         "del" | "erase" if args.iter().any(|a| a.eq_ignore_ascii_case("/f")) => {
             Some("forced delete (cmd del /f)".to_string())
+        }
+        "rd" | "rmdir"
+            if targets_system_path(args) =>
+        {
+            Some("cmd rmdir targeting a system path".to_string())
+        }
+        "rd" | "rmdir"
+            if deletion_targets_inside_workspace(cmd_removal_targets(args), context) =>
+        {
+            None
         }
         "rd" | "rmdir"
             if args
@@ -546,6 +635,7 @@ fn check_variable_indirection(
     segment: &str,
     variables: &HashMap<String, String>,
     depth: usize,
+    context: Option<&SafetyContext>,
 ) -> Option<String> {
     if variables.is_empty() {
         return None;
@@ -562,7 +652,7 @@ fn check_variable_indirection(
     let expanded =
         expand_shell_variable_arguments(&expanded_tokens, variables).unwrap_or(expanded_tokens);
     let expanded = expanded.join(" ");
-    scan(&expanded, depth + 1)
+    scan(&expanded, depth + 1, context)
         .map(|reason| format!("{reason} via shell variable `${variable}` indirection"))
 }
 
@@ -570,6 +660,7 @@ fn check_nested_variable_indirection(
     segment: &str,
     variables: &HashMap<String, String>,
     depth: usize,
+    context: Option<&SafetyContext>,
 ) -> Option<String> {
     if variables.is_empty() {
         return None;
@@ -578,13 +669,15 @@ fn check_nested_variable_indirection(
     let base = base_name(tokens.first()?);
     if base == "eval" {
         let inner = tokens[1..].join(" ");
-        return check_variable_indirection(&inner, variables, depth + 1)
-            .or_else(|| check_argument_variable_expansion(&inner, variables, depth + 1));
+        return check_variable_indirection(&inner, variables, depth + 1, context).or_else(|| {
+            check_argument_variable_expansion(&inner, variables, depth + 1, context)
+        });
     }
     if NESTED_SHELLS.contains(&base.as_str()) {
         let script = nested_shell_script(&tokens[1..])?;
-        return check_variable_indirection(&script, variables, depth + 1)
-            .or_else(|| check_argument_variable_expansion(&script, variables, depth + 1));
+        return check_variable_indirection(&script, variables, depth + 1, context).or_else(|| {
+            check_argument_variable_expansion(&script, variables, depth + 1, context)
+        });
     }
     None
 }
@@ -593,6 +686,7 @@ fn check_argument_variable_expansion(
     segment: &str,
     variables: &HashMap<String, String>,
     depth: usize,
+    context: Option<&SafetyContext>,
 ) -> Option<String> {
     if variables.is_empty() {
         return None;
@@ -600,7 +694,8 @@ fn check_argument_variable_expansion(
     let tokens = strip_wrappers(tokenize(segment)?);
     let expanded = expand_shell_variable_arguments(&tokens, variables)?;
     let expanded = expanded.join(" ");
-    scan(&expanded, depth + 1).map(|reason| format!("{reason} via shell variable argument"))
+    scan(&expanded, depth + 1, context)
+        .map(|reason| format!("{reason} via shell variable argument"))
 }
 
 fn expand_shell_variable_arguments(
@@ -681,14 +776,203 @@ fn is_powershell_flag(arg: &str, name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn posix_removal_targets(args: &[String]) -> Vec<String> {
+    let mut targets = Vec::new();
+    let mut after_double_dash = false;
+    for arg in args {
+        if after_double_dash {
+            targets.push(arg.clone());
+            continue;
+        }
+        if arg == "--" {
+            after_double_dash = true;
+            continue;
+        }
+        if arg.starts_with('-') {
+            continue;
+        }
+        targets.push(arg.clone());
+    }
+    targets
+}
+
+fn powershell_removal_targets(args: &[String]) -> Vec<String> {
+    let mut targets = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        if arg.starts_with('/') {
+            index += 1;
+            continue;
+        }
+        let lower = arg.trim_start_matches('-').to_ascii_lowercase();
+        if matches!(
+            lower.trim_end_matches(':'),
+            "force"
+                | "recurse"
+                | "confirm"
+                | "whatif"
+                | "verbose"
+                | "erroraction"
+                | "ea"
+        ) {
+            if matches!(lower.as_str(), "erroraction" | "ea") && index + 1 < args.len() {
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if matches!(lower.as_str(), "path" | "literalpath") && index + 1 < args.len() {
+            targets.extend(split_powershell_target_list(&args[index + 1]));
+            index += 2;
+            continue;
+        }
+        if arg.starts_with('-') {
+            if let Some((name, value)) = lower.split_once(':') {
+                if matches!(name, "path" | "literalpath") && !value.is_empty() {
+                    targets.extend(split_powershell_target_list(value));
+                }
+            }
+            index += 1;
+            continue;
+        }
+        if !arg.starts_with('-') {
+            targets.extend(split_powershell_target_list(arg));
+        }
+        index += 1;
+    }
+    targets
+}
+
+fn cmd_removal_targets(args: &[String]) -> Vec<String> {
+    args.iter()
+        .filter(|arg| !arg.starts_with('/'))
+        .flat_map(|arg| split_powershell_target_list(arg))
+        .collect()
+}
+
+fn split_powershell_target_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(|target| target.trim().trim_matches(['"', '\'']).to_string())
+        .filter(|target| !target.is_empty())
+        .collect()
+}
+
+fn deletion_targets_inside_workspace(
+    targets: Vec<String>,
+    context: Option<&SafetyContext>,
+) -> bool {
+    let Some(context) = context else {
+        return false;
+    };
+    !targets.is_empty()
+        && targets
+            .iter()
+            .all(|target| target_inside_workspace(target, context))
+}
+
+fn is_batch_removal(targets: Vec<String>) -> bool {
+    targets.len() > 1
+        || targets
+            .iter()
+            .any(|target| target.contains('*') || target.contains('?'))
+}
+
+fn target_inside_workspace(target: &str, context: &SafetyContext) -> bool {
+    let target = target.trim().trim_matches(['"', '\'']);
+    if target.is_empty()
+        || target.starts_with('$')
+        || target.starts_with('%')
+        || target.starts_with('~')
+    {
+        return false;
+    }
+    let workspace = normalize_compare_path(&context.workspace_root.display().to_string());
+    let cwd = normalize_compare_path(&context.cwd.display().to_string());
+    if workspace.is_empty() {
+        return false;
+    }
+    let resolved = if is_absolute_path_text(target) {
+        normalize_compare_path(target)
+    } else {
+        normalize_compare_path(&format!("{cwd}/{target}"))
+    };
+    path_inside_normalized(&resolved, &workspace)
+}
+
+fn is_absolute_path_text(path: &str) -> bool {
+    let path = path.replace('\\', "/");
+    path.starts_with('/')
+        || path.starts_with("//")
+        || path
+            .as_bytes()
+            .get(1)
+            .is_some_and(|byte| *byte == b':')
+}
+
+fn path_inside_normalized(path: &str, root: &str) -> bool {
+    let path = path.trim_end_matches('/');
+    let root = root.trim_end_matches('/');
+    path.eq_ignore_ascii_case(root)
+        || path
+            .to_ascii_lowercase()
+            .starts_with(&format!("{}/", root.to_ascii_lowercase()))
+}
+
+fn normalize_compare_path(path: &str) -> String {
+    let mut text = path.replace('\\', "/");
+    if text.as_bytes().get(1).is_some_and(|byte| *byte == b':')
+        && !text.as_bytes().get(2).is_some_and(|byte| *byte == b'/')
+    {
+        text.insert(2, '/');
+    }
+    if let Some(stripped) = text.strip_prefix("//?/") {
+        text = stripped.to_string();
+    }
+    let mut prefix = String::new();
+    let mut rest = text.as_str();
+    if rest.as_bytes().get(1).is_some_and(|byte| *byte == b':') {
+        prefix = rest[..2].to_ascii_lowercase();
+        rest = &rest[2..];
+    } else if rest.starts_with('/') {
+        prefix = "/".to_string();
+    }
+    let mut parts = Vec::new();
+    for part in rest.split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            parts.pop();
+        } else {
+            parts.push(part);
+        }
+    }
+    if prefix == "/" {
+        format!("/{}", parts.join("/")).trim_end_matches('/').to_string()
+    } else if prefix.is_empty() {
+        parts.join("/")
+    } else if parts.is_empty() {
+        prefix
+    } else {
+        format!("{prefix}/{}", parts.join("/"))
+    }
+}
+
 fn targets_system_path(args: &[String]) -> bool {
     args.iter().any(|arg| {
         if arg.starts_with('-') {
             return false;
         }
-        let normalized = arg.trim_matches(['"', '\'']).trim_end_matches('/');
+        let normalized = arg
+            .trim_matches(['"', '\''])
+            .replace('\\', "/")
+            .trim_end_matches('/')
+            .to_ascii_lowercase();
         let normalized = if normalized.is_empty() {
-            "/"
+            "/".to_string()
         } else {
             normalized
         };
@@ -1016,7 +1300,8 @@ fn collect_string_literals(arg: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_dangerous_command;
+    use super::{is_dangerous_command, is_dangerous_command_with_workspace};
+    use std::path::Path;
 
     fn blocked(command: &str) {
         assert!(
@@ -1030,6 +1315,26 @@ mod tests {
             is_dangerous_command(command).is_none(),
             "expected `{command}` to be allowed, got {:?}",
             is_dangerous_command(command)
+        );
+    }
+
+    fn blocked_with_workspace(command: &str, cwd: &str, workspace: &str) {
+        assert!(
+            is_dangerous_command_with_workspace(command, Path::new(cwd), Path::new(workspace))
+                .is_some(),
+            "expected `{command}` to be blocked with workspace `{workspace}` and cwd `{cwd}`"
+        );
+    }
+
+    fn allowed_with_workspace(command: &str, cwd: &str, workspace: &str) {
+        let reason = is_dangerous_command_with_workspace(
+            command,
+            Path::new(cwd),
+            Path::new(workspace),
+        );
+        assert!(
+            reason.is_none(),
+            "expected `{command}` to be allowed with workspace `{workspace}` and cwd `{cwd}`, got {reason:?}"
         );
     }
 
@@ -1111,6 +1416,86 @@ mod tests {
         );
         blocked("del /f important.txt");
         blocked("rd /s /q build");
+    }
+
+    #[test]
+    fn allows_delete_commands_when_targets_stay_inside_workspace() {
+        allowed_with_workspace("rm -rf cache", "/workspace/project", "/workspace/project");
+        allowed_with_workspace("rm -f cache/a.txt cache/b.txt", "/workspace/project", "/workspace/project");
+        allowed_with_workspace("rmdir cache empty-dir", "/workspace/project", "/workspace/project");
+        allowed_with_workspace(
+            "Remove-Item -Force cache\\a.txt,cache\\b.txt -ErrorAction SilentlyContinue",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        );
+        allowed_with_workspace(
+            "Remove-Item -Recurse -Force 'C:\\workspace\\project\\cache'",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        );
+        allowed_with_workspace(
+            "rd /s /q cache",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        );
+        allowed_with_workspace(
+            "del /f cache\\scratch.txt",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        );
+    }
+
+    #[test]
+    fn blocks_recursive_and_batch_delete_commands_outside_workspace() {
+        blocked_with_workspace("rm -rf ../outside", "/workspace/project", "/workspace/project");
+        blocked_with_workspace(
+            "rm -f /tmp/outside-a /tmp/outside-b",
+            "/workspace/project",
+            "/workspace/project",
+        );
+        blocked_with_workspace(
+            "Remove-Item -Force 'C:\\outside\\a.txt','C:\\outside\\b.txt'",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        );
+        blocked_with_workspace(
+            "Remove-Item -Recurse -Force 'C:\\outside\\cache'",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        );
+        blocked_with_workspace(
+            "rd /s /q C:\\outside\\cache",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        );
+        blocked_with_workspace(
+            "del /f C:\\outside\\scratch.txt",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        );
+    }
+
+    #[test]
+    fn blocks_system_disk_and_power_operations_even_inside_workspace() {
+        blocked_with_workspace("rm -rf /usr", "/workspace/project", "/workspace/project");
+        blocked_with_workspace(
+            "Remove-Item -Recurse -Force C:\\Windows\\System32",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        );
+        blocked_with_workspace("format C:", "C:\\workspace\\project", "C:\\workspace\\project");
+        blocked_with_workspace(
+            "Format-Volume -DriveLetter C",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        );
+        blocked_with_workspace(
+            "Clear-Disk -Number 1",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        );
+        blocked_with_workspace("shutdown -h now", "/workspace/project", "/workspace/project");
+        blocked_with_workspace("dd if=/dev/zero of=/dev/sda", "/workspace/project", "/workspace/project");
     }
 
     #[test]

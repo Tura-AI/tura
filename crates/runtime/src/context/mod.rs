@@ -1,9 +1,9 @@
 mod build;
+mod char_budget;
 mod command_run_streams;
 mod compaction;
 mod media;
 mod text_truncate;
-mod token_budget;
 mod tool_results;
 mod workspace;
 
