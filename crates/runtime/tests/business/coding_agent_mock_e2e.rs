@@ -44,7 +44,7 @@ fn coding_agent_can_call_command_run_tool_e2e() {
             user_input: "Run pwd with command_run, then patch src/lib.rs with command_run apply_patch, verify it with shell_command, and finish with normal assistant text."
                 .to_string(),
             file_input: vec![],
-            agent: Some("fast".to_string()),
+            agent: Some("direct".to_string()),
             runtime_context: None,
             planning_mode_override: None,
         },
@@ -53,7 +53,7 @@ fn coding_agent_can_call_command_run_tool_e2e() {
     .expect("coding agent should complete the command_run e2e flow");
 
     assert_eq!(result.agents.len(), 1);
-    assert_eq!(result.agents[0].agent_name, "fast");
+    assert_eq!(result.agents[0].agent_name, "direct");
     assert_eq!(
         result.session.state,
         SessionState::Completed,
@@ -153,7 +153,7 @@ fn coding_agent_executes_command_run_command_before_stream_finishes() {
             user_input: "Use command_run in this code file workspace to create streamed-first.txt, then create streamed-second.txt."
                 .to_string(),
             file_input: vec![],
-            agent: Some("fast".to_string()),
+            agent: Some("direct".to_string()),
             runtime_context: None,
             planning_mode_override: None,
         },
@@ -214,7 +214,7 @@ fn non_planning_agent_visible_reply_with_task_status_doing_completes_without_fol
         SessionInput {
             user_input: "Answer directly, mark the task status, and stop.".to_string(),
             file_input: vec![],
-            agent: Some("fast".to_string()),
+            agent: Some("direct".to_string()),
             runtime_context: None,
             planning_mode_override: None,
         },

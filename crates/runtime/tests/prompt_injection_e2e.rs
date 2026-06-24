@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use runtime::agent_router::activate_agents_by_session_type;
 use runtime::manas::load_agent_system_prompt_messages;
-use runtime::session::activate_session_with_topic;
+use runtime::session::activate_session_with_directory;
 use runtime::state_machine::session_management::SessionInput;
 
 #[test]
@@ -10,42 +10,41 @@ fn coding_agents_inject_agent_prompt_without_persona_binding() {
     let project_root = find_project_root();
     for (agent_name, agent_prompt_path) in [
         (
-            "thinking",
+            "balanced",
             project_root
                 .join("agents")
                 .join("src")
-                .join("thinking")
+                .join("balanced")
                 .join("prompt.md"),
         ),
         (
-            "thinking-planning",
+            "thoughtful",
             project_root
                 .join("agents")
                 .join("src")
-                .join("thinking-planning")
+                .join("thoughtful")
                 .join("prompt.md"),
         ),
         (
-            "fast",
+            "direct",
             project_root
                 .join("agents")
                 .join("src")
-                .join("fast")
+                .join("direct")
                 .join("prompt.md"),
         ),
         (
-            "fast-text-only",
+            "direct-text-only",
             project_root
                 .join("agents")
                 .join("src")
-                .join("fast-text-only")
+                .join("direct-text-only")
                 .join("prompt.md"),
         ),
     ] {
         let agent_prompt = read_prompt(&agent_prompt_path);
-        let session = activate_session_with_topic(
+        let session = activate_session_with_directory(
             project_root.clone(),
-            "coding",
             SessionInput {
                 user_input: "check prompt injection".to_string(),
                 file_input: vec![],
@@ -86,7 +85,7 @@ fn find_project_root() -> PathBuf {
             candidate
                 .join("agents")
                 .join("src")
-                .join("thinking-planning")
+                .join("thoughtful")
                 .join("agent_config.json")
                 .exists()
         })

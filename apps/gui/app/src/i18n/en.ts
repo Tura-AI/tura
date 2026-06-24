@@ -5,6 +5,11 @@ export const en = {
   acceleration: "Acceleration",
   added: "Added",
   agent: "Agent",
+  agentDescriptionBalanced:
+    "Balances self-reflection with intuitive response, using verification and reflective checks.",
+  agentDescriptionDirect:
+    "Responds quickly and directly, follows intuition into action, and keeps verification light.",
+  agentDescriptionThoughtful: "Reflects on each step and stays steady across long-running tasks.",
   agentId: "Agent ID",
   agentName: "Agent name",
   agentSettings: "Agent config",

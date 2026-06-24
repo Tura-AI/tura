@@ -987,7 +987,7 @@ fn validate_task_status_compact_context_position(commands: &[CommandItem]) -> Re
     };
     if commands[compact_index + 1..]
         .iter()
-        .any(|command| command_has_compact_context(command))
+        .any(command_has_compact_context)
     {
         return Err("only one task_status compact_context command is allowed".to_string());
     }

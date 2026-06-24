@@ -21,7 +21,7 @@ pub struct CodingAgent;
 
 impl CodingAgent {
     pub fn name() -> String {
-        "thinking-planning".to_string()
+        "thoughtful".to_string()
     }
 
     pub fn provider() -> CodingAgentProviderConfig {
@@ -41,15 +41,12 @@ impl CodingAgent {
         vec![
             "apply_patch".to_string(),
             "shells".to_string(),
-            "generate_media".to_string(),
-            "read_media".to_string(),
             "web_discover".to_string(),
             "task_status".to_string(),
-            "planning".to_string(),
         ]
     }
 
     pub fn prompts() -> Vec<String> {
-        vec!["thinking-planning".to_string()]
+        vec!["thoughtful".to_string()]
     }
 }

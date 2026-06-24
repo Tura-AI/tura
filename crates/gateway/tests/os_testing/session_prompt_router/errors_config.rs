@@ -209,6 +209,7 @@ async fn gateway_prompt_business_flow_inherits_agent_runtime_settings_for_router
         false,
         false,
     );
+    let _ = std::fs::remove_file(gateway::session::config::config_path(&workspace));
     let response = prompt_async(
         Path(session.id.clone()),
         Json(json!({

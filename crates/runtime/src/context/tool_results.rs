@@ -6,7 +6,7 @@ use super::command_run_streams::{command_run_display_command, command_run_llm_st
 use super::text_truncate::command_run_truncate_text;
 use crate::state_machine::session_management::SessionManagement;
 
-use super::media::command_run_media_content_items_for_context;
+use super::media::{command_run_media_content_items_for_context, strip_read_media_payload_data};
 
 pub(super) fn strip_context_reporting_fields(value: serde_json::Value) -> serde_json::Value {
     match value {
@@ -219,12 +219,13 @@ struct CommandRunContextItem {
 }
 
 pub(super) fn command_run_current_style_output_string(value: &serde_json::Value) -> Option<String> {
-    let output = strip_context_reporting_fields(
+    let mut output = strip_context_reporting_fields(
         value
             .get("output")
             .cloned()
             .unwrap_or(serde_json::Value::Null),
     );
+    strip_read_media_payload_data(&mut output);
     let input = strip_context_reporting_fields(
         value
             .get("input")
@@ -388,12 +389,13 @@ fn context_output_for_tool_result(value: &serde_json::Value) -> serde_json::Valu
 }
 
 pub(super) fn command_run_summary_for_context(value: &serde_json::Value) -> serde_json::Value {
-    let output = strip_context_reporting_fields(
+    let mut output = strip_context_reporting_fields(
         value
             .get("output")
             .cloned()
             .unwrap_or(serde_json::Value::Null),
     );
+    strip_read_media_payload_data(&mut output);
     let input = strip_context_reporting_fields(
         value
             .get("input")

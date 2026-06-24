@@ -85,7 +85,7 @@ fn claude_code_gateway_session_tool_calling_mock_e2e() {
     debug_e2e("runtime session returned");
 
     assert_eq!(result.agents.len(), 1);
-    assert_eq!(result.agents[0].agent_name, "fast");
+    assert_eq!(result.agents[0].agent_name, "balanced");
     assert_eq!(
         result.session.state,
         SessionState::Completed,

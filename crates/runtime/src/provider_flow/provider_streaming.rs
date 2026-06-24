@@ -14,8 +14,7 @@ use crate::provider_flow::command_run_streaming::{
 use crate::provider_flow::errors::{finish_runtime_failure, runtime_timeout};
 use crate::provider_flow::provider_response::apply_provider_response_with_options;
 use crate::provider_flow::streamed_command_run::{
-    command_run_stream_events_from_provider_content, should_replay_final_response_command_run,
-    streamed_command_run_call_id,
+    command_run_stream_events_from_provider_content, streamed_command_run_call_id,
 };
 use crate::provider_flow::usage::usage_report_from_metrics;
 use crate::state_machine::runtime_management::{RuntimeCallResultStatus, RuntimeManagement};
@@ -204,10 +203,10 @@ pub(crate) async fn call_runtime_streaming(
         }
     };
     let finished_at = Utc::now();
-    if should_replay_final_response_command_run(command_state.seen()) {
-        for event in command_run_stream_events_from_provider_content(&response.content) {
-            let _ = final_response_stream_tx.send(event);
-        }
+    let tool_dispatch_content =
+        response_content_for_tool_dispatch(&response.content, &response.raw);
+    for event in command_run_stream_events_from_provider_content(&tool_dispatch_content) {
+        let _ = final_response_stream_tx.send(event);
     }
     drop(final_response_stream_tx);
     let joined_command_results = command_task.join().unwrap_or_default();
@@ -221,7 +220,7 @@ pub(crate) async fn call_runtime_streaming(
     let mut runtime_output = response.content.clone();
     if !streamed_command_results.is_empty() {
         runtime_output = serde_json::json!({
-            "provider_content": response.content,
+            "provider_content": tool_dispatch_content,
             "streamed_command_run_result": {
                 "commands": snapshot.commands,
                 "command_events": snapshot.events,
@@ -230,7 +229,7 @@ pub(crate) async fn call_runtime_streaming(
         });
     }
     runtime.set_output(runtime_output);
-    apply_provider_response_with_options(runtime, &response.content, finished_at, false);
+    apply_provider_response_with_options(runtime, &tool_dispatch_content, finished_at, false);
 
     if let Some(stream) = response.content.get("stream").and_then(|s| s.as_array()) {
         for chunk in stream {
@@ -256,6 +255,20 @@ pub(crate) async fn call_runtime_streaming(
     Ok(())
 }
 
+fn response_content_for_tool_dispatch(content: &Value, raw: &Value) -> Value {
+    let normalized_content = tura_llm_rust::normalize_response_content(content);
+    if !tura_llm_rust::extract_tool_calls(&normalized_content).is_empty() {
+        return content.clone();
+    }
+
+    let normalized_raw = tura_llm_rust::normalize_response_content(raw);
+    if !tura_llm_rust::extract_tool_calls(&normalized_raw).is_empty() {
+        return normalized_raw;
+    }
+
+    content.clone()
+}
+
 fn first_stream_output_or(
     first_stream_output_at: &Arc<Mutex<Option<DateTime<Utc>>>>,
     fallback: DateTime<Utc>,
@@ -264,4 +277,67 @@ fn first_stream_output_or(
         .lock()
         .unwrap_or_else(|err| err.into_inner())
         .unwrap_or(fallback)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::response_content_for_tool_dispatch;
+    use serde_json::json;
+
+    #[test]
+    fn tool_dispatch_content_recovers_command_run_from_raw_response_events() {
+        let content = json!("I will inspect before editing.");
+        let raw = json!({
+            "object": "response",
+            "output": [],
+            "output_text": "I will inspect before editing.",
+            "events": [
+                {
+                    "type": "response.output_item.done",
+                    "item": {
+                        "type": "message",
+                        "id": "msg_1",
+                        "content": [{
+                            "type": "output_text",
+                            "text": "I will inspect before editing."
+                        }]
+                    }
+                },
+                {
+                    "type": "response.output_item.added",
+                    "item": {
+                        "type": "function_call",
+                        "id": "fc_1",
+                        "call_id": "call_1",
+                        "name": "command_run",
+                        "arguments": ""
+                    }
+                },
+                {
+                    "type": "response.function_call_arguments.done",
+                    "item_id": "fc_1",
+                    "arguments": "{\"commands\":[{\"command_type\":\"shell_command\",\"command_line\":\"pwd\"}]}"
+                },
+                {
+                    "type": "response.output_item.done",
+                    "item": {
+                        "type": "function_call",
+                        "id": "fc_1",
+                        "call_id": "call_1",
+                        "name": "command_run",
+                        "status": "completed",
+                        "arguments": "{\"commands\":[{\"command_type\":\"shell_command\",\"command_line\":\"pwd\"}]}"
+                    }
+                }
+            ]
+        });
+
+        let dispatch_content = response_content_for_tool_dispatch(&content, &raw);
+        let commands = dispatch_content["tool_calls"][0]["function"]["arguments"]["commands"]
+            .as_array()
+            .expect("command_run commands");
+
+        assert_eq!(dispatch_content["text"], "I will inspect before editing.");
+        assert_eq!(commands[0]["command_line"], "pwd");
+    }
 }

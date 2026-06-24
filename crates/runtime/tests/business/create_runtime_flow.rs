@@ -9,7 +9,8 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tura_llm_rust::{
-    ModelCatalog, ProviderConfig as LlmProviderConfig, ProviderEnumCatalog, RouteConfig, Settings,
+    CatalogModelConfig, ModelCatalog, ProviderCatalogConfig, ProviderConfig as LlmProviderConfig,
+    ProviderEnumCatalog, RouteConfig, Settings,
 };
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -136,6 +137,96 @@ async fn create_runtime_business_flow_ignores_unresolvable_model_override_and_us
 }
 
 #[tokio::test]
+async fn runtime_latency_uses_selected_model_tier_not_agent_default_tier() {
+    let _guard = ENV_LOCK.lock().await;
+    let _env = EnvGuard::clear(&[
+        "TURA_SESSION_MODEL_OVERRIDE",
+        "TURA_PROVIDER_TOTAL_TIMEOUT_MS",
+    ]);
+    let settings = settings_with_routes_and_catalog(
+        vec![(
+            "fast",
+            RouteConfig {
+                default_temperature: 0.2,
+                providers: vec![LlmProviderConfig {
+                    provider: "codex".to_string(),
+                    base_url: "https://codex.test/v1".to_string(),
+                    model: "gpt-5.3-codex-spark".to_string(),
+                    temperature: 0.2,
+                }],
+            },
+        )],
+        HashMap::from([("codex".to_string(), "https://codex.test/v1".to_string())]),
+        ModelCatalog {
+            tiers: vec!["thinking".to_string(), "fast".to_string()],
+            providers: HashMap::from([(
+                "codex".to_string(),
+                ProviderCatalogConfig {
+                    models: HashMap::from([
+                        (
+                            "thinking".to_string(),
+                            vec![CatalogModelConfig::Id("gpt-5.5".to_string())],
+                        ),
+                        (
+                            "fast".to_string(),
+                            vec![CatalogModelConfig::Id("gpt-5.3-codex-spark".to_string())],
+                        ),
+                    ]),
+                    ..Default::default()
+                },
+            )]),
+        },
+    );
+    let config = provider_config_with_current_model("fast", Some("fast"), Some("codex/gpt-5.5"));
+
+    let provider = runtime_provider_config_from_tura(&config, &settings, false)
+        .unwrap_or_else(|error| panic!("provider config should resolve selected model: {error}"));
+
+    assert_eq!(provider.llm_provider_name, "codex");
+    assert_eq!(provider.model_name, "gpt-5.5");
+    assert_eq!(
+        provider.base.time_out_ms, 1_200_000,
+        "gpt-5.5 belongs to thinking, so latency must be x-high even through fast agent"
+    );
+}
+
+#[tokio::test]
+async fn runtime_latency_unknown_selected_model_falls_back_to_high() {
+    let _guard = ENV_LOCK.lock().await;
+    let _env = EnvGuard::clear(&[
+        "TURA_SESSION_MODEL_OVERRIDE",
+        "TURA_PROVIDER_TOTAL_TIMEOUT_MS",
+    ]);
+    let settings = settings_with_routes_and_catalog(
+        vec![(
+            "fast",
+            RouteConfig {
+                default_temperature: 0.2,
+                providers: vec![LlmProviderConfig {
+                    provider: "codex".to_string(),
+                    base_url: "https://codex.test/v1".to_string(),
+                    model: "gpt-5.3-codex-spark".to_string(),
+                    temperature: 0.2,
+                }],
+            },
+        )],
+        HashMap::from([("codex".to_string(), "https://codex.test/v1".to_string())]),
+        ModelCatalog::default(),
+    );
+    let config =
+        provider_config_with_current_model("fast", Some("fast"), Some("codex/unknown-model"));
+
+    let provider = runtime_provider_config_from_tura(&config, &settings, false)
+        .unwrap_or_else(|error| panic!("provider config should resolve selected model: {error}"));
+
+    assert_eq!(provider.model_name, "unknown-model");
+    assert_eq!(
+        provider.base.time_out_ms, 960_000,
+        "unknown model tier must fall back to high latency, not agent fast"
+    );
+}
+
+#[tokio::test]
 async fn create_runtime_business_flow_reports_route_errors_without_queue_side_effects() {
     let _guard = ENV_LOCK.lock().await;
     let _env = EnvGuard::clear(&[
@@ -216,6 +307,23 @@ fn provider_config(route: &str) -> ProviderConfig {
     }
 }
 
+fn provider_config_with_current_model(
+    route: &str,
+    default_model_tier: Option<&str>,
+    current_model: Option<&str>,
+) -> ProviderConfig {
+    ProviderConfig {
+        tura_llm_name: route.to_string(),
+        default_model_tier: default_model_tier.map(ToString::to_string),
+        current_model: current_model.map(ToString::to_string),
+        stream: true,
+        temperature: 0.0,
+        max_tokens: 512,
+        tool_choice: ToolChoice::Auto,
+        time_out_ms: 9_999,
+    }
+}
+
 fn settings_with_routes(
     routes: Vec<(&str, RouteConfig)>,
     provider_base_url: HashMap<String, String>,
@@ -227,6 +335,22 @@ fn settings_with_routes(
             .map(|(name, route)| (name.to_string(), route))
             .collect(),
         model_catalog: ModelCatalog::default(),
+        provider_enums: ProviderEnumCatalog::default(),
+    }
+}
+
+fn settings_with_routes_and_catalog(
+    routes: Vec<(&str, RouteConfig)>,
+    provider_base_url: HashMap<String, String>,
+    model_catalog: ModelCatalog,
+) -> Settings {
+    Settings {
+        provider_base_url,
+        routes: routes
+            .into_iter()
+            .map(|(name, route)| (name.to_string(), route))
+            .collect(),
+        model_catalog,
         provider_enums: ProviderEnumCatalog::default(),
     }
 }

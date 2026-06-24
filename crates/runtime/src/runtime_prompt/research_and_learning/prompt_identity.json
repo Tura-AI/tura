@@ -1,0 +1,7 @@
+{
+  "id": "research_and_learning",
+  "display_name": "Research and Learning Operation Manual",
+  "description": "Use for research synthesis, source-grounded explanations, study plans, concept teaching, literature or document review, and learning-oriented analysis.",
+  "father_ids": [],
+  "capabilities": ["web_discover"]
+}

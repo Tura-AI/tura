@@ -316,21 +316,14 @@ fn display_name(agent_id: &str) -> String {
 }
 
 fn default_capabilities() -> Vec<serde_json::Value> {
-    [
-        "apply_patch",
-        "shells",
-        "generate_media",
-        "read_media",
-        "web_discover",
-        "task_status",
-    ]
-    .into_iter()
-    .map(|capability_name| {
-        serde_json::json!({
-            "capability_name": capability_name
+    ["apply_patch", "shells", "web_discover", "task_status"]
+        .into_iter()
+        .map(|capability_name| {
+            serde_json::json!({
+                "capability_name": capability_name
+            })
         })
-    })
-    .collect()
+        .collect()
 }
 
 fn normalize_agent_id(agent_id: &str) -> String {

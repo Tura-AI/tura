@@ -5,6 +5,8 @@ import http from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
+
+import { cleanupRepoTuraProcesses } from "./cleanup_repo_tura_processes.mjs";
 import {
   assertNoMarkerBlink,
   assertSessionPickerCleared,
@@ -764,6 +766,7 @@ async function main() {
     await browser?.close().catch(() => undefined);
     web.child.kill();
     gateway.close();
+    cleanupRepoTuraProcesses();
   }
 }
 

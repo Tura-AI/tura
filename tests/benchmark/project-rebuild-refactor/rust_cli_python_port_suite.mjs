@@ -16,7 +16,11 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(scriptDir, "..", "..", "..")
 const homeDir = process.env.USERPROFILE || process.env.HOME || ""
 const runId = process.env.COMMAND_RUN_AGENT_RUN_ID || `source-port-suite-${Date.now()}`
-const runPaths = businessRunPaths("project-rebuild-source-port", runId)
+const baseRunPaths = businessRunPaths("project-rebuild-source-port", runId)
+const runPaths = businessRunPaths("project-rebuild-source-port", runId, {
+  targetRoot: baseRunPaths.target_root,
+  runRoot: path.join(baseRunPaths.target_root, baseRunPaths.test_name, shortRunDirName(runId)),
+})
 const suiteRoot =
   process.env.SOURCE_PORT_SUITE_ROOT ||
   process.env.COMMAND_RUN_AGENT_SOURCE_PORT_ROOT ||
@@ -27,8 +31,9 @@ const model = process.env.COMMAND_RUN_AGENT_CODEX_MODEL || "gpt-5.5"
 const turaModel = process.env.COMMAND_RUN_AGENT_TURA_MODEL || (model.includes("/") ? model : `openai/${model}`)
 const reasoning = process.env.COMMAND_RUN_AGENT_REASONING_EFFORT || "medium"
 const serviceTier = process.env.COMMAND_RUN_AGENT_SERVICE_TIER || "priority"
-const timeoutMs = Number(process.env.COMMAND_RUN_AGENT_TIMEOUT_MS || 7 * 60_000)
+const timeoutMs = Number(process.env.COMMAND_RUN_AGENT_TIMEOUT_MS || 60 * 60_000)
 const agents = parseAgents(process.env.COMMAND_RUN_AGENT_AGENTS || "tura-planning-shll")
+const printProviderLog = truthy(process.env.COMMAND_RUN_AGENT_PRINT_PROVIDER_LOG || "0")
 const selectedTasksRaw = process.env.SOURCE_PORT_TASKS || process.env.COMMAND_RUN_AGENT_SOURCE_PORT_TASKS || "all"
 const prepOnly = truthy(process.env.COMMAND_RUN_AGENT_PREP_ONLY || "0")
 const selfTest = truthy(process.env.SOURCE_PORT_SELF_TEST || process.env.COMMAND_RUN_AGENT_SOURCE_PORT_SELF_TEST || "0")
@@ -37,6 +42,7 @@ const runEval = truthy(process.env.SOURCE_PORT_RUN_EVAL || process.env.COMMAND_R
 const complexTodoHint = defaultTruthy(process.env.SOURCE_PORT_COMPLEX_TODO_HINT || process.env.COMMAND_RUN_AGENT_SOURCE_PORT_COMPLEX_TODO_HINT)
 const planningOverride = parsePlanningOverride(process.env.COMMAND_RUN_AGENT_TURA_PLANNING || "auto")
 const codexGoalsEnabled = truthy(process.env.COMMAND_RUN_AGENT_CODEX_GOALS || "0")
+const turaGoalEnabled = truthy(process.env.COMMAND_RUN_AGENT_TURA_GOAL || "0")
 const turaExplicitSessionId = truthy(process.env.COMMAND_RUN_AGENT_TURA_SESSION_ID || "0")
 const turaExe =
   process.env.COMMAND_RUN_AGENT_TURA_EXE ||
@@ -45,6 +51,10 @@ const codexMainExe = findCodexMainExe()
 const codexDocumentsExe = findCodexDocumentsExe()
 const claudeExe = findClaudeExe()
 const piExe = findPiExe()
+
+function shortRunDirName(value) {
+  return `r-${crypto.createHash("sha1").update(String(value)).digest("hex").slice(0, 10)}`
+}
 
 const TASKS = {
   "zip-password-finder": {
@@ -67,7 +77,7 @@ const TASKS = {
     commands: ["single command CLI", "argument validation", "dictionary/bruteforce ZIP password search"],
   },
   xsv: {
-    id: "burntsushi__xsv.source-port-python-subset",
+    id: "burntsushi__xsv.source-port-python-complete",
     label: "xsv",
     repo: "https://github.com/BurntSushi/xsv.git",
     owner: "BurntSushi",
@@ -84,7 +94,7 @@ const TASKS = {
     commands: ["headers", "count", "select", "slice", "search", "sort", "table", "fmt", "stats", "frequency"],
   },
   eza: {
-    id: "eza-community__eza.source-port-python-subset",
+    id: "eza-community__eza.source-port-python-complete",
     label: "eza",
     repo: "https://github.com/eza-community/eza.git",
     owner: "eza-community",
@@ -102,7 +112,7 @@ const TASKS = {
     commands: ["directory listing", "long view", "tree", "sort", "hidden", "icons/colors disabled"],
   },
   nushell: {
-    id: "nushell__nushell.source-port-python-subset",
+    id: "nushell__nushell.source-port-python-complete",
     label: "nushell",
     repo: "https://github.com/nushell/nushell.git",
     owner: "nushell",
@@ -219,6 +229,55 @@ function writeJson(file, value) {
 function copyDir(src, dest) {
   mkdirp(dest)
   fs.cpSync(src, dest, { recursive: true, force: true, dereference: false })
+}
+
+const MAX_WINDOWS_GIT_CONFIG_PATH_CHARS = 256
+
+function validateWorkspaceGitPath(workspace) {
+  if (process.platform !== "win32") return
+  const gitConfigPath = path.join(workspace, ".git", "config")
+  if (gitConfigPath.length <= MAX_WINDOWS_GIT_CONFIG_PATH_CHARS) return
+  throw new Error(
+    `workspace Git metadata path is too long for Windows (${gitConfigPath.length} > ${MAX_WINDOWS_GIT_CONFIG_PATH_CHARS} chars): ${gitConfigPath}. Use a shorter COMMAND_RUN_AGENT_RUN_ID or run root.`
+  )
+}
+
+function taskRunDirName(task) {
+  const raw = String(task.label || task.id || "task").trim()
+  const safe = raw.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")
+  return (safe || "task").slice(0, 48)
+}
+
+function formatGitSetupFailure(step, result) {
+  return [
+    `${step} failed with ${result.status}`,
+    `STDOUT:\n${result.stdout}`,
+    `STDERR:\n${result.stderr}`,
+    `ERROR:\n${result.error || ""}`,
+  ].join("\n")
+}
+
+function setupWorkspaceGit(workspace, addArgs, commitMessage) {
+  const failures = []
+  const steps = [
+    ["git init", ["init"]],
+    ["git config user.email", ["config", "user.email", "benchmark@example.invalid"]],
+    ["git config user.name", ["config", "user.name", "Benchmark"]],
+    [`git add ${addArgs.join(" ")}`, ["add", ...addArgs]],
+    ["git commit", ["commit", "-m", commitMessage]],
+  ]
+  for (const [step, args] of steps) {
+    const result = run("git", args, { cwd: workspace, timeoutMs: 60_000 })
+    if (result.status !== 0) {
+      failures.push(formatGitSetupFailure(step, result))
+      break
+    }
+  }
+  if (failures.length === 0) return { ok: true, warning_path: null, failures: [] }
+  const warningPath = path.join(workspace, ".tura-benchmark-git-setup-warning.log")
+  writeFile(warningPath, failures.join("\n\n"))
+  console.warn(`[source-port-suite] workspace git setup failed; continuing without git checkpoint: ${warningPath}`)
+  return { ok: false, warning_path: warningPath, failures }
 }
 
 function run(command, args, options = {}) {
@@ -586,6 +645,7 @@ Equivalence requirements:
 - If the official binary prints nothing, your program must print nothing. If the official binary writes to stderr, your program must write to stderr, not stdout.
 - The evaluator will generate expected results by invoking the official binary at runtime and then invoke your ./executable with the same inputs. It will score semantic behavior rather than require byte-for-byte formatting for display-oriented commands.
 - Passing local hand-written examples is not enough. You must probe the official binary on representative business workflows and reconcile functional differences before marking the task done.
+- A command metadata/help/inventory lookup does not count as testing that command's behavior. For each discovered command, the oracle checklist must include at least one executable invocation that exercises that command's functional semantics, with reference-vs-port status/stdout/stderr comparison. Metadata/help cases may be additional evidence only, never a replacement for functional behavior cases.
 ${todoHint}
 
 Required workflow:
@@ -616,18 +676,28 @@ REFERENCE_BINARY = Path(os.environ["SOURCE_PORT_REFERENCE_BINARY"])
 
 
 def run_cmd(argv, cwd, stdin=None, timeout=30):
-    proc = subprocess.run(
-        [str(x) for x in argv],
-        cwd=str(cwd),
-        input=stdin,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-        timeout=timeout,
-        env={**os.environ, "NO_COLOR": "1", "CLICOLOR": "0", "TERM": "dumb", "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
-    )
-    return {"status": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
+    try:
+        proc = subprocess.run(
+            [str(x) for x in argv],
+            cwd=str(cwd),
+            input=stdin,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=timeout,
+            env={**os.environ, "NO_COLOR": "1", "CLICOLOR": "0", "TERM": "dumb", "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
+        )
+        return {"status": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr, "timed_out": False}
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", "replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", "replace")
+        timeout_stderr = (stderr + "\n" if stderr else "") + f"TIMEOUT after {timeout}s: {' '.join(str(x) for x in argv)}"
+        return {"status": 124, "stdout": stdout, "stderr": timeout_stderr, "timed_out": True}
 
 
 def normalize(text):
@@ -1033,6 +1103,7 @@ function writeHarness(task) {
 
 async function prepareWorkspace(agentDir, task) {
   const workspace = path.join(agentDir, "workspace")
+  validateWorkspaceGitPath(workspace)
   fs.rmSync(workspace, { recursive: true, force: true })
   mkdirp(workspace)
   const reference = ensureReferenceRepo(task)
@@ -1043,12 +1114,8 @@ async function prepareWorkspace(agentDir, task) {
   writeFile(path.join(workspace, "PYTHON_PORT_TASK.md"), sourcePortPrompt(task))
   writeFile(path.join(workspace, "REFERENCE_BINARY.txt"), binary)
   writeFile(path.join(workspace, "compile.sh"), "#!/usr/bin/env sh\nset -eu\n[ -f executable ]\n")
-  runOk("git", ["init"], { cwd: workspace, timeoutMs: 60_000 })
-  runOk("git", ["config", "user.email", "benchmark@example.invalid"], { cwd: workspace, timeoutMs: 60_000 })
-  runOk("git", ["config", "user.name", "Benchmark"], { cwd: workspace, timeoutMs: 60_000 })
-  runOk("git", ["add", ".gitignore", "PYTHON_PORT_TASK.md", "REFERENCE_BINARY.txt", "compile.sh"], { cwd: workspace, timeoutMs: 60_000 })
-  runOk("git", ["commit", "-m", "benchmark source-port fixture"], { cwd: workspace, timeoutMs: 60_000 })
-  return { workspace, reference_path: reference, reference_binary: binary, prompt_path: path.join(workspace, "PYTHON_PORT_TASK.md"), error: null }
+  const gitSetup = setupWorkspaceGit(workspace, [".gitignore", "PYTHON_PORT_TASK.md", "REFERENCE_BINARY.txt", "compile.sh"], "benchmark source-port fixture")
+  return { workspace, reference_path: reference, reference_binary: binary, prompt_path: path.join(workspace, "PYTHON_PORT_TASK.md"), git_setup: gitSetup, error: null }
 }
 
 function serviceTierConfigArgs() {
@@ -1112,6 +1179,7 @@ function writeAgentInvocationArchive(agentDir, details) {
     service_tier: serviceTier,
     timeout_ms: timeoutMs,
     codex_goals_enabled: codexGoalsEnabled,
+    tura_goal_enabled: turaGoalEnabled,
     planning_override: planningOverride === null ? "auto" : (planningOverride ? "on" : "off"),
     notes: details.notes || [],
   })
@@ -1190,6 +1258,7 @@ async function runTuraPlanning(workspace, agentDir, prompt, agentPrompt, onProgr
     "exec",
     "--json",
     "--skip-git-repo-check",
+    ...(turaGoalEnabled ? ["--goal"] : []),
     ...(turaExplicitSessionId ? ["--session-id", launchId] : []),
     "--sandbox",
     "--agent-id",
@@ -1412,6 +1481,52 @@ function usageFromProviderLogs(logRoot) {
   return { totals, calls }
 }
 
+function responseOutputText(response) {
+  const text = response?.output_text
+  if (typeof text === "string") return text
+  if (Array.isArray(response?.output)) {
+    return response.output
+      .flatMap((item) => Array.isArray(item?.content) ? item.content : [])
+      .map((content) => content?.text || "")
+      .filter(Boolean)
+      .join("\n")
+  }
+  return ""
+}
+
+function providerCallDebugRows(agentDir, seen = new Set()) {
+  const rows = []
+  for (const file of jsonFilesUnder(path.join(agentDir, "provider-log")).sort()) {
+    let payload
+    try { payload = JSON.parse(fs.readFileSync(file, "utf8")) } catch { continue }
+    if (payload?.type !== "llm_call") continue
+    const key = `${file}:${payload.finished_at || payload.duration_ms || payload.error || ""}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    const response = payload.response || null
+    const outputText = responseOutputText(response)
+    rows.push({
+      file,
+      call_id: payload.call_id,
+      success: payload.success,
+      provider: payload.provider,
+      model: payload.model,
+      started_at: payload.started_at,
+      finished_at: payload.finished_at,
+      duration_ms: payload.duration_ms,
+      error: payload.error || response?.error || null,
+      request_messages_count: Array.isArray(payload.request?.messages) ? payload.request.messages.length : null,
+      request_tools_count: Array.isArray(payload.request?.params?.tools) ? payload.request.params.tools.length : null,
+      response_status: response?.status || null,
+      response_output_count: Array.isArray(response?.output) ? response.output.length : null,
+      response_text_preview: outputText.slice(0, 500),
+      tool_call_count: payload.metrics?.tool_call_count ?? null,
+      usage: payload.metrics?.usage || null,
+    })
+  }
+  return rows
+}
+
 function discoverRolloutPathsFromStdout(stdout) {
   const paths = new Set()
   const visit = (value) => {
@@ -1602,7 +1717,7 @@ function evaluateWorkspace(workspace, agentDir, task, binary) {
 }
 
 async function runAgent(agentId, task, taskIndex, agentIndex, onAgentUpdate = null) {
-  const agentDir = path.join(runRoot, task.id, `${agentId}-${agentIndex + 1}`)
+  const agentDir = path.join(runRoot, taskRunDirName(task), `${agentId}-${agentIndex + 1}`)
   const prep = await prepareWorkspace(agentDir, task)
   const prompt = sourcePortPrompt(task)
   let result
@@ -1615,8 +1730,14 @@ async function runAgent(agentId, task, taskIndex, agentIndex, onAgentUpdate = nu
     null
   let lastContextArchive = null
   let lastContextArchiveRefreshMs = 0
+  const seenProviderDebugRows = new Set()
   const publishProgress = (liveResult) => {
     const isLive = liveResult.status === null && !liveResult.error
+    if (printProviderLog) {
+      for (const row of providerCallDebugRows(agentDir, seenProviderDebugRows)) {
+        console.log(`[source-port-provider] ${JSON.stringify({ agent: agentId, task: task.label, ...row })}`)
+      }
+    }
     const usageInfo = isLive
       ? { usage: usageFromJsonl(liveResult.stdout || ""), usage_source: "stdout_jsonl", provider_calls: [] }
       : usageForAgent(agentDir, liveResult.stdout || "")
@@ -1771,7 +1892,7 @@ async function main() {
   if (prepOnly) {
     const preps = []
     for (const task of taskObjects) {
-      const prepDir = path.join(runRoot, task.id, "prep-only")
+      const prepDir = path.join(runRoot, taskRunDirName(task), "prep-only")
       const prep = await prepareWorkspace(prepDir, task)
       const harnessPath = writeHarness(task)
       preps.push({ task: task.label, prep, harness_path: harnessPath })

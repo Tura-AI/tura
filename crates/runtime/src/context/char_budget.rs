@@ -1,6 +1,19 @@
 pub(super) const CONTEXT_OUTPUT_MAX_CHARS: usize = 10_000;
 pub(super) const COMMAND_RUN_RESULT_OUTPUT_MAX_CHARS: usize = 10_000;
-pub(super) const COMPACT_CONTEXT_MAX_CHARS: usize = 60_000;
+pub(super) const COMPACT_CONTEXT_FALLBACK_MAX_ESTIMATED_TOKENS: usize = 25_500;
+pub(super) const COMPACT_CONTEXT_ESTIMATED_TOKEN_BYTES: usize = 4;
+
+pub(crate) fn estimated_tokens_from_bytes(bytes: usize) -> usize {
+    bytes.div_ceil(COMPACT_CONTEXT_ESTIMATED_TOKEN_BYTES)
+}
+
+pub(crate) fn estimated_tokens_from_bytes_u64(bytes: u64) -> u64 {
+    bytes.div_ceil(COMPACT_CONTEXT_ESTIMATED_TOKEN_BYTES as u64)
+}
+
+pub(super) fn compact_context_byte_budget(max_estimated_tokens: usize) -> usize {
+    max_estimated_tokens * COMPACT_CONTEXT_ESTIMATED_TOKEN_BYTES
+}
 
 pub(super) fn truncate_text_to_char_budget(text: &str, max_chars: usize) -> String {
     if text.len() <= max_chars {

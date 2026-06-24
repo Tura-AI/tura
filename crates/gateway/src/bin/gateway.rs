@@ -41,7 +41,7 @@ fn main() {
         &tura_path::instance_home(),
         "gateway",
         mode_for_exe(),
-        None,
+        Some(desired_port),
     ) {
         Ok(lock) => lock,
         Err(error) => {

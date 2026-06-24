@@ -94,7 +94,7 @@ mod tests {
             SessionInput {
                 user_input: "hello".to_string(),
                 file_input: Vec::new(),
-                agent: Some("fast".to_string()),
+                agent: Some("direct".to_string()),
                 runtime_context: None,
                 planning_mode_override: None,
             },
@@ -147,7 +147,7 @@ mod tests {
             SessionInput {
                 user_input: "hello".to_string(),
                 file_input: Vec::new(),
-                agent: Some("fast".to_string()),
+                agent: Some("direct".to_string()),
                 runtime_context: None,
                 planning_mode_override: None,
             },

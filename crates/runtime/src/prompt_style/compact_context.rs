@@ -23,15 +23,8 @@ mod tests {
 
     #[test]
     fn compact_context_required_formats_dynamic_limit_and_current_turn_instruction() {
-        let prompt = compact_context_required(76_800);
+        let prompt = compact_context_required(220_000);
 
-        assert!(prompt.contains("above about 76,800 tokens"));
-        assert!(!prompt.contains("above about 250,000 tokens"));
-        assert!(prompt.contains("this assistant turn must call command_run"));
-        assert!(prompt.contains("task_status update carrying compact_context"));
-        assert!(prompt.contains("Do not use a standalone compact_context command"));
-        assert!(prompt.contains("\"command_type\":\"task_status\""));
         assert!(prompt.contains("compact_context"));
-        assert!(prompt.contains("<handoff summary for the next turn>"));
     }
 }

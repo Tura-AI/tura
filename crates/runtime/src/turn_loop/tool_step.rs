@@ -1,16 +1,21 @@
-use crate::context::{compact_session_context_with_agent_message, CompactContextAgentMessage};
 use crate::manas::COMMAND_RUN_TOOL;
 use crate::manas::{user_visible_runtime_output_text, user_visible_runtime_text};
 use crate::state_machine::runtime_management::RuntimeManagement;
-use crate::state_machine::session_management::SessionManagement;
 use crate::tool_router::execute_tool::ToolExecutionResult;
+use chrono::{DateTime, Utc};
 
-pub(crate) fn apply_compact_context_results(
-    session: &mut SessionManagement,
+#[derive(Debug, Clone)]
+pub(crate) struct PendingCompactContext {
+    pub summary: String,
+    pub agent_message_content: Option<String>,
+    pub agent_message_timestamp: DateTime<Utc>,
+}
+
+pub(crate) fn extract_compact_context_results(
     tool_results: &mut [ToolExecutionResult],
     runtime: Option<&RuntimeManagement>,
-) -> Result<bool, String> {
-    let mut compact_applied = false;
+) -> Vec<PendingCompactContext> {
+    let mut pending = Vec::new();
     for tool_result in tool_results.iter_mut() {
         if tool_result.tool_name != COMMAND_RUN_TOOL {
             continue;
@@ -18,28 +23,23 @@ pub(crate) fn apply_compact_context_results(
         let Some(summary) = compact_context_summary_from_command_run(&tool_result.result) else {
             continue;
         };
-        let agent_message_text = runtime.and_then(runtime_visible_text);
-        let agent_message =
-            agent_message_text
-                .as_deref()
-                .map(|content| CompactContextAgentMessage {
-                    content,
-                    timestamp: runtime
-                        .and_then(|runtime| {
-                            runtime
-                                .call_finished_at
-                                .or(runtime.first_token_at)
-                                .or(runtime.called_at)
-                        })
-                        .unwrap_or_else(chrono::Utc::now),
-                });
-        compact_session_context_with_agent_message(session, &summary, agent_message)?;
-        compact_applied = true;
+        pending.push(PendingCompactContext {
+            summary,
+            agent_message_content: runtime.and_then(runtime_visible_text),
+            agent_message_timestamp: runtime
+                .and_then(|runtime| {
+                    runtime
+                        .call_finished_at
+                        .or(runtime.first_token_at)
+                        .or(runtime.called_at)
+                })
+                .unwrap_or_else(Utc::now),
+        });
         strip_compact_context_from_command_run(&mut tool_result.arguments, &mut tool_result.result);
         tool_result.success = command_run_result_success_value(&tool_result.result);
         tool_result.error = command_run_result_error_value(&tool_result.result);
     }
-    Ok(compact_applied)
+    pending
 }
 
 fn compact_context_summary_from_command_run(result: &serde_json::Value) -> Option<String> {
@@ -226,7 +226,11 @@ fn command_run_result_error_value(result: &serde_json::Value) -> Option<String> 
 
 #[cfg(test)]
 mod tests {
-    use super::apply_compact_context_results;
+    use super::extract_compact_context_results;
+    use crate::context::{
+        build_messages_from_session, compact_session_context_with_agent_message,
+        CompactContextAgentMessage,
+    };
     use crate::manas::COMMAND_RUN_TOOL;
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
@@ -263,7 +267,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_compact_context_results_accepts_task_status_handoff_and_keeps_status() {
+    fn extract_compact_context_results_accepts_task_status_handoff_and_keeps_status() {
         let mut session = SessionManagement::new(
             "session-task-status-compact".to_string(),
             "task status compact".to_string(),
@@ -308,11 +312,10 @@ mod tests {
 
         let mut runtime = runtime(&session);
         runtime.text = "Visible runtime reply before checkpoint".to_string();
-        let compact_applied =
-            apply_compact_context_results(&mut session, &mut tool_results, Some(&runtime))
-                .expect("apply compact");
+        let pending = extract_compact_context_results(&mut tool_results, Some(&runtime));
 
-        assert!(compact_applied);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].summary, "task_status handoff");
         assert_eq!(
             tool_results[0].result["results"][0]["output"]["task_status"]["status"],
             "doing"
@@ -322,6 +325,23 @@ mod tests {
                 .get("compact_context")
                 .is_none()
         );
+        compact_session_context_with_agent_message(
+            &mut session,
+            &pending[0].summary,
+            pending[0]
+                .agent_message_content
+                .as_deref()
+                .map(|content| CompactContextAgentMessage {
+                    content,
+                    timestamp: pending[0].agent_message_timestamp,
+                }),
+        )
+        .expect("apply compact");
+        let joined = build_messages_from_session(&session)
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(session.session_log.iter().any(|entry| {
             let value = serde_json::from_str::<serde_json::Value>(entry).ok();
             value
@@ -331,8 +351,9 @@ mod tests {
                 .is_some_and(|content| {
                     content.contains("task_status handoff")
                         && content.contains("Visible runtime reply before checkpoint")
-                        && content.contains("Context rebuild timeline")
+                        && content.contains("Context rebuild before this checkpoint")
                 })
         }));
+        assert!(joined.contains("task_status handoff"));
     }
 }

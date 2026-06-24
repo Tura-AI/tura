@@ -339,7 +339,7 @@ from the compaction summary, workspace snapshot, environment context, and active
 planning objective. Runtime owns this prompt state; gateway should not assemble
 runtime prompts.
 
-The active compact threshold is capped at 250,000 tokens. Runtime still asks the
+The active compact threshold is capped at 255,000 tokens. Runtime still asks the
 agent to provide a `task_status.compact_context` handoff when provider-reported
 input reaches the active threshold, but it also applies an automatic checkpoint
 after a turn if `provider_input_tokens + newly_persisted_context_bytes / 3`

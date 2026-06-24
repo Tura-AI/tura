@@ -1,4 +1,4 @@
-use crate::prompt_style::{agent_identity, compact_context, PromptBuilder};
+use crate::prompt_style::{agent_identity, compact_context, runtime_prompt_manual, PromptBuilder};
 use crate::runtime::call_runtime::{call_runtime, CallRuntimeInput};
 use crate::runtime::create_runtime::{
     create_runtime, runtime_provider_config_from_tura, CreateRuntimeInput,
@@ -6,15 +6,21 @@ use crate::runtime::create_runtime::{
 use crate::runtime::types::ToolCallData;
 use crate::state_machine::agent_management::AgentManagement;
 use crate::state_machine::runtime_management::{RuntimeManagement, UsageReport};
-use crate::state_machine::session_management::{SessionManagement, DEFAULT_CONTEXT_TOKEN_LIMIT};
+use crate::state_machine::session_management::SessionManagement;
+#[cfg(test)]
+use crate::state_machine::session_management::DEFAULT_CONTEXT_TOKEN_LIMIT;
 
 use super::agent_prompts::load_agent_system_prompt_messages;
 use super::constants::{COMMAND_RUN_TOOL, PLANNING_TOOL};
 use super::prompt_messages::messages_for_turn_with_context_limit;
 use super::tool_catalog::{
-    command_run_commands_for_agent, filter_tools_for_turn, load_agent_capabilities,
-    planning_tool_disabled, tool_schema_name,
+    command_run_commands_for_agent, extend_command_run_commands_with_capabilities,
+    filter_tools_for_turn, load_agent_capabilities_with_commands, planning_tool_disabled,
+    tool_schema_name,
 };
+
+const FORCE_COMPACT_CONTEXT_TOKEN_CAP: u64 = 255_000;
+const PROMPT_INJECTION_CONTEXT_TOKEN_CAP: u64 = 220_000;
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute_turn(
@@ -32,10 +38,14 @@ pub(crate) fn execute_turn(
         .first()
         .ok_or_else(|| "no agent available".to_string())?;
 
-    let agent_commands = command_run_commands_for_agent(agent);
+    let mut agent_commands = command_run_commands_for_agent(agent);
+    extend_command_run_commands_with_capabilities(
+        &mut agent_commands,
+        runtime_prompt_manual::capabilities_for_task_type_ids(&session.task_type),
+    );
     let planning_enabled = agent_commands.contains(PLANNING_TOOL);
     let disable_tool_invocation = is_final_turn || force_no_tools;
-    let mut tools = load_agent_capabilities(agent)?;
+    let mut tools = load_agent_capabilities_with_commands(agent, &agent_commands)?;
     if planning_tool_disabled() {
         tools.retain(|tool| tool_schema_name(tool) != Some(PLANNING_TOOL));
     }
@@ -76,7 +86,9 @@ pub(crate) fn execute_turn(
         let runtime_provider_config =
             runtime_provider_config_from_tura(&agent.provider, settings.as_ref(), false)?;
         let compact_limit_tokens =
-            dynamic_context_limit_tokens(settings.as_ref(), &runtime_provider_config);
+            force_compact_context_limit_tokens(settings.as_ref(), &runtime_provider_config);
+        let prompt_injection_limit_tokens =
+            compact_prompt_injection_limit_tokens(settings.as_ref(), &runtime_provider_config);
         let language = session_language();
         let user_name = session_user_name();
         let identity = PromptBuilder::new()
@@ -110,12 +122,12 @@ pub(crate) fn execute_turn(
         }
         runtime_messages.extend(turn_messages);
         if !disable_tool_invocation
-            && should_force_compact_prompt(session, &runtime_messages, compact_limit_tokens)
+            && should_force_compact_prompt(session, prompt_injection_limit_tokens)
         {
             crate::prompt_style::tail_injection::append_tail_prompt(
                 &mut runtime_messages,
-                crate::prompt_style::tail_injection::TailPrompt::user(
-                    compact_context_required_message(compact_limit_tokens),
+                crate::prompt_style::tail_injection::TailPrompt::developer(
+                    compact_context_required_message(prompt_injection_limit_tokens),
                 ),
             );
         }
@@ -143,7 +155,7 @@ pub(crate) fn execute_turn(
                 provider_name: queue_item.provider_name,
                 stream: agent.provider.stream,
                 max_tokens: agent.provider.max_tokens,
-                tool_choice: tool_choice_for_turn(disable_tool_invocation),
+                tool_choice: tool_choice_for_turn(),
                 session_directory: session.session_directory.clone(),
                 allowed_command_run_commands: Some(agent_commands),
             },
@@ -197,9 +209,35 @@ fn session_user_name() -> String {
         .unwrap_or_else(|| "user".to_string())
 }
 
+fn force_compact_context_limit_tokens(
+    settings: &tura_llm_rust::Settings,
+    runtime_provider_config: &crate::state_machine::runtime_management::RuntimeProviderConfig,
+) -> u64 {
+    dynamic_context_limit_tokens(
+        settings,
+        runtime_provider_config,
+        95,
+        FORCE_COMPACT_CONTEXT_TOKEN_CAP,
+    )
+}
+
+fn compact_prompt_injection_limit_tokens(
+    settings: &tura_llm_rust::Settings,
+    runtime_provider_config: &crate::state_machine::runtime_management::RuntimeProviderConfig,
+) -> u64 {
+    dynamic_context_limit_tokens(
+        settings,
+        runtime_provider_config,
+        80,
+        PROMPT_INJECTION_CONTEXT_TOKEN_CAP,
+    )
+}
+
 fn dynamic_context_limit_tokens(
     settings: &tura_llm_rust::Settings,
     runtime_provider_config: &crate::state_machine::runtime_management::RuntimeProviderConfig,
+    model_context_percent: u64,
+    cap_tokens: u64,
 ) -> u64 {
     if let Some(limit) = fixed_context_limit_tokens_from_env() {
         return limit;
@@ -209,9 +247,9 @@ fn dynamic_context_limit_tokens(
         &runtime_provider_config.llm_provider_name,
         &runtime_provider_config.model_name,
     ) else {
-        return DEFAULT_CONTEXT_TOKEN_LIMIT;
+        return cap_tokens;
     };
-    DEFAULT_CONTEXT_TOKEN_LIMIT.min(model_context.saturating_mul(60) / 100)
+    cap_tokens.min(model_context.saturating_mul(model_context_percent) / 100)
 }
 
 fn fixed_context_limit_tokens_from_env() -> Option<u64> {
@@ -259,26 +297,9 @@ fn model_context_window_tokens(
     .unwrap_or(DEFAULT_CONTEXT_TOKEN_LIMIT)
 }
 
-fn should_force_compact_prompt(
-    session: &SessionManagement,
-    messages: &[serde_json::Value],
-    context_limit_tokens: u64,
-) -> bool {
-    if messages_already_request_compact(messages) {
-        return false;
-    }
+fn should_force_compact_prompt(session: &SessionManagement, context_limit_tokens: u64) -> bool {
     provider_context_input_tokens(session)
         .is_some_and(|input_tokens| input_tokens >= context_limit_tokens)
-}
-
-fn messages_already_request_compact(messages: &[serde_json::Value]) -> bool {
-    messages.iter().any(|message| {
-        serde_json::to_string(message).is_ok_and(|text| {
-            text.contains("Context checkpoint required")
-                || text.contains("task_status with compact_context")
-                || text.contains("task_status update carrying compact_context")
-        })
-    })
 }
 
 fn previous_provider_input_tokens(session: &SessionManagement) -> Option<u64> {
@@ -334,8 +355,7 @@ fn debug_runtime_timestamp() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
-fn tool_choice_for_turn(disable_tool_invocation: bool) -> Option<serde_json::Value> {
-    let _ = disable_tool_invocation;
+fn tool_choice_for_turn() -> Option<serde_json::Value> {
     Some(serde_json::json!("auto"))
 }
 
@@ -359,52 +379,60 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn non_final_turn_uses_auto_tool_choice() {
-        assert_eq!(tool_choice_for_turn(false), Some(serde_json::json!("auto")));
+    fn turns_use_auto_tool_choice_for_prompt_cache_stability() {
+        assert_eq!(tool_choice_for_turn(), Some(serde_json::json!("auto")));
     }
 
     #[test]
-    fn final_turn_keeps_auto_tool_choice_for_prompt_cache() {
-        assert_eq!(tool_choice_for_turn(true), Some(serde_json::json!("auto")));
-    }
-
-    #[test]
-    fn force_no_tools_keeps_auto_tool_choice_without_removing_schema() {
-        assert_eq!(tool_choice_for_turn(true), Some(serde_json::json!("auto")));
-    }
-
-    #[test]
-    fn dynamic_context_limit_uses_sixty_percent_of_model_context_when_smaller_than_cap() {
+    fn compact_limits_use_distinct_model_percentages_when_smaller_than_caps() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         let _env = clean_context_limit_env();
         let settings = settings_with_model_context("openai", "gpt-small", 128_000);
         let provider = runtime_provider("openai", "gpt-small");
 
-        assert_eq!(dynamic_context_limit_tokens(&settings, &provider), 76_800);
+        assert_eq!(
+            compact_prompt_injection_limit_tokens(&settings, &provider),
+            102_400
+        );
+        assert_eq!(
+            force_compact_context_limit_tokens(&settings, &provider),
+            121_600
+        );
     }
 
     #[test]
-    fn dynamic_context_limit_caps_at_default_limit_for_large_models() {
+    fn compact_limits_use_distinct_caps_for_large_models() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         let _env = clean_context_limit_env();
         let settings = settings_with_model_context("openai", "gpt-large", 1_000_000);
         let provider = runtime_provider("openai", "gpt-large");
 
         assert_eq!(
-            dynamic_context_limit_tokens(&settings, &provider),
-            DEFAULT_CONTEXT_TOKEN_LIMIT
+            compact_prompt_injection_limit_tokens(&settings, &provider),
+            PROMPT_INJECTION_CONTEXT_TOKEN_CAP
+        );
+        assert_eq!(
+            force_compact_context_limit_tokens(&settings, &provider),
+            FORCE_COMPACT_CONTEXT_TOKEN_CAP
         );
     }
 
     #[test]
-    fn dynamic_context_limit_honors_fixed_context_env_override() {
+    fn compact_limits_honor_fixed_context_env_override() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         let _env = clean_context_limit_env();
         std::env::set_var("COMMAND_RUN_AGENT_FIXED_CONTEXT_TOKENS", "4096");
         let settings = settings_with_model_context("openai", "gpt-large", 1_000_000);
         let provider = runtime_provider("openai", "gpt-large");
 
-        assert_eq!(dynamic_context_limit_tokens(&settings, &provider), 4096);
+        assert_eq!(
+            compact_prompt_injection_limit_tokens(&settings, &provider),
+            4096
+        );
+        assert_eq!(
+            force_compact_context_limit_tokens(&settings, &provider),
+            4096
+        );
     }
 
     #[test]
@@ -428,17 +456,12 @@ mod tests {
         session.runtime_usage = serde_json::json!({
             "input_tokens": 200_012_u64,
         });
-        let messages = vec![serde_json::json!({
-            "role": "user",
-            "content": "small provider-visible context"
-        })];
-
-        assert!(should_force_compact_prompt(&session, &messages, 200_000));
+        assert!(should_force_compact_prompt(&session, 200_000));
     }
 
     #[test]
-    fn force_compact_prompt_does_not_duplicate_existing_request() {
-        let session = SessionManagement::new(
+    fn force_compact_prompt_uses_provider_usage_without_scanning_prompt_text() {
+        let mut session = SessionManagement::new(
             "sess-provider-usage-compact-existing".to_string(),
             "provider usage compact existing".to_string(),
             std::path::PathBuf::from("C:/workspace"),
@@ -454,12 +477,10 @@ mod tests {
             "continue".to_string(),
             chrono::Utc::now(),
         );
-        let messages = vec![serde_json::json!({
-            "role": "user",
-            "content": "Context checkpoint required. task_status with compact_context"
-        })];
-
-        assert!(!should_force_compact_prompt(&session, &messages, 200_000));
+        session.runtime_usage = serde_json::json!({
+            "input_tokens": 200_012_u64,
+        });
+        assert!(should_force_compact_prompt(&session, 200_000));
     }
 
     #[test]
@@ -525,8 +546,12 @@ mod tests {
 
         assert_eq!(model_context_window_tokens(&settings, &provider), 1_050_000);
         assert_eq!(
-            dynamic_context_limit_tokens(&settings, &provider),
-            DEFAULT_CONTEXT_TOKEN_LIMIT
+            compact_prompt_injection_limit_tokens(&settings, &provider),
+            PROMPT_INJECTION_CONTEXT_TOKEN_CAP
+        );
+        assert_eq!(
+            force_compact_context_limit_tokens(&settings, &provider),
+            FORCE_COMPACT_CONTEXT_TOKEN_CAP
         );
     }
 

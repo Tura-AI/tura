@@ -320,15 +320,15 @@ pub struct ProviderLatencyTimeouts {
 impl Default for ProviderLatencyTimeouts {
     fn default() -> Self {
         Self {
-            idle_output_timeout_ms: 20_000,
-            first_output_timeout_ms: 40_000,
-            total_timeout_ms: 240_000,
+            idle_output_timeout_ms: 80_000,
+            first_output_timeout_ms: 160_000,
+            total_timeout_ms: 960_000,
         }
     }
 }
 
 fn default_latency_level() -> String {
-    "fast".to_string()
+    "high".to_string()
 }
 
 fn default_latency_levels() -> HashMap<String, ProviderLatencyTimeouts> {
@@ -364,16 +364,16 @@ fn default_latency_levels() -> HashMap<String, ProviderLatencyTimeouts> {
 /// to a provider-latency level. Level selection is driven entirely by the tier,
 /// never by the thinking / reasoning_effort parameter.
 ///
-/// - thinking       -> high
-/// - fast           -> fast (lowest)
-/// - embedding_high -> high
-/// - embedding_low  -> fast
+/// - thinking       -> x-high
+/// - fast           -> high
+/// - embedding_high -> x-high
+/// - embedding_low  -> high
+/// - unknown        -> high
 pub fn latency_level_for_tier(tier: &str) -> &'static str {
     match tier.trim().to_ascii_lowercase().as_str() {
-        "thinking" => "high",
-        "embedding_high" => "high",
-        "fast" | "embedding_low" => "fast",
-        _ => "fast",
+        "thinking" | "embedding_high" => "x-high",
+        "fast" | "embedding_low" => "high",
+        _ => "high",
     }
 }
 
@@ -383,12 +383,12 @@ impl ProviderLatencyConfig {
     }
 
     /// Resolve the timeouts for a specific latency level, falling back to the
-    /// `fast` level and finally to defaults.
+    /// `high` level and finally to defaults.
     pub fn timeouts_for_level(&self, level: &str) -> ProviderLatencyTimeouts {
         self.levels
             .get(level.trim())
             .copied()
-            .or_else(|| self.levels.get("fast").copied())
+            .or_else(|| self.levels.get("high").copied())
             .unwrap_or_default()
     }
 
@@ -557,6 +557,29 @@ impl Settings {
             models.sort();
         }
         catalog
+    }
+
+    pub fn tier_for_model(&self, provider: &str, model: &str) -> Option<String> {
+        let catalog = self.model_catalog.providers.get(provider)?;
+        let normalized_model = Self::normalize_model_name(provider, model);
+        let mut tier_names = self.model_catalog.tiers.clone();
+        for tier in catalog.models.keys() {
+            if !tier_names.iter().any(|existing| existing == tier) {
+                tier_names.push(tier.clone());
+            }
+        }
+        for tier in tier_names {
+            let Some(models) = catalog.models.get(&tier) else {
+                continue;
+            };
+            if models.iter().any(|entry| {
+                let id = entry.id();
+                id == model || Self::normalize_model_name(provider, id) == normalized_model
+            }) {
+                return Some(tier);
+            }
+        }
+        None
     }
 
     pub fn make_provider(
@@ -793,37 +816,37 @@ mod tests {
     fn provider_latency_default_levels_cover_fast_high_and_x_high() {
         let config = ProviderLatencyConfig::default();
 
-        assert_eq!(config.active, "fast");
+        assert_eq!(config.active, "high");
         assert_eq!(config.levels["fast"].idle_output_timeout_ms, 20_000);
         assert_eq!(config.levels["high"].first_output_timeout_ms, 160_000);
         assert_eq!(config.levels["x-high"].total_timeout_ms, 1_200_000);
-        assert_eq!(config.selected_timeouts(), config.levels["fast"]);
+        assert_eq!(config.selected_timeouts(), config.levels["high"]);
     }
 
     #[test]
     fn latency_level_for_tier_is_canonical_and_case_insensitive() {
-        assert_eq!(latency_level_for_tier("THINKING"), "high");
-        assert_eq!(latency_level_for_tier("embedding_high"), "high");
-        assert_eq!(latency_level_for_tier("fast"), "fast");
-        assert_eq!(latency_level_for_tier("embedding_low"), "fast");
-        assert_eq!(latency_level_for_tier("unknown"), "fast");
+        assert_eq!(latency_level_for_tier("THINKING"), "x-high");
+        assert_eq!(latency_level_for_tier("embedding_high"), "x-high");
+        assert_eq!(latency_level_for_tier("fast"), "high");
+        assert_eq!(latency_level_for_tier("embedding_low"), "high");
+        assert_eq!(latency_level_for_tier("unknown"), "high");
     }
 
     #[test]
-    fn latency_config_falls_back_to_fast_then_builtin_defaults() {
-        let fast = ProviderLatencyTimeouts {
+    fn latency_config_falls_back_to_high_then_builtin_defaults() {
+        let high = ProviderLatencyTimeouts {
             idle_output_timeout_ms: 1,
             first_output_timeout_ms: 2,
             total_timeout_ms: 3,
         };
         let config = ProviderLatencyConfig {
             active: "missing".to_string(),
-            levels: HashMap::from([("fast".to_string(), fast)]),
+            levels: HashMap::from([("high".to_string(), high)]),
         };
 
-        assert_eq!(config.selected_timeouts(), fast);
-        assert_eq!(config.timeouts_for_level("missing"), fast);
-        assert_eq!(config.timeouts_for_tier("unknown"), fast);
+        assert_eq!(config.selected_timeouts(), high);
+        assert_eq!(config.timeouts_for_level("missing"), high);
+        assert_eq!(config.timeouts_for_tier("unknown"), high);
 
         let empty = ProviderLatencyConfig {
             active: "missing".to_string(),
@@ -847,23 +870,28 @@ mod tests {
             first_output_timeout_ms: 50,
             total_timeout_ms: 60,
         };
+        let x_high = ProviderLatencyTimeouts {
+            idle_output_timeout_ms: 70,
+            first_output_timeout_ms: 80,
+            total_timeout_ms: 90,
+        };
         let config = ProviderLatencyConfig {
-            active: "fast".to_string(),
+            active: "high".to_string(),
             levels: HashMap::from([
                 ("fast".to_string(), fast),
                 ("high".to_string(), high),
-                ("x-high".to_string(), ProviderLatencyTimeouts::default()),
+                ("x-high".to_string(), x_high),
             ]),
         };
 
         set_provider_latency_config(config.clone());
-        assert_eq!(provider_latency_config().selected_timeouts(), fast);
+        assert_eq!(provider_latency_config().selected_timeouts(), high);
         set_provider_latency_timeouts(high);
         assert_eq!(provider_latency_timeouts(), high);
-        assert_eq!(apply_latency_for_tier("thinking"), high);
-        assert_eq!(provider_latency_timeouts(), high);
+        assert_eq!(apply_latency_for_tier("thinking"), x_high);
+        assert_eq!(provider_latency_timeouts(), x_high);
         set_provider_latency_config(config);
-        assert_eq!(apply_latency_for_tier("fast"), fast);
+        assert_eq!(apply_latency_for_tier("fast"), high);
     }
 
     #[test]
@@ -953,6 +981,46 @@ mod tests {
             catalog.get("google"),
             Some(&vec!["gemini-3.5-flash".to_string()])
         );
+    }
+
+    #[test]
+    fn tier_for_model_resolves_catalog_tier_from_actual_provider_model() {
+        let settings = Settings {
+            provider_base_url: base_urls(),
+            routes: HashMap::new(),
+            model_catalog: ModelCatalog {
+                tiers: vec!["thinking".to_string(), "fast".to_string()],
+                providers: HashMap::from([(
+                    "codex".to_string(),
+                    ProviderCatalogConfig {
+                        models: HashMap::from([
+                            (
+                                "thinking".to_string(),
+                                vec![CatalogModelConfig::Id("gpt-5.5".to_string())],
+                            ),
+                            (
+                                "fast".to_string(),
+                                vec![CatalogModelConfig::Id("gpt-5.3-codex-spark".to_string())],
+                            ),
+                        ]),
+                        ..Default::default()
+                    },
+                )]),
+            },
+            provider_enums: ProviderEnumCatalog::default(),
+        };
+
+        assert_eq!(
+            settings.tier_for_model("codex", "codex/gpt-5.5").as_deref(),
+            Some("thinking")
+        );
+        assert_eq!(
+            settings
+                .tier_for_model("codex", "gpt-5.3-codex-spark")
+                .as_deref(),
+            Some("fast")
+        );
+        assert_eq!(settings.tier_for_model("codex", "unknown"), None);
     }
 
     #[test]
@@ -1049,7 +1117,7 @@ mod tests {
         assert_eq!(config.routes["fast"].default_temperature, 0.2);
         assert!(config.model_catalog.providers.is_empty());
         assert!(config.provider_auth.is_empty());
-        assert_eq!(config.provider_latency.active, "fast");
+        assert_eq!(config.provider_latency.active, "high");
     }
 
     #[test]

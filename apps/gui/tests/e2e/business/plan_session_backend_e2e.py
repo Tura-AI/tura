@@ -15,6 +15,8 @@ from urllib.request import urlopen
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright, expect
 
+from cleanup_repo_tura_processes import cleanup_repo_tura_processes
+
 
 ROOT = Path(__file__).resolve().parents[5]
 OUT = Path(
@@ -853,6 +855,7 @@ async def main():
         if gateway:
             gateway.shutdown()
             gateway.server_close()
+        cleanup_repo_tura_processes()
 
 
 if __name__ == "__main__":

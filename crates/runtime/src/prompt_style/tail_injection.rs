@@ -22,6 +22,10 @@ impl TailPrompt {
         Self::new("system", content)
     }
 
+    pub fn developer(content: impl AsRef<str>) -> Option<Self> {
+        Self::new("developer", content)
+    }
+
     pub fn user(content: impl AsRef<str>) -> Option<Self> {
         Self::new("user", content)
     }
@@ -74,5 +78,15 @@ mod tests {
         assert_eq!(messages[0]["content"], "fixed prefix");
         assert_eq!(messages[2]["role"], "system");
         assert_eq!(messages[2]["content"], "tail instruction");
+    }
+
+    #[test]
+    fn developer_tail_prompt_uses_developer_role() {
+        let prompt = TailPrompt::developer("runtime guidance").expect("prompt");
+
+        let message = prompt.into_message();
+
+        assert_eq!(message["role"], "developer");
+        assert_eq!(message["content"], "runtime guidance");
     }
 }

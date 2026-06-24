@@ -1,7 +1,5 @@
 use std::path::Path;
 
-pub const PERMISSIONS_INSTRUCTIONS: &str = "<permissions instructions>\nNetwork access is enabled. Approval policy is currently never.\n</permissions instructions>";
-
 pub fn environment_context(
     cwd: &Path,
     shell: &str,

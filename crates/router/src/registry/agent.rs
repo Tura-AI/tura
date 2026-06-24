@@ -284,7 +284,7 @@ mod tests {
     fn resolves_session_type_to_coding() {
         let registry = AgentRegistry::from_static();
         let spec = registry.resolve_by_session_type("coding");
-        assert!(spec.agent_name == "coding_agent" || spec.agent_name == "thinking-planning");
+        assert!(spec.agent_name == "coding_agent" || spec.agent_name == "thoughtful");
     }
 
     #[test]
@@ -298,7 +298,7 @@ mod tests {
     fn explicit_agent_takes_priority() {
         let registry = AgentRegistry::from_static();
         let spec = registry.resolve(Some("coding"), Some("general"));
-        assert!(spec.agent_name == "coding_agent" || spec.agent_name == "thinking-planning");
+        assert!(spec.agent_name == "coding_agent" || spec.agent_name == "thoughtful");
     }
 
     #[test]
@@ -307,7 +307,7 @@ mod tests {
         let spec = registry
             .resolve_by_name("coding")
             .expect("coding alias should resolve");
-        assert!(spec.agent_name == "coding_agent" || spec.agent_name == "thinking-planning");
+        assert!(spec.agent_name == "coding_agent" || spec.agent_name == "thoughtful");
         assert!(
             spec.capabilities.contains(&"command_run".to_string())
                 || spec.capabilities.contains(&"shells".to_string())
@@ -317,8 +317,7 @@ mod tests {
                 || spec.capabilities.contains(&"apply_patch".to_string())
         );
         assert!(
-            spec.session_types.contains(&"coding".to_string())
-                || spec.agent_name == "thinking-planning"
+            spec.session_types.contains(&"coding".to_string()) || spec.agent_name == "thoughtful"
         );
     }
 }

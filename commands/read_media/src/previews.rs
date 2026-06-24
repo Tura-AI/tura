@@ -4,6 +4,8 @@ use image::{
 };
 use serde_json::{json, Value};
 
+const CONTACT_SHEET_MAX_SIDE: u32 = 1024;
+
 pub(super) fn compact_visual_previews(output: &mut Value) -> Result<(), String> {
     let Some(results) = output
         .get_mut("media_results")
@@ -117,7 +119,7 @@ fn contact_sheet_previews(items: &[SheetItem]) -> Result<Vec<Value>, String> {
     let mut sheets = Vec::new();
     for chunk in items.chunks(12) {
         let sheet = render_contact_sheet(chunk)?;
-        let encoded = encode_preview_jpeg(sheet, scaled_side(1024, 3, 2), 76)?;
+        let encoded = encode_preview_jpeg(sheet, CONTACT_SHEET_MAX_SIDE, 76)?;
         sheets.push(json!({
             "type": "image_url",
             "label": "contact_sheet",
@@ -419,6 +421,40 @@ mod tests {
         );
         assert_eq!(output["media_results"][0]["visual_preview_count"], 0);
         assert_eq!(output["media_results"][1]["visual_preview_count"], 0);
+    }
+
+    #[test]
+    fn compact_visual_previews_limits_contact_sheet_long_side_to_1024() {
+        let previews = (0..12)
+            .map(|index| {
+                json!({
+                    "label": format!("preview-{index}"),
+                    "image_url": {
+                        "url": data_url(300, 180, [index * 10, 40, 180])
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut output = json!({
+            "media_results": [{
+                "path": "many-images",
+                "visual_preview_count": previews.len(),
+                "visual_previews": previews
+            }]
+        });
+
+        compact_visual_previews(&mut output).expect("compact");
+
+        let sheet_url = output["media_results"][0]["visual_previews"][0]["image_url"]["url"]
+            .as_str()
+            .unwrap_or_default();
+        let (_, encoded) = sheet_url.split_once(',').expect("data URL separator");
+        let bytes = general_purpose::STANDARD
+            .decode(encoded)
+            .expect("decode sheet jpeg");
+        let sheet = image::load_from_memory(&bytes).expect("decode sheet image");
+
+        assert_eq!(sheet.width().max(sheet.height()), 1024);
     }
 
     #[test]

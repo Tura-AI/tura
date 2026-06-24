@@ -138,11 +138,13 @@ describe("gateway startup wrapper", () => {
       urls.push(String(url));
       return new Response("ok", { status: 200 });
     }) as typeof fetch;
-    const { setState } = stateHarness();
+    const { state, setState } = stateHarness();
 
     await waitForGatewayHealth("http://127.0.0.1:4126///", 1000, setState);
 
     expect(urls).toEqual(["http://127.0.0.1:4126/global/health"]);
+    expect(state().settingsNotice).toBeUndefined();
+    expect(state().gatewayStartupNotice).toBeUndefined();
   });
 });
 
@@ -152,8 +154,8 @@ function stateHarness() {
     connection: "offline",
     gatewayUrl: "http://127.0.0.1:4126",
     error: "previous",
-    settingsNotice: undefined,
-    gatewayStartupNotice: undefined,
+    settingsNotice: "Waiting for Gateway health...",
+    gatewayStartupNotice: "Waiting for Gateway health...",
   } as unknown as AppState;
   const setState = ((updater: (previous: AppState) => AppState) => {
     current = updater(current);

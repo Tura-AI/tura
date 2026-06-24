@@ -8,6 +8,7 @@ import {
 import { createEffect, createMemo, onCleanup, onMount, type Accessor, type Setter } from "solid-js";
 import {
   GATEWAY_CONNECT_TIMEOUT_MS,
+  GATEWAY_HEALTH_TIMEOUT_MS,
   isGatewayTimeoutError,
   tryStartGateway,
   waitForGatewayHealth,
@@ -33,7 +34,7 @@ function gatewayArray<T>(value: T[] | unknown): T[] {
   return Array.isArray(value) ? value : [];
 }
 
-const BOOTSTRAP_REQUEST_TIMEOUT_MS = 5_000;
+const BOOTSTRAP_REQUEST_TIMEOUT_MS = 20_000;
 
 export function useAppGatewayLifecycle(options: {
   state: Accessor<AppState>;
@@ -106,7 +107,7 @@ export function useAppGatewayLifecycle(options: {
     }
   });
 
-  async function hydrate(startAttempt = 0): Promise<void> {
+  async function hydrate(): Promise<void> {
     setState((previous) => ({
       ...previous,
       loading: true,
@@ -115,10 +116,10 @@ export function useAppGatewayLifecycle(options: {
       error: undefined,
       gatewayStartupNotice: previous.gatewayStartupNotice,
     }));
-    if (startAttempt === 0 && !disableGatewayAutostart) {
+    if (!disableGatewayAutostart) {
       const started = await tryStartGateway(gatewayUrl(), setState);
       if (started) {
-        await waitForGatewayHealth(gatewayUrl(), 5_000, setState);
+        await waitForGatewayHealth(gatewayUrl(), GATEWAY_HEALTH_TIMEOUT_MS, setState);
       }
     }
     const client = rootClient();
@@ -142,10 +143,9 @@ export function useAppGatewayLifecycle(options: {
           bootstrapSafe(() => client.currentProject(), fallbackCurrentProject),
           bootstrapSafe(() => client.projects(), []),
         ]);
-      const sessionLogWorkspaces = await bootstrapSafe(
-        () => client.sessionLogWorkspaces(),
-        { workspaces: [] },
-      );
+      const sessionLogWorkspaces = await bootstrapSafe(() => client.sessionLogWorkspaces(), {
+        workspaces: [],
+      });
       const [productConfig, me, workspaces, productIssues, productProjects] = await Promise.all([
         bootstrapSafe(() => client.productConfig(), undefined),
         bootstrapSafe(() => client.me(), undefined),
@@ -163,16 +163,23 @@ export function useAppGatewayLifecycle(options: {
         directory,
       );
       const scoped = client.withDirectory(directory);
-      const [sessions, providers, agentsResult, personasResult, commandsResult, filesResult, workspaceConfig] =
-        await Promise.all([
-          withTimeout(scoped.sessions({ limit: 100 }), BOOTSTRAP_REQUEST_TIMEOUT_MS),
-          bootstrapSafe(() => scoped.providers(), undefined),
-          bootstrapSafe(() => scoped.agents(), []),
-          bootstrapSafe(() => scoped.personas(), []),
-          bootstrapSafe(() => scoped.commands(), []),
-          bootstrapSafe(() => scoped.files(), []),
-          bootstrapSafe(() => scoped.workspaceConfig(), {}),
-        ]);
+      const [
+        sessions,
+        providers,
+        agentsResult,
+        personasResult,
+        commandsResult,
+        filesResult,
+        workspaceConfig,
+      ] = await Promise.all([
+        withTimeout(scoped.sessions({ limit: 100 }), BOOTSTRAP_REQUEST_TIMEOUT_MS),
+        bootstrapSafe(() => scoped.providers(), undefined),
+        bootstrapSafe(() => scoped.agents(), []),
+        bootstrapSafe(() => scoped.personas(), []),
+        bootstrapSafe(() => scoped.commands(), []),
+        bootstrapSafe(() => scoped.files(), []),
+        bootstrapSafe(() => scoped.workspaceConfig(), {}),
+      ]);
       const agents = gatewayArray<AppState["agents"][number]>(agentsResult);
       const personas = gatewayArray<AppState["personas"][number]>(personasResult);
       const commands = gatewayArray<AppState["commands"][number]>(commandsResult);
@@ -231,7 +238,9 @@ export function useAppGatewayLifecycle(options: {
         personas,
         commands,
         files,
-        selectedSessionId: forceNewSession ? undefined : (previous.selectedSessionId ?? selectedSessionId),
+        selectedSessionId: forceNewSession
+          ? undefined
+          : (previous.selectedSessionId ?? selectedSessionId),
         selectedAgent: previous.selectedAgent ?? configuredAgent ?? DEFAULT_AGENT_ID,
         selectedModel:
           previous.selectedModel ?? configuredModel ?? defaultModel(providers) ?? DEFAULT_MODEL_ID,
@@ -271,13 +280,6 @@ export function useAppGatewayLifecycle(options: {
         await openSession(selectedSessionId);
       }
     } catch (error) {
-      if (isGatewayTimeoutError(error) && startAttempt < 1 && !disableGatewayAutostart) {
-        const started = await tryStartGateway(gatewayUrl(), setState);
-        if (started) {
-          await waitForGatewayHealth(gatewayUrl(), 5_000, setState);
-          return hydrate(startAttempt + 1);
-        }
-      }
       setState((previous) => ({
         ...previous,
         loading: false,
@@ -289,6 +291,7 @@ export function useAppGatewayLifecycle(options: {
       }));
     }
   }
+
 }
 
 function mergeWorkspaceProjects(
@@ -298,7 +301,12 @@ function mergeWorkspaceProjects(
 ): Project[] {
   const merged: Project[] = [];
   const push = (project: Project) => {
-    if (!project.worktree || merged.some((item) => samePath(item.worktree, project.worktree))) {
+    if (!project.worktree) {
+      return;
+    }
+    const existingIndex = merged.findIndex((item) => samePath(item.worktree, project.worktree));
+    if (existingIndex >= 0) {
+      merged[existingIndex] = { ...merged[existingIndex], ...project };
       return;
     }
     merged.push(project);
@@ -326,7 +334,10 @@ function mergeWorkspaceProjects(
   return merged;
 }
 
-async function bootstrapSafe<T>(run: () => Promise<T>, fallback: T): Promise<T> {
+async function bootstrapSafe<T>(
+  run: () => Promise<T>,
+  fallback: T,
+): Promise<T> {
   return safe(() => withTimeout(run(), BOOTSTRAP_REQUEST_TIMEOUT_MS), fallback);
 }
 

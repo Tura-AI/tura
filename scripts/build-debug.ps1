@@ -59,11 +59,17 @@ if ($IsWindows -or $env:OS -eq "Windows_NT") {
 
 Remove-Item -LiteralPath (Join-Path $TargetDir "cli.exe") -Force -ErrorAction SilentlyContinue
 
-Invoke-Checked "cargo" @("build", "-p", "gateway", "--bin", "tura_exec", "--bin", "tura_gateway")
-Invoke-Checked "cargo" @("build", "-p", "router", "--bin", "tura_router")
-Invoke-Checked "cargo" @("build", "-p", "session_log", "--bin", "tura_session_db")
-Invoke-Checked "cargo" @("build", "-p", "runtime", "--bin", "tura_runtime")
-Invoke-Checked "cargo" @("build", "-p", "generate_media", "-p", "read_media", "-p", "web_discover")
+$PreviousTuraBuildKind = $env:TURA_BUILD_KIND
+$env:TURA_BUILD_KIND = "dev"
+try {
+  Invoke-Checked "cargo" @("build", "-p", "gateway", "--bin", "tura_exec", "--bin", "tura_gateway")
+  Invoke-Checked "cargo" @("build", "-p", "router", "--bin", "tura_router")
+  Invoke-Checked "cargo" @("build", "-p", "session_log", "--bin", "tura_session_db")
+  Invoke-Checked "cargo" @("build", "-p", "runtime", "--bin", "tura_runtime")
+  Invoke-Checked "cargo" @("build", "-p", "generate_media", "-p", "read_media", "-p", "web_discover")
+} finally {
+  $env:TURA_BUILD_KIND = $PreviousTuraBuildKind
+}
 
 if ($BuildTui) {
   Invoke-Checked "bun" @("run", "build") (Join-Path $RepoRoot "apps\gui")

@@ -14,6 +14,8 @@ from urllib.request import urlopen
 
 from playwright.async_api import async_playwright, expect
 
+from cleanup_repo_tura_processes import cleanup_repo_tura_processes
+
 
 ROOT = Path(__file__).resolve().parents[5]
 OUT = Path(
@@ -272,6 +274,47 @@ class SessionTaskGatewayHandler(BaseHTTPRequestHandler):
             if query.get("includeChildren", ["false"])[0] == "true":
                 return self.send_json(sessions)
             return self.send_json(sessions)
+        if path == "/session-log/workspaces":
+            workspaces = []
+            for workspace in self.server.workspaces:
+                directory = workspace.get("directory") or workspace.get("worktree")
+                sessions = [item for item in self.server.sessions if item.get("directory") == directory]
+                if not directory:
+                    continue
+                workspaces.append(
+                    {
+                        "directory": directory,
+                        "session_count": len(sessions),
+                        "last_updated_at": max(
+                            (item.get("updated_at") or item.get("time", {}).get("updated") or now_ms() for item in sessions),
+                            default=now_ms(),
+                        ),
+                    }
+                )
+            return self.send_json({"workspaces": workspaces})
+        if path == "/session-log/sessions":
+            directory = query.get("workspace", [None])[0] or query.get("directory", [None])[0] or self.server.alpha
+            sessions = [item for item in self.server.sessions if item.get("directory") == directory]
+            snapshots = [
+                {
+                    "session_id": item["id"],
+                    "workspace": item.get("directory") or self.server.alpha,
+                    "name": item.get("name") or item.get("title"),
+                    "parent_id": item.get("parent_id"),
+                    "created_at": item.get("created_at") or item.get("time", {}).get("created") or now_ms(),
+                    "updated_at": item.get("updated_at") or item.get("time", {}).get("updated") or now_ms(),
+                    "status": item.get("status") or "idle",
+                    "message_count": item.get("message_count") or len(self.server.messages.get(item["id"], [])),
+                    "task_management": item.get("task_management") or item.get("taskManagement") or {},
+                }
+                for item in sessions
+            ]
+            return self.send_json(
+                {
+                    "page": {"page": 0, "page_size": len(snapshots), "total": len(snapshots)},
+                    "sessions": snapshots,
+                }
+            )
         if path.startswith("/session/"):
             parts = path.strip("/").split("/")
             session_id = parts[1] if len(parts) > 1 else ""
@@ -921,6 +964,7 @@ async def main():
         if gateway:
             gateway.shutdown()
             gateway.server_close()
+        cleanup_repo_tura_processes()
 
 
 if __name__ == "__main__":

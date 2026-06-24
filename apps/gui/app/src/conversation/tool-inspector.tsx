@@ -30,6 +30,7 @@ export function ToolInspector(props: {
     return toolRecords(props.parts);
   });
   const [expandedId, setExpandedId] = createSignal<string>();
+  let autoExpandedPartId: string | undefined;
   const totalDuration = createMemo(() =>
     formatDuration(records().reduce((duration, record) => duration + (record.durationMs ?? 0), 0)),
   );
@@ -53,7 +54,21 @@ export function ToolInspector(props: {
   createEffect(() => {
     if (!props.open) {
       setExpandedId(undefined);
+      autoExpandedPartId = undefined;
     }
+  });
+
+  createEffect(() => {
+    const selectedId = props.selectedId;
+    if (!props.open || !selectedId || autoExpandedPartId === selectedId) {
+      return;
+    }
+    const selectedRecord = records().find((record) => record.partId === selectedId);
+    if (!selectedRecord) {
+      return;
+    }
+    autoExpandedPartId = selectedId;
+    setExpandedId(selectedRecord.id);
   });
 
   function startResize(clientX: number) {

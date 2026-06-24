@@ -4055,7 +4055,7 @@
     ]
   },
   "provider_latency": {
-    "active": "fast",
+    "active": "high",
     "levels": {
       "fast": {
         "first_output_timeout_ms": 40000,

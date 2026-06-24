@@ -3,6 +3,7 @@
 use chrono::Utc;
 use uuid::Uuid;
 
+use crate::prompt_style::runtime_prompt_manual;
 use crate::state_machine::session_management::{
     PlanStatus, SessionManagement, StartCondition, TaskStep,
 };
@@ -104,6 +105,16 @@ fn apply_status_result(session: &mut SessionManagement, result: &mut serde_json:
             .map(ToString::to_string);
         if let Some(group) = requested_group {
             changed |= apply_task_group(session, status, group);
+        }
+        if let Some(task_type) = status.get("task_type") {
+            let task_type = runtime_prompt_manual::task_type_ids_from_value(task_type);
+            let before = session.task_type.clone();
+            session.replace_task_type(task_type);
+            if session.task_type != before {
+                changed = true;
+            }
+            changed |= runtime_prompt_manual::append_missing_runtime_prompt_manuals(session, None)
+                .unwrap_or(false);
         }
         match status.get("status").and_then(serde_json::Value::as_str) {
             Some("doing") => changed |= mark_active_task_doing(session),
@@ -407,6 +418,8 @@ fn random_task_id() -> String {
 mod tests {
     use super::apply_tool_result_session_state_update;
     const COMMAND_RUN_TOOL: &str = "command_run";
+    use crate::context::compact_session_context;
+    use crate::prompt_style::runtime_prompt_manual::RUNTIME_PROMPT_MANUAL_RECORD_TYPE;
     use crate::state_machine::session_management::{
         PlanStatus, SessionInput, SessionManagement, StartCondition, TaskStep,
     };
@@ -591,6 +604,147 @@ mod tests {
             session.task_plan.detailed_tasks[0].status,
             PlanStatus::Doing
         );
+    }
+
+    #[test]
+    fn task_type_injects_manuals_without_goal_mode_and_compact_rebuilds_current() {
+        let mut session = session();
+        assert!(!session.goal_mode);
+        let mut result = json!({
+            "results": [{
+                "command_type": "task_status",
+                "success": true,
+                "output": {
+                    "task_status": {
+                        "task_type": ["debug", "frontend"]
+                    }
+                }
+            }]
+        });
+
+        assert!(apply_tool_result_session_state_update(
+            &mut session,
+            COMMAND_RUN_TOOL,
+            &mut result,
+        ));
+        assert_eq!(session.task_type, vec!["debug", "visual", "frontend"]);
+        assert_eq!(
+            runtime_prompt_manual_log_ids(&session),
+            vec!["debug", "visual", "frontend"]
+        );
+        let original_manual_positions = runtime_prompt_manual_log_positions(&session);
+        let mut repeated = json!({
+            "results": [{
+                "command_type": "task_status",
+                "success": true,
+                "output": {
+                    "task_status": {
+                        "task_type": ["debug", "frontend"]
+                    }
+                }
+            }]
+        });
+
+        assert!(!apply_tool_result_session_state_update(
+            &mut session,
+            COMMAND_RUN_TOOL,
+            &mut repeated,
+        ));
+        assert_eq!(
+            runtime_prompt_manual_log_ids(&session),
+            vec!["debug", "visual", "frontend"]
+        );
+        assert_eq!(
+            runtime_prompt_manual_log_positions(&session),
+            original_manual_positions
+        );
+
+        let mut expanded = json!({
+            "results": [{
+                "command_type": "task_status",
+                "success": true,
+                "output": {
+                    "task_status": {
+                        "task_type": ["debug", "frontend", "interactive_and_3d"]
+                    }
+                }
+            }]
+        });
+
+        assert!(apply_tool_result_session_state_update(
+            &mut session,
+            COMMAND_RUN_TOOL,
+            &mut expanded,
+        ));
+        assert_eq!(
+            runtime_prompt_manual_log_ids(&session),
+            vec!["debug", "visual", "frontend", "interactive_and_3d"]
+        );
+        let expanded_manual_positions = runtime_prompt_manual_log_positions(&session);
+        assert_eq!(
+            expanded_manual_positions
+                .iter()
+                .take(original_manual_positions.len())
+                .cloned()
+                .collect::<Vec<_>>(),
+            original_manual_positions
+        );
+
+        let mut updated = json!({
+            "results": [{
+                "command_type": "task_status",
+                "success": true,
+                "output": {
+                    "task_status": {
+                        "task_type": ["frontend"]
+                    }
+                }
+            }]
+        });
+
+        assert!(apply_tool_result_session_state_update(
+            &mut session,
+            COMMAND_RUN_TOOL,
+            &mut updated,
+        ));
+        assert_eq!(session.task_type, vec!["visual", "frontend"]);
+        assert_eq!(
+            runtime_prompt_manual_log_ids(&session),
+            vec!["debug", "visual", "frontend", "interactive_and_3d"]
+        );
+
+        compact_session_context(&mut session, "handoff").expect("compact should succeed");
+
+        assert_eq!(
+            runtime_prompt_manual_log_ids_since_last_compact(&session),
+            vec!["visual", "frontend"]
+        );
+    }
+
+    #[test]
+    fn task_type_repairs_missing_manual_when_state_already_contains_type() {
+        let mut session = session();
+        assert!(!session.goal_mode);
+        session.task_type = vec!["visual".to_string()];
+        let mut result = json!({
+            "results": [{
+                "command_type": "task_status",
+                "success": true,
+                "output": {
+                    "task_status": {
+                        "task_type": ["visual"]
+                    }
+                }
+            }]
+        });
+
+        assert!(apply_tool_result_session_state_update(
+            &mut session,
+            COMMAND_RUN_TOOL,
+            &mut result,
+        ));
+        assert_eq!(session.task_type, vec!["visual"]);
+        assert_eq!(runtime_prompt_manual_log_ids(&session), vec!["visual"]);
     }
 
     #[test]
@@ -928,5 +1082,60 @@ mod tests {
         assert!(changed);
         assert_eq!(session.task_plan.detailed_tasks[0].status, PlanStatus::Done);
         assert_eq!(session.task_plan.detailed_tasks[1].status, PlanStatus::Todo);
+    }
+
+    fn runtime_prompt_manual_log_ids(session: &SessionManagement) -> Vec<String> {
+        session
+            .session_log
+            .iter()
+            .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+            .filter(|value| {
+                value.get("type").and_then(serde_json::Value::as_str)
+                    == Some(RUNTIME_PROMPT_MANUAL_RECORD_TYPE)
+            })
+            .filter_map(|value| {
+                value
+                    .get("task_type")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect()
+    }
+
+    fn runtime_prompt_manual_log_positions(session: &SessionManagement) -> Vec<usize> {
+        session
+            .session_log
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                let value = serde_json::from_str::<serde_json::Value>(entry).ok()?;
+                (value.get("type").and_then(serde_json::Value::as_str)
+                    == Some(RUNTIME_PROMPT_MANUAL_RECORD_TYPE))
+                .then_some(index)
+            })
+            .collect()
+    }
+
+    fn runtime_prompt_manual_log_ids_since_last_compact(
+        session: &SessionManagement,
+    ) -> Vec<String> {
+        let mut ids = Vec::new();
+        for entry in session.session_log.iter().rev() {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(entry) else {
+                continue;
+            };
+            if value.get("type").and_then(serde_json::Value::as_str) == Some("context_compaction") {
+                break;
+            }
+            if value.get("type").and_then(serde_json::Value::as_str)
+                == Some(RUNTIME_PROMPT_MANUAL_RECORD_TYPE)
+            {
+                if let Some(id) = value.get("task_type").and_then(serde_json::Value::as_str) {
+                    ids.push(id.to_string());
+                }
+            }
+        }
+        ids.reverse();
+        ids
     }
 }

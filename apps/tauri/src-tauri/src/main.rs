@@ -6,8 +6,12 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use url::Url;
+
+const GATEWAY_HEALTH_TIMEOUT: Duration = Duration::from_secs(20);
+const GATEWAY_HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const GATEWAY_BUILD_KIND: &str = "release";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +41,7 @@ fn open_external_url(url: String) -> Result<(), String> {
 fn start_gateway(gateway_url: String) -> Result<StartGatewayResponse, String> {
     let endpoint = GatewayEndpoint::parse(&gateway_url);
     let my_root = current_runtime_root();
+    let instance_home = instance_home_for_runtime_root(&my_root);
     // Only reuse a reachable gateway if it belongs to *this* package directory.
     // A gateway from another route (dev bin / release) on the same port must not
     // be hijacked — we start our own on a free port instead.
@@ -50,7 +55,9 @@ fn start_gateway(gateway_url: String) -> Result<StartGatewayResponse, String> {
             });
         }
     }
-    let endpoint = endpoint_for_gateway_start(endpoint);
+    if !gateway_port_available(&endpoint) {
+        terminate_gateway_from_lock(&instance_home, &endpoint)?;
+    }
     if !gateway_port_available(&endpoint) {
         return Err(format!(
             "gateway port {} is occupied by a foreign process",
@@ -60,39 +67,70 @@ fn start_gateway(gateway_url: String) -> Result<StartGatewayResponse, String> {
 
     let gateway = gateway_binary_path().ok_or_else(|| "gateway binary not found".to_string())?;
     let runtime_root = runtime_root_for_gateway(&gateway);
-    let mut command = Command::new(&gateway);
+    let instance_home = instance_home_for_runtime_root(&runtime_root);
+
+    for attempt in 0..2 {
+        let child = spawn_gateway_child(&gateway, &runtime_root, &instance_home, &endpoint)?;
+        *owned_gateway()
+            .lock()
+            .map_err(|_| "gateway child lock poisoned".to_string())? = Some(child);
+        if wait_for_gateway_health(&endpoint, GATEWAY_HEALTH_TIMEOUT) {
+            return Ok(StartGatewayResponse {
+                ok: true,
+                status: "connected",
+                gateway_path: Some(gateway.display().to_string()),
+                gateway_url: Some(endpoint.url()),
+            });
+        }
+        let killed_by_lock = terminate_gateway_from_lock(&instance_home, &endpoint)?;
+        let killed_owned_child = force_kill_owned_gateway();
+        if !killed_by_lock && !killed_owned_child {
+            return Err(format!(
+                "gateway did not become healthy after {} seconds and could not be killed",
+                GATEWAY_HEALTH_TIMEOUT.as_secs()
+            ));
+        }
+        if attempt == 0 {
+            continue;
+        }
+    }
+
+    Err(format!(
+        "gateway did not become healthy after {} seconds",
+        GATEWAY_HEALTH_TIMEOUT.as_secs()
+    ))
+}
+
+fn spawn_gateway_child(
+    gateway: &Path,
+    runtime_root: &Path,
+    instance_home: &Path,
+    endpoint: &GatewayEndpoint,
+) -> Result<Child, String> {
+    let mut command = Command::new(gateway);
     command
-        .current_dir(&runtime_root)
+        .current_dir(runtime_root)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .env("TURA_PROJECT_ROOT", &runtime_root)
+        .env("TURA_HOME", instance_home)
+        .env("TURA_PROJECT_ROOT", runtime_root)
         .env("TURA_GATEWAY_SHUTDOWN_ON_STDIN_EOF", "1")
         .env(
             "TURA_PROVIDER_CONFIG",
-            provider_config_path_for_runtime_root(&runtime_root),
+            provider_config_path_for_runtime_root(runtime_root),
         )
-        .env("TURA_ENV_PATH", runtime_root.join(".env"));
-    command.env("PORT", endpoint.port.to_string());
+        .env("TURA_ENV_PATH", runtime_root.join(".env"))
+        .env("PORT", endpoint.port.to_string());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
-    let child = command
+    command
         .spawn()
-        .map_err(|err| format!("failed to start gateway {}: {err}", gateway.display()))?;
-    *owned_gateway()
-        .lock()
-        .map_err(|_| "gateway child lock poisoned".to_string())? = Some(child);
-
-    Ok(StartGatewayResponse {
-        ok: true,
-        status: "starting",
-        gateway_path: Some(gateway.display().to_string()),
-        gateway_url: Some(endpoint.url()),
-    })
+        .map_err(|err| format!("failed to start gateway {}: {err}", gateway.display()))
 }
 
 fn open_url_in_default_browser(url: &str) -> Result<(), String> {
@@ -140,6 +178,25 @@ fn default_browser_command(url: &str) -> Command {
 
 fn owned_gateway() -> &'static Mutex<Option<Child>> {
     OWNED_GATEWAY.get_or_init(|| Mutex::new(None))
+}
+
+fn force_kill_owned_gateway() -> bool {
+    let child = owned_gateway()
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take());
+    let Some(mut child) = child else {
+        return false;
+    };
+    match child.try_wait() {
+        Ok(Some(_)) => true,
+        Ok(None) => {
+            let killed = child.kill().is_ok();
+            let _ = child.wait();
+            killed
+        }
+        Err(_) => false,
+    }
 }
 
 fn gateway_binary_path() -> Option<PathBuf> {
@@ -192,6 +249,7 @@ fn provider_config_path_for_runtime_root(runtime_root: &Path) -> PathBuf {
     if packaged.exists() {
         return packaged;
     }
+
     let workspace = runtime_root
         .join("crates")
         .join("provider")
@@ -201,6 +259,14 @@ fn provider_config_path_for_runtime_root(runtime_root: &Path) -> PathBuf {
         return workspace;
     }
     packaged
+}
+
+fn instance_home_for_runtime_root(runtime_root: &Path) -> PathBuf {
+    std::env::var_os("TURA_HOME")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(|path| normalize_path(&path))
+        .unwrap_or_else(|| normalize_path(runtime_root))
 }
 
 /// Runtime root the running GUI belongs to (its own package directory).
@@ -216,25 +282,34 @@ fn current_runtime_root() -> PathBuf {
 
 fn same_root(left: &str, right: &Path) -> bool {
     fn canonical(path: &Path) -> String {
-        let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        let text = strip_verbatim(&resolved.to_string_lossy());
-        let text = text.trim_end_matches(['\\', '/']).to_string();
-        if cfg!(windows) {
-            text.to_lowercase()
-        } else {
-            text
-        }
-    }
-    fn strip_verbatim(path: &str) -> String {
-        if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
-            format!(r"\\{rest}")
-        } else if let Some(rest) = path.strip_prefix(r"\\?\") {
-            rest.to_string()
-        } else {
-            path.to_string()
-        }
+        comparable_path(path)
     }
     canonical(Path::new(left)) == canonical(right)
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    PathBuf::from(strip_verbatim(&resolved.to_string_lossy()))
+}
+
+fn comparable_path(path: &Path) -> String {
+    let text = normalize_path(path).to_string_lossy().to_string();
+    let text = text.trim_end_matches(['\\', '/']).to_string();
+    if cfg!(windows) {
+        text.to_lowercase()
+    } else {
+        text
+    }
+}
+
+fn strip_verbatim(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = path.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        path.to_string()
+    }
 }
 
 fn gateway_port_available(endpoint: &GatewayEndpoint) -> bool {
@@ -244,27 +319,20 @@ fn gateway_port_available(endpoint: &GatewayEndpoint) -> bool {
         .any(|addr| TcpListener::bind(addr).is_ok())
 }
 
-fn endpoint_for_gateway_start(endpoint: GatewayEndpoint) -> GatewayEndpoint {
-    if gateway_port_available(&endpoint) {
-        return endpoint;
-    }
-    available_endpoint_with_same_host(&endpoint).unwrap_or(endpoint)
-}
-
-fn available_endpoint_with_same_host(endpoint: &GatewayEndpoint) -> Option<GatewayEndpoint> {
-    use std::net::ToSocketAddrs;
-
-    (endpoint.host.as_str(), 0)
-        .to_socket_addrs()
-        .ok()?
-        .find_map(|addr| TcpListener::bind(addr).ok())
-        .and_then(|listener| listener.local_addr().ok())
-        .map(|addr| endpoint.with_port(addr.port()))
-}
-
 #[cfg_attr(not(test), allow(dead_code))]
 fn gateway_health_reachable(endpoint: &GatewayEndpoint) -> bool {
     gateway_identity(endpoint).is_some()
+}
+
+fn wait_for_gateway_health(endpoint: &GatewayEndpoint, timeout: Duration) -> bool {
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        if gateway_health_reachable(endpoint) {
+            return true;
+        }
+        std::thread::sleep(GATEWAY_HEALTH_POLL_INTERVAL);
+    }
+    false
 }
 
 /// Probe `/global/health`; on a healthy gateway return its reported `root`,
@@ -364,16 +432,86 @@ impl GatewayEndpoint {
         };
         format!("http://{host}:{}", self.port)
     }
-
-    fn with_port(&self, port: u16) -> Self {
-        Self {
-            host: self.host.clone(),
-            port,
-            explicit_port: Some(port),
-        }
-    }
 }
 
+#[derive(Debug, Default)]
+struct GatewayLockRecord {
+    pid: Option<u32>,
+    process_start_time: Option<u64>,
+    kind: Option<String>,
+    mode: Option<String>,
+    port: Option<u16>,
+    root: Option<String>,
+}
+
+fn terminate_gateway_from_lock(
+    instance_home: &Path,
+    endpoint: &GatewayEndpoint,
+) -> Result<bool, String> {
+    let Some(record) = read_gateway_lock(instance_home, endpoint.port) else {
+        return Ok(false);
+    };
+    if record.kind.as_deref() != Some("gateway")
+        || record.mode.as_deref() != Some(GATEWAY_BUILD_KIND)
+        || record.port != Some(endpoint.port)
+        || !record
+            .root
+            .as_deref()
+            .is_some_and(|root| comparable_path(Path::new(root)) == comparable_path(instance_home))
+    {
+        return Ok(false);
+    }
+    let Some(pid) = record.pid else {
+        return Ok(false);
+    };
+    if pid == std::process::id() {
+        return Ok(false);
+    }
+    let Some(expected_start) = record.process_start_time else {
+        return Ok(false);
+    };
+    if current_process_start_time(pid) != Some(expected_start) {
+        return Ok(false);
+    }
+    let mut system = sysinfo::System::new_all();
+    system.refresh_processes();
+    let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) else {
+        return Ok(false);
+    };
+    Ok(process.kill())
+}
+
+fn read_gateway_lock(instance_home: &Path, port: u16) -> Option<GatewayLockRecord> {
+    let path = instance_home
+        .join(".tura")
+        .join("locks")
+        .join(format!("gateway-{GATEWAY_BUILD_KIND}.lock"));
+    let raw = std::fs::read_to_string(path).ok()?;
+    let mut record = GatewayLockRecord::default();
+    for line in raw.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        match key.trim() {
+            "pid" => record.pid = value.trim().parse().ok(),
+            "process_start_time" => record.process_start_time = value.trim().parse().ok(),
+            "kind" => record.kind = Some(value.trim().to_string()),
+            "mode" => record.mode = Some(value.trim().to_string()),
+            "port" => record.port = value.trim().parse().ok(),
+            "root" => record.root = Some(value.trim().to_string()),
+            _ => {}
+        }
+    }
+    Some(record)
+}
+
+fn current_process_start_time(pid: u32) -> Option<u64> {
+    let mut system = sysinfo::System::new_all();
+    system.refresh_processes();
+    system
+        .process(sysinfo::Pid::from_u32(pid))
+        .map(sysinfo::Process::start_time)
+}
 impl Default for GatewayEndpoint {
     fn default() -> Self {
         Self {
@@ -500,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn occupied_unhealthy_port_uses_available_fallback_port() {
+    fn occupied_unhealthy_port_is_not_silently_remapped() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind occupied listener");
         let port = listener.local_addr().expect("local addr").port();
         let endpoint = GatewayEndpoint {
@@ -509,11 +647,7 @@ mod tests {
             explicit_port: Some(port),
         };
 
-        let next = endpoint_for_gateway_start(endpoint.clone());
-
-        assert_ne!(next.port, endpoint.port);
-        assert_eq!(next.host, endpoint.host);
-        assert!(gateway_port_available(&next));
+        assert!(!gateway_port_available(&endpoint));
     }
 
     #[test]
@@ -614,6 +748,58 @@ mod tests {
 
         assert_eq!(runtime_root_for_gateway(&gateway), temp);
         let _ = fs::remove_dir_all(test_temp_dir("target-release-layout"));
+    }
+
+    #[test]
+    fn gateway_lock_must_match_release_home_port_and_start_time() {
+        let temp = test_temp_dir("gateway-lock-scope");
+        let foreign_home = test_temp_dir("gateway-lock-foreign");
+        let endpoint = GatewayEndpoint {
+            host: "127.0.0.1".to_string(),
+            port: 4156,
+            explicit_port: Some(4156),
+        };
+        let pid = std::process::id();
+        let start_time = current_process_start_time(pid).expect("current start time");
+        let lock_dir = temp.join(".tura").join("locks");
+        fs::create_dir_all(&lock_dir).expect("lock dir");
+        let lock_path = lock_dir.join("gateway-release.lock");
+
+        fs::write(
+            &lock_path,
+            format!(
+                "pid={pid}\nprocess_start_time={start_time}\nkind=gateway\nmode=dev\nport=4156\nroot={}\n",
+                temp.display()
+            ),
+        )
+        .expect("dev lock");
+        assert!(!terminate_gateway_from_lock(&temp, &endpoint).expect("dev lock should not kill"));
+
+        fs::write(
+            &lock_path,
+            format!(
+                "pid={pid}\nprocess_start_time={start_time}\nkind=gateway\nmode=release\nport=4156\nroot={}\n",
+                foreign_home.display()
+            ),
+        )
+        .expect("foreign home lock");
+        assert!(
+            !terminate_gateway_from_lock(&temp, &endpoint).expect("foreign lock should not kill")
+        );
+
+        fs::write(
+            &lock_path,
+            format!(
+                "pid={pid}\nprocess_start_time={}\nkind=gateway\nmode=release\nport=4156\nroot={}\n",
+                start_time.saturating_sub(1),
+                temp.display()
+            ),
+        )
+        .expect("stale start lock");
+        assert!(!terminate_gateway_from_lock(&temp, &endpoint).expect("stale lock should not kill"));
+
+        let _ = fs::remove_dir_all(temp);
+        let _ = fs::remove_dir_all(foreign_home);
     }
 
     #[test]

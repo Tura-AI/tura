@@ -916,7 +916,7 @@ fn path_inside_normalized(path: &str, root: &str) -> bool {
 fn normalize_compare_path(path: &str) -> String {
     let mut text = path.replace('\\', "/");
     if text.as_bytes().get(1).is_some_and(|byte| *byte == b':')
-        && !text.as_bytes().get(2).is_some_and(|byte| *byte == b'/')
+        && text.as_bytes().get(2).is_none_or(|byte| *byte != b'/')
     {
         text.insert(2, '/');
     }

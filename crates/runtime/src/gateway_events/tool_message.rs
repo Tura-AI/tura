@@ -11,6 +11,7 @@ use crate::state_machine::runtime_management::{
     RuntimeManagement, RuntimeSessionSyncStatus, UsageReport,
 };
 use crate::state_machine::session_management::{ContextTokenStats, SessionManagement};
+use crate::tool_callback_sanitizer::sanitize_tool_callback_output;
 
 use super::agent_message::{gateway_callback_session_id, publish_gateway_agent_message};
 
@@ -163,6 +164,11 @@ pub(crate) fn publish_runtime_usage_record(
     runtime: &RuntimeManagement,
 ) {
     let target_session_id = gateway_callback_session_id(&session.session_id);
+    let runtime_output = runtime
+        .output
+        .as_ref()
+        .map(sanitize_tool_callback_output)
+        .unwrap_or(serde_json::Value::Null);
     let metadata = serde_json::json!({
         "runtime_id": runtime.runtime_id,
         "session_id": session.session_id,
@@ -170,13 +176,11 @@ pub(crate) fn publish_runtime_usage_record(
         "provider": runtime.provider,
         "usage": runtime.usage,
         "status": format!("{:?}", runtime.call_result_status),
-        "input": runtime.input.clone(),
-        "output": runtime.output.clone(),
     });
     let state = serde_json::json!({
         "status": "completed",
         "input": runtime.input.clone().unwrap_or(serde_json::Value::Null),
-        "output": runtime.output.clone().unwrap_or(serde_json::Value::Null),
+        "output": runtime_output,
         "title": "Runtime usage",
         "metadata": metadata,
         "time": {
@@ -226,6 +230,7 @@ pub(crate) fn publish_tool_call_record(
     started_at: chrono::DateTime<Utc>,
 ) {
     let total_start = Instant::now();
+    let sanitized_output = sanitize_tool_callback_output(output);
     let profiling = profile_timings::enabled();
     let input_bytes = if profiling {
         profile_timings::json_bytes(&input)
@@ -233,7 +238,7 @@ pub(crate) fn publish_tool_call_record(
         0
     };
     let output_bytes = if profiling {
-        profile_timings::json_bytes(output)
+        profile_timings::json_bytes(&sanitized_output)
     } else {
         0
     };
@@ -252,7 +257,7 @@ pub(crate) fn publish_tool_call_record(
         }),
     );
     let output_text_start = Instant::now();
-    let output_text = tool_output_text(output, error);
+    let output_text = tool_output_text(&sanitized_output, error);
     let output_text_len = output_text.len();
     profile_timings::log_elapsed(
         "publish_tool_call_record.tool_output_text",
@@ -269,8 +274,6 @@ pub(crate) fn publish_tool_call_record(
     let metadata = serde_json::json!({
         "kind": "mano_tool_call",
         "tool": tool_call.tool_name,
-        "input": input,
-        "output": output,
         "success": success,
         "error": error,
         "summary": extract_tool_argument_string(&tool_call.arguments, "step_summary"),
@@ -390,7 +393,6 @@ pub(crate) fn publish_tool_call_started(
     let metadata = serde_json::json!({
         "kind": "mano_tool_call",
         "tool": tool_call.tool_name,
-        "input": input,
         "success": null,
         "error": null,
         "summary": extract_tool_argument_string(&tool_call.arguments, "step_summary"),

@@ -1,0 +1,7 @@
+{
+  "id": "frontend",
+  "display_name": "Frontend Operation Manual",
+  "description": "Use for frontend, webpage, application UI, PDF, or PPT tasks where the main work is user experience structure, interface behavior, and domain-appropriate design.",
+  "father_ids": ["visual"],
+  "capabilities": ["apply_patch", "shells", "read_media"]
+}

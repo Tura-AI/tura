@@ -9,6 +9,8 @@ from urllib.request import urlopen
 
 from playwright.async_api import async_playwright, expect
 
+from cleanup_repo_tura_processes import cleanup_repo_tura_processes
+
 
 ROOT = Path(__file__).resolve().parents[5]
 GUI = ROOT / "apps" / "gui"
@@ -168,7 +170,9 @@ async def main() -> None:
 
             await selects.nth(3).click()
             await expect(page.locator(".appearance-select-menu")).to_be_visible()
-            await page.get_by_role("button", name="12").click()
+            await page.locator(".appearance-select-menu").get_by_role(
+                "button", name="12"
+            ).click()
             await expect(page.locator(".appearance-select-menu")).to_have_count(0)
             checks.append({"name": "font-selects-interactive", "ok": True})
             await page.screenshot(path=OUT / "02-font-selects.png", full_page=True)
@@ -183,6 +187,7 @@ async def main() -> None:
             await browser.close()
     finally:
         stop(process)
+        cleanup_repo_tura_processes()
 
     failures = [check for check in checks if not check["ok"]]
     (OUT / "summary.json").write_text(

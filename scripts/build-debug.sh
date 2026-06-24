@@ -54,11 +54,11 @@ copy_gui_dist() {
   cp -R "$src"/. "$dst"/
 }
 
-(cd "$REPO_ROOT" && cargo build -p gateway --bin tura_exec --bin tura_gateway)
-(cd "$REPO_ROOT" && cargo build -p router --bin tura_router)
-(cd "$REPO_ROOT" && cargo build -p session_log --bin tura_session_db)
-(cd "$REPO_ROOT" && cargo build -p runtime --bin tura_runtime)
-(cd "$REPO_ROOT" && cargo build -p generate_media -p read_media -p web_discover)
+(cd "$REPO_ROOT" && TURA_BUILD_KIND=dev cargo build -p gateway --bin tura_exec --bin tura_gateway)
+(cd "$REPO_ROOT" && TURA_BUILD_KIND=dev cargo build -p router --bin tura_router)
+(cd "$REPO_ROOT" && TURA_BUILD_KIND=dev cargo build -p session_log --bin tura_session_db)
+(cd "$REPO_ROOT" && TURA_BUILD_KIND=dev cargo build -p runtime --bin tura_runtime)
+(cd "$REPO_ROOT" && TURA_BUILD_KIND=dev cargo build -p generate_media -p read_media -p web_discover)
 
 if [ "$SKIP_TUI" -eq 0 ]; then
   mkdir -p "$TARGET_DIR"

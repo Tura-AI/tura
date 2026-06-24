@@ -8,8 +8,17 @@ use super::constants::{
     COMMAND_RUN_TOOL, DISABLE_EXECUTE_TOOLS_TOOL_ENV, DISABLE_PLANNING_TOOL_ENV, PROJECT_ROOT_ENV,
 };
 
+#[cfg(test)]
 pub(super) fn load_agent_capabilities(
     agent: &AgentManagement,
+) -> Result<Vec<serde_json::Value>, String> {
+    let allowed_commands = command_run_commands_for_agent(agent);
+    load_agent_capabilities_with_commands(agent, &allowed_commands)
+}
+
+pub(super) fn load_agent_capabilities_with_commands(
+    agent: &AgentManagement,
+    allowed_commands: &BTreeSet<String>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let Some(command_run_directory) = command_run_capability_directory(agent)? else {
         return Ok(Vec::new());
@@ -26,8 +35,9 @@ pub(super) fn load_agent_capabilities(
     let interface = serde_json::from_str::<serde_json::Value>(&content)
         .map_err(|e| format!("failed to parse tool interface: {e}"))?;
 
-    Ok(vec![tool_interface_to_provider_schema_for_agent(
-        interface, agent,
+    Ok(vec![tool_interface_to_provider_schema_with_commands(
+        interface,
+        Some(allowed_commands),
     )])
 }
 
@@ -130,14 +140,6 @@ pub(super) fn tool_interface_to_provider_schema(interface: serde_json::Value) ->
     tool_interface_to_provider_schema_with_commands(interface, None)
 }
 
-pub(super) fn tool_interface_to_provider_schema_for_agent(
-    interface: serde_json::Value,
-    agent: &AgentManagement,
-) -> serde_json::Value {
-    let allowed_commands = command_run_commands_for_agent(agent);
-    tool_interface_to_provider_schema_with_commands(interface, Some(&allowed_commands))
-}
-
 pub(crate) fn command_run_commands_for_agent(agent: &AgentManagement) -> BTreeSet<String> {
     let mut commands = agent
         .agent_capabilities
@@ -154,11 +156,25 @@ pub(crate) fn command_run_commands_for_agent(agent: &AgentManagement) -> BTreeSe
     commands
 }
 
+pub(crate) fn extend_command_run_commands_with_capabilities<I, S>(
+    commands: &mut BTreeSet<String>,
+    capabilities: I,
+) where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    for capability in capabilities {
+        let name = code_tools::commands::canonical_command(capability.as_ref());
+        if name != COMMAND_RUN_TOOL {
+            commands.insert(name);
+        }
+    }
+}
+
 fn default_command_run_commands() -> BTreeSet<String> {
     [
         "apply_patch",
         active_shell_command_name(),
-        "read_media",
         "web_discover",
         "task_status",
     ]
@@ -336,59 +352,10 @@ fn command_run_description_for_active_shell(
         .replace("Available commands: apply_patch, bash, shell_command.", "")
         .trim_end()
         .to_string();
-    let mut command_lines = Vec::new();
-    if allowed_commands.contains("apply_patch") {
-        command_lines.push(format!(
-            "- apply_patch: {}",
-            current_apply_patch_command_format()
-        ));
-    }
-    if allowed_commands.contains(active) {
-        let shell_prompt = match active {
-            "shell_command" => code_tools::commands::shell_command::PROMPT,
-            "zsh" => code_tools::commands::zsh::PROMPT,
-            _ => code_tools::commands::bash::PROMPT,
-        };
-        command_lines.push(format!(
-            "- {active}: {}",
-            current_shell_command_format(shell_prompt)
-        ));
-    }
-    if allowed_commands.contains("read_media") {
-        command_lines.push(format!(
-            "- read_media: {} Schema: {}",
-            compact_prompt(&command_prompt("read_media")),
-            compact_schema(&command_schema("read_media")),
-        ));
-    }
-    if allowed_commands.contains("generate_media") {
-        command_lines.push(format!(
-            "- generate_media: {} Schema: {}",
-            compact_prompt(&command_prompt("generate_media")),
-            compact_schema(&command_schema("generate_media")),
-        ));
-    }
-    if allowed_commands.contains("web_discover") {
-        command_lines.push(format!(
-            "- web_discover: {} Schema: {}",
-            compact_prompt(&command_prompt("web_discover")),
-            compact_schema(&command_schema("web_discover")),
-        ));
-    }
-    if allowed_commands.contains("task_status") {
-        command_lines.push(format!(
-            "- task_status: {} Schema: {}",
-            task_status::TASK_STATUS,
-            compact_schema(code_tools::commands::task_status::SCHEMA),
-        ));
-    }
-    if allowed_commands.contains("planning") {
-        command_lines.push(format!(
-            "- planning: {} Schema: {}",
-            compact_prompt(code_tools::commands::planning::PROMPT),
-            compact_schema(code_tools::commands::planning::SCHEMA),
-        ));
-    }
+    let command_lines = command_list_for_description(allowed_commands, active)
+        .into_iter()
+        .filter_map(|command| command_run_command_format_line(&command))
+        .collect::<Vec<_>>();
     format!(
         "{prefix} Available commands: {}.\nCommand run patterns:\n{}\nCommand line formats:\n{}",
         command_list_for_description(allowed_commands, active).join(", "),
@@ -397,8 +364,59 @@ fn command_run_description_for_active_shell(
     )
 }
 
+pub(crate) fn command_run_command_format_line(command_id: &str) -> Option<String> {
+    let command_id = code_tools::commands::canonical_command(command_id);
+    let active = active_shell_command_name();
+    match command_id.as_str() {
+        "apply_patch" => Some(format!(
+            "- apply_patch: {}",
+            current_apply_patch_command_format()
+        )),
+        command if command == active => {
+            let shell_prompt = command_prompt(active);
+            Some(format!(
+                "- {active}: {}",
+                current_shell_command_format(&shell_prompt)
+            ))
+        }
+        "read_media" | "generate_media" | "web_discover" => Some(format!(
+            "- {command_id}: {} Schema: {}",
+            compact_prompt(&command_prompt(&command_id)),
+            compact_schema(&command_schema(&command_id)),
+        )),
+        "task_status" => {
+            let task_status_schema = task_status::task_status_schema();
+            Some(format!(
+                "- task_status: {} Schema: {}",
+                task_status::task_status_prompt(),
+                compact_schema(&task_status_schema),
+            ))
+        }
+        "planning" => Some(format!(
+            "- planning: {} Schema: {}",
+            compact_prompt(&command_prompt("planning")),
+            compact_schema(code_tools::commands::planning::SCHEMA),
+        )),
+        _ => None,
+    }
+}
+
 fn command_prompt(command_id: &str) -> String {
-    read_command_file(command_id, "prompt.md").unwrap_or_default()
+    read_command_file(command_id, "prompt.md")
+        .or_else(|| builtin_command_prompt(command_id).map(str::to_string))
+        .unwrap_or_default()
+}
+
+fn builtin_command_prompt(command_id: &str) -> Option<&'static str> {
+    Some(match command_id {
+        "apply_patch" => code_tools::commands::apply_patch::PROMPT,
+        "bash" => code_tools::commands::bash::PROMPT,
+        "planning" => code_tools::commands::planning::PROMPT,
+        "shell_command" => code_tools::commands::shell_command::PROMPT,
+        "task_status" => code_tools::commands::task_status::PROMPT,
+        "zsh" => code_tools::commands::zsh::PROMPT,
+        _ => return None,
+    })
 }
 
 fn command_schema(command_id: &str) -> String {
@@ -447,24 +465,27 @@ fn command_run_usage_patterns(allowed_commands: &BTreeSet<String>) -> String {
         "- Avoid embedding long generated source code or complex quoting directly in shell command lines; for complex logic, invoke a script/interpreter from the active shell rather than encoding the logic in shell syntax.",
         "- Verification: run the relevant test or build command after edits in the same command_run only when the verification command is already known.",
         "- Failure handling: inspect each failed item and change the next command based on that failure instead of retrying the same command.",
-        "- Context compaction: after a meaningful phase completes, or when context is near the active context limit and feels crowded, put the handoff summary in `task_status.compact_context` after the work it summarizes.",
         "- Example investigation batch: independent `rg --files`, targeted `rg -n`, and candidate file reads all use step 1.",
         "- Example repair batch: step 1 `apply_patch` across related files, step 2 run the known build command, step 3 run multiple known test commands in the same step.",
         "- Example frontend batch: step 1 write or reuse the focused frontend test script, step 2 run that script and inspect generated textual outputs.",
+        "- Example long-running database check: step 1 run `sleep 60` with `timeout_ms` comfortably above 60000, step 2 run the known database probe script, step 3 read the script output log such as `logs/db-check.log` and summarize the findings.",
     ];
-    if allowed_commands.contains("read_media")
-        || allowed_commands.contains("web_discover")
-        || allowed_commands.contains("generate_media")
-    {
+    if allowed_commands.contains("task_status") {
+        patterns.push("- Context compaction: after a meaningful phase completes, or when context is near the active context limit and feels crowded, put the handoff summary in `task_status.compact_context` after the work it summarizes.");
+    }
+    if allowed_commands.contains("read_media") || allowed_commands.contains("generate_media") {
         patterns.push("- Example media batch: step 1 use `web_discover` or `generate_media` to collect the needed media, docs, or repo artifacts, step 2 use `read_media` or focused reads to verify the resulting media or repo content.");
+    } else if allowed_commands.contains("web_discover") {
+        patterns.push("- Example web discovery batch: step 1 use `web_discover` to collect the needed web docs or references, step 2 use focused reads or probes to verify the resulting repo content.");
     }
     patterns.join("\n")
 }
 
 fn current_apply_patch_command_format() -> String {
     let grammar = "start: begin_patch hunk+ end_patch\nbegin_patch: \"*** Begin Patch\" LF\nend_patch: \"*** End Patch\" LF?\n\nhunk: add_hunk | delete_hunk | update_hunk\nadd_hunk: \"*** Add File: \" filename LF add_line+\ndelete_hunk: \"*** Delete File: \" filename LF\nupdate_hunk: \"*** Update File: \" filename LF change_move? change?\n\nfilename: /(.+)/\nadd_line: \"+\" /(.*)/ LF -> line\n\nchange_move: \"*** Move to: \" filename LF\nchange: (change_context | change_line)+ eof_line?\nchange_context: (\"@@\" | \"@@ \" /(.+)/) LF\nchange_line: (\"+\" | \"-\" | \" \") /(.*)/ LF\neof_line: \"*** End of File\" LF\n\n%import common.LF\n";
+    let prompt = compact_prompt(&command_prompt("apply_patch"));
     format!(
-        "Use one patch for coordinated multi-file source edits after reads. Patches validate context and fail on mismatch. Raw freeform body. Format type `grammar`, syntax `lark`. Definition: {grammar}"
+        "{prompt} Use one patch for coordinated multi-file source edits after reads. Patches validate context and fail on mismatch. Raw freeform body. Format type `grammar`, syntax `lark`. Definition: {grammar}"
     )
 }
 
@@ -543,8 +564,8 @@ mod tests {
         let now = Utc::now();
         let mut agent = AgentManagement::new(
             "agent-1".to_string(),
-            "thinking-planning".to_string(),
-            std::path::PathBuf::from("agents/src/thinking-planning"),
+            "thoughtful".to_string(),
+            std::path::PathBuf::from("agents/src/thoughtful"),
             None,
             true,
             true,
@@ -601,40 +622,70 @@ mod tests {
         })
     }
 
-    #[test]
-    fn command_run_description_injects_task_status_command_prompt() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        let schema = tool_interface_to_provider_schema(command_run_interface());
-        let description = schema
-            .pointer("/function/description")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
+    fn command_type_enum(schema: &serde_json::Value) -> Vec<String> {
+        schema["function"]["parameters"]["properties"]["commands"]["items"]["properties"]
+            ["command_type"]["enum"]
+            .as_array()
+            .expect("command_type enum should be injected")
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .expect("command_type enum value should be a string")
+                    .to_string()
+            })
+            .collect()
+    }
 
-        // task_status is advertised as an available command.
-        assert!(
-            description.contains("task_status"),
-            "description missing task_status command"
-        );
-        assert!(
-            description.contains("Reminder: task_status only updates internal task state")
-                && description.contains("Before changing task_status `status`")
-                && description.contains("then call task_status in the same assistant response")
-                && description.contains("Keep task_group available")
-                && description.contains("has been read and inspected with read_media")
-                && description
-                    .contains("Use task_status `compact_context` to create a context checkpoint")
-                && description.contains("if the user says hello or asks a simple question"),
-            "description missing task_status reminder"
-        );
-        // The schema enum is injected too.
-        assert!(
-            description.contains("\"enum\":[\"doing\",\"question\",\"done\"]"),
-            "description missing task_status schema enum"
+    fn assert_command_type_enum(schema: &serde_json::Value, expected: &[&str]) {
+        assert_eq!(
+            command_type_enum(schema),
+            expected
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
         );
     }
 
     #[test]
-    fn planning_command_does_not_replace_task_status_prompt() {
+    fn command_run_schema_injects_task_status_command_and_dynamic_schema() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let commands = default_command_run_commands();
+        let schema = tool_interface_to_provider_schema_with_commands(
+            command_run_interface(),
+            Some(&commands),
+        );
+
+        assert_command_type_enum(
+            &schema,
+            &[
+                "apply_patch",
+                active_shell_command_name(),
+                "web_discover",
+                "task_status",
+            ],
+        );
+
+        let task_status_schema =
+            serde_json::from_str::<serde_json::Value>(&task_status::task_status_schema())
+                .expect("task_status schema should parse");
+        assert_eq!(
+            task_status_schema["properties"]["status"]["enum"],
+            serde_json::json!(["doing", "question", "done"])
+        );
+        assert_eq!(
+            task_status_schema["properties"]["task_type"]["items"]["enum"],
+            serde_json::Value::Array(
+                crate::prompt_style::runtime_prompt_manual::valid_task_type_ids()
+                    .into_iter()
+                    .map(serde_json::Value::String)
+                    .collect()
+            )
+        );
+    }
+
+    #[test]
+    fn planning_command_extends_task_status_command_schema() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let mut commands = default_command_run_commands();
         commands.insert("planning".to_string());
@@ -642,23 +693,8 @@ mod tests {
             command_run_interface(),
             Some(&commands),
         );
-        let description = schema
-            .pointer("/function/description")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
-
-        assert!(description.contains("task_status"));
-        assert!(description.contains("Reminder: task_status only updates internal task state"));
-        assert!(description.contains("Before changing task_status `status`"));
-        assert!(description.contains("then call task_status in the same assistant response"));
-        assert!(description.contains("Keep task_group available"));
-        assert!(description.contains("has been read and inspected with read_media"));
-        assert!(description
-            .contains("Use task_status `compact_context` to create a context checkpoint"));
-        assert!(description.contains("if the user says hello or asks a simple question"));
-        assert!(!description.contains("Continue working toward the active thread goal."));
-        assert!(!description.contains("[current objective]:"));
-        assert!(!description.to_ascii_lowercase().contains("budget"));
+        assert!(command_type_enum(&schema).contains(&"task_status".to_string()));
+        assert!(command_type_enum(&schema).contains(&"planning".to_string()));
     }
 
     #[test]
@@ -722,6 +758,41 @@ mod tests {
         assert!(commands.contains("task_status"));
         assert!(commands.contains(active_shell_command_name()));
         assert!(!commands.contains("shells"));
+    }
+
+    #[test]
+    fn runtime_prompt_capabilities_extend_command_run_schema() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
+        let mut commands = command_run_commands_for_agent(&command_run_agent_with_capabilities(&[
+            "command_run",
+            "apply_patch",
+            "shells",
+            "web_discover",
+            "task_status",
+        ]));
+        extend_command_run_commands_with_capabilities(
+            &mut commands,
+            ["read_media", "generate_media"],
+        );
+
+        let schema = tool_interface_to_provider_schema_with_commands(
+            command_run_interface(),
+            Some(&commands),
+        );
+
+        assert_command_type_enum(
+            &schema,
+            &[
+                "apply_patch",
+                "shell_command",
+                "generate_media",
+                "read_media",
+                "web_discover",
+                "task_status",
+            ],
+        );
+        std::env::remove_var("TURA_COMMAND_RUN_SHELL");
     }
 
     #[test]
@@ -803,125 +874,76 @@ mod tests {
     }
 
     #[test]
-    fn command_run_provider_description_exposes_only_shell_command_surface() {
+    fn command_run_provider_schema_exposes_only_shell_command_surface() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
 
-        let schema = tool_interface_to_provider_schema(command_run_interface());
-        let description = schema["function"]["description"]
-            .as_str()
-            .unwrap_or_default();
-
-        assert!(description.contains(
-            "Available commands: apply_patch, shell_command, read_media, web_discover, task_status."
-        ));
-        assert!(description.contains(
-            "Use assistant content only for concise reasoning, progress, and conclusions."
-        ));
-        assert!(description.contains("- shell_command:"));
-        assert!(description.contains(
-            "Delete commands are allowed only when every delete target is a literal path inside the workspace; variable targets such as `$file.FullName` may be blocked."
-        ));
-        assert!(description.contains("- read_media:"));
-        assert!(description.contains("- web_discover:"));
-        assert!(description.contains("- task_status:"));
-        assert!(!description.contains("- planning:"));
-        assert!(description.contains("\"command\":{\"type\":\"string\""));
-        assert!(description.contains("\"workdir\":{\"type\":\"string\""));
-        assert!(description.contains("\"timeout_ms\":{\"type\":\"number\""));
-        assert!(description.contains("Default timeout is 15 seconds"));
-        assert!(description
-            .contains("Persistent services must never be used as blocking foreground commands"));
-        assert!(description.contains(
-            "monitor early process exit while waiting for readiness and fail immediately"
-        ));
-        assert!(description.contains("check for process exit on every readiness poll"));
-        assert!(description.contains(
-            "If the service exits before readiness, immediately kill/clear only that process tree"
-        ));
-        assert!(description.contains("otherwise the command is considered hung and incorrect"));
-        assert!(!description.contains("Start-Process -WindowStyle Hidden -PassThru"));
-        assert!(!description.contains("Stop-Process -Id $p1.Id,$p2.Id -Force"));
-        assert!(!description.contains("p1=$(node server.mjs 4173"));
-        assert!(!description.contains("Available commands: apply_patch, bash"));
-        assert!(!description.contains("- bash:"));
+        let commands = default_command_run_commands();
+        let schema = tool_interface_to_provider_schema_with_commands(
+            command_run_interface(),
+            Some(&commands),
+        );
+        assert_command_type_enum(
+            &schema,
+            &[
+                "apply_patch",
+                "shell_command",
+                "web_discover",
+                "task_status",
+            ],
+        );
+        assert_eq!(
+            schema["function"]["parameters"]["properties"]["commands"]["items"]["properties"]
+                ["command_line"]["type"],
+            "string"
+        );
+        assert_eq!(
+            schema["function"]["parameters"]["properties"]["commands"]["items"]["properties"]
+                ["step"]["type"],
+            "integer"
+        );
 
         std::env::remove_var("TURA_COMMAND_RUN_SHELL");
     }
 
     #[test]
-    fn command_run_provider_description_exposes_only_bash_surface() {
+    fn command_run_provider_schema_exposes_only_bash_surface() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         std::env::set_var("TURA_COMMAND_RUN_SHELL", "bash");
 
-        let schema = tool_interface_to_provider_schema(command_run_interface());
-        let description = schema["function"]["description"]
-            .as_str()
-            .unwrap_or_default();
-
-        assert!(description.contains(
-            "Available commands: apply_patch, bash, read_media, web_discover, task_status."
-        ));
-        assert!(description.contains(
-            "Use assistant content only for concise reasoning, progress, and conclusions."
-        ));
-        assert!(description.contains("- bash:"));
-        assert!(description.contains("- read_media:"));
-        assert!(description.contains("- web_discover:"));
-        assert!(description.contains("- task_status:"));
-        assert!(!description.contains("- planning:"));
-        assert!(description.contains("\"command\":{\"type\":\"string\""));
-        assert!(description.contains("\"workdir\":{\"type\":\"string\""));
-        assert!(description.contains("\"timeout_ms\":{\"type\":\"number\""));
-        assert!(description.contains("Default timeout is 15 seconds"));
-        assert!(description.contains("bash-specific syntax"));
-        assert!(description.contains("Bash arrays are zero-indexed"));
-        assert!(description.contains("Do not use zsh-only glob qualifiers"));
-        assert!(description
-            .contains("Persistent services must never be used as blocking foreground commands"));
-        assert!(description.contains(
-            "monitor early process exit while waiting for readiness and fail immediately"
-        ));
-        assert!(description.contains("check for process exit on every readiness poll"));
-        assert!(description.contains(
-            "If the service exits before readiness, immediately kill/clear only that process tree"
-        ));
-        assert!(description.contains("otherwise the command is considered hung and incorrect"));
-        assert!(!description.contains("Start-Process -WindowStyle Hidden -PassThru"));
-        assert!(!description.contains("Stop-Process -Id $p1.Id,$p2.Id -Force"));
-        assert!(!description.contains("p1=$(node server.mjs 4173"));
-        assert!(!description.contains("shell_command"));
+        let commands = default_command_run_commands();
+        let schema = tool_interface_to_provider_schema_with_commands(
+            command_run_interface(),
+            Some(&commands),
+        );
+        assert_command_type_enum(
+            &schema,
+            &["apply_patch", "bash", "web_discover", "task_status"],
+        );
 
         std::env::remove_var("TURA_COMMAND_RUN_SHELL");
     }
 
     #[test]
-    fn command_run_provider_description_exposes_only_zsh_surface() {
+    fn command_run_provider_schema_exposes_only_zsh_surface() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         std::env::set_var("TURA_COMMAND_RUN_SHELL", "zsh");
 
-        let schema = tool_interface_to_provider_schema(command_run_interface());
-        let description = schema["function"]["description"]
-            .as_str()
-            .unwrap_or_default();
-
-        assert!(description.contains(
-            "Available commands: apply_patch, zsh, read_media, web_discover, task_status."
-        ));
-        assert!(description.contains("- zsh:"));
-        assert!(description.contains("zsh-specific syntax"));
-        assert!(description.contains("/bin/zsh"));
-        assert!(description.contains("Zsh arrays are one-indexed"));
-        assert!(description.contains("unmatched globs can fail"));
-        assert!(description.contains("Do not use bash-only helpers"));
-        assert!(!description.contains("- bash:"));
-        assert!(!description.contains("- shell_command:"));
+        let commands = default_command_run_commands();
+        let schema = tool_interface_to_provider_schema_with_commands(
+            command_run_interface(),
+            Some(&commands),
+        );
+        assert_command_type_enum(
+            &schema,
+            &["apply_patch", "zsh", "web_discover", "task_status"],
+        );
 
         std::env::remove_var("TURA_COMMAND_RUN_SHELL");
     }
 
     #[test]
-    fn command_run_provider_description_injects_planning_only_when_enabled() {
+    fn command_run_provider_schema_injects_planning_only_when_enabled() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
         let mut commands = default_command_run_commands();
@@ -931,48 +953,36 @@ mod tests {
             command_run_interface(),
             Some(&commands),
         );
-        let description = schema["function"]["description"]
-            .as_str()
-            .unwrap_or_default();
 
-        assert!(description.contains(
-            "Available commands: apply_patch, shell_command, read_media, web_discover, task_status, planning."
-        ));
-        assert!(description.contains("- planning:"));
+        assert_command_type_enum(
+            &schema,
+            &[
+                "apply_patch",
+                "shell_command",
+                "web_discover",
+                "task_status",
+                "planning",
+            ],
+        );
 
         std::env::remove_var("TURA_COMMAND_RUN_SHELL");
     }
 
     #[test]
-    fn command_run_prompt_loading_excludes_capability_prompts_from_model_context() {
+    fn command_run_capability_loading_uses_agent_commands_for_schema() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         let run_id = format!(
-            "tura-command-run-prompt-test-{}",
+            "tura-command-run-schema-test-{}",
             Utc::now().timestamp_nanos_opt().unwrap_or_default()
         );
         let root = std::env::temp_dir().join(run_id);
         let command_run_dir = root.join("command_run");
-        let shell_dir = root.join("commands").join("shell_command");
-        let bash_dir = root.join("commands").join("bash");
-        let zsh_dir = root.join("commands").join("zsh");
-        let apply_patch_dir = root.join("commands").join("apply_patch");
         std::fs::create_dir_all(&command_run_dir).expect("command_run dir should be created");
-        std::fs::create_dir_all(&shell_dir).expect("shell dir should be created");
-        std::fs::create_dir_all(&bash_dir).expect("bash dir should be created");
-        std::fs::create_dir_all(&zsh_dir).expect("zsh dir should be created");
-        std::fs::create_dir_all(&apply_patch_dir).expect("apply_patch dir should be created");
         std::fs::write(
-            command_run_dir.join("prompt.md"),
-            "common command_run prompt",
+            command_run_dir.join("schema.json"),
+            command_run_interface().to_string(),
         )
-        .expect("common prompt should be written");
-        std::fs::write(shell_dir.join("prompt.md"), "shell command_run prompt")
-            .expect("shell prompt should be written");
-        std::fs::write(bash_dir.join("prompt.md"), "bash command_run prompt")
-            .expect("bash prompt should be written");
-        std::fs::write(zsh_dir.join("prompt.md"), "zsh command_run prompt")
-            .expect("zsh prompt should be written");
-        std::fs::write(apply_patch_dir.join("prompt.md"), "apply_patch prompt")
-            .expect("apply_patch prompt should be written");
+        .expect("command_run schema should be written");
 
         let now = Utc::now();
         let mut agent = AgentManagement::new(
@@ -1005,24 +1015,25 @@ mod tests {
             },
             now,
         );
+        for capability_name in ["apply_patch", "shells", "task_status", "planning"] {
+            agent.add_capability(
+                AgentCapabilityItem {
+                    capability_name: capability_name.to_string(),
+                    capability_directory: root.clone(),
+                },
+                now,
+            );
+        }
 
+        std::env::set_var("TURA_COMMAND_RUN_SHELL", "shell_command");
         let tools = load_agent_capabilities(&agent).expect("tool loading should succeed");
-        let descriptions = tools
-            .iter()
-            .filter_map(|tool| {
-                tool.get("function")
-                    .and_then(|function| function.get("description"))
-                    .and_then(|description| description.as_str())
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let command_run = tools.first().expect("command_run tool should load");
+        assert_command_type_enum(
+            command_run,
+            &["apply_patch", "shell_command", "task_status", "planning"],
+        );
 
-        assert!(!descriptions.contains("common command_run prompt"));
-        assert!(!descriptions.contains("apply_patch prompt"));
-        assert!(!descriptions.contains("shell command_run prompt"));
-        assert!(!descriptions.contains("bash command_run prompt"));
-        assert!(!descriptions.contains("zsh command_run prompt"));
-
+        std::env::remove_var("TURA_COMMAND_RUN_SHELL");
         let _ = std::fs::remove_dir_all(root);
     }
 }

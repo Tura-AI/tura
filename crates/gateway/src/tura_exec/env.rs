@@ -13,6 +13,11 @@ pub(crate) fn configure_runtime_env(config: &CliConfig) {
     if config.priority {
         std::env::set_var("TURA_SESSION_ACCELERATION_ENABLED", "1");
     }
+    if config.goal_mode {
+        std::env::set_var("TURA_GOAL_MODE", "1");
+    } else {
+        std::env::remove_var("TURA_GOAL_MODE");
+    }
     if let Some(max_tokens) = config.max_tokens {
         std::env::set_var("TURA_SESSION_MAX_TOKENS", max_tokens.to_string());
     }

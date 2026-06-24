@@ -74,8 +74,8 @@ describe("communication style protocol directives", () => {
               frames: {},
             },
             {
-              id: "laufgh",
-              name: "laufgh",
+              id: "laugh",
+              name: "laugh",
               source_directory: "",
               grid_path: "",
               frames: {},
@@ -84,6 +84,6 @@ describe("communication style protocol directives", () => {
         },
         sticker,
       ),
-    ).toEqual(["laufgh"]);
+    ).toEqual(["laugh"]);
   });
 });

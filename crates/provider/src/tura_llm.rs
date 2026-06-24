@@ -901,6 +901,11 @@ pub fn default_client(api_key: &str) -> Result<reqwest::Client, TuraError> {
 }
 
 pub fn normalize_response_content(raw: &Value) -> Value {
+    if raw.get("events").and_then(Value::as_array).is_some() {
+        if let Some(content) = crate::llm::openapi::normalize_codex_response_event_content(raw) {
+            return content;
+        }
+    }
     if let Some(message) = raw.pointer("/choices/0/message") {
         let content = message.get("content").cloned().unwrap_or(Value::Null);
         let tool_calls = message

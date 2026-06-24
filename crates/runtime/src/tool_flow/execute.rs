@@ -17,7 +17,11 @@ use crate::gateway_events::{
 };
 use crate::manas::constants::COMMAND_RUN_TOOL;
 use crate::manas::tool_arguments::normalize_tool_arguments_for_tool;
-use crate::manas::tool_catalog::{command_run_commands_for_agent, project_directory_with_tools};
+use crate::manas::tool_catalog::{
+    command_run_commands_for_agent, extend_command_run_commands_with_capabilities,
+    project_directory_with_tools,
+};
+use crate::prompt_style::runtime_prompt_manual;
 
 use super::permission::{permission_denial_for_tool, request_command_run_sandbox_bypass};
 
@@ -31,6 +35,14 @@ pub(crate) fn execute_tool_calls(
     let mut results = Vec::new();
     let project_directory = project_directory_with_tools()?;
     let tools_directory = project_directory.join("crates").join("tools").join("src");
+    let allowed_command_run_commands = agent.map(|agent| {
+        let mut commands = command_run_commands_for_agent(agent);
+        extend_command_run_commands_with_capabilities(
+            &mut commands,
+            runtime_prompt_manual::capabilities_for_task_type_ids(&session.task_type),
+        );
+        commands
+    });
 
     for tool_call in tool_calls {
         let tool_started_at = Utc::now();
@@ -113,7 +125,7 @@ pub(crate) fn execute_tool_calls(
             session_directory: session.session_directory.clone(),
             tools_directory: tools_directory.clone(),
             disable_permission_restrictions: session.disable_permission_restrictions,
-            allowed_command_run_commands: agent.map(command_run_commands_for_agent),
+            allowed_command_run_commands: allowed_command_run_commands.clone(),
         };
 
         let mut result = tokio::runtime::Runtime::new()

@@ -57,19 +57,19 @@
         }
       },
       {
-        "id": "laufgh",
-        "source_directory": "personas/src/tura/media/expressions/laufgh",
-        "grid_path": "personas/src/tura/media/expressions/laufgh/grid/sheet.png",
+        "id": "laugh",
+        "source_directory": "personas/src/tura/media/expressions/laugh",
+        "grid_path": "personas/src/tura/media/expressions/laugh/grid/sheet.png",
         "frames": {
-          "center": "personas/src/tura/media/expressions/laufgh/frames/center.png",
-          "up": "personas/src/tura/media/expressions/laufgh/frames/up.png",
-          "down": "personas/src/tura/media/expressions/laufgh/frames/down.png",
-          "left": "personas/src/tura/media/expressions/laufgh/frames/left.png",
-          "right": "personas/src/tura/media/expressions/laufgh/frames/right.png",
-          "up-left": "personas/src/tura/media/expressions/laufgh/frames/up-left.png",
-          "up-right": "personas/src/tura/media/expressions/laufgh/frames/up-right.png",
-          "down-left": "personas/src/tura/media/expressions/laufgh/frames/down-left.png",
-          "down-right": "personas/src/tura/media/expressions/laufgh/frames/down-right.png"
+          "center": "personas/src/tura/media/expressions/laugh/frames/center.png",
+          "up": "personas/src/tura/media/expressions/laugh/frames/up.png",
+          "down": "personas/src/tura/media/expressions/laugh/frames/down.png",
+          "left": "personas/src/tura/media/expressions/laugh/frames/left.png",
+          "right": "personas/src/tura/media/expressions/laugh/frames/right.png",
+          "up-left": "personas/src/tura/media/expressions/laugh/frames/up-left.png",
+          "up-right": "personas/src/tura/media/expressions/laugh/frames/up-right.png",
+          "down-left": "personas/src/tura/media/expressions/laugh/frames/down-left.png",
+          "down-right": "personas/src/tura/media/expressions/laugh/frames/down-right.png"
         }
       },
       {

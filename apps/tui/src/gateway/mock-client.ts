@@ -25,7 +25,7 @@ export class MockGatewayClient {
   private sessions: Session[];
   private messagesBySession = new Map<string, Message[]>();
   private sessionConfig: SessionConfig = {
-    active_agent: "thinking",
+    active_agent: "balanced",
     active_provider: "codex",
     active_model: "gpt-5.5",
     model: "codex/gpt-5.5",
@@ -275,32 +275,39 @@ export class MockGatewayClient {
     return [
       {
         summary: {
-          id: "thinking",
-          name: "Thinking",
-          description: "Mock Tura thinking agent",
+          id: "balanced",
+          name: "Balanced",
+          description:
+            "Balances self-reflection with intuitive response, using verification and reflective checks.",
           source: "static",
-          path: "mock://agents/thinking",
-          aliases: [],
+          path: "mock://agents/balanced",
+          aliases: ["thinking"],
           capabilities: ["chat"],
           hidden: false,
         },
         config: {
-          agent_name: "thinking",
-          description: "Mock Tura thinking agent",
+          agent_name: "balanced",
+          description:
+            "Balances self-reflection with intuitive response, using verification and reflective checks.",
         },
       },
       {
         summary: {
-          id: "fast",
-          name: "fast",
-          description: "Mock fast agent",
+          id: "direct",
+          name: "Direct",
+          description:
+            "Responds quickly and directly, follows intuition into action, and keeps verification light.",
           source: "static",
-          path: "mock://agents/fast",
-          aliases: [],
+          path: "mock://agents/direct",
+          aliases: ["fast"],
           capabilities: ["chat"],
           hidden: false,
         },
-        config: { agent_name: "fast", description: "Mock fast agent" },
+        config: {
+          agent_name: "direct",
+          description:
+            "Responds quickly and directly, follows intuition into action, and keeps verification light.",
+        },
       },
     ];
   }

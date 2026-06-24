@@ -29,6 +29,7 @@ Options:
   -p, --priority                  enable priority model routing for this model
   -a, --agent-id ID               agent id loaded from agents/src/
       --session-id ID             reuse a deterministic session id
+      --goal                      keep the CLI session running until task_status marks done/question
       --json                      emit JSONL events instead of final text only
       --quiet, --silent           suppress progress on stderr
       --output-last-message PATH  write the final assistant message to PATH
@@ -77,6 +78,7 @@ pub(crate) struct CliConfig {
     pub(crate) reasoning_effort: Option<String>,
     pub(crate) priority: bool,
     pub(crate) planning_mode: Option<bool>,
+    pub(crate) goal_mode: bool,
     pub(crate) max_tokens: Option<u64>,
     pub(crate) command_run_shell: Option<String>,
     pub(crate) command_run_sandbox: bool,
@@ -104,6 +106,7 @@ impl CliConfig {
             reasoning_effort: None,
             priority: false,
             planning_mode: None,
+            goal_mode: false,
             max_tokens: None,
             command_run_shell: None,
             command_run_sandbox: false,
@@ -153,6 +156,10 @@ impl CliConfig {
                 }
                 "--sandbox" => {
                     config.command_run_sandbox = true;
+                    index += 1;
+                }
+                "--goal" => {
+                    config.goal_mode = true;
                     index += 1;
                 }
                 "--bash" | "--zsh" | "--shll" => {
@@ -336,7 +343,7 @@ mod tests {
         let config = CliConfig::parse(vec![
             "exec".to_string(),
             "--agent-id".to_string(),
-            "thinking-planning".to_string(),
+            "thoughtful".to_string(),
             "inspect".to_string(),
         ])
         .expect("parse cli");
@@ -381,6 +388,19 @@ mod tests {
 
         assert_eq!(enabled.planning_mode, Some(true));
         assert_eq!(disabled.planning_mode, Some(false));
+    }
+
+    #[test]
+    fn goal_flag_enables_goal_mode() {
+        let config = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--goal".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse goal cli");
+
+        assert!(config.goal_mode);
+        assert_eq!(config.prompt().as_deref(), Ok("inspect"));
     }
 
     #[test]

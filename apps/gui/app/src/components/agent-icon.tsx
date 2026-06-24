@@ -15,13 +15,13 @@ export function agentIconEmoji(agent?: Agent, agentId?: string): string {
     return configured;
   }
   const id = agent?.name ?? agentId;
-  if (id === "thinking") {
+  if (id === "balanced" || id === "thinking") {
     return "🧠";
   }
-  if (id === "thinking-planning") {
+  if (id === "thoughtful" || id === "thinking-planning") {
     return "🧭";
   }
-  if (id === "fast") {
+  if (id === "direct" || id === "fast") {
     return "🚀";
   }
   return "⚡";

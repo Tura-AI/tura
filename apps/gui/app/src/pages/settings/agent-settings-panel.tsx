@@ -11,7 +11,11 @@ import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { AgentIcon } from "../../components/agent-icon";
 import { t, type TextKey } from "../../i18n";
 import { classNames } from "../../state/format";
-import { agentDisplayName, visibleConfigurableAgents } from "../../utils/agent-display";
+import {
+  agentDescription,
+  agentDisplayName,
+  visibleConfigurableAgents,
+} from "../../utils/agent-display";
 import { AppearanceSelect } from "./appearance-select";
 import { ReadonlyRow } from "./readonly-row";
 import {
@@ -49,7 +53,9 @@ export function AgentSettingsPanel(props: {
       return visibleAgents();
     }
     return visibleAgents().filter((agent) =>
-      `${agentDisplayName(agent)} ${agent.description} ${agent.mode}`.toLowerCase().includes(query),
+      `${agentDisplayName(agent)} ${agentDescription(agent)} ${agent.mode}`
+        .toLowerCase()
+        .includes(query),
     );
   });
   const configuredAgentCount = createMemo(() => filteredAgents().length);
@@ -185,7 +191,7 @@ export function AgentSettingsPanel(props: {
           />
           <ReadonlyRow
             label={t("description")}
-            value={storedAgent()?.summary.description ?? selectedAgent()?.description ?? ""}
+            value={agentDescription(selectedAgent(), storedAgent())}
           />
           <ReadonlyRow
             label={t("defaultModelTier")}

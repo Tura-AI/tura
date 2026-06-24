@@ -2,11 +2,11 @@ use std::path::PathBuf;
 
 use chrono::Utc;
 use runtime::agent_router::{activate_agents_by_session_type, coding_agent_provider_name};
-use runtime::session::{activate_session_with_topic, create_session_with_directory};
+use runtime::session::{activate_session_with_directory, create_session_with_directory};
 use runtime::state_machine::session_management::{FileInput, SessionInput};
 
 #[test]
-fn default_agent_registry_loads_general_agent() {
+fn default_agent_registry_loads_coding_agent() {
     let input = SessionInput {
         user_input: "build a rust agent workflow".to_string(),
         file_input: vec![FileInput {
@@ -27,11 +27,13 @@ fn default_agent_registry_loads_general_agent() {
 
     assert_eq!(session.input, input);
     assert_eq!(agents.len(), 1);
-    assert_eq!(agents[0].agent_name, "general");
+    assert_eq!(agents[0].agent_name, "balanced");
     assert!(agents[0].report_to_user);
-    assert_eq!(agents[0].provider.tura_llm_name, "fast");
-    assert!(agents[0].validator.need_validator);
-    assert!(agents[0].agent_capabilities.is_empty());
+    assert_eq!(
+        agents[0].provider.tura_llm_name,
+        coding_agent_provider_name()
+    );
+    assert!(!agents[0].validator.need_validator);
     assert!(!agents[0]
         .agent_capabilities
         .iter()
@@ -48,11 +50,14 @@ fn default_agent_registry_loads_general_agent() {
         .agent_capabilities
         .iter()
         .any(|capability| capability.capability_name == "send_message_to_user"));
-    assert_eq!(agents[0].agent_capabilities.len(), 0);
+    assert!(agents[0]
+        .agent_capabilities
+        .iter()
+        .any(|capability| capability.capability_name == "task_status"));
 }
 
 #[test]
-fn coding_topic_registry_loads_coding_agent() {
+fn default_directory_session_loads_coding_agent() {
     let input = SessionInput {
         user_input: "build a rust agent workflow".to_string(),
         file_input: vec![],
@@ -61,12 +66,12 @@ fn coding_topic_registry_loads_coding_agent() {
         planning_mode_override: None,
     };
 
-    let session = activate_session_with_topic(PathBuf::from("."), "coding", input)
+    let session = activate_session_with_directory(PathBuf::from("."), input)
         .expect("session should be created");
     let agents = activate_agents_by_session_type(&session).expect("agent registry should load");
 
     assert_eq!(agents.len(), 1);
-    assert_eq!(agents[0].agent_name, "thinking");
+    assert_eq!(agents[0].agent_name, "balanced");
     assert_eq!(
         agents[0].provider.tura_llm_name,
         coding_agent_provider_name()
@@ -96,42 +101,26 @@ fn default_coding_agents_expose_expected_command_run_capabilities() {
 
     for (agent_name, expected, forbidden, provider) in [
         (
-            "thinking-planning",
-            vec![
-                "apply_patch",
-                "shells",
-                "generate_media",
-                "read_media",
-                "web_discover",
-                "task_status",
-                "planning",
-            ],
-            vec![],
+            "thoughtful",
+            vec!["apply_patch", "shells", "web_discover", "task_status"],
+            vec!["planning", "generate_media", "read_media"],
             "thinking",
         ),
         (
-            "fast",
-            vec![
-                "apply_patch",
-                "shells",
-                "generate_media",
-                "read_media",
-                "web_discover",
-                "task_status",
-            ],
-            vec!["planning"],
+            "direct",
+            vec!["apply_patch", "shells", "web_discover", "task_status"],
+            vec!["planning", "generate_media", "read_media"],
             "fast",
         ),
         (
-            "fast-text-only",
+            "direct-text-only",
             vec!["apply_patch", "shells", "web_discover", "task_status"],
             vec!["planning", "read_media"],
             "fast",
         ),
     ] {
-        let session = activate_session_with_topic(
+        let session = activate_session_with_directory(
             project_root.clone(),
-            "coding",
             SessionInput {
                 user_input: "check capabilities".to_string(),
                 file_input: vec![],

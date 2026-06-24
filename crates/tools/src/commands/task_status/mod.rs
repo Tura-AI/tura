@@ -5,9 +5,22 @@
 //! `prompt.md` / `schema.json`, mirroring every other command.
 
 use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
 
 pub const PROMPT: &str = include_str!("prompt.md");
 pub const SCHEMA: &str = include_str!("schema.json");
+
+const FALLBACK_TASK_TYPE_IDS: &[&str] = &[
+    "creative_and_writing",
+    "data_visualization",
+    "debug",
+    "frontend",
+    "interactive_and_3d",
+    "new_build",
+    "refactoring",
+    "research_and_learning",
+    "visual",
+];
 
 /// Normalize a task_status command into its result output
 /// `{ "task_status": { ...provided fields... } }`.
@@ -41,6 +54,7 @@ pub fn normalize_output(
         }
     }
     let task_group = string_field(object, &["task_group"]);
+    let task_type = task_type_field(object, "task_type")?;
     let compact_context = string_field(object, &["compact_context"]);
     let mut task_status = serde_json::Map::new();
     if let Some(status) = status {
@@ -48,6 +62,12 @@ pub fn normalize_output(
     }
     if let Some(task_group) = task_group {
         task_status.insert("task_group".to_string(), Value::String(task_group));
+    }
+    if let Some(task_type) = task_type {
+        task_status.insert(
+            "task_type".to_string(),
+            Value::Array(task_type.into_iter().map(Value::String).collect()),
+        );
     }
     if let Some(compact_context) = compact_context {
         task_status.insert(
@@ -129,6 +149,87 @@ fn string_field(object: &serde_json::Map<String, Value>, names: &[&str]) -> Opti
             _ => None,
         })
     })
+}
+
+fn task_type_field(
+    object: &serde_json::Map<String, Value>,
+    name: &str,
+) -> Result<Option<Vec<String>>, String> {
+    let Some(value) = object.get(name) else {
+        return Ok(None);
+    };
+    let Some(items) = value.as_array() else {
+        return Err("task_status task_type must be an array of strings".to_string());
+    };
+    let mut out = Vec::new();
+    for item in items {
+        let Some(id) = item.as_str().map(str::trim).filter(|id| !id.is_empty()) else {
+            return Err("task_status task_type must be an array of strings".to_string());
+        };
+        let valid_ids = task_type_ids();
+        if !valid_ids.iter().any(|valid| valid == id) {
+            return Err(format!(
+                "task_status task_type must be one of: {}",
+                valid_ids.join(", ")
+            ));
+        }
+        if !out.iter().any(|existing| existing == id) {
+            out.push(id.to_string());
+        }
+    }
+    Ok(Some(out))
+}
+
+fn task_type_ids() -> Vec<String> {
+    runtime_prompt_root()
+        .and_then(|root| read_task_type_ids_from_dir(&root).ok())
+        .filter(|ids| !ids.is_empty())
+        .unwrap_or_else(|| {
+            FALLBACK_TASK_TYPE_IDS
+                .iter()
+                .map(|id| (*id).to_string())
+                .collect()
+        })
+}
+
+fn runtime_prompt_root() -> Option<PathBuf> {
+    std::env::var_os("TURA_RUNTIME_PROMPT_ROOT")
+        .map(PathBuf::from)
+        .or_else(|| {
+            let tools_crate = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            Some(
+                tools_crate
+                    .parent()?
+                    .join("runtime")
+                    .join("src")
+                    .join("runtime_prompt"),
+            )
+        })
+}
+
+fn read_task_type_ids_from_dir(root: &Path) -> Result<Vec<String>, String> {
+    let entries = std::fs::read_dir(root).map_err(|err| err.to_string())?;
+    let mut ids = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let identity_path = path.join("prompt_identity.json");
+        let identity_text = std::fs::read_to_string(&identity_path)
+            .map_err(|err| format!("failed to read {}: {err}", identity_path.display()))?;
+        let identity: Value = serde_json::from_str(&identity_text)
+            .map_err(|err| format!("failed to parse {}: {err}", identity_path.display()))?;
+        if let Some(id) = identity.get("id").and_then(Value::as_str) {
+            let id = id.trim();
+            if !id.is_empty() && !ids.iter().any(|existing| existing == id) {
+                ids.push(id.to_string());
+            }
+        }
+    }
+    ids.sort();
+    Ok(ids)
 }
 
 #[cfg(test)]
@@ -222,6 +323,29 @@ mod tests {
                 .expect("compact context should be present"),
             "Need to rerun parser fixture tests."
         );
+    }
+
+    #[test]
+    fn task_type_array_normalizes_and_deduplicates() {
+        let out = normalize_output(
+            None,
+            "{\"task_type\":[\"debug\",\"data_visualization\",\"frontend\",\"debug\"]}",
+        )
+        .expect("task_type should normalize");
+
+        assert_eq!(
+            out.pointer("/task_status/task_type")
+                .expect("task_type should be present"),
+            &json!(["debug", "data_visualization", "frontend"])
+        );
+    }
+
+    #[test]
+    fn task_type_rejects_unknown_ids() {
+        let err = normalize_output(None, "{\"task_type\":[\"unknown\"]}")
+            .expect_err("unknown task type should be rejected");
+
+        assert!(err.contains("task_status task_type must be one of"));
     }
 
     #[test]

@@ -77,6 +77,44 @@ function Start-CargoTestProcess {
   }
 }
 
+function Stop-ProcessTree {
+  param([int]$ProcessId)
+  if ($IsWindows -or $env:OS -eq "Windows_NT") {
+    & taskkill /PID $ProcessId /T /F *> $null
+  } else {
+    Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Test-IsRepoTargetProcess {
+  param([string]$ProcessPath)
+  if (-not $ProcessPath) {
+    return $false
+  }
+  $comparison = [System.StringComparison]::OrdinalIgnoreCase
+  if (-not $ProcessPath.StartsWith($RepoRoot.Path, $comparison)) {
+    return $false
+  }
+  $separator = [System.IO.Path]::DirectorySeparatorChar
+  $targetMarker = "${separator}target${separator}"
+  return $ProcessPath.IndexOf($targetMarker, $comparison) -ge 0
+}
+
+function Stop-RepoTuraProcesses {
+  $names = @("tura", "tura_gui", "tura_gateway", "tura_router", "tura_session_db", "tura_runtime", "tura_exec")
+  foreach ($process in (Get-Process -Name $names -ErrorAction SilentlyContinue)) {
+    $path = $null
+    try {
+      $path = $process.Path
+    } catch {
+      continue
+    }
+    if (Test-IsRepoTargetProcess $path) {
+      Stop-ProcessTree -ProcessId $process.Id
+    }
+  }
+}
+
 function Invoke-ParallelBackendTestCases {
   param([object[]]$Cases, [int]$Parallelism, [int]$TimeoutSeconds)
   if ($Cases.Count -eq 0) {
@@ -92,35 +130,56 @@ function Invoke-ParallelBackendTestCases {
   foreach ($case in $Cases) {
     $pending.Enqueue($case)
   }
-  $running = @()
-  while ($pending.Count -gt 0 -or $running.Count -gt 0) {
+  $failures = @()
+  while ($pending.Count -gt 0) {
+    $running = @()
     while ($pending.Count -gt 0 -and $running.Count -lt $maxParallel) {
       $running += Start-CargoTestProcess $pending.Dequeue()
     }
-    Start-Sleep -Milliseconds 200
-    $nextRunning = @()
-    foreach ($entry in $running) {
-      $entry.Process.Refresh()
-      $elapsed = ((Get-Date) - $entry.StartedAt).TotalSeconds
-      if (-not $entry.Process.HasExited -and $elapsed -gt $TimeoutSeconds) {
-        Stop-Process -Id $entry.Process.Id -Force -ErrorAction SilentlyContinue
-        throw "cargo $($entry.Arguments -join ' ') exceeded ${TimeoutSeconds}s"
-      }
-      if ($entry.Process.HasExited) {
-        $entry.Process.WaitForExit()
-        if ($entry.Process.ExitCode -ne 0) {
-          foreach ($other in $running) {
-            if (-not $other.Process.HasExited) {
-              Stop-Process -Id $other.Process.Id -Force -ErrorAction SilentlyContinue
+    while ($running.Count -gt 0) {
+      Start-Sleep -Milliseconds 200
+      $nextRunning = @()
+      foreach ($entry in $running) {
+        $entry.Process.Refresh()
+        $elapsed = ((Get-Date) - $entry.StartedAt).TotalSeconds
+        if (-not $entry.Process.HasExited -and $elapsed -gt $TimeoutSeconds) {
+          Stop-ProcessTree -ProcessId $entry.Process.Id
+          $entry.Process.WaitForExit()
+          $failures += [pscustomobject]@{
+            Case = $entry.Case
+            ExitCode = $null
+            Reason = "exceeded ${TimeoutSeconds}s"
+            Arguments = $entry.Arguments
+          }
+          Stop-RepoTuraProcesses
+          continue
+        }
+        if ($entry.Process.HasExited) {
+          $entry.Process.WaitForExit()
+          if ($entry.Process.ExitCode -ne 0) {
+            $failures += [pscustomobject]@{
+              Case = $entry.Case
+              ExitCode = $entry.Process.ExitCode
+              Reason = "exit $($entry.Process.ExitCode)"
+              Arguments = $entry.Arguments
             }
           }
-          exit $entry.Process.ExitCode
+        } else {
+          $nextRunning += $entry
         }
-      } else {
-        $nextRunning += $entry
       }
+      $running = $nextRunning
     }
-    $running = $nextRunning
+    Stop-RepoTuraProcesses
+  }
+  if ($failures.Count -gt 0) {
+    Write-Host ""
+    Write-Host "Failed backend business tests:"
+    foreach ($failure in $failures) {
+      Write-Host "- $($failure.Case.Package)::$($failure.Case.Target) ($($failure.Reason))"
+      Write-Host "  cargo $($failure.Arguments -join ' ')"
+    }
+    exit 1
   }
 }
 

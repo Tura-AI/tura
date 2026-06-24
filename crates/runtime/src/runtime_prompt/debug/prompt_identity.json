@@ -1,0 +1,7 @@
+{
+  "id": "debug",
+  "display_name": "Debug Operation Manual",
+  "description": "Use for tasks that require fixing bugs or adding/changing feature.",
+  "father_ids": [],
+  "capabilities": ["shells"]
+}

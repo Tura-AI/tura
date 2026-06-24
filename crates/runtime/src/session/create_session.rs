@@ -5,8 +5,6 @@ use uuid::Uuid;
 
 use crate::state_machine::session_management::{SessionInput, SessionManagement};
 
-const DEFAULT_SESSION_TOPIC: &str = "general";
-
 pub fn create_session(
     session_directory: PathBuf,
     input: SessionInput,
@@ -22,7 +20,7 @@ pub fn create_session(
         session_name,
         session_directory,
         false,
-        DEFAULT_SESSION_TOPIC.to_string(),
+        Vec::<String>::new(),
         input,
         user_goal,
         now,

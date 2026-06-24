@@ -79,10 +79,13 @@ pub fn runtime_provider_config_from_tura(
         })
         .unwrap_or_else(|| primary.clone());
 
-    // Latency level is chosen by the default model tier,
-    // never by the thinking parameter. Install the tier's timeouts globally so
-    // streaming.rs picks them up for first/idle/total deadlines.
-    let tier_timeouts = tura_llm_rust::apply_latency_for_tier(&default_model_tier);
+    // Latency is chosen from the actual selected provider/model, independent
+    // of the agent's default route. Install the model tier's timeouts globally
+    // so streaming.rs picks them up for first/idle/total deadlines.
+    let latency_tier = settings
+        .tier_for_model(&selected.provider, &selected.model)
+        .unwrap_or_else(|| "unknown".to_string());
+    let tier_timeouts = tura_llm_rust::apply_latency_for_tier(&latency_tier);
 
     let mut base = provider_config.clone();
     let provider_total_timeout_ms = std::env::var("TURA_PROVIDER_TOTAL_TIMEOUT_MS")

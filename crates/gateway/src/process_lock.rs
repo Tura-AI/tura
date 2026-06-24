@@ -16,7 +16,7 @@ impl ProcessLock {
         let dir = root.join(".tura").join("locks");
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("failed to create lock dir {}", dir.display()))?;
-        let path = dir.join(lock_file_name(kind, mode, port));
+        let path = dir.join(lock_file_name(kind, mode));
         let mut file = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -36,10 +36,21 @@ impl ProcessLock {
         file.set_len(0)?;
         file.seek(SeekFrom::Start(0))?;
         writeln!(file, "pid={}", std::process::id())?;
+        if let Some(start_time) = current_process_start_time(std::process::id()) {
+            writeln!(file, "process_start_time={start_time}")?;
+        }
         writeln!(file, "kind={kind}")?;
         writeln!(file, "mode={mode}")?;
         if let Some(port) = port {
             writeln!(file, "port={port}")?;
+        }
+
+        fn current_process_start_time(pid: u32) -> Option<u64> {
+            let mut system = sysinfo::System::new_all();
+            system.refresh_processes();
+            system
+                .process(sysinfo::Pid::from_u32(pid))
+                .map(sysinfo::Process::start_time)
         }
         writeln!(file, "root={}", root.display())?;
         Ok(Self { file, path })
@@ -57,9 +68,8 @@ impl Drop for ProcessLock {
     }
 }
 
-fn lock_file_name(kind: &str, mode: &str, port: Option<u16>) -> String {
-    let suffix = port.map(|p| format!("-{p}")).unwrap_or_default();
-    format!("{}-{}{}.lock", sanitize(kind), sanitize(mode), suffix)
+fn lock_file_name(kind: &str, mode: &str) -> String {
+    format!("{}-{}.lock", sanitize(kind), sanitize(mode))
 }
 
 fn sanitize(value: &str) -> String {
@@ -80,23 +90,21 @@ mod tests {
     use super::ProcessLock;
 
     #[test]
-    fn rejects_second_owner_for_same_root_mode_port() {
+    fn rejects_second_owner_for_same_root_mode_even_on_different_port() {
         let temp = tempfile::tempdir().expect("temp dir");
         let first =
             ProcessLock::acquire(temp.path(), "gateway", "dev", Some(4126)).expect("first lock");
-        let second = ProcessLock::acquire(temp.path(), "gateway", "dev", Some(4126));
+        let second = ProcessLock::acquire(temp.path(), "gateway", "dev", Some(4999));
         assert!(second.is_err());
         assert!(first.path().exists());
     }
 
     #[test]
-    fn allows_different_modes_and_ports() {
+    fn allows_different_modes() {
         let temp = tempfile::tempdir().expect("temp dir");
         let _dev =
             ProcessLock::acquire(temp.path(), "gateway", "dev", Some(4126)).expect("dev lock");
         let _release = ProcessLock::acquire(temp.path(), "gateway", "release", Some(4156))
             .expect("release lock");
-        let _other_port = ProcessLock::acquire(temp.path(), "gateway", "dev", Some(4999))
-            .expect("other port lock");
     }
 }

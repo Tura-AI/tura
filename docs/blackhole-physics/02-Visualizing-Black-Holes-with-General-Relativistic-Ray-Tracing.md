@@ -276,7 +276,7 @@ Hope that helps.
 8.
 			 ![](https://secure.gravatar.com/avatar/f36653de3dcc1a3719df0a3a770ce54f6adf3048c2b80392476f2ba31a399f40?s=50&d=mm&r=g) Zenith [
 										September 1, 2024 at 7:38 pm
-								](https://blog.seanholloway.com/2022/03/13/visualizing-black-holes-with-general-relativistic-ray-tracing/#comment-421) hello i would like to have the high resolution picture of a rendered background distorted black hole image from the section (After a good amount of tinkering and head scratching, I ended up with my first successful render of a black hole, with no disk, and a starry background:) here. i think it looked really dope and hoping if i could use it as a print on my graphic tee. i know its 2024 now but hope u d reply i think it look really cool and awsome. Love ur work!
+								](https://blog.seanholloway.com/2022/03/13/visualizing-black-holes-with-general-relativistic-ray-tracing/#comment-421) hello i would like to have the high resolution picture of a rendered background distorted black hole image from the section (After a good amount of tinkering and head scratching, I ended up with my first successful render of a black hole, with no disk, and a starry background:) here. i think it looked really dope and hoping if i could use it as a print on my graphic tee. i know its 2024 now but hope u d reply i think it look really cool and awesome. Love ur work!
 
 [Reply](https://blog.seanholloway.com/2022/03/13/visualizing-black-holes-with-general-relativistic-ray-tracing/?replytocom=421#respond)
 

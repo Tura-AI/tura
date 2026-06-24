@@ -452,12 +452,12 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
                 })
             })
         })
+        .or(agent_runtime_settings.acceleration_enabled)
         .or_else(|| {
             session
                 .as_ref()
                 .map(|session| session.model_acceleration_enabled)
         })
-        .or(agent_runtime_settings.acceleration_enabled)
         .unwrap_or(false);
     let command_run_stall_guard = session_config
         .as_ref()
@@ -1049,6 +1049,23 @@ mod tests {
             prompt_agent_for_run(&serde_json::json!({}), None, Some(&config)).as_deref(),
             Some("workspace-agent")
         );
+    }
+
+    #[test]
+    fn dynamic_agent_runtime_settings_include_acceleration_flag() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut config = tura_agents::store::default_agent_config(temp.path(), "runtime-agent")
+            .expect("default agent config");
+        config.provider["model_reasoning_effort"] = serde_json::json!("high");
+        config.provider["model_acceleration_enabled"] = serde_json::json!(true);
+        tura_agents::store::save_dynamic_agent(temp.path(), &config, Some("runtime agent"))
+            .expect("save dynamic agent");
+
+        let settings = agent_runtime_settings("runtime-agent", temp.path().to_str())
+            .expect("agent runtime settings");
+
+        assert_eq!(settings.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(settings.acceleration_enabled, Some(true));
     }
 
     #[test]

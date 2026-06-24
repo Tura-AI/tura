@@ -99,6 +99,53 @@ fn parse_task_status_compact_context_must_be_final_highest_step() {
 }
 
 #[test]
+fn parse_task_status_compact_context_from_inline_arguments_must_be_final() {
+    let error = parse_args(&json!({
+        "commands": [
+            {
+                "step": 1,
+                "command_type": "task_status",
+                "compact_context": "Inline handoff summary"
+            },
+            {
+                "step": 2,
+                "command_type": "shell_command",
+                "command_line": "echo after-inline"
+            }
+        ]
+    }))
+    .expect_err("inline compact_context must obey final-position rules");
+
+    assert_eq!(
+        error,
+        "task_status compact_context must be the final command in the highest step of command_run"
+    );
+}
+
+#[test]
+fn parse_empty_task_status_compact_context_does_not_force_checkpoint_rules() {
+    let args = parse_args(&json!({
+        "commands": [
+            {
+                "step": 1,
+                "command_type": "task_status",
+                "compact_context": "   "
+            },
+            {
+                "step": 2,
+                "command_type": "shell_command",
+                "command_line": "echo after-empty"
+            }
+        ]
+    }))
+    .expect("blank compact_context is ignored for checkpoint positioning");
+
+    assert_eq!(args.commands.len(), 2);
+    assert_eq!(args.commands[0].command, "task_status");
+    assert_eq!(args.commands[1].command, "shell_command");
+}
+
+#[test]
 fn parse_command_only_shell_text_is_mapped_to_active_shell_command() {
     let args = parse_args(&json!({
         "commands": [
@@ -233,6 +280,30 @@ fn task_status_compact_context_normalizes_json_with_raw_newlines() {
     assert_eq!(
         output["task_status"]["compact_context"],
         json!("Goal: keep going.\nNext: rerun focused tests.")
+    );
+}
+
+#[test]
+fn parse_task_status_compact_context_detects_jsonish_unescaped_newline_before_later_command() {
+    let error = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "task_status",
+                "command_line": "{\"compact_context\":\"Goal: keep going.\nNext: rerun tests.\"}",
+                "step": 1
+            },
+            {
+                "command_type": "shell_command",
+                "command_line": "echo should-not-follow",
+                "step": 2
+            }
+        ]
+    }))
+    .expect_err("jsonish compact_context with raw newline should still be detected");
+
+    assert_eq!(
+        error,
+        "task_status compact_context must be the final command in the highest step of command_run"
     );
 }
 

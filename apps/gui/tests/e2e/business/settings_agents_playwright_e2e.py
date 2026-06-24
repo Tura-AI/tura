@@ -9,6 +9,8 @@ from urllib.request import urlopen
 
 from playwright.async_api import async_playwright, expect
 
+from cleanup_repo_tura_processes import cleanup_repo_tura_processes
+
 
 ROOT = Path(__file__).resolve().parents[5]
 GUI = ROOT / "apps" / "gui"
@@ -141,10 +143,10 @@ async def main() -> None:
             checks.append({"name": "composer-agent-menu-visible", "ok": True})
 
             await page.get_by_role(
-                "button", name="Fast openai/gpt-", exact=False
+                "button", name="Direct openai/gpt-", exact=False
             ).click()
             await expect(page.locator(".agent-trigger-button")).to_contain_text(
-                "Fast"
+                "OpenAI/GPT-5.5"
             )
             checks.append({"name": "composer-agent-selects", "ok": True})
 
@@ -172,26 +174,32 @@ async def main() -> None:
             await expect(page.get_by_role("button", name="新智能体")).to_have_count(0)
             await expect(page.get_by_role("button", name="删除")).to_have_count(0)
             await expect(
-                page.get_by_role("button", name="Thinking 推理", exact=True)
+                page.locator(".agent-pick-row")
+                .filter(has_text="Balanced")
+                .filter(has_text="openai/gpt-5.5-pro")
             ).to_be_visible()
             await expect(
-                page.get_by_role("button", name="Thinking Planning 推理", exact=True)
+                page.locator(".agent-pick-row")
+                .filter(has_text="Thoughtful")
+                .filter(has_text="openai/gpt-5.5-pro")
             ).to_be_visible()
             await expect(
-                page.get_by_role("button", name="Fast 快速", exact=True)
+                page.locator(".agent-pick-row")
+                .filter(has_text="Direct")
+                .filter(has_text="openai/gpt-5.5-mini")
+                .first
             ).to_be_visible()
             await expect(
-                page.get_by_role("button", name="Fast Text Only 快速", exact=True)
+                page.locator(".agent-pick-row")
+                .filter(has_text="Direct Text Only")
+                .filter(has_text="openai/gpt-5.5-mini")
             ).to_be_visible()
-            await page.get_by_role(
-                "button", name="Fast Text Only 快速", exact=True
-            ).click()
-            await page.locator(".agent-editor .field-row").filter(
-                has_text="模型"
-            ).locator(".appearance-select-button").click()
-            await page.locator(".appearance-select-menu").get_by_role(
-                "button", name="推理"
-            ).click()
+            await page.locator(".agent-pick-row").filter(has_text="Direct Text Only").click()
+            await expect(
+                page.locator(".agent-editor .field-row")
+                .filter(has_text="默认模型 tier")
+                .filter(has_text="快速 · openai/gpt-5.5-mini")
+            ).to_be_visible()
             await expect(page.get_by_text("思考强度")).to_be_visible()
             await expect(page.get_by_text("Priority")).to_be_visible()
             await page.locator(".agent-editor .field-row").filter(
@@ -230,7 +238,7 @@ async def main() -> None:
             await mobile.locator('[data-section="agents"]').evaluate("el => el.click()")
             await expect(mobile.get_by_role("heading", name="智能体配置")).to_be_visible()
             await expect(
-                mobile.locator(".agent-pick-row").filter(has_text="Fast").first
+                mobile.locator(".agent-pick-row").filter(has_text="Direct").first
             ).to_be_visible()
             await mobile.screenshot(path=OUT / "05-agent-settings-mobile.png", full_page=True)
             checks.append({"name": "mobile-agent-settings-visible", "ok": True})
@@ -245,6 +253,7 @@ async def main() -> None:
             await browser.close()
     finally:
         stop(process)
+        cleanup_repo_tura_processes()
 
     failures = [check for check in checks if not check["ok"]]
     (OUT / "summary.json").write_text(

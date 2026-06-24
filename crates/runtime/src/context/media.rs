@@ -53,7 +53,7 @@ fn command_run_current_style_output_string_without_media_data(
     command_run_current_style_output_string(&value)
 }
 
-fn strip_read_media_payload_data(value: &mut serde_json::Value) {
+pub(super) fn strip_read_media_payload_data(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(object) => {
             if object.contains_key("visual_previews") {
