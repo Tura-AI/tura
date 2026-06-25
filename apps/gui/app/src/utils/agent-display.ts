@@ -1,4 +1,5 @@
 import type { Agent, StoredAgent } from "@tura/gateway-sdk";
+import { t } from "../i18n";
 
 export function visibleConfigurableAgents(agents: Agent[]): Agent[] {
   return agents.filter((agent) => !agent.hidden);
@@ -12,6 +13,15 @@ export function agentDisplayName(agent?: Agent, stored?: StoredAgent): string {
     cleanDisplayName(readOptionString(agent?.options, "name"), agentId);
 
   return configuredName ?? humanizeIdentifier(agentId);
+}
+
+export function agentDescription(agent?: Agent, stored?: StoredAgent): string {
+  const agentId = agent?.name ?? stored?.summary.id ?? "";
+  const translated = builtinAgentDescription(agentId);
+  if (translated) {
+    return translated;
+  }
+  return stored?.summary.description ?? agent?.description ?? "";
 }
 
 function cleanDisplayName(value: string | null | undefined, agentId: string): string | undefined {
@@ -36,4 +46,22 @@ function humanizeIdentifier(value: string): string {
     .replace(/\s+/g, " ")
     .trim()
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function builtinAgentDescription(agentId: string): string | undefined {
+  switch (agentId) {
+    case "direct":
+    case "direct-text-only":
+    case "fast":
+    case "fast-text-only":
+      return t("agentDescriptionDirect");
+    case "balanced":
+    case "thinking":
+      return t("agentDescriptionBalanced");
+    case "thoughtful":
+    case "thinking-planning":
+      return t("agentDescriptionThoughtful");
+    default:
+      return undefined;
+  }
 }

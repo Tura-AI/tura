@@ -3,6 +3,7 @@ pub mod compact_context;
 pub mod context_blocks;
 pub mod provider_retry;
 pub mod runtime_fallback;
+pub mod runtime_prompt_manual;
 pub mod tail_injection;
 pub mod task_status;
 pub mod terminal_final_response;

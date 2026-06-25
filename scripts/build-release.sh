@@ -119,11 +119,11 @@ else
   echo "Preserving local session DB/config state. Pass -clean to remove it before building."
 fi
 
-(cd "$REPO_ROOT" && cargo build --release -p gateway --bin tura_exec --bin tura_gateway)
-(cd "$REPO_ROOT" && cargo build --release -p router --bin tura_router)
-(cd "$REPO_ROOT" && cargo build --release -p session_log --bin tura_session_db)
-(cd "$REPO_ROOT" && cargo build --release -p runtime --bin tura_runtime)
-(cd "$REPO_ROOT" && cargo build --release -p generate_media -p read_media -p web_discover)
+(cd "$REPO_ROOT" && TURA_BUILD_KIND=release cargo build --release -p gateway --bin tura_exec --bin tura_gateway)
+(cd "$REPO_ROOT" && TURA_BUILD_KIND=release cargo build --release -p router --bin tura_router)
+(cd "$REPO_ROOT" && TURA_BUILD_KIND=release cargo build --release -p session_log --bin tura_session_db)
+(cd "$REPO_ROOT" && TURA_BUILD_KIND=release cargo build --release -p runtime --bin tura_runtime)
+(cd "$REPO_ROOT" && TURA_BUILD_KIND=release cargo build --release -p generate_media -p read_media -p web_discover)
 
 if [ "$BUILD_GUI" -eq 1 ]; then
   (cd "$REPO_ROOT/apps/gui" && bun run build)

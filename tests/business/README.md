@@ -30,9 +30,10 @@ directory scan rather than by hardcoded one-off script paths whenever the
 directory layout can express the suite.
 
 Do not write production logic or tests that pass by matching arbitrary
-exact-response prompt wording. Business assertions must be based on structured
-outputs, command exit/result shape, protocol fields, files, or explicit parser
-contracts.
+exact-response prompt wording. Avoid assertions that only prove a prompt or
+provider description contains a particular sentence. Business assertions must
+be based on structured outputs, command exit/result shape, schema enums,
+protocol fields, files, or explicit parser contracts.
 
 ```powershell
 .\xtask\scripts\run-backend-business-tests.ps1 -List
@@ -43,6 +44,10 @@ contracts.
 sh xtask/scripts/run-backend-business-tests.sh --list
 sh xtask/scripts/run-backend-business-tests.sh --crate tools
 ```
+
+The runner completes the discovered business-test set and reports all failed
+`package::target` entries together. It does not stop at the first failed target,
+but it still stops timed-out process trees before moving on.
 
 Manual backend business script outputs default to:
 

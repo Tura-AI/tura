@@ -1,0 +1,7 @@
+{
+  "id": "data_visualization",
+  "display_name": "Data Visualization Operation Manual",
+  "description": "Use for charts, dashboards, exploratory visual analysis, data storytelling, chart redesigns, and interactive or static data visualization deliverables.",
+  "father_ids": ["visual", "new_build"],
+  "capabilities": []
+}

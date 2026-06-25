@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 use std::time::Duration;
 
-use ::session_log::{DeleteSessionRequest, SessionLogCommand};
+use ::session_log::{DeleteSessionRequest, MarkSessionInterruptedRequest, SessionLogCommand};
 use runtime::state_machine::session_management::StartCondition;
 
 // ============================================================================
@@ -39,6 +39,13 @@ pub async fn list_sessions(
 
     session_store().hydrate_directory(directory.clone());
 
+    let listed = filter_list_sessions(
+        session_store().list_sessions(),
+        &params,
+        directory.as_deref(),
+    );
+    refresh_busy_session_liveness(&listed).await;
+
     let mut sessions = filter_list_sessions(
         session_store().list_sessions(),
         &params,
@@ -55,6 +62,98 @@ pub async fn list_sessions(
     }
 
     Json(sessions)
+}
+
+async fn refresh_busy_session_liveness(sessions: &[Session]) {
+    let busy_session_ids = sessions
+        .iter()
+        .filter(|session| session.status == SessionStatus::Busy)
+        .map(|session| session.id.clone())
+        .collect::<Vec<_>>();
+    if busy_session_ids.is_empty() {
+        return;
+    }
+
+    let inactive_session_ids = match RouterClient::global().probe_sessions(&busy_session_ids) {
+        Ok(payload) => inactive_sessions_from_probe(&busy_session_ids, &payload),
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                sessions = ?busy_session_ids,
+                "runtime liveness probe failed; marking busy sessions interrupted"
+            );
+            busy_session_ids
+        }
+    };
+
+    for session_id in inactive_session_ids {
+        mark_session_interrupted_from_gateway_probe(&session_id).await;
+    }
+}
+
+fn inactive_sessions_from_probe(
+    expected_session_ids: &[String],
+    payload: &serde_json::Value,
+) -> Vec<String> {
+    let active = payload
+        .get("sessions")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let session_id = entry
+                .get("session_id")
+                .and_then(serde_json::Value::as_str)?;
+            let active = entry
+                .get("status")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| value == "active")
+                || entry
+                    .get("active_turn")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+                || entry
+                    .get("worker_alive")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+            active.then_some(session_id.to_string())
+        })
+        .collect::<std::collections::HashSet<_>>();
+
+    expected_session_ids
+        .iter()
+        .filter(|session_id| !active.contains(*session_id))
+        .cloned()
+        .collect()
+}
+
+async fn mark_session_interrupted_from_gateway_probe(session_id: &str) {
+    let Some(session) = session_store().mark_interrupted(session_id) else {
+        return;
+    };
+    session_store().finish_todos(session_id, false);
+    session_store().clear_user_commands_for_session(session_id);
+    session_store().push_event(GlobalEvent::SessionUpdated {
+        properties: SessionUpdatedProperties {
+            session_id: session_id.to_string(),
+            info: session,
+        },
+    });
+    session_store().push_current_session_status_event(session_id);
+
+    if let Err(error) = write_session_log_command(SessionLogCommand::MarkSessionInterrupted(
+        MarkSessionInterruptedRequest {
+            session_id: session_id.to_string(),
+        },
+    ))
+    .await
+    {
+        tracing::warn!(
+            session_id,
+            error,
+            "failed to persist gateway runtime liveness interruption"
+        );
+    }
 }
 
 fn filter_list_sessions(
@@ -389,7 +488,7 @@ pub async fn update_session(
             updated_at: 0,
             directory: None,
             model: None,
-            agent: Some("thinking-planning".to_string()),
+            agent: Some("thoughtful".to_string()),
             session_type: Some("coding".to_string()),
             auto_session_name: true,
             kill_processes_on_start: false,
@@ -442,7 +541,7 @@ pub async fn update_session_task_management(
             updated_at: 0,
             directory: None,
             model: None,
-            agent: Some("thinking-planning".to_string()),
+            agent: Some("thoughtful".to_string()),
             session_type: Some("coding".to_string()),
             auto_session_name: true,
             kill_processes_on_start: false,
@@ -527,6 +626,13 @@ fn abort_session_scope(session_id: &str) -> AbortResponse {
                 "failed to persist aborted session snapshot"
             );
         }
+        if let Err(error) = commit_aborted_session(id) {
+            tracing::warn!(
+                session_id = %id,
+                error = %error,
+                "failed to commit aborted session workspace checkpoint"
+            );
+        }
     }
 
     AbortResponse {
@@ -541,6 +647,13 @@ fn persist_aborted_session(session_id: &str) -> Result<(), String> {
     let request = session_store().session_log_upsert_request(session_id)?;
     crate::session_log_writer::write_session_log(SessionLogCommand::UpsertSession(request))
         .map_err(|error| error.to_string())
+}
+
+fn commit_aborted_session(session_id: &str) -> Result<(), String> {
+    let info = session_store()
+        .get_session_info(session_id)
+        .ok_or_else(|| format!("session {session_id} not found"))?;
+    runtime::workspace_git::commit_session_checkpoint(&info.management, "aborted").map(|_| ())
 }
 
 pub async fn fork_session(

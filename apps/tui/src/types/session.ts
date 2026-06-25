@@ -224,11 +224,19 @@ function userFacingOutputText(value: unknown): string {
   }
   if (typeof value !== "object") return "";
   const object = value as JsonObject;
-  for (const key of ["task_status", "output", "text", "content", "finalText", "final_text", "message"]) {
+  for (const key of [
+    "task_status",
+    "output",
+    "text",
+    "content",
+    "finalText",
+    "final_text",
+    "message",
+  ]) {
     const output = userFacingOutputText(object[key]);
     if (output) return output;
   }
-  for (const key of ["task_detail", "summary", "status", "label"]) {
+  for (const key of ["task_group", "summary", "status", "label"]) {
     const output = userFacingOutputText(object[key]);
     if (output) return output;
   }

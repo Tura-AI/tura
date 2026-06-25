@@ -14,7 +14,7 @@ Command entries:
 Important scripts:
 
 - `install.*`: install dependencies only. The root installer checks
-  `shell_command`, `bash`, and `zsh` coverage on every platform, ensures
+  `shell_command`, `bash`, `zsh`, and `git` coverage on every platform, ensures
   user-local `uv` and `bun`, calls command-owned `commands/*/install.*`
   scripts, and runs Bun installs inside app/package directories. It does not
   build binaries or register PATH launchers. Windows adds common Git/MSYS shell
@@ -61,10 +61,12 @@ Xtask test collection scripts:
 - `xtask/scripts/run-backend-business-tests.*`: run root Rust business tests plus
   crate-owned Rust tests from `crates/*/tests/business`, `commands/*/tests/business`,
   `agents/*/tests/business`, and `personas/*/tests/business` using one-level
-  typed-directory scans. Business targets run in parallel batches; process,
-  daemon, service-owner, lifecycle, and OS policy coverage belongs to
-  `xtask/scripts/run-backend-os-tests.*`. These backend runners do not execute
-  `.mjs` app, TUI, or GUI scripts; run app suites from `apps/tui` or `apps/gui`.
+  typed-directory scans. Business targets run in parallel batches and the
+  runner reports all failed `package::target` entries after the discovered set
+  finishes. Process, daemon, service-owner, lifecycle, and OS policy coverage
+  belongs to `xtask/scripts/run-backend-os-tests.*`. These backend runners do
+  not execute `.mjs` app, TUI, or GUI scripts; run app suites from `apps/tui` or
+  `apps/gui`.
 - `xtask/scripts/run-backend-os-tests.*`: run root and crate-owned Rust tests from
   `tests/os_testing` with the `os-tests` feature gate. Every target runs
   serially with `--test-threads=1` to avoid process-global env, local socket,

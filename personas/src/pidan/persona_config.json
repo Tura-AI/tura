@@ -57,22 +57,6 @@
         }
       },
       {
-        "id": "laufgh",
-        "source_directory": "personas/src/pidan/media/expressions/laufgh",
-        "grid_path": "personas/src/pidan/media/expressions/laufgh/grid/sheet.png",
-        "frames": {
-          "center": "personas/src/pidan/media/expressions/laufgh/frames/center.png",
-          "up": "personas/src/pidan/media/expressions/laufgh/frames/up.png",
-          "down": "personas/src/pidan/media/expressions/laufgh/frames/down.png",
-          "left": "personas/src/pidan/media/expressions/laufgh/frames/left.png",
-          "right": "personas/src/pidan/media/expressions/laufgh/frames/right.png",
-          "up-left": "personas/src/pidan/media/expressions/laufgh/frames/up-left.png",
-          "up-right": "personas/src/pidan/media/expressions/laufgh/frames/up-right.png",
-          "down-left": "personas/src/pidan/media/expressions/laufgh/frames/down-left.png",
-          "down-right": "personas/src/pidan/media/expressions/laufgh/frames/down-right.png"
-        }
-      },
-      {
         "id": "laugh",
         "source_directory": "personas/src/pidan/media/expressions/laugh",
         "grid_path": "personas/src/pidan/media/expressions/laugh/grid/sheet.png",

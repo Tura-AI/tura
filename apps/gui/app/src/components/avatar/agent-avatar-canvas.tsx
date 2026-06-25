@@ -49,7 +49,7 @@ const FALLBACK_EXPRESSIONS = [
   "confused",
   "nervous",
   "vigilant",
-  "laufgh",
+  "laugh",
   "smirk",
   "tired",
 ];

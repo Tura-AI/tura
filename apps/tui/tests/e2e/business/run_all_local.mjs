@@ -3,6 +3,8 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 
+import { cleanupRepoTuraProcesses } from "./cleanup_repo_tura_processes.mjs";
+
 const here = import.meta.dirname;
 const appRoot = path.resolve(here, "..", "..", "..");
 const scripts = [
@@ -20,6 +22,7 @@ for (const script of scripts) {
     stdio: "inherit",
     windowsHide: true,
   });
+  cleanupRepoTuraProcesses();
   if (result.status !== 0) process.exit(result.status ?? 1);
   if (result.signal) {
     console.error(`${script} terminated by ${result.signal}`);

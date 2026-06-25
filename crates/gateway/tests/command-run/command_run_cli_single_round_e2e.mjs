@@ -339,7 +339,7 @@ function inspectTuraToolFlow(calls) {
       !/"cache_id"|"tool_name"|"input"/.test(joinedBackfill) &&
       !/Turn \d+ completed with \d+ tool calls/.test(joinedBackfill) &&
       secondMarkers.join("|").endsWith(
-        "developer:permissions|user:workspace_snapshot|user:environment_context|user:task",
+        "user:workspace_snapshot|user:environment_context|user:task",
       ),
     function_call_count: functionCalls.length,
     batch_sizes: functionCalls.map((call) => call.args.commands.length),
@@ -484,12 +484,11 @@ function contextContractFromMessages(messages, options = {}) {
   const expected = requireBase
     ? [
         "system:base_instructions",
-        "developer:permissions",
         "user:workspace_snapshot",
         "user:environment_context",
         "user:task",
       ]
-    : ["developer:permissions", "user:workspace_snapshot", "user:environment_context", "user:task"]
+    : ["user:workspace_snapshot", "user:environment_context", "user:task"]
   return {
     ok:
       JSON.stringify(markerSequence) === JSON.stringify(expected) &&
@@ -583,7 +582,7 @@ function compareContextContracts(tura, codex) {
     marker_sequence_match:
       JSON.stringify(tura?.marker_sequence) === JSON.stringify(codex?.marker_sequence) ||
       JSON.stringify(tura?.marker_sequence) ===
-        JSON.stringify(["developer:permissions", "user:workspace_snapshot", "user:environment_context", "user:task"]),
+        JSON.stringify(["user:workspace_snapshot", "user:environment_context", "user:task"]),
     task_sha256_match: tura?.task_sha256 === codex?.task_sha256,
     tura_marker_sequence: tura?.marker_sequence,
     codex_current_marker_sequence: codex?.marker_sequence,
@@ -751,7 +750,7 @@ async function runTura(workspace) {
     "-m",
     turaModel,
     ...(turaPriority ? ["-p"] : []),
-    "--dangerously-bypass-approvals-and-sandbox",
+    "--sandbox",
     "--model-reasoning-effort",
     reasoningEffort,
     "--output-last-message",

@@ -641,7 +641,7 @@ async def run_round():
             screenshots.append(await shot(page, "03-after-send"))
 
             try:
-                await expect(page.locator(".run-summary")).to_be_visible(timeout=20000)
+                await expect(page.locator(".run-summary").first).to_be_visible(timeout=20000)
             except Exception:
                 diagnostics = await page.evaluate(
                     """
@@ -723,11 +723,19 @@ async def run_round():
             relative_open_response = await relative_open_info.value
             relative_open_payload = await relative_open_response.json()
 
-            await page.locator(".run-summary").click()
-            await expect(page.locator(".tool-inspector")).to_be_visible(timeout=10_000)
-            steps = page.locator(".inspector-steps button")
-            await expect(steps.nth(2)).to_be_visible(timeout=10_000)
-            await steps.nth(2).click()
+            command_summary_count = await page.locator(".run-summary").count()
+            found_playwright_summary = False
+            inspector_texts = []
+            for index in range(command_summary_count):
+                await page.locator(".run-summary").nth(index).click()
+                await expect(page.locator(".tool-inspector")).to_be_visible(timeout=10_000)
+                inspector_text = await page.locator(".tool-inspector").inner_text()
+                inspector_texts.append(inspector_text)
+                if "node tools/snake_playwright.mjs" in inspector_text:
+                    found_playwright_summary = True
+            if not found_playwright_summary:
+                await page.locator(".run-summary").first.click()
+                await expect(page.locator(".tool-inspector")).to_be_visible(timeout=10_000)
             await page.wait_for_timeout(300)
             screenshots.append(await shot(page, "05-command-inspector"))
 
@@ -736,6 +744,7 @@ async def run_round():
                 () => ({
                   title: document.querySelector('.page-title h1')?.innerText ?? '',
                   runSummary: document.querySelector('.run-summary')?.innerText ?? '',
+                  runSummaryCount: document.querySelectorAll('.run-summary').length,
                   inspector: document.querySelector('.tool-inspector')?.innerText ?? '',
                   richBold: document.querySelectorAll('.rich-text b').length,
                   richCode: document.querySelectorAll('.rich-text code').length,
@@ -765,19 +774,25 @@ async def run_round():
                 })
                 """
             )
+            metrics["inspectorAll"] = "\n".join(inspector_texts)
             failures = []
-            if "6 条命令" not in metrics["runSummary"] and "6 commands" not in metrics["runSummary"]:
+            if (
+                metrics["runSummaryCount"] != 6
+                and "6 条命令" not in metrics["runSummary"]
+                and "6 commands" not in metrics["runSummary"]
+            ):
                 failures.append("run-summary-count")
-            if "node tools/snake_playwright.mjs" not in metrics["inspector"]:
+            inspector_all = metrics["inspectorAll"] or metrics["inspector"]
+            if "node tools/snake_playwright.mjs" not in inspector_all:
                 failures.append("inspector-playwright-step")
-            if "desktop.png ok" not in metrics["inspector"]:
+            if "desktop.png ok" not in inspector_all:
                 failures.append("inspector-screenshot-output")
-            normalized_inspector = metrics["inspector"].replace("/", "\\")
+            normalized_inspector = inspector_all.replace("/", "\\")
             agent_tool_evidence = {
-                "screenshotTool": "snake-desktop.png" in metrics["inspector"] and "snake-mobile.png" in metrics["inspector"],
-                "openLinkTool": f"open {SNAKE_OPEN_LINK}" in metrics["inspector"],
+                "screenshotTool": "snake-desktop.png" in inspector_all and "snake-mobile.png" in inspector_all,
+                "openLinkTool": f"open {SNAKE_OPEN_LINK}" in inspector_all,
                 "entryFileTool": (
-                    "Get-Content" in metrics["inspector"]
+                    "Get-Content" in inspector_all
                     and "snake-playwright-entry" in normalized_inspector
                     and "src\\App.jsx" in normalized_inspector
                 ),

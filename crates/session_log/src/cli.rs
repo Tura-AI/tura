@@ -2,8 +2,8 @@ use std::io::Read;
 
 use crate::{
     file_queue, ipc, DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest,
-    ListSessionRecordsRequest, ListSessionsRequest, SessionLogCommand, SessionLogResponse,
-    SessionLogStore,
+    ListSessionRecordsRequest, ListSessionsRequest, MarkSessionInterruptedRequest,
+    SessionLogCommand, SessionLogResponse, SessionLogStore,
 };
 
 /// Developer query CLI for the session DB.
@@ -26,6 +26,9 @@ pub fn run() -> anyhow::Result<()> {
         "list-sessions" => SessionLogCommand::ListSessions(read_json::<ListSessionsRequest>()?),
         "list-session-records" => {
             SessionLogCommand::ListSessionRecords(read_json::<ListSessionRecordsRequest>()?)
+        }
+        "mark-session-interrupted" => {
+            SessionLogCommand::MarkSessionInterrupted(read_json::<MarkSessionInterruptedRequest>()?)
         }
         "delete-session" => SessionLogCommand::DeleteSession(read_json::<DeleteSessionRequest>()?),
         "delete-workspace" => {

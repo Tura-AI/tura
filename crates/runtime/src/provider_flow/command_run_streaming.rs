@@ -22,6 +22,7 @@ use crate::router_command_run::execute_command_value_results;
 use crate::state_machine::runtime_management::{
     RuntimeManagement, RuntimeSessionSyncStatus, ToolCallRecord,
 };
+use crate::tool_callback_sanitizer::sanitize_tool_callback_result;
 
 const COMMAND_RUN_TOOL_NAME: &str = "command_run";
 
@@ -47,10 +48,6 @@ impl StreamedCommandRunState {
 
     pub(crate) fn mark_seen(&self) {
         self.seen.store(true, Ordering::SeqCst);
-    }
-
-    pub(crate) fn seen(&self) -> bool {
-        self.seen.load(Ordering::SeqCst)
     }
 
     pub(crate) fn should_cancel_after_results(&self) -> bool {
@@ -330,6 +327,9 @@ fn prepare_stream_command(
         command_index,
         command,
     } = command_event;
+    if streamed_command_already_seen(streamed_commands, &tool_call_id, command_index) {
+        return None;
+    }
     let original_command = command;
     let mut command = match code_tools::command_run::normalize_command_value_for_execution(
         original_command.clone(),
@@ -511,6 +511,20 @@ fn start_ready_stream_commands(
     }
 }
 
+fn streamed_command_already_seen(
+    streamed_commands: &[Value],
+    tool_call_id: &str,
+    command_index: usize,
+) -> bool {
+    streamed_commands.iter().any(|command| {
+        command.get("provider_tool_call_id").and_then(Value::as_str) == Some(tool_call_id)
+            && command
+                .get("command_index")
+                .and_then(Value::as_u64)
+                .is_some_and(|index| index as usize == command_index)
+    })
+}
+
 fn start_stream_command(
     input: &SpawnStreamedCommandRunTask,
     completion_tx: &mpsc::Sender<StreamCommandCompletion>,
@@ -571,7 +585,7 @@ fn start_stream_command(
             .into_iter()
             .map(|mut item| {
                 attach_result_identity(&mut item, &completion_command);
-                item
+                sanitize_tool_callback_result(&item)
             })
             .collect();
         let _ = completion_tx.send(StreamCommandCompletion {
@@ -748,6 +762,14 @@ fn cancelled_streamed_command_run_output(
     events: &[Value],
     results: &[Value],
 ) -> Value {
+    let events = events
+        .iter()
+        .map(sanitize_tool_callback_result)
+        .collect::<Vec<_>>();
+    let results = results
+        .iter()
+        .map(sanitize_tool_callback_result)
+        .collect::<Vec<_>>();
     serde_json::json!({
         "streamed_command_run_result": {
             "commands": commands,
@@ -782,7 +804,7 @@ fn streamed_command_run_tool_record(
 mod tests {
     use super::{
         apply_cancelled_streamed_command_run_result, spawn_streamed_command_run_task,
-        SpawnStreamedCommandRunTask, StreamedCommandRunState,
+        streamed_command_already_seen, SpawnStreamedCommandRunTask, StreamedCommandRunState,
     };
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::{
@@ -800,6 +822,29 @@ mod tests {
     use tokio::net::TcpListener;
 
     static STREAMING_TEST_ENV: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn streamed_command_dedupe_matches_provider_call_id_and_index() {
+        let commands = vec![
+            json!({
+                "provider_tool_call_id": "call_1",
+                "command_index": 0,
+                "command_type": "shell_command",
+                "command_line": "pwd"
+            }),
+            json!({
+                "provider_tool_call_id": "call_1",
+                "command_index": 1,
+                "command_type": "shell_command",
+                "command_line": "rg TODO"
+            }),
+        ];
+
+        assert!(streamed_command_already_seen(&commands, "call_1", 0));
+        assert!(streamed_command_already_seen(&commands, "call_1", 1));
+        assert!(!streamed_command_already_seen(&commands, "call_1", 2));
+        assert!(!streamed_command_already_seen(&commands, "call_2", 0));
+    }
 
     fn runtime() -> RuntimeManagement {
         RuntimeManagement::new(

@@ -141,13 +141,32 @@ fn persisted_session_log_hydration_keeps_conversation_messages_and_skips_auxilia
             "system-1",
             "system",
             3,
-            message_record(&session_id, "system-1", "system", "guardrail", 3),
+            message_record(
+                &session_id,
+                "system-1",
+                "system",
+                "[runtime_prompt_command_run_capabilities]\ninternal command formats",
+                3,
+            ),
+        ),
+        session_record(
+            &session_id,
+            "developer-1",
+            "developer",
+            4,
+            message_record(
+                &session_id,
+                "developer-1",
+                "developer",
+                "developer-only prompt",
+                4,
+            ),
         ),
         session_record(
             &session_id,
             "runtime-usage",
             "runtime",
-            4,
+            5,
             serde_json::json!({
                 "id": "runtime-usage",
                 "role": "runtime",
@@ -159,7 +178,7 @@ fn persisted_session_log_hydration_keeps_conversation_messages_and_skips_auxilia
             &session_id,
             "user-agent-context",
             "user-agent",
-            5,
+            6,
             serde_json::json!({
                 "id": "user-agent-context",
                 "role": "user-agent",
@@ -170,7 +189,7 @@ fn persisted_session_log_hydration_keeps_conversation_messages_and_skips_auxilia
             &session_id,
             "legacy-dirty-shape",
             "assistant",
-            6,
+            7,
             serde_json::json!({
                 "id": "legacy-dirty-shape",
                 "role": "assistant",
@@ -182,17 +201,69 @@ fn persisted_session_log_hydration_keeps_conversation_messages_and_skips_auxilia
     let persisted =
         persisted_record_from_session_log(snapshot, records).expect("hydrate persisted session");
 
-    assert_eq!(persisted.messages.len(), 3);
+    assert_eq!(persisted.messages.len(), 2);
     assert_eq!(
         persisted
             .messages
             .iter()
             .map(|message| message.id.as_str())
             .collect::<Vec<_>>(),
-        vec!["user-1", "assistant-1", "system-1"]
+        vec!["user-1", "assistant-1"]
     );
     assert_eq!(persisted.messages[1].parts[0].text.as_deref(), Some("hi"));
     assert_eq!(persisted.todos.len(), 1);
+}
+
+#[test]
+fn frontend_messages_hide_system_and_developer_projection_records() {
+    let store = SessionStore::new();
+    let session_id = "frontend-hidden-prompts";
+    store.messages.write().insert(
+        session_id.to_string(),
+        vec![
+            Message {
+                id: "user-visible".to_string(),
+                session_id: session_id.to_string(),
+                role: MessageRole::User,
+                parent_id: None,
+                parts: vec![MessagePart {
+                    id: "user-visible:part".to_string(),
+                    part_type: "text".to_string(),
+                    content: Some("visible user".to_string()),
+                    text: Some("visible user".to_string()),
+                    metadata: None,
+                    call_id: None,
+                    tool: None,
+                    state: None,
+                }],
+                created_at: 1,
+                updated_at: 1,
+            },
+            Message {
+                id: "system-hidden".to_string(),
+                session_id: session_id.to_string(),
+                role: MessageRole::System,
+                parent_id: None,
+                parts: vec![MessagePart {
+                    id: "system-hidden:part".to_string(),
+                    part_type: "text".to_string(),
+                    content: Some("[runtime_prompt_command_run_capabilities]".to_string()),
+                    text: Some("[runtime_prompt_command_run_capabilities]".to_string()),
+                    metadata: None,
+                    call_id: None,
+                    tool: None,
+                    state: None,
+                }],
+                created_at: 2,
+                updated_at: 2,
+            },
+        ],
+    );
+
+    let messages = store.get_frontend_messages(session_id);
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].id, "user-visible");
 }
 
 #[test]
@@ -1501,11 +1572,18 @@ fn user_messages_are_recorded_in_session_management_log() {
     let info = store
         .get_session_info(&session.id)
         .expect("session info should exist");
-    assert!(info
+    let user_log = info
         .management
         .session_log
         .iter()
-        .any(|entry| entry.contains("补充新的约束")));
+        .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+        .find(|entry| entry.get("role").and_then(serde_json::Value::as_str) == Some("user"))
+        .expect("user message should be recorded as structured JSON");
+    assert_eq!(user_log["role"], "user");
+    assert_eq!(user_log["parts"][0]["text"], "补充新的约束");
+    assert!(user_log["id"]
+        .as_str()
+        .is_some_and(|id| !id.trim().is_empty()));
 }
 
 #[test]

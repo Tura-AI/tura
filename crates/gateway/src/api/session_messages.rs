@@ -655,7 +655,7 @@ fn auto_session_name_from_tool_call(tool_call: &SendAgentToolCall) -> Option<Str
     if tool_call.tool_name == "planning" {
         return last_task_summary_from_planning_tool_call(tool_call);
     }
-    last_task_detail_from_tool_call(tool_call)
+    last_task_group_from_tool_call(tool_call)
 }
 
 fn last_task_summary_from_planning_tool_call(tool_call: &SendAgentToolCall) -> Option<String> {
@@ -683,29 +683,29 @@ fn last_task_summary_from_planning_tool_call(tool_call: &SendAgentToolCall) -> O
     summaries.pop()
 }
 
-fn last_task_detail_from_tool_call(tool_call: &SendAgentToolCall) -> Option<String> {
-    let mut details = Vec::new();
+fn last_task_group_from_tool_call(tool_call: &SendAgentToolCall) -> Option<String> {
+    let mut groups = Vec::new();
     if let Some(output) = tool_call
         .metadata
         .as_ref()
         .and_then(|metadata| metadata.get("output"))
     {
-        collect_string_field(output, "task_detail", &mut details);
+        collect_string_field(output, "task_group", &mut groups);
     }
-    if details.is_empty() {
+    if groups.is_empty() {
         if let Some(output) = tool_call
             .state
             .get("metadata")
             .and_then(|metadata| metadata.get("output"))
             .or_else(|| tool_call.state.get("output"))
         {
-            collect_string_field(output, "task_detail", &mut details);
+            collect_string_field(output, "task_group", &mut groups);
         }
     }
-    if details.is_empty() {
-        collect_string_field(&tool_call.state, "task_detail", &mut details);
+    if groups.is_empty() {
+        collect_string_field(&tool_call.state, "task_group", &mut groups);
     }
-    details.pop()
+    groups.pop()
 }
 
 fn collect_string_field(value: &serde_json::Value, field: &str, values: &mut Vec<String>) {
@@ -1701,31 +1701,31 @@ mod tests {
     }
 
     #[test]
-    fn last_task_detail_prefers_metadata_output_then_state_metadata_then_state() {
+    fn last_task_group_prefers_metadata_output_then_state_metadata_then_state() {
         let call = SendAgentToolCall {
             tool_name: "command_run".to_string(),
             call_id: "call".to_string(),
             state: json!({
-                "task_detail": "state detail",
+                "task_group": "state group",
                 "metadata": {
                     "output": {
-                        "task_detail": "state metadata detail"
+                        "task_group": "state metadata group"
                     }
                 }
             }),
             metadata: Some(json!({
                 "output": {
                     "items": [
-                        { "task_detail": "first metadata detail" },
-                        { "nested": { "task_detail": "last metadata detail" } }
+                        { "task_group": "first metadata group" },
+                        { "nested": { "task_group": "last metadata group" } }
                     ]
                 }
             })),
         };
 
         assert_eq!(
-            last_task_detail_from_tool_call(&call).as_deref(),
-            Some("last metadata detail")
+            last_task_group_from_tool_call(&call).as_deref(),
+            Some("last metadata group")
         );
 
         let call = SendAgentToolCall {
@@ -1733,11 +1733,11 @@ mod tests {
             ..call
         };
         assert_eq!(
-            last_task_detail_from_tool_call(&call).as_deref(),
-            Some("state metadata detail")
+            last_task_group_from_tool_call(&call).as_deref(),
+            Some("state metadata group")
         );
 
-        let detail_only = SendAgentToolCall {
+        let summary_only = SendAgentToolCall {
             tool_name: "task_status".to_string(),
             call_id: "call".to_string(),
             state: json!({
@@ -1750,11 +1750,11 @@ mod tests {
             }),
             metadata: Some(json!({
                 "output": {
-                    "task_summary": "still not a task detail"
+                    "task_summary": "still not a task group"
                 }
             })),
         };
-        assert_eq!(last_task_detail_from_tool_call(&detail_only), None);
+        assert_eq!(last_task_group_from_tool_call(&summary_only), None);
     }
 
     #[test]
@@ -1763,12 +1763,12 @@ mod tests {
             tool_name: "planning".to_string(),
             call_id: "planning".to_string(),
             state: json!({
-                "task_detail": "must not be used",
+                "task_group": "must not be used",
                 "metadata": {
                     "output": {
                         "steps": [
                             { "task_summary": "First summary" },
-                            { "task_detail": "must not be used either" },
+                            { "task_group": "must not be used either" },
                             { "task_summary": "Last summary" }
                         ]
                     }
@@ -1789,15 +1789,15 @@ mod tests {
 
         collect_string_field(
             &json!({
-                "task_detail": "root",
+                "task_group": "root",
                 "items": [
-                    { "task_detail": "child one" },
-                    { "nested": { "task_detail": "child two" } },
-                    { "task_detail": "", "task_summary": "must not fallback" },
-                    { "task_detail": "   " }
+                    { "task_group": "child one" },
+                    { "nested": { "task_group": "child two" } },
+                    { "task_group": "", "task_summary": "must not fallback" },
+                    { "task_group": "   " }
                 ]
             }),
-            "task_detail",
+            "task_group",
             &mut values,
         );
 

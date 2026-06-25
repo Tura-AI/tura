@@ -660,7 +660,7 @@ pub(crate) fn task_status_doing_with_visible_reply_response(index: usize) -> Val
                         "step": 1,
                         "command_type": "task_status",
                         "command_line": json!({
-                            "task_detail": "Quick status task",
+                            "task_group": "商城前端",
                             "status": "doing"
                         }).to_string()
                     }

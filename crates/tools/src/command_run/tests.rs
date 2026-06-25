@@ -2,8 +2,8 @@ use super::handler_parse::{
     command_values, parse_arguments_value, parse_command_item, string_field, u64_field,
 };
 use super::{
-    normalize_command_steps, normalize_compact_context_arguments,
-    normalize_json_or_cli_command_arguments, normalize_shell_command_arguments, parse_args,
+    normalize_command_steps, normalize_json_or_cli_command_arguments,
+    normalize_shell_command_arguments, parse_args,
 };
 use serde_json::json;
 use serde_json::Value;
@@ -75,13 +75,13 @@ fn parse_empty_command_run_is_error() {
 }
 
 #[test]
-fn parse_compact_context_must_be_final_highest_step() {
+fn parse_task_status_compact_context_must_be_final_highest_step() {
     let error = parse_args(&json!({
         "commands": [
             {
                 "step": 2,
-                "command_type": "compact_context",
-                "command_line": "summary"
+                "command_type": "task_status",
+                "command_line": "{\"compact_context\":\"summary\"}"
             },
             {
                 "step": 3,
@@ -90,12 +90,59 @@ fn parse_compact_context_must_be_final_highest_step() {
             }
         ]
     }))
-    .expect_err("compact_context position");
+    .expect_err("task_status compact_context position");
 
     assert_eq!(
         error,
-        "compact_context must be the final command in the highest step of command_run"
+        "task_status compact_context must be the final command in the highest step of command_run"
     );
+}
+
+#[test]
+fn parse_task_status_compact_context_from_inline_arguments_must_be_final() {
+    let error = parse_args(&json!({
+        "commands": [
+            {
+                "step": 1,
+                "command_type": "task_status",
+                "compact_context": "Inline handoff summary"
+            },
+            {
+                "step": 2,
+                "command_type": "shell_command",
+                "command_line": "echo after-inline"
+            }
+        ]
+    }))
+    .expect_err("inline compact_context must obey final-position rules");
+
+    assert_eq!(
+        error,
+        "task_status compact_context must be the final command in the highest step of command_run"
+    );
+}
+
+#[test]
+fn parse_empty_task_status_compact_context_does_not_force_checkpoint_rules() {
+    let args = parse_args(&json!({
+        "commands": [
+            {
+                "step": 1,
+                "command_type": "task_status",
+                "compact_context": "   "
+            },
+            {
+                "step": 2,
+                "command_type": "shell_command",
+                "command_line": "echo after-empty"
+            }
+        ]
+    }))
+    .expect("blank compact_context is ignored for checkpoint positioning");
+
+    assert_eq!(args.commands.len(), 2);
+    assert_eq!(args.commands[0].command, "task_status");
+    assert_eq!(args.commands[1].command, "shell_command");
 }
 
 #[test]
@@ -196,46 +243,110 @@ fn normalize_external_commands_keep_explicit_timeout_fields() {
 }
 
 #[test]
-fn normalize_compact_context_accepts_json_with_raw_newlines() {
+fn parse_task_status_compact_context_accepts_json_with_raw_newlines() {
     let args = parse_args(&json!({
         "commands": [
             {
-                "command_type": "compact_context",
-                "command_line": "{\"summary\":\"Goal: keep going.\nNext: rerun focused tests.\"}",
+                "command_type": "task_status",
+                "command_line": "{\"compact_context\":\"Goal: keep going.\nNext: rerun focused tests.\"}",
                 "step": 1
             }
         ]
     }))
     .expect("parse args");
 
-    let arguments = normalize_compact_context_arguments(&args.commands[0])
-        .expect("compact_context should tolerate raw newlines inside summary JSON");
+    assert_eq!(args.commands[0].command, "task_status");
+}
+
+#[test]
+fn task_status_compact_context_normalizes_json_with_raw_newlines() {
+    let args = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "task_status",
+                "command_line": "{\"compact_context\":\"Goal: keep going.\nNext: rerun focused tests.\"}",
+                "step": 1
+            }
+        ]
+    }))
+    .expect("parse args");
+
+    let output = crate::commands::task_status::normalize_output(
+        args.commands[0].inline_arguments.as_ref(),
+        &args.commands[0].command_line,
+    )
+    .expect("task_status should tolerate raw newlines inside compact_context JSON");
 
     assert_eq!(
-        arguments["summary"],
+        output["task_status"]["compact_context"],
         json!("Goal: keep going.\nNext: rerun focused tests.")
     );
 }
 
 #[test]
-fn normalize_compact_context_recovers_jsonish_summary_text() {
-    let args = parse_args(&json!({
+fn parse_task_status_compact_context_detects_jsonish_unescaped_newline_before_later_command() {
+    let error = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "task_status",
+                "command_line": "{\"compact_context\":\"Goal: keep going.\nNext: rerun tests.\"}",
+                "step": 1
+            },
+            {
+                "command_type": "shell_command",
+                "command_line": "echo should-not-follow",
+                "step": 2
+            }
+        ]
+    }))
+    .expect_err("jsonish compact_context with raw newline should still be detected");
+
+    assert_eq!(
+        error,
+        "task_status compact_context must be the final command in the highest step of command_run"
+    );
+}
+
+#[test]
+fn parse_task_status_compact_context_rejects_multiple_checkpoints() {
+    let error = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "task_status",
+                "command_line": "{\"compact_context\":\"first\"}",
+                "step": 1
+            },
+            {
+                "command_type": "task_status",
+                "command_line": "{\"compact_context\":\"second\"}",
+                "step": 2
+            }
+        ]
+    }))
+    .expect_err("only one compact_context checkpoint should be accepted");
+
+    assert_eq!(
+        error,
+        "only one task_status compact_context command is allowed"
+    );
+}
+
+#[test]
+fn parse_standalone_compact_context_is_rejected() {
+    let error = parse_args(&json!({
         "commands": [
             {
                 "command_type": "compact_context",
-                "command_line": "{\"summary\":\"Goal: preserve \\\"quoted\\\" paths.\nNext: inspect C:\\\\tmp.\"}",
+                "command_line": "{\"summary\":\"legacy standalone command\"}",
                 "step": 1
             }
         ]
     }))
-    .expect("parse args");
-
-    let arguments = normalize_compact_context_arguments(&args.commands[0])
-        .expect("compact_context should recover JSON-like summary text");
+    .expect_err("standalone compact_context should be removed");
 
     assert_eq!(
-        arguments["summary"],
-        json!("Goal: preserve \"quoted\" paths.\nNext: inspect C:\\tmp.")
+        error,
+        "standalone compact_context command has been removed; use task_status compact_context"
     );
 }
 

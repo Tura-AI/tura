@@ -13,10 +13,10 @@ use uuid::Uuid;
 use crate::session::config::DEFAULT_SESSION_REASONING_EFFORT;
 
 const DEFAULT_SESSION_DIRECTORY: &str = "sessions";
-pub const CODING_AGENT_NAME: &str = "fast";
-pub const THINKING_AGENT_NAME: &str = "thinking";
-pub const CODING_AGENT_FAST_NAME: &str = "fast";
-pub const CODING_AGENT_FAST_TEXT_ONLY_NAME: &str = "fast-text-only";
+pub const CODING_AGENT_NAME: &str = "direct";
+pub const THINKING_AGENT_NAME: &str = "balanced";
+pub const CODING_AGENT_FAST_NAME: &str = "direct";
+pub const CODING_AGENT_FAST_TEXT_ONLY_NAME: &str = "direct-text-only";
 
 pub fn coding_agent_provider() -> String {
     runtime::agent_router::coding_agent_provider_name()
@@ -39,6 +39,13 @@ impl SessionManager {
                 .unwrap_or_default()
                 .join(DEFAULT_SESSION_DIRECTORY)
         });
+        if let Err(error) = runtime::workspace_git::ensure_workspace_git_repo(&session_directory) {
+            tracing::warn!(
+                directory = %session_directory.display(),
+                error = %error,
+                "failed to ensure workspace git repository"
+            );
+        }
         let session_id = Self::generate_session_id(&session_directory, now);
         let session_name = format!("Session-{}", now.format("%Y%m%d%H%M%S"));
 
@@ -57,14 +64,12 @@ impl SessionManager {
             planning_mode_override: None,
         };
 
-        let session_topic = session_topic_for_session_type(&session_type);
-
         let mut management = SessionManagement::new(
             session_id.clone(),
             session_name,
             session_directory,
             false,
-            session_topic,
+            Vec::<String>::new(),
             input,
             user_goal,
             now,
@@ -188,10 +193,14 @@ pub fn normalize_session_type(session_type: Option<String>, agent: Option<&str>)
     match session_type.as_deref().or(agent) {
         Some("coding")
         | Some(CODING_AGENT_NAME)
+        | Some("fast")
+        | Some("thoughtful")
         | Some("thinking-planning")
         | Some(THINKING_AGENT_NAME)
+        | Some("thinking")
         | None => "coding".to_string(),
         Some(CODING_AGENT_FAST_TEXT_ONLY_NAME) => "coding".to_string(),
+        Some("fast-text-only") => "coding".to_string(),
         Some("coding_agent") | Some("coding_agent_planning") | Some("coding_agent_thinking") => {
             "coding".to_string()
         }
@@ -210,11 +219,16 @@ pub fn agent_for_session_type(session_type: &str) -> Option<String> {
 
 pub fn runtime_provider_for_session(session_type: &str, agent: Option<&str>) -> Option<String> {
     match (session_type, agent) {
-        (_, Some(CODING_AGENT_FAST_TEXT_ONLY_NAME)) => Some("fast".to_string()),
+        (_, Some(CODING_AGENT_NAME))
+        | (_, Some(CODING_AGENT_FAST_TEXT_ONLY_NAME))
+        | (_, Some("fast"))
+        | (_, Some("fast-text-only"))
+        | (_, Some("coding_agent_fast")) => Some("fast".to_string()),
         ("coding", _)
-        | (_, Some(CODING_AGENT_NAME))
+        | (_, Some("thoughtful"))
         | (_, Some("thinking-planning"))
         | (_, Some(THINKING_AGENT_NAME))
+        | (_, Some("thinking"))
         | (_, Some("coding_agent"))
         | (_, Some("coding_agent_planning"))
         | (_, Some("coding_agent_thinking")) => Some(coding_agent_provider()),
@@ -231,20 +245,18 @@ pub fn default_use_last_tool_call_response_for_session(
         (session_type, agent),
         ("coding", _)
             | (_, Some(CODING_AGENT_NAME))
+            | (_, Some("fast"))
+            | (_, Some("thoughtful"))
             | (_, Some("thinking-planning"))
             | (_, Some(THINKING_AGENT_NAME))
+            | (_, Some("thinking"))
             | (_, Some(CODING_AGENT_FAST_TEXT_ONLY_NAME))
+            | (_, Some("fast-text-only"))
             | (_, Some("coding_agent"))
             | (_, Some("coding_agent_planning"))
+            | (_, Some("coding_agent_fast"))
             | (_, Some("coding_agent_thinking"))
     )
-}
-
-fn session_topic_for_session_type(session_type: &str) -> String {
-    match session_type {
-        "coding" | "programming" | "development" | "testing" => "coding".to_string(),
-        other => other.to_string(),
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -281,9 +293,9 @@ mod tests {
         );
 
         assert_eq!(info.agent.as_deref(), Some(CODING_AGENT_NAME));
-        assert_eq!(info.model, Some(coding_agent_provider()));
+        assert_eq!(info.model.as_deref(), Some("fast"));
         assert_eq!(info.session_type.as_deref(), Some("coding"));
-        assert_eq!(info.management.session_topic, "coding");
+        assert!(info.management.task_type.is_empty());
         assert!(!info.use_last_tool_call_response);
         assert!(!info.management.use_last_tool_call_response);
         assert!(info.management.auto_session_name);
@@ -316,7 +328,7 @@ mod tests {
         assert_eq!(info.agent.as_deref(), Some("general_agent"));
         assert_eq!(info.model.as_deref(), Some("openai/gpt-5"));
         assert_eq!(info.session_type.as_deref(), Some("general"));
-        assert_eq!(info.management.session_topic, "general");
+        assert!(info.management.task_type.is_empty());
         assert!(info.use_last_tool_call_response);
         assert!(info.management.use_last_tool_call_response);
     }

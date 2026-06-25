@@ -29,6 +29,7 @@ Options:
   -p, --priority                  enable priority model routing for this model
   -a, --agent-id ID               agent id loaded from agents/src/
       --session-id ID             reuse a deterministic session id
+      --goal                      keep the CLI session running until task_status marks done/question
       --json                      emit JSONL events instead of final text only
       --quiet, --silent           suppress progress on stderr
       --output-last-message PATH  write the final assistant message to PATH
@@ -37,6 +38,7 @@ Options:
       --planning MODE       planning override: auto, on, or off
                                   (default: auto, follows selected agent config)
       --bash, --zsh, --shll       force the command-run shell surface for this turn
+      --sandbox                   restrict command_run writes/workdirs to the workspace
   -c, --config KEY=VALUE          runtime override:
                                   model_reasoning_effort, max_tokens,
                                   model_max_tokens,
@@ -44,7 +46,7 @@ Options:
                                   command_run_shell=bash|zsh|shll
       --skip-git-repo-check       accepted for compatibility
       --dangerously-bypass-approvals-and-sandbox
-                                  accepted for compatibility
+                                  accepted for Codex CLI compatibility; does not enable sandboxing
   -h, --help                      show this help
 
 Output:
@@ -76,8 +78,10 @@ pub(crate) struct CliConfig {
     pub(crate) reasoning_effort: Option<String>,
     pub(crate) priority: bool,
     pub(crate) planning_mode: Option<bool>,
+    pub(crate) goal_mode: bool,
     pub(crate) max_tokens: Option<u64>,
     pub(crate) command_run_shell: Option<String>,
+    pub(crate) command_run_sandbox: bool,
     pub(crate) agent: Option<String>,
     pub(crate) session_id: Option<String>,
     pub(crate) last_message_path: Option<PathBuf>,
@@ -102,8 +106,10 @@ impl CliConfig {
             reasoning_effort: None,
             priority: false,
             planning_mode: None,
+            goal_mode: false,
             max_tokens: None,
             command_run_shell: None,
+            command_run_sandbox: false,
             agent: None,
             session_id: None,
             last_message_path: None,
@@ -146,6 +152,14 @@ impl CliConfig {
             }
             match arg {
                 "--skip-git-repo-check" | "--dangerously-bypass-approvals-and-sandbox" => {
+                    index += 1;
+                }
+                "--sandbox" => {
+                    config.command_run_sandbox = true;
+                    index += 1;
+                }
+                "--goal" => {
+                    config.goal_mode = true;
                     index += 1;
                 }
                 "--bash" | "--zsh" | "--shll" => {
@@ -329,7 +343,7 @@ mod tests {
         let config = CliConfig::parse(vec![
             "exec".to_string(),
             "--agent-id".to_string(),
-            "thinking-planning".to_string(),
+            "thoughtful".to_string(),
             "inspect".to_string(),
         ])
         .expect("parse cli");
@@ -374,6 +388,19 @@ mod tests {
 
         assert_eq!(enabled.planning_mode, Some(true));
         assert_eq!(disabled.planning_mode, Some(false));
+    }
+
+    #[test]
+    fn goal_flag_enables_goal_mode() {
+        let config = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--goal".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse goal cli");
+
+        assert!(config.goal_mode);
+        assert_eq!(config.prompt().as_deref(), Ok("inspect"));
     }
 
     #[test]
@@ -494,5 +521,24 @@ mod tests {
         assert_eq!(zsh.command_run_shell.as_deref(), Some("zsh"));
         assert_eq!(typo.command_run_shell, None);
         assert_eq!(typo.prompt_parts, vec!["zash", "inspect"]);
+    }
+
+    #[test]
+    fn sandbox_flag_enables_command_run_workspace_sandbox() {
+        let config = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--sandbox".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse sandbox flag");
+        let compat = CliConfig::parse(vec![
+            "exec".to_string(),
+            "--dangerously-bypass-approvals-and-sandbox".to_string(),
+            "inspect".to_string(),
+        ])
+        .expect("parse compatibility flag");
+
+        assert!(config.command_run_sandbox);
+        assert!(!compat.command_run_sandbox);
     }
 }

@@ -138,15 +138,50 @@ impl EmptyDefault for String {
 
 pub(super) fn extension_from_url(url: &str) -> Option<&'static str> {
     let lower = url.to_ascii_lowercase();
-    if lower.contains(".png") {
-        Some("png")
-    } else if lower.contains(".webp") {
-        Some("webp")
-    } else if lower.contains(".jpeg") || lower.contains(".jpg") {
-        Some("jpg")
-    } else {
-        None
+    for (needle, extension) in [
+        (".tar.gz", "tar.gz"),
+        (".jpeg", "jpg"),
+        (".jpg", "jpg"),
+        (".png", "png"),
+        (".webp", "webp"),
+        (".gif", "gif"),
+        (".avif", "avif"),
+        (".svg", "svg"),
+        (".zip", "zip"),
+        (".glb", "glb"),
+        (".gltf", "gltf"),
+        (".obj", "obj"),
+        (".fbx", "fbx"),
+        (".blend", "blend"),
+        (".stl", "stl"),
+        (".usdz", "usdz"),
+        (".dae", "dae"),
+        (".hdr", "hdr"),
+        (".exr", "exr"),
+        (".ktx2", "ktx2"),
+        (".dds", "dds"),
+        (".tga", "tga"),
+        (".wav", "wav"),
+        (".mp3", "mp3"),
+        (".ogg", "ogg"),
+        (".flac", "flac"),
+        (".m4a", "m4a"),
+        (".aac", "aac"),
+        (".opus", "opus"),
+        (".glsl", "glsl"),
+        (".wgsl", "wgsl"),
+        (".vert", "vert"),
+        (".frag", "frag"),
+        (".hlsl", "hlsl"),
+        (".tsx", "tsx"),
+        (".ts", "ts"),
+        (".js", "js"),
+    ] {
+        if lower.contains(needle) {
+            return Some(extension);
+        }
     }
+    None
 }
 
 pub(super) fn content_type_for_path(path: &Path, kind: &str) -> &'static str {
@@ -160,10 +195,26 @@ pub(super) fn content_type_for_path(path: &Path, kind: &str) -> &'static str {
         "jpg" | "jpeg" => "image/jpeg",
         "png" => "image/png",
         "webp" => "image/webp",
+        "gif" => "image/gif",
+        "avif" => "image/avif",
+        "svg" => "image/svg+xml",
         "mp4" => "video/mp4",
         "webm" => "video/webm",
         "mp3" => "audio/mpeg",
         "m4a" => "audio/mp4",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "flac" => "audio/flac",
+        "aac" => "audio/aac",
+        "opus" => "audio/opus",
+        "zip" => "application/zip",
+        "glb" => "model/gltf-binary",
+        "gltf" => "model/gltf+json",
+        "obj" => "model/obj",
+        "fbx" | "blend" | "stl" | "usdz" | "dae" => "model/3d",
+        "hdr" | "exr" | "ktx2" | "dds" | "tga" => "application/octet-stream",
+        "glsl" | "wgsl" | "vert" | "frag" | "hlsl" => "text/plain",
+        "js" | "ts" | "tsx" => "text/plain",
         _ if kind == "website" => "text/markdown",
         _ => "application/octet-stream",
     }

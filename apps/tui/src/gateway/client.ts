@@ -58,7 +58,7 @@ export class GatewayClient {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.directory = options.directory;
     this.verbose = Boolean(options.verbose);
-    this.timeoutMs = options.timeoutMs ?? 30_000;
+    this.timeoutMs = options.timeoutMs ?? 20_000;
   }
 
   async health(): Promise<{ healthy: boolean; version: string }> {

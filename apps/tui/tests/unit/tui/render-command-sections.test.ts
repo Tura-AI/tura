@@ -77,7 +77,7 @@ test("render shows assistant command summaries, command details setting, and thi
           {
             id: "part-inline-payload",
             type: "text",
-            text: '[command_run: {"task_detail":"inline payload summary should be readable"}]\n[command_run: {"status":"done"}]',
+            text: '[command_run: {"task_group":"inline payload summary should be readable"}]\n[command_run: {"status":"done"}]',
           },
           {
             id: "tool-command-1",
@@ -132,7 +132,7 @@ test("render shows assistant command summaries, command details setting, and thi
             state: {
               status: "completed",
               output:
-                '[command_run: {\\"task_detail\\":\\"provide concise final verification summary\\"}]',
+                '[command_run: {\\"task_group\\":\\"provide concise final verification summary\\"}]',
             },
           },
           {
@@ -178,7 +178,7 @@ test("render shows assistant command summaries, command details setting, and thi
   assert.doesNotMatch(collapsedText, /inline payload summary should be readable/);
   assert.doesNotMatch(collapsed, /\[command_run:/);
   assert.doesNotMatch(collapsed, /bash: npm test -- --runInBand/);
-  assert.doesNotMatch(collapsed, /task_detail/);
+  assert.doesNotMatch(collapsed, /task_group/);
   assert.match(collapsed, /task_status/);
   assert.match(collapsed, /\$ \{"status":"done"\}/);
   assert.match(stripAnsi(collapsed), /thinking\s+12s/);

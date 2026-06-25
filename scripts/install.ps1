@@ -21,7 +21,7 @@ Usage:
   .\scripts\install.ps1 [OPTIONS]
 
 Installs project dependencies without building Tura. The root installer verifies
-shell_command/bash/zsh coverage, installs missing bash/zsh dependencies when
+git and shell_command/bash/zsh coverage, installs missing git/bash/zsh dependencies when
 possible, ensures user-local uv/bun are available, runs command-owned installers
 under commands/*, and installs Bun workspaces in their own directories.
 
@@ -171,6 +171,20 @@ function Find-PosixShellTool {
     return (Resolve-Path -LiteralPath $env:SHELL).ProviderPath
   }
   Resolve-ExistingCommand @("sh", "/bin/sh", "/usr/bin/sh")
+}
+
+function Find-GitTool {
+  Resolve-ExistingCommand @(
+    "git",
+    "C:\Program Files\Git\cmd\git.exe",
+    "C:\Program Files\Git\bin\git.exe",
+    "C:\Program Files (x86)\Git\cmd\git.exe",
+    "C:\Program Files (x86)\Git\bin\git.exe",
+    "C:\msys64\usr\bin\git.exe",
+    "/usr/bin/git",
+    "/usr/local/bin/git",
+    "/opt/homebrew/bin/git"
+  )
 }
 
 function Find-Msys2Pacman {
@@ -348,6 +362,89 @@ function Ensure-ShellToolCoverage {
   Write-Host "Shell debug: set TURA_COMMAND_RUN_SHELL=shell_command, bash, or zsh to force a surface."
 }
 
+function Ensure-GitTool {
+  Add-ShellToolPaths
+  $git = Find-GitTool
+  if ($git) {
+    Write-DetectedVersion "git" (Get-CommandOutputLine $git @("--version"))
+    return
+  }
+  if ($CheckOnly) {
+    throw "git was not found. Run .\scripts\install.ps1 without -CheckOnly or install Git manually."
+  }
+  if ($Offline) {
+    throw "git was not found and -Offline was supplied. Install Git manually, then rerun this script."
+  }
+
+  if (Test-IsWindows) {
+    $winget = Resolve-ExistingCommand @("winget")
+    if ($winget) {
+      Write-Step "Installing Git"
+      Invoke-NativeCommand $winget @(
+        "install",
+        "--id", "Git.Git",
+        "--exact",
+        "--source", "winget",
+        "--accept-package-agreements",
+        "--accept-source-agreements"
+      )
+      Add-ShellToolPaths
+    } else {
+      $pacman = Find-Msys2Pacman
+      if (-not $pacman) {
+        throw "git was not found and neither winget nor MSYS2 pacman is available. Install Git manually, then rerun."
+      }
+      Write-Step "Installing Git with MSYS2 pacman"
+      Invoke-NativeCommand $pacman @("-Sy", "--noconfirm", "--needed", "git")
+      Add-ShellToolPaths
+    }
+  } else {
+    $installer = $null
+    $installerArgs = @()
+    if (Test-IsMacOS) {
+      $brew = Resolve-ExistingCommand @("brew", "/opt/homebrew/bin/brew", "/usr/local/bin/brew")
+      if (-not $brew) {
+        throw "Homebrew was not found. Install Git manually, then rerun."
+      }
+      $installer = $brew
+      $installerArgs = @("install", "git")
+    } elseif (Test-CommandAvailable "apt-get") {
+      $installer = (Get-Command "apt-get").Source
+      $installerArgs = @("install", "-y", "git")
+      if (Get-Command "sudo" -ErrorAction SilentlyContinue) {
+        $installerArgs = @($installer) + $installerArgs
+        $installer = (Get-Command "sudo").Source
+      }
+    } elseif (Test-CommandAvailable "dnf") {
+      $installer = (Get-Command "dnf").Source
+      $installerArgs = @("install", "-y", "git")
+    } elseif (Test-CommandAvailable "yum") {
+      $installer = (Get-Command "yum").Source
+      $installerArgs = @("install", "-y", "git")
+    } elseif (Test-CommandAvailable "pacman") {
+      $installer = (Get-Command "pacman").Source
+      $installerArgs = @("-Sy", "--noconfirm", "--needed", "git")
+    } elseif (Test-CommandAvailable "apk") {
+      $installer = (Get-Command "apk").Source
+      $installerArgs = @("add", "git")
+    } elseif (Test-CommandAvailable "zypper") {
+      $installer = (Get-Command "zypper").Source
+      $installerArgs = @("--non-interactive", "install", "git")
+    }
+    if (-not $installer) {
+      throw "No supported package manager was found to install Git. Install Git manually, then rerun."
+    }
+    Write-Step "Installing Git"
+    Invoke-NativeCommand $installer $installerArgs
+  }
+
+  $git = Find-GitTool
+  if (-not $git) {
+    throw "git was installed but is still not discoverable. Add Git to PATH and rerun."
+  }
+  Write-DetectedVersion "git" (Get-CommandOutputLine $git @("--version"))
+}
+
 function Get-CommandOutputLine {
   param([string]$Name, [string[]]$Arguments = @())
   try {
@@ -508,6 +605,7 @@ Set-Location $RepoRoot
 
 Write-Step "Checking root dependency installers"
 Ensure-ShellToolCoverage
+Ensure-GitTool
 Ensure-Uv
 Ensure-Bun
 

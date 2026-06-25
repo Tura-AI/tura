@@ -17,8 +17,9 @@ pub mod store;
 pub use checkpoint::{CheckpointType, CommandCheckpoint};
 pub use protocol::{
     DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest, ListSessionRecordsRequest,
-    ListSessionsRequest, Page, SessionLogCommand, SessionLogResponse, SessionRecord,
-    SessionSnapshot, SessionSummary, UpsertSessionRequest, WorkspaceSummary,
+    ListSessionsRequest, MarkSessionInterruptedRequest, Page, SessionLogCommand,
+    SessionLogResponse, SessionRecord, SessionSnapshot, SessionSummary, UpsertSessionRequest,
+    WorkspaceSummary,
 };
 pub use session_state::SessionState;
 pub use store::SessionLogStore;

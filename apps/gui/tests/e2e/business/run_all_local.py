@@ -7,6 +7,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
+from cleanup_repo_tura_processes import cleanup_repo_tura_processes
+
 
 ROOT = Path(__file__).resolve().parents[5]
 GUI = ROOT / "apps" / "gui"
@@ -118,6 +120,7 @@ def main() -> int:
             result = subprocess.run([sys.executable, str(path)], cwd=ROOT, env=env, check=False)
         finally:
             stop_process_tree(gui_process)
+            cleanup_repo_tura_processes()
         if result.returncode != 0:
             failures.append((script, result.returncode))
             break

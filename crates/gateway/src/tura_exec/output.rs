@@ -260,6 +260,7 @@ fn file_changes(result: &Value, cwd: &Path) -> Vec<Value> {
 
 fn flatten_command_results(output: &Value, input: &Value) -> Vec<Value> {
     let mut values = Vec::new();
+    let output = output.get("streamed_command_run_result").unwrap_or(output);
     let input_commands = input
         .get("commands")
         .and_then(Value::as_array)
@@ -526,6 +527,21 @@ mod tests {
         assert_eq!(
             flatten_command_results(&json!({"ok": true}), &Value::Null),
             vec![json!({"ok": true})]
+        );
+
+        let streamed = flatten_command_results(
+            &json!({
+                "streamed_command_run_result": {
+                    "results": [
+                        {"command_type": "shell_command", "output": "ok"}
+                    ]
+                }
+            }),
+            &Value::Null,
+        );
+        assert_eq!(
+            streamed,
+            vec![json!({"command_type": "shell_command", "output": "ok"})]
         );
     }
 

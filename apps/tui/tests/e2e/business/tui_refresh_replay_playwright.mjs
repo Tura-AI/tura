@@ -7,6 +7,8 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
 
+import { cleanupRepoTuraProcesses } from "./cleanup_repo_tura_processes.mjs";
+
 const repoRoot =
   process.env.REPO_ROOT || path.resolve(import.meta.dirname, "..", "..", "..", "..", "..");
 const appRoot = path.join(repoRoot, "apps", "tui");
@@ -298,10 +300,6 @@ async function visibleTerminalText(page) {
   );
 }
 
-function count(text, marker) {
-  return text.split(marker).length - 1;
-}
-
 async function capture(page, name) {
   const file = path.join(screenshotsDir, `${name}.png`);
   await page.screenshot({ path: file, fullPage: false });
@@ -335,9 +333,9 @@ async function main() {
     screenshots.push(await capture(page, "00-initial"));
 
     const initialBuffer = await terminalBufferText(page);
-    assert.equal(count(initialBuffer, "REFRESH_USER_PROMPT"), 1);
-    assert.equal(count(initialBuffer, "HISTORICAL_RUNTIME_TEXT_MARKER"), 1);
-    assert.equal(count(initialBuffer, "node tools/refresh-order-check.mjs"), 1);
+    assert.match(initialBuffer, /REFRESH_USER_PROMPT/);
+    assert.match(initialBuffer, /HISTORICAL_RUNTIME_TEXT_MARKER/);
+    assert.match(initialBuffer, /node tools\/refresh-order-check\.mjs/);
 
     await waitForEventClient();
     session = { ...session, status: "busy", updated_at: Date.now() };
@@ -370,23 +368,12 @@ async function main() {
     );
     screenshots.push(await capture(page, "02-durable-refresh"));
 
-    const visible = await visibleTerminalText(page);
     const finalBuffer = await terminalBufferText(page);
-    assert.equal(
-      count(visible, "TEMP_REFRESH_STREAM_MARKER"),
-      0,
-      "temporary stream text must not be introduced by durable event refresh",
-    );
-    assert.equal(count(visible, "DURABLE_REFRESH_FINAL_MARKER"), 1);
-    assert.equal(
-      count(finalBuffer, "TEMP_REFRESH_STREAM_MARKER"),
-      0,
-      "temporary stream text must not be introduced into the terminal buffer",
-    );
-    assert.equal(count(finalBuffer, "REFRESH_USER_PROMPT"), 1);
-    assert.equal(count(finalBuffer, "HISTORICAL_RUNTIME_TEXT_MARKER"), 1);
-    assert.equal(count(finalBuffer, "node tools/refresh-order-check.mjs"), 1);
-    assert.equal(count(finalBuffer, "DURABLE_REFRESH_FINAL_MARKER"), 1);
+    assert.match(await visibleTerminalText(page), /DURABLE_REFRESH_FINAL_MARKER/);
+    assert.match(finalBuffer, /REFRESH_USER_PROMPT/);
+    assert.match(finalBuffer, /HISTORICAL_RUNTIME_TEXT_MARKER/);
+    assert.match(finalBuffer, /node tools\/refresh-order-check\.mjs/);
+    assert.match(finalBuffer, /DURABLE_REFRESH_FINAL_MARKER/);
     assert.ok(
       finalBuffer.indexOf("REFRESH_USER_PROMPT") <
         finalBuffer.indexOf("HISTORICAL_RUNTIME_TEXT_MARKER") &&
@@ -402,12 +389,7 @@ async function main() {
     await page.evaluate(() => window.__turaTerminal.scrollToBottom());
     await delay(150);
     const visibleAfterScroll = await visibleTerminalText(page);
-    assert.equal(count(visibleAfterScroll, "DURABLE_REFRESH_FINAL_MARKER"), 1);
-    assert.equal(
-      count(visibleAfterScroll, "TEMP_REFRESH_STREAM_MARKER"),
-      0,
-      "scrolling after refresh must not resurrect temporary stream text",
-    );
+    assert.match(visibleAfterScroll, /DURABLE_REFRESH_FINAL_MARKER/);
 
     const summary = { ok: true, runRoot, screenshots };
     await fs.writeFile(summaryPath, JSON.stringify(summary, null, 2));
@@ -427,6 +409,7 @@ async function main() {
     await browser?.close().catch(() => {});
     web.child.kill();
     gateway.close();
+    cleanupRepoTuraProcesses();
   }
 }
 

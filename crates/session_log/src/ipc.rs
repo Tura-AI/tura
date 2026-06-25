@@ -330,6 +330,10 @@ fn dispatch_inner(
             let (page, records) = store.list_session_records(payload)?;
             SessionLogResponse::Records { page, records }
         }
+        SessionLogCommand::MarkSessionInterrupted(payload) => {
+            store.mark_session_interrupted(payload)?;
+            SessionLogResponse::Ok
+        }
         SessionLogCommand::DeleteSession(payload) => {
             store.delete_session(payload)?;
             SessionLogResponse::Ok

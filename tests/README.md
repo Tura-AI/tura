@@ -145,9 +145,11 @@ references when a typed directory scan can discover the case. Do not keep empty
 typed directories.
 
 Tests and production logic must not special-case prompts or model text with
-fixed exact-response wording. If a flow needs a machine-readable assertion, use
-a structured fixture, command result, protocol field, file artifact, or
-parser-owned output contract instead of matching user or model prose.
+fixed exact-response wording. Do not keep assertions whose only value is that a
+prompt or provider description contains a particular sentence. If a flow needs
+a machine-readable assertion, use a structured fixture, command result, schema
+enum, protocol field, file artifact, or parser-owned output contract instead of
+matching user or model prose.
 
 ```powershell
 .\xtask\scripts\run-backend-business-tests.ps1 -List
@@ -158,6 +160,10 @@ parser-owned output contract instead of matching user or model prose.
 sh xtask/scripts/run-backend-business-tests.sh --list
 sh xtask/scripts/run-backend-business-tests.sh --crate tools
 ```
+
+The backend business runner runs every discovered target even after an
+individual target fails, then prints a final failed `package::target` summary.
+Timeouts are recorded as failures after the timed-out process tree is stopped.
 
 Business-test outputs default to
 `~/Documents/tura_workspace/target/{test_name}/{run_id}/summary.json` for

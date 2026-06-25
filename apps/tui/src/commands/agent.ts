@@ -5,6 +5,7 @@ import { HumanOutput } from "../output/human.js";
 import { printJson } from "../output/json.js";
 import { existsSync, readFileSync } from "node:fs";
 import { t } from "../i18n.js";
+import { agentDescription } from "../agent-display.js";
 
 export async function agentCommand(context: CliContext, args: string[]): Promise<void> {
   const client = new GatewayClient({
@@ -20,9 +21,7 @@ export async function agentCommand(context: CliContext, args: string[]): Promise
     else {
       const human = new HumanOutput(context.color);
       for (const agent of agents) {
-        human.out(
-          `${agent.summary?.name ?? agent.summary?.id}\t${agent.summary?.description ?? ""}`,
-        );
+        human.out(`${agent.summary?.name ?? agent.summary?.id}\t${agentDescription(agent)}`);
       }
     }
     return;
@@ -35,7 +34,7 @@ export async function agentCommand(context: CliContext, args: string[]): Promise
     else {
       const human = new HumanOutput(context.color);
       human.out(`${agent.summary.id}\t${agent.summary.source}\t${agent.summary.path}`);
-      human.out(agent.summary.description);
+      human.out(agentDescription(agent));
     }
     return;
   }

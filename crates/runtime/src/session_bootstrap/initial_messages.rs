@@ -11,10 +11,6 @@ const FRONTEND_PART_ID_ENV: &str = "TURA_FRONTEND_PART_ID";
 pub(crate) fn initial_messages_for_session(
     session: &mut SessionManagement,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let permissions_message = serde_json::json!({
-        "role": "developer",
-        "content": context_blocks::PERMISSIONS_INSTRUCTIONS,
-    });
     if session.session_current_turn == 0 && !session_has_initial_user_message(session) {
         let snapshot_message = serde_json::json!({
             "role": USER_AGENT_CONTEXT_ROLE,
@@ -30,7 +26,7 @@ pub(crate) fn initial_messages_for_session(
             "content": user_input_content_value(&session.input.user_input),
         });
 
-        let mut initial_messages = vec![permissions_message, snapshot_message, environment_message];
+        let mut initial_messages = vec![snapshot_message, environment_message];
         if let Some(message) = runtime_context_message {
             initial_messages.push(message);
         }
@@ -69,9 +65,7 @@ pub(crate) fn initial_messages_for_session(
         accumulate_initial_user_message(session)?;
     }
 
-    let mut messages = vec![permissions_message];
-    messages.extend(build_messages_from_session(session));
-    Ok(messages)
+    Ok(build_messages_from_session(session))
 }
 
 fn environment_context_message(cwd: &std::path::Path) -> String {
@@ -303,6 +297,40 @@ mod tests {
         assert!(!timestamp.trim().is_empty());
         assert!(user_log.get("content").is_some_and(|content| {
             user_input_content_matches(content, "用户重开后仍然可见")
+        }));
+    }
+
+    #[test]
+    fn initial_messages_do_not_include_legacy_developer_permissions() {
+        let now = chrono::Utc::now();
+        let mut session = SessionManagement::new(
+            "session-no-permissions".to_string(),
+            "probe".to_string(),
+            PathBuf::from("C:/workspace/no-permissions"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "probe".to_string(),
+                file_input: Vec::new(),
+                agent: Some("coding".to_string()),
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "probe".to_string(),
+            now,
+        );
+
+        let provider_messages =
+            initial_messages_for_session(&mut session).expect("initial messages should build");
+        assert!(!provider_messages.iter().any(|message| {
+            message.get("role").and_then(serde_json::Value::as_str) == Some("developer")
+        }));
+        assert!(!session.session_log.iter().any(|entry| {
+            serde_json::from_str::<serde_json::Value>(entry)
+                .ok()
+                .is_some_and(|value| {
+                    value.get("role").and_then(serde_json::Value::as_str) == Some("developer")
+                })
         }));
     }
 }

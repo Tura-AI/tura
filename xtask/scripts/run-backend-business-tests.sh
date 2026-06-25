@@ -32,8 +32,9 @@ Usage:
   xtask/scripts/run-backend-business-tests.sh [--crate PACKAGE] [--list] [--timeout-seconds N] [--jobs N]
 
 Scans root tests/business/*.rs and backend package tests/business/*.rs.
-Business tests run in parallel batches. Process, daemon, lifecycle, and OS
-policy coverage lives in tests/os_testing and runs through run-backend-os-tests.
+Business tests run in parallel batches and failures are summarized after the
+discovered set finishes. Process, daemon, lifecycle, and OS policy coverage
+lives in tests/os_testing and runs through run-backend-os-tests.
 EOF
       exit 0
       ;;
@@ -46,7 +47,35 @@ cd "$REPO_ROOT"
 
 cases=$(mktemp)
 failures=$(mktemp)
-trap 'rm -f "$cases" "$failures"' EXIT INT TERM
+
+cleanup_repo_tura_processes() {
+  if command -v powershell.exe >/dev/null 2>&1; then
+    REPO_ROOT="$REPO_ROOT" powershell.exe -NoProfile -Command '
+      $root = [System.IO.Path]::GetFullPath($env:REPO_ROOT)
+      $comparison = [System.StringComparison]::OrdinalIgnoreCase
+      $targetMarker = [System.IO.Path]::DirectorySeparatorChar + "target" + [System.IO.Path]::DirectorySeparatorChar
+      $names = @("tura", "tura_gui", "tura_gateway", "tura_router", "tura_session_db", "tura_runtime", "tura_exec")
+      foreach ($process in (Get-Process -Name $names -ErrorAction SilentlyContinue)) {
+        try { $path = $process.Path } catch { continue }
+        if ($path -and $path.StartsWith($root, $comparison) -and $path.IndexOf($targetMarker, $comparison) -ge 0) {
+          taskkill /PID $process.Id /T /F *> $null
+        }
+      }
+    ' >/dev/null 2>&1 || true
+    return
+  fi
+
+  if command -v pgrep >/dev/null 2>&1; then
+    pids=$(pgrep -f "$REPO_ROOT/target/.*/tura" || true)
+    if [ -n "$pids" ]; then
+      printf '%s\n' "$pids" | while IFS= read -r pid; do
+        kill "$pid" 2>/dev/null || true
+      done
+    fi
+  fi
+}
+
+trap 'cleanup_repo_tura_processes; rm -f "$cases" "$failures"' EXIT INT TERM
 
 run_cargo() {
   if command -v timeout >/dev/null 2>&1; then
@@ -59,7 +88,9 @@ run_cargo() {
 find_backend_business_tests() {
   for root in crates commands agents personas; do
     if [ -d "$root" ]; then
-      find "$root" -path '*/tests/business/*.rs' -type f
+      find "$root" -type d -path '*/tests/business' | while IFS= read -r business_dir; do
+        find "$business_dir" -maxdepth 1 -type f -name '*.rs'
+      done
     fi
   done
 }
@@ -116,12 +147,19 @@ run_parallel_cases() {
     batch=$((batch + 1))
     if [ "$batch" -ge "$JOBS" ]; then
       wait
-      if [ -s "$failures" ]; then cat "$failures" >&2; exit 1; fi
+      cleanup_repo_tura_processes
       batch=0
     fi
   done < "$cases"
   wait
-  if [ -s "$failures" ]; then cat "$failures" >&2; exit 1; fi
+  cleanup_repo_tura_processes
+  if [ -s "$failures" ]; then
+    echo "Failed backend business tests:" >&2
+    while IFS='|' read -r package target _features _path; do
+      echo "- $package::$target" >&2
+    done < "$failures"
+    exit 1
+  fi
 }
 
 if [ -d tests/business ]; then

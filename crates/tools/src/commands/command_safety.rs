@@ -274,6 +274,13 @@ fn check_unix_base(base: &str, args: &[String], context: Option<&SafetyContext>)
         {
             Some(format!("destructive disk operation (`{base}`)"))
         }
+        "diskutil"
+            if args
+                .first()
+                .is_some_and(|arg| matches!(arg.as_str(), "eraseDisk" | "partitionDisk")) =>
+        {
+            Some("destructive disk operation (`diskutil`)".to_string())
+        }
         _ if base.starts_with("mkfs.") => Some("filesystem creation (mkfs)".to_string()),
         "chmod" | "chown" | "chgrp"
             if (short_flag(args, 'R') || long_flag(args, "--recursive"))
@@ -328,9 +335,7 @@ fn check_windows_base(
             }
         }
         "format-volume" | "clear-disk" | "remove-partition" | "initialize-disk"
-        | "remove-volume" | "diskpart" => {
-            Some(format!("destructive disk cmdlet (`{base}`)"))
-        }
+        | "remove-volume" | "diskpart" => Some(format!("destructive disk cmdlet (`{base}`)")),
         _ => None,
     }
 }
@@ -346,20 +351,18 @@ fn check_cmd_base(
         "del" | "erase" if targets_system_path(args) => {
             Some("cmd delete targeting a system path".to_string())
         }
-        "del" | "erase" if deletion_targets_inside_workspace(cmd_removal_targets(args), context) => {
+        "del" | "erase"
+            if deletion_targets_inside_workspace(cmd_removal_targets(args), context) =>
+        {
             None
         }
         "del" | "erase" if args.iter().any(|a| a.eq_ignore_ascii_case("/f")) => {
             Some("forced delete (cmd del /f)".to_string())
         }
-        "rd" | "rmdir"
-            if targets_system_path(args) =>
-        {
+        "rd" | "rmdir" if targets_system_path(args) => {
             Some("cmd rmdir targeting a system path".to_string())
         }
-        "rd" | "rmdir"
-            if deletion_targets_inside_workspace(cmd_removal_targets(args), context) =>
-        {
+        "rd" | "rmdir" if deletion_targets_inside_workspace(cmd_removal_targets(args), context) => {
             None
         }
         "rd" | "rmdir"
@@ -669,15 +672,13 @@ fn check_nested_variable_indirection(
     let base = base_name(tokens.first()?);
     if base == "eval" {
         let inner = tokens[1..].join(" ");
-        return check_variable_indirection(&inner, variables, depth + 1, context).or_else(|| {
-            check_argument_variable_expansion(&inner, variables, depth + 1, context)
-        });
+        return check_variable_indirection(&inner, variables, depth + 1, context)
+            .or_else(|| check_argument_variable_expansion(&inner, variables, depth + 1, context));
     }
     if NESTED_SHELLS.contains(&base.as_str()) {
         let script = nested_shell_script(&tokens[1..])?;
-        return check_variable_indirection(&script, variables, depth + 1, context).or_else(|| {
-            check_argument_variable_expansion(&script, variables, depth + 1, context)
-        });
+        return check_variable_indirection(&script, variables, depth + 1, context)
+            .or_else(|| check_argument_variable_expansion(&script, variables, depth + 1, context));
     }
     None
 }
@@ -808,13 +809,7 @@ fn powershell_removal_targets(args: &[String]) -> Vec<String> {
         let lower = arg.trim_start_matches('-').to_ascii_lowercase();
         if matches!(
             lower.trim_end_matches(':'),
-            "force"
-                | "recurse"
-                | "confirm"
-                | "whatif"
-                | "verbose"
-                | "erroraction"
-                | "ea"
+            "force" | "recurse" | "confirm" | "whatif" | "verbose" | "erroraction" | "ea"
         ) {
             if matches!(lower.as_str(), "erroraction" | "ea") && index + 1 < args.len() {
                 index += 2;
@@ -906,10 +901,7 @@ fn is_absolute_path_text(path: &str) -> bool {
     let path = path.replace('\\', "/");
     path.starts_with('/')
         || path.starts_with("//")
-        || path
-            .as_bytes()
-            .get(1)
-            .is_some_and(|byte| *byte == b':')
+        || path.as_bytes().get(1).is_some_and(|byte| *byte == b':')
 }
 
 fn path_inside_normalized(path: &str, root: &str) -> bool {
@@ -924,7 +916,7 @@ fn path_inside_normalized(path: &str, root: &str) -> bool {
 fn normalize_compare_path(path: &str) -> String {
     let mut text = path.replace('\\', "/");
     if text.as_bytes().get(1).is_some_and(|byte| *byte == b':')
-        && !text.as_bytes().get(2).is_some_and(|byte| *byte == b'/')
+        && text.as_bytes().get(2).is_none_or(|byte| *byte != b'/')
     {
         text.insert(2, '/');
     }
@@ -951,7 +943,9 @@ fn normalize_compare_path(path: &str) -> String {
         }
     }
     if prefix == "/" {
-        format!("/{}", parts.join("/")).trim_end_matches('/').to_string()
+        format!("/{}", parts.join("/"))
+            .trim_end_matches('/')
+            .to_string()
     } else if prefix.is_empty() {
         parts.join("/")
     } else if parts.is_empty() {
@@ -1327,11 +1321,8 @@ mod tests {
     }
 
     fn allowed_with_workspace(command: &str, cwd: &str, workspace: &str) {
-        let reason = is_dangerous_command_with_workspace(
-            command,
-            Path::new(cwd),
-            Path::new(workspace),
-        );
+        let reason =
+            is_dangerous_command_with_workspace(command, Path::new(cwd), Path::new(workspace));
         assert!(
             reason.is_none(),
             "expected `{command}` to be allowed with workspace `{workspace}` and cwd `{cwd}`, got {reason:?}"
@@ -1421,8 +1412,16 @@ mod tests {
     #[test]
     fn allows_delete_commands_when_targets_stay_inside_workspace() {
         allowed_with_workspace("rm -rf cache", "/workspace/project", "/workspace/project");
-        allowed_with_workspace("rm -f cache/a.txt cache/b.txt", "/workspace/project", "/workspace/project");
-        allowed_with_workspace("rmdir cache empty-dir", "/workspace/project", "/workspace/project");
+        allowed_with_workspace(
+            "rm -f cache/a.txt cache/b.txt",
+            "/workspace/project",
+            "/workspace/project",
+        );
+        allowed_with_workspace(
+            "rmdir cache empty-dir",
+            "/workspace/project",
+            "/workspace/project",
+        );
         allowed_with_workspace(
             "Remove-Item -Force cache\\a.txt,cache\\b.txt -ErrorAction SilentlyContinue",
             "C:\\workspace\\project",
@@ -1447,7 +1446,11 @@ mod tests {
 
     #[test]
     fn blocks_recursive_and_batch_delete_commands_outside_workspace() {
-        blocked_with_workspace("rm -rf ../outside", "/workspace/project", "/workspace/project");
+        blocked_with_workspace(
+            "rm -rf ../outside",
+            "/workspace/project",
+            "/workspace/project",
+        );
         blocked_with_workspace(
             "rm -f /tmp/outside-a /tmp/outside-b",
             "/workspace/project",
@@ -1483,7 +1486,11 @@ mod tests {
             "C:\\workspace\\project",
             "C:\\workspace\\project",
         );
-        blocked_with_workspace("format C:", "C:\\workspace\\project", "C:\\workspace\\project");
+        blocked_with_workspace(
+            "format C:",
+            "C:\\workspace\\project",
+            "C:\\workspace\\project",
+        );
         blocked_with_workspace(
             "Format-Volume -DriveLetter C",
             "C:\\workspace\\project",
@@ -1494,8 +1501,16 @@ mod tests {
             "C:\\workspace\\project",
             "C:\\workspace\\project",
         );
-        blocked_with_workspace("shutdown -h now", "/workspace/project", "/workspace/project");
-        blocked_with_workspace("dd if=/dev/zero of=/dev/sda", "/workspace/project", "/workspace/project");
+        blocked_with_workspace(
+            "shutdown -h now",
+            "/workspace/project",
+            "/workspace/project",
+        );
+        blocked_with_workspace(
+            "dd if=/dev/zero of=/dev/sda",
+            "/workspace/project",
+            "/workspace/project",
+        );
     }
 
     #[test]

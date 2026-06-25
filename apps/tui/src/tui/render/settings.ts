@@ -1,4 +1,5 @@
 import { t } from "../../i18n.js";
+import { agentDescription } from "../../agent-display.js";
 import type { SettingDetail, AppState } from "../reducer.js";
 import { runtimeModelFromConfig } from "../model-config.js";
 import { activeCapabilities } from "../render-terminal.js";
@@ -250,7 +251,7 @@ export function settingOptions(state: AppState): Array<[string, string, unknown]
   if (state.settingDetail === "agent") {
     return state.agents.map((agent) => [
       storedAgentID(agent) ?? t("unknown"),
-      [agent.summary?.description, agent.summary?.source].filter(Boolean).join("  "),
+      [agentDescription(agent), agent.summary?.source].filter(Boolean).join("  "),
       storedAgentID(agent) ?? "",
     ]);
   }

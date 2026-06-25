@@ -8,6 +8,8 @@ import net from "node:net";
 import path from "node:path";
 import process from "node:process";
 
+import { cleanupRepoTuraProcesses } from "./cleanup_repo_tura_processes.mjs";
+
 const repoRoot =
   process.env.REPO_ROOT || path.resolve(import.meta.dirname, "..", "..", "..", "..", "..");
 const appRoot = path.join(repoRoot, "apps", "tui");
@@ -475,6 +477,7 @@ async function main() {
     await browser?.close().catch(() => undefined);
     await stopProcess(web?.child);
     await stopGateway(gateway);
+    cleanupRepoTuraProcesses();
   }
 }
 

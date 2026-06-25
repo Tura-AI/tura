@@ -382,7 +382,7 @@ The CLI should send a frontend-compatible prompt payload to `/prompt_async`:
     }
   ],
   "model": "openai/gpt-5.5",
-  "agent": "thinking-planning",
+  "agent": "thoughtful",
   "source": "cli"
 }
 ```

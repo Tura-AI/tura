@@ -110,7 +110,7 @@ test("run result includes runtime task_status payloads", () => {
           tool: "runtime",
           metadata: {
             command_type: "task_status",
-            output: { task_status: { status: "done", task_detail: "task status is visible" } },
+            output: { task_status: { status: "done", task_group: "task status is visible" } },
           },
         },
       ],

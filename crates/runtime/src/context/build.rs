@@ -5,6 +5,7 @@ use tracing::info;
 use crate::profile_timings;
 use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::state_machine::session_management::SessionManagement;
+use crate::tool_callback_sanitizer::sanitize_tool_callback_output;
 
 use super::compaction::context_compaction_messages;
 use super::types::ContextState;
@@ -276,22 +277,6 @@ pub fn accumulate_tool_result_with_provider_metadata(
             },
         }),
     );
-    let context_message_start = Instant::now();
-    tool_result_json["context_message"] = immutable_tool_result_context_message(&tool_result_json);
-    let context_message_elapsed = context_message_start.elapsed();
-    profile_timings::log_duration(
-        "accumulate_tool_result.context_message",
-        context_message_elapsed,
-        serde_json::json!({
-            "session_id": session.session_id,
-            "tool_name": tool_name,
-            "context_message_bytes": if profiling {
-                profile_timings::json_bytes(&tool_result_json["context_message"])
-            } else {
-                0
-            },
-        }),
-    );
     let context_messages_start = Instant::now();
     tool_result_json["context_messages"] =
         serde_json::Value::Array(immutable_tool_result_context_messages(&tool_result_json));
@@ -304,6 +289,21 @@ pub fn accumulate_tool_result_with_provider_metadata(
             "tool_name": tool_name,
             "context_messages_bytes": if profiling {
                 profile_timings::json_bytes(&tool_result_json["context_messages"])
+            } else {
+                0
+            },
+        }),
+    );
+    let sanitize_output_start = Instant::now();
+    tool_result_json["output"] = sanitize_tool_callback_output(&tool_result_json["output"]);
+    profile_timings::log_elapsed(
+        "accumulate_tool_result.sanitize_output_for_record",
+        sanitize_output_start,
+        serde_json::json!({
+            "session_id": session.session_id,
+            "tool_name": tool_name,
+            "output_bytes": if profiling {
+                profile_timings::json_bytes(&tool_result_json["output"])
             } else {
                 0
             },
@@ -432,6 +432,7 @@ pub fn build_messages_from_session(session: &SessionManagement) -> Vec<serde_jso
 
 fn build_messages_from_session_with_options(session: &SessionManagement) -> Vec<serde_json::Value> {
     let mut messages = Vec::new();
+    let mut raw_history_messages = Vec::new();
     let mut saw_context_compaction = false;
     for value in session
         .session_log
@@ -441,10 +442,17 @@ fn build_messages_from_session_with_options(session: &SessionManagement) -> Vec<
         if value.get("type").and_then(|kind| kind.as_str()) == Some("context_compaction") {
             saw_context_compaction = true;
             messages.clear();
-            messages.extend(context_compaction_messages(&value, session));
+            messages.extend(context_compaction_messages(
+                &value,
+                session,
+                &raw_history_messages,
+            ));
+            raw_history_messages.push(value);
             continue;
         }
-        messages.extend(immutable_context_messages_from_log_entry(value));
+        let entry_messages = immutable_context_messages_from_log_entry(value.clone());
+        messages.extend(entry_messages);
+        raw_history_messages.push(value);
     }
 
     let raw_initial_user_input = &session.input.user_input;
@@ -478,6 +486,7 @@ fn immutable_context_messages_from_log_entry(value: serde_json::Value) -> Vec<se
         if role == USER_AGENT_CONTEXT_ROLE
             || role == "user"
             || role == "system"
+            || role == "developer"
             || role == "assistant"
         {
             let provider_role = if role == USER_AGENT_CONTEXT_ROLE {
@@ -497,8 +506,12 @@ fn immutable_context_messages_from_log_entry(value: serde_json::Value) -> Vec<se
         }
     }
 
-    if obj.get("type").and_then(|kind| kind.as_str()) != Some("tool_result") {
-        return Vec::new();
+    match obj.get("type").and_then(|kind| kind.as_str()) {
+        Some("tool_result") => {}
+        Some("streamed_command_event") => {
+            return immutable_streamed_command_event_context_messages(&value);
+        }
+        _ => return Vec::new(),
     }
 
     if let Some(messages) = obj
@@ -515,10 +528,128 @@ fn immutable_context_messages_from_log_entry(value: serde_json::Value) -> Vec<se
     immutable_tool_result_context_messages(&value)
 }
 
+fn immutable_streamed_command_event_context_messages(
+    value: &serde_json::Value,
+) -> Vec<serde_json::Value> {
+    let Some(mut tool_result) = streamed_command_event_as_command_run_tool_result(value) else {
+        return Vec::new();
+    };
+    tool_result["context_cache"] = tool_result_context_cache(&tool_result);
+    immutable_tool_result_context_messages(&tool_result)
+}
+
+fn streamed_command_event_as_command_run_tool_result(
+    value: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    if value.get("type").and_then(|kind| kind.as_str()) != Some("streamed_command_event") {
+        return None;
+    }
+    let command = streamed_command_event_command_for_context(value);
+    let result = streamed_command_event_result_for_context(value);
+    if command.is_null() && result.is_null() {
+        return None;
+    }
+    let success = streamed_command_event_success(value, &result);
+    let mut output_result = result;
+    if let Some(object) = output_result.as_object_mut() {
+        for key in ["step", "command_type", "command_line"] {
+            if !object.contains_key(key) {
+                if let Some(field) = value.get(key).filter(|field| !field.is_null()) {
+                    object.insert(key.to_string(), field.clone());
+                }
+            }
+        }
+        object
+            .entry("success".to_string())
+            .or_insert_with(|| serde_json::Value::Bool(success));
+    }
+    let error = value
+        .get("error")
+        .cloned()
+        .or_else(|| output_result.get("error").cloned())
+        .unwrap_or(serde_json::Value::Null);
+    let sequence = value
+        .get("event_index")
+        .cloned()
+        .or_else(|| value.get("result_index").cloned())
+        .unwrap_or(serde_json::Value::Null);
+    let timestamp = value
+        .get("timestamp")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    Some(serde_json::json!({
+        "type": "tool_result",
+        "tool_name": "command_run",
+        "input": {
+            "commands": [command]
+        },
+        "output": {
+            "results": [output_result]
+        },
+        "success": success,
+        "error": error,
+        "sequence": sequence,
+        "timestamp": timestamp,
+    }))
+}
+
+fn streamed_command_event_command_for_context(value: &serde_json::Value) -> serde_json::Value {
+    if let Some(command) = value.get("command").filter(|command| command.is_object()) {
+        return command.clone();
+    }
+    let mut command = serde_json::Map::new();
+    for key in ["step", "command_type", "command_line"] {
+        if let Some(field) = value.get(key).filter(|field| !field.is_null()) {
+            command.insert(key.to_string(), field.clone());
+        }
+    }
+    if command.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::Object(command)
+    }
+}
+
+fn streamed_command_event_result_for_context(value: &serde_json::Value) -> serde_json::Value {
+    let result = value
+        .get("result")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    if result.is_object() {
+        return result;
+    }
+    let mut output = serde_json::Map::new();
+    for key in ["step", "command_type", "command_line", "status"] {
+        if let Some(field) = value.get(key).filter(|field| !field.is_null()) {
+            output.insert(key.to_string(), field.clone());
+        }
+    }
+    if !result.is_null() {
+        output.insert("output".to_string(), result);
+    }
+    if output.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::Object(output)
+    }
+}
+
+fn streamed_command_event_success(value: &serde_json::Value, result: &serde_json::Value) -> bool {
+    result
+        .get("success")
+        .or_else(|| value.get("success"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or_else(|| {
+            !matches!(
+                value.get("status").and_then(serde_json::Value::as_str),
+                Some("error" | "failed" | "cancelled")
+            )
+        })
+}
+
 use super::tool_results::{
-    immutable_tool_result_context_message, immutable_tool_result_context_messages,
-    last_tool_call_response_from_session, strip_context_reporting_fields,
-    strip_tool_reporting_fields, tool_result_context_cache,
+    immutable_tool_result_context_messages, last_tool_call_response_from_session,
+    strip_context_reporting_fields, strip_tool_reporting_fields, tool_result_context_cache,
 };
 
 #[cfg(test)]
@@ -527,19 +658,20 @@ mod tests {
         accumulate_message, accumulate_tool_result, build_context, build_messages_from_session,
         ContextInput,
     };
-    use crate::context::compact_session_context;
     use crate::context::USER_AGENT_CONTEXT_ROLE;
+    use crate::context::{compact_session_context, compact_session_context_automatically};
     use crate::state_machine::agent_management::{ProviderConfig, ToolChoice};
     use crate::state_machine::runtime_management::{RuntimeManagement, RuntimeProviderConfig};
     use crate::state_machine::session_management::{
         PlanStatus, PollInterval, SessionInput, SessionManagement, StartCondition, TaskStep,
     };
-    use chrono::Utc;
+    use chrono::{Duration, Utc};
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+    const PROMPT_STYLE_BODY_FIXTURE: &str = "Prompt style body fixture";
 
     fn session() -> SessionManagement {
         let now = Utc::now();
@@ -590,7 +722,82 @@ mod tests {
     }
 
     #[test]
-    fn compact_session_context_replaces_prior_tool_context_but_keeps_later_results() {
+    fn accumulate_tool_result_keeps_read_media_payload_only_in_context_messages() {
+        let mut session = session();
+        let image_url = "data:image/png;base64,AAA";
+
+        accumulate_tool_result(
+            &mut session,
+            "command_run",
+            json!({
+                "commands": [
+                    { "step": 1, "command_type": "read_media", "command_line": "read_media reference.png" }
+                ]
+            }),
+            json!({
+                "results": [{
+                    "step": 1,
+                    "command_type": "read_media",
+                    "success": true,
+                    "output": {
+                        "summary": "reference image",
+                        "visual_preview_count": 1,
+                        "visual_previews": [{
+                            "type": "image_url",
+                            "image_url": { "url": image_url }
+                        }]
+                    }
+                }],
+                "command_events": [{
+                    "status": "completed",
+                    "result": {
+                        "output": {
+                            "visual_preview_count": 1,
+                            "visual_previews": [{
+                                "type": "image_url",
+                                "image_url": { "url": image_url }
+                            }]
+                        }
+                    }
+                }]
+            }),
+            true,
+            None,
+        )
+        .expect("tool result");
+
+        let value = session
+            .session_log
+            .last()
+            .and_then(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+            .expect("tool result log entry");
+        assert_eq!(
+            value["output"]["results"][0]["output"]["visual_previews"]["omitted_from_record"],
+            true
+        );
+        assert_eq!(
+            value["output"]["command_events"]["omitted_from_record"],
+            true
+        );
+        assert!(value.get("context_message").is_none());
+
+        let output = serde_json::to_string(&value["output"]).expect("output json");
+        assert!(!output.contains(image_url), "{output}");
+
+        let context_messages =
+            serde_json::to_string(&value["context_messages"]).expect("context messages json");
+        assert_eq!(context_messages.matches(image_url).count(), 1);
+
+        let full_record = serde_json::to_string(&value).expect("full tool record");
+        assert_eq!(
+            full_record.matches(image_url).count(),
+            1,
+            "only the provider media channel should retain the media payload: {full_record}"
+        );
+    }
+
+    #[test]
+    fn compact_session_context_keeps_pre_checkpoint_tool_context_and_later_results() {
         let root = tempfile::TempDir::new().expect("tempdir");
         std::fs::create_dir_all(root.path().join("src")).expect("src dir");
         std::fs::write(root.path().join("src").join("lib.rs"), "fn main() {}\n").expect("fixture");
@@ -657,8 +864,429 @@ mod tests {
         assert!(joined.contains("Checkpoint: prior tool history is no longer needed"));
         assert!(joined.contains("<WORKSPACE_SNAPSHOT>"));
         assert!(joined.contains("src/lib.rs"));
+        assert!(
+            joined.contains("old-tool-secret"),
+            "compact should replay the immediately preceding command_run output as tool context: {joined}"
+        );
+        assert!(joined.contains("\"type\":\"function_call_output\""));
         assert!(joined.contains("new-output"));
-        assert!(!joined.contains("old-tool-secret"));
+    }
+
+    #[test]
+    fn compact_session_context_does_not_replay_non_tail_tool_context() {
+        let root = tempfile::TempDir::new().expect("tempdir");
+        let mut session = session();
+        session.session_directory = root.path().to_path_buf();
+
+        accumulate_tool_result(
+            &mut session,
+            "command_run",
+            json!({
+                "commands": [
+                    { "command_type": "shell_command", "command_line": "echo stale" }
+                ]
+            }),
+            json!({
+                "results": [
+                    { "step": 1, "command_type": "shell_command", "success": true, "output": "STALE_TOOL_RESULT_BEFORE_MESSAGE" }
+                ]
+            }),
+            true,
+            None,
+        )
+        .expect("stale tool result");
+        accumulate_message(
+            &mut session,
+            "assistant",
+            json!("assistant message after stale tool"),
+        )
+        .expect("assistant message");
+
+        compact_session_context(&mut session, "handoff after assistant message")
+            .expect("compact should write");
+
+        let messages = build_messages_from_session(&session);
+        let joined = messages
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(joined.contains("handoff after assistant message"));
+        assert!(
+            !joined.contains("STALE_TOOL_RESULT_BEFORE_MESSAGE"),
+            "compact should only replay tool_result entries at the immediate pre-checkpoint tail: {joined}"
+        );
+    }
+
+    #[test]
+    fn compact_session_context_rebuilds_next_turn_from_timestamped_user_and_agent_timeline() {
+        let root = tempfile::TempDir::new().expect("tempdir");
+        let base = Utc::now() - Duration::minutes(20);
+        let mut session = session();
+        session.session_directory = root.path().to_path_buf();
+        session.session_started_at = base + Duration::minutes(10);
+        session.push_log(
+            serde_json::json!({
+                "role": "user",
+                "content": "old user requirement kept from retained context",
+                "timestamp": (base + Duration::minutes(1)).to_rfc3339(),
+                "created_at": (base + Duration::minutes(1)).timestamp_millis(),
+                "updated_at": (base + Duration::minutes(1)).timestamp_millis()
+            })
+            .to_string(),
+            base + Duration::minutes(1),
+        );
+        session.push_log(
+            serde_json::json!({
+                "type": "context_compaction",
+                "content": "earlier agent summary that remains in current context",
+                "workspace_snapshot": "<WORKSPACE_SNAPSHOT>\nold\n</WORKSPACE_SNAPSHOT>",
+                "environment_context": "<environment_context>old</environment_context>",
+                "timestamp": (base + Duration::minutes(2)).to_rfc3339()
+            })
+            .to_string(),
+            base + Duration::minutes(2),
+        );
+        session.push_log(
+            serde_json::json!({
+                "role": "user",
+                "content": "current run real user request",
+                "timestamp": (base + Duration::minutes(11)).to_rfc3339(),
+                "created_at": (base + Duration::minutes(11)).timestamp_millis(),
+                "updated_at": (base + Duration::minutes(11)).timestamp_millis()
+            })
+            .to_string(),
+            base + Duration::minutes(11),
+        );
+        session.push_log(
+            serde_json::json!({
+                "role": "assistant",
+                "content": "current run visible agent progress",
+                "timestamp": (base + Duration::minutes(12)).to_rfc3339(),
+                "created_at": (base + Duration::minutes(12)).timestamp_millis(),
+                "updated_at": (base + Duration::minutes(12)).timestamp_millis()
+            })
+            .to_string(),
+            base + Duration::minutes(12),
+        );
+
+        compact_session_context(&mut session, "new compact handoff text")
+            .expect("compact should succeed");
+        let messages = build_messages_from_session(&session);
+        let joined = messages
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            joined.contains("Context rebuild before this checkpoint"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains(&(base + Duration::minutes(2)).to_rfc3339()),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("compact_context/user_instruction: earlier agent summary"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains(&(base + Duration::minutes(11)).to_rfc3339()),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("current_run/user: current run real user request"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("current_run/agent: current run visible agent progress"),
+            "{joined}"
+        );
+        assert!(joined.contains("Agent compact handoff"), "{joined}");
+        assert!(joined.contains("new compact handoff text"), "{joined}");
+        assert!(
+            joined.contains("other_task/user: old user requirement kept from retained context"),
+            "{joined}"
+        );
+        let summary = joined
+            .find("earlier agent summary")
+            .expect("summary position");
+        let old_user = joined
+            .find("old user requirement kept from retained context")
+            .expect("old user position");
+        let user = joined
+            .find("current run real user request")
+            .expect("user position");
+        let agent = joined
+            .find("current run visible agent progress")
+            .expect("agent position");
+        let agent_handoff = joined
+            .find("Agent compact handoff")
+            .expect("agent handoff heading");
+        let goal = joined
+            .find("Goal-mode last user command from session state")
+            .expect("goal heading");
+        assert!(
+            old_user < summary && summary < user && user < agent && agent < agent_handoff && agent_handoff < goal,
+            "compact rebuild must order previous compact summaries, user/agent history, agent handoff, then goal: {joined}"
+        );
+    }
+
+    #[test]
+    fn goal_mode_compact_appends_recorded_goal_input_after_agent_handoff() {
+        let root = tempfile::TempDir::new().expect("tempdir");
+        let mut session = session();
+        session.session_directory = root.path().to_path_buf();
+        session.goal_mode = true;
+        session.last_goal_user_input = "original goal command".to_string();
+
+        compact_session_context(&mut session, "agent handoff").expect("compact should succeed");
+        let messages = build_messages_from_session(&session);
+        let joined = messages
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let agent = joined.find("agent handoff").expect("agent handoff");
+        let goal = joined
+            .find("Goal-mode last user command from session state")
+            .expect("goal section");
+        assert!(agent < goal, "{joined}");
+        assert!(joined.contains("original goal command"), "{joined}");
+    }
+
+    #[test]
+    fn goal_mode_compact_uses_recorded_goal_or_prompt_style_fallback() {
+        let root = tempfile::TempDir::new().expect("tempdir");
+        let mut goal_session = session();
+        goal_session.session_directory = root.path().to_path_buf();
+        goal_session.goal_mode = true;
+        goal_session.last_goal_user_input = "resume exact goal".to_string();
+
+        compact_session_context(&mut goal_session, "  ").expect("compact should succeed");
+        let joined = build_messages_from_session(&goal_session)
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("Goal-mode last user command from session state"));
+        assert!(joined.contains("resume exact goal"));
+
+        let mut empty_session = session();
+        empty_session.session_directory = root.path().to_path_buf();
+        empty_session.goal_mode = true;
+        compact_session_context(&mut empty_session, "  ").expect("compact should succeed");
+        let fallback = build_messages_from_session(&empty_session)
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(fallback.contains("[goal_mode_prompt_style]"), "{fallback}");
+        assert!(fallback.contains("Continue working on the previous goal-mode task"));
+    }
+
+    #[test]
+    fn repeated_compact_inherits_only_two_previous_compact_summaries() {
+        let root = tempfile::TempDir::new().expect("tempdir");
+        let mut session = session();
+        session.session_directory = root.path().to_path_buf();
+        session.goal_mode = true;
+        session.last_goal_user_input = "exact active goal".to_string();
+
+        compact_session_context(&mut session, "agent handoff A").expect("compact A");
+        compact_session_context(&mut session, "agent handoff B").expect("compact B");
+        compact_session_context(&mut session, "agent handoff C").expect("compact C");
+        compact_session_context(&mut session, "agent handoff D").expect("compact D");
+
+        let messages = build_messages_from_session(&session);
+        let joined = messages
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(joined.contains("agent handoff D"), "{joined}");
+        assert!(joined.contains("agent handoff C"), "{joined}");
+        assert!(joined.contains("agent handoff B"), "{joined}");
+        assert!(
+            !joined.contains("agent handoff A"),
+            "only two previous compact summaries should be inherited: {joined}"
+        );
+        assert_eq!(
+            joined.matches("[inherited_compact_context]").count(),
+            2,
+            "only the two previous compact summaries should be carried forward: {joined}"
+        );
+    }
+
+    #[test]
+    fn compact_summary_limit_preserves_timestamp_interleaving() {
+        let root = tempfile::TempDir::new().expect("tempdir");
+        let base = Utc::now() - Duration::minutes(30);
+        let mut session = session();
+        session.session_directory = root.path().to_path_buf();
+        session.session_started_at = base;
+        session.push_log(
+            serde_json::json!({
+                "type": "context_compaction",
+                "content": "old compact handoff A",
+                "workspace_snapshot": "<WORKSPACE_SNAPSHOT>\nold-a\n</WORKSPACE_SNAPSHOT>",
+                "environment_context": "<environment_context>old-a</environment_context>",
+                "timestamp": (base + Duration::minutes(1)).to_rfc3339()
+            })
+            .to_string(),
+            base + Duration::minutes(1),
+        );
+        session.push_log(
+            serde_json::json!({
+                "role": "user",
+                "content": "user work before compact B",
+                "timestamp": (base + Duration::minutes(2)).to_rfc3339(),
+                "created_at": (base + Duration::minutes(2)).timestamp_millis(),
+                "updated_at": (base + Duration::minutes(2)).timestamp_millis()
+            })
+            .to_string(),
+            base + Duration::minutes(2),
+        );
+        session.push_log(
+            serde_json::json!({
+                "type": "context_compaction",
+                "content": "compact handoff B",
+                "workspace_snapshot": "<WORKSPACE_SNAPSHOT>\nold-b\n</WORKSPACE_SNAPSHOT>",
+                "environment_context": "<environment_context>old-b</environment_context>",
+                "timestamp": (base + Duration::minutes(3)).to_rfc3339()
+            })
+            .to_string(),
+            base + Duration::minutes(3),
+        );
+        session.push_log(
+            serde_json::json!({
+                "role": "assistant",
+                "content": "assistant work between compact B and compact C",
+                "timestamp": (base + Duration::minutes(4)).to_rfc3339(),
+                "created_at": (base + Duration::minutes(4)).timestamp_millis(),
+                "updated_at": (base + Duration::minutes(4)).timestamp_millis()
+            })
+            .to_string(),
+            base + Duration::minutes(4),
+        );
+        session.push_log(
+            serde_json::json!({
+                "type": "context_compaction",
+                "content": "compact handoff C",
+                "workspace_snapshot": "<WORKSPACE_SNAPSHOT>\nold-c\n</WORKSPACE_SNAPSHOT>",
+                "environment_context": "<environment_context>old-c</environment_context>",
+                "timestamp": (base + Duration::minutes(5)).to_rfc3339()
+            })
+            .to_string(),
+            base + Duration::minutes(5),
+        );
+        session.push_log(
+            serde_json::json!({
+                "role": "user",
+                "content": "user work after compact C",
+                "timestamp": (base + Duration::minutes(6)).to_rfc3339(),
+                "created_at": (base + Duration::minutes(6)).timestamp_millis(),
+                "updated_at": (base + Duration::minutes(6)).timestamp_millis()
+            })
+            .to_string(),
+            base + Duration::minutes(6),
+        );
+
+        compact_session_context(&mut session, "current compact handoff D")
+            .expect("compact D should succeed");
+        let joined = build_messages_from_session(&session)
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(!joined.contains("old compact handoff A"), "{joined}");
+        let user_before_b = joined
+            .find("user work before compact B")
+            .expect("user before B");
+        let compact_b = joined.find("compact handoff B").expect("compact B");
+        let assistant_between = joined
+            .find("assistant work between compact B and compact C")
+            .expect("assistant between");
+        let compact_c = joined.find("compact handoff C").expect("compact C");
+        let user_after_c = joined
+            .find("user work after compact C")
+            .expect("user after C");
+        assert!(
+            user_before_b < compact_b
+                && compact_b < assistant_between
+                && assistant_between < compact_c
+                && compact_c < user_after_c,
+            "retained compact summaries must stay timestamp-interleaved with user/assistant context: {joined}"
+        );
+    }
+
+    #[test]
+    fn automatic_compact_context_preserves_recent_tool_results_and_trims_older_history() {
+        let root = tempfile::TempDir::new().expect("tempdir");
+        let base = Utc::now() - Duration::minutes(90);
+        let mut session = session();
+        session.session_directory = root.path().to_path_buf();
+        session.session_started_at = base;
+        session.context_tokens.limit = 10_000;
+        for index in 0..180 {
+            let content = format!("old-history-{index:02} {}", "x".repeat(900));
+            session.push_log(
+                serde_json::json!({
+                    "role": "user",
+                    "content": content,
+                    "timestamp": (base + Duration::seconds(index)).to_rfc3339(),
+                    "created_at": (base + Duration::seconds(index)).timestamp_millis(),
+                    "updated_at": (base + Duration::seconds(index)).timestamp_millis()
+                })
+                .to_string(),
+                base + Duration::seconds(index),
+            );
+        }
+        session.push_log(
+            serde_json::json!({
+                "type": "tool_result",
+                "tool_name": "command_run",
+                "context_cache": {
+                    "output": "RECENT_TOOL_RESULT_SENTINEL"
+                },
+                "success": true,
+                "timestamp": (base + Duration::minutes(80)).to_rfc3339()
+            })
+            .to_string(),
+            base + Duration::minutes(80),
+        );
+
+        compact_session_context_automatically(&mut session, "automatic handoff")
+            .expect("automatic compact should succeed");
+        let compact = session
+            .session_log
+            .iter()
+            .rev()
+            .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+            .find(|value| {
+                value.get("type").and_then(serde_json::Value::as_str) == Some("context_compaction")
+            })
+            .expect("compact record should be present");
+        let content = compact
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .expect("compact content should be text");
+
+        assert!(content.len() <= 4_000 + 100, "{content}");
+        assert!(
+            content.contains("older timeline entries omitted"),
+            "{content}"
+        );
+        assert!(
+            !content.contains("RECENT_TOOL_RESULT_SENTINEL"),
+            "tool outputs must remain in normal tool context messages, not compact summaries: {content}"
+        );
+        assert!(!content.contains("old-history-00"), "{content}");
     }
 
     #[test]
@@ -688,6 +1316,255 @@ mod tests {
     }
 
     #[test]
+    fn compact_session_context_does_not_embed_prompt_style_records() {
+        let root = tempfile::TempDir::new().expect("tempdir");
+        let now = Utc::now();
+        let mut session = session();
+        session.session_directory = root.path().to_path_buf();
+        session.session_started_at = now - Duration::minutes(1);
+        session.push_log(
+            serde_json::json!({
+                "type": "prompt_style",
+                "role": "developer",
+                "content": PROMPT_STYLE_BODY_FIXTURE,
+                "timestamp": now.to_rfc3339(),
+                "created_at": now.timestamp_millis(),
+                "updated_at": now.timestamp_millis(),
+            })
+            .to_string(),
+            now,
+        );
+
+        compact_session_context(&mut session, "handoff summary").expect("compact should succeed");
+        let messages = build_messages_from_session(&session);
+        let joined = messages
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(joined.contains("handoff summary"));
+        assert!(!joined.contains(PROMPT_STYLE_BODY_FIXTURE));
+    }
+
+    #[test]
+    fn compact_core_replays_pre_checkpoint_command_context_before_prompt_style() {
+        let root = tempfile::TempDir::new().expect("tempdir");
+        let now = Utc::now();
+        let mut session = session();
+        session.session_directory = root.path().to_path_buf();
+        accumulate_tool_result(
+            &mut session,
+            "command_run",
+            json!({
+                "commands": [
+                    { "command_type": "shell_command", "command_line": "echo raw" }
+                ]
+            }),
+            json!({
+                "results": [
+                    { "step": 1, "command_type": "shell_command", "success": true, "output": "RAW_TOOL_RESULT_BEFORE_COMPACT" }
+                ]
+            }),
+            true,
+            None,
+        )
+        .expect("tool result before compact");
+
+        compact_session_context(&mut session, "agent handoff after history")
+            .expect("compact should succeed");
+        session.push_log(
+            serde_json::json!({
+                "type": "prompt_style",
+                "role": "developer",
+                "content": PROMPT_STYLE_BODY_FIXTURE,
+                "timestamp": (now + Duration::seconds(1)).to_rfc3339(),
+                "created_at": (now + Duration::seconds(1)).timestamp_millis(),
+                "updated_at": (now + Duration::seconds(1)).timestamp_millis(),
+            })
+            .to_string(),
+            now + Duration::seconds(1),
+        );
+
+        let messages = build_messages_from_session(&session);
+        let joined = messages
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let contents = messages
+            .iter()
+            .filter_map(|message| message.get("content").and_then(serde_json::Value::as_str))
+            .collect::<Vec<_>>();
+        let snapshot = joined
+            .find("<WORKSPACE_SNAPSHOT>")
+            .expect("workspace snapshot");
+        let environment = joined
+            .find("<environment_context>")
+            .expect("environment context");
+        let compact = joined
+            .find("Agent compact handoff:\\nagent handoff after history")
+            .expect("compact core");
+        let prompt_style = joined
+            .find(PROMPT_STYLE_BODY_FIXTURE)
+            .expect("prompt style");
+
+        assert!(
+            snapshot < environment && environment < compact && compact < prompt_style,
+            "compact core must be placed after environment context and before prompt_style: {contents:?}"
+        );
+        let compact_index = messages
+            .iter()
+            .position(|message| {
+                message
+                    .get("content")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|content| {
+                        content.contains("Agent compact handoff:\nagent handoff after history")
+                    })
+            })
+            .expect("compact core message");
+        let function_call_index = messages
+            .iter()
+            .position(|message| {
+                message.get("type").and_then(serde_json::Value::as_str) == Some("function_call")
+            })
+            .expect("command_run function call");
+        let function_output_index = messages
+            .iter()
+            .position(|message| {
+                message.get("type").and_then(serde_json::Value::as_str)
+                    == Some("function_call_output")
+            })
+            .expect("command_run function output");
+        let prompt_style_index = messages
+            .iter()
+            .position(|message| {
+                message
+                    .get("content")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|content| content.contains(PROMPT_STYLE_BODY_FIXTURE))
+            })
+            .expect("prompt style");
+        assert!(
+            compact_index < function_call_index
+                && function_call_index < function_output_index
+                && function_output_index < prompt_style_index,
+            "compact must replay previous command_run through normal tool context before prompt_style: {joined}"
+        );
+        assert!(
+            messages[function_output_index]
+                .get("output")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|output| output.contains("RAW_TOOL_RESULT_BEFORE_COMPACT")),
+            "function_call_output should carry the pre-checkpoint tool output: {joined}"
+        );
+        let compact_content = contents
+            .iter()
+            .find(|content| content.contains("Agent compact handoff:\nagent handoff after history"))
+            .expect("compact content");
+        assert!(
+            !compact_content.contains("RAW_TOOL_RESULT_BEFORE_COMPACT"),
+            "compact core must not rewrite command_run output: {compact_content}"
+        );
+    }
+
+    #[test]
+    fn compact_drops_pre_checkpoint_streamed_command_context_after_goal() {
+        let root = tempfile::TempDir::new().expect("tempdir");
+        let now = Utc::now();
+        let mut session = session();
+        session.session_directory = root.path().to_path_buf();
+        session.goal_mode = true;
+        session.last_goal_user_input = "exact goal after compact".to_string();
+        session.push_log(
+            serde_json::json!({
+                "type": "streamed_command_event",
+                "status": "completed",
+                "event_index": 0,
+                "step": 1,
+                "command_type": "shell_command",
+                "command_line": "python -m py_compile sentinel.py",
+                "command": {
+                    "step": 1,
+                    "command_type": "shell_command",
+                    "command_line": "python -m py_compile sentinel.py"
+                },
+                "result": {
+                    "step": 1,
+                    "command_type": "shell_command",
+                    "success": true,
+                    "output": "STREAMED_TOOL_RESULT_SENTINEL"
+                },
+                "timestamp": now.to_rfc3339(),
+                "created_at": now.timestamp_millis(),
+                "updated_at": now.timestamp_millis(),
+            })
+            .to_string(),
+            now,
+        );
+
+        compact_session_context(&mut session, "agent handoff before streamed context")
+            .expect("compact should succeed");
+        session.push_log(
+            serde_json::json!({
+                "type": "prompt_style",
+                "role": "developer",
+                "content": PROMPT_STYLE_BODY_FIXTURE,
+                "timestamp": (now + Duration::seconds(1)).to_rfc3339(),
+                "created_at": (now + Duration::seconds(1)).timestamp_millis(),
+                "updated_at": (now + Duration::seconds(1)).timestamp_millis(),
+            })
+            .to_string(),
+            now + Duration::seconds(1),
+        );
+
+        let messages = build_messages_from_session(&session);
+        let joined = messages
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let contents = messages
+            .iter()
+            .filter_map(|message| message.get("content").and_then(serde_json::Value::as_str))
+            .collect::<Vec<_>>();
+        let prompt_style = joined
+            .find(PROMPT_STYLE_BODY_FIXTURE)
+            .expect("prompt style");
+        let compact = joined
+            .find("Goal-mode last user command from session state")
+            .expect("compact goal section");
+
+        assert!(
+            compact < prompt_style,
+            "compact/goal must remain before prompt_style: {joined}"
+        );
+        assert!(
+            !joined.contains("\"name\":\"command_run\""),
+            "compact must not replay streamed command_run function calls: {joined}"
+        );
+        assert!(
+            !joined.contains("python -m py_compile sentinel.py"),
+            "compact must not replay streamed command lines: {joined}"
+        );
+        assert!(
+            !joined.contains("STREAMED_TOOL_RESULT_SENTINEL"),
+            "compact must not replay streamed command output: {joined}"
+        );
+        let compact_content = contents
+            .iter()
+            .find(|content| {
+                content.contains("Agent compact handoff:\nagent handoff before streamed context")
+            })
+            .expect("compact content");
+        assert!(
+            !compact_content.contains("STREAMED_TOOL_RESULT_SENTINEL"),
+            "compact core must not absorb streamed command output: {compact_content}"
+        );
+    }
+
+    #[test]
     fn planning_compact_reinjects_objective_without_completion_audit_after_compact_message() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         let mut session = session();
@@ -712,10 +1589,25 @@ mod tests {
             .filter_map(|message| message.get("content").and_then(serde_json::Value::as_str))
             .collect::<Vec<_>>();
 
-        assert_eq!(contents.first().copied(), Some("compact handoff summary"));
-        assert!(contents
+        let snapshot = contents
             .iter()
-            .any(|content| content.contains("Continue working toward the active thread goal.")));
+            .position(|content| content.contains("<WORKSPACE_SNAPSHOT>"))
+            .expect("workspace snapshot");
+        let environment = contents
+            .iter()
+            .position(|content| content.contains("<environment_context>"))
+            .expect("environment context");
+        let compact = contents
+            .iter()
+            .position(|content| content.contains("Agent compact handoff:\ncompact handoff summary"))
+            .expect("compact core");
+        assert!(
+            snapshot < environment && environment < compact,
+            "compact core must be after environment context: {contents:?}"
+        );
+        assert!(contents.iter().any(|content| content.contains(
+            "Continue working toward the active thread user goal and Operation Manual."
+        )));
         assert!(contents
             .iter()
             .any(|content| content.contains("[current objective]:\nSTATE MACHINE OBJECTIVE")));
@@ -725,10 +1617,13 @@ mod tests {
         assert!(!contents
             .iter()
             .any(|content| content.contains("STALE TASK FOCUS OBJECTIVE")));
-        assert!(!contents
-            .iter()
-            .skip(1)
-            .any(|content| content.contains("compact handoff summary")));
+        assert_eq!(
+            contents
+                .iter()
+                .filter(|content| content.contains("compact handoff summary"))
+                .count(),
+            1
+        );
     }
 
     #[test]

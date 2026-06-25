@@ -1,6 +1,6 @@
 id = "web_discover"
 name = "Web Discover"
-description = "Find public website text and public media artifacts."
+description = "Find public website text, public media, and reusable web or interactive assets."
 core = false
 category = "network"
 execution = "one_shot"

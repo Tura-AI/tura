@@ -28,7 +28,7 @@ pub async fn prompt_async(
         append_user_command_for_runtime(&session_id, content);
         return StatusCode::NO_CONTENT;
     }
-    let _ = session_store().add_message_with_parts(
+    let user_message = session_store().add_message_with_parts(
         &session_id,
         SessionMessageRole::User,
         prompt_message_parts(&payload),
@@ -50,7 +50,10 @@ pub async fn prompt_async(
         session_store().get_messages(&session_id).len(),
     );
     let session_id_for_task = session_id;
-    let payload_for_task = payload;
+    let payload_for_task = user_message
+        .as_ref()
+        .map(|message| prompt_payload_with_frontend_ids(payload.clone(), message))
+        .unwrap_or(payload);
     tokio::task::spawn_blocking(move || {
         if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             run_mano_for_prompt(session_id_for_task.clone(), payload_for_task);
@@ -327,12 +330,58 @@ pub(super) fn first_prompt_part_id(payload: &serde_json::Value) -> Option<String
         .get("parts")?
         .as_array()?
         .iter()
-        .find(|part| part.get("type").and_then(|value| value.as_str()) == Some("text"))?
+        .find(|part| {
+            part.get("type")
+                .and_then(|value| value.as_str())
+                .is_none_or(|part_type| part_type == "text")
+        })?
         .get("id")
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
+}
+
+fn prompt_payload_with_frontend_ids(
+    mut payload: serde_json::Value,
+    message: &crate::session::Message,
+) -> serde_json::Value {
+    let Some(object) = payload.as_object_mut() else {
+        return payload;
+    };
+    object
+        .entry("messageID".to_string())
+        .or_insert_with(|| serde_json::Value::String(message.id.clone()));
+
+    if first_prompt_part_id(&serde_json::Value::Object(object.clone())).is_some() {
+        return payload;
+    }
+
+    let Some(part_id) = message
+        .parts
+        .iter()
+        .find(|part| part.part_type == "text")
+        .map(|part| part.id.clone())
+    else {
+        return payload;
+    };
+    if let Some(parts) = object
+        .get_mut("parts")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        if let Some(part) = parts.iter_mut().find(|part| {
+            part.get("type")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|part_type| part_type == "text")
+        }) {
+            if let Some(part_object) = part.as_object_mut() {
+                part_object
+                    .entry("id".to_string())
+                    .or_insert_with(|| serde_json::Value::String(part_id));
+            }
+        }
+    }
+    payload
 }
 
 fn prompt_runtime_context(payload: &serde_json::Value) -> Option<String> {
@@ -403,12 +452,12 @@ pub(super) fn run_mano_for_prompt(session_id: String, payload: serde_json::Value
                 })
             })
         })
+        .or(agent_runtime_settings.acceleration_enabled)
         .or_else(|| {
             session
                 .as_ref()
                 .map(|session| session.model_acceleration_enabled)
         })
-        .or(agent_runtime_settings.acceleration_enabled)
         .unwrap_or(false);
     let command_run_stall_guard = session_config
         .as_ref()
@@ -1000,6 +1049,23 @@ mod tests {
             prompt_agent_for_run(&serde_json::json!({}), None, Some(&config)).as_deref(),
             Some("workspace-agent")
         );
+    }
+
+    #[test]
+    fn dynamic_agent_runtime_settings_include_acceleration_flag() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut config = tura_agents::store::default_agent_config(temp.path(), "runtime-agent")
+            .expect("default agent config");
+        config.provider["model_reasoning_effort"] = serde_json::json!("high");
+        config.provider["model_acceleration_enabled"] = serde_json::json!(true);
+        tura_agents::store::save_dynamic_agent(temp.path(), &config, Some("runtime agent"))
+            .expect("save dynamic agent");
+
+        let settings = agent_runtime_settings("runtime-agent", temp.path().to_str())
+            .expect("agent runtime settings");
+
+        assert_eq!(settings.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(settings.acceleration_enabled, Some(true));
     }
 
     #[test]

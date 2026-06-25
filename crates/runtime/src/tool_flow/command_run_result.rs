@@ -4,6 +4,7 @@ use chrono::Utc;
 
 use crate::state_machine::runtime_management::RuntimeManagement;
 use crate::state_machine::session_management::{PlanStatus, SessionManagement, StartCondition};
+use crate::tool_callback_sanitizer::sanitize_tool_callback_result;
 
 pub(crate) fn apply_task_attribution_to_streamed_result(
     session: &SessionManagement,
@@ -63,7 +64,7 @@ pub(crate) fn record_streamed_command_events(
     };
     let now = Utc::now();
     for (index, event) in events.iter().enumerate() {
-        let mut event = event.clone();
+        let mut event = sanitize_tool_callback_result(event);
         if !event.is_object() {
             event = serde_json::json!({ "value": event });
         }
@@ -130,6 +131,7 @@ mod tests {
     #[test]
     fn streamed_command_events_are_audited_with_active_task_attribution() {
         let mut session = session();
+        let large_output = "streamed log line\n".repeat(1_000);
         session.task_plan.detailed_tasks.push(TaskStep {
             task_id: "task-aa".to_string(),
             step: 7,
@@ -157,7 +159,10 @@ mod tests {
                     "result_index": 0,
                     "step": 1,
                     "command_type": "shell_command",
-                    "success": true
+                    "success": true,
+                    "result": {
+                        "output": large_output
+                    }
                 }
             ],
             "results": [{
@@ -212,6 +217,11 @@ mod tests {
         assert_eq!(events[0]["provider_tool_call_id"], "call_provider_1");
         assert_eq!(events[0]["task_attribution"]["task_id"], "task-aa");
         assert_eq!(events[1]["task_attribution"]["step"], 7);
+        let output = events[1]["result"]["output"]
+            .as_str()
+            .expect("streamed event output");
+        assert!(output.contains("characters truncated"), "{output}");
+        assert!(output.len() < large_output.len(), "{output}");
     }
 
     #[test]

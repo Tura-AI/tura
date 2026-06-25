@@ -13,10 +13,14 @@ use crate::protocol::{
 use anyhow::Result;
 use rusqlite::{params, OptionalExtension};
 use std::path::Path;
+use std::time::Duration;
+
+const STALE_RUNNING_SESSION_TIMEOUT: Duration = Duration::from_secs(120);
 
 impl SessionLogStore {
     pub fn list_workspaces(&self) -> Result<Vec<WorkspaceSummary>> {
         self.sweep_missing_workspace_dbs()?;
+        self.mark_stale_running_sessions_interrupted(STALE_RUNNING_SESSION_TIMEOUT)?;
         self.with_index_connection(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT workspace, COUNT(*), COALESCE(MAX(updated_at), 0)
@@ -43,6 +47,7 @@ impl SessionLogStore {
         request: ListSessionsRequest,
     ) -> Result<(Page, Vec<SessionSnapshot>)> {
         self.sweep_missing_workspace_dbs()?;
+        self.mark_stale_running_sessions_interrupted(STALE_RUNNING_SESSION_TIMEOUT)?;
         let workspace = normalize_workspace(&request.workspace);
         let page_size = request.page_size.clamp(1, 500);
         let (page, total, index_rows) = self.with_index_connection(|conn| {
@@ -90,6 +95,7 @@ impl SessionLogStore {
         request: ListSessionsRequest,
     ) -> Result<(Page, Vec<SessionSummary>)> {
         self.sweep_missing_workspace_dbs()?;
+        self.mark_stale_running_sessions_interrupted(STALE_RUNNING_SESSION_TIMEOUT)?;
         let workspace = normalize_workspace(&request.workspace);
         let page_size = request.page_size.clamp(1, 500);
         let (page, total, index_rows) = self.with_index_connection(|conn| {
@@ -133,6 +139,7 @@ impl SessionLogStore {
     }
 
     pub fn get_session(&self, request: GetSessionRequest) -> Result<Option<SessionSnapshot>> {
+        self.mark_stale_running_sessions_interrupted(STALE_RUNNING_SESSION_TIMEOUT)?;
         let row = self.with_index_connection(|conn| {
             conn.query_row(
                 "SELECT session_id, workspace_db_path
@@ -153,6 +160,7 @@ impl SessionLogStore {
         &self,
         request: ListSessionRecordsRequest,
     ) -> Result<(Page, Vec<SessionRecord>)> {
+        self.mark_stale_running_sessions_interrupted(STALE_RUNNING_SESSION_TIMEOUT)?;
         let workspace_db_path = self.with_index_connection(|conn| {
             conn.query_row(
                 "SELECT workspace_db_path FROM sessions WHERE session_id = ?1",

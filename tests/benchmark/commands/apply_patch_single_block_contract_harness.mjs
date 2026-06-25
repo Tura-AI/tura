@@ -352,8 +352,7 @@ function runtimeMessages(variant, marker, workspace) {
     },
     {
       role: "developer",
-      content:
-        "Filesystem sandboxing is disabled. Network is enabled. Approval policy is never. Do not provide sandbox_permissions.",
+      content: "Network is enabled. Approval policy is never.",
     },
     { role: "user", content: `<environment_context>\n  <cwd>${workspace}</cwd>\n  <shell>powershell</shell>\n</environment_context>` },
     { role: "user", content: userPrompt(variant, marker, workspace) },

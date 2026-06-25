@@ -418,16 +418,16 @@ agents/
     lib.rs
     coding_agent.rs
     store.rs
-    thinking-planning/
+    thoughtful/
       agent_config.json
       prompt.md
-    thinking/
+    balanced/
       agent_config.json
       prompt.md
-    fast/
+    direct/
       agent_config.json
       prompt.md
-    fast-text-only/
+    direct-text-only/
       agent_config.json
       prompt.md
 ```

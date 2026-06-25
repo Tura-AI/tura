@@ -481,7 +481,7 @@ async fn streamed_command_batches_concurrent_workspaces_remain_isolated_inner() 
                 "command": "task_status",
                 "command_line": json!({
                     "status": "done",
-                    "task_detail": format!("{marker}-first")
+                    "task_group": format!("{marker}-first")
                 }).to_string()
             }),
             json!({
@@ -489,7 +489,7 @@ async fn streamed_command_batches_concurrent_workspaces_remain_isolated_inner() 
                 "command": "task_status",
                 "command_line": json!({
                     "status": "question",
-                    "task_detail": format!("{marker}-second")
+                    "task_group": format!("{marker}-second")
                 }).to_string()
             }),
         ];
@@ -523,11 +523,11 @@ async fn streamed_command_batches_concurrent_workspaces_remain_isolated_inner() 
             "task_status command batch should succeed with status result shape: {output}"
         );
         assert_eq!(
-            results[0]["output"]["task_status"]["task_detail"],
+            results[0]["output"]["task_status"]["task_group"],
             format!("{marker}-first")
         );
         assert_eq!(
-            results[1]["output"]["task_status"]["task_detail"],
+            results[1]["output"]["task_status"]["task_group"],
             format!("{marker}-second")
         );
         assert_eq!(results[0]["output"]["task_status"]["status"], "done");

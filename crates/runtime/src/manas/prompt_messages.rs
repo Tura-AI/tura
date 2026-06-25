@@ -4,9 +4,11 @@ use std::{
     time::Instant,
 };
 
+use crate::context::user_input_content_value;
 use crate::profile_timings;
 use crate::prompt_style::{
-    context_blocks, tail_injection, task_status, user_new_command, PromptBuilder,
+    context_blocks, runtime_prompt_manual, tail_injection, task_status, user_new_command,
+    PromptBuilder,
 };
 use crate::state_machine::session_management::{
     ContextTokenStats, PlanStatus, SessionManagement, StartCondition, TaskStep,
@@ -19,8 +21,8 @@ pub(crate) struct TurnMessages {
 
 pub(crate) fn messages_for_turn_with_context_limit(
     current_messages: &[serde_json::Value],
-    session: &SessionManagement,
-    original_user_task: &str,
+    session: &mut SessionManagement,
+    _original_user_task: &str,
     context_limit_tokens: u64,
 ) -> TurnMessages {
     let total_start = Instant::now();
@@ -41,14 +43,13 @@ pub(crate) fn messages_for_turn_with_context_limit(
             },
         }),
     );
-    if should_append_original_user_task(&messages, original_user_task) {
-        messages.push(serde_json::json!({
-            "role": "user",
-            "content": original_user_task.trim(),
-        }));
-    }
     let user_command_start = Instant::now();
-    let user_command = user_new_command_message(&session.session_id);
+    let user_commands = fetch_user_commands(&session.session_id);
+    if !user_commands.is_empty() {
+        record_user_new_commands(session, &user_commands);
+        append_user_new_command_messages(&mut messages, &user_commands);
+    }
+    let user_command = user_new_command_message_from_commands(&user_commands);
     profile_timings::log_elapsed(
         "messages_for_turn.user_new_command_message",
         user_command_start,
@@ -60,7 +61,7 @@ pub(crate) fn messages_for_turn_with_context_limit(
     if let Some(content) = user_command {
         tail_injection::append_tail_prompt(
             &mut messages,
-            tail_injection::TailPrompt::system(content),
+            tail_injection::TailPrompt::developer(content),
         );
     }
     profile_timings::log_elapsed(
@@ -81,26 +82,7 @@ pub(crate) fn messages_for_turn_with_context_limit(
     }
 }
 
-fn should_append_original_user_task(
-    messages: &[serde_json::Value],
-    original_user_task: &str,
-) -> bool {
-    let task = original_user_task.trim();
-    if task.is_empty() {
-        return false;
-    }
-    !messages.iter().any(|message| {
-        message.get("role").and_then(serde_json::Value::as_str) == Some("user")
-            && message
-                .get("content")
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                == Some(task)
-    })
-}
-
-pub(super) fn user_new_command_message(session_id: &str) -> Option<String> {
-    let commands = fetch_user_commands(session_id);
+fn user_new_command_message_from_commands(commands: &[String]) -> Option<String> {
     if commands.is_empty() {
         return None;
     }
@@ -116,6 +98,39 @@ pub(super) fn user_new_command_message(session_id: &str) -> Option<String> {
             .section("user_new_commands", commands)
             .render(),
     )
+}
+
+fn append_user_new_command_messages(messages: &mut Vec<serde_json::Value>, commands: &[String]) {
+    for command in commands.iter().map(|command| command.trim()) {
+        if command.is_empty() {
+            continue;
+        }
+        messages.push(serde_json::json!({
+            "role": "developer",
+            "content": user_input_content_value(command),
+        }));
+    }
+}
+
+fn record_user_new_commands(session: &mut SessionManagement, commands: &[String]) {
+    for command in commands.iter().map(|command| command.trim()) {
+        if command.is_empty() {
+            continue;
+        }
+        let now = chrono::Utc::now();
+        let record = serde_json::json!({
+            "type": "user",
+            "role": "developer",
+            "content": user_input_content_value(command),
+            "created_at": now.timestamp_millis(),
+            "updated_at": now.timestamp_millis(),
+            "timestamp": now.to_rfc3339(),
+        });
+        session.push_log(
+            serde_json::to_string(&record).unwrap_or_else(|_| "message: user".to_string()),
+            now,
+        );
+    }
 }
 
 pub(super) fn fetch_user_commands(session_id: &str) -> Vec<String> {
@@ -185,22 +200,16 @@ fn user_command_fetch_timeout() -> std::time::Duration {
         .unwrap_or_else(|| std::time::Duration::from_millis(100))
 }
 
-/// Inject the short task_status reminder when the model keeps doing workspace
-/// work (command_run turns) without ever writing or settling the task state.
-/// Used by the runtime loop after N consecutive no-write command_run turns.
-pub(crate) fn push_task_status_nudge(messages: &mut Vec<serde_json::Value>) {
-    tail_injection::append_tail_prompt(
-        messages,
-        tail_injection::TailPrompt::system(task_status::TASK_STATUS),
-    );
-}
-
 pub(crate) fn push_no_tool_task_status_retry_message(
     messages: &mut Vec<serde_json::Value>,
     session: &SessionManagement,
 ) {
-    let content = task_status::no_tool_retry(&planning_objective_block(session));
-    tail_injection::append_tail_prompt(messages, tail_injection::TailPrompt::system(content));
+    let operation_manual = runtime_prompt_manual::active_operation_manual_text(session);
+    let content = task_status::no_tool_retry(
+        &planning_objective_block(session),
+        operation_manual.as_deref(),
+    );
+    tail_injection::append_tail_prompt(messages, tail_injection::TailPrompt::developer(content));
 }
 
 pub(crate) fn planning_objective_block(session: &SessionManagement) -> String {
@@ -233,17 +242,14 @@ fn current_planning_task(session: &SessionManagement) -> Option<(usize, &TaskSte
 mod tests {
     use super::{
         messages_for_turn_with_context_limit, planning_objective_block,
-        push_no_tool_task_status_retry_message, push_task_status_nudge,
+        push_no_tool_task_status_retry_message, record_user_new_commands,
     };
-    use crate::prompt_style::task_status;
+    use crate::context::{build_messages_from_session, compact_session_context};
     use crate::state_machine::session_management::{
         PlanStatus, SessionInput, SessionManagement, StartCondition, TaskStep,
     };
     use chrono::Utc;
     use std::path::PathBuf;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn test_session(user_input: &str) -> SessionManagement {
         let now = Utc::now();
@@ -301,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn no_tool_retry_reminds_that_last_user_message_is_objective() {
+    fn no_tool_retry_injects_active_goal_instead_of_last_user_message() {
         let now = Utc::now();
         let mut session = SessionManagement::new(
             "sess-no-tool-retry".to_string(),
@@ -327,21 +333,18 @@ mod tests {
             .as_str()
             .expect("prompt message content should be a string");
 
-        assert!(content.contains("Continue working toward the active thread goal."));
+        assert!(content.contains("Continue working toward the active thread user goal"));
+        assert!(content.contains("active_goal:\n[current objective]:\nSTATE MACHINE OBJECTIVE"));
+        assert!(content.contains("Do not infer the objective from the last user message"));
         assert!(
-            content.contains("The last user message in the conversation is the current objective")
+            !content.contains("The last user message in the conversation is the current objective")
         );
-        assert!(!content.contains("[current objective]:\nSTATE MACHINE OBJECTIVE"));
-        assert!(content.contains("task_status status question"));
-        assert!(content.contains("task_status status done"));
-        assert!(content.contains("task_status status doing"));
-        assert!(content.contains("first send the user-facing assistant reply"));
-        assert!(content.contains("then call command_run with task_status status done"));
+        assert!(!content.contains("ORIGINAL HUGE PROMPT"));
         assert!(!content.contains("original_user_task:"));
     }
 
     #[test]
-    fn no_tool_retry_does_not_inject_current_task_when_present() {
+    fn no_tool_retry_injects_current_task_when_present() {
         let now = Utc::now();
         let mut session = SessionManagement::new(
             "sess-no-tool-task".to_string(),
@@ -376,34 +379,16 @@ mod tests {
             .expect("prompt message content should be a string");
 
         assert!(
-            content.contains("The last user message in the conversation is the current objective")
+            content.contains("active_goal:\n[current objective]:\nfix the task\n\nPatch parser")
         );
-        assert!(!content.contains("[current objective]:\nfix the task\n\nPatch parser"));
-        assert!(!content.contains("Patch parser"));
+        assert!(
+            !content.contains("The last user message in the conversation is the current objective")
+        );
         assert!(!content.contains("original_user_task:"));
     }
 
     #[test]
-    fn task_status_nudge_appends_tail_system_prompt_without_moving_fixed_system() {
-        let mut messages = vec![
-            serde_json::json!({"role": "system", "content": "fixed system prefix"}),
-            serde_json::json!({"role": "user", "content": "work"}),
-        ];
-
-        push_task_status_nudge(&mut messages);
-
-        assert_eq!(messages[0]["content"], "fixed system prefix");
-        let last_message = messages
-            .last()
-            .expect("task status nudge should append a message");
-        assert_eq!(last_message["role"], "system");
-        assert_eq!(last_message["content"], task_status::TASK_STATUS);
-    }
-
-    #[test]
     fn messages_for_turn_preserves_provider_context_tokens_without_estimating() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
-        std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
         let now = Utc::now();
         let mut session = SessionManagement::new(
             "sess-compact-threshold".to_string(),
@@ -428,7 +413,7 @@ mod tests {
                 "role": "user",
                 "content": "x".repeat(100)
             })],
-            &session,
+            &mut session,
             "fix the task",
             10,
         );
@@ -440,33 +425,62 @@ mod tests {
             .join("\n");
 
         assert!(!joined.contains("Context checkpoint required"));
-        assert!(!joined.contains("compact_context as the final command"));
+        assert!(!joined.contains("command_type\":\"compact_context"));
         assert_eq!(turn.context_tokens.limit, 10);
         assert_eq!(turn.context_tokens.input, 1234);
-        std::env::remove_var("TURA_GATEWAY_CALLBACKS");
     }
 
     #[test]
-    fn messages_for_turn_appends_temporary_prompt_after_fixed_system_prefix() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
-        std::env::set_var("TURA_GATEWAY_CALLBACKS", "off");
-        let session = test_session("tail task");
+    fn messages_for_turn_does_not_append_original_user_task_tail() {
+        let mut session = test_session("tail task");
         let messages = messages_for_turn_with_context_limit(
             &[
                 serde_json::json!({"role": "system", "content": "fixed system prefix"}),
                 serde_json::json!({"role": "user", "content": "x".repeat(100)}),
             ],
-            &session,
+            &mut session,
             "tail task",
             10,
         )
         .messages;
-        let last = messages.last().expect("temporary prompt should be last");
 
         assert_eq!(messages[0]["role"], "system");
         assert_eq!(messages[0]["content"], "fixed system prefix");
-        assert_eq!(last["role"], "user");
-        assert_eq!(last["content"], "tail task");
-        std::env::remove_var("TURA_GATEWAY_CALLBACKS");
+        assert_eq!(messages.len(), 2);
+        assert!(messages.iter().all(|message| {
+            message.get("content").and_then(serde_json::Value::as_str) != Some("tail task")
+        }));
+    }
+
+    #[test]
+    fn user_new_commands_record_as_user_type_developer_messages_for_compaction() {
+        let mut session = test_session("original task");
+        record_user_new_commands(
+            &mut session,
+            &[String::from("change direction and inspect the new failure")],
+        );
+
+        let log_entry = session
+            .session_log
+            .last()
+            .expect("user new command should be recorded");
+        let value: serde_json::Value = serde_json::from_str(log_entry).expect("json log");
+        assert_eq!(value["type"], "user");
+        assert_eq!(value["role"], "developer");
+        assert_eq!(
+            value["content"],
+            "change direction and inspect the new failure"
+        );
+
+        compact_session_context(&mut session, "handoff").expect("compact should succeed");
+        let joined = build_messages_from_session(&session)
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("current_run/user: change direction and inspect the new failure"),
+            "{joined}"
+        );
     }
 }

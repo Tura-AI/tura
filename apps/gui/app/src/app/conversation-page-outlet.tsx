@@ -14,10 +14,7 @@ import {
   utcIsoToLocalDateTime,
 } from "../features/plan/tasks";
 import { ConversationEmptyView } from "../pages/new-session";
-import {
-  PlanComposerControls,
-  PlanConversationFeedbackNotice,
-} from "../pages/plan/plan-composer";
+import { PlanComposerControls, PlanConversationFeedbackNotice } from "../pages/plan/plan-composer";
 import type { AppState } from "../state/global-store";
 import type { SettingsSection } from "../state/global-store";
 import type { AppShellViewModel } from "./app-shell-view-model";
@@ -68,6 +65,23 @@ export function ConversationPageOutlet(props: {
 
   function setComposerImages(composerImages: AppState["composerImages"]) {
     props.setState((previous) => ({ ...previous, composerImages }));
+  }
+
+  function setTranscriptScroll(sessionId: string, scrollTop: number) {
+    const value = Math.max(0, Math.round(scrollTop));
+    props.setState((previous) => {
+      const current = previous.transcriptScrollBySession[sessionId] ?? 0;
+      if (Math.abs(current - value) < 4) {
+        return previous;
+      }
+      return {
+        ...previous,
+        transcriptScrollBySession: {
+          ...previous.transcriptScrollBySession,
+          [sessionId]: value,
+        },
+      };
+    });
   }
 
   function setActiveAgent(selectedAgent: string) {
@@ -132,6 +146,8 @@ export function ConversationPageOutlet(props: {
           state={props.state()}
           session={session()}
           messages={props.selectedMessages()}
+          initialScrollTop={props.state().transcriptScrollBySession[session().id]}
+          onTranscriptScroll={(scrollTop) => setTranscriptScroll(session().id, scrollTop)}
           onLoadEarlierMessages={() => props.loadEarlierMessages(session().id)}
           slashCommands={props.slashCommands()}
           onComposerText={setComposerText}

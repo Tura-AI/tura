@@ -4,11 +4,13 @@ Input is CLI-style. Use `image` or `speech` as the first word, quote long prompt
 
 For images, pass `image` with a strong visual prompt. Optional image fields are `--reference`, `--width`, `--height`, `--size`, `--aspect-ratio`, `--quality`, `--n`, `--seed`, `--format`, and `--output-dir`.
 
-Image prompts must be positive-only. For character image prompts, you must describe the distinct character's style, facial features, body type/build, hairstyle, posture, and visual identity in detail.
+Image prompts must be positive-only. Always describe and verify the time period settings. For character image prompts, you must describe the distinct character's style, facial features, body type/build, hairstyle, posture, and visual identity in detail.
 
 Describe only the elements that appear in the media, and do not include any information about the media’s intended use. Do not include the name of any character, any text that describe the object, or words such as "magazine cover", poser in the prompt.
 
 Image prompts must avoid AI slop, safe stock-like defaults, and CGI-heavy fantasy/game visuals by choosing concrete positive art direction such as stylized, atmospheric, cinematic, editorial...
+
+If an image may need background removal later, prompt for a single isolated subject on a plain solid background with a color that strongly contrasts the subject and is unrelated to the final theme palette, with crisp visible subject edges.
 
 Generate multiple distinct media assets with multiple separate `generate_media` calls in small batches. Do not ask one call to create several different assets, scenes, characters, icons, backgrounds, or deliverables at once. 
 

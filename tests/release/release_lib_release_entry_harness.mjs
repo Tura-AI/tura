@@ -546,7 +546,7 @@ export function caseDefinition(caseName, ctx) {
       "- do not include the final marker until acceptance prints ZIP_PASSWORD_REFACTOR_ACCEPTANCE_OK",
       "- after acceptance passes, write zip_password_refactor/RELEASE_RESULT.md containing the final marker and a concise acceptance summary",
       "- after acceptance passes, your final visible assistant reply must include the final marker",
-      "- if you call task_status with status done, its task_detail must be only a few words describing the current task; it is not the final reply",
+      "- if you call task_status with status done, its task_group must be a few words describing the broad code work area, not the concrete task detail or final reply",
       `Final answer must include exactly this marker: ${sentinel}`,
       "Final answer must mention zip_password_refactor/bin/zip-password-finder.mjs, acceptance/zip_password_cli_acceptance.mjs, dictionary mode, brute-force mode, --json, SHA-256, tura-zip-5519, and the acceptance harness score.",
     ].join("\n"),

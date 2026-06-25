@@ -9,6 +9,8 @@ from urllib.request import urlopen
 
 from playwright.async_api import async_playwright, expect
 
+from cleanup_repo_tura_processes import cleanup_repo_tura_processes
+
 
 ROOT = Path(__file__).resolve().parents[5]
 GUI = ROOT / "apps" / "gui"
@@ -159,6 +161,7 @@ async def main() -> None:
             await browser.close()
     finally:
         stop(process)
+        cleanup_repo_tura_processes()
 
     failures = [check for check in checks if not check["ok"]]
     (OUT / "summary.json").write_text(

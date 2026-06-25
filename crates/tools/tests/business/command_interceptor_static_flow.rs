@@ -121,7 +121,12 @@ fn static_interceptor_blocks_windows_and_nested_shell_shapes_without_execution()
 #[test]
 fn static_interceptor_allows_workspace_deletes_without_execution() {
     let cases = [
-        ("bash-rm-rf", "rm -rf cache", "/workspace/project", "/workspace/project"),
+        (
+            "bash-rm-rf",
+            "rm -rf cache",
+            "/workspace/project",
+            "/workspace/project",
+        ),
         (
             "bash-batch-rm",
             "rm -f cache/a.txt cache/b.txt",
@@ -162,7 +167,12 @@ fn static_interceptor_allows_workspace_deletes_without_execution() {
 #[test]
 fn static_interceptor_blocks_outside_workspace_and_system_deletes_without_execution() {
     let cases = [
-        ("bash-outside-rm", "rm -rf ../outside", "/workspace/project", "/workspace/project"),
+        (
+            "bash-outside-rm",
+            "rm -rf ../outside",
+            "/workspace/project",
+            "/workspace/project",
+        ),
         (
             "bash-outside-batch",
             "rm -f /tmp/outside-a /tmp/outside-b",

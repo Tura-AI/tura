@@ -1,35 +1,29 @@
-use std::path::PathBuf;
-
 use chrono::Utc;
+use std::path::PathBuf;
 use uuid::Uuid;
 
 use crate::state_machine::session_management::{SessionInput, SessionManagement};
 
 const DEFAULT_SESSION_DIRECTORY: &str = "test_session";
-const CODING_SESSION_TOPIC: &str = "coding";
 
 pub fn activate_session(input: SessionInput) -> Result<SessionManagement, String> {
     let session_directory = std::env::current_dir()
         .map_err(|err| format!("failed to resolve project directory: {err}"))?
         .join(DEFAULT_SESSION_DIRECTORY);
 
-    activate_session_with_topic(session_directory, "general", input)
+    activate_session_with_directory(session_directory, input)
 }
 
-pub fn activate_session_with_topic(
+pub fn activate_session_with_directory(
     session_directory: PathBuf,
-    session_topic: impl Into<String>,
     input: SessionInput,
 ) -> Result<SessionManagement, String> {
-    let session_topic = session_topic.into();
-    let mut session = create_session_for_topic(session_directory, session_topic.clone(), input)?;
-    session.use_last_tool_call_response = session_topic != CODING_SESSION_TOPIC;
-    Ok(session)
+    crate::workspace_git::ensure_workspace_git_repo(&session_directory)?;
+    create_session_for_directory(session_directory, input)
 }
 
-fn create_session_for_topic(
+fn create_session_for_directory(
     session_directory: PathBuf,
-    session_topic: String,
     input: SessionInput,
 ) -> Result<SessionManagement, String> {
     let now = Utc::now();
@@ -42,7 +36,7 @@ fn create_session_for_topic(
         session_name,
         session_directory,
         false,
-        session_topic,
+        Vec::<String>::new(),
         input,
         user_goal,
         now,

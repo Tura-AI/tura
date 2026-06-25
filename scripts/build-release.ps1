@@ -132,11 +132,17 @@ if ($Clean) {
 }
 Remove-Item -LiteralPath (Join-Path $TargetDir "cli.exe") -Force -ErrorAction SilentlyContinue
 
-Invoke-Checked "cargo" @("build", "--release", "-p", "gateway", "--bin", "tura_exec", "--bin", "tura_gateway")
-Invoke-Checked "cargo" @("build", "--release", "-p", "router", "--bin", "tura_router")
-Invoke-Checked "cargo" @("build", "--release", "-p", "session_log", "--bin", "tura_session_db")
-Invoke-Checked "cargo" @("build", "--release", "-p", "runtime", "--bin", "tura_runtime")
-Invoke-Checked "cargo" @("build", "--release", "-p", "generate_media", "-p", "read_media", "-p", "web_discover")
+$PreviousTuraBuildKind = $env:TURA_BUILD_KIND
+$env:TURA_BUILD_KIND = "release"
+try {
+  Invoke-Checked "cargo" @("build", "--release", "-p", "gateway", "--bin", "tura_exec", "--bin", "tura_gateway")
+  Invoke-Checked "cargo" @("build", "--release", "-p", "router", "--bin", "tura_router")
+  Invoke-Checked "cargo" @("build", "--release", "-p", "session_log", "--bin", "tura_session_db")
+  Invoke-Checked "cargo" @("build", "--release", "-p", "runtime", "--bin", "tura_runtime")
+  Invoke-Checked "cargo" @("build", "--release", "-p", "generate_media", "-p", "read_media", "-p", "web_discover")
+} finally {
+  $env:TURA_BUILD_KIND = $PreviousTuraBuildKind
+}
 
 if ($BuildGui) {
   Invoke-Checked "bun" @("run", "build") (Join-Path $RepoRoot "apps\gui")

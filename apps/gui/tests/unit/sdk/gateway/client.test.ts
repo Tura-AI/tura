@@ -1,7 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { GatewayClient } from "../../../../sdk/gateway/src/client";
+import { GatewayClient, defaultGatewayUrl } from "../../../../sdk/gateway/src/client";
 
 describe("GatewayClient", () => {
+  test("defaults to the release gateway port inside Tauri", () => {
+    const previousWindow = globalThis.window;
+    globalThis.window = {
+      __TAURI_INTERNALS__: {},
+      location: { search: "" },
+    } as Window & typeof globalThis;
+    try {
+      expect(defaultGatewayUrl()).toBe("http://127.0.0.1:4156");
+    } finally {
+      globalThis.window = previousWindow;
+    }
+  });
+
   test("normalizes wrapped gateway message list items", async () => {
     const client = new GatewayClient({
       baseUrl: "http://gateway.test",

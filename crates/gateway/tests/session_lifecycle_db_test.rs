@@ -21,7 +21,7 @@ async fn fork_and_delete_are_applied_to_session_db() -> anyhow::Result<()> {
     let source = session_store().create_session(
         Some(workspace_key.clone()),
         Some("db-test-model".to_string()),
-        Some("thinking-planning".to_string()),
+        Some("thoughtful".to_string()),
         Some("coding".to_string()),
         false,
         false,

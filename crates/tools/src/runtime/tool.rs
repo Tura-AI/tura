@@ -271,7 +271,6 @@ pub struct CommandRouter {
     bash: crate::commands::bash::BashHandler,
     zsh: crate::commands::zsh::ZshHandler,
     apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
-    compact_context: crate::commands::compact_context::CompactContextHandler,
     planning: crate::commands::planning::PlanningHandler,
 }
 
@@ -283,7 +282,6 @@ impl CommandRouter {
             bash: crate::commands::bash::BashHandler,
             zsh: crate::commands::zsh::ZshHandler,
             apply_patch: crate::commands::apply_patch::ApplyPatchHandler,
-            compact_context: crate::commands::compact_context::CompactContextHandler,
             planning: crate::commands::planning::PlanningHandler,
         }
     }
@@ -301,7 +299,6 @@ impl CommandRouter {
             "bash" => Some("bash".to_string()),
             "zsh" => Some("zsh".to_string()),
             "apply_patch" => Some("apply_patch".to_string()),
-            "compact_context" => Some("compact_context".to_string()),
             "planning" if planning_command_enabled() => Some("planning".to_string()),
             command_name => self
                 .external_manifest(command_name)
@@ -315,7 +312,6 @@ impl CommandRouter {
             "bash" => Some(&self.bash),
             "zsh" => Some(&self.zsh),
             "apply_patch" => Some(&self.apply_patch),
-            "compact_context" => Some(&self.compact_context),
             "planning" if planning_command_enabled() => Some(&self.planning),
             _ => None,
         }
@@ -753,10 +749,7 @@ mod tests {
             router.resolve_command_tool_name("apply_patch"),
             Some("apply_patch".to_string())
         );
-        assert_eq!(
-            router.resolve_command_tool_name("compact_context"),
-            Some("compact_context".to_string())
-        );
+        assert_eq!(router.resolve_command_tool_name("compact_context"), None);
         assert_eq!(
             router.resolve_command_tool_name("generate_media"),
             Some("generate_media".to_string())
@@ -853,10 +846,10 @@ mod tests {
             )))
         });
         let call = ToolCall {
-            tool_name: "compact_context".to_string(),
+            tool_name: "shell_command".to_string(),
             call_id: "call-1".to_string(),
             payload: ToolPayload::Function {
-                arguments: json!({}),
+                arguments: json!({"command":"Write-Output hook"}),
             },
         };
 
@@ -866,7 +859,7 @@ mod tests {
             .expect_err("pre hook should fail");
 
         assert!(
-            matches!(error, ToolError::RespondToModel(message) if message == "blocked compact_context")
+            matches!(error, ToolError::RespondToModel(message) if message == "blocked shell_command")
         );
         assert!(context.events().is_empty());
     }
@@ -884,17 +877,17 @@ mod tests {
             Ok(())
         });
         let call = ToolCall {
-            tool_name: "compact_context".to_string(),
+            tool_name: "apply_patch".to_string(),
             call_id: "call-1".to_string(),
             payload: ToolPayload::Function {
-                arguments: json!({"summary":"checkpoint after successful dispatch"}),
+                arguments: json!({}),
             },
         };
 
         let result = router
             .dispatch(call, context.clone(), false)
             .await
-            .expect("compact_context dispatch");
+            .expect("apply_patch dispatch");
 
         assert_eq!(result.call_id, "call-1");
         assert_eq!(result.result.success, Some(false));
@@ -905,11 +898,11 @@ mod tests {
             vec![
                 ToolRuntimeEvent::ToolStarted {
                     call_id: "call-1".to_string(),
-                    tool_name: "compact_context".to_string(),
+                    tool_name: "apply_patch".to_string(),
                 },
                 ToolRuntimeEvent::ToolFinished {
                     call_id: "call-1".to_string(),
-                    tool_name: "compact_context".to_string(),
+                    tool_name: "apply_patch".to_string(),
                     success: false,
                 },
             ]

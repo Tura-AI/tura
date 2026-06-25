@@ -1,7 +1,7 @@
 use session_log::{
     file_queue, CommandCheckpoint, DeleteSessionRequest, DeleteWorkspaceRequest, GetSessionRequest,
-    ListSessionRecordsRequest, ListSessionsRequest, SessionLogCommand, SessionLogStore,
-    UpsertSessionRequest,
+    ListSessionRecordsRequest, ListSessionsRequest, MarkSessionInterruptedRequest,
+    SessionLogCommand, SessionLogStore, UpsertSessionRequest,
 };
 use std::path::Path;
 use std::process::Command;
@@ -195,6 +195,7 @@ fn running_sessions_are_marked_interrupted_with_one_canonical_state_source() {
     let store = SessionLogStore::open_default().expect("store");
     let session_id = format!("interrupted-{}", uuid::Uuid::new_v4());
     let workspace = db.workspace("interrupted-workspace");
+    let now_ms = chrono::Utc::now().timestamp_millis();
 
     store
         .upsert_session(UpsertSessionRequest {
@@ -202,8 +203,8 @@ fn running_sessions_are_marked_interrupted_with_one_canonical_state_source() {
                 "id": session_id,
                 "name": "Interrupted",
                 "directory": workspace,
-                "created_at": 1,
-                "updated_at": 2,
+                "created_at": now_ms,
+                "updated_at": now_ms,
                 "status": "idle",
                 "management": {
                     "session_id": session_id,
@@ -257,6 +258,118 @@ fn running_sessions_are_marked_interrupted_with_one_canonical_state_source() {
             .expect("persisted interrupted state should deserialize"),
         session_log::SessionState::Interrupted
     );
+}
+
+#[test]
+fn stale_running_sessions_are_interrupted_during_reads_after_two_minutes() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let fresh_id = format!("fresh-{}", uuid::Uuid::new_v4());
+    let stale_id = format!("stale-{}", uuid::Uuid::new_v4());
+    let workspace = db.workspace("stale-running-workspace");
+    let now_ms = chrono::Utc::now().timestamp_millis();
+
+    for (session_id, updated_at) in [
+        (fresh_id.clone(), now_ms),
+        (stale_id.clone(), now_ms - 121_000),
+    ] {
+        store
+            .upsert_session(UpsertSessionRequest {
+                session: serde_json::json!({
+                    "id": session_id,
+                    "name": session_id,
+                    "directory": workspace,
+                    "created_at": updated_at,
+                    "updated_at": updated_at,
+                    "management": {
+                        "session_id": session_id,
+                        "session_name": session_id,
+                        "state": "running"
+                    }
+                }),
+                parent_id: None,
+                messages: vec![],
+                todos: vec![],
+            })
+            .expect("upsert running session");
+    }
+
+    let normalized_workspace = session_log::path::normalize_workspace(&workspace);
+    let (_page, sessions) = store
+        .list_sessions(ListSessionsRequest {
+            workspace: normalized_workspace,
+            page: 0,
+            page_size: 10,
+        })
+        .expect("list sessions triggers stale cleanup");
+
+    let fresh = sessions
+        .iter()
+        .find(|session| session.session_id == fresh_id)
+        .expect("fresh session listed");
+    let stale = sessions
+        .iter()
+        .find(|session| session.session_id == stale_id)
+        .expect("stale session listed");
+
+    assert_eq!(fresh.state.as_deref(), Some("running"));
+    assert_eq!(fresh.status.as_deref(), Some("busy"));
+    assert_eq!(stale.state.as_deref(), Some("interrupted"));
+    assert_eq!(stale.status.as_deref(), Some("error"));
+}
+
+#[test]
+fn mark_session_interrupted_targets_only_one_session() {
+    let db = DirectDbGuard::new();
+    let store = SessionLogStore::open_default().expect("store");
+    let target_id = format!("target-{}", uuid::Uuid::new_v4());
+    let other_id = format!("other-{}", uuid::Uuid::new_v4());
+    let workspace = db.workspace("single-interrupt-workspace");
+    let now_ms = chrono::Utc::now().timestamp_millis();
+
+    for session_id in [target_id.clone(), other_id.clone()] {
+        store
+            .upsert_session(UpsertSessionRequest {
+                session: serde_json::json!({
+                    "id": session_id,
+                    "name": session_id,
+                    "directory": workspace,
+                    "created_at": now_ms,
+                    "updated_at": now_ms,
+                    "management": {
+                        "session_id": session_id,
+                        "session_name": session_id,
+                        "state": "running"
+                    }
+                }),
+                parent_id: None,
+                messages: vec![],
+                todos: vec![],
+            })
+            .expect("upsert running session");
+    }
+
+    assert!(store
+        .mark_session_interrupted(MarkSessionInterruptedRequest {
+            session_id: target_id.clone()
+        })
+        .expect("mark target interrupted"));
+
+    let target = store
+        .get_session(GetSessionRequest {
+            session_id: target_id,
+        })
+        .expect("get target")
+        .expect("target exists");
+    let other = store
+        .get_session(GetSessionRequest {
+            session_id: other_id,
+        })
+        .expect("get other")
+        .expect("other exists");
+
+    assert_eq!(target.state.as_deref(), Some("interrupted"));
+    assert_eq!(other.state.as_deref(), Some("running"));
 }
 
 #[test]

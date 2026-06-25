@@ -215,6 +215,82 @@ pub(crate) fn gateway_status_restarts_crashed_router_and_adopts_session_db(
     Ok(())
 }
 
+pub(crate) fn gateway_status_kills_unresponsive_router_and_restarts(repo: &Path) -> Result<()> {
+    let root = temp_root("workspace-process-router-unresponsive")?;
+    let home = root.join("home");
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&home)?;
+    std::fs::create_dir_all(&workspace)?;
+
+    let port = free_port()?;
+    let mut gateway = GatewayGuard::start(repo, &home, &workspace, port)?;
+    wait_for_http_ok(port, "/global/health", Duration::from_secs(30))
+        .context("router unresponsive gateway did not become healthy")?;
+    let router_before =
+        wait_for_reachable_endpoint(&router_addr_path(&home), Duration::from_secs(30))
+            .context("router unresponsive initial router endpoint did not become reachable")?;
+    let service_before =
+        wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30))
+            .context("router unresponsive initial session_db endpoint did not become reachable")?;
+    let original_endpoint = read_endpoint_json(&router_addr_path(&home))?;
+    let router_pid = endpoint_pid(&original_endpoint)
+        .or_else(|| wait_for_process_pid("tura_router", &workspace, Duration::from_secs(10)).ok())
+        .context("router unresponsive endpoint did not expose a pid")?;
+
+    let fake = UnresponsiveEndpoint::start()?;
+    let mut unresponsive_endpoint = original_endpoint;
+    unresponsive_endpoint["addr"] = json!(fake.addr.clone());
+    publish_router_endpoint(&home, &unresponsive_endpoint)?;
+
+    let status = wait_for_gateway_router_running_with_http_timeout(
+        port,
+        Duration::from_secs(120),
+        Duration::from_secs(90),
+    )
+    .context("gateway status did not kill and restart unresponsive router")?;
+    assert_eq!(
+        status["router"]["status"], "running",
+        "gateway status should report restarted router after unresponsive endpoint: {status}"
+    );
+
+    wait_for_process_dead(router_pid, Duration::from_secs(10))
+        .with_context(|| format!("unresponsive router pid {router_pid} should be killed"))?;
+    let router_after =
+        wait_for_reachable_endpoint(&router_addr_path(&home), Duration::from_secs(30))
+            .context("router unresponsive restarted router endpoint did not become reachable")?;
+    assert_ne!(
+        router_after, router_before,
+        "gateway should publish a fresh router endpoint after replacing an unresponsive router"
+    );
+    assert_ne!(
+        router_after, fake.addr,
+        "gateway must replace the unresponsive fake router endpoint"
+    );
+    let restarted_router_pid = wait_for_process_pid_change(
+        "tura_router",
+        &workspace,
+        router_pid,
+        Duration::from_secs(10),
+    )?;
+    assert_ne!(
+        restarted_router_pid, router_pid,
+        "unresponsive router restart should be owned by a different process"
+    );
+    let service_after =
+        wait_for_reachable_endpoint(&service_addr_path(&home), Duration::from_secs(30)).context(
+            "router unresponsive recovered session_db endpoint did not become reachable",
+        )?;
+    if service_after != service_before {
+        wait_for_addr_unreachable(&service_before, Duration::from_secs(10)).with_context(|| {
+            format!("replaced session_db endpoint {service_before} should not remain reachable")
+        })?;
+    }
+
+    gateway.stop()?;
+    assert_endpoints_cleaned(&home)?;
+    Ok(())
+}
+
 pub(crate) fn router_health_restarts_crashed_session_db(repo: &Path) -> Result<()> {
     let root = temp_root("workspace-process-session-db-crash")?;
     let home = root.join("home");
@@ -421,7 +497,7 @@ pub(crate) fn orphan_router_is_adopted_and_stopped_by_gateway(repo: &Path) -> Re
     Ok(())
 }
 
-pub(crate) fn router_aborts_command_run_when_runtime_socket_disconnects(repo: &Path) -> Result<()> {
+pub(crate) fn router_keeps_command_run_when_runtime_socket_disconnects(repo: &Path) -> Result<()> {
     let root = temp_root("workspace-process-router-command-run-abort")?;
     let home = root.join("home");
     let workspace = root.join("workspace");
@@ -433,20 +509,21 @@ pub(crate) fn router_aborts_command_run_when_runtime_socket_disconnects(repo: &P
     wait_for_router_session_db_running(&home, Duration::from_secs(30))?;
 
     let pid_file = workspace.join("router-command-run-child.pid");
+    let done_file = workspace.join("router-command-run-child.done");
     let request = json!({
-        "request_id": "router-command-run-abort",
+        "request_id": "router-command-run-survive-disconnect",
         "kind": "call",
         "method": "execution.command_run",
         "payload": {
-            "session_id": "router-command-run-abort-session",
-            "runtime_id": "router-command-run-abort-runtime",
+            "session_id": "router-command-run-survive-session",
+            "runtime_id": "router-command-run-survive-runtime",
             "session_directory": workspace.display().to_string(),
             "arguments": {
                 "commands": [{
                     "command": "shell_command",
                     "command_line": json!({
-                        "command": command_run_child_tree_script(&pid_file),
-                        "timeout_ms": 60000
+                        "command": command_run_survival_script(&pid_file, &done_file),
+                        "timeout_ms": 10000
                     }).to_string()
                 }]
             },
@@ -456,7 +533,7 @@ pub(crate) fn router_aborts_command_run_when_runtime_socket_disconnects(repo: &P
 
     let socket: SocketAddr = addr.parse().context("parse router command_run addr")?;
     let mut stream = TcpStream::connect_timeout(&socket, Duration::from_secs(2))
-        .context("connect router for command_run abort")?;
+        .context("connect router for command_run disconnect survival")?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
     stream.write_all(serde_json::to_string(&request)?.as_bytes())?;
     stream.write_all(b"\n")?;
@@ -470,6 +547,8 @@ pub(crate) fn router_aborts_command_run_when_runtime_socket_disconnects(repo: &P
     drop(stream);
     wait_for_process_dead(child_pid, Duration::from_secs(10))
         .with_context(|| format!("router-owned command_run child pid {child_pid} should exit"))?;
+    wait_for_path(&done_file, Duration::from_secs(2))
+        .context("router-owned command_run should finish after runtime socket disconnect")?;
 
     router.stop()?;
     assert_endpoints_cleaned(&home)?;
@@ -524,9 +603,13 @@ pub(crate) fn gateway_stdin_eof_leaves_router_to_idle_self_shutdown(repo: &Path)
         socket_reachable(&router_addr)?,
         "gateway EOF must not proactively kill router; router should self-shutdown after idle"
     );
-    wait_for_missing(&router_addr_path(&home), Duration::from_secs(10))?;
-    wait_for_missing(&service_addr_path(&home), Duration::from_secs(10))?;
-    wait_for_process_dead(router_pid, Duration::from_secs(10)).with_context(|| {
+    if let Err(error) = wait_for_file_missing(&router_addr_path(&home), PROCESS_EXIT_TIMEOUT) {
+        let lifecycle = router_lifecycle_status(&home)
+            .unwrap_or_else(|status_error| json!({ "status_error": status_error.to_string() }));
+        bail!("{error}; lifecycle={lifecycle}");
+    }
+    wait_for_file_missing(&service_addr_path(&home), PROCESS_EXIT_TIMEOUT)?;
+    wait_for_process_dead(router_pid, PROCESS_EXIT_TIMEOUT).with_context(|| {
         format!("stdin-eof router pid {router_pid} should exit after idle self-shutdown")
     })?;
     assert_endpoints_cleaned(&home)?;
@@ -1021,10 +1104,18 @@ pub(crate) fn wait_for_gateway_router_running(
     port: u16,
     timeout: Duration,
 ) -> Result<serde_json::Value> {
+    wait_for_gateway_router_running_with_http_timeout(port, timeout, Duration::from_secs(10))
+}
+
+pub(crate) fn wait_for_gateway_router_running_with_http_timeout(
+    port: u16,
+    timeout: Duration,
+    http_timeout: Duration,
+) -> Result<serde_json::Value> {
     let started = Instant::now();
     let mut last_error = None;
     while started.elapsed() < timeout {
-        match http_json(port, "/service/status") {
+        match http_json_with_timeout(port, "/service/status", http_timeout) {
             Ok(status) if status["router"]["status"] == "running" => return Ok(status),
             Ok(status) => {
                 last_error = Some(anyhow!(
@@ -1170,6 +1261,21 @@ pub(crate) fn endpoint_reachable(path: &Path) -> Result<bool> {
     socket_reachable(&addr)
 }
 
+pub(crate) fn wait_for_file_missing(path: &Path, timeout: Duration) -> Result<()> {
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        if !path.exists() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    bail!(
+        "file {} was not removed within {:?}",
+        path.display(),
+        timeout
+    )
+}
+
 pub(crate) fn endpoint_debug(path: &Path) -> String {
     let exists = path.exists();
     match read_endpoint_addr(path) {
@@ -1222,18 +1328,35 @@ pub(crate) fn wait_for_addr_unreachable(addr: &str, timeout: Duration) -> Result
     bail!("address {addr} was still reachable after {:?}", timeout)
 }
 
-pub(crate) fn command_run_child_tree_script(pid_file: &Path) -> String {
+pub(crate) fn command_run_survival_script(pid_file: &Path, done_file: &Path) -> String {
     if cfg!(windows) {
         let pid_path = powershell_single_quoted_path(pid_file);
+        let done_path = powershell_single_quoted_path(done_file);
         format!(
-            "$child = Start-Process -FilePath powershell -ArgumentList '-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 60' -PassThru; Set-Content -LiteralPath {pid_path} -Value $child.Id; Start-Sleep -Seconds 60"
+            "Set-Content -LiteralPath {pid_path} -Value $PID; Start-Sleep -Milliseconds 800; Set-Content -LiteralPath {done_path} -Value done"
         )
     } else {
         format!(
-            "sleep 60 & printf '%s' \"$!\" > '{}'; sleep 60",
-            pid_file.display()
+            "printf '%s' \"$$\" > '{}'; sleep 0.8; printf done > '{}'",
+            pid_file.display(),
+            done_file.display()
         )
     }
+}
+
+pub(crate) fn wait_for_path(path: &Path, timeout: Duration) -> Result<()> {
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        if path.exists() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    bail!(
+        "path {} did not appear within {}ms",
+        path.display(),
+        timeout.as_millis()
+    )
 }
 
 pub(crate) fn powershell_single_quoted_path(path: &Path) -> String {
@@ -1496,6 +1619,29 @@ pub(crate) fn publish_session_db_endpoint(home: &Path, addr: &str) -> Result<()>
     Ok(())
 }
 
+pub(crate) fn read_endpoint_json(path: &Path) -> Result<serde_json::Value> {
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("read endpoint JSON {}", path.display()))?;
+    serde_json::from_str(raw.trim())
+        .with_context(|| format!("parse endpoint JSON {}", path.display()))
+}
+
+pub(crate) fn endpoint_pid(endpoint: &serde_json::Value) -> Option<u32> {
+    endpoint
+        .get("pid")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+}
+
+pub(crate) fn publish_router_endpoint(home: &Path, endpoint: &serde_json::Value) -> Result<()> {
+    let path = router_addr_path(home);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, serde_json::to_string(endpoint)?)?;
+    Ok(())
+}
+
 pub(crate) struct UnresponsiveEndpoint {
     addr: String,
     stop: Arc<AtomicBool>,
@@ -1504,6 +1650,10 @@ pub(crate) struct UnresponsiveEndpoint {
 
 impl UnresponsiveEndpoint {
     fn start() -> Result<Self> {
+        Self::start_holding(Duration::from_secs(2))
+    }
+
+    fn start_holding(connection_hold: Duration) -> Result<Self> {
         let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
         listener.set_nonblocking(true)?;
         let addr = listener.local_addr()?.to_string();
@@ -1518,7 +1668,7 @@ impl UnresponsiveEndpoint {
                             let _stream = stream;
                             let started = Instant::now();
                             while !stream_stop.load(Ordering::SeqCst)
-                                && started.elapsed() < Duration::from_secs(2)
+                                && started.elapsed() < connection_hold
                             {
                                 thread::sleep(Duration::from_millis(25));
                             }
@@ -1603,8 +1753,12 @@ pub(crate) fn wait_for_http_ok(port: u16, path: &str, timeout: Duration) -> Resu
     Err(last_error.unwrap_or_else(|| anyhow!("HTTP {path} did not become healthy")))
 }
 
-pub(crate) fn http_json(port: u16, path: &str) -> Result<serde_json::Value> {
-    let response = http_get(port, path, Duration::from_secs(10))?;
+pub(crate) fn http_json_with_timeout(
+    port: u16,
+    path: &str,
+    timeout: Duration,
+) -> Result<serde_json::Value> {
+    let response = http_get(port, path, timeout)?;
     if !response.starts_with("HTTP/1.1 200") {
         bail!("GET {path} returned non-200 response: {response}");
     }

@@ -23,6 +23,8 @@ pub struct CommandRunRequest {
     pub arguments: Value,
     #[serde(default)]
     pub allowed_commands: Option<BTreeSet<String>>,
+    #[serde(default)]
+    pub sandbox: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -44,13 +46,15 @@ impl CommandRunService {
         if request.session_directory.as_os_str().is_empty() {
             return Err(anyhow!("command_run session_directory is required"));
         }
-        let output = code_tools::command_run::execute_async_value_with_allowed_and_lock_scope(
-            request.arguments,
-            request.session_directory,
-            request.allowed_commands,
-            request.session_id.clone(),
-        )
-        .await;
+        let output =
+            code_tools::command_run::execute_async_value_with_allowed_lock_scope_and_sandbox(
+                request.arguments,
+                request.session_directory,
+                request.allowed_commands,
+                request.session_id.clone(),
+                request.sandbox,
+            )
+            .await;
         Ok(json!({
             "status": "finished",
             "owner": "router",
@@ -100,7 +104,7 @@ mod tests {
         let workspace = tempfile::tempdir().expect("workspace");
         let command_line = json!({
             "status": "done",
-            "task_detail": "router-owned"
+            "task_group": "订单清结算微服务"
         })
         .to_string();
         let response = CommandRunService::new()
@@ -183,6 +187,7 @@ mod tests {
                 "task_status".to_string()
             ]))
         );
+        assert!(!request.sandbox);
     }
 
     #[tokio::test]

@@ -122,6 +122,14 @@ async fn gateway_prompt_business_flow_enqueues_router_turn_without_session_db_pr
         request["payload"]["payload"]["worker_env"]["TURA_COMMAND_RUN_SHELL"],
         "shell_command"
     );
+    assert_eq!(
+        request["payload"]["payload"]["worker_env"]["TURA_FRONTEND_MESSAGE_ID"],
+        "router-user-message"
+    );
+    assert_eq!(
+        request["payload"]["payload"]["worker_env"]["TURA_FRONTEND_PART_ID"],
+        "router-turn-1"
+    );
 
     wait_until(Duration::from_secs(10), || {
         session_store()
@@ -141,6 +149,89 @@ async fn gateway_prompt_business_flow_enqueues_router_turn_without_session_db_pr
             .any(|message| message.role == MessageRole::Assistant),
         "successful router enqueue without a runtime callback must not synthesize an assistant fallback from the user prompt"
     );
+    assert_gateway_did_not_prewrite_session_db(&session.id)?;
+
+    drop(router);
+    drop(service);
+    Ok(())
+}
+
+#[tokio::test]
+async fn gateway_prompt_business_flow_injects_generated_frontend_ids_when_client_omits_them(
+) -> Result<()> {
+    let _guard = ENV_LOCK.lock().await;
+    let root = tempfile::tempdir().context("temp root")?;
+    let home = root.path().join("home");
+    let workspace = root.path().join("workspace");
+    std::fs::create_dir_all(&home)?;
+    std::fs::create_dir_all(&workspace)?;
+    let _env = EnvGuard::new(&home, &workspace);
+    let service = ServiceThread::start()?;
+    let router = FakeRouter::start(
+        &home,
+        vec![RouterReply::Payload(json!({
+            "ok": true,
+            "accepted": true,
+            "worker_id": "generated-id-worker"
+        }))],
+    )?;
+
+    let session = session_store().create_session(
+        Some(workspace.to_string_lossy().to_string()),
+        Some("openai/gpt-5.5".to_string()),
+        None,
+        Some("coding".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+    let response = prompt_async(
+        Path(session.id.clone()),
+        Json(json!({
+            "parts": [
+                {
+                    "type": "text",
+                    "text": "Client omitted frontend ids but reopened history must keep this user text"
+                }
+            ]
+        })),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), axum::http::StatusCode::NO_CONTENT);
+
+    let request = router.next_request(Duration::from_secs(10))?;
+    let messages = session_store().get_messages(&session.id);
+    let user_message = messages
+        .iter()
+        .find(|message| message.role == MessageRole::User)
+        .ok_or_else(|| anyhow!("prompt should persist the user message before router enqueue"))?;
+    let user_part = user_message
+        .parts
+        .first()
+        .ok_or_else(|| anyhow!("prompt should persist a user text part"))?;
+    assert!(!user_message.id.trim().is_empty());
+    assert!(!user_part.id.trim().is_empty());
+    assert_eq!(request["kind"], "call");
+    assert_eq!(request["method"], "execution.enqueue_turn");
+    assert_eq!(request["payload"]["turn_id"], user_part.id);
+    assert_eq!(
+        request["payload"]["payload"]["worker_env"]["TURA_FRONTEND_MESSAGE_ID"],
+        user_message.id
+    );
+    assert_eq!(
+        request["payload"]["payload"]["worker_env"]["TURA_FRONTEND_PART_ID"],
+        user_part.id
+    );
+
+    wait_until(Duration::from_secs(10), || {
+        session_store()
+            .get_session(&session.id)
+            .is_some_and(|session| session.status == SessionStatus::Idle)
+    })?;
     assert_gateway_did_not_prewrite_session_db(&session.id)?;
 
     drop(router);

@@ -18,6 +18,12 @@ pub struct EnqueueTurnRequest {
     pub payload: Value,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProbeSessionsRequest {
+    #[serde(default)]
+    pub session_ids: Vec<String>,
+}
+
 #[derive(Clone)]
 pub struct ExecutionService {
     active_sessions: Arc<Mutex<HashSet<String>>>,
@@ -111,6 +117,31 @@ impl ExecutionService {
             "session_id": session_id,
             "stopped_worker": stopped_worker
         })
+    }
+
+    pub async fn probe_sessions(&self, state: &AppState, input: Value) -> Result<Value> {
+        let request: ProbeSessionsRequest = serde_json::from_value(input)?;
+        let active = self.active_sessions.lock().clone();
+        let mut sessions = Vec::new();
+        for session_id in request
+            .session_ids
+            .into_iter()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+        {
+            let active_turn = active.contains(&session_id);
+            let worker_alive = state
+                .manager
+                .worker_alive_by_key(&format!("runtime_worker:{session_id}"))
+                .await;
+            sessions.push(json!({
+                "session_id": session_id,
+                "active_turn": active_turn,
+                "worker_alive": worker_alive,
+                "status": if active_turn || worker_alive { "active" } else { "inactive" }
+            }));
+        }
+        Ok(json!({ "sessions": sessions }))
     }
 
     pub fn active_session_count(&self) -> usize {
@@ -266,5 +297,31 @@ mod tests {
         let manager = ServiceManager::new();
 
         assert_eq!(manager.count_workers_with_prefix("runtime_worker:"), 0);
+    }
+
+    #[tokio::test]
+    async fn probe_sessions_reports_active_and_inactive_sessions() {
+        let state = build_state();
+        let service = ExecutionService::new();
+        service
+            .active_sessions
+            .lock()
+            .insert("active-session".to_string());
+
+        let response = service
+            .probe_sessions(
+                &state,
+                json!({ "session_ids": ["active-session", "inactive-session"] }),
+            )
+            .await
+            .expect("probe sessions");
+
+        let sessions = response["sessions"]
+            .as_array()
+            .expect("sessions array should be present");
+        assert_eq!(sessions[0]["session_id"], "active-session");
+        assert_eq!(sessions[0]["status"], "active");
+        assert_eq!(sessions[1]["session_id"], "inactive-session");
+        assert_eq!(sessions[1]["status"], "inactive");
     }
 }

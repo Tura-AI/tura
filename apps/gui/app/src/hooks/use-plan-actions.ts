@@ -233,9 +233,11 @@ export function usePlanActions(options: PlanActionsOptions) {
     if (e2eFixture) {
       return;
     }
+    const messageId = `plan-ticket:${session.id}:${taskId}:${Date.now()}`;
     try {
       await directoryClient().promptAsync(session.id, {
-        parts: [{ type: "text", text: taskDisplayText(task) }],
+        messageID: messageId,
+        parts: [{ id: `${messageId}:text`, type: "text", text: taskDisplayText(task) }],
         model: state().selectedModel,
         agent: state().selectedAgent,
       });
@@ -353,7 +355,8 @@ export function usePlanActions(options: PlanActionsOptions) {
       });
       await Promise.race([
         directoryClient().promptAsync(session.id, {
-          parts: [{ type: "text", text }],
+          messageID: messageId,
+          parts: [{ id: `${messageId}:text`, type: "text", text }],
           model: state().selectedModel,
           agent: state().selectedAgent,
         }),

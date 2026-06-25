@@ -538,6 +538,13 @@ fn codex_input_role(role: &str) -> &str {
 }
 
 pub(crate) fn normalize_codex_response_content(data: &Value) -> Value {
+    if let Some(content) = normalize_codex_response_event_content(data) {
+        return content;
+    }
+    normalize_response_content(data)
+}
+
+pub(crate) fn normalize_codex_response_event_content(data: &Value) -> Option<Value> {
     let tool_calls = complete_codex_tool_calls(data);
     if !tool_calls.is_empty() {
         let mut object = serde_json::Map::new();
@@ -547,11 +554,11 @@ pub(crate) fn normalize_codex_response_content(data: &Value) -> Value {
             }
         }
         object.insert("tool_calls".to_string(), Value::Array(tool_calls));
-        return Value::Object(object);
+        return Some(Value::Object(object));
     }
 
     if let Some(text) = data.get("output_text").and_then(Value::as_str) {
-        return Value::String(text.to_string());
+        return Some(Value::String(text.to_string()));
     }
     if let Some(text) = data
         .get("output")
@@ -571,9 +578,9 @@ pub(crate) fn normalize_codex_response_content(data: &Value) -> Value {
                 .or_else(|| content.get("content").and_then(Value::as_str))
         })
     {
-        return Value::String(text.to_string());
+        return Some(Value::String(text.to_string()));
     }
-    normalize_response_content(data)
+    None
 }
 
 fn codex_tool_schema(tool: &Value) -> Value {

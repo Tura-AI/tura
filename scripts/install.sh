@@ -28,7 +28,7 @@ Usage:
   scripts/install.sh [OPTIONS]
 
 Installs project dependencies without building Tura. The root installer verifies
-shell_command/bash/zsh coverage, installs missing bash/zsh dependencies when
+git and shell_command/bash/zsh coverage, installs missing git/bash/zsh dependencies when
 possible, ensures user-local uv/bun are available, runs command-owned installers
 under commands/*, and installs Bun workspaces in their own directories.
 
@@ -101,6 +101,13 @@ find_zsh() {
 
 find_msys2_pacman() {
   find_first_executable pacman /usr/bin/pacman.exe /c/msys64/usr/bin/pacman.exe /c/msys64/ucrt64/bin/pacman.exe
+}
+
+find_git() {
+  find_first_executable git /usr/bin/git /usr/local/bin/git /opt/homebrew/bin/git \
+    /c/Program\ Files/Git/cmd/git.exe /c/Program\ Files/Git/bin/git.exe \
+    /c/Program\ Files\ \(x86\)/Git/cmd/git.exe /c/Program\ Files\ \(x86\)/Git/bin/git.exe \
+    /usr/bin/git.exe /mingw64/bin/git.exe /ucrt64/bin/git.exe /c/msys64/usr/bin/git.exe
 }
 
 run_as_root() {
@@ -271,6 +278,65 @@ ensure_shell_tool_coverage() {
   echo "Shell debug: set TURA_COMMAND_RUN_SHELL=shell_command, bash, or zsh to force a surface."
 }
 
+ensure_git() {
+  git_path=$(find_git || true)
+  if [ -n "$git_path" ]; then
+    print_version git "$git_path" --version
+    return
+  fi
+  if [ "$CHECK_ONLY" -eq 1 ]; then
+    echo "git was not found. Run scripts/install.sh without --check-only or install Git manually." >&2
+    exit 1
+  fi
+  if [ "$OFFLINE" -eq 1 ]; then
+    echo "git was not found and --offline was supplied. Install Git manually, then rerun." >&2
+    exit 1
+  fi
+
+  os_name=$(uname -s 2>/dev/null || echo unknown)
+  step "Installing Git"
+  case "$os_name" in
+    MINGW*|MSYS*|CYGWIN*)
+      winget_path=$(find_first_executable winget winget.exe /c/Windows/System32/winget.exe || true)
+      if [ -n "$winget_path" ]; then
+        "$winget_path" install --id Git.Git --exact --source winget --accept-package-agreements --accept-source-agreements
+        PATH="/c/Program Files/Git/cmd:/c/Program Files/Git/bin:$PATH"
+        export PATH
+      else
+        pacman_path=$(find_msys2_pacman || true)
+        [ -n "$pacman_path" ] || { echo "git was not found and neither winget nor MSYS2 pacman is available. Install Git manually, then rerun." >&2; exit 1; }
+        "$pacman_path" -Sy --noconfirm --needed git
+      fi
+      ;;
+    Darwin)
+      have brew || { echo "Homebrew was not found. Install Git manually, then rerun." >&2; exit 1; }
+      brew install git
+      ;;
+    *)
+      if have apt-get; then
+        run_as_root apt-get install -y git
+      elif have dnf; then
+        run_as_root dnf install -y git
+      elif have yum; then
+        run_as_root yum install -y git
+      elif have pacman; then
+        run_as_root pacman -Sy --noconfirm --needed git
+      elif have apk; then
+        run_as_root apk add git
+      elif have zypper; then
+        run_as_root zypper --non-interactive install git
+      else
+        echo "No supported package manager was found to install Git. Install Git manually, then rerun." >&2
+        exit 1
+      fi
+      ;;
+  esac
+
+  git_path=$(find_git || true)
+  [ -n "$git_path" ] || { echo "git was installed but is still not discoverable. Add Git to PATH and rerun." >&2; exit 1; }
+  print_version git "$git_path" --version
+}
+
 add_user_tool_paths() {
   for tool_path_dir in "$HOME/.local/bin" "$HOME/.cargo/bin" "$HOME/.bun/bin"; do
     if [ -d "$tool_path_dir" ]; then
@@ -424,6 +490,7 @@ cd "$REPO_ROOT"
 
 step "Checking root dependency installers"
 ensure_shell_tool_coverage
+ensure_git
 ensure_uv
 ensure_bun
 run_command_installers

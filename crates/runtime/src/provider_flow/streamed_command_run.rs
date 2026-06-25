@@ -5,6 +5,9 @@ use serde_json::Value;
 
 use crate::gateway_events::{runtime_message_id, runtime_tool_part_id};
 use crate::state_machine::runtime_management::RuntimeSessionSyncStatus;
+use crate::tool_callback_sanitizer::{
+    sanitize_tool_callback_output, sanitize_tool_callback_result,
+};
 
 const COMMAND_RUN_TOOL_NAME: &str = "command_run";
 
@@ -40,10 +43,6 @@ pub fn command_run_stream_events_from_provider_content(
                 })
         })
         .collect()
-}
-
-pub fn should_replay_final_response_command_run(streamed_command_seen: bool) -> bool {
-    !streamed_command_seen
 }
 
 pub struct StreamedCommandEvent {
@@ -90,7 +89,9 @@ pub fn streamed_command_event_record(
         "command_type": command.get("command_type").cloned().unwrap_or(Value::Null),
         "command_line": command.get("command_line").cloned().unwrap_or(Value::Null),
         "command": command,
-        "result": result.cloned().unwrap_or(Value::Null),
+        "result": result
+            .map(sanitize_tool_callback_result)
+            .unwrap_or(Value::Null),
         "timestamp": timestamp.to_rfc3339(),
     })
 }
@@ -102,6 +103,7 @@ pub fn streamed_command_result_record(
     result: &Value,
     timestamp: DateTime<Utc>,
 ) -> Value {
+    let result = sanitize_tool_callback_result(result);
     serde_json::json!({
         "status": status,
         "runtime_id": runtime_id,
@@ -146,6 +148,11 @@ pub fn command_run_live_delta_result(command: &Value, stdout: &str, stderr: &str
         output_text.push_str("\nStderr:\n");
         output_text.push_str(stderr);
     }
+    let output = sanitize_tool_callback_output(&serde_json::json!({
+        "stdout": stdout,
+        "stderr": stderr,
+        "text": output_text,
+    }));
     serde_json::json!({
         "command_id": command.get("command_id").cloned().unwrap_or(Value::Null),
         "command_run_id": command.get("command_run_id").cloned().unwrap_or(Value::Null),
@@ -157,11 +164,7 @@ pub fn command_run_live_delta_result(command: &Value, stdout: &str, stderr: &str
         "status": "running",
         "success": null,
         "command": command,
-        "output": {
-            "stdout": stdout,
-            "stderr": stderr,
-            "text": output_text,
-        },
+        "output": output,
     })
 }
 
@@ -189,11 +192,16 @@ pub fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>)
         .unwrap_or(update.started_at)
         .timestamp_millis();
     let created_at = update.started_at.timestamp_millis();
+    let sanitized_results = update
+        .results
+        .iter()
+        .map(sanitize_tool_callback_result)
+        .collect::<Vec<_>>();
     let command_updates = command_update_payloads(
         update.runtime_id,
         update.call_id,
         update.commands,
-        update.results,
+        &sanitized_results,
         update.status,
         created_at,
         updated_at,
@@ -201,7 +209,7 @@ pub fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>)
     let input = serde_json::json!({ "commands": update.commands });
     let output = serde_json::json!({
         "streamed_command_run_result": {
-            "results": update.results,
+            "results": sanitized_results,
         }
     });
     let success = match update.status {
@@ -217,8 +225,6 @@ pub fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>)
     let metadata = serde_json::json!({
         "kind": "mano_tool_call",
         "tool": COMMAND_RUN_TOOL_NAME,
-        "input": input,
-        "output": output,
         "success": success,
         "error": error_value,
         "runtime_id": update.runtime_id,
@@ -243,9 +249,6 @@ pub fn publish_streamed_command_run_update(update: StreamedCommandRunUpdate<'_>)
         "status": update.status,
         "input": input,
         "output": output,
-        "streamed_command_run_result": {
-            "results": update.results,
-        },
         "title": if update.status == "completed" {
             "Called `command_run`"
         } else {
@@ -421,19 +424,13 @@ fn planning_child_depth_from_env() -> usize {
 mod tests {
     use super::{
         command_run_live_delta_result, command_run_stream_event_command,
-        command_run_stream_events_from_provider_content, should_replay_final_response_command_run,
-        streamed_command_event_record,
+        command_run_stream_events_from_provider_content, streamed_command_event_record,
+        streamed_command_result_record,
     };
     use chrono::Utc;
 
     #[test]
-    fn final_response_command_run_replay_is_skipped_after_streamed_command_seen() {
-        assert!(!should_replay_final_response_command_run(true));
-        assert!(should_replay_final_response_command_run(false));
-    }
-
-    #[test]
-    fn final_response_command_run_events_still_extract_when_provider_did_not_stream() {
+    fn final_response_command_run_events_extract_for_replay() {
         let content = serde_json::json!({
             "tool_calls": [{
                 "id": "call_1",
@@ -455,7 +452,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         let event = command_run_stream_event_command(events[0].clone())
             .expect("command_run event should contain a command");
-        assert_eq!(event.tool_call_id, "call_command_run_0");
+        assert_eq!(event.tool_call_id, "call_1");
         assert_eq!(event.command["command_type"], "apply_patch");
     }
 
@@ -481,5 +478,40 @@ mod tests {
         assert_eq!(record["command_line"], serde_json::Value::Null);
         assert_eq!(live["command_type"], "command_run");
         assert_eq!(live["command_line"], "");
+    }
+
+    #[test]
+    fn streamed_command_records_truncate_large_result_output() {
+        let large_output = "match line\n".repeat(2_000);
+        let result = serde_json::json!({
+            "command_id": "cmd-1",
+            "command_run_id": "run-1",
+            "provider_tool_call_id": "call-1",
+            "command_index": 0,
+            "step": 1,
+            "command_type": "shell_command",
+            "success": true,
+            "output": large_output,
+        });
+
+        let event = streamed_command_event_record(
+            "completed",
+            "runtime-1",
+            "call-1",
+            0,
+            &serde_json::json!({"command_type": "shell_command"}),
+            Some(&result),
+            Utc::now(),
+        );
+        let record =
+            streamed_command_result_record("completed", "runtime-1", 0, &result, Utc::now());
+
+        for output in [
+            event["result"]["output"].as_str().expect("event output"),
+            record["result"]["output"].as_str().expect("record output"),
+        ] {
+            assert!(output.contains("characters truncated"), "{output}");
+            assert!(output.len() < large_output.len(), "{output}");
+        }
     }
 }

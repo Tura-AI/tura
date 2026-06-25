@@ -14,7 +14,16 @@ pub use build::{
     build_context, build_messages_from_session, user_input_content_matches,
     user_input_content_value, ContextInput, ContextOutput,
 };
+pub(crate) use char_budget::estimated_tokens_from_bytes_u64;
 pub use compaction::compact_session_context;
+#[cfg(test)]
+pub(crate) use compaction::{
+    compact_session_context_automatically, compact_session_context_with_agent_message,
+};
+pub(crate) use compaction::{
+    compact_session_context_automatically_with_capabilities,
+    compact_session_context_with_agent_message_and_capabilities, CompactContextAgentMessage,
+};
 pub(crate) use workspace::WorkspaceSnapshot;
 
 pub trait ContextualUserFragment {

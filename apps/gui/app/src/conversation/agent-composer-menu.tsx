@@ -205,7 +205,7 @@ function modelForTier(
   modelConfig: TuraConfigResponse | undefined,
   tier: string,
 ): string | undefined {
-  const current = modelConfig?.tiers.find((item) => item.tier === tier)?.current;
+  const current = modelConfig?.tiers?.find((item) => item.tier === tier)?.current;
   return (
     namedModelText(modelConfig, current?.provider, current?.model) ??
     (current?.provider && current.model ? `${current.provider}/${current.model}` : undefined)
@@ -220,7 +220,7 @@ function namedModelText(
   if (!provider || !model) {
     return undefined;
   }
-  const option = modelConfig?.tiers
+  const option = (modelConfig?.tiers ?? [])
     .flatMap((tier) => tier.options)
     .find((item) => item.provider === provider && item.model === model);
   const providerName = option?.provider_name || provider;

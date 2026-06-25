@@ -5,42 +5,7 @@ use chrono::Utc;
 use crate::prompt_style::context_blocks;
 use crate::state_machine::session_management::{SessionManagement, TaskStatus};
 
-const COMMAND_RUN_TOOL: &str = "command_run";
 const TASK_STATUS_COMMAND: &str = "task_status";
-
-/// Inject the task_status nudge once this many consecutive command_run turns
-/// have produced no write (`apply_patch`) and no task state change
-/// (`task_status`).
-pub(crate) const NO_WRITE_COMMAND_RUN_NUDGE_THRESHOLD: u64 = 3;
-
-/// True if any command_run tool call in this turn includes a write command
-/// (`apply_patch`) or a task-state command (`task_status`).
-pub(crate) fn command_run_turn_has_write_or_status(
-    tool_calls: &[crate::runtime::types::ToolCallData],
-) -> bool {
-    tool_calls.iter().any(|tool_call| {
-        if tool_call.tool_name != COMMAND_RUN_TOOL {
-            return false;
-        }
-        tool_call
-            .arguments
-            .get("commands")
-            .and_then(|commands| commands.as_array())
-            .is_some_and(|commands| {
-                commands.iter().any(|command| {
-                    let command_type = command
-                        .get("command_type")
-                        .or_else(|| command.get("command"))
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default()
-                        .trim()
-                        .to_ascii_lowercase()
-                        .replace('-', "_");
-                    matches!(command_type.as_str(), "apply_patch" | "task_status")
-                })
-            })
-    })
-}
 
 pub(crate) fn command_run_result_terminal_task_status(
     result: &serde_json::Value,
@@ -203,50 +168,13 @@ fn task_is_user_action_todo(task: &crate::state_machine::session_management::Tas
 
 #[cfg(test)]
 mod tests {
-    const COMMAND_RUN_TOOL: &str = "command_run";
     use crate::context::build_messages_from_session;
-    use crate::runtime::types::ToolCallData;
     use crate::state_machine::session_management::{
         PlanStatus, SessionInput, SessionManagement, StartCondition, TaskStep,
     };
     use chrono::Utc;
     use serde_json::json;
     use std::path::PathBuf;
-
-    fn command_run_call(command_types: &[&str]) -> ToolCallData {
-        ToolCallData {
-            tool_name: COMMAND_RUN_TOOL.to_string(),
-            arguments: json!({
-                "commands": command_types
-                    .iter()
-                    .map(|ct| json!({ "command_type": ct, "command_line": "x" }))
-                    .collect::<Vec<_>>()
-            }),
-            provider_metadata: None,
-        }
-    }
-
-    #[test]
-    fn no_write_detection_drives_task_status_nudge_counter() {
-        // Read-only / verification-only command_run turns are "no write".
-        assert!(!super::command_run_turn_has_write_or_status(&[
-            command_run_call(&["shell_command"])
-        ]));
-        assert!(!super::command_run_turn_has_write_or_status(&[
-            command_run_call(&["shell_command", "read_media"])
-        ]));
-        // A write (apply_patch) or a task state command (task_status) counts.
-        assert!(super::command_run_turn_has_write_or_status(&[
-            command_run_call(&["shell_command", "apply_patch"])
-        ]));
-        assert!(super::command_run_turn_has_write_or_status(&[
-            command_run_call(&["task_status"])
-        ]));
-        // Alias spelling normalizes too.
-        assert!(super::command_run_turn_has_write_or_status(&[
-            command_run_call(&["apply-patch"])
-        ]));
-    }
 
     #[test]
     fn task_status_detection_accepts_streamed_command_run_results() {
@@ -257,7 +185,7 @@ mod tests {
                     "output": {
                         "task_status": {
                             "status": "done",
-                            "task_detail": "finished"
+                            "task_group": "finished"
                         }
                     }
                 }]

@@ -1,0 +1,7 @@
+{
+  "id": "visual",
+  "display_name": "Visual Operation Manual",
+  "description": "Use for visual design, frontend, media research, visual asset preparation, static HTML-to-PDF/PPT workflows, page redesigns, and reference-driven visual verification.",
+  "father_ids": [],
+  "capabilities": ["web_discover", "generate_media", "read_media"]
+}

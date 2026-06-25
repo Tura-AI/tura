@@ -27,7 +27,6 @@ fn router_loads_core_and_external_command_manifests() {
         "zsh",
         "apply_patch",
         "task_status",
-        "compact_context",
         "planning",
         "generate_media",
         "read_media",

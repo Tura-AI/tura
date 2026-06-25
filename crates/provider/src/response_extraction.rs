@@ -78,7 +78,7 @@ pub fn extract_tool_calls(content: &Value) -> Vec<ProviderToolCall> {
                             name,
                             parse_arguments(arguments),
                         ),
-                        provider_metadata: call.get("provider_metadata").cloned(),
+                        provider_metadata: openai_tool_call_metadata(call),
                     });
                 }
             }
@@ -113,6 +113,24 @@ fn google_function_call_metadata(part: &Value) -> Option<Value> {
     Some(serde_json::json!({
         "google_thought_signature": signature,
     }))
+}
+
+fn openai_tool_call_metadata(call: &Value) -> Option<Value> {
+    let mut metadata = call
+        .get("provider_metadata")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+
+    for key in ["id", "call_id", "type"] {
+        if let Some(value) = call.get(key) {
+            metadata
+                .entry(key.to_string())
+                .or_insert_with(|| value.clone());
+        }
+    }
+
+    (!metadata.is_empty()).then_some(Value::Object(metadata))
 }
 
 fn parse_arguments(arguments: Value) -> Value {
@@ -210,6 +228,34 @@ mod tests {
                 .and_then(|metadata| metadata.get("id"))
                 .and_then(serde_json::Value::as_str),
             Some("toolu_1")
+        );
+    }
+
+    #[test]
+    fn extract_tool_calls_preserves_top_level_openai_id_as_metadata() {
+        let calls = extract_tool_calls(&json!({
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "command_run",
+                    "arguments": {"commands": []}
+                }
+            }]
+        }));
+
+        assert_eq!(calls.len(), 1);
+        let metadata = calls[0]
+            .provider_metadata
+            .as_ref()
+            .expect("top-level id should become provider metadata");
+        assert_eq!(
+            metadata.get("id").and_then(serde_json::Value::as_str),
+            Some("call_1")
+        );
+        assert_eq!(
+            metadata.get("type").and_then(serde_json::Value::as_str),
+            Some("function")
         );
     }
 }

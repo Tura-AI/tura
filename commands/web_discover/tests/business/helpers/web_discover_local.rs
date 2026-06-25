@@ -512,6 +512,17 @@ pub(crate) fn tiny_png_bytes() -> &'static [u8] {
     ]
 }
 
+pub(crate) fn test_zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let cursor = std::io::Cursor::new(Vec::new());
+    let mut writer = zip::ZipWriter::new(cursor);
+    let options = zip::write::SimpleFileOptions::default();
+    for (path, bytes) in entries {
+        writer.start_file(*path, options).expect("start zip entry");
+        writer.write_all(bytes).expect("write zip entry");
+    }
+    writer.finish().expect("finish zip").into_inner()
+}
+
 pub(crate) fn write_fake_ytdlp(dir: &Path) -> std::path::PathBuf {
     #[cfg(windows)]
     {

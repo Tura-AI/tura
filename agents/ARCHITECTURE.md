@@ -24,16 +24,16 @@ agents/
     lib.rs
     coding_agent.rs
     store.rs
-    fast/
+    direct/
       agent_config.json
       prompt.md
-    fast-text-only/
+    direct-text-only/
       agent_config.json
       prompt.md
-    thinking/
+    balanced/
       agent_config.json
       prompt.md
-    thinking-planning/
+    thoughtful/
       agent_config.json
       prompt.md
 ```
@@ -144,10 +144,6 @@ Minimal custom agent example:
       "capability_directory": "crates/tools/src"
     },
     {
-      "capability_name": "compact_context",
-      "capability_directory": "crates/tools/src"
-    },
-    {
       "capability_name": "task_status",
       "capability_directory": "crates/tools/src"
     }
@@ -167,8 +163,8 @@ use the multi-task planning runtime path.
 Agents should reference provider routes by stable tier names such as:
 
 ```text
-thinking
-fast
+balanced
+direct
 embedding_high
 embedding_low
 ```

@@ -33,6 +33,7 @@ pub(super) fn resolve_download_dir(
         "image" => "media/image",
         "video" => "media/video",
         "audio" => "media/audio",
+        "asset" => "assets",
         _ => "media",
     };
     let raw = args.download_dir.as_deref().unwrap_or(default_dir);
@@ -102,11 +103,11 @@ pub(super) fn write_unique_download(
         {
             Ok(mut file) => {
                 file.write_all(bytes)
-                    .map_err(|err| format!("failed to write image: {err}"))?;
+                    .map_err(|err| format!("failed to write download: {err}"))?;
                 return Ok(path);
             }
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(err) => return Err(format!("failed to write image: {err}")),
+            Err(err) => return Err(format!("failed to write download: {err}")),
         }
     }
     Err(format!(

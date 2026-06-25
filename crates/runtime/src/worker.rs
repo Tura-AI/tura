@@ -271,7 +271,7 @@ fn looks_like_tool_payload(text: &str) -> bool {
     let trimmed = text.trim_start();
     trimmed.starts_with('{')
         && (trimmed.contains("\"commands\"")
-            || trimmed.contains("\"task_detail\"")
+            || trimmed.contains("\"task_group\"")
             || trimmed.contains("\"step_summary\"")
             || trimmed.contains("\"tool_calls\"")
             || trimmed.contains("\"reply_message\""))

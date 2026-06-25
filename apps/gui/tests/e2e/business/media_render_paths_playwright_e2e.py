@@ -13,6 +13,8 @@ from urllib.request import urlopen
 
 from playwright.async_api import async_playwright
 
+from cleanup_repo_tura_processes import cleanup_repo_tura_processes
+
 
 ROOT = Path(__file__).resolve().parents[5]
 GUI = ROOT / "apps" / "gui"
@@ -358,6 +360,7 @@ async def main() -> None:
         stop(gui)
         media_server.shutdown()
         media_server.server_close()
+        cleanup_repo_tura_processes()
 
 
 if __name__ == "__main__":

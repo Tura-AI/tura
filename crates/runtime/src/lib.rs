@@ -18,10 +18,12 @@ pub mod session_bootstrap;
 pub mod session_log_client;
 pub mod session_state;
 pub mod state_machine;
+pub(crate) mod tool_callback_sanitizer;
 pub mod tool_flow;
 pub mod tool_router;
 pub mod turn_loop;
 pub mod worker;
+pub mod workspace_git;
 
 pub use agent_router::*;
 pub use context::*;

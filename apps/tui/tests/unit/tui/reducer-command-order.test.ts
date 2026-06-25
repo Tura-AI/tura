@@ -41,7 +41,7 @@ test("reducer keeps command updates under the original assistant reply when comp
             tool: "command_run",
             state: {
               status: "running",
-              input: { command_line: '{"status":"done","task_detail":"Greeting answered"}' },
+              input: { command_line: '{"status":"done","task_group":"Greeting answered"}' },
             },
           },
         ],
@@ -77,7 +77,7 @@ test("reducer keeps command updates under the original assistant reply when comp
                 tool: "command_run",
                 state: {
                   status: "completed",
-                  output: '{"status":"done","task_detail":"Greeting answered"}',
+                  output: '{"status":"done","task_group":"Greeting answered"}',
                 },
               },
             ],
@@ -125,7 +125,7 @@ test("reducer appends later streamed assistant replies after command results", (
             tool: "command_run",
             state: {
               status: "completed",
-              output: '{"status":"done","task_detail":"Acceptance"}',
+              output: '{"status":"done","task_group":"Acceptance"}',
             },
           },
         ],

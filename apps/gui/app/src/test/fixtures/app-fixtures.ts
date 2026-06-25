@@ -34,8 +34,8 @@ const RICH_TABLE_ROWS = 72;
 const RICH_TABLE_COLUMNS = 48;
 const FIXTURE_AGENTS: Agent[] = [
   {
-    name: "thinking",
-    description: "Thinking agent",
+    name: "balanced",
+    description: "Balances self-reflection with intuitive response, using verification and reflective checks.",
     mode: "primary",
     native: true,
     hidden: false,
@@ -55,8 +55,8 @@ const FIXTURE_AGENTS: Agent[] = [
     permission: { allow: [], deny: [] },
   },
   {
-    name: "thinking-planning",
-    description: "Thinking planning agent",
+    name: "thoughtful",
+    description: "Reflects on each step and stays steady across long-running tasks.",
     mode: "primary",
     native: true,
     hidden: false,
@@ -76,8 +76,8 @@ const FIXTURE_AGENTS: Agent[] = [
     permission: { allow: [], deny: [] },
   },
   {
-    name: "fast",
-    description: "Fast agent",
+    name: "direct",
+    description: "Responds quickly and directly, follows intuition into action, and keeps verification light.",
     mode: "primary",
     native: true,
     hidden: false,
@@ -97,8 +97,8 @@ const FIXTURE_AGENTS: Agent[] = [
     permission: { allow: [], deny: [] },
   },
   {
-    name: "fast-text-only",
-    description: "Fast text-only agent",
+    name: "direct-text-only",
+    description: "Responds quickly and directly, follows intuition into action, and keeps verification light.",
     mode: "primary",
     native: true,
     hidden: false,
@@ -215,7 +215,7 @@ function fixturePersonaMedia(role: string) {
     ["confused", ["😕", "🤔", "🙄"]],
     ["nervous", ["😬", "😅", "😰"]],
     ["vigilant", ["👀", "🔎", "⚠"]],
-    ["laufgh", ["😂", "😄", "🤣"]],
+    ["laugh", ["😂", "😄", "🤣"]],
     ["smirk", ["😏", "😉", "😼"]],
     ["tired", ["😴", "🥱", "😩"]],
   ];

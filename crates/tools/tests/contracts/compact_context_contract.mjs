@@ -27,17 +27,26 @@ function assert(condition, message) {
 const schemaPath = path.join(repoRoot, "crates", "tools", "src", "command_run", "schema.json");
 const schema = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
 assert(
-  schema.input_schema.properties.commands.items.properties.step.description.includes("compact_context"),
-  "command_run schema must tell the model compact_context belongs in the final highest step",
+  schema.input_schema.properties.commands.items.properties.step.description.includes("task_status compact_context"),
+  "command_run schema must tell the model task_status compact_context belongs after summarized work",
 );
 
-const promptPath = path.join(repoRoot, "crates", "tools", "src", "commands", "compact_context", "prompt.md");
+const promptPath = path.join(repoRoot, "crates", "tools", "src", "commands", "task_status", "prompt.md");
 const prompt = fs.readFileSync(promptPath, "utf8");
-assert(prompt.includes("200,000 tokens"), "compact_context prompt must include the 200k trigger");
-assert(prompt.includes("final command"), "compact_context prompt must require final-step placement");
-assert(prompt.includes("15,000 English words"), "compact_context prompt must include the 20k-token output cap as words");
+assert(prompt.includes("255,000 tokens"), "task_status compact_context prompt must include the 255k hard compact trigger");
+assert(prompt.includes("new task no longer depends on the current main context"), "task_status compact_context prompt must include the new-task dependency rule");
+assert(prompt.includes("Do not duplicate obvious dialogue history"), "task_status compact_context prompt must avoid duplicating conversation history");
+
+const taskStatusSchemaPath = path.join(repoRoot, "crates", "tools", "src", "commands", "task_status", "schema.json");
+const taskStatusSchema = JSON.parse(fs.readFileSync(taskStatusSchemaPath, "utf8"));
+assert(taskStatusSchema.properties.compact_context, "task_status schema must expose compact_context");
 
 run("cargo", ["test", "-p", "tools", "compact_context", "--", "--nocapture"]);
+assert(
+  !fs.existsSync(path.join(repoRoot, "crates", "tools", "src", "commands", "compact_context")),
+  "standalone compact_context command directory must be removed",
+);
+run("cargo", ["test", "-p", "tools", "task_status", "--", "--nocapture"]);
 run("cargo", [
   "test",
   "-p",
@@ -50,7 +59,7 @@ run("cargo", [
   "test",
   "-p",
   "runtime",
-  "messages_for_turn_injects_compact_context_prompt_at_default_200k_threshold",
+  "compact_context_required_formats_dynamic_limit_and_current_turn_instruction",
   "--",
   "--nocapture",
 ]);
@@ -58,8 +67,8 @@ run("cargo", [
 console.log(JSON.stringify({
   ok: true,
   coverage: [
-    "compact_context command routes through command_run and enforces final highest step",
+    "task_status schema and prompt expose compact_context handoff guidance",
     "context checkpoint hides prior tool history, preserves later command_run backfill, and reinjects workspace snapshot",
-    "200k-token threshold injects a user continuation requiring compact_context",
+    "context-threshold prompt requires task_status compact_context",
   ],
 }, null, 2));

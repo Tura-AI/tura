@@ -125,7 +125,7 @@ async fn handle_socket_connection(
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::sync::Mutex as AsyncMutex;
 
-    state.lifecycle.connection_opened();
+    let connection_guard = ConnectionLifecycleGuard::new(state.lifecycle.clone());
     let (read, write) = stream.into_split();
     let write = Arc::new(AsyncMutex::new(write));
     let active_sessions = Arc::new(AsyncMutex::new(HashSet::<String>::new()));
@@ -209,12 +209,29 @@ async fn handle_socket_connection(
     for task in tasks {
         task.abort();
     }
-    state.lifecycle.connection_closed();
+    drop(connection_guard);
     Ok(())
 }
 
 fn should_abort_request_on_connection_close(request: &ipc::IpcRequest) -> bool {
     request.method != "execution.command_run"
+}
+
+struct ConnectionLifecycleGuard {
+    lifecycle: crate::front_lifecycle::FrontLifecycle,
+}
+
+impl ConnectionLifecycleGuard {
+    fn new(lifecycle: crate::front_lifecycle::FrontLifecycle) -> Self {
+        lifecycle.connection_opened();
+        Self { lifecycle }
+    }
+}
+
+impl Drop for ConnectionLifecycleGuard {
+    fn drop(&mut self) {
+        self.lifecycle.connection_closed();
+    }
 }
 
 struct RouterDaemonLock {
@@ -244,7 +261,13 @@ impl RouterDaemonLock {
         })?;
         file.set_len(0)?;
         file.seek(SeekFrom::Start(0))?;
-        writeln!(file, "pid={}", std::process::id())?;
+        let pid = std::process::id();
+        writeln!(file, "pid={pid}")?;
+        writeln!(
+            file,
+            "process_start_time={}",
+            current_process_start_time(pid).unwrap_or_default()
+        )?;
         writeln!(file, "kind=router")?;
         writeln!(file, "build_kind={}", tura_path::build_kind())?;
         writeln!(file, "home={}", tura_path::instance_home().display())?;

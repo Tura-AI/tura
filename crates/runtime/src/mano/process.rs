@@ -84,7 +84,7 @@ fn orchestrate_with_config_and_session(
 
     info!(
         session_id = %session.session_id,
-        session_topic = %session.session_topic,
+        task_type = ?session.task_type,
         "session created"
     );
 
@@ -226,7 +226,7 @@ mod tests {
         let input = SessionInput {
             user_input: "inspect".to_string(),
             file_input: Vec::new(),
-            agent: Some("thinking-planning".to_string()),
+            agent: Some("thoughtful".to_string()),
             runtime_context: None,
             planning_mode_override: Some(false),
         };
@@ -343,7 +343,7 @@ mod tests {
         let serialized = serde_json::to_string(&messages).expect("messages json");
 
         assert!(serialized.contains("data:image/png;base64,AAA"));
-        assert!(messages.iter().any(|message| {
+        assert!(!messages.iter().any(|message| {
             message.get("role").and_then(serde_json::Value::as_str) == Some("developer")
         }));
         assert!(messages.iter().any(|message| {

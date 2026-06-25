@@ -11,6 +11,9 @@ pub(crate) fn bootstrap_orchestration_session(
     gateway_session_id: Option<String>,
     now: DateTime<Utc>,
 ) -> Result<SessionManagement, String> {
+    if let Some(directory) = session_directory.as_ref() {
+        crate::workspace_git::ensure_workspace_git_repo(directory)?;
+    }
     if let Some(session_id) = gateway_session_id {
         if let Some(directory) = session_directory.as_ref() {
             if let Some(mut persisted) = load_persisted_gateway_session(directory, &session_id)? {

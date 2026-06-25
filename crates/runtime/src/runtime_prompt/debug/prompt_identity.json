@@ -1,0 +1,7 @@
+{
+  "id": "debug",
+  "display_name": "Debug Operation Manual",
+  "description": "Use for bugs, failing tests, regressions, incorrect behavior, brittle edge cases, and failure analysis that requires reproduction before patching.",
+  "father_ids": [],
+  "capabilities": ["shells"]
+}

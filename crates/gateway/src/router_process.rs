@@ -20,9 +20,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-const ROUTER_HEALTH_TIMEOUT: Duration = Duration::from_secs(10);
+const ROUTER_HEALTH_TIMEOUT: Duration = Duration::from_secs(20);
 const DEFAULT_ROUTER_EXECUTION_TIMEOUT: Duration = Duration::from_secs(35 * 60);
 const ROUTER_PROBE_CONNECT_TIMEOUT: Duration = Duration::from_millis(100);
+const ROUTER_STARTUP_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RouterProcessStatus {
@@ -31,6 +32,15 @@ pub struct RouterProcessStatus {
     pub process_start_time: Option<u64>,
     pub restart_count: u64,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProcessLockRecord {
+    pid: Option<u32>,
+    process_start_time: Option<u64>,
+    kind: Option<String>,
+    build_kind: Option<String>,
+    home: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,20 +109,35 @@ impl RouterProcess {
             return Ok(());
         }
 
-        self.spawn_router_daemon()?;
-        self.restart_count.fetch_add(1, Ordering::SeqCst);
+        for attempt in 0..2 {
+            let mut child = self.spawn_router_daemon()?;
+            self.restart_count.fetch_add(1, Ordering::SeqCst);
 
-        let started = Instant::now();
-        while started.elapsed() < Duration::from_secs(90) {
-            if let Some((endpoint, _health)) = healthy_router_endpoint()? {
+            if let Some(endpoint) = wait_for_healthy_router(ROUTER_HEALTH_TIMEOUT)? {
                 *self.addr.lock() = Some(endpoint.addr);
                 *self.last_error.lock() = None;
                 return Ok(());
             }
-            std::thread::sleep(Duration::from_millis(200));
+
+            let killed_by_lock = terminate_router_from_lock()?;
+            let killed_spawned_child = kill_spawned_router_child(&mut child);
+            let _ = std::fs::remove_file(router_addr_path());
+            *self.addr.lock() = None;
+
+            if !killed_by_lock && !killed_spawned_child {
+                let error =
+                    "router daemon did not become healthy within 20 seconds and could not be killed"
+                        .to_string();
+                *self.last_error.lock() = Some(error.clone());
+                return Err(anyhow!("failed to start router daemon: {error}"));
+            }
+
+            if attempt == 0 {
+                continue;
+            }
         }
 
-        let error = "router daemon did not become reachable".to_string();
+        let error = "router daemon did not become healthy within 20 seconds".to_string();
         *self.last_error.lock() = Some(error.clone());
         Err(anyhow!("failed to start router daemon: {error}"))
     }
@@ -120,8 +145,6 @@ impl RouterProcess {
     pub fn restart(&self) -> Result<()> {
         let _ = self.shutdown();
         *self.addr.lock() = None;
-        self.spawn_router_daemon()?;
-        self.restart_count.fetch_add(1, Ordering::SeqCst);
         self.ensure_started()
     }
 
@@ -137,12 +160,40 @@ impl RouterProcess {
                     error: self.last_error.lock().clone(),
                 }
             }
-            Ok(None) => RouterProcessStatus {
-                status: "stopped".to_string(),
-                pid: None,
-                process_start_time: None,
-                restart_count: self.restart_count.load(Ordering::SeqCst),
-                error: self.last_error.lock().clone(),
+            Ok(None) => match self.ensure_started() {
+                Ok(()) => match healthy_router_endpoint() {
+                    Ok(Some((endpoint, _health))) => {
+                        *self.addr.lock() = Some(endpoint.addr);
+                        RouterProcessStatus {
+                            status: "running".to_string(),
+                            pid: endpoint.pid,
+                            process_start_time: endpoint.process_start_time,
+                            restart_count: self.restart_count.load(Ordering::SeqCst),
+                            error: self.last_error.lock().clone(),
+                        }
+                    }
+                    Ok(None) => RouterProcessStatus {
+                        status: "stopped".to_string(),
+                        pid: None,
+                        process_start_time: None,
+                        restart_count: self.restart_count.load(Ordering::SeqCst),
+                        error: self.last_error.lock().clone(),
+                    },
+                    Err(error) => RouterProcessStatus {
+                        status: "unhealthy".to_string(),
+                        pid: None,
+                        process_start_time: None,
+                        restart_count: self.restart_count.load(Ordering::SeqCst),
+                        error: Some(error.to_string()),
+                    },
+                },
+                Err(error) => RouterProcessStatus {
+                    status: "stopped".to_string(),
+                    pid: None,
+                    process_start_time: None,
+                    restart_count: self.restart_count.load(Ordering::SeqCst),
+                    error: Some(error.to_string()),
+                },
             },
             Err(error) => RouterProcessStatus {
                 status: "unhealthy".to_string(),
@@ -268,7 +319,46 @@ impl RouterProcess {
         }
     }
 
+    pub fn call_existing_with_timeout(
+        &self,
+        method: &str,
+        payload: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<serde_json::Value> {
+        let endpoint = reachable_router_endpoint()?
+            .ok_or_else(|| anyhow!("router daemon is not reachable"))?;
+        *self.addr.lock() = Some(endpoint.addr);
+        let response = self.call_once_with_timeout(method, payload, timeout)?;
+        if response
+            .get("ok")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            Ok(response
+                .get("payload")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null))
+        } else {
+            Err(anyhow!(
+                "{}",
+                response
+                    .get("error")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("router call failed")
+            ))
+        }
+    }
+
     fn call_once(&self, method: &str, payload: serde_json::Value) -> Result<serde_json::Value> {
+        self.call_once_with_timeout(method, payload, read_timeout_for(method))
+    }
+
+    fn call_once_with_timeout(
+        &self,
+        method: &str,
+        payload: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<serde_json::Value> {
         let addr = self
             .addr
             .lock()
@@ -290,10 +380,10 @@ impl RouterProcess {
             "payload": payload,
             "deadline_ms": deadline_ms,
         });
-        call_router_addr(&addr, &request, read_timeout_for(method))
+        call_router_addr(&addr, &request, timeout)
     }
 
-    fn spawn_router_daemon(&self) -> Result<()> {
+    fn spawn_router_daemon(&self) -> Result<std::process::Child> {
         let router_bin = self
             .router_bin
             .as_ref()
@@ -315,8 +405,7 @@ impl RouterProcess {
                 "failed to spawn detached router daemon {}",
                 router_bin.display()
             )
-        })?;
-        Ok(())
+        })
     }
 }
 
@@ -426,7 +515,9 @@ fn apply_gateway_callback_notification(value: &Value) -> Result<()> {
 
 fn read_timeout_for(method: &str) -> Duration {
     if method == "health_check" {
-        ROUTER_HEALTH_TIMEOUT + Duration::from_secs(1)
+        ROUTER_HEALTH_TIMEOUT
+    } else if method == "execution.probe_sessions" {
+        Duration::from_secs(5)
     } else if method == "execution.shutdown" {
         Duration::from_secs(10)
     } else {
@@ -510,6 +601,7 @@ fn healthy_router_endpoint() -> Result<Option<(RouterEndpoint, serde_json::Value
         match call_router_addr(&endpoint.addr, &request, read_timeout_for("health_check")) {
             Ok(response) => response,
             Err(_) => {
+                let _ = terminate_router_endpoint_process(&endpoint);
                 let _ = std::fs::remove_file(router_addr_path());
                 return Ok(None);
             }
@@ -532,6 +624,17 @@ fn healthy_router_endpoint() -> Result<Option<(RouterEndpoint, serde_json::Value
         endpoint.process_start_time = Some(start_time);
     }
     Ok(Some((endpoint, response)))
+}
+
+fn wait_for_healthy_router(timeout: Duration) -> Result<Option<RouterEndpoint>> {
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        if let Some((endpoint, _health)) = healthy_router_endpoint()? {
+            return Ok(Some(endpoint));
+        }
+        std::thread::sleep(ROUTER_STARTUP_POLL_INTERVAL);
+    }
+    Ok(None)
 }
 
 fn parse_router_endpoint(raw: &str) -> Result<Option<RouterEndpoint>> {
@@ -594,14 +697,139 @@ fn terminate_router_endpoint_process(endpoint: &RouterEndpoint) -> Result<bool> 
     let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) else {
         return Ok(false);
     };
-    Ok(process.kill())
+    let killed = process.kill();
+    if killed {
+        wait_for_process_to_exit(pid, Duration::from_secs(10));
+    }
+    Ok(killed)
+}
+
+fn terminate_router_from_lock() -> Result<bool> {
+    let Some(record) = read_process_lock_record(&router_lock_path()) else {
+        return Ok(false);
+    };
+    if record.kind.as_deref() != Some("router")
+        || record.build_kind.as_deref() != Some(tura_path::build_kind())
+        || !record
+            .home
+            .as_deref()
+            .is_some_and(|home| same_path(home, &tura_path::instance_home()))
+    {
+        return Ok(false);
+    }
+    let Some(pid) = record.pid else {
+        return Ok(false);
+    };
+    if pid == std::process::id() {
+        return Ok(false);
+    }
+    if let Some(expected_start_time) = record.process_start_time {
+        if current_process_start_time(pid)
+            .is_none_or(|start_time| start_time != expected_start_time)
+        {
+            return Ok(false);
+        }
+    } else {
+        return Ok(false);
+    }
+    let mut system = sysinfo::System::new_all();
+    system.refresh_processes();
+    let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) else {
+        return Ok(false);
+    };
+    let killed = process.kill();
+    if killed {
+        wait_for_process_to_exit(pid, Duration::from_secs(10));
+    }
+    Ok(killed)
+}
+
+fn kill_spawned_router_child(child: &mut std::process::Child) -> bool {
+    match child.try_wait() {
+        Ok(Some(_)) => true,
+        Ok(None) => {
+            let killed = child.kill().is_ok();
+            let _ = child.wait();
+            killed
+        }
+        Err(_) => false,
+    }
+}
+
+fn wait_for_process_to_exit(pid: u32, timeout: Duration) -> bool {
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        let mut system = sysinfo::System::new_all();
+        system.refresh_processes();
+        if system.process(sysinfo::Pid::from_u32(pid)).is_none() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    false
 }
 
 fn router_endpoint_process_identity_matches(endpoint: &RouterEndpoint) -> bool {
     let (Some(pid), Some(expected_start_time)) = (endpoint.pid, endpoint.process_start_time) else {
         return false;
     };
+    if !router_lock_matches_endpoint(endpoint) {
+        return false;
+    }
     current_process_start_time(pid).is_some_and(|start_time| start_time == expected_start_time)
+}
+
+fn router_lock_matches_endpoint(endpoint: &RouterEndpoint) -> bool {
+    let Some(record) = read_process_lock_record(&router_lock_path()) else {
+        return false;
+    };
+    record.kind.as_deref() == Some("router")
+        && record.build_kind.as_deref() == Some(tura_path::build_kind())
+        && record
+            .home
+            .as_deref()
+            .is_some_and(|home| same_path(home, &tura_path::instance_home()))
+        && record.pid == endpoint.pid
+        && record.process_start_time == endpoint.process_start_time
+}
+
+fn router_lock_path() -> PathBuf {
+    tura_path::locks_dir().join(format!("router-{}.lock", tura_path::build_kind()))
+}
+
+fn read_process_lock_record(path: &Path) -> Option<ProcessLockRecord> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let mut record = ProcessLockRecord {
+        pid: None,
+        process_start_time: None,
+        kind: None,
+        build_kind: None,
+        home: None,
+    };
+    for line in raw.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        match key.trim() {
+            "pid" => record.pid = value.trim().parse().ok(),
+            "process_start_time" => record.process_start_time = value.trim().parse().ok(),
+            "kind" => record.kind = Some(value.trim().to_string()),
+            "build_kind" => record.build_kind = Some(value.trim().to_string()),
+            "home" => record.home = Some(value.trim().to_string()),
+            _ => {}
+        }
+    }
+    Some(record)
+}
+
+fn same_path(left: &str, right: &Path) -> bool {
+    let left = tura_path::normalize_path(Path::new(left));
+    let right = tura_path::normalize_path(right);
+    if cfg!(windows) {
+        left.to_string_lossy().to_lowercase() == right.to_string_lossy().to_lowercase()
+    } else {
+        left == right
+    }
 }
 
 fn current_process_start_time(pid: u32) -> Option<u64> {
@@ -660,8 +888,12 @@ fn router_executable_candidates(root: &Path) -> Vec<PathBuf> {
             candidates.push(current_exe.with_file_name(executable));
         }
     }
-    candidates.push(root.join("target").join("debug").join(executable));
-    candidates.push(root.join("target").join("release").join(executable));
+    let profile = if tura_path::build_kind() == "release" {
+        "release"
+    } else {
+        "debug"
+    };
+    candidates.push(root.join("target").join(profile).join(executable));
     candidates
 }
 
@@ -750,10 +982,7 @@ mod tests {
                 read_timeout_for("execution.enqueue_turn"),
                 Duration::from_secs(35 * 60)
             );
-            assert_eq!(
-                read_timeout_for("health_check"),
-                ROUTER_HEALTH_TIMEOUT + Duration::from_secs(1)
-            );
+            assert_eq!(read_timeout_for("health_check"), ROUTER_HEALTH_TIMEOUT);
             assert_eq!(
                 read_timeout_for("execution.shutdown"),
                 Duration::from_secs(10)
@@ -1004,9 +1233,22 @@ mod tests {
 
     #[test]
     fn router_pid_identity_requires_matching_start_time_before_forced_kill() {
+        let _guard = crate::test_support::env_lock();
+        let home = temp_home("tura-router-lock-identity").expect("temp home");
+        let _env = EnvGuard::set_home(&home);
         let current_pid = std::process::id();
         let current_start = current_process_start_time(current_pid)
             .expect("current process start time should be visible");
+        std::fs::create_dir_all(tura_path::locks_dir()).expect("locks dir");
+        std::fs::write(
+            router_lock_path(),
+            format!(
+                "pid={current_pid}\nprocess_start_time={current_start}\nkind=router\nbuild_kind={}\nhome={}\n",
+                tura_path::build_kind(),
+                tura_path::instance_home().display()
+            ),
+        )
+        .expect("router lock");
         let matching = RouterEndpoint {
             addr: "127.0.0.1:1".to_string(),
             pid: Some(current_pid),
@@ -1028,6 +1270,81 @@ mod tests {
         assert!(!router_endpoint_process_identity_matches(&no_start_time));
         assert!(!terminate_router_endpoint_process(&no_start_time)
             .expect("missing fingerprint should refuse forced termination"));
+    }
+
+    #[test]
+    fn router_pid_identity_requires_matching_home_and_build_lock() {
+        let _guard = crate::test_support::env_lock();
+        let home = temp_home("tura-router-current-home").expect("temp home");
+        let foreign_home = temp_home("tura-router-foreign-home").expect("foreign home");
+        let _env = EnvGuard::set_home(&home);
+        let current_pid = std::process::id();
+        let current_start = current_process_start_time(current_pid)
+            .expect("current process start time should be visible");
+        std::fs::create_dir_all(tura_path::locks_dir()).expect("locks dir");
+        let endpoint = RouterEndpoint {
+            addr: "127.0.0.1:1".to_string(),
+            pid: Some(current_pid),
+            process_start_time: Some(current_start),
+        };
+
+        std::fs::write(
+            router_lock_path(),
+            format!(
+                "pid={current_pid}\nprocess_start_time={current_start}\nkind=router\nbuild_kind=foreign\nhome={}\n",
+                tura_path::instance_home().display()
+            ),
+        )
+        .expect("foreign build lock");
+        assert!(!router_endpoint_process_identity_matches(&endpoint));
+        assert!(!terminate_router_from_lock().expect("foreign build lock should not kill"));
+
+        std::fs::write(
+            router_lock_path(),
+            format!(
+                "pid={current_pid}\nprocess_start_time={current_start}\nkind=router\nbuild_kind={}\nhome={}\n",
+                tura_path::build_kind(),
+                foreign_home.display()
+            ),
+        )
+        .expect("foreign home lock");
+        assert!(!router_endpoint_process_identity_matches(&endpoint));
+        assert!(!terminate_router_from_lock().expect("foreign home lock should not kill"));
+    }
+
+    #[test]
+    fn router_lock_parser_ignores_malformed_identity_and_refuses_kill() {
+        let _guard = crate::test_support::env_lock();
+        let home = temp_home("tura-router-malformed-lock").expect("temp home");
+        let _env = EnvGuard::set_home(&home);
+        std::fs::create_dir_all(tura_path::locks_dir()).expect("locks dir");
+        std::fs::write(
+            router_lock_path(),
+            format!(
+                "pid=not-a-pid\nkind=router\nbuild_kind={}\nhome={}\nignored-line\n",
+                tura_path::build_kind(),
+                tura_path::instance_home().display()
+            ),
+        )
+        .expect("malformed router lock");
+
+        let record = read_process_lock_record(&router_lock_path()).expect("lock record");
+        assert_eq!(record.pid, None);
+        assert_eq!(record.kind.as_deref(), Some("router"));
+        assert_eq!(record.process_start_time, None);
+        assert!(!terminate_router_from_lock().expect("malformed lock should not kill"));
+
+        let current_pid = std::process::id();
+        std::fs::write(
+            router_lock_path(),
+            format!(
+                "pid={current_pid}\nkind=router\nbuild_kind={}\nhome={}\n",
+                tura_path::build_kind(),
+                tura_path::instance_home().display()
+            ),
+        )
+        .expect("missing start time router lock");
+        assert!(!terminate_router_from_lock().expect("missing start time should not kill"));
     }
 
     #[test]
@@ -1106,7 +1423,7 @@ mod tests {
     }
 
     #[test]
-    fn router_executable_candidates_use_debug_before_release_for_test_binaries() {
+    fn router_executable_candidates_use_current_build_kind_only() {
         let root = PathBuf::from("repo-root-for-order-test");
         let candidates = router_executable_candidates(&root);
         let executable = if cfg!(windows) {
@@ -1116,19 +1433,13 @@ mod tests {
         };
         let debug = root.join("target").join("debug").join(executable);
         let release = root.join("target").join("release").join(executable);
-        let debug_index = candidates
-            .iter()
-            .position(|candidate| candidate == &debug)
-            .expect("debug candidate should be present");
-        let release_index = candidates
-            .iter()
-            .position(|candidate| candidate == &release)
-            .expect("release candidate should be present");
-
-        assert!(
-            debug_index < release_index,
-            "test fallback should prefer freshly built debug router over stale release: {candidates:?}"
-        );
+        if tura_path::build_kind() == "release" {
+            assert!(candidates.contains(&release));
+            assert!(!candidates.contains(&debug));
+        } else {
+            assert!(candidates.contains(&debug));
+            assert!(!candidates.contains(&release));
+        }
     }
 
     #[test]

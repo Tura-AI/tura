@@ -8,6 +8,8 @@ from urllib.request import urlopen
 
 from playwright.async_api import async_playwright, expect
 
+from cleanup_repo_tura_processes import cleanup_repo_tura_processes
+
 
 ROOT = Path(__file__).resolve().parents[5]
 GUI = ROOT / "apps" / "gui"
@@ -200,6 +202,7 @@ async def main() -> None:
                 raise AssertionError("\\n".join(errors))
     finally:
         stop(process)
+        cleanup_repo_tura_processes()
 
 
 if __name__ == "__main__":

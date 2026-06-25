@@ -1,41 +1,7 @@
 use super::types::{SearchResult, WebDiscoverArgs};
 use regex::Regex;
 
-pub(super) fn parse_query_requirements(query: &str) -> (Vec<String>, Vec<String>) {
-    let mut positive = Vec::new();
-    let mut negative = Vec::new();
-    let Ok(negative_re) =
-        Regex::new(r"(?i)^(-|not\s+|exclude\s+|without\s+|反向[:：]?\s*|排除[:：]?\s*|不要\s*)")
-    else {
-        return (vec![query.to_string()], Vec::new());
-    };
-    for part in query.split([',', '，']) {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        if negative_re.is_match(part) {
-            let cleaned = negative_re.replace(part, "").trim().to_string();
-            if !cleaned.is_empty() {
-                negative.push(cleaned);
-            }
-        } else {
-            positive.push(part.to_string());
-        }
-    }
-    if positive.is_empty() {
-        positive.push(query.to_string());
-    }
-    (positive, negative)
-}
-
-pub(super) fn build_search_query(parts: &(Vec<String>, Vec<String>)) -> String {
-    let mut query = parts.0.join(" ");
-    for term in &parts.1 {
-        query.push(' ');
-        query.push('-');
-        query.push_str(term);
-    }
+pub(super) fn normalized_search_query(query: &str) -> String {
     query.trim().to_string()
 }
 

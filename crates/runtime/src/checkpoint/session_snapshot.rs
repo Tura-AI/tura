@@ -3,6 +3,7 @@
 use crate::profile_timings;
 use crate::session_log_client::SessionLogClient;
 use crate::state_machine::session_management::SessionManagement;
+use crate::tool_callback_sanitizer::sanitize_tool_callback_output;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -143,7 +144,7 @@ fn persisted_record(session: &SessionManagement) -> serde_json::Value {
             "directory": session.session_directory.to_string_lossy(),
             "model": null,
             "agent": session.input.agent,
-            "session_type": session.session_topic,
+            "task_type": session.task_type,
             "kill_processes_on_start": false,
             "validator_enabled": false,
             "force_planning": false,
@@ -325,7 +326,7 @@ fn runtime_tool_part(
     updated_at: i64,
 ) -> Value {
     let input = object.get("input").cloned().unwrap_or(Value::Null);
-    let output = object.get("output").cloned().unwrap_or(Value::Null);
+    let output = sanitize_tool_callback_output(object.get("output").unwrap_or(&Value::Null));
     let success = object.get("success").and_then(Value::as_bool);
     let error = object.get("error").cloned().unwrap_or(Value::Null);
     let status = match success {
@@ -337,8 +338,6 @@ fn runtime_tool_part(
         "kind": "mano_tool_call",
         "tool": tool_name,
         "runtime_id": runtime_id,
-        "input": input,
-        "output": output,
         "success": success,
         "error": error,
         "transient": true,
@@ -749,6 +748,7 @@ mod tests {
     #[test]
     fn persisted_messages_merges_runtime_tool_result_into_runtime_assistant_message() {
         let mut session = session();
+        let large_output = "large streamed output line\n".repeat(1_000);
         let assistant_created_at = chrono::DateTime::parse_from_rfc3339("2026-06-14T08:09:11Z")
             .expect("timestamp")
             .timestamp_millis();
@@ -785,7 +785,8 @@ mod tests {
                             "step": 1,
                             "command_type": "shell_command",
                             "command_line": "Get-ChildItem",
-                            "success": true
+                            "success": true,
+                            "output": large_output
                         }]
                     }
                 },
@@ -831,6 +832,18 @@ mod tests {
             message["parts"][1]["state"]["output"]["streamed_command_run_result"]["results"][0]
                 ["success"],
             true
+        );
+        let output = message["parts"][1]["state"]["output"]["streamed_command_run_result"]
+            ["results"][0]["output"]
+            .as_str()
+            .expect("streamed output should remain a string");
+        assert!(
+            output.contains("characters truncated"),
+            "large streamed output should be truncated before callback snapshot: {output}"
+        );
+        assert!(
+            output.len() < large_output.len(),
+            "snapshot should not keep raw streamed output"
         );
     }
 

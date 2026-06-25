@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use tura_agents::coding_agent::{CodingAgent, CodingAgentProviderConfig, CodingAgentToolChoice};
 
 const PROJECT_ROOT_ENV: &str = "TURA_PROJECT_ROOT";
-const DEFAULT_CODING_AGENT_NAME: &str = "thinking";
+const DEFAULT_CODING_AGENT_NAME: &str = "balanced";
 
 pub fn activate_agent_with_loader(
     session: &SessionManagement,
@@ -35,23 +35,11 @@ pub fn activate_agents_by_session_type(
             &coding_prompts_directory,
         )?
     } else {
-        match session.session_topic.as_str() {
-            "coding" | "programming" | "development" | "testing" => create_coding_agent(
-                &project_directory,
-                &capabilities_directory,
-                &coding_prompts_directory,
-            )?,
-            "general" => create_general_agent(
-                &project_directory,
-                &capabilities_directory,
-                &coding_prompts_directory,
-            )?,
-            _ => create_general_agent(
-                &project_directory,
-                &capabilities_directory,
-                &coding_prompts_directory,
-            )?,
-        }
+        create_coding_agent(
+            &project_directory,
+            &capabilities_directory,
+            &coding_prompts_directory,
+        )?
     };
     agents.push(agent);
     Ok(agents)
@@ -67,18 +55,29 @@ fn create_agent_by_name(
         return Ok(agent);
     }
     match agent_name {
-        "thinking-planning" | "coding_agent_planning" | "coding_agent" | "coding" => {
-            create_coding_agent(project_directory, capabilities_directory, prompts_directory)
-        }
-        "thinking" | "fast" | "fast-text-only" | "coding_agent_fast" => {
+        "thoughtful"
+        | "thinking-planning"
+        | "coding_agent_planning"
+        | "coding_agent"
+        | "coding"
+        | "balanced"
+        | "thinking"
+        | "direct"
+        | "fast"
+        | "direct-text-only"
+        | "fast-text-only"
+        | "coding_agent_fast"
+        | "coding_agent_thinking" => {
             let canonical_name = match agent_name {
-                "coding_agent_fast" => "fast",
+                "thinking-planning" | "coding_agent_planning" | "coding_agent" | "coding" => {
+                    "thoughtful"
+                }
+                "thinking" | "coding_agent_thinking" => "balanced",
+                "fast" | "coding_agent_fast" => "direct",
+                "fast-text-only" => "direct-text-only",
                 other => other,
             };
-            if let Some(agent) = load_agent_from_registry(project_directory, agent_name)? {
-                Ok(agent)
-            } else if let Some(agent) = load_agent_from_registry(project_directory, canonical_name)?
-            {
+            if let Some(agent) = load_agent_from_registry(project_directory, canonical_name)? {
                 Ok(agent)
             } else {
                 let mut agent = create_coding_agent(
@@ -88,16 +87,24 @@ fn create_agent_by_name(
                 )?;
                 agent.agent_id = generate_agent_id(canonical_name);
                 agent.agent_name = canonical_name.to_string();
-                if canonical_name == "thinking" {
+                agent.agent_prompt.clear();
+                agent.add_prompt(
+                    AgentPromptItem {
+                        agent_prompt: canonical_name.to_string(),
+                        prompt_directory: prompts_directory.to_path_buf(),
+                    },
+                    Utc::now(),
+                );
+                if canonical_name == "balanced" || canonical_name == "thoughtful" {
                     agent
                         .agent_capabilities
                         .retain(|capability| capability.capability_name != "planning");
                 }
-                if canonical_name == "fast" || canonical_name == "fast-text-only" {
+                if canonical_name == "direct" || canonical_name == "direct-text-only" {
                     agent.provider.tura_llm_name = "fast".to_string();
                     agent.provider.default_model_tier = Some("fast".to_string());
                 }
-                if canonical_name == "fast-text-only" {
+                if canonical_name == "direct-text-only" {
                     agent
                         .agent_capabilities
                         .retain(|capability| capability.capability_name != "read_media");

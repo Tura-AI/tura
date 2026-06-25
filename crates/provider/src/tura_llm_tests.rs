@@ -80,22 +80,79 @@ fn keeps_codex_responses_style_output_unchanged_for_codex_normalizer() {
 }
 
 #[test]
-fn provider_latency_defaults_match_fast_profile() {
+fn normalizes_codex_responses_events_when_output_array_is_empty() {
+    let raw = json!({
+        "object": "response",
+        "output": [],
+        "output_text": "I will inspect before editing.",
+        "events": [
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "message",
+                    "id": "msg_1",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "I will inspect before editing."
+                    }]
+                }
+            },
+            {
+                "type": "response.output_item.added",
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "call_id": "call_1",
+                    "name": "command_run",
+                    "arguments": ""
+                }
+            },
+            {
+                "type": "response.function_call_arguments.done",
+                "item_id": "fc_1",
+                "arguments": "{\"commands\":[{\"command_type\":\"shell_command\",\"command_line\":\"pwd\"}]}"
+            },
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "call_id": "call_1",
+                    "name": "command_run",
+                    "status": "completed",
+                    "arguments": "{\"commands\":[{\"command_type\":\"shell_command\",\"command_line\":\"pwd\"}]}"
+                }
+            }
+        ]
+    });
+
+    let content = normalize_response_content(&raw);
+
+    assert_eq!(content["text"], "I will inspect before editing.");
+    assert_eq!(content["tool_calls"][0]["id"], "call_1");
+    assert_eq!(
+        content["tool_calls"][0]["function"]["arguments"]["commands"][0]["command_line"],
+        "pwd"
+    );
+}
+
+#[test]
+fn provider_latency_defaults_match_high_profile() {
     let selected = ProviderLatencyConfig::default().selected_timeouts();
 
-    assert_eq!(selected.idle_output_timeout_ms, 20_000);
-    assert_eq!(selected.first_output_timeout_ms, 40_000);
-    assert_eq!(selected.total_timeout_ms, 240_000);
+    assert_eq!(selected.idle_output_timeout_ms, 80_000);
+    assert_eq!(selected.first_output_timeout_ms, 160_000);
+    assert_eq!(selected.total_timeout_ms, 960_000);
 }
 
 #[test]
 fn provider_latency_level_tracks_tier_flag() {
-    assert_eq!(super::latency_level_for_tier("thinking"), "high");
-    assert_eq!(super::latency_level_for_tier("fast"), "fast");
-    assert_eq!(super::latency_level_for_tier("embedding_high"), "high");
-    assert_eq!(super::latency_level_for_tier("embedding_low"), "fast");
-    // Unknown tiers fall back to the lowest level.
-    assert_eq!(super::latency_level_for_tier("something_else"), "fast");
+    assert_eq!(super::latency_level_for_tier("thinking"), "x-high");
+    assert_eq!(super::latency_level_for_tier("fast"), "high");
+    assert_eq!(super::latency_level_for_tier("embedding_high"), "x-high");
+    assert_eq!(super::latency_level_for_tier("embedding_low"), "high");
+    // Unknown tiers fall back to the high level.
+    assert_eq!(super::latency_level_for_tier("something_else"), "high");
 }
 
 #[test]
@@ -103,10 +160,10 @@ fn provider_latency_timeouts_for_tier_resolve_levels() {
     let config = ProviderLatencyConfig::default();
 
     let thinking = config.timeouts_for_tier("thinking");
-    assert_eq!(thinking.total_timeout_ms, 960_000);
+    assert_eq!(thinking.total_timeout_ms, 1_200_000);
 
     let fast = config.timeouts_for_tier("fast");
-    assert_eq!(fast.total_timeout_ms, 240_000);
+    assert_eq!(fast.total_timeout_ms, 960_000);
 }
 
 #[test]

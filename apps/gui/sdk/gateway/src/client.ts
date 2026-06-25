@@ -63,7 +63,7 @@ export class GatewayClient {
     this.baseUrl = normalizeBaseUrl(options.baseUrl ?? defaultGatewayUrl());
     this.directory = options.directory;
     this.fetchImpl = options.fetch ?? resolveFetch();
-    this.timeoutMs = options.timeoutMs ?? 5_000;
+    this.timeoutMs = options.timeoutMs ?? 20_000;
   }
 
   withDirectory(directory?: string): GatewayClient {
@@ -253,14 +253,11 @@ export class GatewayClient {
   }
 
   async messages(sessionId: string, input: MessageListInput = {}): Promise<Message[]> {
-    const response = await this.get<unknown>(
-      `/session/${encodeURIComponent(sessionId)}/message`,
-      {
-        limit: input.limit,
-        before: input.before,
-        after: input.after,
-      },
-    );
+    const response = await this.get<unknown>(`/session/${encodeURIComponent(sessionId)}/message`, {
+      limit: input.limit,
+      before: input.before,
+      after: input.after,
+    });
     return normalizeMessagesResponse(response);
   }
 
@@ -511,8 +508,14 @@ export function defaultGatewayUrl(): string {
   const fromVite = meta.env?.VITE_TURA_GATEWAY_URL;
   return (
     [fromQuery, fromWindow, fromVite].find((value) => isValidGatewayUrl(value)) ||
-    "http://127.0.0.1:4126"
+    defaultLocalGatewayUrl()
   );
+}
+
+function defaultLocalGatewayUrl(): string {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
+    ? "http://127.0.0.1:4156"
+    : "http://127.0.0.1:4126";
 }
 
 function sessionFromLogSnapshot(snapshot: SessionLogSnapshot): Session {
@@ -536,7 +539,11 @@ function normalizeMessagesResponse(value: unknown): Message[] {
     if (!item || typeof item !== "object") return [];
     const record = item as Record<string, unknown>;
     const info = record.info;
-    if (info && typeof info === "object" && typeof (info as Record<string, unknown>).id === "string") {
+    if (
+      info &&
+      typeof info === "object" &&
+      typeof (info as Record<string, unknown>).id === "string"
+    ) {
       const message = { ...(info as Record<string, unknown>) } as Message;
       if (Array.isArray(record.parts)) message.parts = record.parts as Message["parts"];
       return [message];

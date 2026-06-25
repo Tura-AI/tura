@@ -32,7 +32,7 @@ impl ProductStore {
         let now = Utc::now().timestamp_millis();
         let workspace_id = "local".to_string();
         let runtime_id = "runtime-local".to_string();
-        let agent_id = "thinking-planning".to_string();
+        let agent_id = "thoughtful".to_string();
         let task_id = "task-active".to_string();
 
         let mut workspaces = HashMap::new();
@@ -57,8 +57,8 @@ impl ProductStore {
             ProductAgent {
                 id: agent_id.clone(),
                 workspace_id: workspace_id.clone(),
-                name: "Thinking Planning".to_string(),
-                description: "Default Tura thinking agent with planning".to_string(),
+                name: "Thoughtful".to_string(),
+                description: "对每步行为进行自我反思，可以在长线任务中稳定执行。".to_string(),
                 provider: "openai".to_string(),
                 model: "default".to_string(),
                 runtime_id: Some(runtime_id.clone()),

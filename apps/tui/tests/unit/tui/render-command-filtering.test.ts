@@ -47,7 +47,7 @@ test("render shows task_status-only command updates", () => {
                     output: {
                       task_status: {
                         status: "done",
-                        task_detail: "user asked for a random food suggestion",
+                        task_group: "user asked for a random food suggestion",
                       },
                     },
                   },
@@ -62,7 +62,7 @@ test("render shows task_status-only command updates", () => {
             state: {
               status: "completed",
               output:
-                '[command_run: {\\"task_detail\\":\\"user asked for a random food suggestion\\"}]',
+                '[command_run: {\\"task_group\\":\\"user asked for a random food suggestion\\"}]',
             },
           },
         ],
@@ -403,7 +403,7 @@ test("render keeps command records while leaving command_run summaries out of co
             tool: "command_run",
             state: {
               status: "completed",
-              output: '{"status":"done","task_detail":"large file scan"}',
+              output: '{"status":"done","task_group":"large file scan"}',
             },
           },
           {
@@ -451,7 +451,7 @@ test("render keeps command records while leaving command_run summaries out of co
   assert.equal(plain.match(/Commands/g)?.length, 1);
   assert.match(plain, /\$ \$ErrorActionPreference='Stop'/u);
   assert.doesNotMatch(plain, /\$ large file scan/u);
-  assert.doesNotMatch(plain, /\$ \{"status":"done","task_detail":"large file scan"\}/u);
+  assert.doesNotMatch(plain, /\$ \{"status":"done","task_group":"large file scan"\}/u);
   assert.match(plain, /\$ shell_command/u);
 });
 
@@ -529,7 +529,7 @@ test("render keeps assistant text above command parts even when tool part arrive
             tool: "command_run",
             state: {
               status: "completed",
-              output: '{"status":"done","task_detail":"Greeting answered"}',
+              output: '{"status":"done","task_group":"Greeting answered"}',
             },
           },
           {

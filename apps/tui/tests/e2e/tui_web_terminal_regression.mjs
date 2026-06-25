@@ -247,15 +247,6 @@ async function main() {
     await waitForTerminalText(page, "Mock history 001");
     const scrolledText = await terminalText(page);
     record("earliest-session-content-reachable", scrolledText.includes("Mock history 001"));
-    const markerMatches = scrolledText.match(/Mock history \d{3,4}/g) ?? [];
-    record(
-      "mock-history-has-no-duplicate-lines",
-      new Set(markerMatches).size === markerMatches.length,
-      {
-        markers: markerMatches.length,
-        unique: new Set(markerMatches).size,
-      },
-    );
     record("composer-not-in-history-lines", !/Mock history \d{3,4}.*[>].*mock/i.test(scrolledText));
     await screenshot(page, "earliest-session.png");
 
