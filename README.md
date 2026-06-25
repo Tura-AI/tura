@@ -46,6 +46,9 @@ good engineer. Tura moves more of that into runtime structure:
 - `task_status` tracks active work, questions, completion, and compact
   handoffs as structured state, and the runtime prompt tells agents to define a
   missing task type before starting work.
+- Workspace-scoped session management keeps durable conversation, task, and
+  context state across CLI/TUI/GUI fronts, so work can resume from the right
+  dynamic context instead of becoming a pile of disconnected sessions.
 - Context checkpoints keep long tasks alive without dragging the whole old
   transcript through every future provider call.
 - The tools crate owns file locks, command safety, schema normalization, shell
@@ -64,6 +67,7 @@ needs taste, verification, and maintenance judgement.
 | Tool-call spam and repeated schema overhead | `command_run` exposes one compact tool, then schedules many internal commands by step | [Command Run](docs/command-run.md) |
 | Prompt bloat from every skill, every time | Runtime prompt manuals are selected by `task_type` and persisted as session records | [Runtime Prompts vs Skills](docs/runtime-prompts-vs-skills.md) |
 | Long tasks that loop, forget, or declare victory early | Structured task state, explicit completion rules, retry prompts, and compact handoffs | [Long Task Loop](docs/long-task-loop.md) |
+| CLI runs with no session memory, while desktop clients can create hundreds of disconnected sessions in one workspace | Dynamic context and workspace-scoped session management keep task state, compact handoffs, and session history reusable across fronts | [Operational overview](docs/overview.md), [Long Task Loop](docs/long-task-loop.md) |
 | "AI slop" code that only satisfies the visible prompt | Repo rules, business tests, typed runners, command safety, and verification pressure | [Rules](docs/rules.md), [Tests](tests/README.md) |
 | Agents that cannot inspect media, web pages, or reusable assets without bloating context | `read_media`, `web_discover`, and `generate_media` return compact artifacts, summaries, and downloaded asset folders | [Tools Crate](crates/tools/ARCHITECTURE.md) |
 | Benchmarks nobody can reproduce | Benchmark harnesses collect usage, command counts, wall time, provider time, and artifacts | [Benchmarks](tests/benchmark/README.md) |
