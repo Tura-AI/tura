@@ -1,7 +1,7 @@
 use super::asset::asset_records;
 use super::files::{relative_or_display, resolve_download_dir};
 use super::filter::{
-    build_search_query, filter_results, parse_query_requirements, site_filters_to_image_keywords,
+    filter_results, normalized_search_query, site_filters_to_image_keywords,
     strip_site_filters_from_query,
 };
 use super::html::{direct_webpage_url, title_from_url};
@@ -37,8 +37,7 @@ pub(super) fn run_web_discover_inner(
         .redirect(reqwest::redirect::Policy::limited(8))
         .build()
         .map_err(|err| format!("failed to create web client: {err}"))?;
-    let query_parts = parse_query_requirements(&args.query);
-    let normalized_query = build_search_query(&query_parts);
+    let normalized_query = normalized_search_query(&args.query);
     let search_query = if args.kind == "image" {
         site_filters_to_image_keywords(&normalized_query)
     } else if matches!(args.kind.as_str(), "video" | "audio") {

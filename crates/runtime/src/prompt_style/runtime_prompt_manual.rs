@@ -242,10 +242,7 @@ pub fn append_missing_runtime_prompt_manuals(
                 changed = true;
             }
         }
-        if runtime_prompt_command_run_capability_present_since_last_compact(session, &manual.id) {
-            continue;
-        }
-        let Some((content, capabilities)) = command_run_capability_content(&manual) else {
+        let Some((content, capabilities)) = command_run_capability_content(session, &manual) else {
             continue;
         };
         let now = Utc::now();
@@ -271,6 +268,7 @@ pub fn append_missing_runtime_prompt_manuals(
             serde_json::to_string(&record).map_err(|err| err.to_string())?,
             now,
         );
+        session.record_session_capabilities_at(capabilities.iter().map(String::as_str), now);
         changed = true;
     }
     Ok(changed)
@@ -284,17 +282,6 @@ pub fn append_runtime_prompt_manuals_after_compact(
 
 fn runtime_prompt_manual_present_since_last_compact(session: &SessionManagement, id: &str) -> bool {
     runtime_prompt_record_present_since_last_compact(session, RUNTIME_PROMPT_MANUAL_RECORD_TYPE, id)
-}
-
-fn runtime_prompt_command_run_capability_present_since_last_compact(
-    session: &SessionManagement,
-    id: &str,
-) -> bool {
-    runtime_prompt_record_present_since_last_compact(
-        session,
-        RUNTIME_PROMPT_COMMAND_RUN_CAPABILITY_RECORD_TYPE,
-        id,
-    )
 }
 
 fn runtime_prompt_record_present_since_last_compact(
@@ -318,13 +305,19 @@ fn runtime_prompt_record_present_since_last_compact(
     false
 }
 
-fn command_run_capability_content(manual: &RuntimePromptManual) -> Option<(String, Vec<String>)> {
+fn command_run_capability_content(
+    session: &SessionManagement,
+    manual: &RuntimePromptManual,
+) -> Option<(String, Vec<String>)> {
     let mut seen = HashSet::new();
     let mut capabilities = Vec::new();
     let mut command_lines = Vec::new();
     for capability in &manual.capabilities {
         let capability = code_tools::commands::canonical_command(capability);
-        if capability == "command_run" || capability.is_empty() || !seen.insert(capability.clone())
+        if capability == "command_run"
+            || capability.is_empty()
+            || session.has_session_capability(&capability)
+            || !seen.insert(capability.clone())
         {
             continue;
         }
@@ -557,5 +550,100 @@ mod tests {
         assert!(content.contains("[runtime_prompt_command_run_capabilities]"));
         assert!(content.contains("- read_media:"));
         assert!(content.contains("- generate_media:"));
+    }
+
+    #[test]
+    fn append_missing_manuals_dedupes_capability_prompts_against_session_state() {
+        let mut session = SessionManagement::new(
+            "runtime-prompt-manual-dedupe".to_string(),
+            "runtime prompt manual dedupe".to_string(),
+            std::path::PathBuf::from("C:/workspace"),
+            false,
+            "coding".to_string(),
+            SessionInput {
+                user_input: "Build a 3D WebGL demo".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            "Build a 3D WebGL demo".to_string(),
+            Utc::now(),
+        );
+        session.record_session_capabilities(vec![
+            "web_discover".to_string(),
+            "apply_patch".to_string(),
+            code_tools::commands::active_shell_command_name().to_string(),
+        ]);
+        session.task_type = normalize_task_type_ids(["visual"]);
+
+        assert!(append_missing_runtime_prompt_manuals(&mut session, None)
+            .expect("visual manual should append"));
+
+        let records = command_run_capability_records(&session);
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0]
+                .get("task_type")
+                .and_then(serde_json::Value::as_str),
+            Some("visual")
+        );
+        assert_eq!(
+            records[0].get("capabilities"),
+            Some(&serde_json::json!(["generate_media", "read_media"]))
+        );
+        let content = records[0]
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        assert!(!content.contains("- web_discover:"));
+        assert!(session.has_session_capability("generate_media"));
+        assert!(session.has_session_capability("read_media"));
+
+        session.task_type = normalize_task_type_ids(["interactive_and_3d"]);
+
+        assert!(append_missing_runtime_prompt_manuals(&mut session, None)
+            .expect("3D manual should append"));
+
+        let records = command_run_capability_records(&session);
+        assert_eq!(
+            records.len(),
+            1,
+            "interactive_and_3d reuses visual's media capabilities and must not inject a duplicate capability prompt"
+        );
+        assert_eq!(
+            runtime_prompt_manual_log_ids(&session),
+            vec!["visual", "frontend", "interactive_and_3d"]
+        );
+    }
+
+    fn command_run_capability_records(session: &SessionManagement) -> Vec<serde_json::Value> {
+        session
+            .session_log
+            .iter()
+            .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+            .filter(|value| {
+                value.get("type").and_then(serde_json::Value::as_str)
+                    == Some(RUNTIME_PROMPT_COMMAND_RUN_CAPABILITY_RECORD_TYPE)
+            })
+            .collect()
+    }
+
+    fn runtime_prompt_manual_log_ids(session: &SessionManagement) -> Vec<String> {
+        session
+            .session_log
+            .iter()
+            .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+            .filter(|value| {
+                value.get("type").and_then(serde_json::Value::as_str)
+                    == Some(RUNTIME_PROMPT_MANUAL_RECORD_TYPE)
+            })
+            .filter_map(|value| {
+                value
+                    .get("task_type")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect()
     }
 }

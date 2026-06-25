@@ -1267,15 +1267,26 @@ fn persisted_record_from_session_log(
     }
     info.message_count = snapshot.message_count as usize;
 
-    // Only user/assistant/system records are conversation messages. The runtime
-    // also persists auxiliary records (log / tool / runtime / event checkpoints)
-    // that are not `Message`s; skip any record that does not deserialize rather
-    // than failing the whole session load (a single such record must not make a
-    // session invisible to the gateway).
+    // Only user/assistant records are frontend conversation messages. The runtime
+    // also persists system/developer prompt context and auxiliary records
+    // (log / tool / runtime / event checkpoints); skip any record that does
+    // not deserialize into a frontend-visible message rather than failing the
+    // whole session load.
     let messages = records
         .into_iter()
         .filter_map(|record| match serde_json::from_value::<Message>(record.record) {
-            Ok(message) => Some(message),
+            Ok(message)
+                if matches!(message.role, MessageRole::User | MessageRole::Assistant) =>
+            {
+                Some(message)
+            }
+            Ok(message) => {
+                tracing::debug!(
+                    role = ?message.role,
+                    "skipping internal session_log message during hydration"
+                );
+                None
+            }
             Err(err) => {
                 tracing::debug!(error = %err, "skipping non-message session_log record during hydration");
                 None

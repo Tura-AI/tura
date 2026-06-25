@@ -23,8 +23,9 @@ use tura_llm_rust::{
 use crate::checkpoint::session_snapshot::persist_session_checkpoint;
 use crate::context::{
     accumulate_tool_result_with_provider_metadata, build_context,
-    compact_session_context_automatically, compact_session_context_with_agent_message,
-    estimated_tokens_from_bytes_u64, CompactContextAgentMessage, ContextInput,
+    compact_session_context_automatically_with_capabilities,
+    compact_session_context_with_agent_message_and_capabilities, estimated_tokens_from_bytes_u64,
+    CompactContextAgentMessage, ContextInput,
 };
 use crate::manas::ManasOverrides;
 use crate::provider_flow::errors::{
@@ -84,9 +85,17 @@ pub fn process_manas_internal(
         agents
     };
 
+    let agent_commands = agents.first().map(command_run_commands_for_agent);
+    if let Some(commands) = agent_commands.as_ref() {
+        session.record_session_capabilities(commands.iter().map(String::as_str));
+    }
     session.transition(SessionState::Running, Utc::now())?;
     persist_session_checkpoint(session, "running");
 
+    let active_agent_capabilities = agent_commands
+        .as_ref()
+        .map(|commands| commands.iter().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
     let mut current_messages = initial_messages.clone();
     let mut last_runtime_id: Option<RuntimeId> = None;
     let original_user_task = session.input.user_input.clone();
@@ -95,7 +104,6 @@ pub fn process_manas_internal(
     let mut no_tool_retries = 0_u64;
     let mut final_session_state = SessionState::Completed;
     let mut final_error: Option<String> = None;
-    let agent_commands = agents.first().map(command_run_commands_for_agent);
     let supports_task_status = agent_commands
         .as_ref()
         .is_some_and(|commands| commands.contains(TASK_STATUS_COMMAND));
@@ -329,7 +337,7 @@ pub fn process_manas_internal(
 
             if !pending_compact_contexts.is_empty() {
                 for pending in &pending_compact_contexts {
-                    compact_session_context_with_agent_message(
+                    compact_session_context_with_agent_message_and_capabilities(
                         session,
                         &pending.summary,
                         pending.agent_message_content.as_deref().map(|content| {
@@ -338,6 +346,7 @@ pub fn process_manas_internal(
                                 timestamp: pending.agent_message_timestamp,
                             }
                         }),
+                        &active_agent_capabilities,
                     )?;
                 }
                 persist_session_checkpoint(session, "compact_context");
@@ -365,7 +374,11 @@ pub fn process_manas_internal(
             if let Some(summary) =
                 auto_compact_summary_after_new_context(session, &runtime, &tool_results)
             {
-                compact_session_context_automatically(session, &summary)?;
+                compact_session_context_automatically_with_capabilities(
+                    session,
+                    &summary,
+                    &active_agent_capabilities,
+                )?;
                 persist_session_checkpoint(session, "auto_compact_context");
                 info!(
                     session_id = %session.session_id,
@@ -460,7 +473,11 @@ pub fn process_manas_internal(
             }
         } else {
             if let Some(summary) = auto_compact_summary_after_new_context(session, &runtime, &[]) {
-                compact_session_context_automatically(session, &summary)?;
+                compact_session_context_automatically_with_capabilities(
+                    session,
+                    &summary,
+                    &active_agent_capabilities,
+                )?;
                 persist_session_checkpoint(session, "auto_compact_context");
                 info!(
                     session_id = %session.session_id,

@@ -1,5 +1,5 @@
 ## New Build Operation Manual
-Use this prompt when the task is to start a new frontend, backend, full-stack, or conventional software build, or build something without any source code or binary.
+Use this prompt when the task is to start a new frontend, backend, full-stack project, or build software without any source code or binary.
 
 ### Expectations:
 - Use established open-source libraries for conventional frontend, backend, full-stack, data, media, auth, database, queue, and infrastructure work. Do not hand-roll common production components without a strong reason.

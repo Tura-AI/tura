@@ -534,32 +534,14 @@ fn split_cli_assignment_only_handles_option_assignments() {
 }
 
 #[test]
-fn query_requirements_support_positive_and_negative_terms() {
-    let requirements = parse_query_requirements("rust docs, not nightly, 排除: draft, 不要 mirror");
-
-    assert_eq!(requirements.0, vec!["rust docs"]);
+fn normalized_search_query_preserves_query_text() {
     assert_eq!(
-        requirements.1,
-        vec!["nightly", "draft", "mirror"]
-            .into_iter()
-            .map(str::to_string)
-            .collect::<Vec<_>>()
+        normalized_search_query(" rust docs, not nightly, exclude draft "),
+        "rust docs, not nightly, exclude draft"
     );
     assert_eq!(
-        build_search_query(&requirements),
-        "rust docs -nightly -draft -mirror"
-    );
-}
-
-#[test]
-fn query_requirements_keep_negative_only_query_searchable() {
-    let requirements = parse_query_requirements("not beta, exclude old");
-
-    assert_eq!(requirements.0, vec!["not beta, exclude old"]);
-    assert_eq!(requirements.1, vec!["beta", "old"]);
-    assert_eq!(
-        build_search_query(&requirements),
-        "not beta, exclude old -beta -old"
+        normalized_search_query("not beta, exclude old"),
+        "not beta, exclude old"
     );
 }
 

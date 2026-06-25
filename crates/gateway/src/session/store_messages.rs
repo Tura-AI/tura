@@ -11,6 +11,9 @@ impl SessionStore {
 
     pub fn get_frontend_messages(&self, session_id: &str) -> Vec<Message> {
         self.get_session_db_messages(session_id)
+            .into_iter()
+            .filter(frontend_visible_message)
+            .collect()
     }
 
     pub fn get_session_db_messages(&self, session_id: &str) -> Vec<Message> {
@@ -43,10 +46,16 @@ impl SessionStore {
             .unwrap_or_default();
 
         if db_messages.is_empty() {
-            return projection_messages;
+            return projection_messages
+                .into_iter()
+                .filter(frontend_visible_message)
+                .collect();
         }
         if projection_messages.is_empty() {
-            return db_messages;
+            return db_messages
+                .into_iter()
+                .filter(frontend_visible_message)
+                .collect();
         }
 
         let mut messages = db_messages;
@@ -58,6 +67,9 @@ impl SessionStore {
         }
         messages.sort_by_key(|message| message.created_at);
         messages
+            .into_iter()
+            .filter(frontend_visible_message)
+            .collect()
     }
 
     pub fn apply_runtime_sync_status(
@@ -897,6 +909,10 @@ impl SessionStore {
             updated_at,
         }
     }
+}
+
+fn frontend_visible_message(message: &Message) -> bool {
+    matches!(message.role, MessageRole::User | MessageRole::Assistant)
 }
 
 fn merge_message_parts(mut existing: Message, incoming: Message) -> Message {

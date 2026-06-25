@@ -21,7 +21,6 @@ use crate::manas::tool_catalog::{
     command_run_commands_for_agent, extend_command_run_commands_with_capabilities,
     project_directory_with_tools,
 };
-use crate::prompt_style::runtime_prompt_manual;
 
 use super::permission::{permission_denial_for_tool, request_command_run_sandbox_bypass};
 
@@ -39,7 +38,7 @@ pub(crate) fn execute_tool_calls(
         let mut commands = command_run_commands_for_agent(agent);
         extend_command_run_commands_with_capabilities(
             &mut commands,
-            runtime_prompt_manual::capabilities_for_task_type_ids(&session.task_type),
+            session.session_capabilities.iter().map(String::as_str),
         );
         commands
     });

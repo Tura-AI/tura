@@ -28,6 +28,7 @@ Arguments:
 - Type: `website`, `image`, `video`, `audio`, or `asset`. You may pass it as the first word or with `--type`.
 - Asset type: for `asset`, pass `shader`, `texture`, `2d`, `3d`, `audio`, or `auto` as the next word or with `--asset-type`.
 - Query: pass quoted search text, a single webpage URL, multiple direct media URLs, one or more direct asset URLs, or `--query`.
+- Query text is literal. Do not encode filters as words inside the query; use explicit CLI arguments such as `--include-regex` and `--exclude-regex`.
 - For remote model/API or media-generation work, assume model/API knowledge may be stale: search official current docs and model/version pages first, using recent year+month terms instead of "latest", and save relevant docs under `doc/`.
 - For image and website tasks, start with a short search query to find candidate pages and media URLs, then fetch or download from the relevant result.
 - For direct media or asset downloads, pass one or more URLs as the quoted query.

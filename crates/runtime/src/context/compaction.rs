@@ -35,6 +35,7 @@ pub(crate) struct CompactContextAgentMessage<'a> {
     pub timestamp: DateTime<Utc>,
 }
 
+#[cfg(test)]
 pub(crate) fn compact_session_context_with_agent_message(
     session: &mut SessionManagement,
     compact_text: &str,
@@ -48,15 +49,54 @@ pub(crate) fn compact_session_context_with_agent_message(
     )
 }
 
+pub(crate) fn compact_session_context_with_agent_message_and_capabilities(
+    session: &mut SessionManagement,
+    compact_text: &str,
+    agent_message: Option<CompactContextAgentMessage<'_>>,
+    baseline_capabilities: &[String],
+) -> Result<(), String> {
+    compact_session_context_with_options(
+        session,
+        compact_text,
+        agent_message,
+        CompactContextOptions {
+            baseline_capabilities: baseline_capabilities.to_vec(),
+        },
+    )
+}
+
+#[cfg(test)]
 pub(crate) fn compact_session_context_automatically(
     session: &mut SessionManagement,
     compact_text: &str,
 ) -> Result<(), String> {
-    compact_session_context_with_options(session, compact_text, None, CompactContextOptions {})
+    compact_session_context_with_options(
+        session,
+        compact_text,
+        None,
+        CompactContextOptions::default(),
+    )
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-struct CompactContextOptions {}
+pub(crate) fn compact_session_context_automatically_with_capabilities(
+    session: &mut SessionManagement,
+    compact_text: &str,
+    baseline_capabilities: &[String],
+) -> Result<(), String> {
+    compact_session_context_with_options(
+        session,
+        compact_text,
+        None,
+        CompactContextOptions {
+            baseline_capabilities: baseline_capabilities.to_vec(),
+        },
+    )
+}
+
+#[derive(Debug, Clone, Default)]
+struct CompactContextOptions {
+    baseline_capabilities: Vec<String>,
+}
 
 fn compact_session_context_with_options(
     session: &mut SessionManagement,
@@ -73,7 +113,7 @@ fn compact_session_context_with_options(
         &agent_handoff,
         &goal_text,
         agent_message,
-        options,
+        &options,
         max_estimated_tokens,
     );
     let compact_text = truncate_text_to_char_budget(
@@ -94,6 +134,13 @@ fn compact_session_context_with_options(
     });
     session.context_tokens.input = 0;
     session.runtime_usage = serde_json::Value::Null;
+    session.reset_session_capabilities_at(
+        options
+            .baseline_capabilities
+            .iter()
+            .map(std::string::String::as_str),
+        now,
+    );
     session.push_log(compact_record.to_string(), now);
     runtime_prompt_manual::append_runtime_prompt_manuals_after_compact(session)?;
     Ok(())
@@ -139,7 +186,7 @@ fn compact_rebuild_content(
     agent_handoff: &str,
     goal_text: &str,
     agent_message: Option<CompactContextAgentMessage<'_>>,
-    options: CompactContextOptions,
+    options: &CompactContextOptions,
     max_estimated_tokens: usize,
 ) -> String {
     let mut entries = compaction_timeline_entries(session, options);
@@ -294,7 +341,7 @@ fn render_timeline_group<'a>(out: &mut String, entries: impl Iterator<Item = &'a
 
 fn compaction_timeline_entries(
     session: &SessionManagement,
-    options: CompactContextOptions,
+    options: &CompactContextOptions,
 ) -> Vec<TimelineEntry> {
     let values = session
         .session_log
@@ -375,7 +422,7 @@ fn compaction_timeline_entries(
 
 fn current_run_timeline_item(
     value: &serde_json::Value,
-    options: CompactContextOptions,
+    options: &CompactContextOptions,
 ) -> Option<(&'static str, String)> {
     let _ = options;
     role_timeline_item(value, true)

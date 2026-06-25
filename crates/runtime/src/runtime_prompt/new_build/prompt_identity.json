@@ -1,6 +1,6 @@
 {
   "id": "new_build",
   "display_name": "New Build Operation Manual",
-  "description": "Use for create from scratch a new or work from a design or a plan（not refactoring existing）frontend, backend, or full-stack implementation tasks.",
+  "description": "Use for create from scratch a new or work from a design or a plan (not refactoring existing) frontend (not html website or demo page), backend, or full-stack implementation tasks.",
   "capabilities": ["apply_patch", "shells"]
 }

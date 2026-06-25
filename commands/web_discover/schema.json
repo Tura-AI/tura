@@ -36,7 +36,7 @@
       "query": {
         "type": "string",
         "x-tura-optional": true,
-        "description": "Search query, direct webpage URL, or direct media/asset file URL. Comma-separated parts are positive unless prefixed with -, not, exclude, without, 排除, 不要, or 反向."
+        "description": "Literal search query, direct webpage URL, or direct media/asset file URL. Use explicit CLI fields such as include_regex and exclude_regex for filtering."
       },
       "q": {
         "type": "string",

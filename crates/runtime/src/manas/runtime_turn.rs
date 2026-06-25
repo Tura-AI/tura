@@ -1,4 +1,4 @@
-use crate::prompt_style::{agent_identity, compact_context, runtime_prompt_manual, PromptBuilder};
+use crate::prompt_style::{agent_identity, compact_context, PromptBuilder};
 use crate::runtime::call_runtime::{call_runtime, CallRuntimeInput};
 use crate::runtime::create_runtime::{
     create_runtime, runtime_provider_config_from_tura, CreateRuntimeInput,
@@ -41,7 +41,7 @@ pub(crate) fn execute_turn(
     let mut agent_commands = command_run_commands_for_agent(agent);
     extend_command_run_commands_with_capabilities(
         &mut agent_commands,
-        runtime_prompt_manual::capabilities_for_task_type_ids(&session.task_type),
+        session.session_capabilities.iter().map(String::as_str),
     );
     let planning_enabled = agent_commands.contains(PLANNING_TOOL);
     let disable_tool_invocation = is_final_turn || force_no_tools;

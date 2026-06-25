@@ -21,6 +21,9 @@ pub type SessionName = String;
 /// Runtime prompt manual task categories active for the whole session.
 pub type SessionTaskType = Vec<String>;
 
+/// Command capabilities loaded into the active session context.
+pub type SessionCapabilities = Vec<String>;
+
 /// User input text that started the task.
 pub type UserInputText = String;
 
@@ -218,6 +221,9 @@ pub struct SessionManagement {
     /// Runtime prompt manual task types active for this session.
     #[serde(default, deserialize_with = "deserialize_task_type")]
     pub task_type: SessionTaskType,
+    /// Command capabilities already loaded into the active session context.
+    #[serde(default, deserialize_with = "deserialize_session_capabilities")]
+    pub session_capabilities: SessionCapabilities,
     /// Total turn count across the whole tree of the session.
     pub session_current_turn: u64,
     /// Historical execution log entries.
@@ -305,6 +311,7 @@ impl SessionManagement {
             session_directory,
             session_uses_docker,
             task_type: task_type.into_session_task_type(),
+            session_capabilities: Vec::new(),
             session_current_turn: 0,
             session_log: Vec::new(),
             session_created_at: now,
@@ -380,6 +387,61 @@ impl SessionManagement {
         added
     }
 
+    /// Records capabilities loaded into the current context. Existing entries are never removed.
+    pub fn record_session_capabilities<I, S>(&mut self, capabilities: I) -> Vec<String>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.record_session_capabilities_at(capabilities, Utc::now())
+    }
+
+    /// Records capabilities loaded into the current context at a known timestamp.
+    pub fn record_session_capabilities_at<I, S>(
+        &mut self,
+        capabilities: I,
+        now: UtcDateTimeMs,
+    ) -> Vec<String>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut seen = self
+            .session_capabilities
+            .iter()
+            .cloned()
+            .collect::<HashSet<_>>();
+        let mut added = Vec::new();
+        for capability in capabilities {
+            let Some(capability) = normalize_session_capability(capability.as_ref()) else {
+                continue;
+            };
+            if seen.insert(capability.clone()) {
+                self.session_capabilities.push(capability.clone());
+                added.push(capability);
+            }
+        }
+        if !added.is_empty() {
+            self.session_last_update_at = now;
+        }
+        added
+    }
+
+    /// Rebuilds the loaded capability set after context compaction.
+    pub fn reset_session_capabilities_at<I, S>(&mut self, capabilities: I, now: UtcDateTimeMs)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.session_capabilities = normalize_session_capabilities(capabilities);
+        self.session_last_update_at = now;
+    }
+
+    pub fn has_session_capability(&self, capability: &str) -> bool {
+        normalize_session_capability(capability)
+            .is_some_and(|capability| self.session_capabilities.contains(&capability))
+    }
+
     /// Appends a log entry and refreshes the update timestamp.
     pub fn push_log(&mut self, entry: impl Into<String>, now: UtcDateTimeMs) {
         self.session_log.push(entry.into());
@@ -448,11 +510,58 @@ fn normalize_task_type_values(values: impl IntoIterator<Item = String>) -> Sessi
     out
 }
 
+fn normalize_session_capability(value: &str) -> Option<String> {
+    let capability = code_tools::commands::canonical_command(value.trim());
+    if capability.is_empty() || capability == "command_run" {
+        return None;
+    }
+    Some(capability)
+}
+
+fn normalize_session_capabilities<I, S>(values: I) -> SessionCapabilities
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for value in values {
+        let Some(capability) = normalize_session_capability(value.as_ref()) else {
+            continue;
+        };
+        if seen.insert(capability.clone()) {
+            out.push(capability);
+        }
+    }
+    out
+}
+
 fn is_legacy_session_kind(value: &str) -> bool {
     matches!(
         value,
         "coding" | "general" | "programming" | "development" | "testing"
     )
+}
+
+fn deserialize_session_capabilities<'de, D>(
+    deserializer: D,
+) -> Result<SessionCapabilities, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Array(values) => Ok(normalize_session_capabilities(
+            values
+                .into_iter()
+                .filter_map(|value| value.as_str().map(ToString::to_string)),
+        )),
+        serde_json::Value::String(value) => Ok(normalize_session_capabilities([value])),
+        serde_json::Value::Null => Ok(Vec::new()),
+        other => Err(serde::de::Error::custom(format!(
+            "session_capabilities must be a string array, got {other}"
+        ))),
+    }
 }
 
 fn goal_mode_enabled_from_env() -> bool {
@@ -572,6 +681,68 @@ mod tests {
         let decoded: SessionManagement =
             serde_json::from_value(value).expect("session should deserialize");
         assert_eq!(decoded.current_objective, "focused objective");
+    }
+
+    #[test]
+    fn session_capabilities_append_only_until_compact_rebuild() {
+        let now = Utc::now();
+        let mut session = session_in_state(SessionState::Running);
+
+        assert_eq!(
+            session.record_session_capabilities_at(
+                ["shell_command", "command_run", "read_media", "read_media"],
+                now,
+            ),
+            vec![
+                code_tools::commands::active_shell_command_name().to_string(),
+                "read_media".to_string()
+            ]
+        );
+        assert_eq!(
+            session.session_capabilities,
+            vec![
+                code_tools::commands::active_shell_command_name().to_string(),
+                "read_media".to_string()
+            ]
+        );
+        assert!(session.has_session_capability("shell_command"));
+        assert!(session.has_session_capability("read_media"));
+
+        session.replace_task_type(Vec::<String>::new());
+        assert_eq!(
+            session.session_capabilities,
+            vec![
+                code_tools::commands::active_shell_command_name().to_string(),
+                "read_media".to_string()
+            ],
+            "task_type changes must not remove capabilities from the active context"
+        );
+
+        session.reset_session_capabilities_at(["apply_patch", "apply_patch"], now);
+        assert_eq!(
+            session.session_capabilities,
+            vec!["apply_patch".to_string()]
+        );
+        assert!(!session.has_session_capability("read_media"));
+    }
+
+    #[test]
+    fn session_capabilities_persist_and_normalize_legacy_shapes() {
+        let mut value =
+            serde_json::to_value(session_in_state(SessionState::Running)).expect("serialize");
+        value["session_capabilities"] =
+            serde_json::json!(["shell_command", "command_run", "read_media", "read_media"]);
+
+        let decoded: SessionManagement =
+            serde_json::from_value(value).expect("session capabilities should deserialize");
+
+        assert_eq!(
+            decoded.session_capabilities,
+            vec![
+                code_tools::commands::active_shell_command_name().to_string(),
+                "read_media".to_string()
+            ]
+        );
     }
 
     #[test]
