@@ -8,7 +8,16 @@
 
 # Rust build output
 target/
-bin/
+/bin/
+/NONE
+
+# Portable self-contained package produced by scripts/build-release.*
+release/
+!tests/release/
+!tests/release/**
+
+# Generated CLI launchers (scripts/install.* registers tura-tui / tura-gateway here)
+cli-bin/
 
 # JavaScript and TypeScript dependency/build output
 node_modules/
@@ -20,6 +29,7 @@ node_modules/
 
 # Python fallback dependencies and caches
 scripts/packages/python/
+commands/*/.venv/
 **/__pycache__/
 *.py[cod]
 *$py.class
@@ -27,6 +37,7 @@ scripts/packages/python/
 # Local databases, downloaded binaries, and storage
 storage/
 sessions/
+db/install.ps1
 db/session_log/
 db/qdrant/qdrant.exe
 
@@ -40,10 +51,12 @@ apps/**/test-results/
 tests/command-run-codex-two-way/records/runs/
 tests/command-run-codex-two-way/records/summaries/
 priority-param-probe-results.json
+*.bun-build
 *.log
 *.tmp
 
 # Editors and OS metadata
 .idea/
 .vscode/
+.vs/
 .DS_Store

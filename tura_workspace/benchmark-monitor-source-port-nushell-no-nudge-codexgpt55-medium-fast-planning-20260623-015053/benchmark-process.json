@@ -1,0 +1,11 @@
+{
+  "RunId": "source-port-nushell-no-nudge-codexgpt55-medium-fast-planning-20260623-015053",
+  "MonitorRoot": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-nushell-no-nudge-codexgpt55-medium-fast-planning-20260623-015053",
+  "Stdout": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-nushell-no-nudge-codexgpt55-medium-fast-planning-20260623-015053\\benchmark.stdout.log",
+  "Stderr": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-nushell-no-nudge-codexgpt55-medium-fast-planning-20260623-015053\\benchmark.stderr.log",
+  "Agents": "tura-fast-shll,tura-planning-shll",
+  "Tasks": "nushell",
+  "TimeoutMs": 900000,
+  "Pid": 12808,
+  "StartedAt": "2026-06-23T01:50:53.4194835+02:00"
+}

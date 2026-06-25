@@ -2,14 +2,27 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "task_summary": {
+    "task_group": {
       "type": "string",
-      "description": "Optional task title/summary."
+      "description": "Optional few-word code work area for the active task. This is a broad implementation domain, not a specific task detail, progress report, completion summary, or user-visible reply. Correct examples: PDF editing, storefront frontend, order settlement service. Wrong examples: Create a slide deck about the fall of Constantinople in 1453, Add cart button animation, Check order system logs."
     },
     "status": {
       "type": "string",
-      "enum": ["question", "done"],
-      "description": "question when blocked on user feedback; done when the task is complete and verified."
+      "enum": ["doing", "question", "done"],
+      "description": "doing only when more command_run calls are required; question when blocked on user feedback; done only when the task is complete, verified, and any media to send/show has been read and inspected."
+    },
+    "task_type": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "description": "Complete set of prompt and Operation Manual types needed by the current task. Update it as soon as the task type is identified, keep it paired with task_group, and include multiple ids when multiple manuals apply. Runtime injects the current available task types from runtime prompt identities."
+    },
+    "compact_context": {
+      "type": "string",
+      "maxLength": 60000,
+      "description": "Optional context handoff summary. Use only when a new task no longer depends on the current main context or when a context checkpoint is needed. Include only details not already present in the current task conversation or prior summary."
     }
   }
 }

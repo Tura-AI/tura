@@ -3,7 +3,9 @@
 //! This module provides session storage functionality using the SessionInfo
 //! structure that wraps SessionManagement from mano.
 
-use crate::api::types::{GlobalEvent, Session as ApiSession, SessionStatus as ApiSessionStatus};
+use crate::contracts::{
+    GlobalEvent, Session as ApiSession, SessionContextTokens, SessionStatus as ApiSessionStatus,
+};
 use crate::session::config::{load_config, merge_config, TuraSessionConfig};
 use crate::session::manager::{
     agent_for_session_type, default_use_last_tool_call_response_for_session,
@@ -13,11 +15,12 @@ use crate::session::manager::{
 use crate::session_db_client::SessionDbClient;
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
+use runtime::state_machine::runtime_management::RuntimeSessionSyncStatus;
 use runtime::state_machine::session_management::{
     PlanStatus, PollInterval, SessionState, StartCondition, TaskStep,
 };
-use session_log::{SessionRecord, SessionSnapshot};
-use std::collections::{HashMap, HashSet};
+use session_log::{SessionRecord, SessionSnapshot, UpsertSessionRequest};
+use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(test)]
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -56,15 +59,46 @@ pub struct MessagePart {
 }
 
 #[derive(Clone)]
+struct LiveMessageOverlay {
+    runtime_id: Option<String>,
+    message: Message,
+}
+
+#[derive(Clone)]
 pub struct SessionStore {
     sessions: Arc<RwLock<HashMap<String, SessionInfo>>>,
     messages: Arc<RwLock<HashMap<String, Vec<Message>>>>,
+    session_db_messages: Arc<RwLock<HashMap<String, Vec<Message>>>>,
+    session_db_loaded: Arc<RwLock<HashSet<String>>>,
+    session_db_refresh_needed: Arc<RwLock<HashSet<String>>>,
+    live_messages: Arc<RwLock<HashMap<String, Vec<LiveMessageOverlay>>>>,
     todos: Arc<RwLock<HashMap<String, Vec<serde_json::Value>>>>,
     children: Arc<RwLock<HashMap<String, Vec<String>>>>,
     user_commands: Arc<RwLock<HashMap<String, Vec<String>>>>,
     cancelled: Arc<RwLock<HashSet<String>>>,
     current_session_id: Arc<RwLock<Option<String>>>,
-    events: Arc<RwLock<Vec<GlobalEvent>>>,
+    events: Arc<RwLock<EventLog>>,
+}
+
+const MAX_SESSION_EVENTS: usize = 10_000;
+
+struct EventLog {
+    next_sequence: u64,
+    entries: VecDeque<EventLogEntry>,
+}
+
+struct EventLogEntry {
+    sequence: u64,
+    event: GlobalEvent,
+}
+
+impl EventLog {
+    fn new() -> Self {
+        Self {
+            next_sequence: 0,
+            entries: VecDeque::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -91,7 +125,10 @@ use store_task_management::{
 
 #[path = "store_frontend.rs"]
 mod store_frontend;
-use store_frontend::{frontend_safe_part_value, normalize_tool_message_state};
+#[cfg(test)]
+pub(crate) use store_frontend::frontend_safe_value;
+use store_frontend::normalize_tool_message_state;
+pub(crate) use store_frontend::{frontend_safe_part_state, frontend_safe_part_value};
 
 #[path = "store_messages.rs"]
 mod store_messages;
@@ -107,12 +144,16 @@ impl SessionStore {
         let store = Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             messages: Arc::new(RwLock::new(HashMap::new())),
+            session_db_messages: Arc::new(RwLock::new(HashMap::new())),
+            session_db_loaded: Arc::new(RwLock::new(HashSet::new())),
+            session_db_refresh_needed: Arc::new(RwLock::new(HashSet::new())),
+            live_messages: Arc::new(RwLock::new(HashMap::new())),
             todos: Arc::new(RwLock::new(HashMap::new())),
             children: Arc::new(RwLock::new(HashMap::new())),
             user_commands: Arc::new(RwLock::new(HashMap::new())),
             cancelled: Arc::new(RwLock::new(HashSet::new())),
             current_session_id: Arc::new(RwLock::new(None)),
-            events: Arc::new(RwLock::new(Vec::new())),
+            events: Arc::new(RwLock::new(EventLog::new())),
         };
         store.init_default_session();
         store
@@ -198,6 +239,7 @@ impl SessionStore {
         }
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     fn hydrate_directory_background(&self, directory: Option<String>) {
         let Some(directory) = directory else {
             return;
@@ -222,6 +264,10 @@ impl SessionStore {
         record.info.management.use_last_tool_call_response =
             record.info.use_last_tool_call_response;
         let session_id = record.info.id.clone();
+        self.session_db_messages
+            .write()
+            .insert(session_id.clone(), record.messages.clone());
+        self.session_db_loaded.write().insert(session_id.clone());
 
         if self.sessions.read().contains_key(&session_id) {
             return Ok(());
@@ -244,76 +290,54 @@ impl SessionStore {
         Ok(())
     }
 
-    fn persist_session(&self, session_id: &str) {
-        if let Err(err) = self.persist_session_result(session_id) {
-            tracing::warn!(session_id, error = %err, "failed to persist session");
-        }
-    }
-
-    fn persist_session_background(&self, session_id: &str) {
-        #[cfg(test)]
-        {
-            self.persist_session(session_id);
-        }
-
-        #[cfg(not(test))]
-        {
-            let session_id = session_id.to_string();
-            let store = self.clone();
-            std::thread::spawn(move || {
-                if let Err(err) = store.persist_session_result(&session_id) {
-                    tracing::warn!(session_id, error = %err, "failed to persist session");
-                }
-            });
-        }
-    }
-
-    pub fn persist_session_ack(&self, session_id: &str) -> Result<(), String> {
-        self.persist_session_result(session_id)
-    }
-
-    fn persist_session_result(&self, session_id: &str) -> Result<(), String> {
-        let info = self
-            .sessions
-            .read()
-            .get(session_id)
-            .cloned()
-            .ok_or_else(|| "session not found".to_string())?;
-        let messages = self
-            .messages
-            .read()
-            .get(session_id)
-            .cloned()
-            .unwrap_or_default();
-        let todos = self
-            .todos
-            .read()
-            .get(session_id)
-            .cloned()
-            .unwrap_or_default();
-        let parent_id = self.parent_for_child(session_id);
-        let record = PersistedSessionRecord {
-            info,
-            parent_id,
-            messages,
-            todos,
+    pub fn refresh_session_db_cache(&self, session_id: &str) -> Result<Vec<Message>, String> {
+        let client = SessionDbClient::discover()
+            .map_err(|err| format!("failed to discover session_log client: {err}"))?;
+        let Some(snapshot) = client
+            .get_session(session_id.to_string())
+            .map_err(|err| format!("failed to read session snapshot from session_log: {err}"))?
+        else {
+            self.session_db_messages.write().remove(session_id);
+            self.session_db_loaded
+                .write()
+                .insert(session_id.to_string());
+            self.session_db_refresh_needed.write().remove(session_id);
+            return Ok(Vec::new());
         };
+        let (_, records) = client
+            .list_session_records(session_id.to_string(), 0, 10_000)
+            .map_err(|err| format!("failed to read session records from session_log: {err}"))?;
+        let mut record = persisted_record_from_session_log(snapshot, records)?;
+        record.info.message_count = record.messages.len();
+        record.info.use_last_tool_call_response = default_use_last_tool_call_response_for_session(
+            record.info.session_type.as_deref().unwrap_or("coding"),
+            record.info.agent.as_deref(),
+        );
+        record.info.management.use_last_tool_call_response =
+            record.info.use_last_tool_call_response;
+        let messages = record.messages.clone();
 
-        SessionDbClient::discover()
-            .map_err(|err| err.to_string())?
-            .upsert_session(
-                serde_json::to_value(&record.info).map_err(|err| err.to_string())?,
-                record.parent_id,
-                record
-                    .messages
-                    .into_iter()
-                    .map(serde_json::to_value)
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|err| err.to_string())?,
-                record.todos,
-            )
-            .map_err(|err| err.to_string())?;
-        Ok(())
+        self.sessions
+            .write()
+            .insert(session_id.to_string(), record.info);
+        self.session_db_messages
+            .write()
+            .insert(session_id.to_string(), messages.clone());
+        self.todos
+            .write()
+            .insert(session_id.to_string(), record.todos);
+        self.session_db_loaded
+            .write()
+            .insert(session_id.to_string());
+        self.session_db_refresh_needed.write().remove(session_id);
+        if let Some(parent_id) = record.parent_id.filter(|value| !value.trim().is_empty()) {
+            let mut children = self.children.write();
+            let entry = children.entry(parent_id).or_default();
+            if !entry.iter().any(|id| id == session_id) {
+                entry.push(session_id.to_string());
+            }
+        }
+        Ok(messages)
     }
 
     fn persist_active_config(&self, session: &ApiSession) {
@@ -333,8 +357,12 @@ impl SessionStore {
             force_planning: Some(session.force_planning),
             model_variant: session.model_variant.clone(),
             model_acceleration_enabled: Some(session.model_acceleration_enabled),
+            active_persona: None,
+            show_react_kaomoji: None,
             ..TuraSessionConfig::default()
         };
+        patch.active_provider = None;
+        patch.active_model = None;
         patch.fill_model_parts();
         if let Err(err) = merge_config(directory, patch) {
             tracing::warn!(directory, error = %err, "failed to persist active session config");
@@ -410,6 +438,10 @@ impl SessionStore {
         ids
     }
 
+    pub fn user_command_root_session_id(&self, session_id: &str) -> String {
+        self.root_session_id(session_id)
+    }
+
     pub fn append_user_command(&self, session_id: &str, command: impl Into<String>) -> Vec<String> {
         let command = command.into();
         let command = command.trim();
@@ -440,6 +472,10 @@ impl SessionStore {
             .unwrap_or_default()
     }
 
+    pub fn clear_user_commands_for_session(&self, session_id: &str) -> Vec<String> {
+        self.take_user_commands_for_session(session_id)
+    }
+
     pub fn register_child_session(
         &self,
         parent_session_id: &str,
@@ -450,14 +486,15 @@ impl SessionStore {
     ) -> ApiSession {
         let now = Utc::now().timestamp_millis();
         if let Some(existing) = self.sessions.write().get_mut(child_session_id) {
-            existing.status = SessionStatusMano::Busy;
+            let _ = existing.transition(SessionState::Running);
+            existing.status = SessionStatusMano::from_state(existing.management.state);
             existing.updated_at = now;
             if existing.directory.is_none() {
                 existing.directory = directory;
             }
             if existing.management.session_name.trim().is_empty() {
                 existing.management.session_name =
-                    name.unwrap_or_else(|| format!("Subtask {}", child_session_id));
+                    name.unwrap_or_else(|| format!("Subtask {child_session_id}"));
             }
             {
                 let mut children = self.children.write();
@@ -477,11 +514,12 @@ impl SessionStore {
         );
         info.id = child_session_id.to_string();
         info.management.session_name =
-            name.unwrap_or_else(|| format!("Subtask {}", child_session_id));
-        info.status = SessionStatusMano::Busy;
+            name.unwrap_or_else(|| format!("Subtask {child_session_id}"));
         info.created_at = now;
         info.updated_at = now;
         info.management.session_id = child_session_id.to_string();
+        let _ = info.transition(SessionState::Running);
+        info.status = SessionStatusMano::from_state(info.management.state);
         if let Some(parent) = self.sessions.read().get(parent_session_id) {
             info.disable_permission_restrictions = parent.disable_permission_restrictions;
             info.management.disable_permission_restrictions =
@@ -532,6 +570,7 @@ impl SessionStore {
         model_acceleration_enabled: bool,
         disable_permission_restrictions: bool,
     ) -> ApiSession {
+        #[cfg(not(test))]
         self.hydrate_directory_background(directory.clone());
         let persisted_config = directory.as_deref().map(load_config).unwrap_or_default();
         let model = model.or(persisted_config.model.clone());
@@ -559,7 +598,6 @@ impl SessionStore {
         self.messages.write().insert(session_id, Vec::new());
         self.todos.write().insert(session.id.clone(), Vec::new());
         self.persist_active_config(&session);
-        self.persist_session_background(&session.id);
 
         session
     }
@@ -631,6 +669,7 @@ impl SessionStore {
             let mut patched = info.clone();
             match apply_task_management_patch(&mut patched, task_management) {
                 Ok(()) => {
+                    preserve_busy_doing_tasks(info, &mut patched);
                     info.management.session_name = patched.management.session_name;
                     info.management.task_plan = patched.management.task_plan;
                 }
@@ -645,7 +684,6 @@ impl SessionStore {
         let session = api_session_from_info(info, parent_id);
         drop(sessions);
         self.persist_active_config(&session);
-        self.persist_session(session_id);
         Some(session)
     }
 
@@ -661,13 +699,16 @@ impl SessionStore {
         info.updated_at = Utc::now().timestamp_millis();
         let session = api_session_from_info(info, parent_id);
         drop(sessions);
-        self.persist_session(session_id);
         Some(session)
     }
 
     pub fn delete_session(&self, session_id: &str) -> bool {
         if self.sessions.write().remove(session_id).is_some() {
             self.messages.write().remove(session_id);
+            self.session_db_messages.write().remove(session_id);
+            self.session_db_loaded.write().remove(session_id);
+            self.session_db_refresh_needed.write().remove(session_id);
+            self.live_messages.write().remove(session_id);
             self.todos.write().remove(session_id);
             self.children.write().remove(session_id);
             self.cancelled.write().remove(session_id);
@@ -684,6 +725,52 @@ impl SessionStore {
         } else {
             false
         }
+    }
+
+    pub fn attach_child_session(
+        &self,
+        parent_session_id: &str,
+        child_session_id: &str,
+    ) -> Option<ApiSession> {
+        if !self.sessions.read().contains_key(parent_session_id)
+            || !self.sessions.read().contains_key(child_session_id)
+        {
+            return None;
+        }
+        {
+            let mut children = self.children.write();
+            let entry = children.entry(parent_session_id.to_string()).or_default();
+            if !entry.iter().any(|id| id == child_session_id) {
+                entry.push(child_session_id.to_string());
+            }
+        }
+        self.get_session(child_session_id)
+    }
+
+    pub fn session_log_upsert_request(
+        &self,
+        session_id: &str,
+    ) -> Result<UpsertSessionRequest, String> {
+        let info = self
+            .sessions
+            .read()
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| format!("session {session_id} not found"))?;
+        let session = serde_json::to_value(&info)
+            .map_err(|error| format!("failed to serialize session {session_id}: {error}"))?;
+        let messages = self
+            .get_messages(session_id)
+            .into_iter()
+            .map(serde_json::to_value)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to serialize messages for {session_id}: {error}"))?;
+        Ok(UpsertSessionRequest {
+            session,
+            parent_id: self.parent_for_child(session_id),
+            messages,
+            todos: self.get_todos(session_id),
+        })
     }
 
     pub fn get_current_session(&self) -> Option<ApiSession> {
@@ -704,33 +791,197 @@ impl SessionStore {
         if let Some(info) = self.sessions.write().get_mut(session_id) {
             let now = Utc::now();
             let target_state = match status {
-                SessionStatusMano::Idle => SessionState::Created,
+                SessionStatusMano::Idle => match info.management.state {
+                    SessionState::Created | SessionState::Completed => SessionState::Created,
+                    SessionState::Running | SessionState::Paused => SessionState::Completed,
+                    SessionState::Failed | SessionState::Cancelled | SessionState::Interrupted => {
+                        info.management.state
+                    }
+                },
                 SessionStatusMano::Busy => SessionState::Running,
                 SessionStatusMano::Error => SessionState::Failed,
             };
-            if info.transition(target_state).is_err() && matches!(status, SessionStatusMano::Idle) {
-                info.management.state = SessionState::Created;
-                info.management.session_last_update_at = now;
+            if target_state != info.management.state {
+                if let Err(err) = info.transition(target_state) {
+                    tracing::warn!(
+                        session_id,
+                        current_state = ?info.management.state,
+                        target_state = ?target_state,
+                        error = %err,
+                        "session status update rejected by state machine"
+                    );
+                }
             }
-            info.status = status;
+            info.status = SessionStatusMano::from_state(info.management.state);
             info.updated_at = now.timestamp_millis();
         }
-        self.persist_session_background(session_id);
+        let (status, updated_at, context_tokens, usage) = self
+            .sessions
+            .read()
+            .get(session_id)
+            .map(|info| {
+                let context_tokens = session_context_tokens(info);
+                (
+                    info.status,
+                    info.updated_at,
+                    context_tokens,
+                    session_usage_from_info(info, context_tokens),
+                )
+            })
+            .unwrap_or_else(|| {
+                let context_tokens = crate::contracts::SessionContextTokens::default();
+                (
+                    status,
+                    Utc::now().timestamp_millis(),
+                    context_tokens,
+                    crate::contracts::SessionUsage::new(context_tokens, serde_json::Value::Null),
+                )
+            });
         self.push_event(GlobalEvent::SessionStatus {
-            properties: crate::api::types::SessionStatusProperties {
+            properties: crate::contracts::SessionStatusProperties {
                 session_id: session_id.to_string(),
+                updated_at,
                 status: match status {
                     SessionStatusMano::Idle => serde_json::json!({ "type": "idle" }),
                     SessionStatusMano::Busy => serde_json::json!({ "type": "busy" }),
                     SessionStatusMano::Error => serde_json::json!({ "type": "error" }),
                 },
+                context_tokens,
+                usage,
+            },
+        });
+    }
+
+    pub fn mark_interrupted(&self, session_id: &str) -> Option<ApiSession> {
+        let parent_id = self.parent_for_child(session_id);
+        let mut sessions = self.sessions.write();
+        let info = sessions.get_mut(session_id)?;
+        if matches!(
+            info.management.state,
+            SessionState::Failed | SessionState::Cancelled | SessionState::Interrupted
+        ) {
+            return Some(api_session_from_info(info, parent_id));
+        }
+        let now = Utc::now();
+        match info.management.state {
+            SessionState::Running | SessionState::Paused => {
+                if let Err(err) = info.transition(SessionState::Interrupted) {
+                    tracing::warn!(
+                        session_id,
+                        current_state = ?info.management.state,
+                        error = %err,
+                        "session interrupted transition rejected by state machine"
+                    );
+                    return Some(api_session_from_info(info, parent_id));
+                }
+            }
+            SessionState::Created | SessionState::Completed => {
+                info.management.state = SessionState::Interrupted;
+                info.management.session_last_update_at = now;
+            }
+            SessionState::Failed | SessionState::Cancelled | SessionState::Interrupted => {}
+        }
+        for task in &mut info.management.task_plan.detailed_tasks {
+            if task.status == PlanStatus::Doing {
+                task.status = PlanStatus::WaitingUser;
+            }
+        }
+        info.updated_at = now.timestamp_millis();
+        info.management.session_last_update_at = now;
+        info.status = SessionStatusMano::from_state(info.management.state);
+        Some(api_session_from_info(info, parent_id))
+    }
+
+    pub fn pause_session_for_abort(&self, session_id: &str) -> Option<ApiSession> {
+        let parent_id = self.parent_for_child(session_id);
+        let mut sessions = self.sessions.write();
+        let info = sessions.get_mut(session_id)?;
+        let now = Utc::now();
+
+        for task in &mut info.management.task_plan.detailed_tasks {
+            if !matches!(
+                task.status,
+                PlanStatus::WaitingUser | PlanStatus::Done | PlanStatus::Archived
+            ) {
+                task.status = PlanStatus::WaitingUser;
+            }
+        }
+
+        info.management.state = match info.management.state {
+            SessionState::Running | SessionState::Paused | SessionState::Completed => {
+                SessionState::Completed
+            }
+            SessionState::Created
+            | SessionState::Failed
+            | SessionState::Cancelled
+            | SessionState::Interrupted => SessionState::Created,
+        };
+        info.status = SessionStatusMano::Idle;
+        info.updated_at = now.timestamp_millis();
+        info.management.session_last_update_at = now;
+
+        Some(api_session_from_info(info, parent_id))
+    }
+
+    pub fn update_session_runtime_usage(&self, session_id: &str, usage: serde_json::Value) -> bool {
+        let mut sessions = self.sessions.write();
+        let Some(info) = sessions.get_mut(session_id) else {
+            return false;
+        };
+        if info.management.runtime_usage == usage {
+            return false;
+        }
+        info.management.runtime_usage = usage;
+        info.updated_at = Utc::now().timestamp_millis();
+        true
+    }
+
+    pub fn update_session_context_tokens(
+        &self,
+        session_id: &str,
+        context_tokens: crate::contracts::SessionContextTokens,
+    ) -> bool {
+        let mut sessions = self.sessions.write();
+        let Some(info) = sessions.get_mut(session_id) else {
+            return false;
+        };
+        if info.management.context_tokens.input == context_tokens.input
+            && info.management.context_tokens.limit == context_tokens.limit
+        {
+            return false;
+        }
+        info.management.context_tokens =
+            runtime::state_machine::session_management::ContextTokenStats {
+                input: context_tokens.input,
+                limit: context_tokens.limit,
+            };
+        info.updated_at = Utc::now().timestamp_millis();
+        true
+    }
+
+    pub fn push_current_session_status_event(&self, session_id: &str) {
+        let Some(info) = self.sessions.read().get(session_id).cloned() else {
+            return;
+        };
+        let context_tokens = session_context_tokens(&info);
+        self.push_event(GlobalEvent::SessionStatus {
+            properties: crate::contracts::SessionStatusProperties {
+                session_id: session_id.to_string(),
+                updated_at: info.updated_at,
+                status: match info.status {
+                    SessionStatusMano::Idle => serde_json::json!({ "type": "idle" }),
+                    SessionStatusMano::Busy => serde_json::json!({ "type": "busy" }),
+                    SessionStatusMano::Error => serde_json::json!({ "type": "error" }),
+                },
+                context_tokens,
+                usage: session_usage_from_info(&info, context_tokens),
             },
         });
     }
 
     pub fn claim_due_task_runs(&self, now: DateTime<Utc>) -> Vec<ScheduledTaskRun> {
         let mut claimed = Vec::new();
-        let mut persist_ids = Vec::new();
+        let mut claimed_ids = Vec::new();
         {
             let mut sessions = self.sessions.write();
             for info in sessions.values_mut() {
@@ -747,6 +998,15 @@ impl SessionStore {
                 else {
                     continue;
                 };
+                if let Err(err) = info.transition(SessionState::Running) {
+                    tracing::warn!(
+                        session_id = %info.id,
+                        current_state = ?info.management.state,
+                        error = %err,
+                        "scheduled task claim rejected by state machine"
+                    );
+                    continue;
+                }
 
                 let plan_summary = info.management.task_plan.plan_summary.clone();
                 let task = &mut info.management.task_plan.detailed_tasks[task_index];
@@ -757,33 +1017,42 @@ impl SessionStore {
                     task.start_at = next_polling_start(task.start_at, task.poll_interval, now);
                 }
 
-                info.status = SessionStatusMano::Busy;
+                info.status = SessionStatusMano::from_state(info.management.state);
                 info.updated_at = now.timestamp_millis();
-                info.management.state = SessionState::Running;
-                info.management.session_last_update_at = now;
                 claimed.push(ScheduledTaskRun {
                     session_id: info.id.clone(),
                     task_summary,
                     start_condition,
                 });
-                persist_ids.push(info.id.clone());
+                claimed_ids.push(info.id.clone());
             }
         }
 
-        for session_id in persist_ids {
-            self.persist_session(&session_id);
-            if let Some(session) = self.get_session(&session_id) {
+        for session_id in claimed_ids {
+            let (context_tokens, usage) = if let Some(session) = self.get_session(&session_id) {
+                let context_tokens = session.context_tokens;
+                let usage = session.usage.clone();
                 self.push_event(GlobalEvent::SessionUpdated {
-                    properties: crate::api::types::SessionUpdatedProperties {
+                    properties: crate::contracts::SessionUpdatedProperties {
                         session_id: session_id.clone(),
                         info: session,
                     },
                 });
-            }
+                (context_tokens, usage)
+            } else {
+                let context_tokens = crate::contracts::SessionContextTokens::default();
+                (
+                    context_tokens,
+                    crate::contracts::SessionUsage::new(context_tokens, serde_json::Value::Null),
+                )
+            };
             self.push_event(GlobalEvent::SessionStatus {
-                properties: crate::api::types::SessionStatusProperties {
+                properties: crate::contracts::SessionStatusProperties {
                     session_id,
+                    updated_at: now.timestamp_millis(),
                     status: serde_json::json!({ "type": "busy" }),
+                    context_tokens,
+                    usage,
                 },
             });
         }
@@ -801,7 +1070,6 @@ impl SessionStore {
             info.updated_at = Utc::now().timestamp_millis();
             info.status = SessionStatusMano::from_state(info.management.state);
         }
-        self.persist_session(session_id);
     }
 
     pub fn session_count(&self) -> usize {
@@ -809,15 +1077,37 @@ impl SessionStore {
     }
 
     pub fn push_event(&self, event: GlobalEvent) {
-        self.events.write().push(event);
+        let mut log = self.events.write();
+        let sequence = log.next_sequence;
+        log.next_sequence = log.next_sequence.saturating_add(1);
+        log.entries.push_back(EventLogEntry { sequence, event });
+        while log.entries.len() > MAX_SESSION_EVENTS {
+            log.entries.pop_front();
+        }
+    }
+
+    pub fn event_cursor(&self) -> u64 {
+        self.events.read().next_sequence
+    }
+
+    pub fn next_event(&self, cursor: &mut u64) -> Option<GlobalEvent> {
+        let log = self.events.read();
+        let first_sequence = log.entries.front()?.sequence;
+        if *cursor < first_sequence {
+            *cursor = first_sequence;
+        }
+        let index = cursor.saturating_sub(first_sequence) as usize;
+        let entry = log.entries.get(index)?;
+        *cursor = entry.sequence.saturating_add(1);
+        Some(entry.event.clone())
     }
 
     pub fn pop_event(&self) -> Option<GlobalEvent> {
-        let mut events = self.events.write();
-        if events.is_empty() {
-            return None;
-        }
-        Some(events.remove(0))
+        self.events
+            .write()
+            .entries
+            .pop_front()
+            .map(|entry| entry.event)
     }
 
     pub fn mark_cancelled(&self, session_id: &str) {
@@ -882,10 +1172,10 @@ fn api_session_from_info(info: &SessionInfo, parent_id: Option<String>) -> ApiSe
         .filter(|value| !value.is_empty());
     let session_name = info.management.session_name.trim().to_string();
     let session_name = (!session_name.is_empty()).then_some(session_name);
-    let session_display_name = plan_summary
+    let session_display_name = session_name
         .clone()
+        .or_else(|| plan_summary.clone())
         .or(first_task_summary)
-        .or_else(|| session_name.clone())
         .or_else(|| Some("New Session".to_string()));
     ApiSession {
         id: info.id.clone(),
@@ -911,8 +1201,51 @@ fn api_session_from_info(info: &SessionInfo, parent_id: Option<String>) -> ApiSe
         },
         message_count: info.message_count,
         task_management: info.management.task_management_json(),
+        context_tokens: session_context_tokens(info),
+        usage: session_usage_from_info(info, session_context_tokens(info)),
         plan_summary,
         session_display_name,
+    }
+}
+
+fn session_context_tokens(info: &SessionInfo) -> SessionContextTokens {
+    SessionContextTokens {
+        input: info.management.context_tokens.input,
+        limit: info.management.context_tokens.limit,
+    }
+}
+
+fn session_usage_from_info(
+    info: &SessionInfo,
+    context_tokens: SessionContextTokens,
+) -> crate::contracts::SessionUsage {
+    crate::contracts::SessionUsage::new(context_tokens, info.management.runtime_usage.clone())
+}
+
+fn preserve_busy_doing_tasks(current: &SessionInfo, patched: &mut SessionInfo) {
+    if !matches!(current.status, SessionStatusMano::Busy) {
+        return;
+    }
+
+    for current_task in current
+        .management
+        .task_plan
+        .detailed_tasks
+        .iter()
+        .filter(|task| task.status == PlanStatus::Doing)
+    {
+        let Some(patched_task) = patched
+            .management
+            .task_plan
+            .detailed_tasks
+            .iter_mut()
+            .find(|task| task.task_id == current_task.task_id)
+        else {
+            continue;
+        };
+        if matches!(patched_task.status, PlanStatus::Todo | PlanStatus::Question) {
+            patched_task.status = PlanStatus::Doing;
+        }
     }
 }
 
@@ -934,13 +1267,21 @@ fn persisted_record_from_session_log(
     }
     info.message_count = snapshot.message_count as usize;
 
+    // Only user/assistant/system records are conversation messages. The runtime
+    // also persists auxiliary records (log / tool / runtime / event checkpoints)
+    // that are not `Message`s; skip any record that does not deserialize rather
+    // than failing the whole session load (a single such record must not make a
+    // session invisible to the gateway).
     let messages = records
         .into_iter()
-        .map(|record| {
-            serde_json::from_value::<Message>(record.record)
-                .map_err(|err| format!("invalid session_log message record: {err}"))
+        .filter_map(|record| match serde_json::from_value::<Message>(record.record) {
+            Ok(message) => Some(message),
+            Err(err) => {
+                tracing::debug!(error = %err, "skipping non-message session_log record during hydration");
+                None
+            }
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<_>>();
 
     Ok(PersistedSessionRecord {
         info,

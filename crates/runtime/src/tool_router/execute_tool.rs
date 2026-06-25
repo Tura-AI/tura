@@ -43,15 +43,17 @@ pub async fn execute_tool(input: ExecuteToolInput) -> Result<ToolExecutionResult
     }
 
     let interface_content = fs::read_to_string(&interface_path)
-        .map_err(|e| format!("failed to read tool interface: {}", e))?;
+        .map_err(|e| format!("failed to read tool interface: {e}"))?;
 
     let _interface: serde_json::Value = serde_json::from_str(&interface_content)
-        .map_err(|e| format!("failed to parse tool interface: {}", e))?;
+        .map_err(|e| format!("failed to parse tool interface: {e}"))?;
 
     if execution_tool_name == "command_run" {
-        let output_value = code_tools::command_run::execute_async_value_with_allowed(
+        let output_value = crate::router_command_run::execute_command_run_value_or_error(
             input.arguments.clone(),
             input.session_directory.clone(),
+            Some(&input.session_id),
+            Some(&input.runtime_id),
             input.allowed_command_run_commands.clone(),
         )
         .await;
@@ -141,25 +143,25 @@ pub async fn dequeue_tool_call(
     redis_url: &str,
 ) -> Result<Option<ToolRouterQueueItem>, String> {
     let client = redis::Client::open(redis_url)
-        .map_err(|e| format!("failed to create redis client: {}", e))?;
+        .map_err(|e| format!("failed to create redis client: {e}"))?;
 
     let mut con = client
         .get_multiplexed_async_connection()
         .await
-        .map_err(|e| format!("failed to get redis connection: {}", e))?;
+        .map_err(|e| format!("failed to get redis connection: {e}"))?;
 
-    let queue_key = format!("tool_router:queue:{}", session_id);
+    let queue_key = format!("tool_router:queue:{session_id}");
 
     let result: Option<String> = redis::cmd("LPOP")
         .arg(&queue_key)
         .query_async(&mut con)
         .await
-        .map_err(|e| format!("failed to dequeue tool call: {}", e))?;
+        .map_err(|e| format!("failed to dequeue tool call: {e}"))?;
 
     match result {
         Some(payload) => {
             let item: ToolRouterQueueItem = serde_json::from_str(&payload)
-                .map_err(|e| format!("failed to deserialize tool call: {}", e))?;
+                .map_err(|e| format!("failed to deserialize tool call: {e}"))?;
             Ok(Some(item))
         }
         None => Ok(None),
@@ -172,24 +174,24 @@ pub async fn enqueue_tool_result(
     redis_url: &str,
 ) -> Result<(), String> {
     let client = redis::Client::open(redis_url)
-        .map_err(|e| format!("failed to create redis client: {}", e))?;
+        .map_err(|e| format!("failed to create redis client: {e}"))?;
 
     let mut con = client
         .get_multiplexed_async_connection()
         .await
-        .map_err(|e| format!("failed to get redis connection: {}", e))?;
+        .map_err(|e| format!("failed to get redis connection: {e}"))?;
 
-    let queue_key = format!("tool_result:queue:{}", session_id);
+    let queue_key = format!("tool_result:queue:{session_id}");
 
     let payload = serde_json::to_string(result)
-        .map_err(|e| format!("failed to serialize tool result: {}", e))?;
+        .map_err(|e| format!("failed to serialize tool result: {e}"))?;
 
     redis::cmd("RPUSH")
         .arg(&queue_key)
         .arg(&payload)
         .query_async::<_, ()>(&mut con)
         .await
-        .map_err(|e| format!("failed to enqueue tool result: {}", e))?;
+        .map_err(|e| format!("failed to enqueue tool result: {e}"))?;
 
     Ok(())
 }

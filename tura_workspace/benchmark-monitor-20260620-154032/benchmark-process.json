@@ -1,0 +1,11 @@
+{
+  "RunId": "source-port-eza-thinking-oldprompts-openai-release-20260620-154032",
+  "RunRoot": "C:\\Users\\liuliu\\Documents\\tura_workspace\\target\\project-rebuild-source-port\\source-port-eza-thinking-oldprompts-openai-release-20260620-154032",
+  "MonitorRoot": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-20260620-154032",
+  "Pid": 3368,
+  "Stdout": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-20260620-154032\\benchmark.stdout.log",
+  "Stderr": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-20260620-154032\\benchmark.stderr.log",
+  "ReleaseExe": "C:\\Users\\liuliu\\Documents\\tura\\target\\release\\tura_exec.exe",
+  "Model": "openai/gpt-5.5",
+  "PromptSource": "015d0e71"
+}

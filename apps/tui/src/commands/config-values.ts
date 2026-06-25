@@ -2,6 +2,8 @@ import { CliUsageError } from "../types/common.js";
 import type { SessionConfig } from "../types/config.js";
 import { t } from "../i18n.js";
 
+export type CommandRunShell = "bash" | "zsh" | "shell_command";
+
 export interface RuntimeConfigOverrides {
   model?: string;
   agent?: string;
@@ -10,6 +12,7 @@ export interface RuntimeConfigOverrides {
   modelAccelerationEnabled?: boolean;
   killProcessesOnStart?: boolean;
   validatorEnabled?: boolean;
+  commandRunShell?: CommandRunShell;
 }
 
 export function parseConfigAssignment(entry: string): [string, unknown] {
@@ -61,6 +64,8 @@ function assignSessionConfigValue(
   const canonical = canonicalKey(key);
   if (canonical === "agent") {
     patch.active_agent = stringValue(value);
+  } else if (canonical === "persona") {
+    patch.active_persona = stringValue(value);
   } else if (canonical === "model_variant") {
     patch.model_variant = stringValue(value);
   } else if (canonical === "model_acceleration_enabled") {
@@ -80,7 +85,7 @@ function assignSessionConfigValue(
   } else if (canonical === "show_command_instructions") {
     patch.show_command_instructions = booleanValue(value, key);
   } else if (canonical === "model") {
-    patch.model = stringValue(value);
+    assignModelConfigValue(patch, stringValue(value));
   } else if (canonical === "active_model") {
     patch.active_model = stringValue(value);
   } else if (canonical === "active_provider") {
@@ -94,6 +99,19 @@ function assignSessionConfigValue(
   } else {
     throw new CliUsageError(t("unsupportedSessionConfigKey", { key }));
   }
+}
+
+function assignModelConfigValue(patch: Partial<SessionConfig>, model: string): void {
+  patch.model = model;
+  const separator = model.indexOf("/");
+  if (separator <= 0 || separator === model.length - 1) return;
+  const provider = model.slice(0, separator).trim();
+  const modelID = model.slice(separator + 1).trim();
+  if (!provider || !modelID) return;
+  patch.active_provider = provider;
+  patch.active_model = modelID.startsWith(`${provider}/`)
+    ? modelID.slice(provider.length + 1)
+    : modelID;
 }
 
 function assignRuntimeConfigValue(
@@ -113,11 +131,13 @@ function assignRuntimeConfigValue(
   else if (canonical === "kill_processes_on_start")
     overrides.killProcessesOnStart = booleanValue(value, key);
   else if (canonical === "validator_enabled") overrides.validatorEnabled = booleanValue(value, key);
+  else if (canonical === "command_run_shell") overrides.commandRunShell = shellValue(value, key);
 }
 
 function canonicalKey(key: string): string {
   const normalized = key.trim().replace(/-/g, "_");
   if (normalized === "agent" || normalized === "active_agent") return "agent";
+  if (normalized === "persona" || normalized === "active_persona") return "persona";
   if (
     normalized === "reasoning_effort" ||
     normalized === "model_reasoning_effort" ||
@@ -162,4 +182,12 @@ function booleanValue(value: unknown, key: string): boolean {
 
 function serviceTierAcceleration(value: unknown): boolean {
   return booleanValue(value, "service_tier");
+}
+
+export function shellValue(value: unknown, key = "command_run_shell"): CommandRunShell {
+  const normalized = String(value).trim();
+  if (normalized === "bash") return "bash";
+  if (normalized === "zsh") return "zsh";
+  if (normalized === "shll") return "shell_command";
+  throw new CliUsageError(t("unsupportedCommandRunShell", { key, value: normalized }));
 }

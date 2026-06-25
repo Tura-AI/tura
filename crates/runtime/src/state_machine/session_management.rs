@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use super::agent_management::AgentName;
@@ -17,8 +18,11 @@ pub type SessionId = String;
 /// Natural-language session name.
 pub type SessionName = String;
 
-/// High-level task category for the whole session.
-pub type SessionTopic = String;
+/// Runtime prompt manual task categories active for the whole session.
+pub type SessionTaskType = Vec<String>;
+
+/// Command capabilities loaded into the active session context.
+pub type SessionCapabilities = Vec<String>;
 
 /// User input text that started the task.
 pub type UserInputText = String;
@@ -26,7 +30,7 @@ pub type UserInputText = String;
 /// Summarized user goal extracted from the original request.
 pub type UserGoal = String;
 
-/// Free-form historical execution log entry.
+/// Free-form execution log entry.
 pub type SessionLogEntry = String;
 
 /// JSON text describing the tools needed by a step.
@@ -79,20 +83,39 @@ pub struct SessionInput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanStatus {
-    #[serde(alias = "pending")]
     #[default]
     Todo,
     WaitingUser,
-    #[serde(alias = "in_progress")]
     Doing,
     Question,
-    #[serde(alias = "completed")]
     Done,
-    #[serde(alias = "cancelled")]
     Archived,
 }
 
 pub type TaskStatus = PlanStatus;
+
+pub const DEFAULT_CONTEXT_TOKEN_LIMIT: u64 = 255_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextTokenStats {
+    #[serde(default)]
+    pub input: u64,
+    #[serde(default = "default_context_token_limit")]
+    pub limit: u64,
+}
+
+impl Default for ContextTokenStats {
+    fn default() -> Self {
+        Self {
+            input: 0,
+            limit: DEFAULT_CONTEXT_TOKEN_LIMIT,
+        }
+    }
+}
+
+fn default_context_token_limit() -> u64 {
+    DEFAULT_CONTEXT_TOKEN_LIMIT
+}
 
 /// Condition that starts or resumes a task-plan item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -179,29 +202,7 @@ pub struct TaskPlan {
     pub detailed_tasks: Vec<TaskStep>,
 }
 
-/// State machine for a session lifecycle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SessionState {
-    /// Session has been created but not started.
-    Created,
-    /// Session is actively processing work.
-    Running,
-    /// Session is temporarily paused.
-    Paused,
-    /// Session finished successfully.
-    Completed,
-    /// Session finished with a failure.
-    Failed,
-    /// Session was manually cancelled.
-    Cancelled,
-}
-
-impl SessionState {
-    /// Returns true if transitioning from `self` to `next` is allowed.
-    pub fn can_transition_to(self, next: SessionState) -> bool {
-        crate::session_state::transitions::can_transition_to(self, next)
-    }
-}
+pub use session_log::SessionState;
 
 /// Root session state object.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -217,8 +218,12 @@ pub struct SessionManagement {
     pub session_directory: PathBuf,
     /// Whether this session uses Docker.
     pub session_uses_docker: bool,
-    /// High-level session topic.
-    pub session_topic: SessionTopic,
+    /// Runtime prompt manual task types active for this session.
+    #[serde(default, deserialize_with = "deserialize_task_type")]
+    pub task_type: SessionTaskType,
+    /// Command capabilities already loaded into the active session context.
+    #[serde(default, deserialize_with = "deserialize_session_capabilities")]
+    pub session_capabilities: SessionCapabilities,
     /// Total turn count across the whole tree of the session.
     pub session_current_turn: u64,
     /// Historical execution log entries.
@@ -253,6 +258,22 @@ pub struct SessionManagement {
     /// Whether the active agent state for this run includes planning.
     #[serde(default)]
     pub planning_enabled: bool,
+    /// Whether the active agent requests reflective task-status prompt style.
+    #[serde(default)]
+    pub reflection_enabled: bool,
+    /// Whether this session should keep running until the goal is explicitly
+    /// settled by task_status.
+    #[serde(default)]
+    pub goal_mode: bool,
+    /// Last user command that explicitly enabled goal mode.
+    #[serde(default)]
+    pub last_goal_user_input: String,
+    /// Latest provider-reported input token count and active compaction limit.
+    #[serde(default)]
+    pub context_tokens: ContextTokenStats,
+    /// Latest terminal provider token/cost report for the session.
+    #[serde(default)]
+    pub runtime_usage: serde_json::Value,
 }
 
 fn default_use_last_tool_call_response() -> bool {
@@ -274,24 +295,32 @@ impl SessionManagement {
         session_name: SessionName,
         session_directory: PathBuf,
         session_uses_docker: bool,
-        session_topic: SessionTopic,
+        task_type: impl IntoSessionTaskType,
         input: SessionInput,
         user_goal: UserGoal,
         now: UtcDateTimeMs,
     ) -> Self {
+        let goal_mode = goal_mode_enabled_from_env();
+        let current_objective = input.user_input.trim().to_string();
+        let last_goal_user_input = if goal_mode {
+            current_objective.clone()
+        } else {
+            String::new()
+        };
         Self {
             session_id,
             session_name,
             auto_session_name: true,
             session_directory,
             session_uses_docker,
-            session_topic,
+            task_type: task_type.into_session_task_type(),
+            session_capabilities: Vec::new(),
             session_current_turn: 0,
             session_log: Vec::new(),
             session_created_at: now,
             session_last_update_at: now,
             session_started_at: now,
-            current_objective: input.user_input.trim().to_string(),
+            current_objective,
             input,
             user_goal,
             task_plan: TaskPlan::default(),
@@ -300,6 +329,11 @@ impl SessionManagement {
             is_child_session: false,
             disable_permission_restrictions: false,
             planning_enabled: false,
+            reflection_enabled: false,
+            goal_mode,
+            last_goal_user_input,
+            context_tokens: ContextTokenStats::default(),
+            runtime_usage: serde_json::Value::Null,
         }
     }
 
@@ -323,16 +357,93 @@ impl SessionManagement {
     /// not the lifetime of the conversation. Reusing a session after switching
     /// back to it should keep its history but start the next run from `Created`.
     pub fn prepare_for_new_user_turn(&mut self, input: SessionInput, now: UtcDateTimeMs) {
-        self.current_objective = input.user_input.trim().to_string();
+        let current_objective = input.user_input.trim().to_string();
+        self.current_objective = current_objective.clone();
+        if goal_mode_enabled_from_env() {
+            self.goal_mode = true;
+            self.last_goal_user_input = current_objective;
+        }
         self.input = input;
         if matches!(
             self.state,
-            SessionState::Completed | SessionState::Failed | SessionState::Cancelled
+            SessionState::Completed
+                | SessionState::Failed
+                | SessionState::Cancelled
+                | SessionState::Interrupted
         ) {
             self.state = SessionState::Created;
             self.session_started_at = now;
         }
         self.session_last_update_at = now;
+    }
+
+    /// Replaces the active task-type list and returns ids that were not present
+    /// in the previous state.
+    pub fn replace_task_type(&mut self, task_type: impl IntoSessionTaskType) -> Vec<String> {
+        let next = task_type.into_session_task_type();
+        let previous = self.task_type.iter().cloned().collect::<HashSet<_>>();
+        let added = next
+            .iter()
+            .filter(|task_type| !previous.contains(*task_type))
+            .cloned()
+            .collect::<Vec<_>>();
+        self.task_type = next;
+        added
+    }
+
+    /// Records capabilities loaded into the current context. Existing entries are never removed.
+    pub fn record_session_capabilities<I, S>(&mut self, capabilities: I) -> Vec<String>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.record_session_capabilities_at(capabilities, Utc::now())
+    }
+
+    /// Records capabilities loaded into the current context at a known timestamp.
+    pub fn record_session_capabilities_at<I, S>(
+        &mut self,
+        capabilities: I,
+        now: UtcDateTimeMs,
+    ) -> Vec<String>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut seen = self
+            .session_capabilities
+            .iter()
+            .cloned()
+            .collect::<HashSet<_>>();
+        let mut added = Vec::new();
+        for capability in capabilities {
+            let Some(capability) = normalize_session_capability(capability.as_ref()) else {
+                continue;
+            };
+            if seen.insert(capability.clone()) {
+                self.session_capabilities.push(capability.clone());
+                added.push(capability);
+            }
+        }
+        if !added.is_empty() {
+            self.session_last_update_at = now;
+        }
+        added
+    }
+
+    /// Rebuilds the loaded capability set after context compaction.
+    pub fn reset_session_capabilities_at<I, S>(&mut self, capabilities: I, now: UtcDateTimeMs)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.session_capabilities = normalize_session_capabilities(capabilities);
+        self.session_last_update_at = now;
+    }
+
+    pub fn has_session_capability(&self, capability: &str) -> bool {
+        normalize_session_capability(capability)
+            .is_some_and(|capability| self.session_capabilities.contains(&capability))
     }
 
     /// Appends a log entry and refreshes the update timestamp.
@@ -366,6 +477,106 @@ impl SessionManagement {
     }
 }
 
+pub trait IntoSessionTaskType {
+    fn into_session_task_type(self) -> SessionTaskType;
+}
+
+impl IntoSessionTaskType for SessionTaskType {
+    fn into_session_task_type(self) -> SessionTaskType {
+        normalize_task_type_values(self)
+    }
+}
+
+impl IntoSessionTaskType for String {
+    fn into_session_task_type(self) -> SessionTaskType {
+        normalize_task_type_values([self])
+    }
+}
+
+impl IntoSessionTaskType for &str {
+    fn into_session_task_type(self) -> SessionTaskType {
+        normalize_task_type_values([self.to_string()])
+    }
+}
+
+fn normalize_task_type_values(values: impl IntoIterator<Item = String>) -> SessionTaskType {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for value in values {
+        let value = value.trim();
+        if value.is_empty() || is_legacy_session_kind(value) {
+            continue;
+        }
+        if seen.insert(value.to_string()) {
+            out.push(value.to_string());
+        }
+    }
+    out
+}
+
+fn normalize_session_capability(value: &str) -> Option<String> {
+    let capability = code_tools::commands::canonical_command(value.trim());
+    if capability.is_empty() || capability == "command_run" {
+        return None;
+    }
+    Some(capability)
+}
+
+fn normalize_session_capabilities<I, S>(values: I) -> SessionCapabilities
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for value in values {
+        let Some(capability) = normalize_session_capability(value.as_ref()) else {
+            continue;
+        };
+        if seen.insert(capability.clone()) {
+            out.push(capability);
+        }
+    }
+    out
+}
+
+fn is_legacy_session_kind(value: &str) -> bool {
+    matches!(
+        value,
+        "coding" | "general" | "programming" | "development" | "testing"
+    )
+}
+
+fn deserialize_session_capabilities<'de, D>(
+    deserializer: D,
+) -> Result<SessionCapabilities, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Array(values) => Ok(normalize_session_capabilities(
+            values
+                .into_iter()
+                .filter_map(|value| value.as_str().map(ToString::to_string)),
+        )),
+        serde_json::Value::String(value) => Ok(normalize_session_capabilities([value])),
+        serde_json::Value::Null => Ok(Vec::new()),
+        other => Err(serde::de::Error::custom(format!(
+            "session_capabilities must be a string array, got {other}"
+        ))),
+    }
+}
+
+fn goal_mode_enabled_from_env() -> bool {
+    std::env::var("TURA_GOAL_MODE").ok().is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on" | "enabled" | "goal"
+        )
+    })
+}
+
 fn deserialize_task_plan<'de, D>(deserializer: D) -> Result<TaskPlan, D::Error>
 where
     D: Deserializer<'de>,
@@ -381,11 +592,42 @@ where
     serde_json::from_value(value).map_err(serde::de::Error::custom)
 }
 
+fn deserialize_task_type<'de, D>(deserializer: D) -> Result<SessionTaskType, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::String(value) => Ok(normalize_task_type_values([value])),
+        serde_json::Value::Array(values) => {
+            Ok(normalize_task_type_values(values.into_iter().filter_map(
+                |value| value.as_str().map(ToString::to_string),
+            )))
+        }
+        serde_json::Value::Null => Ok(Vec::new()),
+        other => Err(serde::de::Error::custom(format!(
+            "task_type must be a string array, got {other}"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{PlanStatus, SessionInput, SessionManagement, SessionState, TaskStep};
     use chrono::Utc;
+    use std::ffi::OsString;
     use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn restore_env(key: &str, value: Option<OsString>) {
+        if let Some(value) = value {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
+    }
 
     fn session_in_state(state: SessionState) -> SessionManagement {
         let now = Utc::now();
@@ -446,6 +688,158 @@ mod tests {
     }
 
     #[test]
+    fn session_capabilities_append_only_until_compact_rebuild() {
+        let now = Utc::now();
+        let mut session = session_in_state(SessionState::Running);
+
+        assert_eq!(
+            session.record_session_capabilities_at(
+                ["shell_command", "command_run", "read_media", "read_media"],
+                now,
+            ),
+            vec![
+                code_tools::commands::active_shell_command_name().to_string(),
+                "read_media".to_string()
+            ]
+        );
+        assert_eq!(
+            session.session_capabilities,
+            vec![
+                code_tools::commands::active_shell_command_name().to_string(),
+                "read_media".to_string()
+            ]
+        );
+        assert!(session.has_session_capability("shell_command"));
+        assert!(session.has_session_capability("read_media"));
+
+        session.replace_task_type(Vec::<String>::new());
+        assert_eq!(
+            session.session_capabilities,
+            vec![
+                code_tools::commands::active_shell_command_name().to_string(),
+                "read_media".to_string()
+            ],
+            "task_type changes must not remove capabilities from the active context"
+        );
+
+        session.reset_session_capabilities_at(["apply_patch", "apply_patch"], now);
+        assert_eq!(
+            session.session_capabilities,
+            vec!["apply_patch".to_string()]
+        );
+        assert!(!session.has_session_capability("read_media"));
+    }
+
+    #[test]
+    fn session_capabilities_persist_and_normalize_legacy_shapes() {
+        let mut value =
+            serde_json::to_value(session_in_state(SessionState::Running)).expect("serialize");
+        value["session_capabilities"] =
+            serde_json::json!(["shell_command", "command_run", "read_media", "read_media"]);
+
+        let decoded: SessionManagement =
+            serde_json::from_value(value).expect("session capabilities should deserialize");
+
+        assert_eq!(
+            decoded.session_capabilities,
+            vec![
+                code_tools::commands::active_shell_command_name().to_string(),
+                "read_media".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn goal_mode_records_last_goal_user_input_from_env() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let previous = std::env::var_os("TURA_GOAL_MODE");
+        std::env::set_var("TURA_GOAL_MODE", "1");
+
+        let mut session = session_in_state(SessionState::Completed);
+
+        assert!(session.goal_mode);
+        assert_eq!(session.last_goal_user_input, "first");
+
+        session.prepare_for_new_user_turn(
+            SessionInput {
+                user_input: "second goal".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            Utc::now(),
+        );
+
+        assert!(session.goal_mode);
+        assert_eq!(session.last_goal_user_input, "second goal");
+        restore_env("TURA_GOAL_MODE", previous);
+    }
+
+    #[test]
+    fn non_goal_turn_does_not_overwrite_recorded_goal_input() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let previous = std::env::var_os("TURA_GOAL_MODE");
+        std::env::set_var("TURA_GOAL_MODE", "1");
+        let mut session = session_in_state(SessionState::Completed);
+        assert_eq!(session.last_goal_user_input, "first");
+
+        std::env::remove_var("TURA_GOAL_MODE");
+        session.prepare_for_new_user_turn(
+            SessionInput {
+                user_input: "ordinary follow-up".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            Utc::now(),
+        );
+
+        assert!(session.goal_mode);
+        assert_eq!(session.current_objective, "ordinary follow-up");
+        assert_eq!(session.last_goal_user_input, "first");
+        restore_env("TURA_GOAL_MODE", previous);
+    }
+
+    #[test]
+    fn session_state_uses_snake_case_internal_persistence() {
+        assert_eq!(
+            serde_json::to_value(SessionState::Running).expect("state should serialize"),
+            serde_json::json!("running")
+        );
+        assert_eq!(
+            serde_json::from_value::<SessionState>(serde_json::json!("interrupted"))
+                .expect("interrupted is a first-class state"),
+            SessionState::Interrupted
+        );
+        assert!(
+            serde_json::from_value::<SessionState>(serde_json::json!("Running")).is_err(),
+            "internal state persistence must not accept PascalCase aliases"
+        );
+    }
+
+    #[test]
+    fn interrupted_session_can_prepare_for_another_user_turn() {
+        let now = Utc::now();
+        let mut session = session_in_state(SessionState::Interrupted);
+
+        session.prepare_for_new_user_turn(
+            SessionInput {
+                user_input: "resume".to_string(),
+                file_input: vec![],
+                agent: None,
+                runtime_context: None,
+                planning_mode_override: None,
+            },
+            now,
+        );
+
+        assert_eq!(session.state, SessionState::Created);
+        assert_eq!(session.input.user_input, "resume");
+    }
+
+    #[test]
     fn task_management_json_single_task_is_object() {
         let mut session = session_in_state(SessionState::Running);
         session.task_plan.plan_summary = "Fix issue".to_string();
@@ -499,10 +893,9 @@ mod tests {
     }
 
     #[test]
-    fn status_deserializes_legacy_names() {
+    fn plan_status_rejects_non_canonical_internal_names() {
         assert_eq!(
-            serde_json::from_str::<PlanStatus>("\"pending\"")
-                .expect("pending alias should deserialize"),
+            serde_json::from_str::<PlanStatus>("\"todo\"").expect("todo should deserialize"),
             PlanStatus::Todo
         );
         assert_eq!(
@@ -511,19 +904,23 @@ mod tests {
             PlanStatus::WaitingUser
         );
         assert_eq!(
-            serde_json::from_str::<PlanStatus>("\"in_progress\"")
-                .expect("in_progress alias should deserialize"),
+            serde_json::from_str::<PlanStatus>("\"doing\"").expect("doing should deserialize"),
             PlanStatus::Doing
         );
         assert_eq!(
-            serde_json::from_str::<PlanStatus>("\"completed\"")
-                .expect("completed alias should deserialize"),
+            serde_json::from_str::<PlanStatus>("\"done\"").expect("done should deserialize"),
             PlanStatus::Done
         );
         assert_eq!(
-            serde_json::from_str::<PlanStatus>("\"cancelled\"")
-                .expect("cancelled alias should deserialize"),
+            serde_json::from_str::<PlanStatus>("\"archived\"")
+                .expect("archived should deserialize"),
             PlanStatus::Archived
         );
+        for non_canonical in ["pending", "in_progress", "completed", "cancelled"] {
+            assert!(
+                serde_json::from_str::<PlanStatus>(&format!("\"{non_canonical}\"")).is_err(),
+                "{non_canonical} must not be accepted inside persisted task state"
+            );
+        }
     }
 }

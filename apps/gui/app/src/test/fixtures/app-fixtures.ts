@@ -34,8 +34,8 @@ const RICH_TABLE_ROWS = 72;
 const RICH_TABLE_COLUMNS = 48;
 const FIXTURE_AGENTS: Agent[] = [
   {
-    name: "thinking",
-    description: "Thinking agent",
+    name: "balanced",
+    description: "Balances self-reflection with intuitive response, using verification and reflective checks.",
     mode: "primary",
     native: true,
     hidden: false,
@@ -43,21 +43,20 @@ const FIXTURE_AGENTS: Agent[] = [
     options: {
       icon_emoji: "🧠",
       capabilities: ["command_run", "apply_patch", "shell_command"],
-      provider: { tura_llm_name: "flagship_thinking" },
+      provider: { default_model_tier: "thinking", tura_llm_name: "thinking" },
       avatar: {
         persona_id: "tura",
         role: "tura",
         display_mode: "static",
         pixel_size: 20,
-        threshold: 150,
-        scale: 100,
+        threshold: 160,
       },
     },
     permission: { allow: [], deny: [] },
   },
   {
-    name: "thinking-planning",
-    description: "Thinking planning agent",
+    name: "thoughtful",
+    description: "Reflects on each step and stays steady across long-running tasks.",
     mode: "primary",
     native: true,
     hidden: false,
@@ -65,21 +64,20 @@ const FIXTURE_AGENTS: Agent[] = [
     options: {
       icon_emoji: "🧭",
       capabilities: ["command_run", "apply_patch", "shell_command"],
-      provider: { tura_llm_name: "flagship_thinking" },
+      provider: { default_model_tier: "thinking", tura_llm_name: "thinking" },
       avatar: {
         persona_id: "tura",
         role: "tura",
         display_mode: "static",
         pixel_size: 20,
-        threshold: 150,
-        scale: 100,
+        threshold: 160,
       },
     },
     permission: { allow: [], deny: [] },
   },
   {
-    name: "fast",
-    description: "Fast agent",
+    name: "direct",
+    description: "Responds quickly and directly, follows intuition into action, and keeps verification light.",
     mode: "primary",
     native: true,
     hidden: false,
@@ -87,21 +85,20 @@ const FIXTURE_AGENTS: Agent[] = [
     options: {
       icon_emoji: "🚀",
       capabilities: ["command_run", "apply_patch", "shell_command"],
-      provider: { tura_llm_name: "thinking" },
+      provider: { default_model_tier: "fast", tura_llm_name: "fast" },
       avatar: {
         persona_id: "wonderful",
         role: "wonderful",
         display_mode: "static",
         pixel_size: 20,
-        threshold: 150,
-        scale: 100,
+        threshold: 160,
       },
     },
     permission: { allow: [], deny: [] },
   },
   {
-    name: "fast-text-only",
-    description: "Fast text-only agent",
+    name: "direct-text-only",
+    description: "Responds quickly and directly, follows intuition into action, and keeps verification light.",
     mode: "primary",
     native: true,
     hidden: false,
@@ -109,14 +106,13 @@ const FIXTURE_AGENTS: Agent[] = [
     options: {
       icon_emoji: "⚡",
       capabilities: ["command_run", "shell_command"],
-      provider: { tura_llm_name: "thinking" },
+      provider: { default_model_tier: "fast", tura_llm_name: "fast" },
       avatar: {
         persona_id: "pidan",
         role: "pidan",
         display_mode: "static",
         pixel_size: 20,
-        threshold: 150,
-        scale: 100,
+        threshold: 160,
       },
     },
     permission: { allow: [], deny: [] },
@@ -219,7 +215,7 @@ function fixturePersonaMedia(role: string) {
     ["confused", ["😕", "🤔", "🙄"]],
     ["nervous", ["😬", "😅", "😰"]],
     ["vigilant", ["👀", "🔎", "⚠"]],
-    ["laufgh", ["😂", "😄", "🤣"]],
+    ["laugh", ["😂", "😄", "🤣"]],
     ["smirk", ["😏", "😉", "😼"]],
     ["tired", ["😴", "🥱", "😩"]],
   ];
@@ -456,7 +452,7 @@ const FIXTURE_PROVIDER_STATE: Pick<
     path: "mock/provider_config.json",
     tiers: [
       {
-        tier: "flagship_thinking",
+        tier: "thinking",
         current: { provider: "openai", model: "gpt-5.5-pro" },
         options: [
           {
@@ -471,12 +467,6 @@ const FIXTURE_PROVIDER_STATE: Pick<
             model: "copilot-gpt-5.5-pro",
             model_name: "Copilot GPT-5.5 Pro",
           },
-        ],
-      },
-      {
-        tier: "thinking",
-        current: { provider: "openai", model: "gpt-5.5" },
-        options: [
           {
             provider: "openai",
             provider_name: "OpenAI",
@@ -493,24 +483,6 @@ const FIXTURE_PROVIDER_STATE: Pick<
       },
       {
         tier: "fast",
-        current: { provider: "openai", model: "gpt-5.5-mini" },
-        options: [
-          {
-            provider: "openai",
-            provider_name: "OpenAI",
-            model: "gpt-5.5-mini",
-            model_name: "GPT-5.5 Mini",
-          },
-          {
-            provider: "github-copilot",
-            provider_name: "GitHub Copilot",
-            model: "copilot-gpt-5.5",
-            model_name: "Copilot GPT-5.5",
-          },
-        ],
-      },
-      {
-        tier: "instant",
         current: { provider: "openai", model: "gpt-5.5-mini" },
         options: [
           {
@@ -621,7 +593,7 @@ export function fixtureFileContent(
       null,
       2,
     ),
-    "apps/app.config.ts": 'export default {\n  name: "tura",\n  workspace: "tura workspace",\n};\n',
+    "apps/app.config.ts": 'export default {\n  name: "tura",\n  workspace: "tura_workspace",\n};\n',
     "apps/gui/package.json": JSON.stringify(
       {
         name: "@tura/gui",
@@ -975,6 +947,8 @@ function fixtureGatewaySessions(now: number, directory: string): Session[] {
 }
 
 function commandRunPart(
+  sessionID: string,
+  messageID: string,
   id: string,
   now: number,
   status: "completed" | "running" | "failed",
@@ -995,6 +969,8 @@ function commandRunPart(
   };
   return {
     id,
+    sessionID,
+    messageID,
     type: "tool",
     tool: "command_run",
     callID: `${id}-call`,
@@ -1044,7 +1020,7 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
   const base = initialAppState(gatewayUrl);
   const now = Date.now();
   if (fixture === "plan-sessions") {
-    const directory = "C:\\Users\\liuliu\\Documents\\tura workspace";
+    const directory = "C:\\Users\\liuliu\\Documents\\tura_workspace";
     const sessions = fixtureGatewaySessions(now, directory);
     const messagesForSession = (session: Session, index: number): Message[] => {
       const title = sessionTitle(session);
@@ -1053,13 +1029,16 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
           const createdAt = now - 240_000 + turnIndex * 18_000;
           const user: Message = {
             id: `${session.id}-long-user-${turnIndex}`,
-            session_id: session.id,
+            sessionID: session.id,
             role: "user",
             created_at: createdAt,
             updated_at: createdAt,
+            time: { created: createdAt, updated: createdAt },
             parts: [
               {
                 id: `${session.id}-long-user-${turnIndex}-part`,
+                sessionID: session.id,
+                messageID: `${session.id}-long-user-${turnIndex}`,
                 type: "text",
                 text: `第 ${turnIndex + 1} 轮用户反馈：请继续检查全屏侧边栏滚动条是否贴在屏幕最右侧，同时保留这段很长的测试文本用于撑开历史记录区域。这里还有额外说明，确保消息高度足够长，能测试会话窗口、文件浏览器侧边栏和移动端全屏菜单的滚动表现。`,
               },
@@ -1067,16 +1046,19 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
           };
           const assistant: Message = {
             id: `${session.id}-long-agent-${turnIndex}`,
-            session_id: session.id,
+            sessionID: session.id,
             role: "assistant",
             providerID: "openai",
             modelID: turnIndex % 2 === 0 ? "gpt-5.5" : "gpt-5.5-mini",
             cost: 0.001 + turnIndex * 0.0003,
             created_at: createdAt + 6_000,
             updated_at: createdAt + 8_000,
+            time: { created: createdAt + 6_000, updated: createdAt + 8_000 },
             parts: [
               {
                 id: `${session.id}-long-agent-${turnIndex}-part`,
+                sessionID: session.id,
+                messageID: `${session.id}-long-agent-${turnIndex}`,
                 type: "text",
                 text: `第 ${turnIndex + 1} 轮助手回复：已记录滚动条测试状态。当前这条回复故意写得比较长，用来模拟真实会话里多轮来回沟通后的内容密度。测试时可以打开左侧全屏侧栏、切换文件浏览器页面、滚动会话历史，并确认滚动条始终贴近画面边缘而不是贴近中间内容列。`,
               },
@@ -1087,13 +1069,19 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       }
       const user: Message = {
         id: `${session.id}-message-user`,
-        session_id: session.id,
+        sessionID: session.id,
         role: "user",
         created_at: now - 20_000 - index * 1_000,
         updated_at: now - 20_000 - index * 1_000,
+        time: {
+          created: now - 20_000 - index * 1_000,
+          updated: now - 20_000 - index * 1_000,
+        },
         parts: [
           {
             id: `${session.id}-message-user-part`,
+            sessionID: session.id,
+            messageID: `${session.id}-message-user`,
             type: "text",
             text: `用户创建工单：${title}`,
           },
@@ -1104,6 +1092,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
         session.id === "session-todo-001" || session.id === "session-done-004";
       const commandPart = isRunningCommand
         ? commandRunPart(
+            session.id,
+            `${session.id}-message-agent`,
             `${session.id}-command-run-running`,
             now,
             "running",
@@ -1113,6 +1103,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
           )
         : isCompletedCommand
           ? commandRunPart(
+              session.id,
+              `${session.id}-message-agent`,
               `${session.id}-command-run-completed`,
               now,
               "completed",
@@ -1129,6 +1121,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       const assistantParts: MessagePart[] = [
         {
           id: `${session.id}-message-agent-part`,
+          sessionID: session.id,
+          messageID: `${session.id}-message-agent`,
           type: "text",
           text: isRunningCommand
             ? `正在为 ${title} 执行命令并持续接收 command run 输出。`
@@ -1141,13 +1135,15 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       if (!isRunningCommand && commandPart) {
         assistantParts.push({
           id: `${session.id}-message-agent-summary`,
+          sessionID: session.id,
+          messageID: `${session.id}-message-agent`,
           type: "text",
           text: "命令已经完成，模型、provider 和费用统计已写入这条回复。",
         });
       }
       const assistant: Message = {
         id: `${session.id}-message-agent`,
-        session_id: session.id,
+        sessionID: session.id,
         role: "assistant",
         providerID: "openai",
         modelID: session.id === "session-todo-001" ? "gpt-5.5-mini" : "gpt-5.5",
@@ -1161,6 +1157,10 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
                 : undefined,
         created_at: now - 16_000 - index * 1_000,
         updated_at: isRunningCommand ? now - 250 : now - 8_000 - index * 1_000,
+        time: {
+          created: now - 16_000 - index * 1_000,
+          updated: isRunningCommand ? now - 250 : now - 8_000 - index * 1_000,
+        },
         parts: assistantParts,
       };
       return [user, assistant];
@@ -1192,8 +1192,188 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       projects: [
         {
           id: "fixture-project-default",
-          name: "tura workspace",
+          name: "tura_workspace",
           worktree: directory,
+        },
+      ],
+    };
+  }
+  if (fixture === "long-transcript") {
+    const session: Session = {
+      id: "fixture-long-transcript",
+      name: "Long transcript virtualization",
+      directory: "C:\\Users\\liuliu\\Documents\\tura",
+      model: "openai/gpt-5.5",
+      agent: "coding_agent",
+      session_type: "coding",
+      status: "idle",
+      created_at: now - 3_600_000,
+      updated_at: now,
+      message_count: 2_200,
+      model_variant: "low",
+      model_acceleration_enabled: true,
+    };
+    const messages: Message[] = Array.from({ length: 2_200 }, (_, index) => {
+      const role = index % 2 === 0 ? "user" : "assistant";
+      const createdAt = now - 3_600_000 + index * 1_000;
+      return {
+        id: `fixture-long-transcript-${index}`,
+        sessionID: session.id,
+        role,
+        providerID: role === "assistant" ? "openai" : undefined,
+        modelID: role === "assistant" ? "gpt-5.5" : undefined,
+        created_at: createdAt,
+        updated_at: createdAt,
+        time: { created: createdAt, updated: createdAt },
+        parts: [
+          {
+            id: `fixture-long-transcript-${index}-part`,
+            sessionID: session.id,
+            messageID: `fixture-long-transcript-${index}`,
+            type: "text",
+            text:
+              role === "user"
+                ? `第 ${index + 1} 条用户消息：这是一条用于长会话虚拟化验收的稳定 mock 内容。`
+                : `第 ${index + 1} 条助手消息：渲染窗口应该保持有界，滚动、贴底按钮和头像跟随都应该继续工作。${" 补充上下文。".repeat(index % 5)}`,
+          },
+        ],
+      };
+    });
+    return {
+      ...base,
+      loading: false,
+      bootstrapped: true,
+      connection: "connected",
+      activeTab: "conversation",
+      directory: session.directory ?? undefined,
+      selectedSessionId: session.id,
+      sessions: [session],
+      messagesBySession: {
+        [session.id]: messages,
+      },
+      messagePagingBySession: {
+        [session.id]: { hasEarlier: false, loadingEarlier: false },
+      },
+      selectedModel: "openai/gpt-5.5",
+      agents: FIXTURE_AGENTS,
+      personas: FIXTURE_PERSONAS,
+      selectedProviderId: "openai",
+      modelVariant: "low",
+      accelerationEnabled: true,
+      ...FIXTURE_PROVIDER_STATE,
+      projects: [
+        {
+          id: "fixture-project",
+          name: "tura",
+          worktree: session.directory ?? "",
+        },
+      ],
+    };
+  }
+  if (fixture === "streaming-delta") {
+    const session: Session = {
+      id: "fixture-streaming-delta",
+      name: "Streaming delta stability",
+      directory: "C:\\Users\\liuliu\\Documents\\tura",
+      model: "openai/gpt-5.5",
+      agent: "coding_agent",
+      session_type: "coding",
+      status: "busy",
+      created_at: now - 600_000,
+      updated_at: now,
+      message_count: 82,
+      model_variant: "low",
+      model_acceleration_enabled: true,
+    };
+    const history: Message[] = Array.from({ length: 80 }, (_, index) => {
+      const role = index % 2 === 0 ? "user" : "assistant";
+      const createdAt = now - 600_000 + index * 1_000;
+      return {
+        id: `fixture-stream-history-${index}`,
+        sessionID: session.id,
+        role,
+        providerID: role === "assistant" ? "openai" : undefined,
+        modelID: role === "assistant" ? "gpt-5.5" : undefined,
+        created_at: createdAt,
+        updated_at: createdAt,
+        time: { created: createdAt, updated: createdAt },
+        parts: [
+          {
+            id: `fixture-stream-history-${index}-part`,
+            sessionID: session.id,
+            messageID: `fixture-stream-history-${index}`,
+            type: "text",
+            text:
+              role === "user"
+                ? `历史用户消息 ${index + 1}：用于撑开滚动区域并验证拖动滚动条时视口不被新 delta 拉回。`
+                : `历史助手消息 ${index + 1}：这段已经绘制的文本在后续更新中不应该被重挂或横向抖动。${" 稳定内容。".repeat(index % 4)}`,
+          },
+        ],
+      };
+    });
+    const user: Message = {
+      id: "fixture-stream-user",
+      sessionID: session.id,
+      role: "user",
+      created_at: now - 2_000,
+      updated_at: now - 2_000,
+      time: { created: now - 2_000, updated: now - 2_000 },
+      parts: [
+        {
+          id: "fixture-stream-user-part",
+          sessionID: session.id,
+          messageID: "fixture-stream-user",
+          type: "text",
+          text: "持续追加 delta，旧内容不要重绘。",
+        },
+      ],
+    };
+    const assistant: Message = {
+      id: "fixture-stream-assistant",
+      sessionID: session.id,
+      role: "assistant",
+      providerID: "openai",
+      modelID: "gpt-5.5",
+      created_at: now - 1_000,
+      updated_at: now,
+      time: { created: now - 1_000, updated: now },
+      parts: [
+        {
+          id: "fixture-stream-assistant-part",
+          sessionID: session.id,
+          messageID: "fixture-stream-assistant",
+          type: "text",
+          text: "stream-prefix: 已绘制前缀。",
+        },
+      ],
+    };
+    return {
+      ...base,
+      loading: false,
+      bootstrapped: true,
+      connection: "connected",
+      activeTab: "conversation",
+      directory: session.directory ?? undefined,
+      selectedSessionId: session.id,
+      sessions: [session],
+      messagesBySession: {
+        [session.id]: [...history, user, assistant],
+      },
+      messagePagingBySession: {
+        [session.id]: { hasEarlier: false, loadingEarlier: false },
+      },
+      selectedModel: "openai/gpt-5.5",
+      agents: FIXTURE_AGENTS,
+      personas: FIXTURE_PERSONAS,
+      selectedProviderId: "openai",
+      modelVariant: "low",
+      accelerationEnabled: true,
+      ...FIXTURE_PROVIDER_STATE,
+      projects: [
+        {
+          id: "fixture-project",
+          name: "tura",
+          worktree: session.directory ?? "",
         },
       ],
     };
@@ -1215,13 +1395,16 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
   };
   const user: Message = {
     id: "fixture-user",
-    session_id: session.id,
+    sessionID: session.id,
     role: "user",
     created_at: now - 16_000,
     updated_at: now - 16_000,
+    time: { created: now - 16_000, updated: now - 16_000 },
     parts: [
       {
         id: "fixture-user-part",
+        sessionID: session.id,
+        messageID: "fixture-user",
         type: "text",
         text: protocolFixture
           ? "解析 communication_style.md，并展示所有消息协议。"
@@ -1233,16 +1416,19 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
   };
   const assistant: Message = {
     id: "fixture-assistant",
-    session_id: session.id,
+    sessionID: session.id,
     role: "assistant",
     providerID: "openai",
     modelID: "gpt-5.5",
     cost: 0.0004,
     created_at: now - 15_000,
     updated_at: fixture === "snake-pending" ? now - 2_000 : now - 400,
+    time: { created: now - 15_000, updated: fixture === "snake-pending" ? now - 2_000 : now - 400 },
     parts: [
       {
         id: "fixture-process-text",
+        sessionID: session.id,
+        messageID: "fixture-assistant",
         type: "text",
         content: protocolFixture
           ? "正在解析消息协议、工具记录和媒体排版。"
@@ -1250,6 +1436,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       },
       {
         id: "fixture-tool-shell",
+        sessionID: session.id,
+        messageID: "fixture-assistant",
         type: "tool",
         tool: "shell_command",
         callID: "call-shell",
@@ -1264,6 +1452,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       },
       {
         id: "fixture-tool-patch",
+        sessionID: session.id,
+        messageID: "fixture-assistant",
         type: "tool",
         tool: "apply_patch",
         callID: "call-patch",
@@ -1285,6 +1475,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       },
       {
         id: "fixture-process-check",
+        sessionID: session.id,
+        messageID: "fixture-assistant",
         type: "text",
         content: protocolFixture
           ? "正在校验格式、图片和命令展开范围。"
@@ -1292,6 +1484,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       },
       {
         id: "fixture-tool-test",
+        sessionID: session.id,
+        messageID: "fixture-assistant",
         type: "tool",
         tool: "browser",
         callID: "call-browser",
@@ -1306,6 +1500,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       },
       {
         id: "fixture-tool-format",
+        sessionID: session.id,
+        messageID: "fixture-assistant",
         type: "tool",
         tool: "format_check",
         callID: "call-format",
@@ -1320,6 +1516,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       },
       {
         id: "fixture-tool-stream",
+        sessionID: session.id,
+        messageID: "fixture-assistant",
         type: "tool",
         tool: "command_run",
         callID: "call-stream",
@@ -1334,6 +1532,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
       },
       {
         id: "fixture-summary",
+        sessionID: session.id,
+        messageID: "fixture-assistant",
         type: "text",
         text:
           fixture === "snake-pending"
@@ -1356,6 +1556,8 @@ export function fixtureAppState(gatewayUrl: string, fixture: string): AppState {
     parts: [
       {
         id: "fixture-reaction-part",
+        sessionID: session.id,
+        messageID: "fixture-reaction",
         type: "text",
         text: "[EMOJI:react:👍:EMOJI]",
       },

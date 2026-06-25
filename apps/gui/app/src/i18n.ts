@@ -1,6 +1,7 @@
 import { en } from "./i18n/en";
 import type { Dictionary, Language, TextKey } from "./i18n/types";
 import { zhCN } from "./i18n/zh-CN";
+import { createSignal } from "solid-js";
 
 export type { Language, TextKey };
 
@@ -9,10 +10,49 @@ const dictionaries: Record<Language, Dictionary> = {
   en,
 };
 
-export const activeLanguage: Language = "zh-CN";
+const defaultLanguage: Language =
+  parseLanguage(
+    typeof navigator !== "undefined" ? (navigator.language ?? navigator.languages?.[0]) : undefined,
+  ) ?? "en";
+
+const [language, setLanguageSignal] = createSignal<Language>(defaultLanguage);
+
+export const LANGUAGE_OPTIONS: Array<{ id: Language; label: string }> = [
+  { id: "en", label: "English" },
+  { id: "zh-CN", label: "简体中文" },
+];
+
+export function parseLanguage(value: string | undefined | null): Language | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "zh" || normalized === "zh-cn" || normalized === "cn") {
+    return "zh-CN";
+  }
+  if (normalized === "en" || normalized === "en-us" || normalized === "en-gb") {
+    return "en";
+  }
+  return undefined;
+}
+
+export function setLanguage(value: string | undefined | null): void {
+  if (!value) {
+    setLanguageSignal(defaultLanguage);
+    return;
+  }
+  const parsed = parseLanguage(value);
+  if (parsed) {
+    setLanguageSignal(parsed);
+  }
+}
+
+export function currentLanguage(): Language {
+  return language();
+}
 
 export function t(key: TextKey, values?: Record<string, string | number>): string {
-  const template = dictionaries[activeLanguage][key] ?? dictionaries.en[key];
+  const template = dictionaries[language()][key] ?? dictionaries.en[key];
   if (!values) {
     return template;
   }

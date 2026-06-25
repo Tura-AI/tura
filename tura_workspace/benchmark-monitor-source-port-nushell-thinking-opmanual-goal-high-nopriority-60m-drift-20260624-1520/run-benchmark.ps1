@@ -1,0 +1,15 @@
+Set-Location 'C:\Users\liuliu\Documents\tura'
+$env:COMMAND_RUN_AGENT_RUN_ID = 'source-port-nushell-thinking-opmanual-goal-high-nopriority-60m-drift-20260624-1520'
+$env:COMMAND_RUN_AGENT_AGENTS = 'tura-thinking-shll'
+$env:COMMAND_RUN_AGENT_SOURCE_PORT_TASKS = 'nushell'
+$env:COMMAND_RUN_AGENT_TIMEOUT_MS = '3600000'
+$env:COMMAND_RUN_AGENT_REASONING_EFFORT = 'high'
+$env:COMMAND_RUN_AGENT_SERVICE_TIER = 'default'
+$env:COMMAND_RUN_AGENT_TURA_MODEL = 'codex/gpt-5.5'
+$env:COMMAND_RUN_AGENT_TURA_GOAL = '1'
+$env:TURA_GOAL_MODE = '1'
+$env:COMMAND_RUN_AGENT_TEST_PROMPT_STYLE = 'source-port-operation-manual'
+$env:TURA_TEST_PROMPT_STYLE = 'source-port-operation-manual'
+$env:COMMAND_RUN_AGENT_CONTEXT_ARCHIVE = '1'
+node tests\benchmark\project-rebuild-refactor\rust_cli_python_port_suite_defined_workflow.mjs
+exit $LASTEXITCODE

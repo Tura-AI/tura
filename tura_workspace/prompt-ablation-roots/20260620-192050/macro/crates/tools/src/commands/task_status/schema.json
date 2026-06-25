@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "task_detail": {
+      "type": "string",
+      "description": "Optional few-word current task name/task label. Update it when starting execution of a newly recognized task. This is internal state, not a user-visible reply."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["doing", "question", "done"],
+      "description": "doing only when more command_run calls are required; question when blocked on user feedback; done only when the task is complete, verified, and any media to send/show has been read and inspected."
+    }
+  }
+}

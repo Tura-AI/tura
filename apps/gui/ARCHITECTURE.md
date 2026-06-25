@@ -52,6 +52,12 @@ apps/gui/
     gateway/
       package.json
       src/
+  tests/
+    unit/
+    e2e/
+      business/
+      live/
+        business/
   ARCHITECTURE.md
 ```
 
@@ -155,7 +161,7 @@ Default gateway URL resolution:
 1. `?gatewayUrl=<url>` query parameter.
 2. `localStorage["tura.gatewayUrl"]`.
 3. `VITE_TURA_GATEWAY_URL`.
-4. `http://127.0.0.1:4096`.
+4. `http://127.0.0.1:4126`.
 
 `TURA_GATEWAY_URL` is a shell/runtime convenience variable. Browser code does
 not read it directly; start scripts translate it to `VITE_TURA_GATEWAY_URL`
@@ -1147,6 +1153,11 @@ E2E tests against mocked gateway:
 
 Live smoke tests can later start `crates/gateway` and exercise a minimal
 session plus issue/task flow.
+
+Release-entry acceptance tests that validate the registered release
+command surface belong in `apps/gui/tests/e2e/live/business/` for the GUI surface. Root
+`tests/release/release_entry_*.mjs` owns CLI release-entry scripts;
+`tests/benchmark/` owns comparison and scoring benchmarks.
 
 ## Implementation Phases
 

@@ -113,3 +113,216 @@ fn normalize_repo_root(path: PathBuf) -> PathBuf {
         .map(Path::to_path_buf)
         .unwrap_or(path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::registry::tools::manifest::{
+        ConfigurableEntry, LimitsSection, PathsSection, RuntimeSection, ToolManifest,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn registry_resolves_aliases_and_unknown_values_without_mutating_input() {
+        let registry = registry_with(vec![manifest("read_media", false)]);
+
+        assert_eq!(registry.resolve_alias("view_media"), "read_media");
+        assert_eq!(registry.resolve_alias("inspect_media"), "read_media");
+        assert_eq!(registry.resolve_alias("unknown"), "unknown");
+        assert!(registry.get("view_media").is_some());
+        assert!(registry.get("unknown").is_none());
+    }
+
+    #[test]
+    fn patch_tool_allows_safe_view_overrides_only_for_returned_view() {
+        let registry = registry_with(vec![manifest("web_discover", false)]);
+
+        let disabled = registry
+            .patch_tool(
+                "web_search",
+                ToolPatch {
+                    enabled: Some(false),
+                    aliases: Some(vec!["search".to_string()]),
+                    ..ToolPatch::default()
+                },
+            )
+            .expect("safe patch");
+
+        assert_eq!(disabled.id, "web_discover");
+        assert!(!disabled.enabled);
+        assert_eq!(disabled.state, state::ToolState::Disabled);
+        assert_eq!(disabled.aliases, vec!["search"]);
+
+        let original = registry.get("web_discover").expect("original view");
+        assert_ne!(original.aliases, disabled.aliases);
+        assert_eq!(original.state, state::ToolState::Unavailable);
+    }
+
+    #[test]
+    fn patch_tool_rejects_unsafe_fields_and_unknown_tools() {
+        let registry = registry_with(vec![manifest("read_media", false)]);
+
+        for patch in [
+            ToolPatch {
+                core: Some(true),
+                ..ToolPatch::default()
+            },
+            ToolPatch {
+                execution: Some("in_process".to_string()),
+                ..ToolPatch::default()
+            },
+            ToolPatch {
+                binary: Some("replacement".to_string()),
+                ..ToolPatch::default()
+            },
+            ToolPatch {
+                mutating: Some(true),
+                ..ToolPatch::default()
+            },
+            ToolPatch {
+                network: Some(true),
+                ..ToolPatch::default()
+            },
+            ToolPatch {
+                policy: Some("allow-all".to_string()),
+                ..ToolPatch::default()
+            },
+        ] {
+            let error = registry
+                .patch_tool("read_media", patch)
+                .expect_err("unsafe patch should fail");
+            assert_eq!(
+                error,
+                "unsafe manifest fields cannot be changed through gateway"
+            );
+        }
+
+        assert_eq!(
+            registry
+                .patch_tool(
+                    "missing",
+                    ToolPatch {
+                        enabled: Some(true),
+                        ..ToolPatch::default()
+                    },
+                )
+                .expect_err("unknown tool"),
+            "unknown tool: missing"
+        );
+    }
+
+    #[test]
+    fn patch_config_validates_and_merges_values_over_defaults() {
+        let mut tool = manifest("read_media", false);
+        tool.configurable = vec![
+            configurable("pdf_default_pages", "enum", json!("5"), &["5", "10"]),
+            configurable("ocr_enabled", "boolean", json!(false), &[]),
+        ];
+        let registry = registry_with(vec![tool]);
+
+        let patched = registry
+            .patch_config(
+                "view_media",
+                BTreeMap::from([
+                    ("pdf_default_pages".to_string(), json!("10")),
+                    ("ocr_enabled".to_string(), json!(true)),
+                ]),
+            )
+            .expect("valid config patch");
+
+        assert_eq!(patched.id, "read_media");
+        assert_eq!(patched.values["pdf_default_pages"], json!("10"));
+        assert_eq!(patched.values["ocr_enabled"], json!(true));
+
+        let invalid = registry
+            .patch_config(
+                "read_media",
+                BTreeMap::from([("pdf_default_pages".to_string(), json!("100"))]),
+            )
+            .expect_err("invalid enum");
+        assert_eq!(invalid, "invalid enum value for pdf_default_pages: 100");
+    }
+
+    #[test]
+    fn normalize_repo_root_walks_up_from_child_when_repo_markers_exist() {
+        let temp = tempfile::tempdir().expect("temp repo");
+        let repo = temp.path().join("repo");
+        let child = repo.join("nested").join("crate");
+        std::fs::create_dir_all(repo.join("crates").join("tools")).expect("tools dir");
+        std::fs::create_dir_all(repo.join("commands")).expect("commands dir");
+        std::fs::create_dir_all(&child).expect("child dir");
+
+        assert_eq!(normalize_repo_root(child), repo);
+        assert_eq!(
+            normalize_repo_root(temp.path().join("standalone")),
+            temp.path().join("standalone")
+        );
+    }
+
+    fn registry_with(manifests: Vec<ToolManifest>) -> ToolRegistry {
+        ToolRegistry {
+            repo_root: PathBuf::from("C:/repo"),
+            tools: manifests
+                .into_iter()
+                .map(|manifest| (manifest.id.clone(), manifest))
+                .collect(),
+        }
+    }
+
+    fn manifest(id: &str, core: bool) -> ToolManifest {
+        ToolManifest {
+            id: id.to_string(),
+            name: format!("{id} tool"),
+            description: "test tool".to_string(),
+            core,
+            category: "test".to_string(),
+            execution: if core {
+                "in_process".to_string()
+            } else {
+                "one_shot".to_string()
+            },
+            state_machine: "default".to_string(),
+            supports_macro_command: true,
+            mutating: false,
+            network: false,
+            runtime: RuntimeSection {
+                binary: if core {
+                    String::new()
+                } else {
+                    format!("tura-command-{id}")
+                },
+                entry: String::new(),
+                language: "rust".to_string(),
+            },
+            limits: LimitsSection {
+                default_timeout_ms: 1_000,
+                max_timeout_ms: 2_000,
+            },
+            paths: PathsSection {
+                prompt: "prompt.md".to_string(),
+                schema: "schema.json".to_string(),
+                policy: "policy.toml".to_string(),
+            },
+            configurable: Vec::new(),
+            manifest_path: PathBuf::from("tool.json"),
+        }
+    }
+
+    fn configurable(
+        key: &str,
+        value_type: &str,
+        default: serde_json::Value,
+        enum_values: &[&str],
+    ) -> ConfigurableEntry {
+        ConfigurableEntry {
+            key: key.to_string(),
+            label: key.to_string(),
+            description: format!("{key} setting"),
+            value_type: value_type.to_string(),
+            default,
+            enum_values: enum_values.iter().map(|value| value.to_string()).collect(),
+            required: false,
+            scope: "workspace".to_string(),
+        }
+    }
+}

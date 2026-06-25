@@ -25,8 +25,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "airtable",
@@ -63,8 +61,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "alibaba_cloud",
@@ -96,8 +92,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "alipay_open",
@@ -129,8 +123,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "aliyun_oss",
@@ -162,8 +154,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "amap",
@@ -193,7 +183,7 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [
+          "thinking": [
             {
               "attachment": true,
               "family": "claude",
@@ -223,9 +213,7 @@
               "tool_call": true,
               "visible": false
             }
-          ],
-          "instant": [],
-          "thinking": []
+          ]
         },
         "runtime_provider": "anthropic",
         "status": "configured",
@@ -326,10 +314,7 @@
               "status": null,
               "temperature": true,
               "tool_call": true
-            }
-          ],
-          "flagship_thinking": [],
-          "instant": [
+            },
             {
               "attachment": true,
               "family": "gemini",
@@ -426,8 +411,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "atlassian",
@@ -465,8 +448,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "aws",
@@ -552,8 +533,6 @@
             }
           ],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "azure",
@@ -591,8 +570,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "azure_cloud",
@@ -624,8 +601,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "azure_speech",
@@ -658,8 +633,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "azure_storage",
@@ -690,8 +663,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "baidu_maps",
@@ -721,8 +692,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "baidu_qianfan",
@@ -748,7 +717,7 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [
+          "thinking": [
             {
               "attachment": true,
               "family": "claude",
@@ -778,9 +747,7 @@
               "tool_call": true,
               "visible": false
             }
-          ],
-          "instant": [],
-          "thinking": []
+          ]
         },
         "runtime_provider": "bedrock",
         "status": "configured",
@@ -811,8 +778,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "bitbucket",
@@ -842,8 +807,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "brave_search",
@@ -873,7 +836,7 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [
+          "thinking": [
             {
               "attachment": true,
               "family": "claude",
@@ -932,9 +895,7 @@
               "tool_call": true,
               "visible": false
             }
-          ],
-          "instant": [],
-          "thinking": []
+          ]
         },
         "runtime_provider": "anthropic",
         "status": "configured",
@@ -1072,37 +1033,7 @@
               "status": "preview",
               "temperature": true,
               "tool_call": true
-            }
-          ],
-          "flagship_thinking": [
-            {
-              "attachment": true,
-              "family": "gpt-5.5",
-              "id": "gpt-5.5",
-              "limit": {
-                "context": 1050000,
-                "input": 1050000,
-                "output": 128000
-              },
-              "modalities": {
-                "input": [
-                  "text",
-                  "image"
-                ],
-                "output": [
-                  "text"
-                ]
-              },
-              "name": "gpt-5.5",
-              "options": {},
-              "reasoning": true,
-              "release_date": "2026-04-23",
-              "status": null,
-              "temperature": true,
-              "tool_call": true
-            }
-          ],
-          "instant": [
+            },
             {
               "attachment": true,
               "family": "gpt-5.4",
@@ -1130,7 +1061,34 @@
               "tool_call": true
             }
           ],
-          "thinking": []
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "gpt-5.5",
+              "id": "gpt-5.5",
+              "limit": {
+                "context": 1050000,
+                "input": 1050000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5.5",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-04-23",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
         },
         "runtime_provider": "codex",
         "status": "configured",
@@ -1195,8 +1153,6 @@
           ],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "cohere",
@@ -1252,8 +1208,6 @@
               "tool_call": true
             }
           ],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": [
             {
               "attachment": true,
@@ -1316,8 +1270,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "dingtalk",
@@ -1348,8 +1300,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "discord",
@@ -1384,8 +1334,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "duckduckgo_search",
@@ -1419,8 +1367,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "exa_search",
@@ -1455,8 +1401,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "feishu",
@@ -1485,8 +1429,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "fireworks",
@@ -1525,8 +1467,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "gcp",
@@ -1559,8 +1499,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "github",
@@ -1592,8 +1530,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "gitlab",
@@ -1695,10 +1631,7 @@
               "status": null,
               "temperature": true,
               "tool_call": true
-            }
-          ],
-          "flagship_thinking": [],
-          "instant": [
+            },
             {
               "attachment": true,
               "family": "gemini",
@@ -1792,8 +1725,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "google_calendar",
@@ -1825,8 +1756,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "google_maps",
@@ -1855,8 +1784,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "google_search",
@@ -1885,8 +1812,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "groq",
@@ -1922,8 +1847,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "huawei_cloud",
@@ -1989,8 +1912,6 @@
           ],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "huggingface",
@@ -2022,8 +1943,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "kingsoft_cloud",
@@ -2058,8 +1977,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "lark",
@@ -2095,8 +2012,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "line",
@@ -2125,8 +2040,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "lmstudio",
@@ -2156,8 +2069,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "mailgun",
@@ -2194,8 +2105,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "microsoft_graph",
@@ -2225,8 +2134,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": [
             {
               "attachment": true,
@@ -2286,8 +2193,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "notion",
@@ -2316,8 +2221,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "ollama",
@@ -2428,37 +2331,7 @@
               "status": null,
               "temperature": true,
               "tool_call": true
-            }
-          ],
-          "flagship_thinking": [
-            {
-              "attachment": true,
-              "family": "gpt-5.5",
-              "id": "gpt-5.5-pro",
-              "limit": {
-                "context": 1050000,
-                "input": 1050000,
-                "output": 128000
-              },
-              "modalities": {
-                "input": [
-                  "text",
-                  "image"
-                ],
-                "output": [
-                  "text"
-                ]
-              },
-              "name": "gpt-5.5-pro",
-              "options": {},
-              "reasoning": true,
-              "release_date": "2026-04-23",
-              "status": null,
-              "temperature": true,
-              "tool_call": true
-            }
-          ],
-          "instant": [
+            },
             {
               "attachment": true,
               "family": "gpt-5.4",
@@ -2486,7 +2359,34 @@
               "tool_call": true
             }
           ],
-          "thinking": []
+          "thinking": [
+            {
+              "attachment": true,
+              "family": "gpt-5.5",
+              "id": "gpt-5.5-pro",
+              "limit": {
+                "context": 1050000,
+                "input": 1050000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5.5-pro",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-04-23",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            }
+          ]
         },
         "runtime_provider": "openai",
         "status": "configured",
@@ -2679,66 +2579,7 @@
               "status": null,
               "temperature": true,
               "tool_call": true
-            }
-          ],
-          "flagship_thinking": [
-            {
-              "attachment": true,
-              "family": "gpt-5.5",
-              "id": "gpt-5.5-pro",
-              "limit": {
-                "context": 1050000,
-                "input": 1050000,
-                "output": 128000
-              },
-              "modalities": {
-                "input": [
-                  "text",
-                  "image"
-                ],
-                "output": [
-                  "text"
-                ]
-              },
-              "name": "gpt-5.5-pro",
-              "options": {},
-              "reasoning": true,
-              "release_date": "2026-04-23",
-              "status": null,
-              "temperature": true,
-              "tool_call": true
             },
-            {
-              "attachment": true,
-              "family": "claude",
-              "id": "claude-opus-4-7",
-              "limit": {
-                "context": 1000000,
-                "input": 1000000,
-                "output": 128000
-              },
-              "modalities": {
-                "input": [
-                  "text",
-                  "image"
-                ],
-                "output": [
-                  "text"
-                ]
-              },
-              "name": "claude-opus-4-7",
-              "options": {
-                "thinking_type": "adaptive"
-              },
-              "reasoning": true,
-              "release_date": "2026-04-16",
-              "status": null,
-              "temperature": true,
-              "tool_call": true,
-              "visible": false
-            }
-          ],
-          "instant": [
             {
               "attachment": true,
               "family": "gpt-5.4",
@@ -2796,6 +2637,61 @@
             }
           ],
           "thinking": [
+            {
+              "attachment": true,
+              "family": "gpt-5.5",
+              "id": "gpt-5.5-pro",
+              "limit": {
+                "context": 1050000,
+                "input": 1050000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "gpt-5.5-pro",
+              "options": {},
+              "reasoning": true,
+              "release_date": "2026-04-23",
+              "status": null,
+              "temperature": true,
+              "tool_call": true
+            },
+            {
+              "attachment": true,
+              "family": "claude",
+              "id": "claude-opus-4-7",
+              "limit": {
+                "context": 1000000,
+                "input": 1000000,
+                "output": 128000
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              },
+              "name": "claude-opus-4-7",
+              "options": {
+                "thinking_type": "adaptive"
+              },
+              "reasoning": true,
+              "release_date": "2026-04-16",
+              "status": null,
+              "temperature": true,
+              "tool_call": true,
+              "visible": false
+            },
             {
               "attachment": true,
               "family": "deepseek",
@@ -2961,8 +2857,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "perplexity",
@@ -2995,8 +2889,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "qiniu",
@@ -3093,8 +2985,6 @@
               "tool_call": true
             }
           ],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": [
             {
               "attachment": true,
@@ -3219,8 +3109,6 @@
               "tool_call": true
             }
           ],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": [
             {
               "attachment": true,
@@ -3278,8 +3166,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "replicate",
@@ -3308,8 +3194,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "sendgrid",
@@ -3346,8 +3230,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "slack",
@@ -3378,8 +3260,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "smtp",
@@ -3409,8 +3289,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "telegram",
@@ -3445,8 +3323,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "tencent_cloud",
@@ -3478,8 +3354,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "tencent_cos",
@@ -3565,8 +3439,6 @@
             }
           ],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "together",
@@ -3598,8 +3470,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "twilio",
@@ -3631,8 +3501,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "ucloud",
@@ -3668,8 +3536,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "volcengine",
@@ -3701,8 +3567,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "volcengine_ark",
@@ -3736,8 +3600,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "wechat_open_platform",
@@ -3770,8 +3632,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "wechat_pay",
@@ -3806,8 +3666,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "wecom",
@@ -3837,8 +3695,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": [
             {
               "attachment": true,
@@ -3897,8 +3753,6 @@
           "embedding_high": [],
           "embedding_low": [],
           "fast": [],
-          "flagship_thinking": [],
-          "instant": [],
           "thinking": []
         },
         "runtime_provider": "zoom",
@@ -3907,10 +3761,8 @@
       }
     },
     "tiers": [
-      "flagship_thinking",
       "thinking",
       "fast",
-      "instant",
       "embedding_high",
       "embedding_low"
     ]
@@ -3927,7 +3779,7 @@
       "status": "connected",
       "token_env": "CLAUDE_CODE_OAUTH_TOKEN",
       "type": "oauth",
-      "updated_at": "2026-06-07T16:26:36.330461200+00:00"
+      "updated_at": "2026-06-08T13:24:27.965080300+00:00"
     },
     "codex": {
       "account_env": "OPENAI_ACCOUNT_ID",
@@ -4203,7 +4055,7 @@
     ]
   },
   "provider_latency": {
-    "active": "fast",
+    "active": "high",
     "levels": {
       "fast": {
         "first_output_timeout_ms": 40000,
@@ -4285,7 +4137,7 @@
       "default_temperature": 0.2,
       "providers": [
         {
-          "model": "gpt-5.4-mini",
+          "model": "gpt-5.3-codex-spark",
           "provider": "codex"
         },
         {
@@ -4303,29 +4155,7 @@
         {
           "model": "gpt-5.3-codex-spark",
           "provider": "codex"
-        }
-      ]
-    },
-    "flagship_thinking": {
-      "default_temperature": 0.2,
-      "providers": [
-        {
-          "model": "gpt-5.5",
-          "provider": "codex"
         },
-        {
-          "model": "gpt-5.5-pro",
-          "provider": "openai"
-        },
-        {
-          "model": "claude-opus-4-7",
-          "provider": "anthropic"
-        }
-      ]
-    },
-    "instant": {
-      "default_temperature": 0.2,
-      "providers": [
         {
           "model": "gpt-5.4-nano",
           "provider": "codex"
@@ -4339,6 +4169,18 @@
     "thinking": {
       "default_temperature": 0.2,
       "providers": [
+        {
+          "model": "gpt-5.5",
+          "provider": "codex"
+        },
+        {
+          "model": "gpt-5.5-pro",
+          "provider": "openai"
+        },
+        {
+          "model": "claude-opus-4-7",
+          "provider": "anthropic"
+        },
         {
           "model": "gemini-3.1-pro-preview",
           "provider": "antigravity"

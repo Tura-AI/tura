@@ -101,6 +101,10 @@ export class HumanOutput {
       this.err(`${style(event.tool, "cyan", this.color)} ${event.status}`);
       return;
     }
+    if (event.type === "command.updated" && event.commandID && event.status) {
+      this.err(`${style("command_run", "cyan", this.color)} ${event.commandID} ${event.status}`);
+      return;
+    }
     if (event.type === "permission.asked" && event.permission) {
       this.err(
         `${style(`${t("permissions")}:`, "yellow", this.color)} ${event.permission.permission} (${event.permission.id})`,

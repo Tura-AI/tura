@@ -1,11 +1,14 @@
 {
-  "name": "@tura/gui-tauri",
+  "name": "@tura/tura_gui",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
-    "build:frontend": "bun --cwd ../gui build"
+    "build:frontend": "bun --cwd ../gui build",
+    "test": "bun run test:unit",
+    "test:unit": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "check": "bun run test:unit && bun run build:frontend"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0"

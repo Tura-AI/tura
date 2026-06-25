@@ -1,8 +1,18 @@
-.assistant-thinking {
+.assistant-thinking-text {
   justify-self: start;
+}
+
+.assistant-thinking-text .rich-text {
   color: var(--muted);
   font-size: var(--font-small);
+  font-weight: 430;
   animation: assistant-thinking-drift 5s ease-in-out infinite;
+}
+
+.assistant-thinking-text .assistant-thinking-glyph {
+  display: inline-block;
+  transform-origin: 50% 55%;
+  animation: assistant-thinking-glyph-pulse 1.2s ease-in-out infinite;
 }
 
 .message-arrival-pulse .assistant-stack {
@@ -39,6 +49,24 @@
   46% {
     opacity: 0.82;
     transform: translateX(2px);
+  }
+}
+
+@keyframes assistant-thinking-glyph-pulse {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(0.92) rotate(0deg);
+  }
+
+  45% {
+    opacity: 1;
+    transform: scale(1.18) rotate(12deg);
+  }
+
+  72% {
+    opacity: 0.86;
+    transform: scale(1.02) rotate(-8deg);
   }
 }
 

@@ -79,12 +79,12 @@ fn orchestrate_with_config_and_session(
     )
     .map_err(|e| {
         error!(error = %e, "failed to bootstrap session");
-        format!("failed to bootstrap session: {}", e)
+        format!("failed to bootstrap session: {e}")
     })?;
 
     info!(
         session_id = %session.session_id,
-        session_topic = %session.session_topic,
+        task_type = ?session.task_type,
         "session created"
     );
 
@@ -92,15 +92,16 @@ fn orchestrate_with_config_and_session(
         Ok(a) => a,
         Err(e) => {
             error!(error = %e, "failed to activate agents");
-            return Err(format!("failed to activate agents: {}", e));
+            return Err(format!("failed to activate agents: {e}"));
         }
     };
     apply_planning_capability_override(&mut agents, &session);
     session.planning_enabled = agents.first().is_some_and(agent_has_planning_capability);
+    session.reflection_enabled = agents.first().is_some_and(|agent| agent.reflection);
 
     if let Err(e) = initialize_agent_state_machine(&mut agents, &session) {
         error!(error = %e, "failed to initialize agent state machine");
-        return Err(format!("failed to initialize agent state machine: {}", e));
+        return Err(format!("failed to initialize agent state machine: {e}"));
     }
 
     info!(
@@ -127,7 +128,7 @@ fn orchestrate_with_config_and_session(
             Ok(r) => r,
             Err(e) => {
                 error!(error = %e, "manas processing failed");
-                return Err(format!("manas processing failed: {}", e));
+                return Err(format!("manas processing failed: {e}"));
             }
         };
 
@@ -141,6 +142,7 @@ fn orchestrate_with_config_and_session(
     Ok(ManoProcessResult {
         session: manas_result.session,
         agents: manas_result.agents,
+        final_error: manas_result.final_error,
     })
 }
 
@@ -200,18 +202,23 @@ pub fn process_from_user_internal(
             let mut agts = activate_agents_by_session_type(&session)?;
             apply_planning_capability_override(&mut agts, &session);
             session.planning_enabled = agts.first().is_some_and(agent_has_planning_capability);
+            session.reflection_enabled = agts.first().is_some_and(|agent| agent.reflection);
             initialize_agent_state_machine(&mut agts, &session)?;
             agts
         }
     };
 
-    Ok(ManoProcessResult { session, agents })
+    Ok(ManoProcessResult {
+        session,
+        agents,
+        final_error: None,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::build_messages_from_session;
+    use crate::context::{build_messages_from_session, USER_AGENT_CONTEXT_ROLE};
     use crate::state_machine::session_management::{SessionInput, SessionManagement};
     use chrono::Utc;
     use std::fs;
@@ -221,7 +228,7 @@ mod tests {
         let input = SessionInput {
             user_input: "inspect".to_string(),
             file_input: Vec::new(),
-            agent: Some("thinking-planning".to_string()),
+            agent: Some("thoughtful".to_string()),
             runtime_context: None,
             planning_mode_override: Some(false),
         };
@@ -239,8 +246,10 @@ mod tests {
 
         apply_planning_capability_override(&mut agents, &session);
         session.planning_enabled = agents.first().is_some_and(agent_has_planning_capability);
+        session.reflection_enabled = agents.first().is_some_and(|agent| agent.reflection);
 
         assert!(!session.planning_enabled);
+        assert!(session.reflection_enabled);
         assert!(!agent_has_planning_capability(&agents[0]));
     }
 
@@ -267,8 +276,10 @@ mod tests {
 
         apply_planning_capability_override(&mut agents, &session);
         session.planning_enabled = agents.first().is_some_and(agent_has_planning_capability);
+        session.reflection_enabled = agents.first().is_some_and(|agent| agent.reflection);
 
         assert!(session.planning_enabled);
+        assert!(!session.reflection_enabled);
         assert!(agent_has_planning_capability(&agents[0]));
     }
 
@@ -338,7 +349,7 @@ mod tests {
         let serialized = serde_json::to_string(&messages).expect("messages json");
 
         assert!(serialized.contains("data:image/png;base64,AAA"));
-        assert!(messages.iter().any(|message| {
+        assert!(!messages.iter().any(|message| {
             message.get("role").and_then(serde_json::Value::as_str) == Some("developer")
         }));
         assert!(messages.iter().any(|message| {
@@ -443,7 +454,68 @@ mod tests {
             .as_str()
             .expect("snapshot content should be text")
             .contains("src/lib.rs"));
-        assert!(replayed.iter().any(|message| message == initial_snapshot));
+        assert_eq!(initial_snapshot["role"], USER_AGENT_CONTEXT_ROLE);
+        let replayed_snapshot = replayed
+            .iter()
+            .find(|message| {
+                message["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("<WORKSPACE_SNAPSHOT>"))
+            })
+            .expect("replayed context should include workspace snapshot");
+        assert_eq!(replayed_snapshot["role"], "user");
+        assert_eq!(replayed_snapshot["content"], initial_snapshot["content"]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn initial_runtime_context_uses_user_agent_storage_and_user_replay() {
+        let root = std::env::temp_dir().join(format!(
+            "tura-runtime-context-tag-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        fs::create_dir_all(&root).expect("test workspace should be created");
+        let input = SessionInput {
+            user_input: "inspect this workspace".to_string(),
+            file_input: Vec::new(),
+            agent: None,
+            runtime_context: Some("client runtime context".to_string()),
+            planning_mode_override: None,
+        };
+        let mut session = SessionManagement::new(
+            "runtime-context-tag-session".to_string(),
+            "runtime context tag".to_string(),
+            root.clone(),
+            false,
+            "coding".to_string(),
+            input,
+            "inspect this workspace".to_string(),
+            Utc::now(),
+        );
+
+        let initial =
+            initial_messages_for_session(&mut session).expect("initial messages should build");
+        let initial_context = initial
+            .iter()
+            .find(|message| message["content"] == "client runtime context")
+            .expect("initial messages should include runtime context");
+        assert_eq!(initial_context["role"], USER_AGENT_CONTEXT_ROLE);
+
+        let stored_context = session
+            .session_log
+            .iter()
+            .filter_map(|entry| serde_json::from_str::<serde_json::Value>(entry).ok())
+            .find(|entry| entry["content"] == "client runtime context")
+            .expect("runtime context should be stored");
+        assert_eq!(stored_context["role"], USER_AGENT_CONTEXT_ROLE);
+
+        let replayed = build_messages_from_session(&session);
+        let replayed_context = replayed
+            .iter()
+            .find(|message| message["content"] == "client runtime context")
+            .expect("runtime context should replay into provider context");
+        assert_eq!(replayed_context["role"], "user");
 
         let _ = fs::remove_dir_all(root);
     }

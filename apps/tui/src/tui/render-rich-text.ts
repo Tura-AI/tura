@@ -1,170 +1,177 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { t } from "../i18n.js";
 import {
   activeCapabilities,
   bold,
   dim,
-  gray,
   inverse,
   italic,
-  opencodeTextWeak,
-  pad,
+  padVisible,
   reset,
   richBlockBg,
   richInlineBg,
   strike,
   stripAnsi,
-  truncate,
+  textAgentRich,
+  textAuxiliary,
   underline,
   visibleTextWidth,
 } from "./render-terminal.js";
+import { compactInlinePayloads, sanitizeRawTerminalText } from "./render-payload.js";
+
+export {
+  compactInlinePayloads,
+  compactPayloadField,
+  extractCommandsFromText,
+  extractCommandsFromUnknown,
+  firstCommandLine,
+  looksLikeCommand,
+  sanitizeRawTerminalText,
+  toolSummary,
+} from "./render-payload.js";
 
 const osc8FullPattern = /\x1b\]8;;[^\x1b]*\x1b\\[\s\S]*?\x1b\]8;;\x1b\\/g;
 const ansiSequencePattern = /\x1b\[[0-9;]*m|\x1b\]8;;[^\x1b]*\x1b\\/g;
+const protectedRichRegionPattern =
+  /\x1b\[48;5;(?:234|236)m\x1b\[38;2;217;222;205m[\s\S]*?\x1b\[0m/g;
+
+// Keep whole assistant answers (lists, multi-step plans) intact. The transcript
+// window bounds the visible height on its own, so this is only a sanity cap that
+// prevents a pathological multi-thousand-line dump from being materialized.
+const MAX_ASSISTANT_LINES = 200;
+
+type RenderRichTextOptions = {
+  tableWidth?: number;
+  workspaceDirectory?: string;
+};
 
 export function displayMessageText(role: string, value: string): string {
   const text = cleanMessageText(value);
   if (!text) return "";
   if (/completed without a user-facing message/i.test(text)) return "";
   if (role === "user") {
-    const first = text.split(/\r?\n/).find((line) => line.trim()) ?? text;
-    return truncate(first.trim(), 140);
+    return text
+      .split(/\r?\n/)
+      .map((line) => line.trimEnd())
+      .join("\n")
+      .trim();
   }
   const lines = text
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
-    .filter((line) => line.trim())
-    .slice(0, activeCapabilities.level === "rich" ? 8 : 10);
+    .slice(0, MAX_ASSISTANT_LINES);
+  while (lines.length && !lines[0]?.trim()) lines.shift();
+  while (lines.length && !lines.at(-1)?.trim()) lines.pop();
   return lines.join("\n");
 }
 
 function cleanMessageText(value: string): string {
-  const text = value
+  const text = sanitizeRawTerminalText(value)
     .replace(/<br\s*\/?>/g, "\n")
+    .replace(/^\s*\[command_run:\s*[^\r\n\]]*\]\s*$/gimu, "")
+    .replace(/\[command_run:\s*[^\r\n\]]*\]/giu, "")
     .replace(/data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi, `[${t("imageData")}]`)
     .replace(/[A-Za-z0-9+/]{180,}={0,2}/g, `[${t("encodedData")}]`);
   return compactInlinePayloads(text).trim();
 }
 
-export function compactInlinePayloads(value: string): string {
-  const compactKnown = value.replace(
-    /\[([a-z_][a-z0-9_-]*):\s*([\s\S]*?)\]/gu,
-    (match, tool, payload) => {
-      const summary =
-        compactPayloadField(String(payload)) ??
-        compactCommandJson(normalizePayloadText(String(payload))) ??
-        summarizePayloadText(String(payload));
-      return summary ? `[${String(tool)}: ${summary}]` : String(match);
-    },
-  );
-  const inline = compactKnown.replace(
-    /\[([a-z_][a-z0-9_-]*):\s*(\{[\s\S]*?\})\]/giu,
-    (match, tool, payload) => {
-      const summary =
-        compactPayloadField(String(payload)) ??
-        compactCommandJson(normalizePayloadText(String(payload))) ??
-        summarizePayloadText(String(payload));
-      return summary ? `[${String(tool)}: ${summary}]` : String(match);
-    },
-  );
-  return inline
-    .split(/\r?\n/)
-    .map((line) => {
-      const match = line.trim().match(/^\[([a-z_][a-z0-9_-]*):\s*([\s\S]+)\]$/iu);
-      if (!match) return line;
-      const tool = match[1] ?? t("tool");
-      const payload = match[2] ?? "";
-      const summary =
-        compactPayloadField(payload) ??
-        compactCommandJson(normalizePayloadText(payload)) ??
-        summarizePayloadText(payload);
-      return summary ? `[${tool}: ${summary}]` : line;
-    })
-    .join("\n");
-}
-
-export function renderRichText(source: string): string {
+export function renderRichText(source: string, options: RenderRichTextOptions = {}): string {
   if (!source) return "";
   source = compactInlinePayloads(source);
-  if (activeCapabilities.richText === "none") return plainRichText(source);
-  if (activeCapabilities.richText === "basicMarkdown") return basicRichText(source);
+  if (activeCapabilities.richText === "none") return plainRichText(source, options);
+  if (activeCapabilities.richText === "basicMarkdown") return basicRichText(source, options);
   const tokenized = source.replace(
     /\[(MEDIA):([\s\S]*?):MEDIA\]|\[EMOJI:(sticker|react):([\s\S]*?):EMOJI\]/gu,
     (_match, media, path, mode, emoji) => {
-      if (media) return renderMediaToken(String(path).trim());
+      if (media) return renderMediaToken(String(path).trim(), options);
       return mode === "react" ? `${dim}${String(emoji).trim()}${reset}` : String(emoji).trim();
     },
   );
   return renderInlineMarkdown(
-    renderMarkdownRegions(renderMarkdownTables(renderHtmlSubset(tokenized))),
+    renderMarkdownRegions(
+      renderMarkdownTables(renderHtmlSubset(tokenized, options), options.tableWidth, options),
+    ),
+    options,
   );
 }
 
-function plainRichText(source: string): string {
+function plainRichText(source: string, options: RenderRichTextOptions): string {
   return renderMarkdownTables(
     decodeHtml(
       stripUnsupportedHtml(
         source
-          .replace(
-            /<a\s+href=['"]((?:https?:\/\/|file:\/\/)[^'"]+)['"][^>]*>([\s\S]*?)<\/a>/giu,
-            (_match, href, body) => `${stripHtml(String(body))} (${href})`,
+          .replace(/<a\s+href=['"]([^'"]+)['"][^>]*>([\s\S]*?)<\/a>/giu, (_match, _href, body) =>
+            stripHtml(String(body)),
           )
-          .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/gu, "$1 ($2)")
+          .replace(markdownLinkPattern, "$1")
           .replace(/\[MEDIA:([\s\S]*?):MEDIA\]/gu, "[MEDIA:$1:MEDIA]")
           .replace(/\[EMOJI:(sticker|react):([\s\S]*?):EMOJI\]/gu, (_match, _mode, emoji) =>
             String(emoji).trim(),
           ),
       ),
     ),
+    options.tableWidth,
+    options,
   );
 }
 
-function basicRichText(source: string): string {
+function basicRichText(source: string, options: RenderRichTextOptions): string {
   const tokenized = source.replace(
     /\[(MEDIA):([\s\S]*?):MEDIA\]|\[EMOJI:(sticker|react):([\s\S]*?):EMOJI\]/gu,
     (_match, media, path, _mode, emoji) => {
-      if (media) return renderMediaToken(String(path).trim());
+      if (media) return renderMediaToken(String(path).trim(), options);
       return String(emoji).trim();
     },
   );
-  return renderInlineMarkdown(renderMarkdownTables(renderHtmlSubset(tokenized)));
+  return renderInlineMarkdown(
+    renderMarkdownTables(renderHtmlSubset(tokenized, options), options.tableWidth, options),
+    options,
+  );
 }
 
-function renderHtmlSubset(source: string): string {
+function renderHtmlSubset(source: string, options: RenderRichTextOptions = {}): string {
   let output = source;
   output = output.replace(
-    /<pre(?:\s[^>]*)?>\s*<code(?:\s+class=['"]language-([^'"]+)['"])?>([\s\S]*?)<\/code>\s*<\/pre>/giu,
-    (_match, language, body) => {
-      const title = language
-        ? blockRegion(`[${t("code")}: ${decodeHtml(language)}]`)
-        : blockRegion(`[${t("code")}]`);
-      return `${title}\n${renderCodeBlock(decodeHtml(body))}`;
-    },
+    /<pre(?:\s[^>]*)?>\s*<code(?:\s[^>]*)?>([\s\S]*?)<\/code>\s*<\/pre>/giu,
+    (_match, body) => renderCodeFence(decodeHtml(body)),
   );
   output = output.replace(/<blockquote>([\s\S]*?)<\/blockquote>/giu, (_match, body) =>
     decodeHtml(stripHtml(body))
       .split(/\r?\n/)
-      .map((line) => quoteRegion(`${activeCapabilities.unicode ? "│" : ">"} ${line}`))
+      .map((line) => quoteRegion(line))
       .join("\n"),
   );
   const replacements: Array<[RegExp, (body: string, attr?: string) => string]> = [
     [
       /<(?:b|strong)>([\s\S]*?)<\/(?:b|strong)>/giu,
-      (body) => `${bold}${renderHtmlSubset(body)}${reset}`,
+      (body) => `${textAgentRich}${bold}${renderHtmlSubset(body, options)}${reset}`,
     ],
-    [/<(?:i|em)>([\s\S]*?)<\/(?:i|em)>/giu, (body) => `${italic}${renderHtmlSubset(body)}${reset}`],
-    [/<u>([\s\S]*?)<\/u>/giu, (body) => `${underline}${renderHtmlSubset(body)}${reset}`],
+    [
+      /<(?:i|em)>([\s\S]*?)<\/(?:i|em)>/giu,
+      (body) => `${textAgentRich}${italic}${renderHtmlSubset(body, options)}${reset}`,
+    ],
+    [
+      /<u>([\s\S]*?)<\/u>/giu,
+      (body) => `${textAgentRich}${underline}${renderHtmlSubset(body, options)}${reset}`,
+    ],
     [
       /<(?:s|del)>([\s\S]*?)<\/(?:s|del)>/giu,
-      (body) => `${strike}${renderHtmlSubset(body)}${reset}`,
+      (body) => `${textAgentRich}${strike}${renderHtmlSubset(body, options)}${reset}`,
     ],
-    [/<code>([\s\S]*?)<\/code>/giu, (body) => inlineRegion(decodeHtml(stripHtml(body)))],
+    [
+      /<code(?:\s[^>]*)?>([\s\S]*?)<\/code>/giu,
+      (body) => inlineRegion(decodeHtml(stripHtml(body))),
+    ],
     [
       /<span\s+class=['"]tg-spoiler['"]>([\s\S]*?)<\/span>/giu,
       (body) => `${inverse}${decodeHtml(stripHtml(body))}${reset}`,
     ],
+    [/<mark>([\s\S]*?)<\/mark>/giu, (body) => `${inverse}${decodeHtml(stripHtml(body))}${reset}`],
     [
-      /<a\s+href=['"]((?:https?:\/\/|file:\/\/)[^'"]+)['"][^>]*>([\s\S]*?)<\/a>/giu,
-      (body, href) => renderLinkTarget(href ?? "", renderHtmlSubset(body)),
+      /<a\s+href=['"]([^'"]+)['"][^>]*>([\s\S]*?)<\/a>/giu,
+      (body, href) => renderLinkTarget(href ?? "", renderHtmlSubset(body, options), options),
     ],
   ];
   let changed = true;
@@ -181,12 +188,16 @@ function renderHtmlSubset(source: string): string {
   return decodeHtml(stripUnsupportedHtml(output));
 }
 
-function renderCodeBlock(value: string): string {
-  return value
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .map((line) => blockRegion(`  ${line}`))
-    .join("\n");
+function renderCodeFence(value: string): string {
+  return codeBlockRegionLines(codeBlockLines(value)).join("\n");
+}
+
+function codeBlockLines(value: string): string[] {
+  return value.replace(/\r\n/g, "\n").replace(/\n$/u, "").split("\n");
+}
+
+function codeBlockRegionLines(lines: string[]): string[] {
+  return [blockRegion(""), ...lines.map(blockRegion), blockRegion("")];
 }
 
 function renderMarkdownRegions(source: string): string {
@@ -194,26 +205,35 @@ function renderMarkdownRegions(source: string): string {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
   const output: string[] = [];
   for (let index = 0; index < lines.length; index += 1) {
-    const fence = lines[index].match(/^\s*```([A-Za-z0-9_-]+)?\s*$/u);
+    const fence = lines[index].match(/^\s*(`{3,}|~{3,})[^`~]*$/u);
     if (fence) {
-      output.push(blockRegion(fence[1] ? `[${t("code")}: ${fence[1]}]` : `[${t("code")}]`));
+      const fenceMarker = fence[1] ?? "```";
+      const fenceChar = fenceMarker[0] ?? "`";
+      const closingFence = new RegExp(
+        `^\\s*${escapeRegExp(fenceChar).repeat(fenceMarker.length)}${escapeRegExp(fenceChar)}*\\s*$`,
+        "u",
+      );
+      pushBlankBeforeBlock(output);
       index += 1;
-      while (index < lines.length && !/^\s*```\s*$/u.test(lines[index])) {
-        output.push(blockRegion(`  ${lines[index]}`));
+      const codeLines: string[] = [];
+      while (index < lines.length && !closingFence.test(lines[index])) {
+        codeLines.push(lines[index]);
         index += 1;
       }
+      output.push(...codeBlockRegionLines(codeLines));
+      pushBlankAfterBlock(output, lines, index + 1);
       continue;
     }
     const heading = lines[index].match(/^\s{0,3}(#{1,6})\s+(.+)$/u);
     if (heading) {
       output.push(
-        `${bold}${heading[1]} ${stripAnsi(renderInlineMarkdown(heading[2] ?? ""))}${reset}`,
+        `${textAgentRich}${bold}${heading[1]} ${stripAnsi(renderInlineMarkdown(heading[2] ?? ""))}${reset}`,
       );
       continue;
     }
     const quote = lines[index].match(/^\s{0,3}>\s?(.*)$/u);
     if (quote) {
-      output.push(quoteRegion(`${activeCapabilities.unicode ? "│" : ">"} ${quote[1] ?? ""}`));
+      output.push(quoteRegion(quote[1] ?? ""));
       continue;
     }
     output.push(lines[index]);
@@ -221,41 +241,59 @@ function renderMarkdownRegions(source: string): string {
   return output.join("\n");
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function blockRegion(value: string): string {
   if (activeCapabilities.level !== "rich") return value;
-  return `${richBlockBg}${opencodeTextWeak}${value.replaceAll(reset, `${reset}${richBlockBg}${opencodeTextWeak}`)}${reset}`;
+  return `${richBlockBg}${textAgentRich}${value.replaceAll(reset, `${reset}${richBlockBg}${textAgentRich}`)}${reset}`;
 }
 
 function quoteRegion(value: string): string {
   if (activeCapabilities.level !== "rich") return value;
-  return `${richBlockBg}${value.replaceAll(reset, `${reset}${richBlockBg}`)}${reset}`;
+  return `${richBlockBg}${textAgentRich}${value.replaceAll(reset, `${reset}${richBlockBg}${textAgentRich}`)}${reset}`;
 }
 
 function inlineRegion(value: string): string {
   if (activeCapabilities.level !== "rich") return value;
   const normalized = value.replace(/\s+/gu, " ").trim();
   if (!normalized) return "";
-  return `${richInlineBg}${opencodeTextWeak} ${normalized.replaceAll(reset, `${reset}${richInlineBg}${opencodeTextWeak}`)} ${reset}`;
+  return `${richInlineBg}${textAgentRich} ${normalized.replaceAll(reset, `${reset}${richInlineBg}${textAgentRich}`)} ${reset}`;
 }
 
-function renderMarkdownTables(source: string): string {
+function renderMarkdownTables(
+  source: string,
+  tableWidth?: number,
+  options: RenderRichTextOptions = {},
+): string {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
   const output: string[] = [];
   for (let index = 0; index < lines.length; ) {
     if (isMarkdownTableStart(lines, index)) {
+      pushBlankBeforeBlock(output);
       const table: string[][] = [tableCells(lines[index])];
       index += 2;
       while (index < lines.length && /^\s*\|.*\|\s*$/u.test(lines[index])) {
         table.push(tableCells(lines[index]));
         index += 1;
       }
-      output.push(...formatMarkdownTable(table));
+      output.push(...formatMarkdownTable(table, tableWidth, options));
+      pushBlankAfterBlock(output, lines, index);
       continue;
     }
     output.push(lines[index]);
     index += 1;
   }
   return output.join("\n");
+}
+
+function pushBlankBeforeBlock(output: string[]): void {
+  if (output.length > 0 && output.at(-1)?.trim()) output.push("");
+}
+
+function pushBlankAfterBlock(output: string[], lines: string[], nextIndex: number): void {
+  if (nextIndex >= lines.length || lines[nextIndex]?.trim()) output.push("");
 }
 
 function isMarkdownTableStart(lines: string[], index: number): boolean {
@@ -275,54 +313,156 @@ function tableCells(line: string): string[] {
     .map((cell) => cell.trim());
 }
 
-function formatMarkdownTable(rows: string[][]): string[] {
+function formatMarkdownTable(
+  rows: string[][],
+  tableWidth?: number,
+  options: RenderRichTextOptions = {},
+): string[] {
   const width = Math.max(...rows.map((row) => row.length));
   let normalized = rows.map((row) =>
     Array.from({ length: width }, (_item, index) => row[index] ?? ""),
   );
   if (activeCapabilities.level === "rich") {
-    normalized = normalized.map((row) => row.map((cell) => renderInlineMarkdown(cell)));
+    normalized = normalized.map((row) => row.map((cell) => renderInlineMarkdown(cell, options)));
   }
-  const widths = Array.from({ length: width }, (_item, column) =>
-    Math.min(48, Math.max(3, ...normalized.map((row) => visibleTextWidth(row[column])))),
-  );
-  if (activeCapabilities.level === "rich") {
-    return compactMarkdownTable(normalized);
-  }
-  return normalized.map((row, index) => {
-    const cells = row.map((cell, column) => pad(truncate(cell, widths[column]), widths[column]));
-    const text = ` ${cells.join("  ")} `;
-    return index === 0 ? `${bold}${text}${reset}` : text;
+  const separator =
+    activeCapabilities.level === "rich" && activeCapabilities.unicode
+      ? ` ${textAuxiliary}│${textAgentRich} `
+      : activeCapabilities.unicode
+        ? " │ "
+        : "  ";
+  const widths = tableColumnWidths(normalized, separator, tableWidth);
+  return normalized.flatMap((row, index) => {
+    const wrappedCells = row.map((cell, column) => tableCellLines(cell, widths[column]));
+    const rowHeight = Math.max(1, ...wrappedCells.map((cell) => cell.length));
+    return Array.from({ length: rowHeight }, (_item, lineIndex) => {
+      const cells = wrappedCells.map((cell, column) =>
+        padVisible(cell[lineIndex] ?? "", widths[column]),
+      );
+      const text = ` ${cells.join(separator)} `;
+      if (activeCapabilities.level === "rich")
+        return index === 0
+          ? `${textAgentRich}${bold}${text}${reset}`
+          : `${textAgentRich}${text}${reset}`;
+      return index === 0 ? `${bold}${text}${reset}` : text;
+    });
   });
 }
 
-function compactMarkdownTable(rows: string[][]): string[] {
-  const headers = rows[0] ?? [];
-  return rows.slice(1).map((row) => {
-    const cells = row
-      .map((cell, index) => {
-        const header = stripAnsi(headers[index] ?? "").trim();
-        const value = cell.trim();
-        if (!value) return "";
-        return header ? `${header}: ${value}` : value;
-      })
-      .filter(Boolean);
-    return `${gray}◇${reset} ${opencodeTextWeak}${cells.join("  ")}${reset}`;
-  });
+function tableColumnWidths(rows: string[][], separator: string, tableWidth?: number): number[] {
+  const width = Math.max(...rows.map((row) => row.length), 0);
+  const desired = Array.from({ length: width }, (_item, column) =>
+    Math.min(48, Math.max(3, ...rows.map((row) => visibleTextWidth(row[column])))),
+  );
+  if (!tableWidth || width <= 0) return desired;
+  const separatorWidth = visibleTextWidth(separator);
+  const available = Math.max(1, tableWidth - 2 - separatorWidth * Math.max(0, width - 1));
+  const widths = [...desired];
+  const minimum = widths.map(() => 1);
+  let total = widths.reduce((sum, item) => sum + item, 0);
+  while (total > available) {
+    let target = -1;
+    for (const [index, value] of widths.entries()) {
+      if (value <= minimum[index]) continue;
+      if (target < 0 || value > widths[target]) target = index;
+    }
+    if (target < 0) break;
+    widths[target] -= 1;
+    total -= 1;
+  }
+  return widths;
 }
 
-function renderInlineMarkdown(source: string): string {
-  const linked = source.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/gu, (_match, label, href) =>
-    renderLinkTarget(String(href), String(label)),
+function tableCellLines(value: string, width: number): string[] {
+  if (width <= 0) return [""];
+  if (visibleTextWidth(value) <= width) return [value];
+  let visible = 0;
+  let line = "";
+  const output: string[] = [];
+  for (const token of ansiTokensForTable(value)) {
+    if (token.control) {
+      line += token.value;
+      continue;
+    }
+    const segmentWidth = visibleTextWidth(token.value);
+    if (visible > 0 && visible + segmentWidth > width) {
+      output.push(line);
+      line = "";
+      visible = 0;
+    }
+    line += token.value;
+    visible += segmentWidth;
+  }
+  output.push(line);
+  return output;
+}
+
+function* ansiTokensForTable(value: string): Generator<{ value: string; control: boolean }> {
+  let plain = "";
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === "\x1b") {
+      const match = value.slice(index).match(/^(?:\x1b\[[0-9;]*[Km]|\x1b\]8;;[^\x1b]*\x1b\\)/u);
+      if (match) {
+        if (plain) {
+          for (const segment of graphemesForTable(plain)) yield { value: segment, control: false };
+          plain = "";
+        }
+        yield { value: match[0], control: true };
+        index += match[0].length - 1;
+        continue;
+      }
+    }
+    plain += value[index];
+  }
+  if (plain) {
+    for (const segment of graphemesForTable(plain)) yield { value: segment, control: false };
+  }
+}
+
+function graphemesForTable(value: string): string[] {
+  const segmenter =
+    typeof Intl !== "undefined" && "Segmenter" in Intl
+      ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+      : undefined;
+  return segmenter ? [...segmenter.segment(value)].map((item) => item.segment) : Array.from(value);
+}
+
+const markdownLinkPattern = /\[([^\]\n]+)\]\(((?:<[^>\n]+>|[^()\n]+|\([^()\n]*\))+)\)/gu;
+
+function renderInlineMarkdown(source: string, options: RenderRichTextOptions = {}): string {
+  const linked = source.replace(markdownLinkPattern, (_match, label, href) =>
+    renderLinkTarget(markdownLinkTarget(String(href)), String(label), options),
   );
-  const localLinked = linkLocalPathsPreservingOsc(linked);
-  const preserved = preserveAnsiSequences(localLinked);
-  return restoreAnsiSequences(renderInlineDecorations(preserved.text), preserved.tokens);
+  const preserved = preserveAnsiSequences(linked);
+  const localLinked = linkLocalPathsPreservingOsc(preserved.text, options);
+  return restoreAnsiSequences(renderInlineDecorations(localLinked), preserved.tokens);
+}
+
+function markdownLinkTarget(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("<")) {
+    const close = trimmed.indexOf(">");
+    if (close > 0) return decodeHtml(trimmed.slice(1, close).trim());
+  }
+  const withoutTitle = trimmed.match(/^(\S+)(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/u);
+  return decodeHtml((withoutTitle?.[1] ?? trimmed).trim());
 }
 
 function preserveAnsiSequences(source: string): { text: string; tokens: string[] } {
   const tokens: string[] = [];
-  const text = source.replace(ansiSequencePattern, (match) => {
+  const withLinksPreserved = source.replace(osc8FullPattern, (match) => {
+    const index = tokens.push(match) - 1;
+    return `\u0000ANSI${index}\u0000`;
+  });
+  const withRichRegionsPreserved = withLinksPreserved.replace(
+    protectedRichRegionPattern,
+    (match) => {
+      const index = tokens.push(match) - 1;
+      return `\u0000ANSI${index}\u0000`;
+    },
+  );
+  const text = withRichRegionsPreserved.replace(ansiSequencePattern, (match) => {
     const index = tokens.push(match) - 1;
     return `\u0000ANSI${index}\u0000`;
   });
@@ -335,59 +475,167 @@ function restoreAnsiSequences(source: string, tokens: string[]): string {
 
 function renderInlineDecorations(source: string): string {
   return source
-    .replace(/(?<!\\)\*\*([^*\n]+)\*\*/gu, (_match, body) => `${bold}${body}${reset}`)
-    .replace(/(?<!\\)__([^_\n]+)__/gu, (_match, body) => `${bold}${body}${reset}`)
+    .replace(
+      /(?<!\\)\*\*([^*\n]+)\*\*/gu,
+      (_match, body) => `${textAgentRich}${bold}${body}${reset}`,
+    )
+    .replace(
+      /(?<![A-Za-z0-9_\\])__(?![_\s])([^_\n]+?)(?<![\s_])__(?![A-Za-z0-9_])/gu,
+      (_match, body) => `${textAgentRich}${bold}${body}${reset}`,
+    )
+    .replace(/(?<!\\)~~([^~\n]+)~~/gu, (_match, body) => `${textAgentRich}${strike}${body}${reset}`)
+    .replace(
+      /(?<!\\)==([^=\n]+)==/gu,
+      (_match, body) => `${inverse}${decodeHtml(String(body))}${reset}`,
+    )
+    .replace(
+      /(?<![*\\])\*(?!\*)([^*\n]+?)(?<!\*)\*(?!\*)/gu,
+      (_match, body) => `${textAgentRich}${italic}${body}${reset}`,
+    )
+    .replace(
+      /(?<![A-Za-z0-9_\\])_(?![_\s])([^_\n]+?)(?<![\s_])_(?![A-Za-z0-9_])/gu,
+      (_match, body) => `${textAgentRich}${italic}${body}${reset}`,
+    )
     .replace(/(?<!\\)`([^`\n]+)`/gu, (_match, body) => inlineRegion(String(body)));
 }
 
-function renderMediaToken(path: string): string {
+function renderMediaToken(path: string, options: RenderRichTextOptions = {}): string {
   const label = path;
   return isLinkTarget(path)
-    ? terminalLink(linkTargetUrl(path), `${opencodeTextWeak}${label}${reset}`)
-    : `${opencodeTextWeak}${label}${reset}`;
+    ? terminalLink(linkTargetUrl(path, options.workspaceDirectory), linkLabel(label, path))
+    : `${textAgentRich}${label}${reset}`;
 }
 
-function renderLinkTarget(target: string, label: string): string {
-  if (!isLinkTarget(target)) return `${label} (${target})`;
-  const visible = `${stripAnsi(label)} ${opencodeTextWeak}(${target})${reset}`;
-  return terminalLink(linkTargetUrl(target), visible);
+function renderLinkTarget(
+  target: string,
+  label: string,
+  options: RenderRichTextOptions = {},
+): string {
+  const visibleLabel = stripAnsi(label).trim() || stripAnsi(target).trim();
+  if (!isLinkTarget(target)) return visibleLabel;
+  const visible = linkLabel(visibleLabel, target);
+  return terminalLink(linkTargetUrl(target, options.workspaceDirectory), visible);
+}
+
+function linkLabel(label: string, target: string): string {
+  const style = isLocalLinkTarget(target) ? `${textAgentRich}${underline}` : textAgentRich;
+  return `${style}${label}${reset}`;
 }
 
 const LOCAL_PATH_PATTERN =
-  /(?:[A-Za-z]:[\\/][^\s<>"'`]+|\\\\[^\\/\s<>"'`]+\\[^\\/\s<>"'`]+(?:\\[^\s<>"'`]+)*|\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+|\.{1,2}[\\/][^\s<>"'`]+)/gu;
+  /(?:[A-Za-z]:[\\/][^\r\n<>"'`]+|\\\\[^\\/\r\n<>"'`]+\\[^\\/\r\n<>"'`]+(?:\\[^\r\n<>"'`]+)*|\/[A-Za-z0-9_. -]+(?:\/[A-Za-z0-9_. -]+)+|\.{1,2}[\\/][^\r\n<>"'`]+|(?:[A-Za-z0-9_.-]+[\\/])+(?:[A-Za-z0-9_. -]+))/gu;
+const FILE_URL_PATTERN = /file:\/\/[^\s\r\n<>"'`]+/giu;
 const TRAILING_PATH_PUNCTUATION = /[),.;:!?]+$/u;
+const KNOWN_FILE_EXTENSION_PATTERN =
+  /\.(?:png|jpe?g|gif|webp|svg|bmp|mp4|mov|webm|m4v|mp3|wav|ogg|flac|pdf|md|markdown|txt|tsx?|jsx?|json|ya?ml|toml|html?|css|scss|rs|py|go|java|kt|swift|c|cc|cpp|h|hpp|cs)(?=$|[\s),.;:!?])/iu;
 
-function linkLocalPaths(source: string): string {
-  return source.replace(LOCAL_PATH_PATTERN, (raw, offset: number) => {
-    if (source.slice(Math.max(0, offset - 8), offset).includes("[MEDIA:")) return raw;
-    if (offset > 1 && source[offset - 2] === ":" && source[offset - 1] === "/") return raw;
-    if (/^[A-Za-z]:[\\/]/u.test(raw) && offset > 0 && /[A-Za-z0-9]/u.test(source[offset - 1]))
-      return raw;
-    const path = raw.replace(TRAILING_PATH_PUNCTUATION, "");
+function linkLocalPaths(source: string, options: RenderRichTextOptions = {}): string {
+  const fileLinks: string[] = [];
+  const protectedFileLinks = source.replace(FILE_URL_PATTERN, (raw) => {
+    const path = normalizeMatchedPath(raw, options);
     const trailing = raw.slice(path.length);
-    if (!isLocalPath(path)) return raw;
+    const label = localFilesystemPath(path, options.workspaceDirectory) ?? path;
+    const index =
+      fileLinks.push(
+        terminalLink(linkTargetUrl(path, options.workspaceDirectory), linkLabel(label, path)),
+      ) - 1;
+    return `\u0000FILELINK${index}\u0000${trailing}`;
+  });
+  const linked = protectedFileLinks.replace(LOCAL_PATH_PATTERN, (raw, offset: number) => {
+    if (protectedFileLinks.slice(Math.max(0, offset - 10), offset).includes("\u0000FILELINK"))
+      return raw;
+    if (protectedFileLinks.slice(Math.max(0, offset - 8), offset).includes("[MEDIA:")) return raw;
+    if (
+      offset > 1 &&
+      protectedFileLinks[offset - 2] === ":" &&
+      protectedFileLinks[offset - 1] === "/"
+    )
+      return raw;
+    if (
+      /^[A-Za-z]:[\\/]/u.test(raw) &&
+      offset > 0 &&
+      /[A-Za-z0-9]/u.test(protectedFileLinks[offset - 1])
+    )
+      return raw;
+    const path = normalizeMatchedPath(raw, options);
+    const trailing = raw.slice(path.length);
+    if (!isLocalPathReference(path)) return raw;
     if (activeCapabilities.level === "rich" || activeCapabilities.level === "ansi")
-      return `${terminalLink(linkTargetUrl(path), `${opencodeTextWeak}${path}${reset}`)}${trailing}`;
+      return `${terminalLink(linkTargetUrl(path, options.workspaceDirectory), linkLabel(path, path))}${trailing}`;
     return `${path}${trailing}`;
   });
+  return linked.replace(
+    /\u0000FILELINK(\d+)\u0000/gu,
+    (_match, index) => fileLinks[Number(index)] ?? "",
+  );
 }
 
-function linkLocalPathsPreservingOsc(source: string): string {
+function linkLocalPathsPreservingOsc(source: string, options: RenderRichTextOptions = {}): string {
   if (stripAnsi(source).trimStart().startsWith("◇")) return source;
   let cursor = 0;
   let output = "";
   for (const match of source.matchAll(osc8FullPattern)) {
     const index = match.index ?? 0;
-    output += linkLocalPaths(source.slice(cursor, index));
+    output += linkLocalPaths(source.slice(cursor, index), options);
     output += match[0];
     cursor = index + match[0].length;
   }
-  output += linkLocalPaths(source.slice(cursor));
+  output += linkLocalPaths(source.slice(cursor), options);
   return output;
+}
+
+function normalizeMatchedPath(raw: string, options: RenderRichTextOptions = {}): string {
+  const existing = longestExistingMatchedPath(raw, options.workspaceDirectory);
+  if (existing) return existing;
+  const trimmed = raw.replace(TRAILING_PATH_PUNCTUATION, "");
+  if (!/\s/u.test(trimmed)) return trimmed;
+  const extension = trimmed.match(KNOWN_FILE_EXTENSION_PATTERN);
+  if (extension?.index !== undefined) {
+    return trimmed.slice(0, extension.index + extension[0].trimEnd().length);
+  }
+  return trimmed.trimEnd();
+}
+
+function longestExistingMatchedPath(raw: string, workspaceDirectory?: string): string | undefined {
+  const candidates = matchedPathCandidates(raw);
+  for (const candidate of candidates) {
+    if (localTargetExists(candidate, workspaceDirectory)) return candidate;
+  }
+  return undefined;
+}
+
+function matchedPathCandidates(raw: string): string[] {
+  const endings = new Set<number>([raw.length]);
+  for (let end = raw.length; end > 0; end -= 1) {
+    const previous = raw[end - 1] ?? "";
+    if (!/[),.;:!?]/u.test(previous)) break;
+    endings.add(end - 1);
+  }
+  for (let index = 0; index < raw.length; index += 1) {
+    if (/[\s,.;:!?]/u.test(raw[index] ?? "")) endings.add(index);
+    if (/[\])}]/u.test(raw[index] ?? "")) {
+      endings.add(index);
+      endings.add(index + 1);
+    }
+  }
+  return [...endings]
+    .map((end) => raw.slice(0, end).trimEnd())
+    .filter((candidate) => candidate && isLocalLinkTarget(candidate))
+    .sort((left, right) => right.length - left.length);
 }
 
 function isLocalPath(value: string): boolean {
   return /^(?:[A-Za-z]:[\\/]|\\\\|\/|\.{1,2}[\\/])/u.test(value);
+}
+
+function isRelativePath(value: string): boolean {
+  return (
+    !/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(value) && !value.startsWith("#") && /[\\/]/u.test(value)
+  );
+}
+
+function isLocalPathReference(value: string): boolean {
+  return isLocalPath(value) || isRelativePath(value);
 }
 
 function terminalLink(url: string, label: string): string {
@@ -397,29 +645,147 @@ function terminalLink(url: string, label: string): string {
 }
 
 function stripHtml(value: string): string {
-  return stripUnsupportedHtml(value).replace(/<[^>]+>/gu, "");
+  return stripUnsupportedHtml(value).replace(supportedHtmlTagPattern, "");
 }
 
+const supportedHtmlTags = new Set([
+  "a",
+  "address",
+  "article",
+  "aside",
+  "b",
+  "blockquote",
+  "br",
+  "caption",
+  "code",
+  "del",
+  "details",
+  "div",
+  "em",
+  "figcaption",
+  "figure",
+  "footer",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "header",
+  "hr",
+  "i",
+  "li",
+  "main",
+  "mark",
+  "nav",
+  "ol",
+  "p",
+  "pre",
+  "s",
+  "section",
+  "span",
+  "strong",
+  "summary",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "tr",
+  "u",
+  "ul",
+]);
+const supportedHtmlTagPattern = /<\/?([A-Za-z][A-Za-z0-9_-]*)(?:\s[^<>]*)?\/?>/gu;
+
 function stripUnsupportedHtml(value: string): string {
-  return value
+  const preserved = preserveMarkdownCodeFences(value);
+  const stripped = preserved.text
     .replace(/<br\s*\/?>/giu, "\n")
-    .replace(/<\/?(?:p|div)>/giu, "\n")
-    .replace(/<\/?[^>]+>/gu, "");
+    .replace(/<li(?:\s[^>]*)?>/giu, "\n")
+    .replace(/<\/li>/giu, "\n")
+    .replace(
+      /<\/?(?:address|article|aside|blockquote|details|div|figcaption|figure|footer|h[1-6]|header|hr|main|nav|ol|p|pre|section|summary|table|tbody|td|tfoot|th|thead|tr|ul)(?:\s[^>]*)?>/giu,
+      "\n",
+    )
+    .replace(supportedHtmlTagPattern, (match, tagName) =>
+      supportedHtmlTags.has(String(tagName).toLowerCase()) ? "" : match,
+    );
+  return restoreMarkdownCodeFences(stripped, preserved.tokens);
+}
+
+function preserveMarkdownCodeFences(source: string): { text: string; tokens: string[] } {
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  const output: string[] = [];
+  const tokens: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const fence = lines[index].match(/^\s*(`{3,}|~{3,})[^`~]*$/u);
+    if (!fence) {
+      output.push(lines[index]);
+      continue;
+    }
+    const fenceMarker = fence[1] ?? "```";
+    const fenceChar = fenceMarker[0] ?? "`";
+    const closingFence = new RegExp(
+      `^\\s*${escapeRegExp(fenceChar).repeat(fenceMarker.length)}${escapeRegExp(fenceChar)}*\\s*$`,
+      "u",
+    );
+    const block = [lines[index]];
+    index += 1;
+    while (index < lines.length) {
+      block.push(lines[index]);
+      if (closingFence.test(lines[index])) break;
+      index += 1;
+    }
+    const token = `\u0000FENCE${tokens.length}\u0000`;
+    tokens.push(block.join("\n"));
+    output.push(token);
+  }
+  return { text: output.join("\n"), tokens };
+}
+
+function restoreMarkdownCodeFences(source: string, tokens: string[]): string {
+  return source.replace(/\u0000FENCE(\d+)\u0000/gu, (_match, index) => tokens[Number(index)] ?? "");
 }
 
 function isLinkTarget(value: string): boolean {
-  return /^(?:https?:\/\/|file:\/\/)/iu.test(value) || isLocalPath(value);
+  return /^(?:https?:\/\/|file:\/\/)/iu.test(value) || isLocalPathReference(value);
 }
 
-function linkTargetUrl(value: string): string {
+function isLocalLinkTarget(value: string): boolean {
+  return /^file:\/\//iu.test(value) || isLocalPathReference(value);
+}
+
+function linkTargetUrl(value: string, workspaceDirectory?: string): string {
   if (/^(?:https?:\/\/|file:\/\/)/iu.test(value)) return value;
-  return localPathUrl(value);
+  return localPathUrl(value, workspaceDirectory);
 }
 
-function localPathUrl(value: string): string {
-  const normalized = value.replace(/\\/g, "/");
+function localPathUrl(value: string, workspaceDirectory?: string): string {
+  const resolved = localFilesystemPath(value, workspaceDirectory) ?? value;
+  const normalized = resolved.replace(/\\/g, "/");
   const withSlash = /^[A-Za-z]:\//u.test(normalized) ? `/${normalized}` : normalized;
   return `file://${encodeURI(withSlash)}`;
+}
+
+function localTargetExists(value: string, workspaceDirectory?: string): boolean {
+  const resolved = localFilesystemPath(value, workspaceDirectory);
+  return Boolean(resolved && existsSync(resolved));
+}
+
+function localFilesystemPath(value: string, workspaceDirectory?: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (/^file:\/\//iu.test(trimmed)) {
+    try {
+      return fileURLToPath(trimmed);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!isLocalPathReference(trimmed)) return undefined;
+  if (path.isAbsolute(trimmed)) return trimmed;
+  return path.resolve(workspaceDirectory || process.cwd(), trimmed);
 }
 
 function decodeHtml(value: string): string {
@@ -429,238 +795,4 @@ function decodeHtml(value: string): string {
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'");
-}
-
-function summarizePayloadText(value: string): string | undefined {
-  if (
-    !/[{[]/.test(value) ||
-    !/(command_run|apply_patch|image_url|command_type|tool_result|results)/i.test(value)
-  )
-    return undefined;
-  const normalized = normalizePayloadText(value);
-  const snippets: string[] = [];
-  for (const match of normalized.matchAll(/"path"\s*:\s*"([^"]+)"/g))
-    snippets.push(`[${t("read")}: ${match[1]}]`);
-  for (const match of normalized.matchAll(/"command_line"\s*:\s*"([^"]+)"/g)) {
-    const command = decodeJsonString(match[1] ?? "");
-    if (looksLikeCommand(command)) snippets.push(`[${t("bash")}: ${firstCommandLine(command)}]`);
-  }
-  for (const match of normalized.matchAll(/"command"\s*:\s*"([^"]+)"/g)) {
-    const command = decodeJsonString(match[1] ?? "");
-    if (looksLikeCommand(command)) snippets.push(`[${t("bash")}: ${firstCommandLine(command)}]`);
-  }
-  for (const match of normalized.matchAll(/"command_type"\s*:\s*"([^"]+)"/g))
-    snippets.push(`[${t("tool")}: ${match[1]}]`);
-  for (const match of normalized.matchAll(/"label"\s*:\s*"([^"]+)"/g)) {
-    if (/img|image/i.test(match[1])) snippets.push(`[${t("media")}: ${match[1]}]`);
-  }
-  const unique = Array.from(new Set(snippets)).slice(0, 8);
-  if (unique.length) return unique.join("\n");
-  return `[${t("toolResult")}]`;
-}
-
-export function extractCommandsFromText(value: string): string[] {
-  const text = value.trim();
-  if (!text) return [];
-  const commands: string[] = [];
-  for (const pattern of [
-    /"command_line"\s*:\s*"([^"]+)"/g,
-    /"command"\s*:\s*"([^"]+)"/g,
-    /`([^`\n]*(?:npm|pnpm|yarn|node|python|cargo|git|rg|powershell|pwsh|cmd)\s+[^`\n]*)`/gi,
-  ]) {
-    for (const match of text.matchAll(pattern)) {
-      const command = decodeJsonString(match[1] ?? "");
-      if (looksLikeCommand(command)) commands.push(command);
-    }
-  }
-  const compact = compactCommandJson(text);
-  if (compact) {
-    for (const command of extractCommandsFromText(compact)) commands.push(command);
-  }
-  return commands;
-}
-
-export function extractCommandsFromUnknown(value: unknown): string[] {
-  if (!value) return [];
-  if (typeof value === "string") return extractCommandsFromText(value);
-  if (Array.isArray(value)) return value.flatMap(extractCommandsFromUnknown);
-  if (typeof value !== "object") return [];
-  const object = value as Record<string, unknown>;
-  const commands: string[] = [];
-  for (const key of ["command_line", "command"]) {
-    const command = object[key];
-    if (typeof command === "string" && looksLikeCommand(command)) commands.push(command);
-  }
-  for (const key of ["commands", "results", "steps", "input", "output"]) {
-    commands.push(...extractCommandsFromUnknown(object[key]));
-  }
-  return commands;
-}
-
-export function firstCommandLine(value: string): string {
-  return value.trim().split(/\r?\n/)[0]?.trim() ?? "";
-}
-
-function looksLikeCommand(value: string): boolean {
-  const command = firstCommandLine(value);
-  return (
-    Boolean(command) &&
-    !/^https?:\/\//i.test(command) &&
-    (/^(?:npm|pnpm|yarn|node|python|py|cargo|git|rg|powershell|pwsh|cmd|npx|tsx|tsc|ls|dir|cd|cat|type|echo|mkdir|copy|xcopy|robocopy|del|rm|cp|mv)\b/i.test(
-      command,
-    ) ||
-      /^[A-Z][A-Za-z]+-[A-Z][A-Za-z]+\b/u.test(command))
-  );
-}
-
-function decodeJsonString(value: string): string {
-  try {
-    return JSON.parse(`"${value.replace(/"/g, '\\"')}"`) as string;
-  } catch {
-    return value.replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-  }
-}
-
-export function toolSummary(state: Record<string, unknown>): string {
-  const output = state.output;
-  if (typeof output === "string") {
-    const clean = cleanMessageText(output);
-    return (
-      compactPayloadField(clean) ??
-      summarizePayloadText(clean) ??
-      compactCommandJson(clean) ??
-      clean
-    );
-  }
-  if (output && typeof output === "object") {
-    const object = output as Record<string, unknown>;
-    for (const key of ["reply_message", "text", "summary", "stdout", "stderr"]) {
-      const value = object[key];
-      if (typeof value === "string" && value.trim()) {
-        const clean = cleanMessageText(value);
-        return (
-          compactPayloadField(clean) ??
-          summarizePayloadText(clean) ??
-          compactCommandJson(clean) ??
-          clean
-        );
-      }
-    }
-  }
-  const input = state.input;
-  if (input && typeof input === "object") {
-    const object = input as Record<string, unknown>;
-    for (const key of ["step_summary", "task_summary", "summary", "status", "label"]) {
-      const value = object[key];
-      if (typeof value === "string" && value.trim()) return value.trim();
-    }
-    for (const key of ["command_line", "command"]) {
-      const value = object[key];
-      if (typeof value === "string" && looksLikeCommand(value)) return firstCommandLine(value);
-    }
-    const commands = object.commands;
-    if (Array.isArray(commands)) {
-      const first = commands.find((item) => item && typeof item === "object") as
-        | Record<string, unknown>
-        | undefined;
-      const command = first?.command_line ?? first?.command ?? first?.command_type;
-      if (typeof command === "string" && command.trim()) return command.trim();
-    }
-  }
-  return "";
-}
-
-export function compactPayloadField(value: string): string | undefined {
-  const normalized = normalizePayloadText(value);
-  for (const key of ["task_summary", "summary", "status", "label"]) {
-    const index = normalized.indexOf(key);
-    if (index < 0) continue;
-    const colon = normalized.indexOf(":", index + key.length);
-    const open = colon >= 0 ? normalized.indexOf('"', colon + 1) : -1;
-    const close = open >= 0 ? normalized.indexOf('"', open + 1) : -1;
-    if (open >= 0 && close > open)
-      return truncate(
-        normalized
-          .slice(open + 1, close)
-          .trim()
-          .replace(/\s+/g, " "),
-        90,
-      );
-  }
-  for (const key of ["task_summary", "summary", "status", "label"]) {
-    const direct = normalized.match(new RegExp(`${key}\\\\*"?\\s*:\\s*\\\\*"([^"\\\\]+)`, "u"));
-    if (direct?.[1]?.trim()) return truncate(direct[1].trim().replace(/\s+/g, " "), 90);
-  }
-  const start = normalized.indexOf("{");
-  const end = normalized.lastIndexOf("}");
-  if (start >= 0 && end > start) {
-    const compact = compactCommandJson(normalized.slice(start, end + 1));
-    if (compact) return compact;
-  }
-  for (const key of ["task_summary", "summary", "status", "label"]) {
-    const match = normalized.match(new RegExp(`\\\\*"${key}\\\\*"\\s*:\\s*\\\\*"([^"\\\\]+)`, "u"));
-    if (match?.[1]?.trim()) return truncate(match[1].trim().replace(/\s+/g, " "), 90);
-  }
-  const loose = normalized.replace(/[\\"]/g, "");
-  for (const key of ["task_summary", "summary", "status", "label"]) {
-    const index = loose.indexOf(`${key}:`);
-    if (index < 0) continue;
-    const rest = loose.slice(index + key.length + 1);
-    const stop = rest.search(/[}\],]/u);
-    const field = (stop >= 0 ? rest.slice(0, stop) : rest).trim();
-    if (field) return truncate(field.replace(/\s+/g, " "), 90);
-  }
-  return undefined;
-}
-
-function normalizePayloadText(value: string): string {
-  let normalized = value;
-  for (let index = 0; index < 5; index += 1) {
-    const next = normalized.replace(/\\\\/g, "\\").replace(/\\"/g, '"');
-    if (next === normalized) return normalized;
-    normalized = next;
-  }
-  return normalized;
-}
-
-function compactCommandJson(value: string): string | undefined {
-  const trimmed = value.trim();
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return undefined;
-  try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    return compactCommandValue(parsed);
-  } catch {
-    return undefined;
-  }
-}
-
-function compactCommandValue(value: unknown): string | undefined {
-  if (Array.isArray(value)) {
-    const nested = value.map(compactCommandValue).filter(Boolean).slice(0, 4);
-    return nested.length ? nested.join("  ") : undefined;
-  }
-  if (!value || typeof value !== "object") return undefined;
-  const object = value as Record<string, unknown>;
-  const command = object.command ?? object.command_line;
-  if (typeof command === "string" && command.trim()) return `[${t("bash")}: ${command.trim()}]`;
-  const commandType = object.command_type;
-  if (typeof commandType === "string" && commandType.trim())
-    return `[${t("tool")}: ${commandType.trim()}]`;
-  for (const key of ["task_summary", "summary", "status", "label"]) {
-    const value = object[key];
-    if (typeof value === "string" && value.trim())
-      return truncate(value.trim().replace(/\s+/g, " "), 90);
-  }
-  const output = object.output;
-  if (typeof output === "string" && output.trim())
-    return truncate(output.trim().replace(/\s+/g, " "), 90);
-  if (output && typeof output === "object") {
-    const nested = compactCommandValue(output);
-    if (nested) return nested;
-  }
-  for (const key of ["results", "commands", "changes"]) {
-    const nested = compactCommandValue(object[key]);
-    if (nested) return nested;
-  }
-  return undefined;
 }

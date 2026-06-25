@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Tura",
+  "productName": "tura_gui",
   "version": "0.1.0",
-  "identifier": "dev.tura.gui",
+  "identifier": "dev.tura.tura-gui",
   "build": {
     "beforeDevCommand": "bun --cwd ../gui/app dev -- --host 127.0.0.1 --port 5174 --strictPort",
     "beforeBuildCommand": "bun --cwd ../gui build",
@@ -26,6 +26,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"]
+    "icon": [
+      "../../../assets/tura/32x32.png",
+      "../../../assets/tura/128x128.png",
+      "../../../assets/tura/128x128@2x.png",
+      "../../../assets/tura/icon.ico"
+    ]
   }
 }

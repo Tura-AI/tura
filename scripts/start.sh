@@ -1,162 +1,160 @@
 #!/usr/bin/env sh
 set -eu
+PATH="/usr/bin:/bin:/mingw64/bin:/ucrt64/bin:$PATH"
+export PATH
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-TUI_DIR="$REPO_ROOT/apps/tui"
-TAURI_DIR="$REPO_ROOT/apps/tauri"
-
+MODE=debug
 BUILD_ONLY=0
-RELEASE_SERVICES=0
-GATEWAY=0
 TUI=0
-GUI=0
-DESKTOP=0
-SKIP_INSTALL=0
-SKIP_FRONTEND=0
-SKIP_PLAYWRIGHT=0
-PORT=4096
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --release) MODE=release ;;
     --build-only) BUILD_ONLY=1 ;;
-    --release-services|--release) RELEASE_SERVICES=1 ;;
-    --gateway) GATEWAY=1 ;;
     --tui) TUI=1 ;;
-    --gui) GUI=1 ;;
-    --desktop) DESKTOP=1 ;;
-    --skip-install) SKIP_INSTALL=1 ;;
-    --skip-frontend) SKIP_FRONTEND=1 ;;
-    --skip-playwright) SKIP_PLAYWRIGHT=1 ;;
-    --port)
-      shift
-      if [ "$#" -eq 0 ]; then echo "--port requires a value" >&2; exit 2; fi
-      PORT=$1
-      ;;
     -h|--help)
       cat <<'EOF'
 Usage:
-  scripts/start.sh [PROMPT...]
-  scripts/start.sh --tui [tura args...]
-  scripts/start.sh --gui [bun dev args...]
-  scripts/start.sh --desktop [tauri dev args...]
-  scripts/start.sh --gateway [--port 4096]
-  scripts/start.sh --build-only [--release-services]
-
-Options:
-  --build-only        install dependencies and build binaries, then exit
-  --release-services build Rust binaries with --release
-  --gateway          run the gateway HTTP server binary
-  --tui              run the TypeScript terminal client from apps/tui
-  --gui              run the Bun/Vite graphical UI from apps/gui
-  --desktop          run the Tauri desktop shell from apps/tauri
-  --skip-install     skip dependency bootstrap before starting
-  --skip-frontend    skip frontend dependency setup during bootstrap
-  --skip-playwright  skip Playwright Chromium setup during bootstrap
-  --port PORT        gateway server port, and GUI default gateway URL port
-
-Default behavior runs the Rust CLI:
-  cargo run -p gateway --bin tura -- exec [PROMPT...]
+  scripts/start.sh [--release] [PROMPT...]
+  scripts/start.sh [--release] --tui [tura args...]
+  scripts/start.sh [--release] --build-only
 EOF
       exit 0
       ;;
-    --)
-      shift
-      break
-      ;;
-    *)
-      break ;;
+    --) shift; break ;;
+    *) break ;;
   esac
   shift
 done
 
-cd "$REPO_ROOT"
+TARGET_DIR="$REPO_ROOT/target/$MODE"
+BUILD_SCRIPT="$SCRIPT_DIR/build-$MODE.sh"
+EXE_SUFFIX=""
+case "$(uname -s 2>/dev/null || echo unknown)" in
+  MINGW*|MSYS*|CYGWIN*) EXE_SUFFIX=".exe" ;;
+esac
 
-if [ -z "${TURA_ENV_PATH:-}" ] && [ -f "$REPO_ROOT/.env" ]; then
-  export TURA_ENV_PATH="$REPO_ROOT/.env"
-fi
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
 
-if [ "$SKIP_INSTALL" -eq 0 ]; then
-  # start.sh runs the app from source for local development, so bootstrap the
-  # debug (dev) install rather than the production release-into-bin route.
-  INSTALL_ARGS="dev"
-  if [ "$SKIP_FRONTEND" -eq 1 ]; then INSTALL_ARGS="$INSTALL_ARGS --skip-frontend"; fi
-  if [ "$SKIP_PLAYWRIGHT" -eq 1 ]; then INSTALL_ARGS="$INSTALL_ARGS --skip-playwright"; fi
-  if [ "$BUILD_ONLY" -eq 0 ]; then INSTALL_ARGS="$INSTALL_ARGS --skip-rust-build"; fi
-  "$SCRIPT_DIR/install.sh" $INSTALL_ARGS
-else
-  if ! command -v cargo >/dev/null 2>&1; then
-    echo "cargo was not found. Run ./scripts/install.sh first, or install Rust from https://rustup.rs/." >&2
-    exit 1
+strict_shell_coverage() {
+  value=$(printf '%s' "${TURA_STRICT_SHELL_TOOL_COVERAGE:-}" | tr '[:upper:]' '[:lower:]')
+  [ "$value" = "1" ] || [ "$value" = "true" ] || [ "$value" = "yes" ] || [ "$value" = "on" ]
+}
+
+find_first_executable() {
+  for candidate in "$@"; do
+    [ -n "$candidate" ] || continue
+    case "$candidate" in
+      */*)
+        [ -x "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+        ;;
+      *)
+        command -v "$candidate" 2>/dev/null && return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+find_bash() {
+  find_first_executable bash /bin/bash /usr/bin/bash /usr/local/bin/bash /opt/homebrew/bin/bash \
+    /usr/bin/bash.exe /mingw64/bin/bash.exe /ucrt64/bin/bash.exe /c/Program\ Files/Git/bin/bash.exe
+}
+
+find_zsh() {
+  if [ -n "${TURA_ZSH_PATH:-}" ]; then
+    [ -x "$TURA_ZSH_PATH" ] && { printf '%s\n' "$TURA_ZSH_PATH"; return 0; }
+    return 1
   fi
-  if [ "$TUI" -eq 1 ]; then
-    if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-      echo "node/npm were not found. Run ./scripts/install.sh first, or install Node.js 20+ from https://nodejs.org/." >&2
-      exit 1
-    fi
-  fi
-  if [ "$GUI" -eq 1 ] || [ "$DESKTOP" -eq 1 ]; then
-    if ! command -v bun >/dev/null 2>&1; then
-      echo "bun was not found. Run ./scripts/install.sh first, or install Bun from https://bun.sh/." >&2
-      exit 1
-    fi
-  fi
-  if [ "$DESKTOP" -eq 1 ] && ! command -v cargo >/dev/null 2>&1; then
-    echo "cargo was not found. Run ./scripts/install.sh first, or install Rust from https://rustup.rs/." >&2
-    exit 1
-  fi
-fi
+  find_first_executable zsh /bin/zsh /usr/bin/zsh /usr/local/bin/zsh /opt/homebrew/bin/zsh \
+    /usr/bin/zsh.exe /mingw64/bin/zsh.exe /ucrt64/bin/zsh.exe /c/msys64/usr/bin/zsh.exe
+}
 
-if [ "$BUILD_ONLY" -eq 1 ]; then
-  exit 0
-fi
+find_powershell() {
+  find_first_executable pwsh powershell.exe powershell
+}
 
-PROFILE_ARGS=""
-if [ "$RELEASE_SERVICES" -eq 1 ]; then
-  PROFILE_ARGS="--release"
-fi
+find_posix_shell() {
+  if [ -n "${SHELL:-}" ] && [ -x "$SHELL" ]; then
+    printf '%s\n' "$SHELL"
+    return 0
+  fi
+  find_first_executable sh /bin/sh /usr/bin/sh
+}
 
-if [ "$GATEWAY" -eq 1 ]; then
-  export PORT
-  cargo run $PROFILE_ARGS -p gateway --bin gateway
-  exit $?
-fi
+report_shell_tool() {
+  label=$1
+  path=$2
+  hint=$3
+  if [ -n "$path" ]; then
+    printf '%s: %s\n' "$label" "$path"
+    return 0
+  fi
+  echo "$label: missing. $hint" >&2
+  strict_shell_coverage && return 1
+  return 0
+}
+
+require_shell_tool() {
+  label=$1
+  path=$2
+  hint=$3
+  if [ -n "$path" ]; then
+    printf '%s: %s\n' "$label" "$path"
+    return 0
+  fi
+  echo "$label: missing. $hint" >&2
+  exit 1
+}
+
+ensure_shell_tool_coverage() {
+  os_name=$(uname -s 2>/dev/null || echo unknown)
+  case "$os_name" in
+    MINGW*|MSYS*|CYGWIN*)
+      ps_path=$(find_powershell || true)
+      bash_path=$(find_bash || true)
+      zsh_path=$(find_zsh || true)
+      require_shell_tool "shell_command/PowerShell" "$ps_path" "Install PowerShell or run from a PowerShell-capable environment."
+      report_shell_tool "bash" "$bash_path" "Install Git for Windows/MSYS2 bash for bash command_run coverage."
+      report_shell_tool "zsh" "$zsh_path" "Install MSYS2 zsh or set TURA_ZSH_PATH to a valid zsh.exe."
+      ;;
+    Darwin)
+      shell_path=$(find_posix_shell || true)
+      zsh_path=$(find_zsh || true)
+      bash_path=$(find_bash || true)
+      pwsh_path=$(find_powershell || true)
+      require_shell_tool "shell_command/POSIX shell" "$shell_path" "Install sh, bash, or zsh."
+      require_shell_tool "zsh" "$zsh_path" "macOS requires zsh for the default Tura shell surface. Install zsh or set TURA_ZSH_PATH to a valid zsh binary."
+      require_shell_tool "bash" "$bash_path" "Install bash for bash command_run coverage."
+      report_shell_tool "powershell" "$pwsh_path" "Install PowerShell 7 (`pwsh`) if you want to run PowerShell install/debug scripts on macOS."
+      ;;
+    *)
+      shell_path=$(find_posix_shell || true)
+      bash_path=$(find_bash || true)
+      zsh_path=$(find_zsh || true)
+      require_shell_tool "shell_command/POSIX shell" "$shell_path" "Install sh, bash, or zsh for shell_command debugging."
+      require_shell_tool "bash" "$bash_path" "Install bash for the default Linux command_run shell surface."
+      report_shell_tool "zsh" "$zsh_path" "Install zsh or set TURA_ZSH_PATH to a valid zsh binary for zsh command_run coverage."
+      ;;
+  esac
+}
+
+ensure_built() {
+  if [ ! -x "$TARGET_DIR/tura_exec$EXE_SUFFIX" ] || [ ! -x "$TARGET_DIR/tura$EXE_SUFFIX" ] || [ ! -x "$TARGET_DIR/tura_gateway$EXE_SUFFIX" ]; then
+    sh "$BUILD_SCRIPT"
+  fi
+}
+
+ensure_shell_tool_coverage
+ensure_built
+[ "$BUILD_ONLY" -eq 0 ] || exit 0
 
 if [ "$TUI" -eq 1 ]; then
-  if [ ! -f "$TUI_DIR/dist/index.js" ]; then
-    (cd "$TUI_DIR" && npm run build)
-  fi
-  node "$TUI_DIR/dist/index.js" "$@"
-  exit $?
+  exec "$TARGET_DIR/tura$EXE_SUFFIX" "$@"
 fi
 
-if [ "$GUI" -eq 1 ]; then
-  if ! command -v bun >/dev/null 2>&1; then
-    echo "bun was not found. Run ./scripts/install.sh first, or install Bun from https://bun.sh/." >&2
-    exit 1
-  fi
-  if [ -z "${VITE_TURA_GATEWAY_URL:-}" ]; then
-    if [ -n "${TURA_GATEWAY_URL:-}" ]; then
-      export VITE_TURA_GATEWAY_URL="$TURA_GATEWAY_URL"
-    else
-      export VITE_TURA_GATEWAY_URL="http://127.0.0.1:$PORT"
-    fi
-  fi
-  (cd "$REPO_ROOT/apps/gui" && bun run dev "$@")
-  exit $?
-fi
-
-if [ "$DESKTOP" -eq 1 ]; then
-  if ! command -v bun >/dev/null 2>&1; then
-    echo "bun was not found. Run ./scripts/install.sh first, or install Bun from https://bun.sh/." >&2
-    exit 1
-  fi
-  if ! command -v cargo >/dev/null 2>&1; then
-    echo "cargo was not found. Run ./scripts/install.sh first, or install Rust from https://rustup.rs/." >&2
-    exit 1
-  fi
-  (cd "$TAURI_DIR" && bun run dev "$@")
-  exit $?
-fi
-
-cargo run $PROFILE_ARGS -p gateway --bin tura -- exec "$@"
+exec "$TARGET_DIR/tura$EXE_SUFFIX" exec "$@"

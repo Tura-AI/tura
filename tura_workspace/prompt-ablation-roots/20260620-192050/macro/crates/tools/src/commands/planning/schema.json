@@ -1,0 +1,20 @@
+{
+  "type": "array",
+  "minItems": 2,
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [],
+    "properties": {
+      "step": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Unique positive task step number."
+      },
+      "task_summary": {
+        "type": "string",
+        "description": "One short sentence naming this independent goal task, about 10 words or fewer."
+      }
+    }
+  }
+}

@@ -255,8 +255,68 @@
   transform: translateY(-50%);
 }
 
+.plan-pipeline-grid {
+  overflow: auto;
+  --plan-day-width: max(156px, calc((100% - var(--plan-left-width)) / var(--plan-days)));
+}
+
+.plan-timeline-scale [data-plan-step] {
+  display: grid;
+  grid-row: 2;
+  align-content: center;
+  min-height: 46px;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-left: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  background: transparent;
+  color: var(--muted);
+  text-align: center;
+  cursor: default;
+}
+
+.plan-pipeline-track {
+  align-items: center;
+  overflow: visible;
+  background-image: repeating-linear-gradient(
+    to right,
+    transparent 0,
+    transparent calc(var(--plan-day-width) - 1px),
+    color-mix(in srgb, var(--line) 72%, transparent) calc(var(--plan-day-width) - 1px),
+    color-mix(in srgb, var(--line) 72%, transparent) var(--plan-day-width)
+  );
+}
+
+.plan-pipeline-task {
+  position: relative;
+  top: auto;
+  justify-self: stretch;
+  width: auto;
+  max-width: calc(var(--plan-day-width) - 8px);
+  margin: 0 4px;
+  transform: none;
+}
+
+.plan-pipeline-task.drop-step {
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--line-strong) 64%, transparent),
+    0 5px 14px rgb(28 28 24 / 10%);
+}
+
+.plan-pipeline-empty {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+
 .plan-drag-ghost.plan-timeline-bar {
   transform: translateY(-50%);
+}
+
+.plan-drag-ghost.plan-pipeline-task {
+  transform: none;
 }
 
 .plan-calendar-event {

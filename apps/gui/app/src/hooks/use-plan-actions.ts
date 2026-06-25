@@ -233,9 +233,11 @@ export function usePlanActions(options: PlanActionsOptions) {
     if (e2eFixture) {
       return;
     }
+    const messageId = `plan-ticket:${session.id}:${taskId}:${Date.now()}`;
     try {
       await directoryClient().promptAsync(session.id, {
-        parts: [{ type: "text", text: taskDisplayText(task) }],
+        messageID: messageId,
+        parts: [{ id: `${messageId}:text`, type: "text", text: taskDisplayText(task) }],
         model: state().selectedModel,
         agent: state().selectedAgent,
       });
@@ -259,7 +261,6 @@ export function usePlanActions(options: PlanActionsOptions) {
     const optimisticMessage: Message = {
       id: messageId,
       sessionID: session.id,
-      session_id: session.id,
       role: "user",
       created_at: now,
       updated_at: now,
@@ -267,6 +268,8 @@ export function usePlanActions(options: PlanActionsOptions) {
       parts: [
         {
           id: `${messageId}:text`,
+          sessionID: session.id,
+          messageID: messageId,
           type: "text",
           text,
           metadata: {
@@ -324,7 +327,6 @@ export function usePlanActions(options: PlanActionsOptions) {
             {
               id: `${messageId}:gateway-response`,
               sessionID: session.id,
-              session_id: session.id,
               role: "assistant",
               providerID: "mock",
               modelID: "gateway",
@@ -334,6 +336,8 @@ export function usePlanActions(options: PlanActionsOptions) {
               parts: [
                 {
                   id: `${messageId}:gateway-response:text`,
+                  sessionID: session.id,
+                  messageID: `${messageId}:gateway-response`,
                   type: "text",
                   text: `Gateway 已接收立即执行任务：${taskSummaryText(task)}`,
                 },
@@ -351,7 +355,8 @@ export function usePlanActions(options: PlanActionsOptions) {
       });
       await Promise.race([
         directoryClient().promptAsync(session.id, {
-          parts: [{ type: "text", text }],
+          messageID: messageId,
+          parts: [{ id: `${messageId}:text`, type: "text", text }],
           model: state().selectedModel,
           agent: state().selectedAgent,
         }),
@@ -472,9 +477,13 @@ export function usePlanActions(options: PlanActionsOptions) {
       const updated = await directoryClient().updateSessionTaskManagement(session.id, { tasks });
       setState((previous) => ({
         ...previous,
-        sessions: previous.sessions.map((item) =>
-          item.id === session.id ? { ...item, ...updated } : item,
-        ),
+        sessions: previous.sessions.map((item) => {
+          if (item.id !== session.id) {
+            return item;
+          }
+          const merged = reorderTasksInSession(item, tasks);
+          return { ...item, ...updated, task_management: merged.task_management };
+        }),
       }));
     } catch (error) {
       setState((previous) => ({ ...previous, error: errorMessage(error) }));

@@ -1,1 +1,12 @@
+pub mod ipc;
+#[path = "services/manager.rs"]
+pub mod manager;
+#[path = "services/models.rs"]
+pub mod models;
+#[path = "services/process_scope.rs"]
+pub mod process_scope;
 pub mod registry;
+#[path = "services/runtime_orphans.rs"]
+pub mod runtime_orphans;
+#[path = "services/worker_process.rs"]
+pub mod worker_process;

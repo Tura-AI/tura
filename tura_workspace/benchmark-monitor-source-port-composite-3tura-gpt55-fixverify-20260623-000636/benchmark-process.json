@@ -1,0 +1,10 @@
+{
+  "RunId": "source-port-composite-3tura-gpt55-fixverify-20260623-000636",
+  "MonitorRoot": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-composite-3tura-gpt55-fixverify-20260623-000636",
+  "Stdout": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-composite-3tura-gpt55-fixverify-20260623-000636\\benchmark.stdout.log",
+  "Stderr": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-composite-3tura-gpt55-fixverify-20260623-000636\\benchmark.stderr.log",
+  "Agents": "tura-fast-shll,tura-thinking-shll,tura-planning-shll",
+  "TimeoutMs": 1200000,
+  "Pid": 4176,
+  "StartedAt": "2026-06-23T00:06:36.6907297+02:00"
+}

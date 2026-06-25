@@ -1,0 +1,11 @@
+{
+  "run_id": "ogas-rpcap-nopermissions-20260624-2018",
+  "launcher_pid": 29660,
+  "started": "2026-06-24T20:44:58.9855247+02:00",
+  "monitor_dir": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-ogas-rpcap-nopermissions-20260624-2018",
+  "stdout": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-ogas-rpcap-nopermissions-20260624-2018\\runner.stdout.log",
+  "stderr": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-ogas-rpcap-nopermissions-20260624-2018\\runner.stderr.log",
+  "summary": "C:\\Users\\liuliu\\Documents\\tura_workspace\\target\\media-presentation-ogas-pdf\\ogas-rpcap-nopermissions-20260624-2018\\summary.json",
+  "agent_dir": "C:\\Users\\liuliu\\Documents\\tura_workspace\\target\\media-presentation-ogas-pdf\\ogas-rpcap-nopermissions-20260624-2018\\tura-thinking",
+  "script": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-ogas-rpcap-nopermissions-20260624-2018\\run-benchmark.ps1"
+}

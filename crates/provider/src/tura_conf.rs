@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
 
-use dotenvy::{from_path_override, vars};
+use dotenvy::{from_path_iter, vars};
 use tracing::{debug, warn};
 
 #[derive(Debug, Clone)]
@@ -42,17 +42,32 @@ impl TuraConfig {
     }
 
     fn load(&mut self) {
+        let mut values = HashMap::new();
         if self.env_path.exists() {
-            if let Err(err) = from_path_override(&self.env_path) {
-                warn!(error = %err, path = %self.env_path.display(), "failed to load env file");
-            } else {
-                debug!(path = %self.env_path.display(), "configuration loaded");
+            match from_path_iter(&self.env_path) {
+                Ok(entries) => {
+                    for entry in entries {
+                        match entry {
+                            Ok((key, value)) => {
+                                values.insert(key, value);
+                            }
+                            Err(err) => {
+                                warn!(error = %err, path = %self.env_path.display(), "failed to parse env entry");
+                            }
+                        }
+                    }
+                    debug!(path = %self.env_path.display(), "configuration loaded");
+                }
+                Err(err) => {
+                    warn!(error = %err, path = %self.env_path.display(), "failed to load env file");
+                }
             }
         } else {
             debug!(path = %self.env_path.display(), "root dotenv not found");
         }
 
-        self.values = vars().collect();
+        values.extend(vars());
+        self.values = values;
     }
 
     pub fn env_path(&self) -> &Path {
@@ -128,6 +143,30 @@ impl Default for TuraConfig {
 #[cfg(test)]
 mod tests {
     use super::TuraConfig;
+    use std::ffi::OsString;
+
+    struct EnvRestore {
+        key: &'static str,
+        value: Option<OsString>,
+    }
+
+    impl EnvRestore {
+        fn remove(key: &'static str) -> Self {
+            let value = std::env::var_os(key);
+            std::env::remove_var(key);
+            Self { key, value }
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            if let Some(value) = &self.value {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
 
     #[test]
     fn get_reads_uppercase_environment_keys() {
@@ -144,6 +183,8 @@ mod tests {
 
     #[test]
     fn require_reports_checked_env_path_when_missing() {
+        let _env_path = EnvRestore::remove("TURA_ENV_PATH");
+        let _project_root = EnvRestore::remove("TURA_PROJECT_ROOT");
         let conf = TuraConfig::new(".env.missing-for-test");
         let err = conf
             .require("definitely_missing_tura_key")

@@ -1,0 +1,6 @@
+Set-Location 'C:\Users\liuliu\Documents\tura'
+$env:TURA_MODEL='codex/gpt-5.5'
+$env:TURA_AGENT_MODEL='codex/gpt-5.5'
+$env:TURA_TURA_MODEL='codex/gpt-5.5'
+$env:TURA_BENCH_RUN_ID='source-port-composite-fullprompt-taskstatusprompt-4agents-gpt55-20260622-225057'
+node 'C:\Users\liuliu\Documents\tura\tests\benchmark\project-rebuild-refactor\rust_cli_python_port_composite_suite.mjs' --agents tura-fast-shll,tura-thinking-shll,tura-planning-shll,codex-main --timeout-ms 1200000 --model gpt-5.5 --tura-model codex/gpt-5.5 *> 'C:\Users\liuliu\Documents\tura\tura_workspace\benchmark-monitor-source-port-composite-fullprompt-taskstatusprompt-4agents-gpt55-20260622-225057\suite.stdout.log' 2> 'C:\Users\liuliu\Documents\tura\tura_workspace\benchmark-monitor-source-port-composite-fullprompt-taskstatusprompt-4agents-gpt55-20260622-225057\suite.stderr.log'

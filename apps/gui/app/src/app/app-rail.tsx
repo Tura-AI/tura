@@ -22,7 +22,7 @@ export function AppRail(props: { view: AppShellViewModel; collapseAfterSelection
     fileTree,
     fileLoadingPath,
     expandedFileTreePaths,
-    expandedWorkspace,
+    expandedWorkspaces,
     loadFiles,
     openFile,
     toggleFileTreeDirectory,
@@ -61,6 +61,7 @@ export function AppRail(props: { view: AppShellViewModel; collapseAfterSelection
               projects={state().projects}
               directory={state().directory}
               sessions={state().sessions}
+              sessionsLoading={state().sessionsLoading}
               selectedSessionId={state().selectedSessionId}
               productIssues={state().productIssues}
               filePath={state().filePath}
@@ -69,7 +70,7 @@ export function AppRail(props: { view: AppShellViewModel; collapseAfterSelection
               fileLoadingPath={fileLoadingPath()}
               expandedFileTreePaths={expandedFileTreePaths()}
               selectedFile={state().selectedFile}
-              expandedWorkspace={expandedWorkspace()}
+              expandedWorkspaces={expandedWorkspaces()}
               expandedGroup={expandedRailGroup()}
               attentionAcknowledged={sessionAttentionAcknowledged}
               onWorkspace={selectWorkspace}

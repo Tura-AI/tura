@@ -1,11 +1,13 @@
 use super::{
-    agent_message_content, agent_message_metadata, api_message_from_store, filter_list_sessions,
-    first_prompt_part_id, frontend_safe_reply_message, frontend_safe_value, planning_todos,
-    prompt_message_id, prompt_model_acceleration, prompt_model_variant, prompt_text,
-    user_facing_completion_fallback, workspace_key, SendAgentMedia, SendAgentMessageRequest,
-    SendAgentToolCall, SessionListParams,
+    agent_message_content, agent_message_metadata, api_message_from_store, apply_single_change,
+    config_model_override, filter_list_sessions, first_prompt_part_id, frontend_safe_reply_message,
+    frontend_safe_value, inactive_sessions_from_probe, planning_todos, prompt_command_run_shell,
+    prompt_message_id, prompt_model_acceleration, prompt_model_variant, prompt_text, workspace_key,
+    SendAgentMedia, SendAgentMessageRequest, SendAgentToolCall, SessionChangeRecord,
+    SessionListParams,
 };
-use crate::api::types::{Session, SessionStatus};
+use crate::contracts::{Session, SessionContextTokens, SessionStatus};
+use crate::session::config::TuraSessionConfig;
 use crate::session_store;
 use axum::{
     extract::{Path, Query},
@@ -47,6 +49,20 @@ fn prompt_payload_extracts_model_runtime_options() {
 }
 
 #[test]
+fn prompt_payload_extracts_documented_command_run_shell_surfaces() {
+    let zsh = serde_json::json!({ "command_run_shell": "zsh" });
+    let shll = serde_json::json!({ "commandRunShell": "shell_command" });
+    let typo = serde_json::json!({ "command_run_shell": "zash" });
+
+    assert_eq!(prompt_command_run_shell(&zsh).as_deref(), Some("zsh"));
+    assert_eq!(
+        prompt_command_run_shell(&shll).as_deref(),
+        Some("shell_command")
+    );
+    assert_eq!(prompt_command_run_shell(&typo), None);
+}
+
+#[test]
 fn prompt_payload_treats_default_model_variant_as_unset() {
     let payload = serde_json::json!({
         "variant": " default ",
@@ -56,20 +72,17 @@ fn prompt_payload_treats_default_model_variant_as_unset() {
 }
 
 #[test]
-fn completion_fallback_preserves_exact_reply_requests() {
+fn session_config_model_override_prefers_provider_model_pair_for_tier_names() {
+    let config = TuraSessionConfig {
+        model: Some("thinking".to_string()),
+        active_provider: Some("codex".to_string()),
+        active_model: Some("gpt-5.5".to_string()),
+        ..TuraSessionConfig::default()
+    };
+
     assert_eq!(
-        user_facing_completion_fallback(
-            "TUI real business test: reply with exactly TUI_BUSINESS_OK and no extra text."
-        ),
-        "TUI_BUSINESS_OK"
-    );
-    assert_eq!(
-        user_facing_completion_fallback("只回复这一行，不要解释：TUI_WEB_OK"),
-        "TUI_WEB_OK"
-    );
-    assert_eq!(
-        user_facing_completion_fallback("Summarize the repository"),
-        "Done: Summarize the repository"
+        config_model_override(&config).as_deref(),
+        Some("codex/gpt-5.5")
     );
 }
 
@@ -94,6 +107,8 @@ fn test_session(id: &str, directory: &str, parent_id: Option<&str>, updated_at: 
         status: SessionStatus::Idle,
         message_count: 0,
         task_management: serde_json::json!({}),
+        context_tokens: SessionContextTokens::default(),
+        usage: Default::default(),
         plan_summary: None,
         session_display_name: None,
     }
@@ -213,7 +228,7 @@ async fn session_status_includes_task_management_display_fields() {
 
     assert_eq!(status["task_management"]["status"], "question");
     assert_eq!(status["plan_summary"], "Status Contract");
-    assert_eq!(status["session_display_name"], "Status Contract");
+    assert_eq!(status["session_display_name"], "Status task");
 }
 
 #[tokio::test]
@@ -249,7 +264,7 @@ async fn create_session_accepts_task_management_and_serializes_session_fields() 
     assert_eq!(session.plan_summary.as_deref(), Some("Create Route Plan"));
     assert_eq!(
         session.session_display_name.as_deref(),
-        Some("Create Route Plan")
+        Some("Create route task")
     );
     assert_eq!(session.task_management["task_summary"], "Create route task");
 
@@ -258,10 +273,14 @@ async fn create_session_accepts_task_management_and_serializes_session_fields() 
     assert!(value["task_management"].get("status").is_none());
     assert_eq!(value["task_management"]["start_condition"], "user_action");
     assert_eq!(value["plan_summary"], "Create Route Plan");
-    assert_eq!(value["session_display_name"], "Create Route Plan");
+    assert_eq!(value["session_display_name"], "Create route task");
     assert_eq!(value["auto_session_name"], true);
+    assert_eq!(value["context_tokens"]["input"], 0);
+    assert!(value["context_tokens"]["limit"].as_u64().is_some());
+    assert_eq!(value["usage"]["context_tokens"]["input"], 0);
+    assert!(value["usage"]["context_tokens"]["limit"].as_u64().is_some());
     let object = value.as_object().expect("session JSON should be an object");
-    assert_eq!(object.len(), 21);
+    assert_eq!(object.len(), 23);
 
     let Json(listed) = super::list_sessions(
         HeaderMap::new(),
@@ -318,10 +337,7 @@ async fn task_management_route_patches_session_and_returns_session_fields() {
         updated.plan_summary.as_deref(),
         Some("Dedicated Patch Route")
     );
-    assert_eq!(
-        updated.session_display_name.as_deref(),
-        Some("Dedicated Patch Route")
-    );
+    assert_eq!(updated.session_display_name.as_deref(), Some("Patch task"));
     assert_eq!(updated.task_management["status"], "question");
     assert_eq!(updated.task_management["start_condition"], "scheduled_task");
 
@@ -332,10 +348,14 @@ async fn task_management_route_patches_session_and_returns_session_fields() {
         "scheduled_task"
     );
     assert_eq!(value["plan_summary"], "Dedicated Patch Route");
-    assert_eq!(value["session_display_name"], "Dedicated Patch Route");
+    assert_eq!(value["session_display_name"], "Patch task");
     assert_eq!(value["auto_session_name"], true);
+    assert_eq!(value["context_tokens"]["input"], 0);
+    assert!(value["context_tokens"]["limit"].as_u64().is_some());
+    assert_eq!(value["usage"]["context_tokens"]["input"], 0);
+    assert!(value["usage"]["context_tokens"]["limit"].as_u64().is_some());
     let object = value.as_object().expect("session JSON should be an object");
-    assert_eq!(object.len(), 21);
+    assert_eq!(object.len(), 23);
 
     let Json(fetched) = super::get_session(Path(session.id)).await;
     assert_eq!(fetched.task_management["status"], "question");
@@ -345,7 +365,7 @@ async fn task_management_route_patches_session_and_returns_session_fields() {
 }
 
 #[tokio::test]
-async fn agent_tool_callback_updates_auto_session_name_from_last_task_summary() {
+async fn agent_tool_callback_updates_auto_session_name_from_last_task_group() {
     let directory = std::env::temp_dir()
         .join(format!("auto-session-name-{}", uuid::Uuid::new_v4()))
         .to_string_lossy()
@@ -364,39 +384,45 @@ async fn agent_tool_callback_updates_auto_session_name_from_last_task_summary() 
     );
 
     let Json(response) = super::send_agent_message(
-            Path(session.id.clone()),
-            Json(super::SendAgentMessageRequest {
-                reply_message: String::new(),
-                new_learning: String::new(),
-                step_summary: None,
-                media: vec![],
-                runtime_id: Some("runtime-1".to_string()),
-                tool_call: Some(super::SendAgentToolCall {
-                    tool_name: "command_run".to_string(),
-                    call_id: "call-1".to_string(),
-                    state: serde_json::json!({
-                        "status": "completed",
-                        "metadata": {
-                            "output": {
-                                "results": [
-                                    { "output": { "task_status": { "task_summary": "First summary" } } },
-                                    { "output": { "status": { "task_summary": "Last summary" } } }
-                                ]
-                            }
+        Path(session.id.clone()),
+        Json(super::SendAgentMessageRequest {
+            reply_message: String::new(),
+            new_learning: String::new(),
+            step_summary: None,
+            media: vec![],
+            runtime_id: Some("runtime-1".to_string()),
+            runtime_status: None,
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
+            created_at: 1,
+            updated_at: 1,
+            tool_call: Some(super::SendAgentToolCall {
+                tool_name: "command_run".to_string(),
+                call_id: "call-1".to_string(),
+                state: serde_json::json!({
+                    "status": "completed",
+                    "metadata": {
+                        "output": {
+                            "results": [
+                                { "output": { "task_status": { "task_group": "商城前端" } } },
+                                { "output": { "status": { "task_group": "订单清结算微服务" } } }
+                            ]
                         }
-                    }),
-                    metadata: None,
+                    }
                 }),
+                metadata: None,
             }),
-        )
-        .await;
+        }),
+    )
+    .await;
 
     assert!(response.ok);
     let Json(updated) = super::get_session(Path(session.id)).await;
-    assert_eq!(updated.name.as_deref(), Some("Last summary"));
+    assert_eq!(updated.name.as_deref(), Some("订单清结算微服务"));
     assert_eq!(
         updated.session_display_name.as_deref(),
-        Some("Last summary")
+        Some("订单清结算微服务")
     );
 
     let _ = fs::remove_dir_all(directory);
@@ -446,6 +472,12 @@ async fn agent_tool_callback_keeps_manual_session_name_when_auto_disabled() {
             step_summary: None,
             media: vec![],
             runtime_id: Some("runtime-1".to_string()),
+            runtime_status: None,
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
+            created_at: 1,
+            updated_at: 1,
             tool_call: Some(super::SendAgentToolCall {
                 tool_name: "command_run".to_string(),
                 call_id: "call-1".to_string(),
@@ -455,7 +487,7 @@ async fn agent_tool_callback_keeps_manual_session_name_when_auto_disabled() {
                         "output": {
                             "results": [{
                                 "output": {
-                                    "status": { "task_summary": "Generated summary" }
+                                    "status": { "task_group": "pdf编辑制作" }
                                 }
                             }]
                         }
@@ -473,6 +505,94 @@ async fn agent_tool_callback_keeps_manual_session_name_when_auto_disabled() {
     assert!(!updated.auto_session_name);
 
     let _ = fs::remove_dir_all(directory);
+}
+
+#[tokio::test]
+async fn transient_agent_tool_callback_without_runtime_status_is_ignored() {
+    let session = session_store().create_session(
+        Some("C:/workspace".to_string()),
+        None,
+        None,
+        Some("coding".to_string()),
+        false,
+        false,
+        false,
+        None,
+        false,
+        false,
+    );
+
+    let Json(response) = super::send_agent_message(
+        Path(session.id.clone()),
+        Json(SendAgentMessageRequest {
+            reply_message: String::new(),
+            new_learning: String::new(),
+            step_summary: None,
+            media: vec![],
+            runtime_id: Some("runtime-1".to_string()),
+            runtime_status: None,
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
+            created_at: 1,
+            updated_at: 1,
+            tool_call: Some(SendAgentToolCall {
+                tool_name: "command_run".to_string(),
+                call_id: "runtime-1.tool.command_run".to_string(),
+                state: serde_json::json!({
+                    "status": "running",
+                    "transient": true,
+                    "input": { "commands": [{ "command_type": "shell_command", "command_line": "npm test" }] },
+                    "metadata": { "kind": "mano_tool_call", "transient": true, "streaming_partial": true }
+                }),
+                metadata: Some(serde_json::json!({
+                    "kind": "mano_tool_call",
+                    "transient": true,
+                    "streaming_partial": true
+                })),
+            }),
+        }),
+    )
+    .await;
+
+    assert!(response.ok);
+    assert!(response.event.is_none());
+    assert!(session_store().get_messages(&session.id).is_empty());
+
+    let Json(response) = super::send_agent_message(
+        Path(session.id.clone()),
+        Json(SendAgentMessageRequest {
+            reply_message: String::new(),
+            new_learning: String::new(),
+            step_summary: None,
+            media: vec![],
+            runtime_id: Some("runtime-1".to_string()),
+            runtime_status: None,
+            context_tokens: None,
+            usage: None,
+            command_updates: Vec::new(),
+            created_at: 1,
+            updated_at: 1,
+            tool_call: Some(SendAgentToolCall {
+                tool_name: "command_run".to_string(),
+                call_id: "runtime-1.tool.command_run".to_string(),
+                state: serde_json::json!({
+                    "status": "completed",
+                    "transient": true,
+                    "metadata": { "kind": "mano_tool_call", "transient": true }
+                }),
+                metadata: Some(serde_json::json!({
+                    "kind": "mano_tool_call",
+                    "transient": true
+                })),
+            }),
+        }),
+    )
+    .await;
+
+    assert!(response.ok);
+    assert!(response.event.is_none());
+    assert!(session_store().get_messages(&session.id).is_empty());
 }
 
 #[test]
@@ -661,6 +781,12 @@ fn agent_message_metadata_keeps_step_summary_for_frontend() {
         step_summary: Some("send final response".to_string()),
         media: vec![],
         runtime_id: Some("runtime-1".to_string()),
+        runtime_status: None,
+        context_tokens: None,
+        usage: None,
+        command_updates: Vec::new(),
+        created_at: 1,
+        updated_at: 1,
         tool_call: None,
     })
     .expect("feedback metadata should be present");
@@ -682,11 +808,85 @@ fn agent_message_content_renders_media_as_rich_tokens() {
             media_type: Some("image/png".to_string()),
         }],
         runtime_id: Some("runtime-1".to_string()),
+        runtime_status: None,
+        context_tokens: None,
+        usage: None,
+        command_updates: Vec::new(),
+        created_at: 1,
+        updated_at: 1,
         tool_call: None,
     });
 
     assert_eq!(
         content,
         "screens\n\n[MEDIA:C:\\Users\\liuliu\\Documents\\tura\\shot.png:MEDIA]\n"
+    );
+}
+
+#[test]
+fn apply_single_change_reports_target_directory_context() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let blocking_parent = temp.path().join("blocked");
+    std::fs::write(&blocking_parent, "file blocks child directory").expect("write blocking file");
+    let target = blocking_parent.join("child.txt");
+    let record = SessionChangeRecord {
+        path: target.to_string_lossy().to_string(),
+        before_exists: true,
+        before_content: Some("before".to_string()),
+        after_exists: true,
+        after_content: None,
+        reverted: false,
+    };
+
+    let error = apply_single_change(&record, true)
+        .expect_err("blocked parent path should fail directory creation");
+
+    let message = &error;
+    assert!(
+        message.contains("failed to create change target directory"),
+        "error should describe the failed operation: {message}"
+    );
+    assert!(
+        message.contains(&blocking_parent.to_string_lossy().to_string()),
+        "error should include the target directory path: {message}"
+    );
+}
+
+#[test]
+fn inactive_sessions_from_probe_keeps_active_sessions() {
+    let expected = vec!["active".to_string(), "worker".to_string()];
+    let inactive = inactive_sessions_from_probe(
+        &expected,
+        &serde_json::json!({
+            "sessions": [
+                { "session_id": "active", "status": "active" },
+                { "session_id": "worker", "worker_alive": true }
+            ]
+        }),
+    );
+
+    assert!(inactive.is_empty());
+}
+
+#[test]
+fn inactive_sessions_from_probe_marks_missing_or_inactive_sessions() {
+    let expected = vec![
+        "inactive".to_string(),
+        "missing".to_string(),
+        "active".to_string(),
+    ];
+    let inactive = inactive_sessions_from_probe(
+        &expected,
+        &serde_json::json!({
+            "sessions": [
+                { "session_id": "inactive", "status": "inactive" },
+                { "session_id": "active", "active_turn": true }
+            ]
+        }),
+    );
+
+    assert_eq!(
+        inactive,
+        vec!["inactive".to_string(), "missing".to_string()]
     );
 }

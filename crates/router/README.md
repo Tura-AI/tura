@@ -6,7 +6,7 @@ logic or command alias canonicalization; both live in `crates/tools`
 (`commands::canonical_command`) and execute inside the runtime worker.
 
 This version keeps `command_run` as the only coding-agent visible tool. Internal
-command ids such as `shell_command`, `bash`, and `apply_patch` are resolved and
+command ids such as `shell_command`, `bash`, `zsh`, and `apply_patch` are resolved and
 dispatched by `crates/tools/src/commands`, not by the router.
 
 ## Layering
@@ -16,8 +16,9 @@ dispatched by `crates/tools/src/commands`, not by the router.
   agent loop and holds no in-process runtime.
 - **Router** owns the agent registry, CLI forwarding, and the lifecycle of
   runtime workers. `POST /run_agent` resolves an agent spec, builds the worker
-  environment contract, and dispatches a runtime worker subprocess (the gateway
-  binary re-invoked with `TURA_ROLE=runtime_worker`). Command alias resolution
+  environment contract, and dispatches a runtime worker subprocess (the
+  standalone `tura_runtime` binary, `TURA_ROLE=runtime_worker`). Command alias
+  resolution
   and handler dispatch are owned by `crates/tools`, not the router.
 - **Runtime** (`crates/runtime`, package `runtime`) activates
   `AgentManagement`, assembles agent prompts/tools, and runs the MANAS loop. It
@@ -50,5 +51,5 @@ does not expose a session-log data bridge. Gateway and runtime helpers call the
 session DB service directly through `session-db-call`; router IPC is limited to
 execution supervision and service lifecycle.
 
-`target\debug\gateway.exe session-log` also uses the direct session DB client
+`target\debug\tura_gateway.exe session-log` also uses the direct session DB client
 instead of routing reads through the router.

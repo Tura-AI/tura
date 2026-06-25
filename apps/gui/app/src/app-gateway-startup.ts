@@ -2,7 +2,8 @@ import type { Setter } from "solid-js";
 import { t } from "./i18n";
 import type { AppState } from "./state/global-store";
 
-export const GATEWAY_CONNECT_TIMEOUT_MS = 5_000;
+export const GATEWAY_CONNECT_TIMEOUT_MS = 20_000;
+export const GATEWAY_HEALTH_TIMEOUT_MS = 20_000;
 
 export function isGatewayTimeoutError(error: unknown): boolean {
   if (
@@ -58,7 +59,7 @@ async function tryStartGatewayFromDevServer(
   }));
   try {
     const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), 1_500);
+    const timer = window.setTimeout(() => controller.abort(), GATEWAY_HEALTH_TIMEOUT_MS);
     const response = await fetch("/__tura/start-gateway", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -118,14 +119,35 @@ export async function waitForGatewayHealth(
   while (Date.now() < deadline) {
     try {
       const controller = new AbortController();
-      const timer = window.setTimeout(() => controller.abort(), 1_200);
+      const timer = window.setTimeout(() => controller.abort(), 500);
       const response = await fetch(`${baseUrl.replace(/\/+$/u, "")}/global/health`, {
         signal: controller.signal,
       }).finally(() => window.clearTimeout(timer));
-      if (response.ok) return;
+      if (response.ok) {
+        const body = (await response
+          .clone()
+          .json()
+          .catch(() => undefined)) as { dev_log_path?: string } | undefined;
+        const devPath = body?.dev_log_path;
+        if (devPath) {
+          setState((previous) => ({
+            ...previous,
+            settingsNotice: `${t("devModeActive")}${devPath}`,
+            gatewayStartupNotice: `${t("devModeActive")}${devPath}`,
+          }));
+        } else {
+          setState((previous) => ({
+            ...previous,
+            settingsNotice: undefined,
+            gatewayStartupNotice: undefined,
+          }));
+        }
+        return;
+      }
     } catch {
       // Keep the loading overlay alive while the dev server starts Gateway.
     }
     await new Promise((resolve) => window.setTimeout(resolve, 500));
   }
+  throw new DOMException("Gateway did not become healthy within 20 seconds.", "TimeoutError");
 }

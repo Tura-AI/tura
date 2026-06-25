@@ -6,7 +6,7 @@ import "../styles/index.css";
 const params = new URLSearchParams(window.location.search);
 const workspaceDirectory = params.get("workspace") ?? undefined;
 const paths = params.getAll("path").filter(Boolean);
-const text = paths.map((path) => `[MEDIA:${path}:MEDIA]`).join("\n");
+const text = params.get("text") ?? paths.map((path) => `[MEDIA:${path}:MEDIA]`).join("\n");
 const root = document.getElementById("root");
 
 if (!root) {

@@ -38,16 +38,33 @@ pub(crate) fn finish_runtime_failure_with_usage(
     };
     runtime
         .finish_failure(finished_at, err, status, usage)
-        .map_err(|e| format!("failed to finish runtime failure: {}", e))
+        .map_err(|e| format!("failed to finish runtime failure: {e}"))
 }
 
 pub(crate) fn provider_timeout_retry_wait(retry_count: u8) -> Option<Duration> {
+    if let Some(duration) = provider_retry_wait_override(retry_count) {
+        return Some(duration);
+    }
     match retry_count {
         0 => Some(Duration::from_secs(5)),
         1 => Some(Duration::from_secs(15)),
         2 => Some(Duration::from_secs(45)),
         _ => None,
     }
+}
+
+fn provider_retry_wait_override(retry_count: u8) -> Option<Duration> {
+    let raw = std::env::var("TURA_PROVIDER_RETRY_BACKOFF_MS").ok()?;
+    let values = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .filter_map(|value| value.parse::<u64>().ok())
+        .collect::<Vec<_>>();
+    values
+        .get(usize::from(retry_count))
+        .copied()
+        .map(Duration::from_millis)
 }
 
 pub(crate) fn runtime_failure_allows_retry(runtime: &RuntimeManagement) -> bool {
@@ -82,8 +99,15 @@ mod tests {
     };
     use chrono::Utc;
     use serde_json::json;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn provider_timeout_retry_waits_use_three_step_backoff() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let previous = std::env::var_os("TURA_PROVIDER_RETRY_BACKOFF_MS");
+        std::env::remove_var("TURA_PROVIDER_RETRY_BACKOFF_MS");
         assert_eq!(
             super::provider_timeout_retry_wait(0),
             Some(std::time::Duration::from_secs(5))
@@ -97,6 +121,30 @@ mod tests {
             Some(std::time::Duration::from_secs(45))
         );
         assert_eq!(super::provider_timeout_retry_wait(3), None);
+        restore_env("TURA_PROVIDER_RETRY_BACKOFF_MS", previous);
+    }
+
+    #[test]
+    fn provider_timeout_retry_wait_allows_fast_business_test_override() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let previous = std::env::var_os("TURA_PROVIDER_RETRY_BACKOFF_MS");
+        std::env::set_var("TURA_PROVIDER_RETRY_BACKOFF_MS", "0,1,2");
+
+        assert_eq!(
+            super::provider_timeout_retry_wait(0),
+            Some(std::time::Duration::from_millis(0))
+        );
+        assert_eq!(
+            super::provider_timeout_retry_wait(1),
+            Some(std::time::Duration::from_millis(1))
+        );
+        assert_eq!(
+            super::provider_timeout_retry_wait(2),
+            Some(std::time::Duration::from_millis(2))
+        );
+        assert_eq!(super::provider_timeout_retry_wait(3), None);
+
+        restore_env("TURA_PROVIDER_RETRY_BACKOFF_MS", previous);
     }
 
     #[test]
@@ -180,6 +228,8 @@ mod tests {
             RuntimeProviderConfig {
                 base: ProviderConfig {
                     tura_llm_name: provider.clone(),
+                    default_model_tier: None,
+                    current_model: None,
                     stream: true,
                     temperature: 0.0,
                     max_tokens: 0,
@@ -194,5 +244,13 @@ mod tests {
             },
             now,
         )
+    }
+
+    fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
+        if let Some(previous) = previous {
+            std::env::set_var(key, previous);
+        } else {
+            std::env::remove_var(key);
+        }
     }
 }

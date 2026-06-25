@@ -77,7 +77,7 @@ crates/gateway/
     mock/
     bin/
       gateway.rs
-      tura.rs
+      tura_exec.rs
 
     channel.rs
     handler.rs
@@ -93,8 +93,39 @@ not directories that currently exist in this crate.
 
 ## Direct Rust CLI Output
 
-The `src/bin/tura.rs` binary is the direct Rust CLI for one local prompt turn.
-It does not require the gateway HTTP server.
+The `src/bin/tura_exec.rs` binary (formerly `tura.rs`) is the direct Rust CLI
+for one local prompt turn. It does not require the gateway HTTP server.
+
+As a **thin front** it links no runtime/DB executor by default: it probe-first
+connects to (or detaches) the per-home `tura_router` **socket daemon**, sends
+`execution.enqueue_turn`, and renders the final assistant message from the
+single `tura_session_db` owner. `--embedded` instead runs the runtime in-process
+(codex-style) while still connecting to that same shared owner — it never opens
+its own database. If the CLI request socket closes before the turn finishes,
+router cancels the active session and aborts unfinished router-owned
+`command_run` work for that connection.
+
+Gateway startup must also adopt a compatible already-running router for the same
+home rather than starting a second backend owner. The published router endpoint
+contains `addr`, `version`, `pid`, and `process_start_time`; gateway health
+checks the socket before reuse and only force-terminates a stuck daemon when the
+PID start-time fingerprint still matches. GUI/TUI launchers pass
+`TURA_GATEWAY_SHUTDOWN_ON_STDIN_EOF=1` and keep gateway stdin piped; when the
+front closes that pipe, gateway exits without killing router. Router receives
+periodic `lifecycle.front_heartbeat` leases from live gateways and self-shuts
+down after its idle grace when no valid gateway lease, exec socket, active
+runtime worker, or active turn remains.
+Process/state regressions are
+covered by the mandatory root test
+`tests/os_testing/process_state_management_e2e.rs`: stale endpoints, gateway
+restart, same-home gateway lock conflict, orphan router adoption, orphan
+session_db adoption through router, router-owned command_run cancellation on
+socket disconnect, stdin-EOF gateway exit followed by router idle self-shutdown,
+and endpoint cleanup after graceful shutdown.
+`tests/os_testing/process_lifecycle_policy_matrix.rs` pins the same lifecycle
+contract for Windows, Linux, macOS, and fallback OS families so front leases,
+detached reusable owners, process-group cleanup, and Job Object cleanup remain
+explicit.
 
 Its output contract is:
 
@@ -176,10 +207,10 @@ GET /session-log/{sessionID}/records?page=0&page_size=100
 The gateway binary also exposes the raw router/session-log bridge:
 
 ```powershell
-'{"command":"list_workspaces"}' | target\debug\gateway.exe session-log
-'{"command":"list_sessions","workspace":"C:/repo","page":0,"page_size":50}' | target\debug\gateway.exe session-log
-'{"command":"get_session","session_id":"session-id"}' | target\debug\gateway.exe session-log
-'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\gateway.exe session-log
+'{"command":"list_workspaces"}' | target\debug\tura_gateway.exe session-log
+'{"command":"list_sessions","workspace":"C:/repo","page":0,"page_size":50}' | target\debug\tura_gateway.exe session-log
+'{"command":"get_session","session_id":"session-id"}' | target\debug\tura_gateway.exe session-log
+'{"command":"list_session_records","session_id":"session-id","page":0,"page_size":100}' | target\debug\tura_gateway.exe session-log
 ```
 
 Use `get_session` when debugging the persisted `SessionInfo`, `management`,
@@ -189,9 +220,8 @@ message/event history.
 ## Persistence Model
 
 To recreate Multica's functionality, gateway needs durable product state.
-The persistence backend may be SQLite for local/single-user Tura deployments
-and PostgreSQL for hosted/multi-user deployments, but the domain model must not
-depend on the storage engine.
+The local persistence backend is embedded SQLite through `tura_session_db`, but
+the domain model must not depend on the storage engine.
 
 Required domains and fields:
 
@@ -435,6 +465,11 @@ scheduled_task
 polling_task
 ```
 
+`status` and `start_condition` are separate fields. Do not pass
+`session_idle`, `user_action`, `scheduled_task`, or `polling_task` through the
+`status` field; invalid task-management patches are ignored and the previous
+state is kept.
+
 Single-task `task_management` is an object. Object patches apply to the active
 single task and may set the task `task_id`. Multi-task updates that need
 task-specific matching use `task_management.tasks[]`; array entries match by
@@ -622,6 +657,13 @@ through lifecycle services.
 Gateway may expose UI-facing process, PTY, command status, managed service
 status, or project startup APIs, but lifecycle work is delegated to
 `crates/router` or narrow helpers.
+
+`RouterProcess` (`router_process.rs`) supervises the single persistent router
+(flock-guarded single instance via `process_lock.rs`, keyed by root/mode). It
+talks to the router over a line protocol and **multiplexes by `request_id`**: a
+background reader thread dispatches each response to a per-call mailbox, so
+concurrent calls never serialize behind a shared read lock, a stuck call times
+out without blocking others, and router EOF unblocks all pending callers.
 
 The router client should support:
 

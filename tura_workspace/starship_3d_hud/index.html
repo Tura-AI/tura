@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aegis Rift Starship HUD</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Exo+2:wght@500;700;800&family=Rajdhani:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./src/styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main class="scene-shell" aria-label="Aegis Rift tactical starship capture">
+      <canvas id="stage" aria-hidden="true"></canvas>
+
+      <section class="hud hud-top" aria-label="Command status">
+        <div class="brand-lockup">
+          <span class="kicker">AEGIS RIFT</span>
+          <h1>VANGUARD-09</h1>
+          <span class="status-dot">LIVE COMBAT LINK</span>
+        </div>
+        <div class="top-readouts" aria-label="Mission telemetry">
+          <div>
+            <span>VECTOR</span>
+            <strong id="vector-readout">034.8 / -12.4</strong>
+          </div>
+          <div>
+            <span>THRUST</span>
+            <strong id="thrust-readout">87%</strong>
+          </div>
+          <div>
+            <span>SHIELD</span>
+            <strong id="shield-readout">92%</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="hud side-panel left-panel" aria-label="Ship systems">
+        <div class="panel-header">
+          <span>FRAME STATUS</span>
+          <strong>CRUISER CLASS</strong>
+        </div>
+        <div class="bar-list">
+          <label>
+            <span>Hull integrity</span>
+            <i style="--value: 82%"></i>
+          </label>
+          <label>
+            <span>Reactor output</span>
+            <i style="--value: 76%"></i>
+          </label>
+          <label>
+            <span>Thermal margin</span>
+            <i style="--value: 61%"></i>
+          </label>
+        </div>
+        <div class="mode-grid" aria-label="System modes">
+          <button class="mode active" data-mode="assault" title="Assault pattern">
+            <span data-lucide="crosshair"></span>
+          </button>
+          <button class="mode" data-mode="cloak" title="Signal masking">
+            <span data-lucide="radar"></span>
+          </button>
+          <button class="mode" data-mode="boost" title="Drive boost">
+            <span data-lucide="zap"></span>
+          </button>
+        </div>
+      </section>
+
+      <section class="hud side-panel right-panel" aria-label="Target acquisition">
+        <div class="panel-header">
+          <span>TARGET LOCK</span>
+          <strong id="target-label">HOSTILE CARRIER</strong>
+        </div>
+        <div class="target-scope">
+          <div class="scope-ring"></div>
+          <div class="scope-blip primary"></div>
+          <div class="scope-blip secondary"></div>
+          <div class="scope-blip tertiary"></div>
+        </div>
+        <dl class="target-data">
+          <div>
+            <dt>Range</dt>
+            <dd id="range-readout">18.4 km</dd>
+          </div>
+          <div>
+            <dt>Signature</dt>
+            <dd>ION WAKE</dd>
+          </div>
+          <div>
+            <dt>Solution</dt>
+            <dd id="solution-readout">68%</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="hud bottom-console" aria-label="Tactical console">
+        <div class="weapon-stack">
+          <span>LOADOUT</span>
+          <strong>RAIL LANCE / DRONE WING / FLARE WALL</strong>
+        </div>
+        <div class="command-row">
+          <button class="command active" title="Weapons armed">
+            <span data-lucide="shield-alert"></span>
+          </button>
+          <button class="command" title="Wingmen linked">
+            <span data-lucide="send"></span>
+          </button>
+          <button class="command" title="Navigation vector">
+            <span data-lucide="navigation"></span>
+          </button>
+          <button class="command" title="Power routing">
+            <span data-lucide="activity"></span>
+          </button>
+        </div>
+        <div class="mission-strip">
+          <span>OBJECTIVE</span>
+          <strong>BREACH THE ORBITAL CORDON</strong>
+          <i id="pulse-clock">T+ 00:42</i>
+        </div>
+      </section>
+
+      <div class="reticle" aria-hidden="true">
+        <span></span>
+        <span></span>
+      </div>
+      <div class="scanlines" aria-hidden="true"></div>
+      <div class="vignette" aria-hidden="true"></div>
+    </main>
+
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>

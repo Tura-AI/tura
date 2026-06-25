@@ -17,7 +17,7 @@ This crate owns current Tura provider behavior:
 - route-based provider configuration
 - `provider_config.json`
 - `.env` / `TURA_ENV_PATH`
-- `TURA_PROVIDER_CONFIG`, `TURALLM_CONFIG`
+- `TURA_PROVIDER_CONFIG`
 - provider call logs under project-root `log/provider/`
 - OpenAI-compatible, Google, and Bedrock providers
 - usage/cost extraction already present in provider responses
@@ -38,7 +38,14 @@ crates/provider/
   config/
     provider_config.json
   tests/
-    provider_tool_call_live_smoke.rs
+    live/
+      claude_code_live_smoke.rs
+      codex_priority_tps_live.rs
+      google_local_flow.rs
+      live_model_smoke.rs
+      openai_compatible_local_flow.rs
+      provider_tool_call_live_smoke.rs
+      responses_tier_live_smoke.rs
 
   src/
     lib.rs
@@ -211,8 +218,6 @@ from `tura_path` for project-root-aware paths.
 Accepted path inputs:
 
 - `TURA_ENV_PATH`
-- `TURA_PROVIDER_CONFIG`, `TURALLM_CONFIG`
-- project config from `tura_path`
 - provider `config/provider_config.json`
 - project-root `log/provider/YYYY-MM-DD/...json`
 
@@ -253,14 +258,14 @@ service_tier = "auto"
 reasoning_effort = "low"
 stream = true
 
-[[provider.routes.flagship_thinking.providers]]
+[[provider.routes.thinking.providers]]
 provider = "openai"
 base_url = "https://api.openai.com/v1"
 model = "gpt-5.1-codex"
 temperature = 0.2
 priority = 100
 
-[[provider.routes.flagship_thinking.providers]]
+[[provider.routes.thinking.providers]]
 provider = "google"
 base_url = "https://generativelanguage.googleapis.com"
 model = "gemini-..."
@@ -285,7 +290,6 @@ crates/provider/config/provider_config.json
 Override the file path only when needed:
 
 - `TURA_PROVIDER_CONFIG`: explicit provider config path.
-- `TURALLM_CONFIG`: explicit provider config path.
 
 Runtime environment values are loaded from the project-root `.env` by default.
 `TURA_ENV_PATH` can point to another dotenv file, but normal project setup
@@ -297,8 +301,8 @@ To add a model on an existing provider:
 2. Add the model id, display metadata, cost/context values, and capability
    flags expected by the gateway/model picker.
 3. Add the model as a candidate in one or more `routes` entries.
-4. Keep route names stable so existing agent configs continue to use names such
-   as `flagship_thinking`, `thinking`, `fast`, or `instant`.
+4. Keep route names stable so existing agent configs continue to use canonical
+   names such as `thinking`, `fast`, `embedding_high`, or `embedding_low`.
 5. Add or update live smoke tests only when the provider/model can be tested in
    the current environment.
 
@@ -460,7 +464,7 @@ call-level state vocabulary and normalization.
 
 ### `routing/routes/`
 
-Resolves a named route such as `flagship_thinking` to ordered provider candidates.
+Resolves a named route such as `thinking` to ordered provider candidates.
 
 Route behavior:
 
@@ -775,9 +779,8 @@ Sources:
 
 - environment
 - `TURA_ENV_PATH`
-- `TURA_PROVIDER_CONFIG`, `TURALLM_CONFIG`
+- `TURA_PROVIDER_CONFIG`
 - provider `config/provider_config.json`
-- future global Tura config from `tura_path`
 
 ### `storage/secret_store/`
 
@@ -837,7 +840,7 @@ Gateway should not inspect raw provider secrets.
 
 Minimum tests when implementation begins:
 
-- config path resolution including `TURA_ENV_PATH`, `TURA_PROVIDER_CONFIG`, and `TURALLM_CONFIG`
+- config path resolution including `TURA_ENV_PATH` and `TURA_PROVIDER_CONFIG`
 - route loading from provider JSON
 - API key resolution and masking
 - OAuth state transitions

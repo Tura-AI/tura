@@ -25,10 +25,11 @@ export type AppShellViewModel = {
   toggleRailGroup: (id: string) => void;
   selectedSession: Accessor<Session | undefined>;
   selectedMessages: Accessor<Message[]>;
+  loadEarlierMessages: (sessionId: string) => Promise<boolean>;
   slashCommands: Accessor<Command[]>;
   openBlankSession: () => void;
   openSession: (sessionId: string) => Promise<void>;
-  useWorkspaceDirectory: (directory: string) => void;
+  useWorkspaceDirectory: (directory: string) => void | Promise<void>;
   createNamedWorkspace: (name: string) => Promise<void>;
   pickExistingWorkspaceDirectory: () => Promise<void>;
   submitPrompt: (options?: { queued?: boolean }) => Promise<void>;
@@ -57,7 +58,7 @@ export type AppShellViewModel = {
   fileLoadingPath: Accessor<string | undefined>;
   fileContentLoadingPath: Accessor<string | undefined>;
   expandedFileTreePaths: Accessor<Set<string>>;
-  expandedWorkspace: Accessor<string | undefined>;
+  expandedWorkspaces: Accessor<Set<string>>;
   loadFiles: (path?: string) => Promise<void>;
   openFile: (file: FileInfo) => Promise<void>;
   toggleFileTreeDirectory: (file: FileInfo) => Promise<void>;

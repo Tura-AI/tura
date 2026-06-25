@@ -188,6 +188,33 @@ export function formatPollingTaskTiming(task: TaskManagement): string {
   return `${remaining}/${formatPollIntervalEveryCompact(taskPollInterval(task))}`;
 }
 
+export function timedTaskDisplayDate(task: TaskManagement, nowMs = Date.now()): Date | undefined {
+  const raw = taskStartAt(task);
+  if (!raw) {
+    return undefined;
+  }
+  const start = new Date(raw);
+  if (Number.isNaN(start.getTime())) {
+    return undefined;
+  }
+  if (taskStartCondition(task) !== "polling_task") {
+    return start;
+  }
+  const interval = taskPollInterval(task);
+  const intervalMs =
+    (interval.d ?? 0) * 86_400_000 +
+    (interval.h ?? 0) * 3_600_000 +
+    (interval.m ?? 0) * 60_000 +
+    (interval.s ?? 0) * 1_000;
+  if (intervalMs <= 0) {
+    return start;
+  }
+  const startMs = start.getTime();
+  const nextMs =
+    startMs > nowMs ? startMs : startMs + Math.ceil((nowMs - startMs) / intervalMs) * intervalMs;
+  return new Date(nextMs);
+}
+
 export function applyTaskPatchToSession(session: Session, patch: Partial<TaskManagement>): Session {
   const current = sessionTaskState(session);
   const nonce = patch.task_id;
@@ -295,6 +322,11 @@ export function sessionAttentionKey(session: Session): string | undefined {
   return `${session.id}:${status}:${normalizeTimeMs(sessionUpdatedAt(session) ?? 0)}`;
 }
 
+export function shouldShowSessionAttention(session: Session, acknowledged: boolean): boolean {
+  const status = planSessionStatus(session);
+  return status === "doing" || (!acknowledged && (status === "question" || status === "done"));
+}
+
 export function planStoredPlanStatus(session: Session): PlanStatus | undefined {
   const task = sessionTaskState(session);
   const status = task.status;
@@ -335,10 +367,18 @@ export function planTimedSessions(sessions: Session[]): Session[] {
 export function timedSessionTasks(session: Session): TaskManagement[] {
   return sortedSessionTasks(session).filter(
     (task) =>
-      (taskPlanStatus(task) ?? planStoredPlanStatus(session)) === "todo" &&
+      (taskPlanStatus(task) ?? planStoredPlanStatus(session) ?? "todo") === "todo" &&
       isTimedStartCondition(taskStartCondition(task)) &&
       Boolean(taskStartAt(task)),
   );
+}
+
+export function queuedSessionTasks(session: Session): TaskManagement[] {
+  return sortedSessionTasks(session);
+}
+
+export function planQueuedSessions(sessions: Session[]): Session[] {
+  return sessions.filter((session) => queuedSessionTasks(session).length > 0);
 }
 
 export function planTriggerClass(session: Session): string {

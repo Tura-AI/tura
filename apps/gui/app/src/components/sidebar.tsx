@@ -20,8 +20,9 @@ import {
   type MainTab,
 } from "../state/global-store";
 import { isRootSession } from "../state/session-tree";
+import { sidebarWorkspaceProjects, workspaceExpanded } from "./sidebar/workspace-projects";
 
-import { planSessionStatus } from "../features/plan/tasks";
+import { planSessionStatus, shouldShowSessionAttention } from "../features/plan/tasks";
 import { PlanStatusIndicator } from "../pages/plan/plan-view";
 import {
   normalizePath,
@@ -37,6 +38,7 @@ export function WorkspaceTree(props: {
   projects: Project[];
   directory?: string;
   sessions: Session[];
+  sessionsLoading: boolean;
   selectedSessionId?: string;
   productIssues: ProductIssue[];
   filePath: string;
@@ -45,7 +47,7 @@ export function WorkspaceTree(props: {
   fileLoadingPath?: string;
   expandedFileTreePaths: Set<string>;
   selectedFile?: FileInfo;
-  expandedWorkspace?: string;
+  expandedWorkspaces?: Set<string>;
   expandedGroup?: string;
   attentionAcknowledged: (session: Session) => boolean;
   onWorkspace: (project: Project) => void;
@@ -62,27 +64,7 @@ export function WorkspaceTree(props: {
 }) {
   const [workspaceSectionOpen, setWorkspaceSectionOpen] = createSignal(true);
   const [archivedSectionOpen, setArchivedSectionOpen] = createSignal(true);
-  const fallbackProject = createMemo<Project | undefined>(() =>
-    props.directory
-      ? {
-          id: props.directory,
-          name: shortWorkspaceLabel(props.directory),
-          worktree: props.directory,
-        }
-      : undefined,
-  );
-  const projects = createMemo(() =>
-    props.projects
-      .filter((project) => samePath(project.worktree, props.directory))
-      .slice(0, 1)
-      .concat(
-        props.projects.some((project) => samePath(project.worktree, props.directory))
-          ? []
-          : fallbackProject()
-            ? [fallbackProject()!]
-            : [],
-      ),
-  );
+  const projects = createMemo(() => sidebarWorkspaceProjects(props.projects, props.directory));
   const activeWorkspaceSessions = (worktree: string) =>
     props.sessions.filter(
       (session) =>
@@ -93,11 +75,9 @@ export function WorkspaceTree(props: {
   }
   function workspaceAttentionStatus(worktree: string): PlanStatus | undefined {
     const sessions = activeWorkspaceSessions(worktree)
-      .filter((session) => {
-        const status = planSessionStatus(session);
-        return status === "doing" || status === "question" || status === "done";
-      })
-      .filter((session) => !props.attentionAcknowledged(session))
+      .filter((session) =>
+        shouldShowSessionAttention(session, props.attentionAcknowledged(session)),
+      )
       .sort(
         (left, right) =>
           normalizeTimeMs(sessionUpdatedAt(right) ?? 0) -
@@ -155,79 +135,81 @@ export function WorkspaceTree(props: {
         </RailSectionTitle>
         <Show when={workspaceSectionOpen()}>
           <For each={projects()}>
-            {(project) => (
-              <div class="workspace-node">
-                <div class="workspace-row-wrap">
-                  <button
-                    class={classNames(
-                      "workspace-row",
-                      samePath(project.worktree, props.directory) && "selected",
-                    )}
-                    onClick={() => props.onWorkspace(project)}
-                    title={project.worktree}
-                  >
-                    <FolderOpen size={15} strokeWidth={1.6} />
-                    <span class="workspace-row-label">
-                      {project.name || shortWorkspaceLabel(project.worktree)}
-                    </span>
-                    <Show
-                      when={
-                        props.activeTab !== "plan" &&
-                        props.expandedWorkspace !== project.worktree &&
-                        workspaceAttentionStatus(project.worktree)
-                      }
-                    >
-                      {(status) => <PlanStatusIndicator status={status()} />}
-                    </Show>
-                  </button>
-                  <div class="workspace-actions">
+            {(project) => {
+              const expanded = () => workspaceExpanded(props.expandedWorkspaces, project.worktree);
+              const showChildren = () =>
+                expanded() &&
+                (props.activeTab !== "files" || samePath(project.worktree, props.directory));
+              return (
+                <div class="workspace-node">
+                  <div class="workspace-row-wrap">
                     <button
-                      type="button"
-                      title={t("newSession")}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        props.onBlankSession();
-                      }}
+                      class={classNames(
+                        "workspace-row",
+                        samePath(project.worktree, props.directory) && "selected",
+                      )}
+                      onClick={() => props.onWorkspace(project)}
+                      title={project.worktree}
                     >
-                      <Plus size={14} strokeWidth={1.8} />
+                      <FolderOpen size={15} strokeWidth={1.6} />
+                      <span class="workspace-row-label">
+                        {project.name || shortWorkspaceLabel(project.worktree)}
+                      </span>
+                      <Show
+                        when={
+                          props.activeTab !== "plan" &&
+                          !expanded() &&
+                          workspaceAttentionStatus(project.worktree)
+                        }
+                      >
+                        {(status) => <PlanStatusIndicator status={status()} />}
+                      </Show>
                     </button>
-                    <WorkspaceMenu
-                      onSettings={props.onSettings}
-                      onNewSession={props.onBlankSession}
-                    />
+                    <div class="workspace-actions">
+                      <button
+                        type="button"
+                        title={t("newSession")}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          props.onBlankSession();
+                        }}
+                      >
+                        <Plus size={14} strokeWidth={1.8} />
+                      </button>
+                      <WorkspaceMenu
+                        onSettings={props.onSettings}
+                        onNewSession={props.onBlankSession}
+                      />
+                    </div>
                   </div>
+                  <Show when={showChildren()}>
+                    <WorkspaceChildren
+                      activeTab={props.activeTab}
+                      expandedGroup={props.expandedGroup}
+                      sessions={activeWorkspaceSessions(project.worktree)}
+                      sessionsLoading={props.sessionsLoading}
+                      attentionAcknowledged={props.attentionAcknowledged}
+                      selectedSessionId={props.selectedSessionId}
+                      productIssues={props.productIssues}
+                      filePath={props.filePath}
+                      files={props.files}
+                      fileTree={props.fileTree}
+                      fileLoadingPath={props.fileLoadingPath}
+                      expandedFileTreePaths={props.expandedFileTreePaths}
+                      selectedFile={props.selectedFile}
+                      onIssue={props.onIssue}
+                      onGroup={props.onGroup}
+                      onStatus={props.onStatus}
+                      onSession={openRailSession}
+                      onRenameSession={props.onRenameSession}
+                      onFile={props.onFile}
+                      onFileTreeDirectory={props.onFileTreeDirectory}
+                      onUp={props.onUp}
+                    />
+                  </Show>
                 </div>
-                <Show
-                  when={
-                    samePath(project.worktree, props.directory) &&
-                    props.expandedWorkspace === project.worktree
-                  }
-                >
-                  <WorkspaceChildren
-                    activeTab={props.activeTab}
-                    expandedGroup={props.expandedGroup}
-                    sessions={activeWorkspaceSessions(project.worktree)}
-                    attentionAcknowledged={props.attentionAcknowledged}
-                    selectedSessionId={props.selectedSessionId}
-                    productIssues={props.productIssues}
-                    filePath={props.filePath}
-                    files={props.files}
-                    fileTree={props.fileTree}
-                    fileLoadingPath={props.fileLoadingPath}
-                    expandedFileTreePaths={props.expandedFileTreePaths}
-                    selectedFile={props.selectedFile}
-                    onIssue={props.onIssue}
-                    onGroup={props.onGroup}
-                    onStatus={props.onStatus}
-                    onSession={openRailSession}
-                    onRenameSession={props.onRenameSession}
-                    onFile={props.onFile}
-                    onFileTreeDirectory={props.onFileTreeDirectory}
-                    onUp={props.onUp}
-                  />
-                </Show>
-              </div>
-            )}
+              );
+            }}
           </For>
         </Show>
       </Show>

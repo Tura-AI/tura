@@ -13,6 +13,14 @@ path = "mod.rs"
 name = "tura-command-web-discover"
 path = "src/main.rs"
 
+[features]
+business-tests = []
+
+[[test]]
+name = "web_discover_local_flow"
+path = "tests/business/web_discover_local_flow.rs"
+required-features = ["business-tests"]
+
 [dependencies]
 quick_html2md.workspace = true
 regex.workspace = true
@@ -20,3 +28,7 @@ reqwest = { workspace = true, features = ["blocking", "json"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 provider = { workspace = true }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile.workspace = true

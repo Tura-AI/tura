@@ -1,26 +1,8 @@
 import type { Agent, StoredAgent } from "@tura/gateway-sdk";
-
-export const CONFIGURABLE_AGENT_IDS = [
-  "thinking",
-  "thinking-planning",
-  "fast",
-  "fast-text-only",
-] as const;
-const CONFIGURABLE_AGENT_ID_SET = new Set<string>(CONFIGURABLE_AGENT_IDS);
-const CONFIGURABLE_AGENT_ORDER = new Map<string, number>(
-  CONFIGURABLE_AGENT_IDS.map((id, index) => [id, index]),
-);
+import { t } from "../i18n";
 
 export function visibleConfigurableAgents(agents: Agent[]): Agent[] {
-  const visibleAgents = agents.filter((agent) => !agent.hidden);
-  const defaultAgents = visibleAgents.filter((agent) => CONFIGURABLE_AGENT_ID_SET.has(agent.name));
-  return defaultAgents.length > 0
-    ? [...defaultAgents].sort(
-        (left, right) =>
-          (CONFIGURABLE_AGENT_ORDER.get(left.name) ?? Number.MAX_SAFE_INTEGER) -
-          (CONFIGURABLE_AGENT_ORDER.get(right.name) ?? Number.MAX_SAFE_INTEGER),
-      )
-    : visibleAgents;
+  return agents.filter((agent) => !agent.hidden);
 }
 
 export function agentDisplayName(agent?: Agent, stored?: StoredAgent): string {
@@ -31,6 +13,15 @@ export function agentDisplayName(agent?: Agent, stored?: StoredAgent): string {
     cleanDisplayName(readOptionString(agent?.options, "name"), agentId);
 
   return configuredName ?? humanizeIdentifier(agentId);
+}
+
+export function agentDescription(agent?: Agent, stored?: StoredAgent): string {
+  const agentId = agent?.name ?? stored?.summary.id ?? "";
+  const translated = builtinAgentDescription(agentId);
+  if (translated) {
+    return translated;
+  }
+  return stored?.summary.description ?? agent?.description ?? "";
 }
 
 function cleanDisplayName(value: string | null | undefined, agentId: string): string | undefined {
@@ -55,4 +46,22 @@ function humanizeIdentifier(value: string): string {
     .replace(/\s+/g, " ")
     .trim()
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function builtinAgentDescription(agentId: string): string | undefined {
+  switch (agentId) {
+    case "direct":
+    case "direct-text-only":
+    case "fast":
+    case "fast-text-only":
+      return t("agentDescriptionDirect");
+    case "balanced":
+    case "thinking":
+      return t("agentDescriptionBalanced");
+    case "thoughtful":
+    case "thinking-planning":
+      return t("agentDescriptionThoughtful");
+    default:
+      return undefined;
+  }
 }

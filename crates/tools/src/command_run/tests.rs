@@ -1,6 +1,13 @@
-use super::{normalize_command_steps, normalize_shell_command_arguments, parse_args};
+use super::handler_parse::{
+    command_values, parse_arguments_value, parse_command_item, string_field, u64_field,
+};
+use super::{
+    normalize_command_steps, normalize_json_or_cli_command_arguments,
+    normalize_shell_command_arguments, parse_args,
+};
 use serde_json::json;
 use serde_json::Value;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn parse_missing_steps_default_to_original_order_steps() {
@@ -17,7 +24,7 @@ fn parse_missing_steps_default_to_original_order_steps() {
 }
 
 #[test]
-fn normalize_duplicate_steps_extends_in_input_order() {
+fn normalize_preserves_duplicate_dependency_groups_and_extends_backwards_steps() {
     let mut args = parse_args(&json!({
         "commands": [
             { "command": "shell_command", "command_line": "echo a", "step": 1 },
@@ -35,7 +42,29 @@ fn normalize_duplicate_steps_extends_in_input_order() {
         .iter()
         .map(|command| command.effective_step())
         .collect::<Vec<_>>();
-    assert_eq!(steps, vec![1, 2, 3, 4]);
+    assert_eq!(steps, vec![1, 2, 2, 3]);
+}
+
+#[test]
+fn normalize_scrambled_steps_never_move_backwards_or_merge_repaired_groups() {
+    let mut args = parse_args(&json!({
+        "commands": [
+            { "command": "shell_command", "command_line": "echo three", "step": 3 },
+            { "command": "shell_command", "command_line": "echo two", "step": 2 },
+            { "command": "shell_command", "command_line": "echo four", "step": 4 },
+            { "command": "shell_command", "command_line": "echo one", "step": 1 }
+        ]
+    }))
+    .expect("parse args");
+
+    normalize_command_steps(&mut args.commands);
+
+    let steps = args
+        .commands
+        .iter()
+        .map(|command| command.effective_step())
+        .collect::<Vec<_>>();
+    assert_eq!(steps, vec![3, 4, 5, 6]);
 }
 
 #[test]
@@ -46,13 +75,13 @@ fn parse_empty_command_run_is_error() {
 }
 
 #[test]
-fn parse_compact_context_must_be_final_highest_step() {
+fn parse_task_status_compact_context_must_be_final_highest_step() {
     let error = parse_args(&json!({
         "commands": [
             {
                 "step": 2,
-                "command_type": "compact_context",
-                "command_line": "summary"
+                "command_type": "task_status",
+                "command_line": "{\"compact_context\":\"summary\"}"
             },
             {
                 "step": 3,
@@ -61,12 +90,59 @@ fn parse_compact_context_must_be_final_highest_step() {
             }
         ]
     }))
-    .expect_err("compact_context position");
+    .expect_err("task_status compact_context position");
 
     assert_eq!(
         error,
-        "compact_context must be the final command in the highest step of command_run"
+        "task_status compact_context must be the final command in the highest step of command_run"
     );
+}
+
+#[test]
+fn parse_task_status_compact_context_from_inline_arguments_must_be_final() {
+    let error = parse_args(&json!({
+        "commands": [
+            {
+                "step": 1,
+                "command_type": "task_status",
+                "compact_context": "Inline handoff summary"
+            },
+            {
+                "step": 2,
+                "command_type": "shell_command",
+                "command_line": "echo after-inline"
+            }
+        ]
+    }))
+    .expect_err("inline compact_context must obey final-position rules");
+
+    assert_eq!(
+        error,
+        "task_status compact_context must be the final command in the highest step of command_run"
+    );
+}
+
+#[test]
+fn parse_empty_task_status_compact_context_does_not_force_checkpoint_rules() {
+    let args = parse_args(&json!({
+        "commands": [
+            {
+                "step": 1,
+                "command_type": "task_status",
+                "compact_context": "   "
+            },
+            {
+                "step": 2,
+                "command_type": "shell_command",
+                "command_line": "echo after-empty"
+            }
+        ]
+    }))
+    .expect("blank compact_context is ignored for checkpoint positioning");
+
+    assert_eq!(args.commands.len(), 2);
+    assert_eq!(args.commands[0].command, "task_status");
+    assert_eq!(args.commands[1].command, "shell_command");
 }
 
 #[test]
@@ -105,6 +181,176 @@ fn normalize_shell_commands_default_to_15_second_timeout() {
 }
 
 #[test]
+fn normalize_external_commands_default_to_registry_timeout() {
+    let args = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "read_media",
+                "path": "note.txt",
+                "step": 1
+            }
+        ]
+    }))
+    .expect("parse command_run args");
+
+    let arguments = normalize_json_or_cli_command_arguments(&args.commands[0], "read_media")
+        .expect("normalize read_media arguments");
+
+    assert_eq!(arguments["path"], json!("note.txt"));
+    assert_eq!(arguments["timeout_ms"], json!(60_000));
+}
+
+#[test]
+fn normalize_generate_media_defaults_to_100_second_timeout() {
+    let args = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "generate_media",
+                "command_line": "--prompt logo",
+                "step": 1
+            }
+        ]
+    }))
+    .expect("parse command_run args");
+
+    let arguments = normalize_json_or_cli_command_arguments(&args.commands[0], "generate_media")
+        .expect("normalize generate_media arguments");
+
+    assert_eq!(arguments["cli"], json!("--prompt logo"));
+    assert_eq!(arguments["timeout_ms"], json!(100_000));
+}
+
+#[test]
+fn normalize_external_commands_keep_explicit_timeout_fields() {
+    let args = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "web_discover",
+                "command_line": "{\"query\":\"docs\",\"timeout_secs\":2}",
+                "timeout_ms": 5000,
+                "step": 1
+            }
+        ]
+    }))
+    .expect("parse command_run args");
+
+    let arguments = normalize_json_or_cli_command_arguments(&args.commands[0], "web_discover")
+        .expect("normalize web_discover arguments");
+
+    assert_eq!(arguments["query"], json!("docs"));
+    assert_eq!(arguments["timeout_secs"], json!(2));
+    assert!(arguments.get("timeout_ms").is_none());
+}
+
+#[test]
+fn parse_task_status_compact_context_accepts_json_with_raw_newlines() {
+    let args = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "task_status",
+                "command_line": "{\"compact_context\":\"Goal: keep going.\nNext: rerun focused tests.\"}",
+                "step": 1
+            }
+        ]
+    }))
+    .expect("parse args");
+
+    assert_eq!(args.commands[0].command, "task_status");
+}
+
+#[test]
+fn task_status_compact_context_normalizes_json_with_raw_newlines() {
+    let args = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "task_status",
+                "command_line": "{\"compact_context\":\"Goal: keep going.\nNext: rerun focused tests.\"}",
+                "step": 1
+            }
+        ]
+    }))
+    .expect("parse args");
+
+    let output = crate::commands::task_status::normalize_output(
+        args.commands[0].inline_arguments.as_ref(),
+        &args.commands[0].command_line,
+    )
+    .expect("task_status should tolerate raw newlines inside compact_context JSON");
+
+    assert_eq!(
+        output["task_status"]["compact_context"],
+        json!("Goal: keep going.\nNext: rerun focused tests.")
+    );
+}
+
+#[test]
+fn parse_task_status_compact_context_detects_jsonish_unescaped_newline_before_later_command() {
+    let error = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "task_status",
+                "command_line": "{\"compact_context\":\"Goal: keep going.\nNext: rerun tests.\"}",
+                "step": 1
+            },
+            {
+                "command_type": "shell_command",
+                "command_line": "echo should-not-follow",
+                "step": 2
+            }
+        ]
+    }))
+    .expect_err("jsonish compact_context with raw newline should still be detected");
+
+    assert_eq!(
+        error,
+        "task_status compact_context must be the final command in the highest step of command_run"
+    );
+}
+
+#[test]
+fn parse_task_status_compact_context_rejects_multiple_checkpoints() {
+    let error = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "task_status",
+                "command_line": "{\"compact_context\":\"first\"}",
+                "step": 1
+            },
+            {
+                "command_type": "task_status",
+                "command_line": "{\"compact_context\":\"second\"}",
+                "step": 2
+            }
+        ]
+    }))
+    .expect_err("only one compact_context checkpoint should be accepted");
+
+    assert_eq!(
+        error,
+        "only one task_status compact_context command is allowed"
+    );
+}
+
+#[test]
+fn parse_standalone_compact_context_is_rejected() {
+    let error = parse_args(&json!({
+        "commands": [
+            {
+                "command_type": "compact_context",
+                "command_line": "{\"summary\":\"legacy standalone command\"}",
+                "step": 1
+            }
+        ]
+    }))
+    .expect_err("standalone compact_context should be removed");
+
+    assert_eq!(
+        error,
+        "standalone compact_context command has been removed; use task_status compact_context"
+    );
+}
+
+#[test]
 fn parse_command_line_without_command_type_accepts_workdir_and_timeout() {
     let args = parse_args(&json!({
         "commands": [
@@ -125,6 +371,42 @@ fn parse_command_line_without_command_type_accepts_workdir_and_timeout() {
     assert_eq!(args.commands[0].command_line, "pwd");
     assert_eq!(args.commands[0].workdir.as_deref(), Some("subdir"));
     assert_eq!(args.commands[0].timeout_ms, Some(5000));
+}
+
+#[test]
+fn normalize_command_value_for_execution_adds_actual_shell_command_type() {
+    let normalized = super::normalize_command_value_for_execution(
+        json!({
+            "command_line": "Write-Output normalized-ok",
+            "step": 3,
+            "timeout_ms": 5000
+        }),
+        0,
+    )
+    .expect("normalize command value");
+
+    assert_eq!(
+        normalized["command_type"],
+        crate::commands::active_shell_command_name()
+    );
+    assert_eq!(normalized["command_line"], "Write-Output normalized-ok");
+    assert_eq!(normalized["step"], 3);
+    assert_eq!(normalized["timeout_ms"], 5000);
+}
+
+#[test]
+fn normalize_command_value_for_execution_does_not_type_plain_summary_text() {
+    let normalized = super::normalize_command_value_for_execution(
+        json!({
+            "command": "large file scan",
+            "step": 1
+        }),
+        0,
+    )
+    .expect("plain summary should still parse as a non-executable command record");
+
+    assert!(normalized.get("command_type").is_none());
+    assert_eq!(normalized["command"], "large file scan");
 }
 
 #[test]
@@ -220,6 +502,26 @@ fn parse_single_shell_object_without_commands_is_wrapped() {
 }
 
 #[test]
+fn parse_single_stringified_shell_object_without_commands_is_wrapped() {
+    let args = parse_args(&json!({
+        "command": json!({ "command": "echo ok", "timeout_ms": 5000 }).to_string(),
+        "timeoutMs": 120000
+    }))
+    .expect("parse args");
+
+    assert_eq!(args.commands.len(), 1);
+    assert_eq!(
+        args.commands[0].command,
+        crate::commands::active_shell_command_name()
+    );
+    assert_eq!(
+        args.commands[0].command_line,
+        json!({ "command": "echo ok", "timeout_ms": 5000 }).to_string()
+    );
+    assert_eq!(args.commands[0].timeout_ms, Some(120000));
+}
+
+#[test]
 fn parse_command_only_here_string_patch_is_routed_to_apply_patch() {
     let args = parse_args(&json!({
             "commands": [
@@ -233,4 +535,149 @@ fn parse_command_only_here_string_patch_is_routed_to_apply_patch() {
 
     assert_eq!(args.commands[0].command, "apply_patch");
     assert!(args.commands[0].command_line.starts_with("*** Begin Patch"));
+}
+
+#[test]
+fn parse_arguments_value_accepts_requests_wrapper_and_plain_values() {
+    let wrapped = parse_arguments_value(&json!({
+        "requests": {
+            "commands": [
+                {"command_type": "shell_command", "command_line": "echo wrapped"}
+            ]
+        }
+    }))
+    .expect("requests wrapper");
+    let fenced = parse_arguments_value(&Value::String(
+        "```json\n{\"requests\":{\"commands\":[{\"command\":\"shell_command\"}]}}\n```".to_string(),
+    ))
+    .expect("fenced requests wrapper");
+    let plain = parse_arguments_value(&json!({"commands": [{"command": "echo plain"}]}))
+        .expect("plain arguments");
+
+    assert_eq!(wrapped["commands"][0]["command_line"], "echo wrapped");
+    assert_eq!(fenced["commands"][0]["command"], "shell_command");
+    assert_eq!(plain["commands"][0]["command"], "echo plain");
+}
+
+#[test]
+fn parse_arguments_value_reports_jsonish_errors_with_context() {
+    let error = parse_arguments_value(&Value::String("```json\n{\"commands\":[}\n```".to_string()))
+        .expect_err("invalid fenced json should fail");
+
+    assert!(error.contains("failed to parse command_run arguments"));
+}
+
+#[test]
+fn command_values_wraps_single_objects_and_strings_but_drops_scalars() {
+    assert_eq!(command_values(&json!([{"command": "one"}])).len(), 1);
+    assert_eq!(command_values(&json!({"command": "one"})).len(), 1);
+    assert_eq!(command_values(&json!("echo one")), vec![json!("echo one")]);
+    assert!(command_values(&json!(false)).is_empty());
+    assert!(command_values(&json!(42)).is_empty());
+}
+
+#[test]
+fn parse_command_item_recovers_inline_arguments_and_residual_fields() {
+    let item = parse_command_item(&json!({
+        "command_type": "task_status",
+        "command": "{\"status\":\"done\"}",
+        "parameters": {"status": "done"},
+        "workdir": "workspace",
+        "step": "3",
+        "timeoutMs": "4000"
+    }))
+    .expect("parse command item");
+
+    assert_eq!(item.command, "task_status");
+    assert_eq!(item.command_line, "{\"status\":\"done\"}");
+    assert_eq!(item.inline_arguments, Some(json!({"status": "done"})));
+    assert_eq!(item.workdir.as_deref(), Some("workspace"));
+    assert_eq!(item.step, Some(3));
+    assert_eq!(item.timeout_ms, Some(4000));
+}
+
+#[test]
+fn parse_command_item_uses_shell_when_only_payload_field_is_present() {
+    let item = parse_command_item(&json!({
+        "payload": "echo payload-only",
+        "extra": "kept"
+    }))
+    .expect("parse payload-only item");
+
+    assert_eq!(item.command, crate::commands::active_shell_command_name());
+    assert_eq!(item.command_line, "echo payload-only");
+    assert_eq!(item.inline_arguments, Some(json!({"extra": "kept"})));
+}
+
+#[test]
+fn parse_command_item_rejects_non_object_non_string_and_missing_command() {
+    assert!(parse_command_item(&json!(null))
+        .expect_err("null command item")
+        .contains("expected object"));
+    assert!(parse_command_item(&json!({"step": 1}))
+        .expect_err("missing command")
+        .contains("missing field `command_type`"));
+}
+
+#[test]
+fn field_helpers_trim_only_string_presence_and_parse_unsigned_numbers() {
+    let object = json!({
+        "blank": " ",
+        "array": ["a", "b"],
+        "object": {"k": "v"},
+        "number": 42,
+        "numberString": "43",
+        "badNumber": "-1"
+    });
+    let object = object.as_object().expect("object");
+
+    assert_eq!(string_field(object, &["blank"]), None);
+    assert_eq!(
+        string_field(object, &["array"]),
+        Some("[\"a\",\"b\"]".to_string())
+    );
+    assert_eq!(
+        string_field(object, &["object"]),
+        Some("{\"k\":\"v\"}".to_string())
+    );
+    assert_eq!(u64_field(object, &["number"]), Some(42));
+    assert_eq!(u64_field(object, &["numberString"]), Some(43));
+    assert_eq!(u64_field(object, &["badNumber"]), None);
+}
+
+#[tokio::test]
+async fn streaming_executor_returns_safe_shell_result_before_finish() {
+    let workspace = temporary_workspace("streaming-safe-shell-before-finish");
+    let mut executor = super::StreamingCommandRunExecutor::new(workspace.clone());
+
+    let result = executor
+        .push_command_value(json!({
+            "command": "shell_command",
+            "command_line": "echo streamed-safe-shell",
+            "timeout_ms": 3000,
+            "step": 1
+        }))
+        .await;
+
+    assert!(
+        !result.is_empty(),
+        "streaming shell result should be available before finish()"
+    );
+    assert_eq!(
+        result[0].get("success").and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+fn temporary_workspace(prefix: &str) -> std::path::PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after UNIX_EPOCH")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&path)
+        .unwrap_or_else(|error| panic!("failed to create {}: {error}", path.display()));
+    path
 }

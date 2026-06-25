@@ -1,3 +1,6 @@
+#![deny(clippy::unwrap_used)]
+#![forbid(unsafe_code)]
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::io::Read;
@@ -7,6 +10,8 @@ use std::path::Path;
 mod access;
 #[path = "src/args.rs"]
 mod args;
+#[path = "src/asset.rs"]
+mod asset;
 #[path = "src/download.rs"]
 mod download;
 #[path = "src/files.rs"]

@@ -38,6 +38,25 @@ pub fn xml_parameters(text: &str) -> Map<String, Value> {
         .to_string();
         arguments.insert(key, parse_xml_parameter_value(&value));
     }
+
+    for key in ["command_type", "command", "command_line", "cmd", "step"] {
+        let Ok(tag_re) = Regex::new(&format!(r#"(?s)<{key}>(.*?)</{key}>"#)) else {
+            continue;
+        };
+        if let Some(capture) = tag_re.captures(text) {
+            let value = xml_unescape(
+                capture
+                    .get(1)
+                    .map(|value| value.as_str())
+                    .unwrap_or_default(),
+            )
+            .trim()
+            .to_string();
+            arguments
+                .entry(key.to_string())
+                .or_insert_with(|| parse_xml_parameter_value(&value));
+        }
+    }
     arguments
 }
 
@@ -58,5 +77,15 @@ mod tests {
         );
         assert_eq!(params["command_line"], "cat package.json");
         assert_eq!(params["step"], json!(1));
+    }
+
+    #[test]
+    fn extracts_command_run_tag_values() {
+        let params = xml_parameters(
+            "<parameters><command_type>shell_command</command_type><command_line>Get-Content README.md</command_line><step>2</step></parameters>",
+        );
+        assert_eq!(params["command_type"], "shell_command");
+        assert_eq!(params["command_line"], "Get-Content README.md");
+        assert_eq!(params["step"], json!(2));
     }
 }

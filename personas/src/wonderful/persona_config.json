@@ -1,8 +1,8 @@
 {
   "persona_name": "wonderful",
   "display_name": "Wonderful",
-  "description": "Quiet, tireless, loyal dog companion.",
-  "short_description": "Loyal companion",
+  "description": "Quiet and sparse, reporting only the most important information.",
+  "short_description": "Quiet reporter",
   "default_config": true,
   "persona_directory": "personas/src/wonderful",
   "prompt_directory": "personas/src/wonderful/prompt",
@@ -57,19 +57,19 @@
         }
       },
       {
-        "id": "laufgh",
-        "source_directory": "personas/src/wonderful/media/expressions/laufgh",
-        "grid_path": "personas/src/wonderful/media/expressions/laufgh/grid/sheet.png",
+        "id": "laugh",
+        "source_directory": "personas/src/wonderful/media/expressions/laugh",
+        "grid_path": "personas/src/wonderful/media/expressions/laugh/grid/sheet.png",
         "frames": {
-          "center": "personas/src/wonderful/media/expressions/laufgh/frames/center.png",
-          "up": "personas/src/wonderful/media/expressions/laufgh/frames/up.png",
-          "down": "personas/src/wonderful/media/expressions/laufgh/frames/down.png",
-          "left": "personas/src/wonderful/media/expressions/laufgh/frames/left.png",
-          "right": "personas/src/wonderful/media/expressions/laufgh/frames/right.png",
-          "up-left": "personas/src/wonderful/media/expressions/laufgh/frames/up-left.png",
-          "up-right": "personas/src/wonderful/media/expressions/laufgh/frames/up-right.png",
-          "down-left": "personas/src/wonderful/media/expressions/laufgh/frames/down-left.png",
-          "down-right": "personas/src/wonderful/media/expressions/laufgh/frames/down-right.png"
+          "center": "personas/src/wonderful/media/expressions/laugh/frames/center.png",
+          "up": "personas/src/wonderful/media/expressions/laugh/frames/up.png",
+          "down": "personas/src/wonderful/media/expressions/laugh/frames/down.png",
+          "left": "personas/src/wonderful/media/expressions/laugh/frames/left.png",
+          "right": "personas/src/wonderful/media/expressions/laugh/frames/right.png",
+          "up-left": "personas/src/wonderful/media/expressions/laugh/frames/up-left.png",
+          "up-right": "personas/src/wonderful/media/expressions/laugh/frames/up-right.png",
+          "down-left": "personas/src/wonderful/media/expressions/laugh/frames/down-left.png",
+          "down-right": "personas/src/wonderful/media/expressions/laugh/frames/down-right.png"
         }
       },
       {

@@ -833,54 +833,6 @@ fn codex_oauth_payload_keeps_system_messages_in_input() {
     assert_eq!(payload["tool_choice"], "auto");
 }
 
-#[test]
-fn codex_oauth_usage_falls_back_to_estimate_when_stream_stops_before_usage() {
-    let payload = json!({
-        "model": "gpt-5.1-codex",
-        "input": [{"role": "user", "content": "Run tests"}],
-        "tools": [{"type": "function", "name": "command_run"}]
-    });
-    let content = json!({
-        "tool_calls": [{
-            "function": {
-                "name": "command_run",
-                "arguments": {"commands": [{"step": 1, "command": "npm", "command_line": "npm test"}]}
-            }
-        }]
-    });
-    let mut metrics = crate::metrics::extract_openapi_metrics(&json!({}), None);
-
-    crate::metrics::fill_missing_estimated_usage(
-        &mut metrics,
-        &payload,
-        &content,
-        "codex_oauth_stream_returned_before_provider_usage",
-    );
-
-    assert!(
-        metrics
-            .usage
-            .input_tokens
-            .expect("estimated input tokens should be present")
-            > 0
-    );
-    assert!(
-        metrics
-            .usage
-            .output_tokens
-            .expect("estimated output tokens should be present")
-            > 0
-    );
-    assert_eq!(
-        metrics
-            .raw_usage
-            .as_ref()
-            .and_then(|usage| usage.get("estimated"))
-            .and_then(serde_json::Value::as_bool),
-        Some(true)
-    );
-}
-
 fn header_value<'a>(headers: &'a str, name: &str) -> Option<&'a str> {
     headers.lines().find_map(|line| {
         let (candidate, value) = line.split_once(':')?;
@@ -980,7 +932,8 @@ fn command_index_for_test(event: &crate::tura_llm::ProviderStreamEvent) -> Optio
         crate::tura_llm::ProviderStreamEvent::CommandRunCommandReady { command_index, .. } => {
             Some(*command_index)
         }
-        crate::tura_llm::ProviderStreamEvent::ProviderOutputStarted => None,
+        crate::tura_llm::ProviderStreamEvent::ProviderOutputStarted
+        | crate::tura_llm::ProviderStreamEvent::TextDelta { .. } => None,
     }
 }
 
@@ -1166,6 +1119,72 @@ fn codex_responses_stream_tool_call_does_not_pollute_output_text() {
         "shell_command"
     );
     assert!(normalized.get("text").is_none());
+}
+
+#[test]
+fn codex_responses_stream_preserves_tool_call_after_completed_message_item() {
+    let events = vec![
+        json!({
+            "type": "response.output_item.added",
+            "item": {
+                "type": "message",
+                "id": "msg_1"
+            }
+        }),
+        json!({
+            "type": "response.output_text.delta",
+            "delta": "I will inspect the files first."
+        }),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "id": "msg_1",
+                "content": [{
+                    "type": "output_text",
+                    "text": "I will inspect the files first."
+                }]
+            }
+        }),
+        json!({
+            "type": "response.output_item.added",
+            "item": {
+                "type": "function_call",
+                "id": "fc_late",
+                "call_id": "call_late",
+                "name": "command_run",
+                "arguments": ""
+            }
+        }),
+        json!({
+            "type": "response.function_call_arguments.done",
+            "item_id": "fc_late",
+            "arguments": "{\"commands\":[{\"command_type\":\"shell_command\",\"command_line\":\"pwd\"}]}"
+        }),
+        json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "function_call",
+                "id": "fc_late",
+                "call_id": "call_late",
+                "name": "command_run",
+                "status": "completed",
+                "arguments": "{\"commands\":[{\"command_type\":\"shell_command\",\"command_line\":\"pwd\"}]}"
+            }
+        }),
+    ];
+
+    let normalized = super::normalize_codex_response_content(&json!({
+        "events": events,
+        "output_text": "I will inspect the files first."
+    }));
+
+    assert_eq!(normalized["text"], "I will inspect the files first.");
+    assert_eq!(normalized["tool_calls"][0]["id"], "call_late");
+    assert_eq!(
+        normalized["tool_calls"][0]["function"]["arguments"]["commands"][0]["command_line"],
+        "pwd"
+    );
 }
 
 #[test]

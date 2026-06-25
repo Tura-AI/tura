@@ -1,6 +1,7 @@
+use super::asset::asset_records;
 use super::files::{relative_or_display, resolve_download_dir};
 use super::filter::{
-    build_search_query, filter_results, parse_query_requirements, site_filters_to_image_keywords,
+    filter_results, normalized_search_query, site_filters_to_image_keywords,
     strip_site_filters_from_query,
 };
 use super::html::{direct_webpage_url, title_from_url};
@@ -29,15 +30,14 @@ pub(super) fn run_web_discover_inner(
     args: WebDiscoverArgs,
     session_dir: &Path,
 ) -> Result<Value, String> {
-    let should_download = args.download_dir.is_some();
+    let should_download = true;
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .user_agent("Tura web_discover/1.0")
         .redirect(reqwest::redirect::Policy::limited(8))
         .build()
         .map_err(|err| format!("failed to create web client: {err}"))?;
-    let query_parts = parse_query_requirements(&args.query);
-    let normalized_query = build_search_query(&query_parts);
+    let normalized_query = normalized_search_query(&args.query);
     let search_query = if args.kind == "image" {
         site_filters_to_image_keywords(&normalized_query)
     } else if matches!(args.kind.as_str(), "video" | "audio") {
@@ -45,11 +45,7 @@ pub(super) fn run_web_discover_inner(
     } else {
         normalized_query.clone()
     };
-    let output_dir = args
-        .download_dir
-        .as_ref()
-        .map(|_| resolve_download_dir(&args, session_dir))
-        .transpose()?;
+    let output_dir = Some(resolve_download_dir(&args, session_dir)?);
     if args.kind == "website" {
         if let Some(url) = direct_webpage_url(&args.query) {
             let result = SearchResult {
@@ -80,6 +76,29 @@ pub(super) fn run_web_discover_inner(
             });
             return Ok(output);
         }
+    }
+    if args.kind == "asset" {
+        let (records, downloaded_files, searched_sources) = asset_records(
+            &args,
+            &client,
+            &search_query,
+            output_dir.as_deref(),
+            session_dir,
+        )?;
+        let output = json!({
+            "query": args.query,
+            "type": args.kind,
+            "asset_type": args.asset_type,
+            "normalized_query": normalized_query,
+            "searched_sources": searched_sources,
+            "saved": should_download,
+            "download_dir": output_dir.as_deref().map(|path| relative_or_display(path, session_dir)),
+            "result_count": records.len(),
+            "results": records,
+            "downloaded_files": downloaded_files,
+            "summary_markdown": summarize_records(&records, &downloaded_files),
+        });
+        return Ok(output);
     }
     let mut results = if args.kind == "website" {
         search_websites(&client, &search_query, args.max_results)?

@@ -2,45 +2,10 @@
 
 use chrono::Utc;
 
-use crate::manas::prompt_messages::planning_current_task_text;
+use crate::prompt_style::context_blocks;
 use crate::state_machine::session_management::{SessionManagement, TaskStatus};
 
-const COMMAND_RUN_TOOL: &str = "command_run";
 const TASK_STATUS_COMMAND: &str = "task_status";
-
-/// Inject the task_status nudge once this many consecutive command_run turns
-/// have produced no write (`apply_patch`) and no task state change
-/// (`task_status`).
-pub(crate) const NO_WRITE_COMMAND_RUN_NUDGE_THRESHOLD: u64 = 3;
-
-/// True if any command_run tool call in this turn includes a write command
-/// (`apply_patch`) or a task-state command (`task_status`).
-pub(crate) fn command_run_turn_has_write_or_status(
-    tool_calls: &[crate::runtime::types::ToolCallData],
-) -> bool {
-    tool_calls.iter().any(|tool_call| {
-        if tool_call.tool_name != COMMAND_RUN_TOOL {
-            return false;
-        }
-        tool_call
-            .arguments
-            .get("commands")
-            .and_then(|commands| commands.as_array())
-            .is_some_and(|commands| {
-                commands.iter().any(|command| {
-                    let command_type = command
-                        .get("command_type")
-                        .or_else(|| command.get("command"))
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default()
-                        .trim()
-                        .to_ascii_lowercase()
-                        .replace('-', "_");
-                    matches!(command_type.as_str(), "apply_patch" | "task_status")
-                })
-            })
-    })
-}
 
 pub(crate) fn command_run_result_terminal_task_status(
     result: &serde_json::Value,
@@ -71,44 +36,45 @@ fn command_run_item_terminal_task_status(item: &serde_json::Value) -> Option<Str
         .and_then(|output| output.get("task_status"))
         .and_then(|status| status.get("status"))
         .and_then(serde_json::Value::as_str)
-        .filter(|status| matches!(*status, "done" | "question"))
+        .filter(|status| matches!(*status, "doing" | "done" | "question"))
         .map(ToString::to_string)
 }
 
-pub(crate) fn terminal_task_status_final_message(
-    session: &SessionManagement,
-    status: &str,
-    original_user_task: &str,
-) -> Option<String> {
-    let summary = session
-        .task_plan
-        .detailed_tasks
-        .iter()
-        .rev()
-        .find_map(|task| non_empty_text(&task.task_summary))
-        .or_else(|| non_empty_text(&session.task_plan.plan_summary))
-        .or_else(|| non_empty_text(original_user_task))?;
-    let prefix = if status == "question" {
-        "Question"
-    } else {
-        "Done"
-    };
-    Some(format!("{prefix}: {summary}"))
-}
-
-fn non_empty_text(value: &str) -> Option<String> {
-    let value = value.trim();
-    (!value.is_empty()).then(|| value.to_string())
+pub(crate) fn command_run_result_has_non_status_command(result: &serde_json::Value) -> bool {
+    let result = result.get("streamed_command_run_result").unwrap_or(result);
+    result
+        .get("results")
+        .and_then(|value| value.as_array())
+        .is_some_and(|items| {
+            items.iter().any(|item| {
+                let command_type = item
+                    .get("command_type")
+                    .or_else(|| item.get("command"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_ascii_lowercase()
+                    .replace('-', "_");
+                !command_type.is_empty() && command_type != TASK_STATUS_COMMAND
+            })
+        })
 }
 
 pub(crate) fn active_task_user_message(session: &SessionManagement) -> Option<serde_json::Value> {
     task_user_message_by(session, task_is_executable)
 }
 
+#[cfg(test)]
 pub(crate) fn active_todo_task_user_message(
     session: &SessionManagement,
 ) -> Option<serde_json::Value> {
     task_user_message_by(session, task_is_user_action_todo)
+}
+
+pub(crate) fn active_doing_task_user_message(
+    session: &SessionManagement,
+) -> Option<serde_json::Value> {
+    task_user_message_by(session, task_is_doing)
 }
 
 fn task_user_message_by(
@@ -121,13 +87,12 @@ fn task_user_message_by(
         .iter()
         .enumerate()
         .find(|(_, task)| predicate(task))?;
-    let current_task = planning_current_task_text(task);
+    let current_task = context_blocks::current_task_text(&task.task_summary);
     Some(serde_json::json!({
         "role": "user",
-        "content": format!(
-            "[current objective]:\n{}\n\n{}",
-            session.current_objective.trim(),
-            current_task
+        "content": context_blocks::current_objective_block(
+            &session.current_objective,
+            Some(current_task),
         )
     }))
 }
@@ -153,7 +118,7 @@ pub(crate) fn record_task_focus_message_for_terminal_done(
     }) else {
         return;
     };
-    let task_id = task.task_id.clone();
+    let task_id = task.task_id.as_str();
     if session.session_log.iter().rev().any(|entry| {
         serde_json::from_str::<serde_json::Value>(entry)
             .ok()
@@ -191,6 +156,10 @@ fn task_is_executable(task: &crate::state_machine::session_management::TaskStep)
                 == crate::state_machine::session_management::StartCondition::UserAction)
 }
 
+fn task_is_doing(task: &crate::state_machine::session_management::TaskStep) -> bool {
+    task.status == TaskStatus::Doing
+}
+
 fn task_is_user_action_todo(task: &crate::state_machine::session_management::TaskStep) -> bool {
     task.status == TaskStatus::Todo
         && task.start_condition
@@ -199,50 +168,13 @@ fn task_is_user_action_todo(task: &crate::state_machine::session_management::Tas
 
 #[cfg(test)]
 mod tests {
-    const COMMAND_RUN_TOOL: &str = "command_run";
     use crate::context::build_messages_from_session;
-    use crate::runtime::types::ToolCallData;
     use crate::state_machine::session_management::{
         PlanStatus, SessionInput, SessionManagement, StartCondition, TaskStep,
     };
     use chrono::Utc;
     use serde_json::json;
     use std::path::PathBuf;
-
-    fn command_run_call(command_types: &[&str]) -> ToolCallData {
-        ToolCallData {
-            tool_name: COMMAND_RUN_TOOL.to_string(),
-            arguments: json!({
-                "commands": command_types
-                    .iter()
-                    .map(|ct| json!({ "command_type": ct, "command_line": "x" }))
-                    .collect::<Vec<_>>()
-            }),
-            provider_metadata: None,
-        }
-    }
-
-    #[test]
-    fn no_write_detection_drives_task_status_nudge_counter() {
-        // Read-only / verification-only command_run turns are "no write".
-        assert!(!super::command_run_turn_has_write_or_status(&[
-            command_run_call(&["shell_command"])
-        ]));
-        assert!(!super::command_run_turn_has_write_or_status(&[
-            command_run_call(&["shell_command", "read_media"])
-        ]));
-        // A write (apply_patch) or a task state command (task_status) counts.
-        assert!(super::command_run_turn_has_write_or_status(&[
-            command_run_call(&["shell_command", "apply_patch"])
-        ]));
-        assert!(super::command_run_turn_has_write_or_status(&[
-            command_run_call(&["task_status"])
-        ]));
-        // Alias spelling normalizes too.
-        assert!(super::command_run_turn_has_write_or_status(&[
-            command_run_call(&["apply-patch"])
-        ]));
-    }
 
     #[test]
     fn task_status_detection_accepts_streamed_command_run_results() {
@@ -253,7 +185,7 @@ mod tests {
                     "output": {
                         "task_status": {
                             "status": "done",
-                            "task_summary": "finished"
+                            "task_group": "finished"
                         }
                     }
                 }]
@@ -280,6 +212,49 @@ mod tests {
             super::command_run_result_terminal_task_status(&question).as_deref(),
             Some("question")
         );
+
+        let doing = json!({
+            "results": [{
+                "command_type": "task_status",
+                "output": {
+                    "task_status": {
+                        "status": "doing"
+                    }
+                }
+            }]
+        });
+        assert_eq!(
+            super::command_run_result_terminal_task_status(&doing).as_deref(),
+            Some("doing")
+        );
+    }
+
+    #[test]
+    fn command_run_result_detects_real_commands_before_terminal_status() {
+        let result = json!({
+            "streamed_command_run_result": {
+                "results": [
+                    { "command_type": "shell_command", "success": true, "output": "ok" },
+                    {
+                        "command_type": "task_status",
+                        "success": true,
+                        "output": { "task_status": { "status": "done" } }
+                    }
+                ]
+            }
+        });
+        assert!(super::command_run_result_has_non_status_command(&result));
+
+        let status_only = json!({
+            "results": [{
+                "command_type": "task_status",
+                "success": true,
+                "output": { "task_status": { "status": "done" } }
+            }]
+        });
+        assert!(!super::command_run_result_has_non_status_command(
+            &status_only
+        ));
     }
 
     fn session_with_tasks(tasks: Vec<TaskStep>) -> SessionManagement {
@@ -409,17 +384,5 @@ mod tests {
 
         assert!(super::active_todo_task_user_message(&session).is_none());
         assert!(super::active_task_user_message(&session).is_none());
-    }
-
-    #[test]
-    fn terminal_task_status_message_falls_back_to_task_summary() {
-        let session =
-            session_with_tasks(vec![task(1, PlanStatus::Done, StartCondition::UserAction)]);
-
-        assert_eq!(
-            super::terminal_task_status_final_message(&session, "done", "finish queued work")
-                .as_deref(),
-            Some("Done: Task 1")
-        );
     }
 }

@@ -1,0 +1,18 @@
+{
+  "run_id": "ogas-rpcap-sanitizerfix-20260624-1",
+  "pid": 3316,
+  "monitor": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-ogas-rpcap-sanitizerfix-20260624-1",
+  "script": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-ogas-rpcap-sanitizerfix-20260624-1\\run-benchmark.ps1",
+  "runner_stdout": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-ogas-rpcap-sanitizerfix-20260624-1\\runner.stdout.log",
+  "runner_stderr": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-ogas-rpcap-sanitizerfix-20260624-1\\runner.stderr.log",
+  "run_root": "C:\\Users\\liuliu\\Documents\\tura_workspace\\target\\media-presentation-ogas-pdf\\ogas-rpcap-sanitizerfix-20260624-1",
+  "summary": "C:\\Users\\liuliu\\Documents\\tura_workspace\\target\\media-presentation-ogas-pdf\\ogas-rpcap-sanitizerfix-20260624-1\\summary.json",
+  "agents": [
+    "tura-thinking"
+  ],
+  "timeout_ms": 3600000,
+  "reasoning": "high",
+  "service_tier": "default",
+  "goal_mode": false,
+  "started_at": "2026-06-24T20:01:52.1299901+02:00"
+}

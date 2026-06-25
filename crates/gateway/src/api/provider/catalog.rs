@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use axum::extract::Json;
 use tokio::time::{timeout, Duration};
 
-use crate::api::types::*;
+use crate::contracts::*;
 use crate::mock::global_store;
 
 use super::{provider_env_key, provider_key_exists, provider_key_value_for_env};
@@ -680,22 +680,6 @@ pub(super) fn provider_base_url(
     settings.provider_base_url(provider_id)
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct ValidateModelRequest {
-    #[serde(rename = "providerID")]
-    pub provider_id: String,
-    #[serde(rename = "modelID")]
-    pub model_id: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ValidateModelResponse {
-    pub ok: bool,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub output: Option<serde_json::Value>,
-}
-
 pub async fn validate_model(
     Json(payload): Json<ValidateModelRequest>,
 ) -> Json<ValidateModelResponse> {
@@ -809,3 +793,223 @@ pub async fn validate_model(
 
 // ============================================================================
 // Auth
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn provider_config(provider: &str, model: &str) -> tura_llm_rust::ProviderConfig {
+        tura_llm_rust::ProviderConfig {
+            provider: provider.to_string(),
+            base_url: format!("https://{provider}.example/v1"),
+            model: tura_llm_rust::Settings::normalize_model_name(provider, model),
+            temperature: 0.2,
+        }
+    }
+
+    fn catalog_settings() -> tura_llm_rust::Settings {
+        let visible_detail = tura_llm_rust::CatalogModelDetail {
+            id: "local/model-a".to_string(),
+            visible: true,
+            name: "Model A".to_string(),
+            family: "local-family".to_string(),
+            release_date: "2026-06-12".to_string(),
+            attachment: true,
+            reasoning: false,
+            temperature: true,
+            tool_call: false,
+            limit: tura_llm_rust::CatalogModelLimit {
+                context: 32_000,
+                input: 16_000,
+                output: 4_000,
+            },
+            modalities: tura_llm_rust::CatalogModelModalities {
+                input: vec!["text".to_string()],
+                output: vec!["text".to_string(), "json".to_string()],
+            },
+            options: serde_json::Map::from_iter([(
+                "tier".to_string(),
+                serde_json::json!("business"),
+            )]),
+            status: Some("stable".to_string()),
+        };
+        let hidden_detail = tura_llm_rust::CatalogModelDetail {
+            id: "hidden-model".to_string(),
+            visible: false,
+            name: "Hidden".to_string(),
+            ..Default::default()
+        };
+        tura_llm_rust::Settings {
+            provider_base_url: HashMap::from([(
+                "local".to_string(),
+                "https://local.example/v1".to_string(),
+            )]),
+            routes: HashMap::from([(
+                "coding".to_string(),
+                tura_llm_rust::RouteConfig {
+                    default_temperature: 0.2,
+                    providers: vec![
+                        provider_config("local", "local/model-a"),
+                        provider_config("local", "hidden-model"),
+                        provider_config("openai", "openai/gpt-visible"),
+                    ],
+                },
+            )]),
+            model_catalog: tura_llm_rust::ModelCatalog {
+                tiers: vec!["fast".to_string()],
+                providers: HashMap::from([(
+                    "local".to_string(),
+                    tura_llm_rust::ProviderCatalogConfig {
+                        display_name: "Local Provider".to_string(),
+                        runtime_provider: "openai".to_string(),
+                        api_style: "openai_compatible".to_string(),
+                        base_url: "https://local.example/v1".to_string(),
+                        token_env: Some("LOCAL_TOKEN".to_string()),
+                        env: vec!["LOCAL_TOKEN".to_string(), "LOCAL_FALLBACK".to_string()],
+                        domains: vec!["llm".to_string(), "local".to_string()],
+                        capabilities: vec!["llm.chat".to_string()],
+                        auth_methods: vec!["api_key".to_string()],
+                        api_docs: Some("https://local.example/docs".to_string()),
+                        status: Some("beta".to_string()),
+                        models: HashMap::from([(
+                            "fast".to_string(),
+                            vec![
+                                tura_llm_rust::CatalogModelConfig::Detailed(visible_detail),
+                                tura_llm_rust::CatalogModelConfig::Detailed(hidden_detail),
+                                tura_llm_rust::CatalogModelConfig::Id("claude-legacy".to_string()),
+                            ],
+                        )]),
+                    },
+                )]),
+            },
+            provider_enums: tura_llm_rust::ProviderEnumCatalog::default(),
+        }
+    }
+
+    #[test]
+    fn catalog_provider_metadata_helpers_project_settings_fields() {
+        let settings = catalog_settings();
+
+        assert_eq!(
+            provider_display_name_from_settings(Some(&settings), "local").as_deref(),
+            Some("Local Provider")
+        );
+        assert_eq!(
+            provider_env_from_settings(Some(&settings), "local"),
+            vec!["LOCAL_TOKEN".to_string(), "LOCAL_FALLBACK".to_string()]
+        );
+        assert_eq!(
+            provider_api_from_settings(Some(&settings), "local").as_deref(),
+            Some("https://local.example/v1")
+        );
+
+        let options = provider_options_from_settings(Some(&settings), "local");
+        assert_eq!(options["api_style"], "openai_compatible");
+        assert_eq!(options["runtime_provider"], "openai");
+        assert_eq!(options["token_env"], "LOCAL_TOKEN");
+        assert_eq!(options["domains"], serde_json::json!(["llm", "local"]));
+        assert_eq!(options["capabilities"], serde_json::json!(["llm.chat"]));
+        assert_eq!(options["auth_methods"], serde_json::json!(["api_key"]));
+        assert_eq!(options["api_docs"], "https://local.example/docs");
+        assert_eq!(options["status"], "beta");
+
+        assert!(provider_display_name_from_settings(Some(&settings), "missing").is_none());
+        assert!(provider_env_from_settings(None, "local").is_empty());
+        assert!(provider_api_from_settings(Some(&settings), "missing").is_none());
+        assert!(provider_options_from_settings(None, "local").is_empty());
+    }
+
+    #[test]
+    fn catalog_model_detail_lookup_and_sdk_model_projection_are_canonical() {
+        let settings = catalog_settings();
+
+        assert_eq!(normalize_model_id("openai", "openai/model-a"), "model-a");
+        assert_eq!(normalize_model_id("local", "local/model-a"), "model-a");
+        assert_eq!(
+            normalize_model_id("local", "openai/model-a"),
+            "openai/model-a"
+        );
+        assert_eq!(normalize_model_id("local", "model-a"), "model-a");
+
+        let detail = catalog_model_detail(&settings, "local", "model-a").expect("model detail");
+        assert_eq!(detail.name, "Model A");
+        assert_eq!(detail.status.as_deref(), Some("stable"));
+
+        let model = sdk_model_from_settings(Some(&settings), "local", "model-a");
+        assert_eq!(model.id, "model-a");
+        assert_eq!(model.name, "Model A");
+        assert_eq!(model.family, "local-family");
+        assert_eq!(model.release_date, "2026-06-12");
+        assert!(model.attachment);
+        assert!(!model.reasoning);
+        assert!(model.temperature);
+        assert!(!model.tool_call);
+        assert_eq!(model.limit.context, 32_000);
+        assert_eq!(model.limit.input, 16_000);
+        assert_eq!(model.limit.output, 4_000);
+        assert_eq!(model.modalities.input, vec!["text"]);
+        assert_eq!(model.modalities.output, vec!["text", "json"]);
+        assert_eq!(model.options["tier"], "business");
+        assert_eq!(model.status.as_deref(), Some("stable"));
+    }
+
+    #[test]
+    fn catalog_visibility_rejects_hidden_and_claude_like_models() {
+        let settings = catalog_settings();
+
+        assert!(model_visible_for_picker(
+            Some(&settings),
+            "local",
+            "model-a"
+        ));
+        assert!(!model_visible_for_picker(
+            Some(&settings),
+            "local",
+            "hidden-model"
+        ));
+        for (provider, model) in [
+            ("claude-code", "anything"),
+            ("anthropic", "claude-3-opus"),
+            ("bedrock", "anthropic.claude-3-5-sonnet"),
+            ("custom", "vendor/claude-test"),
+            ("custom", "claude"),
+        ] {
+            assert!(looks_like_claude_model(provider, model));
+            assert!(!model_visible_for_picker(Some(&settings), provider, model));
+        }
+        assert!(!looks_like_claude_model("anthropic", "sonnet-compatible"));
+    }
+
+    #[test]
+    fn provider_list_for_route_merges_route_catalog_and_configured_models() {
+        let settings = catalog_settings();
+        let route = settings.route_by_name("coding").expect("coding route");
+
+        let response = provider_list_for_route(&settings, route);
+        let local = response
+            .all
+            .iter()
+            .find(|provider| provider.id == "local")
+            .expect("local provider");
+
+        assert_eq!(response.default["local"], "model-a");
+        assert!(response
+            .connected
+            .iter()
+            .any(|provider| provider == "local"));
+        assert_eq!(local.name, "Local Provider");
+        assert_eq!(local.env, vec!["LOCAL_TOKEN", "LOCAL_FALLBACK"]);
+        assert_eq!(local.api.as_deref(), Some("https://local.example/v1"));
+        assert!(local.models.contains_key("model-a"));
+        assert!(!local.models.contains_key("hidden-model"));
+        assert!(!local.models.contains_key("claude-legacy"));
+
+        let openai = response
+            .all
+            .iter()
+            .find(|provider| provider.id == "openai")
+            .expect("route-only openai provider");
+        assert!(openai.models.contains_key("gpt-visible"));
+    }
+}

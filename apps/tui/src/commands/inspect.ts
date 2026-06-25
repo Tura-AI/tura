@@ -42,49 +42,36 @@ export async function inspectCommand(context: CliContext, args: string[]): Promi
           ]),
         );
   }
-  if (subcommand === "logs") {
-    return inspectLogs(context, client, args, json);
-  }
-  throw new CliUsageError(t("unknownInspectCommand", { command: subcommand }));
-}
-
-async function inspectLogs(
-  context: CliContext,
-  client: GatewayClient,
-  args: string[],
-  json: boolean,
-): Promise<void> {
-  const mode = args.shift() ?? "sessions";
-  if (mode === "workspaces") {
-    const workspaces = await client.listSessionLogWorkspaces();
-    if (json) return printJson(workspaces);
-    return write(
-      context,
-      formatTable(workspaces, [
-        { header: t("directory"), value: (workspace) => workspace.directory ?? "" },
-        { header: t("sessions"), value: (workspace) => workspace.session_count ?? "" },
-        { header: t("updated"), value: (workspace) => workspace.updated_at ?? "" },
-      ]),
-    );
-  }
-  if (mode === "sessions") {
-    const sessions = await client.listSessionLogSessions();
+  if (subcommand === "sessions") {
+    const sessions = await client.listSessions({ includeChildren: true });
     if (json) return printJson(sessions);
     return write(
       context,
       formatTable(sessions, [
-        { header: t("id"), value: (session) => session.id ?? session.session_id ?? "" },
+        { header: t("id"), value: (session) => session.id },
         { header: t("directory"), value: (session) => session.directory ?? "" },
+        { header: t("status"), value: (session) => session.status ?? "" },
+        { header: t("messages"), value: (session) => session.message_count ?? "" },
         { header: t("updated"), value: (session) => session.updated_at ?? "" },
       ]),
     );
   }
-  if (mode === "records") {
+  if (subcommand === "messages") {
     const sessionID = args.shift();
-    if (!sessionID) throw new CliUsageError(t("inspectLogsRecordsRequiresSessionId"));
-    return printJson(await client.listSessionLogRecords(sessionID));
+    if (!sessionID) throw new CliUsageError(t("inspectMessagesRequiresSessionId"));
+    const messages = await client.listMessages(sessionID);
+    if (json) return printJson(messages);
+    return write(
+      context,
+      formatTable(messages, [
+        { header: t("id"), value: (message) => message.id },
+        { header: t("role"), value: (message) => message.role },
+        { header: t("updated"), value: (message) => message.updated_at ?? "" },
+        { header: t("parts"), value: (message) => message.parts.length },
+      ]),
+    );
   }
-  throw new CliUsageError(t("unknownInspectLogsMode", { mode }));
+  throw new CliUsageError(t("unknownInspectCommand", { command: subcommand }));
 }
 
 function write(context: CliContext, text: string): void {

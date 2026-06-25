@@ -1,4 +1,9 @@
-import type { GatewayEventEnvelope, NormalizedEvent } from "../types/event.js";
+import type {
+  CommandUpdatedEventProperties,
+  GatewayEventEnvelope,
+  MessagePartDeltaEventProperties,
+  NormalizedEvent,
+} from "../types/event.js";
 import { eventSessionID } from "../types/event.js";
 import type { PermissionRequest, QuestionRequest } from "../types/permission.js";
 import type { Message, MessagePart } from "../types/session.js";
@@ -66,6 +71,7 @@ export function normalizeEvent(raw: GatewayEventEnvelope): NormalizedEvent {
   let text: string | undefined;
   let status: string | undefined;
   let tool: string | undefined;
+  let commandID: string | undefined;
   let permission: PermissionRequest | undefined;
   let question: QuestionRequest | undefined;
 
@@ -83,10 +89,18 @@ export function normalizeEvent(raw: GatewayEventEnvelope): NormalizedEvent {
     status = partStatus(part);
   }
   if (payload?.type === "message.part.delta") {
-    const properties = payload.properties as Record<string, unknown> | undefined;
-    partID = readString(properties, "part_id") ?? readString(properties, "partID");
-    messageID = readString(properties, "message_id") ?? readString(properties, "messageID");
-    text = readString(properties, "delta");
+    const properties = payload.properties as MessagePartDeltaEventProperties | undefined;
+    partID = properties?.partID;
+    messageID = properties?.messageID;
+    text = properties?.delta;
+  }
+  if (payload?.type === "command.updated") {
+    const properties = payload.properties as CommandUpdatedEventProperties | undefined;
+    messageID = properties?.messageID;
+    partID = properties?.partID;
+    status = properties?.status;
+    tool = "command_run";
+    commandID = properties?.commandID;
   }
   if (payload?.type === "session.status") {
     const statusValue = (payload.properties as { status?: unknown } | undefined)?.status;
@@ -116,6 +130,7 @@ export function normalizeEvent(raw: GatewayEventEnvelope): NormalizedEvent {
     status,
     text,
     tool,
+    commandID,
     permission,
     question,
     raw,
@@ -127,14 +142,6 @@ function partStatus(part: MessagePart | undefined): string | undefined {
   if (!state || typeof state !== "object") return undefined;
   const status = (state as Record<string, unknown>).status;
   return typeof status === "string" ? status : undefined;
-}
-
-function readString(
-  properties: Record<string, unknown> | undefined,
-  key: string,
-): string | undefined {
-  const value = properties?.[key];
-  return typeof value === "string" ? value : undefined;
 }
 
 function readRequest<T extends { id: string }>(

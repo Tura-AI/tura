@@ -1,0 +1,13 @@
+[project]
+name = "tura-command-read-media-deps"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+  "imageio-ffmpeg",
+  "opencv-python-headless",
+  "Pillow",
+  "PyMuPDF",
+]
+
+[tool.uv]
+package = false

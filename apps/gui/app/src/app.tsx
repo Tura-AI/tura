@@ -1,5 +1,6 @@
 import {
   GatewayClient,
+  type GatewayEventEnvelope,
   defaultGatewayUrl,
   errorMessage,
   type AgentUpsertRequest,
@@ -17,7 +18,13 @@ import {
   storedAgentFromRuntimeAgent,
   storedAgentFromUpsert,
 } from "./app-agent-config";
-import { mergeSessions, providerIssueIdFromError, writeLastSessionOpened } from "./app-state-utils";
+import {
+  mergeMessagePages,
+  mergeSessions,
+  providerIssueIdFromError,
+  shouldFetchSessionMessages,
+  writeLastSessionOpened,
+} from "./app-state-utils";
 import { AppShell } from "./app/app-shell";
 import { AppProviders } from "./context/app-providers";
 import { isToolPart } from "./conversation/message-tools";
@@ -37,6 +44,7 @@ import { useMainTabNavigation } from "./hooks/use-main-tab-navigation";
 import { usePlanActions } from "./hooks/use-plan-actions";
 import { useProviderSettingsActions } from "./hooks/use-provider-settings-actions";
 import { t } from "./i18n";
+import { applyGatewayEvent } from "./state/event-reducer";
 import { fixtureAppState } from "./test/fixtures/app-fixtures";
 import {
   activeSession,
@@ -49,6 +57,7 @@ import {
   readBooleanSearchParam,
   readMainTabSearchParam,
   readSearchParam,
+  normalizePath,
   samePath,
   shortWorkspaceLabel,
   withInitialOverrides,
@@ -59,10 +68,22 @@ const PROMPT_RESPONSE_TIMEOUT_MS = 30_000;
 const PROMPT_RESPONSE_TIMEOUT_CODE = "GATEWAY_NO_RESPONSE_30S";
 const ASSISTANT_REPLY_POLL_TIMEOUT_MS = 120_000;
 const ASSISTANT_REPLY_POLL_INTERVAL_MS = 1_250;
+const MESSAGE_PAGE_SIZE = 200;
+
+declare global {
+  interface Window {
+    __turaGuiE2E?: {
+      applyGatewayEvent: (envelope: GatewayEventEnvelope) => void;
+      snapshot: () => AppState;
+    };
+  }
+}
 
 export function App() {
   const e2eFixture = readSearchParam("e2eFixture");
+  const requestedGatewayUrl = readSearchParam("gatewayUrl") ?? defaultGatewayUrl();
   const requestedTab = readSearchParam("tab");
+  const disableGatewayAutostart = readSearchParam("e2eNoGatewayStart") === "1";
   const initialTab = readMainTabSearchParam();
   const forceNewSession = readBooleanSearchParam("newSession") || requestedTab === "new";
   const disablePermissionRestrictions = readBooleanSearchParam("disablePermissionRestrictions");
@@ -72,8 +93,8 @@ export function App() {
   const [state, setState] = createSignal<AppState>(
     withInitialOverrides(
       e2eFixture
-        ? fixtureAppState(defaultGatewayUrl(), e2eFixture)
-        : initialAppState(defaultGatewayUrl()),
+        ? fixtureAppState(requestedGatewayUrl, e2eFixture)
+        : initialAppState(requestedGatewayUrl),
       {
         activeTab: initialTab,
         selectedSessionId: initialSessionId,
@@ -103,10 +124,17 @@ export function App() {
       .commands.filter((command) => command.name.toLowerCase().includes(query))
       .slice(0, 6);
   });
-  const [expandedWorkspace, setExpandedWorkspace] = createSignal<string>();
+  const [expandedWorkspaces, setExpandedWorkspaces] = createSignal<Set<string>>(new Set());
   const [expandedRailGroup, setExpandedRailGroup] = createSignal<string>();
   const [workspaceTreeTouched, setWorkspaceTreeTouched] = createSignal(false);
   const e2eStoredAgents = new Map<string, StoredAgent>();
+
+  if (e2eFixture && typeof window !== "undefined") {
+    window.__turaGuiE2E = {
+      applyGatewayEvent: (event) => setState((previous) => applyGatewayEvent(previous, event)),
+      snapshot: () => state(),
+    };
+  }
 
   const {
     fileTree,
@@ -127,10 +155,37 @@ export function App() {
   });
 
   createEffect(() => {
-    if (!workspaceTreeTouched() && state().directory) {
-      setExpandedWorkspace(state().directory);
+    const directory = state().directory;
+    if (!workspaceTreeTouched() && directory) {
+      expandWorkspace(directory);
     }
   });
+
+  function expandWorkspace(worktree: string) {
+    const key = normalizePath(worktree);
+    setExpandedWorkspaces((previous) => {
+      if (previous.has(key)) {
+        return previous;
+      }
+      return new Set([...previous, key]);
+    });
+  }
+
+  function toggleExpandedWorkspace(worktree: string): boolean {
+    const key = normalizePath(worktree);
+    let opened = false;
+    setExpandedWorkspaces((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+        opened = true;
+      }
+      return next;
+    });
+    return opened;
+  }
 
   createEffect(() => {
     document.documentElement.dataset.theme = state().themeMode;
@@ -147,18 +202,92 @@ export function App() {
     }));
     const client = directoryClient();
     const existingMessages = state().messagesBySession[sessionId] ?? [];
+    if (!shouldFetchSessionMessages(existingMessages, options.forceRefreshMessages)) {
+      setState((previous) => ({
+        ...previous,
+        messagePagingBySession: {
+          ...previous.messagePagingBySession,
+          [sessionId]: previous.messagePagingBySession[sessionId] ?? {
+            hasEarlier: true,
+            loadingEarlier: false,
+          },
+        },
+      }));
+      return;
+    }
     const [messages] = await Promise.all([
-      e2eFixture && existingMessages.length > 0 && !options.forceRefreshMessages
-        ? Promise.resolve(existingMessages)
-        : safe(() => client.messages(sessionId), existingMessages),
+      safe(() => client.messages(sessionId, { limit: MESSAGE_PAGE_SIZE }), existingMessages),
     ]);
     setState((previous) => ({
       ...previous,
       messagesBySession: {
         ...previous.messagesBySession,
-        [sessionId]: messages,
+        [sessionId]: mergeMessagePages(previous.messagesBySession[sessionId] ?? [], messages),
+      },
+      messagePagingBySession: {
+        ...previous.messagePagingBySession,
+        [sessionId]: {
+          hasEarlier: !e2eFixture && messages.length >= MESSAGE_PAGE_SIZE,
+          loadingEarlier: false,
+        },
       },
     }));
+  }
+
+  async function loadEarlierMessages(sessionId: string): Promise<boolean> {
+    if (e2eFixture) {
+      return false;
+    }
+    const paging = state().messagePagingBySession[sessionId];
+    if (paging?.loadingEarlier || paging?.hasEarlier === false) {
+      return false;
+    }
+    const currentMessages = state().messagesBySession[sessionId] ?? [];
+    const before = currentMessages[0]?.id;
+    if (!before) {
+      return false;
+    }
+    setState((previous) => ({
+      ...previous,
+      messagePagingBySession: {
+        ...previous.messagePagingBySession,
+        [sessionId]: { hasEarlier: paging?.hasEarlier ?? true, loadingEarlier: true },
+      },
+    }));
+    try {
+      const earlier = await directoryClient().messages(sessionId, {
+        limit: MESSAGE_PAGE_SIZE,
+        before,
+      });
+      setState((previous) => {
+        const existing = previous.messagesBySession[sessionId] ?? [];
+        return {
+          ...previous,
+          messagesBySession: {
+            ...previous.messagesBySession,
+            [sessionId]: mergeMessagePages(earlier, existing),
+          },
+          messagePagingBySession: {
+            ...previous.messagePagingBySession,
+            [sessionId]: {
+              hasEarlier: earlier.length >= MESSAGE_PAGE_SIZE,
+              loadingEarlier: false,
+            },
+          },
+        };
+      });
+      return earlier.length > 0;
+    } catch (error) {
+      setState((previous) => ({
+        ...previous,
+        error: errorMessage(error),
+        messagePagingBySession: {
+          ...previous.messagePagingBySession,
+          [sessionId]: { hasEarlier: paging?.hasEarlier ?? true, loadingEarlier: false },
+        },
+      }));
+      return false;
+    }
   }
 
   function openBlankSession() {
@@ -198,31 +327,54 @@ export function App() {
     }
   }
 
-  function useWorkspaceDirectory(directory: string) {
+  async function useWorkspaceDirectory(directory: string) {
     const workspaceDirectory = directory.trim();
     if (!workspaceDirectory) {
       return;
     }
+    const project: Project = {
+      id: workspaceDirectory,
+      name: shortWorkspaceLabel(workspaceDirectory),
+      worktree: workspaceDirectory,
+    };
     setState((previous) => ({
       ...previous,
       directory: workspaceDirectory,
       projects: previous.projects.some((project) => samePath(project.worktree, workspaceDirectory))
         ? previous.projects
-        : [
-            {
-              id: workspaceDirectory,
-              name: shortWorkspaceLabel(workspaceDirectory),
-              worktree: workspaceDirectory,
-            },
-            ...previous.projects,
-          ],
+        : [project, ...previous.projects],
       activeTab: "conversation",
       previousMainTab: "conversation",
       selectedSessionId: undefined,
-      sessions: samePath(previous.directory, workspaceDirectory) ? previous.sessions : [],
+      sessions: previous.sessions,
+      sessionsLoading: true,
       composerText: "",
     }));
-    setExpandedWorkspace(workspaceDirectory);
+    expandWorkspace(workspaceDirectory);
+    if (e2eFixture) {
+      setState((previous) => ({ ...previous, sessionsLoading: false }));
+      return;
+    }
+    try {
+      const scoped = rootClient().withDirectory(workspaceDirectory);
+      const [currentProject, sessions] = await Promise.all([
+        safe(() => scoped.currentProject(), { project }),
+        scoped.sessions({ limit: 100 }),
+      ]);
+      setState((previous) => ({
+        ...previous,
+        currentProject,
+        sessions: mergeSessions(sessions, previous.sessions),
+        sessionsLoading: false,
+        error: undefined,
+      }));
+    } catch (error) {
+      setState((previous) => ({
+        ...previous,
+        sessionsLoading: false,
+        error: errorMessage(error),
+      }));
+    }
   }
 
   function activateWorkspaceProject(project: Project) {
@@ -237,10 +389,10 @@ export function App() {
       activeTab: "conversation",
       previousMainTab: "conversation",
       selectedSessionId: undefined,
-      sessions: samePath(previous.directory, project.worktree) ? previous.sessions : [],
+      sessions: previous.sessions,
       composerText: "",
     }));
-    setExpandedWorkspace(project.worktree);
+    expandWorkspace(project.worktree);
   }
 
   async function createNamedWorkspace(name: string) {
@@ -464,6 +616,7 @@ export function App() {
     gatewayUrl,
     rootClient,
     forceNewSession,
+    disableGatewayAutostart,
     e2eFixture,
     openSession,
   });
@@ -522,7 +675,6 @@ export function App() {
       const optimisticMessage: Message = {
         id: optimisticId,
         sessionID: sessionId,
-        session_id: sessionId,
         role: "user",
         created_at: now,
         updated_at: now,
@@ -530,6 +682,8 @@ export function App() {
         parts: [
           {
             id: `${optimisticId}:text`,
+            sessionID: sessionId,
+            messageID: optimisticId,
             type: "text",
             text: content,
             metadata: { planRunPending: true },
@@ -559,7 +713,8 @@ export function App() {
       }));
       await Promise.race([
         directoryClient().promptAsync(sessionId, {
-          parts: [{ type: "text", text: content }],
+          messageID: optimisticId,
+          parts: [{ id: `${optimisticId}:text`, type: "text", text: content }],
           model: state().selectedModel,
           agent: state().selectedAgent,
         }),
@@ -579,7 +734,6 @@ export function App() {
         previousMainTab: "conversation",
         planNotice: undefined,
       }));
-      await openSession(sessionId, { forceRefreshMessages: true });
       setState((previous) => ({
         ...previous,
         selectedSessionId: sessionId,
@@ -661,7 +815,7 @@ export function App() {
         ...previous,
         messagesBySession: {
           ...previous.messagesBySession,
-          [sessionId]: messages,
+          [sessionId]: mergeMessagePages(previous.messagesBySession[sessionId] ?? [], messages),
         },
       }));
       if (hasVisibleAssistantReply(messages)) {
@@ -824,11 +978,21 @@ export function App() {
   }
 
   async function refreshSessions() {
-    const sessions = await safe(() => directoryClient().sessions({ limit: 100 }), state().sessions);
-    setState((previous) => ({
-      ...previous,
-      sessions: mergeSessions(sessions, previous.sessions),
-    }));
+    setState((previous) => ({ ...previous, sessionsLoading: true }));
+    try {
+      const sessions = await directoryClient().sessions({ limit: 100 });
+      setState((previous) => ({
+        ...previous,
+        sessions: mergeSessions(sessions, previous.sessions),
+        sessionsLoading: false,
+      }));
+    } catch (error) {
+      setState((previous) => ({
+        ...previous,
+        sessionsLoading: false,
+        error: errorMessage(error),
+      }));
+    }
   }
 
   async function switchWorkspace(project: Project, options: { selectSession?: boolean } = {}) {
@@ -849,10 +1013,11 @@ export function App() {
         selectedFile: undefined,
         fileContent: undefined,
         loading: false,
+        sessionsLoading: false,
         error: undefined,
       }));
       setFileTree({});
-      setExpandedWorkspace(directory);
+      expandWorkspace(directory);
       return;
     }
     const scoped = rootClient().withDirectory(directory);
@@ -861,12 +1026,14 @@ export function App() {
       directory,
       selectedSessionId: undefined,
       messagesBySession: {},
+      messagePagingBySession: {},
       todosBySession: {},
       files: [],
       filePath: "",
       selectedFile: undefined,
       fileContent: undefined,
       loading: true,
+      sessionsLoading: true,
       error: undefined,
     }));
     try {
@@ -879,10 +1046,11 @@ export function App() {
       setState((previous) => ({
         ...previous,
         currentProject,
-        sessions,
+        sessions: mergeSessions(sessions, previous.sessions),
         files,
         selectedSessionId,
         loading: false,
+        sessionsLoading: false,
       }));
       setFileTree({ "": files });
       if (selectedSessionId) {
@@ -892,6 +1060,7 @@ export function App() {
       setState((previous) => ({
         ...previous,
         loading: false,
+        sessionsLoading: false,
         error: errorMessage(error),
       }));
     }
@@ -899,28 +1068,24 @@ export function App() {
 
   async function toggleWorkspace(project: Project) {
     setWorkspaceTreeTouched(true);
+    const opened = toggleExpandedWorkspace(project.worktree);
     if (state().activeTab === "files") {
       setExpandedRailGroup(undefined);
-      if (
-        expandedWorkspace() === project.worktree &&
-        samePath(project.worktree, state().directory)
-      ) {
-        setExpandedWorkspace(undefined);
+      if (!opened && samePath(project.worktree, state().directory)) {
         return;
       }
-      setExpandedWorkspace(project.worktree);
-      if (!samePath(project.worktree, state().directory)) {
+      if (opened && !samePath(project.worktree, state().directory)) {
         await switchWorkspace(project, { selectSession: false });
         return;
       }
-      await loadFiles("");
+      if (opened) {
+        await loadFiles("");
+      }
       return;
     }
-    if (expandedWorkspace() === project.worktree) {
-      setExpandedWorkspace(undefined);
+    if (!opened) {
       return;
     }
-    setExpandedWorkspace(project.worktree);
     setExpandedRailGroup(undefined);
     if (!samePath(project.worktree, state().directory)) {
       await switchWorkspace(project);
@@ -942,6 +1107,7 @@ export function App() {
           toggleRailGroup,
           selectedSession,
           selectedMessages,
+          loadEarlierMessages,
           slashCommands,
           openBlankSession,
           openSession,
@@ -966,7 +1132,7 @@ export function App() {
           fileLoadingPath,
           fileContentLoadingPath,
           expandedFileTreePaths,
-          expandedWorkspace,
+          expandedWorkspaces,
           loadFiles,
           openFile,
           toggleFileTreeDirectory,

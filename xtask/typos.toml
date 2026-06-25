@@ -9,8 +9,11 @@ extend-exclude = [
   "bin/",
   "bin.7z",
   "target/",
+  "tmp_nushell_agent_rounds.txt",
   "tmp/",
+  "tura_workspace/",
   "log/",
+  "workspace/docs/**",
   "apps/gui/test-results/",
   "apps/gui/app/public/assets/",
   "personas/src/**/media/",
@@ -21,8 +24,11 @@ Configurables = "Configurables"
 configurables = "configurables"
 FO = "FO"
 hel = "hel"
+ine = "ine"
 MCH = "MCH"
 oppend = "oppend"
+resul = "resul"
 shll = "shll"
 stlye = "stlye"
+Ue = "Ue"
 Vey = "Vey"

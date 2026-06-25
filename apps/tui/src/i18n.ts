@@ -29,7 +29,7 @@ export function currentLanguage(): Language {
     languageOverride ??
     parseLanguage(process.env.TURA_LANG) ??
     parseLanguage(process.env.LANG) ??
-    "zh-CN"
+    "en"
   );
 }
 

@@ -1,0 +1,10 @@
+{
+  "RunId": "source-port-composite-taskstatusprompt-4agents-gpt55-20260623-002534",
+  "MonitorRoot": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-composite-taskstatusprompt-4agents-gpt55-20260623-002534",
+  "Stdout": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-composite-taskstatusprompt-4agents-gpt55-20260623-002534\\benchmark.stdout.log",
+  "Stderr": "C:\\Users\\liuliu\\Documents\\tura\\tura_workspace\\benchmark-monitor-source-port-composite-taskstatusprompt-4agents-gpt55-20260623-002534\\benchmark.stderr.log",
+  "Agents": "tura-fast-shll,tura-thinking-shll,tura-planning-shll,codex-main",
+  "TimeoutMs": 1200000,
+  "Pid": 27772,
+  "StartedAt": "2026-06-23T00:25:34.9058193+02:00"
+}

@@ -182,14 +182,35 @@ function ConversationLoadingPlaceholder() {
     <section class="conversation-view" aria-label={t("loading")}>
       <div class="conversation-grid">
         <div class="conversation-main">
-          <div class="transcript-loading-placeholder">
-            <div class="loading-bar wide" />
-            <div class="loading-bar medium" />
-            <div class="loading-bar" />
+          <div class="transcript">
+            <div class="transcript-inner page-layer-inner">
+              <TranscriptTextLoadingLines />
+            </div>
           </div>
         </div>
       </div>
     </section>
+  );
+}
+
+export function TranscriptTextLoadingLines() {
+  return (
+    <article class="message assistant transcript-loading-placeholder" aria-hidden="true">
+      <div class="message-body">
+        <div class="assistant-response">
+          <div class="message-avatar-wrap" />
+          <div class="assistant-stack assistant-text">
+            <div class="assistant-text-block">
+              <div class="part text-part">
+                <div class="rich-text">
+                  <span class="loading-bar text-loading-line" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
   );
 }
 

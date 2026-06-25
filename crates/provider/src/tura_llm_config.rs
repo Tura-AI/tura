@@ -76,7 +76,7 @@ impl RouteConfig {
             .iter()
             .find(|p| p.provider == name)
             .ok_or_else(|| TuraError::Config {
-                message: format!("This route has no provider named '{}'", name),
+                message: format!("This route has no provider named '{name}'"),
             })
     }
 
@@ -310,7 +310,7 @@ impl Default for ProviderLatencyConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderLatencyTimeouts {
     pub idle_output_timeout_ms: u64,
     pub first_output_timeout_ms: u64,
@@ -320,15 +320,15 @@ pub struct ProviderLatencyTimeouts {
 impl Default for ProviderLatencyTimeouts {
     fn default() -> Self {
         Self {
-            idle_output_timeout_ms: 20_000,
-            first_output_timeout_ms: 40_000,
-            total_timeout_ms: 240_000,
+            idle_output_timeout_ms: 80_000,
+            first_output_timeout_ms: 160_000,
+            total_timeout_ms: 960_000,
         }
     }
 }
 
 fn default_latency_level() -> String {
-    "fast".to_string()
+    "high".to_string()
 }
 
 fn default_latency_levels() -> HashMap<String, ProviderLatencyTimeouts> {
@@ -364,18 +364,16 @@ fn default_latency_levels() -> HashMap<String, ProviderLatencyTimeouts> {
 /// to a provider-latency level. Level selection is driven entirely by the tier,
 /// never by the thinking / reasoning_effort parameter.
 ///
-/// - flagship_thinking -> x-high
-/// - thinking          -> high
-/// - fast / instant    -> fast (lowest)
-/// - embedding_high    -> high
-/// - embedding_low     -> fast
+/// - thinking       -> x-high
+/// - fast           -> high
+/// - embedding_high -> x-high
+/// - embedding_low  -> high
+/// - unknown        -> high
 pub fn latency_level_for_tier(tier: &str) -> &'static str {
     match tier.trim().to_ascii_lowercase().as_str() {
-        "flagship_thinking" => "x-high",
-        "thinking" => "high",
-        "embedding_high" => "high",
-        "fast" | "instant" | "embedding_low" => "fast",
-        _ => "fast",
+        "thinking" | "embedding_high" => "x-high",
+        "fast" | "embedding_low" => "high",
+        _ => "high",
     }
 }
 
@@ -385,12 +383,12 @@ impl ProviderLatencyConfig {
     }
 
     /// Resolve the timeouts for a specific latency level, falling back to the
-    /// `fast` level and finally to defaults.
+    /// `high` level and finally to defaults.
     pub fn timeouts_for_level(&self, level: &str) -> ProviderLatencyTimeouts {
         self.levels
             .get(level.trim())
             .copied()
-            .or_else(|| self.levels.get("fast").copied())
+            .or_else(|| self.levels.get("high").copied())
             .unwrap_or_default()
     }
 
@@ -490,8 +488,7 @@ pub struct RawProviderConfig {
 
 impl Settings {
     pub async fn default() -> Result<Arc<Self>, TuraError> {
-        let explicit_config = std::env::var_os("TURA_PROVIDER_CONFIG").is_some()
-            || std::env::var_os("TURALLM_CONFIG").is_some();
+        let explicit_config = std::env::var_os("TURA_PROVIDER_CONFIG").is_some();
         if !explicit_config {
             if let Some(settings) = SETTINGS.get() {
                 return Ok(Arc::clone(settings));
@@ -562,6 +559,29 @@ impl Settings {
         catalog
     }
 
+    pub fn tier_for_model(&self, provider: &str, model: &str) -> Option<String> {
+        let catalog = self.model_catalog.providers.get(provider)?;
+        let normalized_model = Self::normalize_model_name(provider, model);
+        let mut tier_names = self.model_catalog.tiers.clone();
+        for tier in catalog.models.keys() {
+            if !tier_names.iter().any(|existing| existing == tier) {
+                tier_names.push(tier.clone());
+            }
+        }
+        for tier in tier_names {
+            let Some(models) = catalog.models.get(&tier) else {
+                continue;
+            };
+            if models.iter().any(|entry| {
+                let id = entry.id();
+                id == model || Self::normalize_model_name(provider, id) == normalized_model
+            }) {
+                return Some(tier);
+            }
+        }
+        None
+    }
+
     pub fn make_provider(
         provider_base_url: &HashMap<String, String>,
         provider: &str,
@@ -608,5 +628,528 @@ impl Settings {
         };
         route.validate()?;
         Ok(route)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        apply_latency_for_tier, latency_level_for_tier, provider_latency_config,
+        provider_latency_timeouts, set_provider_latency_config, set_provider_latency_timeouts,
+        CatalogModelConfig, CatalogModelDetail, CatalogModelLimit, CatalogModelModalities,
+        ModelCatalog, ProviderCatalogConfig, ProviderEnumCatalog, ProviderLatencyConfig,
+        ProviderLatencyTimeouts, RawProviderConfig, RawRouteConfig, RootConfig, RouteConfig,
+        Settings,
+    };
+    use crate::{ProviderConfig, TuraError};
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    fn base_urls() -> HashMap<String, String> {
+        HashMap::from([
+            (
+                "openai".to_string(),
+                "https://api.openai.test/v1".to_string(),
+            ),
+            ("codex".to_string(), "https://codex.test/v1".to_string()),
+            ("google".to_string(), "https://google.test/v1".to_string()),
+        ])
+    }
+
+    fn provider(provider: &str, model: &str) -> ProviderConfig {
+        ProviderConfig {
+            provider: provider.to_string(),
+            base_url: format!("https://{provider}.test/v1"),
+            model: Settings::normalize_model_name(provider, model),
+            temperature: 0.2,
+        }
+    }
+
+    fn settings_with_catalog_and_routes() -> Settings {
+        let catalog_provider = ProviderCatalogConfig {
+            display_name: "OpenAI".to_string(),
+            models: HashMap::from([(
+                "flagship".to_string(),
+                vec![
+                    CatalogModelConfig::Id("openai/gpt-5.5".to_string()),
+                    CatalogModelConfig::Detailed(CatalogModelDetail {
+                        id: "gpt-5.4-mini".to_string(),
+                        visible: true,
+                        name: "GPT Mini".to_string(),
+                        ..Default::default()
+                    }),
+                    CatalogModelConfig::Id("gpt-5.5".to_string()),
+                ],
+            )]),
+            ..Default::default()
+        };
+        Settings {
+            provider_base_url: base_urls(),
+            routes: HashMap::from([
+                (
+                    "fast".to_string(),
+                    RouteConfig {
+                        default_temperature: 0.2,
+                        providers: vec![
+                            provider("openai", "openai/gpt-5.4-mini"),
+                            provider("google", "google/gemini-3.5-flash"),
+                        ],
+                    },
+                ),
+                (
+                    "thinking".to_string(),
+                    RouteConfig {
+                        default_temperature: 0.6,
+                        providers: vec![provider("openai", "gpt-5.5")],
+                    },
+                ),
+            ]),
+            model_catalog: ModelCatalog {
+                tiers: vec!["fast".to_string(), "thinking".to_string()],
+                providers: HashMap::from([("openai".to_string(), catalog_provider)]),
+            },
+            provider_enums: ProviderEnumCatalog::default(),
+        }
+    }
+
+    #[test]
+    fn call_options_default_is_empty_and_serializes_without_spurious_values() {
+        let value = serde_json::to_value(super::CallOptions::default()).expect("serialize");
+
+        assert_eq!(value["search"], false);
+        assert_eq!(value["force_search"], false);
+        assert_eq!(value["temperature"], serde_json::Value::Null);
+        assert_eq!(value["tools"], serde_json::Value::Null);
+        assert_eq!(value["parallel_tool_calls"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn route_validate_rejects_out_of_range_default_temperature() {
+        let route = RouteConfig {
+            default_temperature: 2.1,
+            providers: vec![provider("openai", "gpt-5.5")],
+        };
+
+        let error = route
+            .validate()
+            .expect_err("temperature above 2.0 is invalid");
+
+        assert!(matches!(error, TuraError::Validation { .. }));
+        assert!(error
+            .to_string()
+            .contains("default_temperature must be within [0.0, 2.0]"));
+    }
+
+    #[test]
+    fn route_validate_rejects_invalid_provider_config() {
+        let mut invalid = provider("openai", "gpt-5.5");
+        invalid.base_url = String::new();
+        let route = RouteConfig {
+            default_temperature: 0.2,
+            providers: vec![invalid],
+        };
+
+        let error = route
+            .validate()
+            .expect_err("provider validation should fail");
+
+        assert!(error.to_string().contains("base_url"));
+    }
+
+    #[test]
+    fn route_provider_lookup_returns_named_provider_or_contextual_error() {
+        let route = RouteConfig {
+            default_temperature: 0.2,
+            providers: vec![provider("openai", "gpt-5.5"), provider("google", "gemini")],
+        };
+
+        assert_eq!(
+            route.provider("google").expect("google provider").provider,
+            "google"
+        );
+        let error = route
+            .provider("anthropic")
+            .expect_err("missing provider should report route context");
+        assert!(matches!(error, TuraError::Config { .. }));
+        assert!(error
+            .to_string()
+            .contains("This route has no provider named 'anthropic'"));
+    }
+
+    #[test]
+    fn catalog_model_config_id_and_detail_accessors_are_variant_specific() {
+        let id = CatalogModelConfig::Id("gpt-5.5".to_string());
+        assert_eq!(id.id(), "gpt-5.5");
+        assert!(id.detail().is_none());
+
+        let detail = CatalogModelConfig::Detailed(CatalogModelDetail {
+            id: "gpt-5.4-mini".to_string(),
+            name: "GPT Mini".to_string(),
+            ..Default::default()
+        });
+        assert_eq!(detail.id(), "gpt-5.4-mini");
+        assert_eq!(
+            detail.detail().map(|item| item.name.as_str()),
+            Some("GPT Mini")
+        );
+    }
+
+    #[test]
+    fn catalog_model_defaults_preserve_visible_text_only_contract() {
+        let detail: CatalogModelDetail = serde_json::from_value(json!({
+            "id": "model-a"
+        }))
+        .expect("missing visible should use serde default");
+        let limit = CatalogModelLimit::default();
+        let modalities = CatalogModelModalities::default();
+
+        assert!(detail.visible);
+        assert!(!CatalogModelDetail::default().visible);
+        assert_eq!(limit.context, 200_000);
+        assert_eq!(limit.input, 200_000);
+        assert_eq!(limit.output, 16_384);
+        assert_eq!(modalities.input, vec!["text"]);
+        assert_eq!(modalities.output, vec!["text"]);
+    }
+
+    #[test]
+    fn provider_latency_default_levels_cover_fast_high_and_x_high() {
+        let config = ProviderLatencyConfig::default();
+
+        assert_eq!(config.active, "high");
+        assert_eq!(config.levels["fast"].idle_output_timeout_ms, 20_000);
+        assert_eq!(config.levels["high"].first_output_timeout_ms, 160_000);
+        assert_eq!(config.levels["x-high"].total_timeout_ms, 1_200_000);
+        assert_eq!(config.selected_timeouts(), config.levels["high"]);
+    }
+
+    #[test]
+    fn latency_level_for_tier_is_canonical_and_case_insensitive() {
+        assert_eq!(latency_level_for_tier("THINKING"), "x-high");
+        assert_eq!(latency_level_for_tier("embedding_high"), "x-high");
+        assert_eq!(latency_level_for_tier("fast"), "high");
+        assert_eq!(latency_level_for_tier("embedding_low"), "high");
+        assert_eq!(latency_level_for_tier("unknown"), "high");
+    }
+
+    #[test]
+    fn latency_config_falls_back_to_high_then_builtin_defaults() {
+        let high = ProviderLatencyTimeouts {
+            idle_output_timeout_ms: 1,
+            first_output_timeout_ms: 2,
+            total_timeout_ms: 3,
+        };
+        let config = ProviderLatencyConfig {
+            active: "missing".to_string(),
+            levels: HashMap::from([("high".to_string(), high)]),
+        };
+
+        assert_eq!(config.selected_timeouts(), high);
+        assert_eq!(config.timeouts_for_level("missing"), high);
+        assert_eq!(config.timeouts_for_tier("unknown"), high);
+
+        let empty = ProviderLatencyConfig {
+            active: "missing".to_string(),
+            levels: HashMap::new(),
+        };
+        assert_eq!(
+            empty.timeouts_for_level("missing"),
+            ProviderLatencyTimeouts::default()
+        );
+    }
+
+    #[test]
+    fn latency_global_setters_are_idempotent_and_apply_tiers() {
+        let fast = ProviderLatencyTimeouts {
+            idle_output_timeout_ms: 10,
+            first_output_timeout_ms: 20,
+            total_timeout_ms: 30,
+        };
+        let high = ProviderLatencyTimeouts {
+            idle_output_timeout_ms: 40,
+            first_output_timeout_ms: 50,
+            total_timeout_ms: 60,
+        };
+        let x_high = ProviderLatencyTimeouts {
+            idle_output_timeout_ms: 70,
+            first_output_timeout_ms: 80,
+            total_timeout_ms: 90,
+        };
+        let config = ProviderLatencyConfig {
+            active: "high".to_string(),
+            levels: HashMap::from([
+                ("fast".to_string(), fast),
+                ("high".to_string(), high),
+                ("x-high".to_string(), x_high),
+            ]),
+        };
+
+        set_provider_latency_config(config.clone());
+        assert_eq!(provider_latency_config().selected_timeouts(), high);
+        set_provider_latency_timeouts(high);
+        assert_eq!(provider_latency_timeouts(), high);
+        assert_eq!(apply_latency_for_tier("thinking"), x_high);
+        assert_eq!(provider_latency_timeouts(), x_high);
+        set_provider_latency_config(config);
+        assert_eq!(apply_latency_for_tier("fast"), high);
+    }
+
+    #[test]
+    fn provider_auth_config_serializes_only_configured_optional_fields() {
+        let auth = super::ProviderAuthConfig {
+            auth_type: "oauth".to_string(),
+            status: Some("connected".to_string()),
+            token_env: Some("OPENAI_API_KEY".to_string()),
+            ..Default::default()
+        };
+
+        let value = serde_json::to_value(&auth).expect("serialize auth");
+
+        assert_eq!(value["type"], "oauth");
+        assert_eq!(value["status"], "connected");
+        assert_eq!(value["token_env"], "OPENAI_API_KEY");
+        assert!(value.get("refresh_env").is_none());
+        assert!(value.get("account_id").is_none());
+    }
+
+    #[test]
+    fn raw_route_config_defaults_temperature_and_empty_provider_list() {
+        let route: RawRouteConfig = serde_json::from_value(json!({})).expect("default route");
+
+        assert_eq!(route.default_temperature, 0.2);
+        assert!(route.providers.is_empty());
+    }
+
+    #[test]
+    fn normalize_model_name_strips_only_matching_internal_prefixes() {
+        assert_eq!(
+            Settings::normalize_model_name("openai", " openai/gpt-5.5 "),
+            "gpt-5.5"
+        );
+        assert_eq!(
+            Settings::normalize_model_name("codex", "codex/gpt-5.5"),
+            "gpt-5.5"
+        );
+        assert_eq!(
+            Settings::normalize_model_name("google", "openai/gpt-5.5"),
+            "openai/gpt-5.5"
+        );
+        assert_eq!(
+            Settings::normalize_model_name("google", "google/gemini-3.5-flash"),
+            "gemini-3.5-flash"
+        );
+    }
+
+    #[test]
+    fn settings_route_iteration_and_lookup_are_consistent() {
+        let settings = settings_with_catalog_and_routes();
+        let route_names = settings.routes.keys().cloned().collect::<Vec<_>>();
+        let route_count = settings.routes().count();
+
+        assert_eq!(route_count, route_names.len());
+        assert!(settings.route_by_name("fast").is_some());
+        assert!(settings.route_by_name("missing").is_none());
+    }
+
+    #[test]
+    fn provider_base_url_prefers_explicit_map_then_route_provider_url() {
+        let mut settings = settings_with_catalog_and_routes();
+        assert_eq!(
+            settings.provider_base_url("openai").as_deref(),
+            Some("https://api.openai.test/v1")
+        );
+
+        settings.provider_base_url.remove("google");
+        assert_eq!(
+            settings.provider_base_url("google").as_deref(),
+            Some("https://google.test/v1")
+        );
+        assert_eq!(settings.provider_base_url("anthropic"), None);
+    }
+
+    #[test]
+    fn configured_model_catalog_merges_catalog_and_routes_deduped_and_sorted() {
+        let settings = settings_with_catalog_and_routes();
+
+        let catalog = settings.configured_model_catalog();
+
+        assert_eq!(
+            catalog.get("openai"),
+            Some(&vec!["gpt-5.4-mini".to_string(), "gpt-5.5".to_string()])
+        );
+        assert_eq!(
+            catalog.get("google"),
+            Some(&vec!["gemini-3.5-flash".to_string()])
+        );
+    }
+
+    #[test]
+    fn tier_for_model_resolves_catalog_tier_from_actual_provider_model() {
+        let settings = Settings {
+            provider_base_url: base_urls(),
+            routes: HashMap::new(),
+            model_catalog: ModelCatalog {
+                tiers: vec!["thinking".to_string(), "fast".to_string()],
+                providers: HashMap::from([(
+                    "codex".to_string(),
+                    ProviderCatalogConfig {
+                        models: HashMap::from([
+                            (
+                                "thinking".to_string(),
+                                vec![CatalogModelConfig::Id("gpt-5.5".to_string())],
+                            ),
+                            (
+                                "fast".to_string(),
+                                vec![CatalogModelConfig::Id("gpt-5.3-codex-spark".to_string())],
+                            ),
+                        ]),
+                        ..Default::default()
+                    },
+                )]),
+            },
+            provider_enums: ProviderEnumCatalog::default(),
+        };
+
+        assert_eq!(
+            settings.tier_for_model("codex", "codex/gpt-5.5").as_deref(),
+            Some("thinking")
+        );
+        assert_eq!(
+            settings
+                .tier_for_model("codex", "gpt-5.3-codex-spark")
+                .as_deref(),
+            Some("fast")
+        );
+        assert_eq!(settings.tier_for_model("codex", "unknown"), None);
+    }
+
+    #[test]
+    fn make_provider_applies_route_default_temperature_and_model_normalization() {
+        let provider = Settings::make_provider(&base_urls(), "openai", "openai/gpt-5.5", None, 0.7)
+            .expect("provider");
+
+        assert_eq!(provider.provider, "openai");
+        assert_eq!(provider.base_url, "https://api.openai.test/v1");
+        assert_eq!(provider.model, "gpt-5.5");
+        assert_eq!(provider.temperature, 0.7);
+    }
+
+    #[test]
+    fn make_provider_overrides_temperature_when_provider_sets_one() {
+        let provider = Settings::make_provider(&base_urls(), "openai", "gpt-5.5", Some(0.1), 0.7)
+            .expect("provider");
+
+        assert_eq!(provider.temperature, 0.1);
+    }
+
+    #[test]
+    fn make_provider_reports_unknown_provider_without_guessing_base_url() {
+        let error = Settings::make_provider(&base_urls(), "missing", "model", None, 0.2)
+            .expect_err("unknown provider should fail");
+
+        assert!(matches!(error, TuraError::UnknownProvider { .. }));
+        assert!(error.to_string().contains("missing"));
+    }
+
+    #[test]
+    fn make_route_preserves_provider_order_and_default_temperature() {
+        let route = Settings::make_route(
+            &base_urls(),
+            &[
+                RawProviderConfig {
+                    provider: "openai".to_string(),
+                    model: "openai/gpt-5.5".to_string(),
+                    temperature: None,
+                },
+                RawProviderConfig {
+                    provider: "google".to_string(),
+                    model: "google/gemini-3.5-flash".to_string(),
+                    temperature: Some(0.0),
+                },
+            ],
+            0.4,
+        )
+        .expect("route");
+
+        assert_eq!(route.default_temperature, 0.4);
+        assert_eq!(route.providers[0].provider, "openai");
+        assert_eq!(route.providers[0].model, "gpt-5.5");
+        assert_eq!(route.providers[0].temperature, 0.4);
+        assert_eq!(route.providers[1].provider, "google");
+        assert_eq!(route.providers[1].model, "gemini-3.5-flash");
+        assert_eq!(route.providers[1].temperature, 0.0);
+    }
+
+    #[test]
+    fn make_route_rejects_invalid_default_temperature_after_provider_build() {
+        let error = Settings::make_route(
+            &base_urls(),
+            &[RawProviderConfig {
+                provider: "openai".to_string(),
+                model: "gpt-5.5".to_string(),
+                temperature: None,
+            }],
+            -0.1,
+        )
+        .expect_err("route validation should reject invalid default temperature");
+
+        assert!(matches!(error, TuraError::Validation { .. }));
+    }
+
+    #[test]
+    fn root_config_deserializes_optional_catalog_auth_and_latency_sections() {
+        let config: RootConfig = serde_json::from_value(json!({
+            "provider_base_url": { "openai": "https://api.openai.test/v1" },
+            "routes": {
+                "fast": {
+                    "providers": [
+                        { "provider": "openai", "model": "openai/gpt-5.5" }
+                    ]
+                }
+            }
+        }))
+        .expect("root config");
+
+        assert_eq!(
+            config.provider_base_url.get("openai").map(String::as_str),
+            Some("https://api.openai.test/v1")
+        );
+        assert_eq!(config.routes["fast"].default_temperature, 0.2);
+        assert!(config.model_catalog.providers.is_empty());
+        assert!(config.provider_auth.is_empty());
+        assert_eq!(config.provider_latency.active, "high");
+    }
+
+    #[test]
+    fn catalog_provider_config_deserializes_openapi_service_metadata() {
+        let provider: ProviderCatalogConfig = serde_json::from_value(json!({
+            "display_name": "Feishu",
+            "runtime_provider": "openapi",
+            "api_style": "openapi",
+            "base_url": "https://open.feishu.cn/open-apis",
+            "token_env": "FEISHU_TOKEN",
+            "env": ["FEISHU_APP_ID"],
+            "domains": ["productivity"],
+            "capabilities": ["message.send"],
+            "auth_methods": ["app_token"],
+            "api_docs": "https://open.feishu.cn/document",
+            "status": "stable"
+        }))
+        .expect("provider catalog");
+
+        assert_eq!(provider.display_name, "Feishu");
+        assert_eq!(provider.runtime_provider, "openapi");
+        assert_eq!(provider.api_style, "openapi");
+        assert_eq!(provider.base_url, "https://open.feishu.cn/open-apis");
+        assert_eq!(provider.token_env.as_deref(), Some("FEISHU_TOKEN"));
+        assert_eq!(provider.env, vec!["FEISHU_APP_ID"]);
+        assert_eq!(provider.domains, vec!["productivity"]);
+        assert_eq!(provider.capabilities, vec!["message.send"]);
+        assert_eq!(provider.auth_methods, vec!["app_token"]);
+        assert_eq!(
+            provider.api_docs.as_deref(),
+            Some("https://open.feishu.cn/document")
+        );
+        assert_eq!(provider.status.as_deref(), Some("stable"));
     }
 }

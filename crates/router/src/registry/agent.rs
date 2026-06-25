@@ -1,29 +1,26 @@
-//! agent 注册表（registry 归 router，loop 仍归 runtime）。
+//! Agent registry owned by the router.
 //!
-//! 边界（对齐 `ARCHITECTURE.md`）：router 拥有 agent 注册表 + 解析 + spec 下发；
-//! runtime 仅据下发的 spec 激活 `AgentManagement` 实体并跑 MANAS loop。
-//! router **不拥有** agent loop / prompt 组装 / provider 格式化。
+//! The router owns agent discovery, resolution, and spec delivery. The runtime
+//! activates `AgentManagement` from the delivered spec and runs the MANAS loop.
+//! The router does not own prompt assembly, provider formatting, or agent loops.
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use tura_agents::store::{discover_agents, project_root_from_env_or_cwd};
 
-/// router 下发给 runtime worker 的已解析 agent spec。
-/// runtime 据此激活实体，不再自己查 agent 注册表。
+/// Resolved agent spec delivered from the router to a runtime worker.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AgentSpec {
     pub agent_name: String,
-    /// 默认 provider 标识（真值/OAuth 仍归 provider crate）。
+    /// Default provider id; credential truth and OAuth handling stay in provider.
     pub provider: String,
     pub capabilities: Vec<String>,
-    /// 触发该 agent 的 session_type / topic 集合。
+    /// Session types and topics that select this agent.
     pub session_types: Vec<String>,
     pub validator_enabled: bool,
     #[serde(default)]
     pub default_config: bool,
-    #[serde(default)]
-    pub personas: Vec<tura_persona::store::StoredPersona>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config: Option<tura_agents::store::AgentConfig>,
 }
@@ -97,7 +94,7 @@ const AGENT_TABLE: &[AgentDefinition] = &[
 
 const DEFAULT_AGENT_INDEX: usize = 1;
 
-/// 内存态 agent 注册表，启动从静态定义装载。
+/// In-memory agent registry loaded from static and dynamic definitions.
 #[derive(Clone, Debug)]
 pub struct AgentRegistry {
     name_index: HashMap<String, usize>,
@@ -135,7 +132,6 @@ impl AgentRegistry {
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false),
                 default_config: agent.config.default_config,
-                personas: resolve_agent_personas(&agent.config),
                 config: Some(agent.config),
             };
             dynamic_specs.insert(agent.summary.id.to_ascii_lowercase(), spec.clone());
@@ -150,7 +146,7 @@ impl AgentRegistry {
         }
     }
 
-    /// 按显式 agent 名解析。
+    /// Resolve by explicit agent name.
     pub fn resolve_by_name(&self, name: &str) -> Option<AgentSpec> {
         let key = name.trim().to_ascii_lowercase();
         if let Some(spec) = self.dynamic_specs.get(&key) {
@@ -161,7 +157,7 @@ impl AgentRegistry {
             .map(|index| spec_from(&AGENT_TABLE[*index]))
     }
 
-    /// 按 session_type / topic 解析；无显式 agent 时使用。
+    /// Resolve by session type or topic when no explicit agent is selected.
     pub fn resolve_by_session_type(&self, session_type: &str) -> AgentSpec {
         let key = session_type.trim().to_ascii_lowercase();
         if let Some(spec) = self.dynamic_specs.get(&key) {
@@ -175,7 +171,7 @@ impl AgentRegistry {
         spec_from(&AGENT_TABLE[index])
     }
 
-    /// 综合解析：优先显式 agent 名，回退 session_type。
+    /// Resolve by explicit agent first, then fall back to session type.
     pub fn resolve(&self, agent: Option<&str>, session_type: Option<&str>) -> AgentSpec {
         if let Some(agent) = agent {
             if let Some(spec) = self.resolve_by_name(agent) {
@@ -242,24 +238,8 @@ fn spec_from(def: &AgentDefinition) -> AgentSpec {
         session_types: def.session_types.iter().map(|s| s.to_string()).collect(),
         validator_enabled: def.validator_enabled,
         default_config: true,
-        personas: Vec::new(),
         config: None,
     }
-}
-
-fn resolve_agent_personas(
-    config: &tura_agents::store::AgentConfig,
-) -> Vec<tura_persona::store::StoredPersona> {
-    let project_root = project_root_from_env_or_cwd();
-    config
-        .agent_persona
-        .iter()
-        .filter_map(|item| {
-            item.get("persona_name")
-                .and_then(serde_json::Value::as_str)
-                .and_then(|name| tura_persona::store::load_persona(&project_root, name))
-        })
-        .collect()
 }
 
 fn catalog_item_from_stored_agent(agent: tura_agents::store::StoredAgent) -> AgentCatalogItem {
@@ -276,10 +256,6 @@ fn catalog_item_from_stored_agent(agent: tura_agents::store::StoredAgent) -> Age
     options.insert(
         "capabilities".to_string(),
         serde_json::json!(agent.summary.capabilities),
-    );
-    options.insert(
-        "personas".to_string(),
-        serde_json::json!(resolve_agent_personas(&agent.config)),
     );
     options.insert(
         "default_config".to_string(),
@@ -308,7 +284,7 @@ mod tests {
     fn resolves_session_type_to_coding() {
         let registry = AgentRegistry::from_static();
         let spec = registry.resolve_by_session_type("coding");
-        assert!(spec.agent_name == "coding_agent" || spec.agent_name == "thinking-planning");
+        assert!(spec.agent_name == "coding_agent" || spec.agent_name == "thoughtful");
     }
 
     #[test]
@@ -322,7 +298,7 @@ mod tests {
     fn explicit_agent_takes_priority() {
         let registry = AgentRegistry::from_static();
         let spec = registry.resolve(Some("coding"), Some("general"));
-        assert!(spec.agent_name == "coding_agent" || spec.agent_name == "thinking-planning");
+        assert!(spec.agent_name == "coding_agent" || spec.agent_name == "thoughtful");
     }
 
     #[test]
@@ -331,15 +307,17 @@ mod tests {
         let spec = registry
             .resolve_by_name("coding")
             .expect("coding alias should resolve");
-        assert!(spec.agent_name == "coding_agent" || spec.agent_name == "thinking-planning");
-        assert!(spec.capabilities.contains(&"command_run".to_string()));
+        assert!(spec.agent_name == "coding_agent" || spec.agent_name == "thoughtful");
+        assert!(
+            spec.capabilities.contains(&"command_run".to_string())
+                || spec.capabilities.contains(&"shells".to_string())
+        );
         assert!(
             spec.capabilities.contains(&"file_edit".to_string())
                 || spec.capabilities.contains(&"apply_patch".to_string())
         );
         assert!(
-            spec.session_types.contains(&"coding".to_string())
-                || spec.agent_name == "thinking-planning"
+            spec.session_types.contains(&"coding".to_string()) || spec.agent_name == "thoughtful"
         );
     }
 }

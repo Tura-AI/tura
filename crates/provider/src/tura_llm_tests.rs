@@ -5,15 +5,7 @@ use super::{
 };
 use serde_json::json;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
-
-fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("env lock poisoned")
-}
 
 struct EnvRestore {
     keys: Vec<(&'static str, Option<String>)>,
@@ -88,38 +80,90 @@ fn keeps_codex_responses_style_output_unchanged_for_codex_normalizer() {
 }
 
 #[test]
-fn provider_latency_defaults_match_fast_profile() {
+fn normalizes_codex_responses_events_when_output_array_is_empty() {
+    let raw = json!({
+        "object": "response",
+        "output": [],
+        "output_text": "I will inspect before editing.",
+        "events": [
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "message",
+                    "id": "msg_1",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "I will inspect before editing."
+                    }]
+                }
+            },
+            {
+                "type": "response.output_item.added",
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "call_id": "call_1",
+                    "name": "command_run",
+                    "arguments": ""
+                }
+            },
+            {
+                "type": "response.function_call_arguments.done",
+                "item_id": "fc_1",
+                "arguments": "{\"commands\":[{\"command_type\":\"shell_command\",\"command_line\":\"pwd\"}]}"
+            },
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "call_id": "call_1",
+                    "name": "command_run",
+                    "status": "completed",
+                    "arguments": "{\"commands\":[{\"command_type\":\"shell_command\",\"command_line\":\"pwd\"}]}"
+                }
+            }
+        ]
+    });
+
+    let content = normalize_response_content(&raw);
+
+    assert_eq!(content["text"], "I will inspect before editing.");
+    assert_eq!(content["tool_calls"][0]["id"], "call_1");
+    assert_eq!(
+        content["tool_calls"][0]["function"]["arguments"]["commands"][0]["command_line"],
+        "pwd"
+    );
+}
+
+#[test]
+fn provider_latency_defaults_match_high_profile() {
     let selected = ProviderLatencyConfig::default().selected_timeouts();
 
-    assert_eq!(selected.idle_output_timeout_ms, 20_000);
-    assert_eq!(selected.first_output_timeout_ms, 40_000);
-    assert_eq!(selected.total_timeout_ms, 240_000);
+    assert_eq!(selected.idle_output_timeout_ms, 80_000);
+    assert_eq!(selected.first_output_timeout_ms, 160_000);
+    assert_eq!(selected.total_timeout_ms, 960_000);
 }
 
 #[test]
 fn provider_latency_level_tracks_tier_flag() {
-    assert_eq!(super::latency_level_for_tier("flagship_thinking"), "x-high");
-    assert_eq!(super::latency_level_for_tier("thinking"), "high");
-    assert_eq!(super::latency_level_for_tier("fast"), "fast");
-    assert_eq!(super::latency_level_for_tier("instant"), "fast");
-    assert_eq!(super::latency_level_for_tier("embedding_high"), "high");
-    assert_eq!(super::latency_level_for_tier("embedding_low"), "fast");
-    // Unknown tiers fall back to the lowest level.
-    assert_eq!(super::latency_level_for_tier("something_else"), "fast");
+    assert_eq!(super::latency_level_for_tier("thinking"), "x-high");
+    assert_eq!(super::latency_level_for_tier("fast"), "high");
+    assert_eq!(super::latency_level_for_tier("embedding_high"), "x-high");
+    assert_eq!(super::latency_level_for_tier("embedding_low"), "high");
+    // Unknown tiers fall back to the high level.
+    assert_eq!(super::latency_level_for_tier("something_else"), "high");
 }
 
 #[test]
 fn provider_latency_timeouts_for_tier_resolve_levels() {
     let config = ProviderLatencyConfig::default();
 
-    let flagship = config.timeouts_for_tier("flagship_thinking");
-    assert_eq!(flagship.total_timeout_ms, 1_200_000);
-
     let thinking = config.timeouts_for_tier("thinking");
-    assert_eq!(thinking.total_timeout_ms, 960_000);
+    assert_eq!(thinking.total_timeout_ms, 1_200_000);
 
-    let fast = config.timeouts_for_tier("instant");
-    assert_eq!(fast.total_timeout_ms, 240_000);
+    let fast = config.timeouts_for_tier("fast");
+    assert_eq!(fast.total_timeout_ms, 960_000);
 }
 
 #[test]
@@ -138,7 +182,7 @@ fn provider_latency_global_timeout_state_is_configurable() {
 
 #[test]
 fn loads_codex_oauth_tokens_from_codex_home() {
-    let _lock = env_lock();
+    let _lock = crate::test_support::env_lock();
     let _env = EnvRestore::capture(&[
         "CODEX_HOME",
         "OPENAI_LOGIN",
@@ -146,14 +190,12 @@ fn loads_codex_oauth_tokens_from_codex_home() {
         "OPENAI_REFRESH_TOKEN",
         "OPENAI_ACCOUNT_ID",
         "TURA_PROVIDER_CONFIG",
-        "TURALLM_CONFIG",
     ]);
     std::env::remove_var("OPENAI_LOGIN");
     std::env::remove_var("OPENAI_API_KEY");
     std::env::remove_var("OPENAI_REFRESH_TOKEN");
     std::env::remove_var("OPENAI_ACCOUNT_ID");
     std::env::remove_var("TURA_PROVIDER_CONFIG");
-    std::env::remove_var("TURALLM_CONFIG");
 
     let codex_home = unique_temp_dir("codex-home");
     std::fs::write(
@@ -194,13 +236,12 @@ fn loads_codex_oauth_tokens_from_codex_home() {
 
 #[test]
 fn openai_oauth_login_uses_provider_auth_config() {
-    let _lock = env_lock();
+    let _lock = crate::test_support::env_lock();
     let _env = EnvRestore::capture(&[
         "CODEX_HOME",
         "OPENAI_LOGIN",
         "OPENAI_API_KEY",
         "TURA_PROVIDER_CONFIG",
-        "TURALLM_CONFIG",
     ]);
     std::env::remove_var("CODEX_HOME");
     std::env::remove_var("OPENAI_LOGIN");
@@ -211,7 +252,7 @@ fn openai_oauth_login_uses_provider_auth_config() {
     let config = dir.join("provider_config.json");
     std::fs::write(&config, r#"{"provider_auth":{"openai":{"login":"oauth"}}}"#)
         .expect("provider config");
-    std::env::set_var("TURALLM_CONFIG", &config);
+    std::env::set_var("TURA_PROVIDER_CONFIG", &config);
 
     assert!(openai_login_is_oauth(
         &crate::tura_conf::TuraConfig::default()

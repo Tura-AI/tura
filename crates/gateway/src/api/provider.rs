@@ -1,13 +1,15 @@
 //! Provider / Auth API handlers
 
-use crate::api::types::*;
+use crate::contracts::*;
 use crate::mock::global_store;
 use axum::extract::{Json, Path, Query};
 use chrono::Utc;
+use fs2::FileExt;
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path as FsPath, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use tura_llm_rust::{AuthMethodKind, OAuthAuthorizeKind};
 
 mod auth_refresh;
@@ -16,7 +18,6 @@ mod oauth_flow;
 use auth_validation::{validate_provider_auth_config, validation_detail};
 pub use oauth_flow::{
     oauth_authorize, oauth_callback, oauth_callback_info, oauth_redirect_callback,
-    OAuthRedirectCallbackParams,
 };
 mod catalog;
 pub use catalog::{list_providers, validate_model};
@@ -35,6 +36,8 @@ use metadata::{
     provider_auth_docs_url,
 };
 use oauth_support::{browser_login_url, github_copilot_oauth_client_id, google_oauth_client_id};
+
+static PROVIDER_AUTH_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 // ============================================================================
 // Provider List
@@ -63,47 +66,6 @@ pub async fn set_auth(
 
 pub async fn remove_auth(Path(provider_id): Path<String>) -> Json<bool> {
     Json(logout_provider_auth(&provider_id).is_ok() && global_store().remove_auth(&provider_id))
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ProviderAuthStatusResponse {
-    pub provider_id: String,
-    pub display_name: String,
-    pub login: Option<String>,
-    pub configured: bool,
-    pub authenticated: bool,
-    pub expired: Option<bool>,
-    pub account_id: Option<String>,
-    pub token_env: Option<String>,
-    pub login_env: Option<String>,
-    pub refresh_env: Option<String>,
-    pub expires_env: Option<String>,
-    pub updated_at: Option<String>,
-    pub auth_state: tura_llm_rust::AuthState,
-    pub runtime_state: tura_llm_rust::ProviderRuntimeState,
-    pub last_error_category: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ProviderAuthActionResponse {
-    pub ok: bool,
-    pub provider_id: String,
-    pub code: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub level: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub details: Vec<ProviderAuthActionDetail>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<ProviderAuthStatusResponse>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ProviderAuthActionDetail {
-    pub code: String,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub value: Option<String>,
 }
 
 pub(super) async fn refresh_provider_auth_if_needed(
@@ -224,41 +186,6 @@ pub async fn provider_auth_logout(
 // ============================================================================
 // Provider Auth
 // ============================================================================
-
-#[derive(Debug, Clone, serde::Deserialize, Default)]
-pub struct ProviderAuthQuery {
-    pub directory: Option<String>,
-    pub workspace: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ProviderAuthMethod {
-    #[serde(rename = "type")]
-    pub method_type: String,
-    pub kind: AuthMethodKind,
-    pub login: String,
-    pub label: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompts: Option<Vec<serde_json::Value>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub token_env: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub login_env: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub authorize_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub token_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub docs_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub configured_value: Option<String>,
-    pub available: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unavailable_reason: Option<String>,
-    pub supports_refresh: bool,
-}
 
 pub async fn provider_auth(
     Query(_params): Query<ProviderAuthQuery>,
@@ -404,6 +331,7 @@ fn auth_method_unavailable_reason(
 }
 
 fn persist_provider_auth(provider_id: &str, auth: &ProviderAuth) -> io::Result<()> {
+    let _write_guard = provider_auth_write_guard();
     let key = auth.access.as_deref().or(auth.key.as_deref());
     let Some(key) = key.filter(|value| !value.trim().is_empty()) else {
         return Ok(());
@@ -418,6 +346,7 @@ fn persist_provider_auth(provider_id: &str, auth: &ProviderAuth) -> io::Result<(
                 .env_path()
                 .to_path_buf()
         });
+    let _file_guard = provider_auth_file_lock()?;
     let api_key = auth
         .metadata
         .as_ref()
@@ -492,6 +421,45 @@ fn persist_provider_auth(provider_id: &str, auth: &ProviderAuth) -> io::Result<(
     }
 
     Ok(())
+}
+
+fn provider_auth_write_guard() -> MutexGuard<'static, ()> {
+    match PROVIDER_AUTH_WRITE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+struct ProviderAuthFileLock {
+    file: File,
+}
+
+impl Drop for ProviderAuthFileLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
+fn provider_auth_file_lock() -> io::Result<ProviderAuthFileLock> {
+    let config_path = config::provider_config_path();
+    let lock_path = provider_auth_lock_path(&config_path);
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)?;
+    file.lock_exclusive()?;
+    Ok(ProviderAuthFileLock { file })
+}
+
+fn provider_auth_lock_path(config_path: &FsPath) -> PathBuf {
+    let mut lock_path = config_path.to_path_buf();
+    lock_path.set_extension("auth.lock");
+    lock_path
 }
 
 fn login_value_for_auth(provider_id: &str, auth: &ProviderAuth) -> String {
@@ -685,7 +653,7 @@ fn bedrock_credentials_exist(provider_id: &str) -> bool {
 }
 
 fn logout_provider_auth(provider_id: &str) -> io::Result<()> {
-    let status = build_provider_auth_status(provider_id);
+    let _write_guard = provider_auth_write_guard();
     let env_path = std::env::var("TURA_ENV_PATH")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -695,6 +663,8 @@ fn logout_provider_auth(provider_id: &str) -> io::Result<()> {
                 .env_path()
                 .to_path_buf()
         });
+    let _file_guard = provider_auth_file_lock()?;
+    let status = build_provider_auth_status(provider_id);
 
     let current_login = status.login.as_deref();
     let should_clear_shared_token = match provider_id {
@@ -778,9 +748,13 @@ fn upsert_provider_auth_config(
         ));
     }
 
-    let provider_auth = root
-        .as_object_mut()
-        .expect("checked object")
+    let Some(root_object) = root.as_object_mut() else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "tura llm config root must be a JSON object",
+        ));
+    };
+    let provider_auth = root_object
         .entry("provider_auth")
         .or_insert_with(|| serde_json::json!({}));
     if !provider_auth.is_object() {
@@ -836,10 +810,13 @@ fn upsert_provider_auth_config(
             entry["account_id"] = serde_json::Value::String(account_id.to_string());
         }
     }
-    provider_auth
-        .as_object_mut()
-        .expect("provider_auth is object")
-        .insert(provider_id.to_string(), entry);
+    let Some(provider_auth_object) = provider_auth.as_object_mut() else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "provider_auth must be a JSON object",
+        ));
+    };
+    provider_auth_object.insert(provider_id.to_string(), entry);
 
     let formatted = serde_json::to_string_pretty(&root)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;

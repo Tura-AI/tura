@@ -1,6 +1,15 @@
 import type { AgentAvatarConfig, PersonaMediaConfig } from "@tura/gateway-sdk";
 import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { classNames } from "../../state/format";
+import { EMOJI_ALIASES, avatarExpressionIdsForEmoji } from "./agent-avatar-protocol";
+import {
+  FALLBACK_AVATAR_IMAGE,
+  avatarImageKey,
+  avatarImageKeyForLoaded,
+  avatarPixelAfterThreshold,
+  fallbackImageKey,
+  type AvatarExpressionInfo,
+} from "./agent-avatar-rendering";
 
 export type AvatarRenderSettings = AgentAvatarConfig;
 export type AvatarDisplayMode = NonNullable<AgentAvatarConfig["display_mode"]>;
@@ -10,15 +19,12 @@ export const DEFAULT_AVATAR_SETTINGS: AvatarRenderSettings = {
   role: "tura",
   display_mode: "static",
   pixel_size: 20,
-  threshold: 150,
-  scale: 100,
+  threshold: 160,
 };
-const FALLBACK_AVATAR_IMAGE = "/assets/avatar-fallback/tura-vigilant-right.png";
 
 export const AVATAR_SETTING_LIMITS = {
   pixelSize: { min: 10, max: 30 },
   threshold: { min: 100, max: 200 },
-  scale: { min: 100, max: 120 },
 };
 
 const CANVAS_SIZE = 768;
@@ -50,27 +56,11 @@ const FALLBACK_EXPRESSIONS = [
   "confused",
   "nervous",
   "vigilant",
-  "laufgh",
+  "laugh",
   "smirk",
   "tired",
 ];
-const EMOJI_ALIASES: Record<string, string[]> = {
-  panic: ["😱", "😨", "😰", "🤯", "🥶", "😧", "😵", "😦", "😮"],
-  crying: ["😭", "😢", "😿", "😥", "🥺", "😪", "😓"],
-  confused: ["😕", "🤔", "🙄", "🫤", "🤨", "🧐", "🙃", "🥴"],
-  nervous: ["😬", "😅", "😟", "😓", "😰", "🫥", "🫨"],
-  vigilant: ["👀", "🫢", "🫣", "🔎", "🔍", "⚠", "🚨", "🎯"],
-  laufgh: ["😂", "😄", "😆", "🤣", "😁", "😹", "😃"],
-  smirk: ["😏", "😉", "😌", "😼", "😈", "😎", "🤭"],
-  tired: ["😴", "😪", "😩", "🫠", "🥱", "😔", "🤧"],
-};
-
 type LoadedImages = Record<string, HTMLImageElement>;
-type ExpressionInfo = {
-  id: string;
-  aliases: string[];
-  frames: Record<string, string>;
-};
 type ImageEntry = {
   key: string;
   src: string;
@@ -119,11 +109,6 @@ export function normalizeAvatarSettings(
       Number(value?.threshold ?? DEFAULT_AVATAR_SETTINGS.threshold),
       AVATAR_SETTING_LIMITS.threshold.min,
       AVATAR_SETTING_LIMITS.threshold.max,
-    ),
-    scale: clamp(
-      Number(value?.scale ?? DEFAULT_AVATAR_SETTINGS.scale),
-      AVATAR_SETTING_LIMITS.scale.min,
-      AVATAR_SETTING_LIMITS.scale.max,
     ),
   };
 }
@@ -176,7 +161,6 @@ export function AgentAvatarCanvas(props: {
   expressionId?: string;
   interactive?: boolean;
   previewCycle?: boolean;
-  thinking?: boolean;
   class?: string;
   label?: string;
 }) {
@@ -211,12 +195,7 @@ export function AgentAvatarCanvas(props: {
   }
 
   function chooseExpressionForEmoji(emoji: string | undefined): string | undefined {
-    const clean = emoji?.trim();
-    if (!clean) {
-      return undefined;
-    }
-    const matches = expressions().filter((item) => item.aliases.includes(clean));
-    return randomItem(matches)?.id;
+    return randomItem(avatarExpressionIdsForEmoji(media(), emoji));
   }
 
   createEffect(() => {
@@ -373,11 +352,17 @@ export function AgentAvatarCanvas(props: {
     if (!context) {
       return;
     }
-    const info = expressions().find((item) => item.id === expression()) ?? expressions()[0];
     const image =
-      (info && images()[imageKey(info.id, direction())]) ||
-      (info && images()[imageKey(info.id, media().default_direction || "right")]) ||
-      images()[fallbackImageKey()];
+      images()[
+        avatarImageKeyForLoaded(
+          expressions(),
+          Object.keys(images()),
+          expression(),
+          direction(),
+          media().default_direction || "right",
+          media().default_expression,
+        )
+      ];
     if (!image) {
       return;
     }
@@ -396,9 +381,8 @@ export function AgentAvatarCanvas(props: {
 
     const baseWidth = identity ? CANVAS_SIZE : smallWidth * pixelSize;
     const baseHeight = identity ? CANVAS_SIZE : smallHeight * pixelSize;
-    const scaleFactor = settings().scale / 100;
-    const drawWidth = Math.max(1, Math.round(baseWidth * scaleFactor));
-    const drawHeight = Math.max(1, Math.round(baseHeight * scaleFactor));
+    const drawWidth = Math.max(1, Math.round(baseWidth));
+    const drawHeight = Math.max(1, Math.round(baseHeight));
     const offsetX = Math.round((CANVAS_SIZE - drawWidth) / 2);
     const offsetY = Math.round((CANVAS_SIZE - drawHeight) / 2);
     context.imageSmoothingEnabled = false;
@@ -422,7 +406,6 @@ export function AgentAvatarCanvas(props: {
   ) {
     const imageData = context.getImageData(0, 0, width, height);
     const data = imageData.data;
-    const transparentValue = isDarkTheme() ? 0 : 255;
     for (let index = 0; index < data.length; index += 4) {
       const originalAlpha = data[index + 3] ?? 0;
       if (originalAlpha <= 8) {
@@ -433,23 +416,23 @@ export function AgentAvatarCanvas(props: {
         (data[index] ?? 0) * 0.299 +
         (data[index + 1] ?? 0) * 0.587 +
         (data[index + 2] ?? 0) * 0.114;
-      const value = gray < settings().threshold ? 0 : 255;
-      data[index] = value;
-      data[index + 1] = value;
-      data[index + 2] = value;
-      data[index + 3] = value === transparentValue ? 0 : originalAlpha;
+      const pixel = avatarPixelAfterThreshold(
+        gray,
+        originalAlpha,
+        settings().threshold,
+        isDarkTheme(),
+      );
+      data[index] = pixel.value;
+      data[index + 1] = pixel.value;
+      data[index + 2] = pixel.value;
+      data[index + 3] = pixel.alpha;
     }
     context.putImageData(imageData, 0, 0);
   }
 
   return (
     <div
-      class={classNames(
-        "agent-avatar-stage",
-        props.thinking && "thinking",
-        loading() && "loading",
-        props.class,
-      )}
+      class={classNames("agent-avatar-stage", loading() && "loading", props.class)}
       role={props.label ? "img" : undefined}
       aria-label={props.label}
       aria-hidden={props.label ? undefined : "true"}
@@ -470,7 +453,7 @@ export function AgentAvatarCanvas(props: {
   );
 }
 
-function expressionInfos(media: PersonaMediaConfig): ExpressionInfo[] {
+function expressionInfos(media: PersonaMediaConfig): AvatarExpressionInfo[] {
   return (media.expressions ?? []).map((expression) => ({
     id: expression.id,
     aliases: [
@@ -482,10 +465,10 @@ function expressionInfos(media: PersonaMediaConfig): ExpressionInfo[] {
   }));
 }
 
-function imageEntries(expressions: ExpressionInfo[]): ImageEntry[] {
+function imageEntries(expressions: AvatarExpressionInfo[]): ImageEntry[] {
   const entries: ImageEntry[] = expressions.flatMap((expression) =>
     Object.entries(expression.frames).map(([direction, src]) => ({
-      key: imageKey(expression.id, direction),
+      key: avatarImageKey(expression.id, direction),
       src,
     })),
   );
@@ -493,11 +476,11 @@ function imageEntries(expressions: ExpressionInfo[]): ImageEntry[] {
   return entries;
 }
 
-function allImagesCached(expressions: ExpressionInfo[]): boolean {
+function allImagesCached(expressions: AvatarExpressionInfo[]): boolean {
   return imageEntries(expressions).every((entry) => avatarImageCache.has(mediaSource(entry.src)));
 }
 
-function loadImages(expressions: ExpressionInfo[]): Promise<LoadedImages> {
+function loadImages(expressions: AvatarExpressionInfo[]): Promise<LoadedImages> {
   const entries = imageEntries(expressions);
   return Promise.all(
     entries.map(async ({ key, src }) => [key, await loadCachedImage(mediaSource(src))]),
@@ -532,14 +515,6 @@ function loadCachedImage(src: string): Promise<HTMLImageElement | undefined> {
   });
   avatarImageRequestCache.set(src, request);
   return request;
-}
-
-function imageKey(expression: string, direction: string): string {
-  return `${expression}:${direction}`;
-}
-
-function fallbackImageKey(): string {
-  return "fallback:tura-vigilant-right";
 }
 
 function mediaSource(path: string): string {

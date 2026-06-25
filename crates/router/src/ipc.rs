@@ -47,3 +47,31 @@ impl IpcResponse {
         }
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IpcNotification {
+    pub request_id: String,
+    pub kind: String,
+    #[serde(default)]
+    pub method: String,
+    #[serde(default)]
+    pub payload: Value,
+}
+
+impl IpcNotification {
+    pub fn new(
+        request_id: impl Into<String>,
+        kind: impl Into<String>,
+        method: impl Into<String>,
+        payload: Value,
+    ) -> Self {
+        Self {
+            request_id: request_id.into(),
+            kind: kind.into(),
+            method: method.into(),
+            payload,
+        }
+    }
+}
+
+pub type IpcNotificationSender = tokio::sync::mpsc::UnboundedSender<IpcNotification>;

@@ -9,8 +9,8 @@
       "commands": {
         "type": "array",
         "minItems": 5,
-        "maxItems": 15,
-        "description": "Executable command-line instructions. During task execution, complete all currently needed steps in one batch; prefer 5 or more commands. Include only commands whose inputs are already known when this batch is created. Independent read/search commands may share one step. Do not create test/probe commands that depend on output from earlier commands in the same batch.",
+        "maxItems": 20,
+        "description": "Executable command-line instructions. During task execution, complete all currently needed steps in one batch; prefer 5 or more commands. For simple, standalone user tasks such as quick information lookups (e.g., checking current time) or single-step queries, 1-2 commands are acceptable when that fully answers the request. Include only commands whose inputs are already known when this batch is created. Independent read/search/list commands with no output dependency must share one step. Do not create test/probe commands that depend on output from earlier commands in the same batch.",
         "items": {
           "type": "object",
           "required": ["command_type", "command_line"],
@@ -28,7 +28,7 @@
               "type": "integer",
               "minimum": 1,
               "x-tura-optional": true,
-              "description": "Execution order and dependency group. Commands in the same step may run together when they do not depend on each other's output. Use a later step only when that command depends on earlier known work or must run after edits. Duplicate or earlier step values are extended into later unique steps in input order. When using compact_context, it must be the final command in the highest step."
+              "description": "Dependency group and execution order. Commands in the same step must have no output dependency on each other and may run together. Independent read/search/list commands with no output dependency must share one step. Commands that depend on earlier output, known work, or completed edits must use a later unique ordered step. When using task_status compact_context for a checkpoint, place that task_status command after the work it summarizes."
             }
           }
         }

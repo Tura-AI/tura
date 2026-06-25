@@ -116,7 +116,7 @@ impl WorkspaceSnapshot {
 }
 
 impl ContextualUserFragment for WorkspaceSnapshot {
-    const ROLE: &'static str = "user";
+    const ROLE: &'static str = super::USER_AGENT_CONTEXT_ROLE;
     const START_MARKER: &'static str = "<WORKSPACE_SNAPSHOT>";
     const END_MARKER: &'static str = "</WORKSPACE_SNAPSHOT>";
 
