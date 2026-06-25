@@ -448,7 +448,7 @@ fn terminate_gateway_from_lock(
     instance_home: &Path,
     endpoint: &GatewayEndpoint,
 ) -> Result<bool, String> {
-    let Some(record) = read_gateway_lock(instance_home, endpoint.port) else {
+    let Some(record) = read_gateway_lock(instance_home) else {
         return Ok(false);
     };
     if record.kind.as_deref() != Some("gateway")
@@ -481,7 +481,7 @@ fn terminate_gateway_from_lock(
     Ok(process.kill())
 }
 
-fn read_gateway_lock(instance_home: &Path, port: u16) -> Option<GatewayLockRecord> {
+fn read_gateway_lock(instance_home: &Path) -> Option<GatewayLockRecord> {
     let path = instance_home
         .join(".tura")
         .join("locks")
